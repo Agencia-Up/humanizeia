@@ -12,7 +12,7 @@
  * Chama a edge function `recarga-create-payment` (JWT do usuario logado).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,6 +80,12 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
   const [result, setResult] = useState<RecargaResult | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Mantem o ultimo pacote enquanto o dialog fecha (evita desmontar o Radix de
+  // forma abrupta no meio da animacao de fechamento).
+  const lastPkgRef = useRef<Pkg | null>(null);
+  if (pkg) lastPkgRef.current = pkg;
+  const shownPkg = pkg ?? lastPkgRef.current;
+
   // Reseta tudo ao (re)abrir.
   useEffect(() => {
     if (open) {
@@ -89,7 +95,22 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
     }
   }, [open, hasSaved]);
 
-  if (!pkg) return null;
+  // Rede de seguranca: o Radix Dialog as vezes deixa o body com
+  // `pointer-events: none` (tela inteira fica sem clicar) se o componente
+  // desmonta no meio do fechamento. Garante a liberacao ao fechar/desmontar.
+  useEffect(() => {
+    if (!open) {
+      const id = window.setTimeout(() => {
+        if (document.body.style.pointerEvents === 'none') {
+          document.body.style.pointerEvents = '';
+        }
+      }, 350);
+      return () => window.clearTimeout(id);
+    }
+  }, [open]);
+  useEffect(() => () => { document.body.style.pointerEvents = ''; }, []);
+
+  if (!shownPkg) return null;
 
   const cardValid =
     onlyDigits(cardNumber).length >= 13 &&
@@ -102,11 +123,11 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
     (metodo === 'cartao_salvo' || metodo === 'pix' || (metodo === 'cartao' && cardValid));
 
   const handlePay = async () => {
-    if (!canPay || !pkg) return;
+    if (!canPay || !shownPkg) return;
     setSubmitting(true);
     try {
       const payload: any = {
-        pacote: pkg.atendimentos,
+        pacote: shownPkg.atendimentos,
         paymentMethod: metodo,
         document: onlyDigits(doc) || undefined,
       };
@@ -142,7 +163,7 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
       if (res.credited) {
         toast({
           title: 'Recarga concluída!',
-          description: `+${fmt(pkg.atendimentos)} atendimentos adicionados ao seu saldo.`,
+          description: `+${fmt(shownPkg.atendimentos)} atendimentos adicionados ao seu saldo.`,
         });
         onCredited();
       } else if (res.pix) {
@@ -187,9 +208,9 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
           <div className="mt-3 flex items-end justify-between">
             <div>
               <p className="text-[11px] uppercase tracking-wider" style={{ color: 'rgba(250,248,242,0.65)' }}>Pacote</p>
-              <p className="text-lg font-extrabold" style={{ color: '#FAF8F2' }}>{fmt(pkg.atendimentos)} atendimentos</p>
+              <p className="text-lg font-extrabold" style={{ color: '#FAF8F2' }}>{fmt(shownPkg.atendimentos)} atendimentos</p>
             </div>
-            <p className="text-2xl font-black" style={{ color: '#D4A017' }}>{brl(pkg.price)}</p>
+            <p className="text-2xl font-black" style={{ color: '#D4A017' }}>{brl(shownPkg.price)}</p>
           </div>
         </div>
 
@@ -202,7 +223,7 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
               </div>
               <h3 className="font-bold text-lg">Recarga concluída!</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                +{fmt(pkg.atendimentos)} atendimentos adicionados.
+                +{fmt(shownPkg.atendimentos)} atendimentos adicionados.
                 {result.balanceAfter != null && <> Saldo atual: <strong>{fmt(result.balanceAfter)}</strong>.</>}
               </p>
               <Button className="mt-5 w-full" onClick={() => onOpenChange(false)}>Fechar</Button>
@@ -335,7 +356,7 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
                 {submitting ? (
                   <><Loader2 className="h-5 w-5 animate-spin" /> Processando...</>
                 ) : (
-                  <><Lock className="h-4 w-4" /> Pagar {brl(pkg.price)}</>
+                  <><Lock className="h-4 w-4" /> Pagar {brl(shownPkg.price)}</>
                 )}
               </Button>
 
