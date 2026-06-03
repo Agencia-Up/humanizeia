@@ -87,6 +87,33 @@ const WEAK_WORDS = new Set([
   "barateza", "acessivel", "acessivel", "custo", "beneficio",
 ]);
 
+// TOKENS DE ATRIBUTO/RUIDO: descrevem cor, carroceria, estado de conservacao ou ANO —
+// NUNCA o modelo. O bug (relatorio Antigravity #2): no scoreVehicle, qualquer token que
+// nao casa com o cadastro levava -10. Adjetivos como "prata"/"completo"/"conservado"
+// zeravam o carro CERTO (ex.: lead pede "onix prata completo" e o Onix do estoque e
+// cinza -> -30 -> "nao temos"). Estes tokens NAO entram na penalidade de modelo; quando
+// casam, ja pontuam positivo no loop de match; quando nao casam, sao neutros.
+const ATTRIBUTE_NOISE_TOKENS = new Set([
+  // cores
+  "preto", "preta", "branco", "branca", "prata", "prateado", "prateada", "cinza", "grafite",
+  "chumbo", "vermelho", "vermelha", "azul", "verde", "dourado", "dourada", "bege", "marrom",
+  "amarelo", "amarela", "laranja", "vinho",
+  // carroceria / categoria
+  "hatch", "hatchback", "sedan", "suv", "picape", "pickup", "perua", "utilitario",
+  // estado / adjetivos de venda (ruido)
+  "completo", "completa", "novo", "nova", "seminovo", "seminova", "semi", "usado", "usada",
+  "conservado", "conservada", "impecavel", "lindo", "linda", "bonito", "bonita", "top",
+  "revisado", "revisada", "unico", "particular", "inteiro", "inteira", "bem", "muito", "mto",
+  // cambio / combustivel (reforco — ja em WEAK_WORDS, repetido por seguranca)
+  "automatico", "automatica", "manual", "flex", "gasolina", "diesel", "turbo", "cvt",
+]);
+
+// Token de atributo/ruido OU ano (AAAA). O ano e tratado nos filtros numericos, nao
+// deve penalizar o modelo no scoring textual.
+function isAttributeOrNoiseToken(token: string): boolean {
+  return ATTRIBUTE_NOISE_TOKENS.has(token) || /^(?:19|20)\d{2}$/.test(token);
+}
+
 function getQueryTokens(searchText: string) {
   const norm = normalizeText(searchText);
   const originalTokens = norm
@@ -343,7 +370,10 @@ function detectDynamicModelTerms(filters: Record<string, any>): string[] {
   const searchText = buildScoringText(filters);
   if (!searchText) return [];
   const tokens = searchTokens(searchText);
-  return tokens.filter((token) => !KNOWN_BRANDS.includes(token));
+  // Exclui marcas E atributos: o primeiro modelTerm vira o filtro estrito de modelo
+  // (vehicleMatchesStrictModel). Sem isso, "prata onix" usava "prata" como modelo e
+  // excluia o Onix que nao fosse prata. (Fix relatorio Antigravity #2.)
+  return tokens.filter((token) => !KNOWN_BRANDS.includes(token) && !isAttributeOrNoiseToken(token));
 }
 
 function vehicleMatchesStrictModel(vehicle: BndvVehicle, modelTerms: string[]) {
@@ -395,7 +425,10 @@ function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
   if (filters?.versao && version.includes(normalizeText(filters.versao))) score += 4;
   if (year && searchText.includes(year)) score += 3;
 
-  const modelTerms = originalTokens.filter((token) => !KNOWN_BRANDS.includes(token));
+  // SO tokens de MODELO entram na penalidade -10 (discriminam o carro certo do errado).
+  // Atributos (cor/carroceria/estado/ano) ficam de fora: ja pontuaram positivo acima se
+  // casaram; aqui nao podem zerar o modelo correto. (Fix relatorio Antigravity #2.)
+  const modelTerms = originalTokens.filter((token) => !KNOWN_BRANDS.includes(token) && !isAttributeOrNoiseToken(token));
   for (const term of modelTerms) {
     if (model.includes(term)) {
       score += 15;
@@ -404,6 +437,11 @@ function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
     } else {
       score -= 10;
     }
+  }
+  // Atributo que CASA (cor/cambio/carroceria certos) = leve bonus de desempate, nunca penalidade.
+  const attributeTerms = originalTokens.filter((token) => !KNOWN_BRANDS.includes(token) && isAttributeOrNoiseToken(token));
+  for (const term of attributeTerms) {
+    if (indexed.includes(term)) score += 3;
   }
 
   for (const modelToken of searchTokens(model)) {

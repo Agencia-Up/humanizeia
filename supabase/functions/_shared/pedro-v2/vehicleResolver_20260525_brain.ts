@@ -54,6 +54,15 @@ const VEHICLE_ALIASES: VehicleAlias[] = [
   { canonical: "kicks", label: "Nissan Kicks", type: "suv", aliases: ["kicks", "kick", "nissan kicks"] },
   { canonical: "city", label: "Honda City", type: "sedan", aliases: ["city", "honda city"] },
   { canonical: "fit", label: "Honda Fit", type: "hatch", aliases: ["fit", "honda fit"] },
+  // Modelos comuns que faltavam na lista estatica (o stockSearch ja os referencia em
+  // expansoes de marca). Sem alias, dependiam so do match dinamico/LLM. (Fix Antigravity #1.)
+  { canonical: "spin", label: "Chevrolet Spin", type: "carro", aliases: ["spin", "chevrolet spin", "espin", "spim", "spinn"] },
+  { canonical: "prisma", label: "Chevrolet Prisma", type: "sedan", aliases: ["prisma", "chevrolet prisma", "prizma", "prima"] },
+  { canonical: "sandero", label: "Renault Sandero", type: "hatch", aliases: ["sandero", "renault sandero", "sandeiro", "sandeo", "sandera"] },
+  { canonical: "yaris", label: "Toyota Yaris", type: "hatch", aliases: ["yaris", "toyota yaris", "iaris", "yariz"] },
+  { canonical: "nivus", label: "Volkswagen Nivus", type: "suv", aliases: ["nivus", "volkswagen nivus", "vw nivus", "nivos", "nivuz", "nivius"] },
+  { canonical: "fox", label: "Volkswagen Fox", type: "hatch", aliases: ["fox", "vw fox", "volkswagen fox"] },
+  { canonical: "voyage", label: "Volkswagen Voyage", type: "sedan", aliases: ["voyage", "vw voyage", "volkswagen voyage", "voiage", "voiagi"] },
 ];
 
 const KNOWN_BRANDS = [
@@ -68,6 +77,16 @@ const WEAK_WORDS = new Set([
   "da", "do", "dos", "das", "um", "uma", "com", "sem", "para", "por", "ate",
   "automatico", "manual", "flex", "gasolina", "diesel", "aut", "mec", "fotos", 
   "foto", "detalhes", "modelo", "versao", "ano", "cor", "km"
+]);
+
+// Tokens que NUNCA sao modelo (cor/estado/segmento). Impede o match dinamico de
+// confundir "prata"/"novo" como nome de modelo na deteccao por adjacencia de marca.
+const NON_MODEL_WORDS = new Set([
+  "preto", "preta", "branco", "branca", "prata", "cinza", "grafite", "vermelho", "vermelha",
+  "azul", "verde", "dourado", "bege", "marrom", "amarelo", "laranja", "vinho",
+  "novo", "nova", "seminovo", "seminova", "usado", "usada", "completo", "completa",
+  "barato", "barata", "economico", "economica", "popular", "basico", "lindo", "bonito",
+  "conservado", "conservada", "automatico", "manual", "flex",
 ]);
 
 const REFERENCE_WORDS = /\b(esse|essa|este|esta|aquele|aquela|dele|dela|do\s+\d|da\s+\d|primeiro|primeira|segundo|segunda|terceiro|terceira|quarto|quarta|quinto|quinta|foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|traseira|frente|lateral)\b/;
@@ -165,29 +184,33 @@ function matchVehicleInText(text?: string | null) {
 
   if (best) return best;
 
-  // 3. Detecção dinâmica: Marca Conhecida + Palavra significativa seguinte
+  // 3. Detecção dinâmica: MARCA conhecida + palavra de modelo ADJACENTE (antes OU depois).
+  // Antes so olhava o que vinha DEPOIS da marca, entao a inversao de sintaxe perdia o
+  // veiculo: "Nivus da Volkswagen" / "Tem Nivus no estoque da VW?" (marca depois do modelo)
+  // nao casavam. Agora procura o modelo depois da marca e, se nao achar, ANTES dela.
+  // (Fix relatorio Antigravity #1.)
+  const dynTokens = normalized.split(/\s+/).filter(Boolean);
+  const isModelCandidate = (tk: string) =>
+    tk.length >= 3 && !WEAK_WORDS.has(tk) && !KNOWN_BRANDS.includes(tk) && !NON_MODEL_WORDS.has(tk);
   for (const brand of KNOWN_BRANDS) {
-    const brandRegex = new RegExp(`\\b${brand}\\b`, "i");
-    if (brandRegex.test(normalized)) {
-      const parts = normalized.split(brandRegex);
-      if (parts.length > 1) {
-        const afterText = parts[1].trim();
-        const afterTokens = afterText.split(/\s+/).filter(Boolean);
-        const modelCandidate = afterTokens.find((token) => !WEAK_WORDS.has(token) && token.length >= 3);
-        if (modelCandidate) {
-          const label = `${capitalize(brand)} ${capitalize(modelCandidate)}`;
-          return {
-            vehicle: {
-              canonical: modelCandidate,
-              label,
-              type: inferVehicleType(label) || "carro",
-              aliases: [modelCandidate]
-            },
-            confidence: 0.85,
-            reason: `dynamic_brand_match:${brand}:${modelCandidate}`
-          };
-        }
-      }
+    const bi = dynTokens.indexOf(brand);
+    if (bi === -1) continue;
+    // Modelo logo DEPOIS da marca; se nao houver, o mais proximo ANTES dela.
+    const forward = dynTokens.slice(bi + 1).find(isModelCandidate);
+    const backward = dynTokens.slice(0, bi).reverse().find(isModelCandidate);
+    const modelCandidate = forward || backward;
+    if (modelCandidate) {
+      const label = `${capitalize(brand)} ${capitalize(modelCandidate)}`;
+      return {
+        vehicle: {
+          canonical: modelCandidate,
+          label,
+          type: inferVehicleType(label) || "carro",
+          aliases: [modelCandidate],
+        },
+        confidence: 0.85,
+        reason: `dynamic_brand_match:${brand}:${modelCandidate}`,
+      };
     }
   }
 

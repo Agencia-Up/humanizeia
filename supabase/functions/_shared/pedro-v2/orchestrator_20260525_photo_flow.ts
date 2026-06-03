@@ -1027,6 +1027,7 @@ export async function processPedroV2Turn(
 
   // Salvar mensagem do usuário no histórico (transferências/CRM/debounce). Captura o id.
   let myUserMsgId: string | null = null;
+  let myUserMsgCreatedAt: string | null = null;
   if (!dryRun && lead?.id && text) {
     try {
       const { data: insertedUserMsg } = await supabase.from("wa_chat_history").insert({
@@ -1036,8 +1037,9 @@ export async function processPedroV2Turn(
         remote_jid: remoteJid,
         role: "user",
         content: text,
-      }).select("id").maybeSingle();
+      }).select("id, created_at").maybeSingle();
       myUserMsgId = insertedUserMsg?.id || null;
+      myUserMsgCreatedAt = insertedUserMsg?.created_at || null;
     } catch (err) {
       console.warn("[PedroV2] Failed to save user message to chat history:", err);
     }
@@ -1376,6 +1378,34 @@ export async function processPedroV2Turn(
     });
   }
 
+  // GUARD DE IDEMPOTENCIA (anti-resposta-dupla / relatorio Antigravity #4): se outra
+  // invocacao concorrente (instancia serverless paralela) JA respondeu este lead apos a
+  // mensagem que disparou este turno, NAO envia de novo — evita resposta dupla no WhatsApp
+  // e gasto dobrado de tokens. O debounce ja cobre o caso comum; este fecha a brecha de
+  // race (a resposta deste turno so e salva como 'assistant' DEPOIS do envio, abaixo).
+  if (!dryRun && reply.ok && lead?.id && myUserMsgCreatedAt && isPedroV2SendingEnabled()) {
+    const { data: priorAssistant } = await supabase
+      .from("wa_chat_history")
+      .select("id")
+      .eq("agent_id", input.agent.id)
+      .eq("remote_jid", remoteJid)
+      .eq("role", "assistant")
+      .gt("created_at", myUserMsgCreatedAt)
+      .limit(1)
+      .maybeSingle();
+    if (priorAssistant?.id) {
+      log("info", "pedro_v2_duplicate_reply_suppressed", { remote_jid: remoteJid });
+      return {
+        ok: true,
+        dry_run: dryRun,
+        correlation_id: correlationId,
+        identity,
+        lead_id: lead.id,
+        next_action: "duplicate_reply_suppressed",
+      };
+    }
+  }
+
   let sendResult: any = null;
   if (!dryRun && reply.ok && isPedroV2SendingEnabled()) {
     const instance = input.wa_instance || await resolvePedroInstance(supabase, {
@@ -1483,7 +1513,10 @@ export async function processPedroV2Turn(
   // controla o TIMING (qualificar antes) e o cerebro seguindo o System Prompt; este guard
   // so evita transferir um turno vazio/sem contexto.
   const _q = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : {};
-  const _hasNome = Boolean(_q.nome || lead?.lead_name);
+  // Nome para o gate de transferencia: aceita tambem o pushName do WhatsApp deste turno
+  // (alguns leads chegam sem lead_name salvo). Evita o lead QUALIFICADO ficar preso no robo
+  // so porque o campo nome estava vazio. (Hardening relatorio Antigravity #3.)
+  const _hasNome = Boolean(_q.nome || lead?.lead_name || pushName);
   const _hasContext = Boolean(_q.interesse) || Boolean(_q.dia_agendamento)
     || _q.tem_troca === true || _q.tem_troca === false || Boolean(_q.valor_entrada) || Boolean(_q.forma_pagamento)
     || Boolean(effectiveMemory?.interesse?.modelo_desejado)
