@@ -808,107 +808,130 @@ export default function Checkout() {
           {/* ── COLUNA DIREITA — SIDEBAR DE RESUMO ──────────────── */}
           <aside className="lg:sticky lg:top-24 lg:self-start">
             <div
-              className="rounded-2xl p-6 md:p-7"
+              className="rounded-2xl overflow-hidden"
               style={{
-                background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)',
+                background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
                 color: 'var(--brand-cream)',
-                boxShadow: 'var(--shadow-strong)',
+                boxShadow: '0 24px 60px -20px rgba(15, 38, 71, 0.55)',
+                border: '1px solid rgba(212, 160, 23, 0.22)',
               }}
             >
-              {/* Badge */}
-              <Badge
-                className="mb-4 border-0 px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
-              >
-                ★ Plano {planLabel}
-              </Badge>
+              {/* Faixa de destaque dourada no topo */}
+              <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
 
-              {/* Selo de fundador (só Pro, enquanto houver vaga) */}
-              {isFundador && foundersLeft != null && foundersLeft > 0 && (
-                <p className="text-[11px] font-semibold mb-4" style={{ color: 'var(--brand-gold)' }}>
-                  Preço de Fundador — {foundersLeft === 1 ? 'resta 1 vaga' : `restam ${foundersLeft} vagas`}
-                </p>
-              )}
-
-              {/* Toggle Mensal/Anual */}
-              <div className="inline-flex p-1 rounded-full mb-5" style={{ background: 'rgba(250, 248, 242, 0.12)' }}>
-                {(['mensal', 'anual'] as const).map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setCiclo(c)}
-                    className="px-4 py-1 rounded-full text-xs font-semibold transition-all"
-                    style={{
-                      background: ciclo === c ? 'var(--brand-gold)' : 'transparent',
-                      color: ciclo === c ? 'var(--brand-navy)' : 'var(--brand-cream)',
-                    }}
+              <div className="p-6 md:p-7">
+                {/* Badge + fundador */}
+                <div className="flex items-center justify-between gap-2 mb-5">
+                  <Badge
+                    className="border-0 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
+                    style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
                   >
-                    {c === 'mensal' ? 'Mensal' : 'Anual'}
-                  </button>
-                ))}
-              </div>
+                    ★ Plano {planLabel}
+                  </Badge>
+                  {isFundador && foundersLeft != null && foundersLeft > 0 && (
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full"
+                      style={{ background: 'rgba(212, 160, 23, 0.15)', color: 'var(--brand-gold)', border: '1px solid rgba(212, 160, 23, 0.35)' }}
+                    >
+                      {foundersLeft === 1 ? 'Resta 1 vaga' : `Fundador · ${foundersLeft} vagas`}
+                    </span>
+                  )}
+                </div>
 
-              {/* Tipo de cobrança */}
-              <h3 className="text-2xl font-extrabold mb-1" style={{ fontFamily: 'var(--font-display)' }}>
-                {planLabel} · {ciclo === 'anual' ? 'Anual' : 'Mensal'}
-              </h3>
-              <p className="text-xs opacity-75 mb-5">Cobrança {ciclo === 'anual' ? 'anual' : 'mensal'}, cancelamento livre</p>
+                {/* Toggle Mensal/Anual */}
+                <div className="inline-flex p-1 rounded-full mb-5" style={{ background: 'rgba(250, 248, 242, 0.10)', border: '1px solid rgba(250, 248, 242, 0.10)' }}>
+                  {(['mensal', 'anual'] as const).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCiclo(c)}
+                      className="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
+                      style={{
+                        background: ciclo === c ? 'var(--brand-gold)' : 'transparent',
+                        color: ciclo === c ? 'var(--brand-navy)' : 'rgba(250, 248, 242, 0.85)',
+                        boxShadow: ciclo === c ? '0 2px 8px rgba(212, 160, 23, 0.35)' : 'none',
+                      }}
+                    >
+                      {c === 'mensal' ? 'Mensal' : 'Anual'}
+                    </button>
+                  ))}
+                </div>
 
-              {/* Valor */}
-              <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
-                <p
-                  className="text-3xl md:text-4xl font-black"
-                  style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}
-                >
-                  {recurrenceDisplay}
+                {/* Tipo de cobrança */}
+                <h3 className="text-2xl font-extrabold mb-1" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}>
+                  {planLabel} · {ciclo === 'anual' ? 'Anual' : 'Mensal'}
+                </h3>
+                <p className="text-xs mb-5" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                  Cobrança {ciclo === 'anual' ? 'anual' : 'mensal'} · cancelamento livre
                 </p>
-                <p className="text-xs opacity-75 mt-1">{priceEquivalent}</p>
-                {economiaAnual > 0 && (
-                  <p className="text-xs mt-1 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                    Economia: {brl(economiaAnual)} no ano
+
+                {/* Mensalidade */}
+                <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.14)' }}>
+                  <p
+                    className="text-4xl md:text-[2.75rem] leading-none font-black"
+                    style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}
+                  >
+                    {recurrenceDisplay}
                   </p>
-                )}
-              </div>
-
-              {/* Taxa de implementação */}
-              <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
-                <div className="flex justify-between items-baseline mb-1">
-                  <span className="text-sm">Taxa de implementação</span>
-                  <span className="text-sm font-semibold">{setupDisplay}</span>
+                  <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>{priceEquivalent}</p>
+                  {economiaAnual > 0 && (
+                    <p
+                      className="text-[11px] mt-2 inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md"
+                      style={{ background: 'rgba(22, 163, 74, 0.18)', color: '#5BE49B' }}
+                    >
+                      Economia de {brl(economiaAnual)} no ano
+                    </p>
+                  )}
                 </div>
-                <p className="text-[10px] opacity-65">Cobrada uma única vez no primeiro pagamento</p>
-              </div>
 
-              {/* Total hoje */}
-              <div className="mb-6">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-xs uppercase tracking-wider opacity-75">Total hoje</span>
-                  <span className="text-2xl font-extrabold" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}>
-                    {totalTodayDisplay}
-                  </span>
+                {/* Taxa de implementação */}
+                <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.14)' }}>
+                  <div className="flex justify-between items-baseline mb-1">
+                    <span className="text-sm" style={{ color: 'rgba(250, 248, 242, 0.88)' }}>Taxa de implementação</span>
+                    <span className="text-sm font-bold" style={{ color: 'var(--brand-cream)' }}>{setupDisplay}</span>
+                  </div>
+                  <p className="text-[10px]" style={{ color: 'rgba(250, 248, 242, 0.55)' }}>Cobrada uma única vez no primeiro pagamento</p>
                 </div>
-                <p className="text-[10px] opacity-65 mt-1">
-                  ({setupDisplay} de setup + {recurrenceDisplay})
-                </p>
-              </div>
 
-              {/* Lista de benefícios resumida */}
-              <ul className="space-y-2 text-xs">
-                {benefits.map((b) => (
-                  <li key={b} className="flex items-start gap-2">
-                    <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: 'var(--brand-gold)' }} />
-                    <span className="opacity-90">{b}</span>
-                  </li>
-                ))}
-              </ul>
+                {/* Total hoje — painel dourado em destaque */}
+                <div
+                  className="mb-6 rounded-xl p-4"
+                  style={{ background: 'rgba(212, 160, 23, 0.10)', border: '1px solid rgba(212, 160, 23, 0.30)' }}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-[11px] uppercase tracking-widest font-semibold" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>Total hoje</span>
+                    <span className="text-[1.75rem] leading-none font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}>
+                      {totalTodayDisplay}
+                    </span>
+                  </div>
+                  <p className="text-[10px] mt-1.5 text-right" style={{ color: 'rgba(250, 248, 242, 0.60)' }}>
+                    {setupDisplay} de setup + {recurrenceDisplay}
+                  </p>
+                </div>
 
-              {/* Selo de segurança */}
-              <div
-                className="mt-6 pt-5 flex items-center justify-center gap-2 text-[11px]"
-                style={{ borderTop: '1px solid rgba(250, 248, 242, 0.15)', color: 'rgba(250, 248, 242, 0.70)' }}
-              >
-                <Shield className="h-3.5 w-3.5" />
-                <span>Pagamento 100% seguro · SSL/TLS</span>
+                {/* Lista de benefícios */}
+                <ul className="space-y-2.5 text-[13px]">
+                  {benefits.map((b) => (
+                    <li key={b} className="flex items-start gap-2.5">
+                      <span
+                        className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
+                        style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}
+                      >
+                        <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
+                      </span>
+                      <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Selo de segurança */}
+                <div
+                  className="mt-6 pt-5 flex items-center justify-center gap-2 text-[11px]"
+                  style={{ borderTop: '1px solid rgba(250, 248, 242, 0.14)', color: 'rgba(250, 248, 242, 0.72)' }}
+                >
+                  <Shield className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
+                  <span>Pagamento 100% seguro · SSL/TLS</span>
+                </div>
               </div>
             </div>
 
