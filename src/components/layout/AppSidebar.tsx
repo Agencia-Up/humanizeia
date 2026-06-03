@@ -28,6 +28,7 @@ import {
   GraduationCap,
   Bot,
   BarChart3,
+  Wallet,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -447,6 +448,10 @@ export function AppSidebar() {
                   : item;
                 return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
               })}
+              {/* FASE 4 — Painel interno de margem de IA. SO o superadmin (operador) ve. */}
+              {isAdmin && (
+                <NavItem collapsed={collapsed} item={{ title: 'Margem (IA)', url: '/admin/margem', icon: Wallet }} />
+              )}
             </NavGroup>
           </>
         )}
