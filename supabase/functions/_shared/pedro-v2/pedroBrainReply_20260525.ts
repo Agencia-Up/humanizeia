@@ -109,9 +109,15 @@ function vehicleLabel(vehicle: any) {
 }
 
 function leadFirstName(memory?: PedroV2LeadMemory | null) {
-  const name = String(memory?.lead?.nome || "").trim();
+  let name = String(memory?.lead?.nome || "").trim();
   if (!name || /^lead$/i.test(name)) return null;
-  return name.split(/\s+/)[0];
+  // O nome do WhatsApp do lead costuma vir com EMOJIS/simbolos ("RUTH ❤️🤩🍀💋").
+  // Sem limpar, o agente escrevia "RUTH❤️🤩🍀🍀💋💋, consigo..." como vocativo (horrivel).
+  // Mantem so letras (com acento), espaco, hifen e apostrofo; pega o 1o nome; capitaliza.
+  name = name.replace(/[^\p{L}\s'-]/gu, " ").replace(/\s+/g, " ").trim();
+  const first = name.split(/\s+/)[0] || "";
+  if (first.length < 2) return null;
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
 }
 
 function normalizeHistoryRole(role: any): "lead" | "agent" | null {

@@ -68,9 +68,14 @@ function isPhotoText(message?: string | null) {
 }
 
 function isAffirmativeText(message?: string | null) {
-  const normalized = normalizeText(message);
-  return /^(sim|s|ss|quero|pode|pode sim|pode mandar|manda|manda sim|envia|envia sim|claro|bora|vamos|ok|ta bom|beleza|blz)$/.test(normalized) ||
-    /\b(pode mandar|manda pra mim|manda ai|me manda|envia pra mim|quero ver|quero sim|pode enviar)\b/.test(normalized);
+  const n = normalizeText(message);
+  if (!n) return false;
+  // Afirmativo ISOLADO ou no INICIO da frase. Antes exigia a palavra exata ("^sim$"),
+  // entao "sim por favor", "sim quero", "claro que sim", "pode sim" NAO eram aceitos —
+  // e o lead que respondia "Sim por favor" a uma oferta de foto NAO recebia as fotos.
+  if (/^(sim|s|ss|claro|isso|isso ai|perfeito|com certeza|pode ser|aham|uhum|ok|ta bom|beleza|blz|bora|vamos|quero|queria|pode|manda|envia)\b/.test(n)) return true;
+  if (/\b(pode mandar|pode sim|pode enviar|manda pra mim|manda ai|manda sim|me manda|me envia|envia pra mim|envia sim|quero ver|quero sim|quero as fotos|gostaria de ver)\b/.test(n)) return true;
+  return false;
 }
 
 // Resposta CURTA que SELECIONA qual veiculo o lead quer ver, em reacao a uma oferta
