@@ -593,13 +593,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         </CardHeader>
         <CardContent className="pt-0">
           <ul className="text-[11px] text-muted-foreground space-y-0.5 list-disc list-inside">
-            <li>Uma pergunta por mensagem</li>
-            <li>Sempre termina com pergunta de condução</li>
-            <li>Nunca pressiona o cliente</li>
-            <li>Nunca fala preço antes de qualificar</li>
-            <li>Nunca tenta fechar a venda</li>
-            <li>Trata o cliente pelo nome assim que souber</li>
-            <li>Varia tom e aberturas (não repete frases)</li>
+            <li>Uma mensagem curta por vez (1–2 linhas), direto ao ponto</li>
+            <li>Uma pergunta por mensagem, só se avança a qualificação — pode terminar SEM pergunta</li>
+            <li>Sem pergunta-isca genérica e sem elogiar o cliente ou o produto</li>
+            <li>Nunca pressiona; lê o tom e desqualifica lead frio/hostil (1 resgate, depois encerra)</li>
+            <li>Nunca fala preço antes de qualificar, nunca tenta fechar a venda</li>
+            <li>Trata o cliente pelo nome quando souber e varia o tom (não repete frases)</li>
           </ul>
         </CardContent>
       </Card>
