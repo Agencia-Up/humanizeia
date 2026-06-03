@@ -217,10 +217,21 @@ function canUseMemoryForReference(message?: string | null) {
 
 function memoryVehicle(memory?: PedroV2LeadMemory | null) {
   const dynamicMemory = (memory || {}) as any;
-  return memory?.interesse?.modelo_desejado ||
-    memory?.referencia?.veiculo_citado ||
+  // ANCORA DE REFERENCIA ("dele", "qual a km", "e a cor"): usa o veiculo REALMENTE
+  // apresentado/discutido com o lead, NAO o campo interesse.modelo_desejado — que
+  // pode estar contaminado pelo carro de TROCA (ex.: lead diz "tenho um Spin pra
+  // dar na troca" e a extracao grava Spin como interesse). O carro que o lead quer
+  // e o que foi mostrado (veiculos_apresentados / ultima_foto), entao ele vem 1o.
+  const apresentados = Array.isArray(dynamicMemory?.veiculos_apresentados) ? dynamicMemory.veiculos_apresentados : [];
+  const presented = apresentados.length > 0
+    ? (apresentados[0]?.label || apresentados[0]?.modelo ||
+       [apresentados[0]?.marca, apresentados[0]?.modelo].filter(Boolean).join(" "))
+    : null;
+  return dynamicMemory?.ultima_foto?.veiculo_label ||
+    presented ||
     dynamicMemory?.referencia?.ultimo_veiculo_label ||
-    dynamicMemory?.ultima_foto?.veiculo_label ||
+    memory?.interesse?.modelo_desejado ||
+    memory?.referencia?.veiculo_citado ||
     null;
 }
 

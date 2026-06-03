@@ -17,10 +17,10 @@ export function pickInterestVehicleFromState(state: any): string | null {
           .filter(Boolean).join(" "))
     : null;
   const candidatos = [
-    state?.interesse?.modelo_desejado,   // veiculo do anuncio (titulo completo) ou modelo que o lead pediu
-    state?.referencia?.veiculo_citado,   // veiculo citado no anuncio/conversa
-    presented,                            // 1o veiculo apresentado pelo agente
+    presented,                            // veiculo REALMENTE apresentado (mais confiavel; e o de interesse de fato)
     state?.ultima_foto?.veiculo_label,   // ultimo veiculo de que mandou foto
+    state?.interesse?.modelo_desejado,   // modelo pedido / do anuncio (pode estar contaminado pela troca)
+    state?.referencia?.veiculo_citado,   // veiculo citado no anuncio/conversa
   ];
   for (const c of candidatos) {
     const s = String(c || "").trim();

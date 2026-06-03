@@ -453,6 +453,30 @@ export async function generatePedroBrainReply(input: {
   const allFacts = stockFacts(input.stock_result);
   const adVehicleConsultation = isCurrentTurnAdVehicleConsultation(input);
   const facts = adVehicleConsultation ? allFacts.slice(0, 1) : allFacts;
+  // VEICULO EM FOCO: o carro que o lead esta de fato discutindo (resolvido OU o
+  // ultimo apresentado), com FATOS explicitos. Serve para o LLM responder
+  // perguntas de atributo (preco/km/cor/ano) sobre ELE — e NUNCA sobre o carro
+  // de TROCA do cliente (que pode ter contaminado memory.interesse.modelo_desejado).
+  const focusVehicle = (() => {
+    const apres = Array.isArray(input.memory?.veiculos_apresentados) ? input.memory.veiculos_apresentados : [];
+    if (apres.length === 0) return null;
+    const q = normalizeText(input.vehicle_resolution?.query || "");
+    const match = q
+      ? apres.find((v: any) => {
+          const lbl = normalizeText(v?.label || v?.modelo || "");
+          const mod = normalizeText(v?.modelo || "");
+          return (lbl && lbl.includes(q)) || (mod && q.includes(mod));
+        })
+      : null;
+    const v: any = match || apres[0];
+    if (!v) return null;
+    return {
+      label: v.label || [v.marca, v.modelo, v.ano].filter(Boolean).join(" ") || null,
+      marca: v.marca ?? null, modelo: v.modelo ?? null, versao: v.versao ?? null,
+      ano: v.ano ?? null, preco: v.preco ?? null, km: v.km ?? null,
+      cor: v.cor ?? null, cambio: v.cambio ?? null, combustivel: v.combustivel ?? null,
+    };
+  })();
   const currentTime = saoPauloNowInfo();
   const chatHistory = buildChatHistory(input.recent_history || input.memory?.recent_turns || [], input.message);
   try {
@@ -518,6 +542,7 @@ export async function generatePedroBrainReply(input: {
               lead_first_name: leadFirstName(input.memory),
               plan: input.plan,
               vehicle_resolution: input.vehicle_resolution,
+              veiculo_em_foco: focusVehicle,
               ad_context: input.ad_context || null,
               media_context: input.media_context || null,
               recent_history: input.recent_history || input.memory?.recent_turns || [],
@@ -543,6 +568,8 @@ export async function generatePedroBrainReply(input: {
                 "Siga a sua personalidade principal do System Prompt do Portal.",
                 "Se houver estoque (stock.facts), cite os dados reais dele. Não invente carros ou especificações.",
                 "Se o cliente mudou o carro de interesse, priorize o modelo atual em relação à memória.",
+                "VEICULO EM FOCO: perguntas de ATRIBUTO (preço, km, cor, ano, câmbio, versão, combustível) e referências ('dele', 'desse', 'esse carro') são SEMPRE sobre o 'veiculo_em_foco' (ou stock.facts) — NUNCA sobre o carro de TROCA do cliente. Se 'veiculo_em_foco' tiver o dado, responda direto com ele; NUNCA diga que não tem a informação de um carro que está em 'veiculo_em_foco'.",
+                "Se 'memory_summary.interesse.modelo_desejado' divergir de 'veiculo_em_foco', o 'veiculo_em_foco' PREVALECE (o campo interesse pode estar desatualizado ou conter o carro de troca por engano).",
                 "Se a tool de fotos foi ativada (tool_result.type === 'vehicle_photos'), confirme o envio das fotos sem prometer novos envios.",
                 "Retorne no JSON a chave 'presented_vehicle_indices' listando os indices (1-baseados, campo 'index') dos veiculos citados no texto."
               ],
