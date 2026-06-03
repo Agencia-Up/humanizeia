@@ -221,8 +221,12 @@ function findFirstBase64Image(value: unknown, depth = 0): string | null {
 function isImageLikeUrl(text?: string | null) {
   const value = String(text || "").trim();
   if (!/^https?:\/\//i.test(value)) return false;
+  // NUNCA tratar a foto de PERFIL do contato (pps.whatsapp.net) nem avatares como
+  // "imagem do anuncio": elas terminam em .jpg e eram pescadas no lugar do anuncio,
+  // fazendo a visao nao achar o carro (image_confidence=0).
+  if (/pps\.whatsapp\.net|profile[-_]?pic|profilepic|\/avatar|\/pp\//i.test(value)) return false;
   return /\.(png|jpe?g|webp)(\?.*)?$/i.test(value) ||
-    /(?:fbcdn|scontent|lookaside|image|thumbnail|picture|media|blob\.core|cdninstagram)/i.test(value);
+    /(?:fbcdn|scontent|lookaside|\/ads\/image|cdninstagram|image|thumbnail|picture|media|blob\.core)/i.test(value);
 }
 
 function findFirstImageUrlCandidate(value: unknown, depth = 0): string | null {
@@ -805,8 +809,21 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
   }
 
   const embeddedImage = findFirstBase64Image(payload) || findFirstBase64Image(pageMetadata?.image);
+  // Imagem do ANUNCIO em si: anuncios de Instagram/Facebook trazem a foto como uma
+  // URL do FB Ads CDN (https://www.facebook.com/ads/image/?d=...) ou scontent/fbcdn/
+  // cdninstagram dentro do texto/conversion fields. Ela tem PRIORIDADE sobre qualquer
+  // imagem solta do payload (que costuma ser a FOTO DE PERFIL do contato em
+  // pps.whatsapp.net — nao o carro do anuncio).
+  const adImageBlob = compact([
+    textual.raw_text,
+    ...(((textual.diagnostics as any)?.conversion_fields_decoded as string[]) || []),
+    textual.url,
+  ]);
+  const adImageMatch = adImageBlob.match(/https?:\/\/[^\s|"']*\/ads\/image\/?\?[^\s|"']+/i)
+    || adImageBlob.match(/https?:\/\/(?:[a-z0-9.-]*\.)?(?:scontent|fbcdn|cdninstagram)[^\s|"']+/i);
+  const adImageUrl = adImageMatch ? adImageMatch[0] : null;
   const imageUrlCandidate = !embeddedImage
-    ? findFirstImageUrlCandidate(payload) || (isImageLikeUrl(pageMetadata?.image) ? pageMetadata?.image || null : null)
+    ? (adImageUrl || findFirstImageUrlCandidate(payload) || (isImageLikeUrl(pageMetadata?.image) ? pageMetadata?.image || null : null))
     : null;
   const fetchedImage = embeddedImage && /^https?:\/\//i.test(embeddedImage)
     ? await fetchImageAsDataUrl(embeddedImage)
