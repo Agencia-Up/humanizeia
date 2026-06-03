@@ -309,3 +309,24 @@
   trocar deteccao por regex por planner LLM com Structured Outputs (enum de acao +
   confidence + few-shot dos casos reais), classificar SEMPRE relativo a ultima pergunta
   do agente, e grounding de veiculo por ID. Plano cirurgico de 4 fases entregue ao dev.
+
+## 2026-06-03 — Pedro v2 FASE 2: planner com saida estruturada + contexto (v50)
+
+- Build `2026-06-03-planner-structured-context-v50` (deploy da `main`, verificado ao vivo).
+- Dev escolheu a Fase 2 (cerebro do agente) do plano cirurgico.
+- `pedroBrainPlanner_20260525.ts`:
+  - `getLastAgentText` + `classifyPendingQuestion`: sinal deterministico do QUE o agente
+    acabou de perguntar/oferecer (ofereceu_fotos / perguntou_pagamento / troca / dados /
+    veiculo / fez_pergunta), passado ao LLM com `last_agent_message`.
+  - Prompt reescrito: REGRA #1 = interpretar a msg do lead EM RELACAO ao pending_question
+    (resposta curta/emoji/erro de digitacao responde a oferta anterior; nunca "unknown"
+    havendo pending claro) + few-shot dos erros reais (👍, Pir favor, 2024, o preto,
+    financiamento, troca-nao-vira-interesse).
+  - Structured Outputs (json_schema strict, `PLAN_JSON_SCHEMA`) com DEGRADACAO GRACIOSA:
+    schema -> json_object -> fallback heuristico (sem regressao se o schema for rejeitado).
+  - `normalizePlan` (regex) mantido como rede de seguranca. Reply segue em gpt-4o.
+- Validacao: 9 casos unitarios do classificador + dry-run ao vivo (brain_plan exposto):
+  "reguede"->Jeep Renegade (source=llm), handoff/greeting ok; lead REAL em estado
+  ofereceu_fotos respondendo "👍" -> photo_request. Leads transferidos -> guard v48.
+- PROXIMAS FASES do plano: 3 (tom humano: derrubar 68% de "?" + cortar elogios) e
+  4 (grounding de veiculo por ID + harness de regressao com as conversas reais).
