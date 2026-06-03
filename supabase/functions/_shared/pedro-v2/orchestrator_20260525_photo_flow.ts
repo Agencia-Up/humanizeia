@@ -1074,6 +1074,68 @@ export async function processPedroV2Turn(
     if (batched) text = batched;
   }
 
+  // === GUARD POS-TRANSFERENCIA (24h) ===
+  // Se o lead JA foi transferido a um vendedor humano nas ultimas 24h, o agente NAO
+  // conduz funil/fotos/estoque (evita atropelar o vendedor mandando imagens/perguntas
+  // apos a transferencia). Avisa UMA vez que o consultor vai chamar e re-notifica o
+  // vendedor (o lead esta na linha do agente, nao na do vendedor). Volta ao normal so
+  // depois de 24h da transferencia. (Pedido do dono.)
+  if (lead?.id && identity.kind !== "seller") {
+    const { data: lastTransfer } = await supabase
+      .from("ai_lead_transfers")
+      .select("created_at, to_member_id")
+      .eq("lead_id", lead.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const transferAtMs = lastTransfer?.created_at ? Date.parse(lastTransfer.created_at) : 0;
+    if (transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000) {
+      const _at = ((currentMemory as any)?.atendimento) || {};
+      const noticeAtMs = _at.transfer_notice_at ? Date.parse(_at.transfer_notice_at) : 0;
+      const renotifyAtMs = _at.transfer_renotify_at ? Date.parse(_at.transfer_renotify_at) : 0;
+      const nowMs = Date.now();
+      const shouldNoticeLead = !(noticeAtMs && noticeAtMs >= transferAtMs); // 1x por transferencia
+      const shouldRenotifySeller = (nowMs - renotifyAtMs) > 45 * 60 * 1000; // a cada 45min
+      if (!dryRun && isPedroV2SendingEnabled()) {
+        const inst = input.wa_instance || await resolvePedroInstance(supabase, {
+          user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
+        });
+        const leadPhone = remoteJidToPhone(remoteJid);
+        if (shouldNoticeLead) {
+          await sendPedroText(inst, { to: leadPhone, text: "Seu atendimento já está com um dos nossos consultores de vendas, que vai falar com você por aqui. É só aguardar um momentinho! 😊" }).catch(() => {});
+        }
+        if (shouldRenotifySeller && lastTransfer?.to_member_id) {
+          const { data: seller } = await supabase.from("ai_team_members").select("whatsapp_number, name").eq("id", lastTransfer.to_member_id).maybeSingle();
+          if (seller?.whatsapp_number) {
+            await sendPedroText(inst, { to: seller.whatsapp_number, text: `*Seu lead respondeu por aqui* 👀\n\n*${lead.lead_name || pushName || "Lead"}* (+${leadPhone}) mandou:\n"${String(text || "").slice(0, 300)}"\n\n*Atender:* https://wa.me/${leadPhone}` }).catch(() => {});
+          }
+        }
+        try {
+          await supabase.from("pedro_conversation_state").upsert({
+            lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,
+            state: {
+              ...(currentMemory || {}),
+              atendimento: {
+                ..._at,
+                transfer_notice_at: shouldNoticeLead ? new Date(nowMs).toISOString() : _at.transfer_notice_at,
+                transfer_renotify_at: shouldRenotifySeller ? new Date(nowMs).toISOString() : _at.transfer_renotify_at,
+              },
+            },
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "lead_id,agent_id" });
+        } catch (_e) { /* nao bloqueante */ }
+      }
+      return {
+        ok: true,
+        dry_run: dryRun,
+        correlation_id: correlationId,
+        identity,
+        lead_id: lead.id,
+        next_action: "post_transfer_hold_24h",
+      };
+    }
+  }
+
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text), mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
