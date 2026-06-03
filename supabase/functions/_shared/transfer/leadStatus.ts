@@ -15,18 +15,20 @@ export type LeadTransferStatusKey =
   | "pediu_atendente"
   | "retornou"
   | "followup"
+  | "pouco_qualificado"
   | "desqualificado"
   | "sem_resposta"
   | "repassado";
 
 const STATUS_MAP: Record<LeadTransferStatusKey, { emoji: string; label: string }> = {
-  qualificado:     { emoji: "🟢", label: "QUALIFICADO" },
-  pediu_atendente: { emoji: "🔴", label: "PEDIU ATENDENTE" },
-  retornou:        { emoji: "🟡", label: "RETORNOU" },
-  followup:        { emoji: "⚪", label: "EM FOLLOW-UP (ainda nao avancou)" },
-  desqualificado:  { emoji: "🔴", label: "DESQUALIFICADO" },
-  sem_resposta:    { emoji: "🔵", label: "SEM RESPOSTA (ausente)" },
-  repassado:       { emoji: "🟠", label: "REPASSADO (vendedor anterior nao assumiu)" },
+  qualificado:       { emoji: "🟢", label: "QUALIFICADO" },
+  pediu_atendente:   { emoji: "🔴", label: "PEDIU ATENDENTE" },
+  retornou:          { emoji: "🟡", label: "RETORNOU" },
+  followup:          { emoji: "⚪", label: "EM FOLLOW-UP (ainda nao avancou)" },
+  pouco_qualificado: { emoji: "❄️", label: "POUCO QUALIFICADO (frio — pode voltar)" },
+  desqualificado:    { emoji: "⛔", label: "DESQUALIFICADO (sem interesse / hostil)" },
+  sem_resposta:      { emoji: "🔵", label: "SEM RESPOSTA (ausente)" },
+  repassado:         { emoji: "🟠", label: "REPASSADO (vendedor anterior nao assumiu)" },
 };
 
 export function leadTransferStatus(key: LeadTransferStatusKey): { emoji: string; label: string } {

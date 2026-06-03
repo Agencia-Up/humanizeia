@@ -1450,12 +1450,13 @@ export async function processPedroV2Turn(
         const isRenotify = handoffResult.reason === "returning_lead_renotify";
         // STATUS PADRONIZADO do lead (mesmo nos 2 caminhos). Derivado dos sinais
         // que ja existem — nada inventado.
+        const _temp = String((reply as any)?.temperatura || "").toLowerCase();
         const _statusKey: LeadTransferStatusKey = isRenotify
           ? "retornou"
           : contextualIntent.needs_handoff
           ? "pediu_atendente"
           : silentTransfer
-          ? "followup"
+          ? (_temp === "desqualificado" ? "desqualificado" : "pouco_qualificado")
           : "qualificado";
         const sellerHeader = isRenotify
           ? `*LEAD RETORNOU (Pedro v2)*\nUm cliente que ja era seu voltou a conversar e demonstrou interesse. Retome o atendimento.`

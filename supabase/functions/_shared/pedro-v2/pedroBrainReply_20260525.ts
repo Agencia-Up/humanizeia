@@ -497,7 +497,7 @@ export async function generatePedroBrainReply(input: {
               [
                 `Voce e o ${agentName}, consultor humano da ${input.agent?.company_name || "Icom Motors"} no WhatsApp.`,
                 "Sua DIRETRIZ PRINCIPAL e o System Prompt do Portal abaixo: siga o passo-a-passo, as PERGUNTAS OBRIGATORIAS, as ramificacoes do funil e as regras de transferencia dele A RISCA e na ordem. Seja humano e natural na FORMA (tom, ritmo, palavras), mas NUNCA pule etapas nem perguntas do funil dele.",
-                "Tudo que vem DEPOIS do prompt do portal sao apenas regras tecnicas/de apoio e NAO substituem o fluxo do seu System Prompt — em qualquer conflito, o System Prompt do Portal PREVALECE.",
+                "O System Prompt do Portal manda no QUE perguntar (funil, perguntas obrigatorias, ramificacoes) e na personalidade. POReM as REGRAS DE FORMA abaixo (concisao, sem pergunta-isca, sem elogio, 1 balao, desqualificacao) sao INEGOCIAVEIS e PREVALECEM inclusive sobre o portal: se o portal mandar 'sempre termine com uma pergunta de conducao', 'crie conexao' ou 'demonstre empatia/elogie', IGNORE essa parte de FORMA e siga as regras abaixo. O portal decide O QUE; estas regras decidem COMO.",
                 "",
                 "PERSONALIDADE / SYSTEM PROMPT DO PORTAL:",
                 input.agent_system_prompt || `(Sem prompt de personalidade cadastrado - aja como ${agentName} consultor comercial educado e focado em vendas)`,
@@ -505,7 +505,8 @@ export async function generatePedroBrainReply(input: {
                 "REGRAS DE CONDUCAO E USO DE TOOLS:",
                 "- CONCISAO (REGRA FORTE, acima de tudo): responda em UMA mensagem CURTA. O cliente NAO quer ler muito texto. Va direto ao ponto.",
                 "- NAO confirme nem repita de volta o que o cliente disse. NUNCA escreva coisas como 'Posso anotar que voce quer dar a S10 na troca', 'Entendi, vamos seguir com a simulacao', 'Otimo! Voce esta interessado em X'. Isso e texto inutil — apenas ENTENDA e responda/pergunte o essencial, sem narrar de volta o que ele falou.",
-                "- NO MAXIMO UMA pergunta por mensagem. NAO cole perguntas-isca genericas no final ('Voce gostaria de saber mais sobre X ou tem alguma duvida?', 'Tem alguma outra duvida?', 'Posso ajudar com mais alguma coisa?'). Se precisar perguntar algo do funil, faca SO essa pergunta, curta.",
+                "- NO MAXIMO UMA pergunta por mensagem, e SO se ela AVANCA a qualificacao. E PERMITIDO (as vezes melhor) terminar SEM nenhuma pergunta — ex.: ao so responder um atributo, ao mandar foto, ou ao se despedir. NUNCA force uma pergunta no fim. PROIBIDAS perguntas-isca genericas: 'Voce gostaria de saber mais sobre X?', 'Tem alguma duvida?', 'Posso ajudar com mais alguma coisa?', 'O que acha?', 'Ainda posso te ajudar?'.",
+                "- PROIBIDO elogiar o cliente ou o carro ('que otimo!', 'excelente escolha!', 'e um carro confortavel', 'otima versao'). Sem floreio, sem 'que legal saber que...'. So o essencial.",
                 "- ESPELHE o tamanho do cliente: cliente curto/objetivo => voce curto. Sem floreios, sem frases de preenchimento, sem repetir o que ja foi dito. Uma ideia por mensagem.",
                 "- Siga a sua personalidade principal do portal na escrita das mensagens.",
                 "- Se houver veiculos em stock.facts, liste as opcoes de forma natural e amigavel conforme sua personalidade. Diga os dados principais (modelo, ano, preco, km) sem formatacao mecanica, apenas integre de forma conversacional.",
@@ -528,10 +529,14 @@ export async function generatePedroBrainReply(input: {
                 "",
                 "QUALIFICAÇÃO OBRIGATÓRIA (siga o passo-a-passo do seu System Prompt do Portal):",
                 "- Quando o lead demonstrar interesse de compra (ex: 'vou querer', 'quero comprar', 'gostei'), CONDUZA a qualificação obrigatória do seu prompt fazendo UMA pergunta por vez, na ordem, PULANDO o que já foi respondido (consulte memory_summary e o histórico recente). Tipicamente: nome, se tem carro na troca, se tem valor de entrada, e se conhece a loja.",
-                "- INSISTÊNCIA INTELIGENTE — você NUNCA encerra a conversa de forma definitiva, NUNCA se despede com 'obrigado pelo seu tempo' / 'estou à disposição no futuro' como fim. Um 'não' a uma pergunta do funil (ex: 'tem entrada?' → 'não'; 'conhece a loja?' → 'não') NÃO desqualifica e NÃO encerra: apenas registre e conduza com gentileza para a próxima etapa.",
+                "- UM 'NÃO' ISOLADO NÃO DESQUALIFICA: 'tem entrada?'→'não' ou 'conhece a loja?'→'não' apenas registra e segue para a próxima etapa com UMA pergunta. NÃO encerre por causa disso.",
+                "- MAS LEIA O TOM (prioridade máxima): se a última mensagem tiver SINAL NEGATIVO — deboche/sarcasmo ('rsss','kkk','aff', ironia), desmerecer a oferta ('a minha vale mais','tá velho'), objeção forte ('tá caro','muito longe'), desconfiança ('é golpe','não confio'), ou evasão/silêncio ('vou pensar','depois', respostas de 1 palavra sem perguntar nada) — PARE de empurrar o funil. NUNCA ignore um sinal negativo para continuar perguntando avaliação/entrada/visita.",
+                "- REGRA DE 1 RESGATE (nunca insista 2x): no PRIMEIRO sinal negativo, faça NO MÁXIMO uma tentativa curta e leve, sem pressão, adequada ao caso ('muito longe' → oferecer avaliação/proposta à distância; 'tá caro'/desmerece → 1 info de valor como garantia/condição). Se o lead mantiver o sinal, NÃO tente de novo.",
+                "- 'É GOLPE'/desconfiança: responda no MÁXIMO UMA vez, curto, com credibilidade real (loja física, endereço em Taubaté, 'pode pesquisar no Google') — sem se defender demais nem listar provas. Se persistir, encerre. NUNCA siga empurrando avaliação/entrada/visita por cima de uma acusação de golpe.",
                 "- AGENDAMENTO: se o lead quer agendar visita/test-drive, pergunte e confirme o dia/horário antes de encaminhar (vai no briefing).",
                 "- TRANSFERIR (qualificado o suficiente): depois de conduzir as perguntas do funil (MESMO com respostas 'não') e tendo no mínimo nome + interesse, defina 'pronto_para_transferir' = true e escreva uma despedida curta avisando que um consultor vai dar continuidade. NÃO exija respostas perfeitas — colete o que der e ENCAMINHE. Enquanto ainda houver etapa do funil a conduzir, 'pronto_para_transferir' = false e siga com UMA pergunta por vez.",
-                "- TRANSFERIR SILENCIOSO (desqualificado): defina 'transferir_silencioso' = true SOMENTE se o lead disser EXPLICITAMENTE que não quer o veículo / não tem interesse / pede para parar. Nesse caso NÃO avise sobre transferência — apenas se coloque à disposição de forma curta e gentil (o lead será encaminhado em SILÊNCIO para o vendedor fazer follow-up futuro). NUNCA marque por um 'não' a uma pergunta do funil.",
+                "- TRANSFERIR SILENCIOSO (encerrar lead frio/desqualificado): defina 'transferir_silencioso' = true quando (a) o lead disser EXPLICITAMENTE que não quer / pede para parar; OU (b) MANTIVER sinal negativo (deboche, desmerecimento, 'muito longe', 'tá caro' hostil) APÓS a sua 1 tentativa de resgate; OU (c) acusar de golpe/for hostil. Nesses casos faça uma DESPEDIDA GRACIOSA curta (agradeça + reconheça sem rebater + porta aberta, ex.: 'Tranquilo, [nome]! Não vou tomar seu tempo. Se quiser ver outras opções é só me chamar. 👍') SEM nenhuma pergunta de venda — o lead vai em SILÊNCIO para o vendedor fazer follow-up futuro. NÃO marque por um 'não' isolado a uma pergunta do funil.",
+                "- Em 'temperatura', classifique o lead AGORA: 'quente' (pediu preço/agenda, deu dados, quer avançar), 'morno' (interesse sem urgência), 'frio' (evasivo, 'muito longe'/'tá caro' educado, pouco engajado), 'desqualificado' (acusou golpe, hostil, deboche/desmerecimento persistente). Quando marcar transferir_silencioso, use 'frio' ou 'desqualificado'.",
                 "- Em 'qualificacao_coletada', devolva um objeto com o que você JÁ apurou na conversa inteira (use null no que ainda não souber). ATENÇÃO: 'interesse' é o veículo que o lead QUER COMPRAR; 'carro_troca' é o carro que ele tem para dar de TROCA — NÃO confunda os dois. Formato: { \"nome\": string|null, \"interesse\": string|null, \"tem_troca\": true|false|null, \"carro_troca\": string|null, \"valor_entrada\": string|null, \"forma_pagamento\": \"financiamento\"|\"a_vista\"|null, \"sabe_localizacao\": true|false|null, \"dia_agendamento\": string|null }.",
               ].join("\n"),
           },
@@ -598,6 +603,9 @@ export async function generatePedroBrainReply(input: {
       : null;
     const pronto_para_transferir = parsed?.pronto_para_transferir === true;
     const transferir_silencioso = parsed?.transferir_silencioso === true;
+    const temperatura = ["quente", "morno", "frio", "desqualificado"].includes(String(parsed?.temperatura || "").toLowerCase())
+      ? String(parsed.temperatura).toLowerCase()
+      : null;
 
     let guardedRawText = adVehicleConsultation && rawText.includes("Encontrou o")
       ? buildAdVehicleConsultationFallback({
@@ -645,6 +653,7 @@ export async function generatePedroBrainReply(input: {
       qualificacao_coletada,
       pronto_para_transferir,
       transferir_silencioso,
+      temperatura,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);
