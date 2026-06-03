@@ -1611,7 +1611,7 @@ export default function LandingPage() {
               {/* Link clicável posicionado SOBRE o botão "QUERO COMEÇAR AGORA" da imagem
                  (proporções calibradas pro mockup 862x1050 — área do botão dourado) */}
               <Link
-                to="/checkout?plano=mensal"
+                to="/checkout?plano=pro&ciclo=mensal"
                 className="absolute inset-x-[6%] bottom-[6%] top-[83%] rounded-2xl focus:outline-none focus:ring-4 focus:ring-yellow-400/50 hover:bg-white/5 transition-colors"
                 aria-label="Quero começar agora — assinar plano PRO"
                 title="Quero começar agora — assinar plano PRO"
@@ -1633,7 +1633,7 @@ export default function LandingPage() {
                   border: '2px solid var(--brand-gold-hover)',
                 }}
               >
-                <Link to="/checkout?plano=mensal">
+                <Link to="/checkout?plano=pro&ciclo=mensal">
                   Quero começar agora <ArrowRight className="h-5 w-5" strokeWidth={3} />
                 </Link>
               </Button>

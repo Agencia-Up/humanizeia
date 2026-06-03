@@ -39,6 +39,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { quote, type PlanType, type Ciclo } from '../_shared/checkout-plans.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,12 +51,8 @@ const corsHeaders = {
 const ASAAS_BASE_URL = Deno.env.get('ASAAS_BASE_URL') || 'https://sandbox.asaas.com/api/v3';
 const ASAAS_API_KEY = Deno.env.get('ASAAS_API_KEY') || '';
 
-// ── Preços do plano PRO (sincronizar com landing/checkout) ─────────────────
-const PRECOS = {
-  mensal: { mensalidade: 497.00, cycle: 'MONTHLY' as const },
-  anual:  { mensalidade: 4970.00, cycle: 'YEARLY' as const },
-};
-const SETUP_FEE = 1499.00;
+// ── Preços: fonte única em _shared/checkout-plans.ts (matriz Pro/Básico) ────
+//    Setup e recorrência são resolvidos por quote(planType, ciclo, paidPro).
 
 // ── Helper: chamada Asaas com auth + erro padronizado ──────────────────────
 async function asaas(path: string, init: RequestInit = {}): Promise<any> {
@@ -95,12 +92,24 @@ serve(async (req: Request) => {
   try {
     const body = await req.json();
     const {
-      plano, personType, fullName, email, document, phone,
+      plano: planoRaw, ciclo: cicloRaw, personType, fullName, email, document, phone,
       paymentMethod, cardData,
     } = body;
 
+    // ── Compatibilidade: aceita o formato novo (plano=pro|basico + ciclo) e o
+    //    antigo (plano=mensal|anual → assume Pro, ciclo = o próprio valor). ──
+    let planType: PlanType;
+    let ciclo: Ciclo;
+    if (planoRaw === 'mensal' || planoRaw === 'anual') {
+      planType = 'pro';
+      ciclo = planoRaw;
+    } else {
+      if (!planoRaw || !['pro', 'basico'].includes(planoRaw)) throw new Error('plano inválido (use pro|basico)');
+      planType = planoRaw as PlanType;
+      ciclo = cicloRaw === 'anual' ? 'anual' : 'mensal';
+    }
+
     // Validação mínima
-    if (!plano || !['mensal', 'anual'].includes(plano)) throw new Error('plano inválido');
     if (!personType || !['pf', 'pj'].includes(personType)) throw new Error('personType inválido');
     if (!fullName || fullName.trim().length < 3) throw new Error('nome obrigatório');
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('e-mail inválido');
@@ -109,7 +118,17 @@ serve(async (req: Request) => {
     if (!paymentMethod || !['pix', 'cartao', 'boleto'].includes(paymentMethod)) throw new Error('paymentMethod inválido');
     if (paymentMethod === 'cartao' && !cardData) throw new Error('cardData obrigatório quando paymentMethod=cartao');
 
-    const plan = PRECOS[plano as 'mensal' | 'anual'];
+    // ── Resolve a faixa fundador/normal do Pro pelo nº de Pro já PAGOS ───────
+    let paidPro = 0;
+    if (planType === 'pro') {
+      const { count } = await supabase
+        .from('checkout_pending')
+        .select('id', { count: 'exact', head: true })
+        .eq('plan_type', 'pro')
+        .eq('status', 'paid');
+      paidPro = count || 0;
+    }
+    const q = quote(planType, ciclo, paidPro);
 
     // ── 1. Registrar tentativa pendente (lookup do webhook depende disso) ──
     const { data: pending, error: pendingErr } = await supabase
@@ -120,7 +139,11 @@ serve(async (req: Request) => {
         document: document.replace(/\D/g, ''),
         person_type: personType,
         phone: phone.replace(/\D/g, ''),
-        plano,
+        plano: ciclo,
+        plan_type: planType,
+        tier: q.tier,
+        setup_value: q.setup,
+        recurrence_value: q.recurrence,
         payment_method: paymentMethod,
         status: 'pending',
       })
@@ -129,7 +152,7 @@ serve(async (req: Request) => {
 
     if (pendingErr || !pending?.id) throw new Error(`Falha ao criar checkout_pending: ${pendingErr?.message}`);
     pendingId = pending.id;
-    console.log(`[checkout] criado pending=${pendingId} email=${email} plano=${plano} method=${paymentMethod}`);
+    console.log(`[checkout] criado pending=${pendingId} email=${email} plano=${planType} ciclo=${ciclo} tier=${q.tier ?? '-'} method=${paymentMethod}`);
 
     // ── 2. Buscar ou criar customer no Asaas ──
     // Asaas pode rejeitar email duplicado — buscar primeiro
@@ -172,9 +195,9 @@ serve(async (req: Request) => {
     const setupPaymentBody: any = {
       customer: customerId,
       billingType: billingTypeMap[paymentMethod],
-      value: SETUP_FEE,
+      value: q.setup,
       dueDate,
-      description: 'LOGOS|IA — Taxa de implementação (PRO)',
+      description: `LOGOS|IA — Taxa de implementação (${planType === 'pro' ? 'PRO' : 'Básico'})`,
       externalReference: `setup_${pendingId}`,
     };
 
@@ -211,10 +234,10 @@ serve(async (req: Request) => {
     const subscriptionBody: any = {
       customer: customerId,
       billingType: billingTypeMap[paymentMethod],
-      value: plan.mensalidade,
+      value: q.recurrence,
       nextDueDate: nextDue.toISOString().slice(0, 10),
-      cycle: plan.cycle,
-      description: `LOGOS|IA — Plano PRO ${plano === 'anual' ? 'Anual' : 'Mensal'}`,
+      cycle: q.cycleAsaas,
+      description: `LOGOS|IA — Plano ${planType === 'pro' ? 'PRO' : 'Básico'} ${ciclo === 'anual' ? 'Anual' : 'Mensal'}`,
       externalReference: `sub_${pendingId}`,
     };
 
@@ -227,7 +250,7 @@ serve(async (req: Request) => {
       method: 'POST',
       body: JSON.stringify(subscriptionBody),
     });
-    console.log(`[checkout] subscription criada: ${subscription.id} cycle=${plan.cycle}`);
+    console.log(`[checkout] subscription criada: ${subscription.id} cycle=${q.cycleAsaas}`);
 
     // ── 5. Buscar dados de pagamento (QR PIX / boleto) ──
     let pixData: any = null;

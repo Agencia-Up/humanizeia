@@ -1,9 +1,12 @@
 /**
  * Checkout.tsx — Página de pagamento do plano PRO (Prompt 10 — landing redesign 16/05)
  *
- * Fluxo:
- *   /checkout?plano=mensal     → R$ 497/mês
- *   /checkout?plano=anual      → R$ 4.970/ano (economia 2 meses)
+ * Fluxo (links separados por plano; ciclo alternável na própria tela):
+ *   /checkout?plano=pro&ciclo=mensal    → Plano PRO mensal
+ *   /checkout?plano=pro&ciclo=anual     → Plano PRO anual
+ *   /checkout?plano=basico&ciclo=mensal → Plano Básico mensal
+ *   Compat: ?plano=mensal|anual ainda cai no PRO com o ciclo correspondente.
+ *   Preços vêm ao vivo da edge function checkout-pricing (fundador/normal).
  *
  * 3 etapas:
  *   1) Dados pessoais (nome, e-mail, CPF/CNPJ, telefone)
@@ -34,7 +37,8 @@ import {
 
 /* ── Tipos ─────────────────────────────────────────────────────────────── */
 type Step = 1 | 2 | 3;
-type Billing = 'mensal' | 'anual';
+type Ciclo = 'mensal' | 'anual';
+type PlanType = 'pro' | 'basico';
 type PaymentMethod = 'pix' | 'cartao' | 'boleto';
 type PersonType = 'pf' | 'pj';
 
@@ -102,14 +106,39 @@ function maskExpiry(v: string): string {
   const d = onlyDigits(v).slice(0, 4);
   return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
 }
+function brl(v: number): string {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
 
 /* ── Componente principal ──────────────────────────────────────────────── */
 export default function Checkout() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isDarkMode } = useAppStore();
-  const planoParam = (searchParams.get('plano') || 'mensal') as Billing;
-  const billing: Billing = planoParam === 'anual' ? 'anual' : 'mensal';
+  // ?plano=pro|basico (links separados por plano). Compat: plano=mensal|anual → Pro.
+  const planoRaw = searchParams.get('plano') || 'pro';
+  const planType: PlanType = planoRaw === 'basico' ? 'basico' : 'pro';
+  const cicloFromPlano: Ciclo | null =
+    planoRaw === 'anual' ? 'anual' : planoRaw === 'mensal' ? 'mensal' : null;
+  const cicloParam = searchParams.get('ciclo');
+  const initialCiclo: Ciclo =
+    cicloParam === 'anual' ? 'anual'
+    : cicloParam === 'mensal' ? 'mensal'
+    : (cicloFromPlano ?? 'mensal');
+  const [ciclo, setCiclo] = useState<Ciclo>(initialCiclo);
+
+  // Preços ao vivo (checkout-pricing): resolve fundador/normal + setup/recorrência.
+  const [pricing, setPricing] = useState<any>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('checkout-pricing', { body: {} });
+        if (alive && !error && data) setPricing(data);
+      } catch { /* mantém o estado de carregamento; UI mostra "—" até resolver */ }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const [step, setStep] = useState<Step>(1);
 
@@ -145,15 +174,51 @@ export default function Checkout() {
   const canGoToStep3 = step1Valid && step2Valid;
   const canSubmit = canGoToStep3 && agreedTerms && !submitting;
 
-  // Valores do plano
-  const priceMonthlyDisplay = billing === 'anual' ? 'R$ 4.970/ano' : 'R$ 497/mês';
-  const priceEquivalent = billing === 'anual' ? 'R$ 414,17/mês equivalente' : 'cobrado mensalmente';
-  const totalToday = billing === 'anual' ? 'R$ 6.469,00' : 'R$ 1.996,00'; // setup + 1ª mensalidade
+  // ── Valores do plano (do checkout-pricing; mostra "—" enquanto carrega) ──
+  const planLabel = planType === 'pro' ? 'PRO' : 'Básico';
+  const planPricing: any = pricing ? pricing[planType] : null;
+  const cyclePricing: any = planPricing ? planPricing[ciclo] : null;
+  const setupValue: number | null = cyclePricing?.setup ?? null;
+  const recurrenceValue: number | null = cyclePricing?.recurrence ?? null;
+  const totalTodayValue: number | null =
+    setupValue != null && recurrenceValue != null ? setupValue + recurrenceValue : null;
+  const atendimentos: number | null = planPricing?.atendimentos ?? null;
+  const isFundador: boolean = planType === 'pro' && planPricing?.tier === 'fundador';
+  const foundersLeft: number | null = planType === 'pro' ? (planPricing?.foundersLeft ?? null) : null;
 
-  // Persiste billing no <title> pra clareza
+  const recurrenceDisplay =
+    recurrenceValue != null ? `${brl(recurrenceValue)}${ciclo === 'anual' ? '/ano' : '/mês'}` : '—';
+  const setupDisplay = setupValue != null ? brl(setupValue) : '—';
+  const totalTodayDisplay = totalTodayValue != null ? brl(totalTodayValue) : '—';
+  const priceEquivalent =
+    ciclo === 'anual' && recurrenceValue != null
+      ? `${brl(recurrenceValue / 12)}/mês equivalente`
+      : 'cobrado mensalmente';
+  const economiaAnual =
+    planPricing && ciclo === 'anual'
+      ? planPricing.mensal.recurrence * 12 - planPricing.anual.recurrence
+      : 0;
+
+  const benefits = planType === 'pro'
+    ? [
+        `${atendimentos ?? 300} atendimentos por ciclo`,
+        'Pedro 24/7 no WhatsApp',
+        'Marcos · CRM ao vivo + disparo',
+        'Importação ilimitada',
+        'Multi-vendedor',
+        'Suporte humano via WhatsApp',
+      ]
+    : [
+        `${atendimentos ?? 150} atendimentos por ciclo`,
+        'Pedro 24/7 no WhatsApp',
+        'CRM com seus leads',
+        'Suporte humano via WhatsApp',
+      ];
+
+  // Persiste plano/ciclo no <title> pra clareza
   useEffect(() => {
-    document.title = `Checkout PRO ${billing === 'anual' ? 'Anual' : 'Mensal'} · LOGOS|IA`;
-  }, [billing]);
+    document.title = `Checkout ${planLabel} ${ciclo === 'anual' ? 'Anual' : 'Mensal'} · LOGOS|IA`;
+  }, [planLabel, ciclo]);
 
   // Submit final — chama edge function checkout-create-subscription (Prompt 11)
   // Se a edge function não estiver deployada ainda, mostra mensagem amigável.
@@ -163,7 +228,8 @@ export default function Checkout() {
 
     try {
       const payload: any = {
-        plano: billing,
+        plano: planType,
+        ciclo,
         personType,
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
@@ -222,7 +288,8 @@ export default function Checkout() {
       sessionStorage.setItem('checkout_result', JSON.stringify({
         pendingId,
         method: paymentMethod,
-        plano: billing,
+        plano: planType,
+        ciclo,
         email,
         pix: setup?.pix,
         boleto: setup?.boleto,
@@ -695,7 +762,7 @@ export default function Checkout() {
                     <a href="/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="underline font-medium" style={{ color: 'var(--brand-navy)' }}>
                       Política de Privacidade
                     </a>
-                    . Entendo que o plano PRO é cobrado de forma recorrente e posso cancelar a qualquer momento.
+                    . Entendo que o plano {planLabel} é cobrado de forma recorrente e posso cancelar a qualquer momento.
                   </label>
                 </div>
 
@@ -725,7 +792,7 @@ export default function Checkout() {
                     {submitting ? 'Processando...' : (
                       <>
                         <Lock className="h-5 w-5" />
-                        Pagar agora — {totalToday}
+                        Pagar agora — {totalTodayDisplay}
                       </>
                     )}
                   </Button>
@@ -749,14 +816,39 @@ export default function Checkout() {
                 className="mb-4 border-0 px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider"
                 style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
               >
-                ★ Plano PRO
+                ★ Plano {planLabel}
               </Badge>
+
+              {/* Selo de fundador (só Pro, enquanto houver vaga) */}
+              {isFundador && foundersLeft != null && foundersLeft > 0 && (
+                <p className="text-[11px] font-semibold mb-4" style={{ color: 'var(--brand-gold)' }}>
+                  Preço de Fundador — {foundersLeft === 1 ? 'resta 1 vaga' : `restam ${foundersLeft} vagas`}
+                </p>
+              )}
+
+              {/* Toggle Mensal/Anual */}
+              <div className="inline-flex p-1 rounded-full mb-5" style={{ background: 'rgba(250, 248, 242, 0.12)' }}>
+                {(['mensal', 'anual'] as const).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCiclo(c)}
+                    className="px-4 py-1 rounded-full text-xs font-semibold transition-all"
+                    style={{
+                      background: ciclo === c ? 'var(--brand-gold)' : 'transparent',
+                      color: ciclo === c ? 'var(--brand-navy)' : 'var(--brand-cream)',
+                    }}
+                  >
+                    {c === 'mensal' ? 'Mensal' : 'Anual'}
+                  </button>
+                ))}
+              </div>
 
               {/* Tipo de cobrança */}
               <h3 className="text-2xl font-extrabold mb-1" style={{ fontFamily: 'var(--font-display)' }}>
-                PRO · {billing === 'anual' ? 'Anual' : 'Mensal'}
+                {planLabel} · {ciclo === 'anual' ? 'Anual' : 'Mensal'}
               </h3>
-              <p className="text-xs opacity-75 mb-5">Cobrança {billing === 'anual' ? 'anual' : 'mensal'}, cancelamento livre</p>
+              <p className="text-xs opacity-75 mb-5">Cobrança {ciclo === 'anual' ? 'anual' : 'mensal'}, cancelamento livre</p>
 
               {/* Valor */}
               <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
@@ -764,12 +856,12 @@ export default function Checkout() {
                   className="text-3xl md:text-4xl font-black"
                   style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}
                 >
-                  {priceMonthlyDisplay}
+                  {recurrenceDisplay}
                 </p>
                 <p className="text-xs opacity-75 mt-1">{priceEquivalent}</p>
-                {billing === 'anual' && (
+                {economiaAnual > 0 && (
                   <p className="text-xs mt-1 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                    Economia: R$ 994 (2 meses grátis)
+                    Economia: {brl(economiaAnual)} no ano
                   </p>
                 )}
               </div>
@@ -778,7 +870,7 @@ export default function Checkout() {
               <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
                 <div className="flex justify-between items-baseline mb-1">
                   <span className="text-sm">Taxa de implementação</span>
-                  <span className="text-sm font-semibold">R$ 1.499</span>
+                  <span className="text-sm font-semibold">{setupDisplay}</span>
                 </div>
                 <p className="text-[10px] opacity-65">Cobrada uma única vez no primeiro pagamento</p>
               </div>
@@ -788,23 +880,17 @@ export default function Checkout() {
                 <div className="flex justify-between items-baseline">
                   <span className="text-xs uppercase tracking-wider opacity-75">Total hoje</span>
                   <span className="text-2xl font-extrabold" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}>
-                    {totalToday}
+                    {totalTodayDisplay}
                   </span>
                 </div>
                 <p className="text-[10px] opacity-65 mt-1">
-                  {billing === 'anual' ? '(R$ 1.499 setup + R$ 4.970 anual)' : '(R$ 1.499 setup + R$ 497 mensalidade)'}
+                  ({setupDisplay} de setup + {recurrenceDisplay})
                 </p>
               </div>
 
               {/* Lista de benefícios resumida */}
               <ul className="space-y-2 text-xs">
-                {[
-                  'Pedro 24/7 no WhatsApp',
-                  'Marcos · CRM ao vivo + disparo',
-                  'Importação ilimitada',
-                  'Multi-vendedor',
-                  'Suporte humano via WhatsApp',
-                ].map((b) => (
+                {benefits.map((b) => (
                   <li key={b} className="flex items-start gap-2">
                     <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: 'var(--brand-gold)' }} />
                     <span className="opacity-90">{b}</span>

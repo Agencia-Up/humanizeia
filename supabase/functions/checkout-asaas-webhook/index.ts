@@ -30,6 +30,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { PLANS } from '../_shared/checkout-plans.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,13 +44,14 @@ const WEBHOOK_TOKEN =
   '';
 
 // ── Entitlement liberado por um pagamento confirmado do checkout publico ─────
-// Decisao do Wander (03/06/2026): o checkout cobra R$497 -> plano BASICO.
-// `tokens_included` conta ATENDIMENTOS do ciclo (basico = 150), conforme a
-// escala vigente do projeto. Quando houver checkout para Pro/Max, dar a cada
-// um o seu plan_id/cota (a reconciliacao de precos/tiers fica como tarefa a
-// parte). NAO mexe no gating de agentes por plano (frente separada).
-const CHECKOUT_PLAN_ID = 'basico';
-const CHECKOUT_ATENDIMENTOS = 150;
+// O plano contratado vem de `checkout_pending.plan_type` (pro|basico), gravado
+// pela checkout-create-subscription. `tokens_included` conta ATENDIMENTOS do
+// ciclo (pro = 300, basico = 150). Linhas antigas sem plan_type caem em basico
+// (compatibilidade). NAO mexe no gating de agentes por plano (frente separada).
+function resolveEntitlement(planType: string | null | undefined): { planId: string; atendimentos: number } {
+  if (planType === 'pro') return { planId: 'pro', atendimentos: PLANS.pro.atendimentos };
+  return { planId: 'basico', atendimentos: PLANS.basico.atendimentos };
+}
 
 // Renovacao do ciclo a partir do `plano` do checkout (mensal/anual).
 function computeRenewalISO(plano: string | null | undefined): string {
@@ -219,6 +221,7 @@ serve(async (req: Request) => {
         // o re-processamento ainda provisione (idempotente) antes do guard cortar.
         if (userId) {
           const renewalISO = computeRenewalISO(pending.plano);
+          const { planId, atendimentos } = resolveEntitlement(pending.plan_type);
           const { data: existingSub } = await supabase
             .from('user_subscriptions')
             .select('id')
@@ -229,9 +232,9 @@ serve(async (req: Request) => {
             const { error: updErr } = await supabase
               .from('user_subscriptions')
               .update({
-                plan_id: CHECKOUT_PLAN_ID,
+                plan_id: planId,
                 status: 'active',
-                tokens_included: CHECKOUT_ATENDIMENTOS,
+                tokens_included: atendimentos,
                 renewal_date: renewalISO,
                 updated_at: new Date().toISOString(),
               })
@@ -240,15 +243,15 @@ serve(async (req: Request) => {
               console.error(`[checkout-asaas-webhook] erro ao atualizar user_subscriptions: ${updErr.message}`);
               throw updErr;
             }
-            console.log(`[checkout-asaas-webhook] assinatura ATUALIZADA — user=${userId} plan=${CHECKOUT_PLAN_ID} cota=${CHECKOUT_ATENDIMENTOS}`);
+            console.log(`[checkout-asaas-webhook] assinatura ATUALIZADA — user=${userId} plan=${planId} cota=${atendimentos}`);
           } else {
             const { error: insErr } = await supabase
               .from('user_subscriptions')
               .insert({
                 user_id: userId,
-                plan_id: CHECKOUT_PLAN_ID,
+                plan_id: planId,
                 status: 'active',
-                tokens_included: CHECKOUT_ATENDIMENTOS,
+                tokens_included: atendimentos,
                 tokens_used: 0,
                 tokens_purchased: 0,
                 renewal_date: renewalISO,
@@ -257,7 +260,7 @@ serve(async (req: Request) => {
               console.error(`[checkout-asaas-webhook] erro ao inserir user_subscriptions: ${insErr.message}`);
               throw insErr;
             }
-            console.log(`[checkout-asaas-webhook] assinatura CRIADA — user=${userId} plan=${CHECKOUT_PLAN_ID} cota=${CHECKOUT_ATENDIMENTOS}`);
+            console.log(`[checkout-asaas-webhook] assinatura CRIADA — user=${userId} plan=${planId} cota=${atendimentos}`);
           }
         } else {
           console.warn(`[checkout-asaas-webhook] sem userId após pagamento — não foi possível provisionar acesso (pending=${pending.id})`);
