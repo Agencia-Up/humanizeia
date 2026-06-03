@@ -1076,12 +1076,15 @@ export async function processPedroV2Turn(
     if (batched) text = batched;
   }
 
-  // === GUARD POS-TRANSFERENCIA (24h) ===
-  // Se o lead JA foi transferido a um vendedor humano nas ultimas 24h, o agente NAO
-  // conduz funil/fotos/estoque (evita atropelar o vendedor mandando imagens/perguntas
-  // apos a transferencia). Avisa UMA vez que o consultor vai chamar e re-notifica o
-  // vendedor (o lead esta na linha do agente, nao na do vendedor). Volta ao normal so
-  // depois de 24h da transferencia. (Pedido do dono.)
+  // === MODO ASSISTENTE DO VENDEDOR (lead transferido / com dono) ===
+  // Um lead JA transferido tem um VENDEDOR HUMANO cuidando. O agente NAO deve requalificar
+  // nem assumir a venda — atua como ASSISTENTE: responde duvidas/info do carro (inclusive
+  // clique em anuncio NOVO), NAO refaz o funil, ROTEIA fotos/proximos passos para o vendedor
+  // dono e re-notifica esse vendedor. Cobre o periodo de 24h (transferencia recente) E leads
+  // com assigned_to_id persistente (donos mesmo apos 24h). Substitui o antigo "silencio total
+  // pos-transferencia" (v48) — que ate ignorava clique em anuncio novo (Casos 1/2/3 do dono).
+  let ownedLeadAssistantMode = false;
+  let assistantSellerName: string | null = null;
   if (lead?.id && identity.kind !== "seller") {
     const { data: lastTransfer } = await supabase
       .from("ai_lead_transfers")
@@ -1091,50 +1094,43 @@ export async function processPedroV2Turn(
       .limit(1)
       .maybeSingle();
     const transferAtMs = lastTransfer?.created_at ? Date.parse(lastTransfer.created_at) : 0;
-    if (transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000) {
-      const _at = ((currentMemory as any)?.atendimento) || {};
-      const noticeAtMs = _at.transfer_notice_at ? Date.parse(_at.transfer_notice_at) : 0;
-      const renotifyAtMs = _at.transfer_renotify_at ? Date.parse(_at.transfer_renotify_at) : 0;
-      const nowMs = Date.now();
-      const shouldNoticeLead = !(noticeAtMs && noticeAtMs >= transferAtMs); // 1x por transferencia
-      const shouldRenotifySeller = (nowMs - renotifyAtMs) > 45 * 60 * 1000; // a cada 45min
-      if (!dryRun && isPedroV2SendingEnabled()) {
-        const inst = input.wa_instance || await resolvePedroInstance(supabase, {
-          user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
-        });
-        const leadPhone = remoteJidToPhone(remoteJid);
-        if (shouldNoticeLead) {
-          await sendPedroText(inst, { to: leadPhone, text: "Seu atendimento já está com um dos nossos consultores de vendas, que vai falar com você por aqui. É só aguardar um momentinho! 😊" }).catch(() => {});
+    const recentTransferWithin24h = Boolean(transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000);
+    // Vendedor DONO: assigned_to_id persistente (vale mesmo apos 24h); na falta dele, o
+    // destinatario de uma transferencia recente (<24h) ainda nao atribuida. Owner inativo
+    // NAO entra (is_active) -> o lead cai no fluxo normal e pode ser reatribuido.
+    const ownerSellerId = (lead as any).assigned_to_id || (recentTransferWithin24h ? lastTransfer?.to_member_id : null) || null;
+    if (ownerSellerId) {
+      const { data: seller } = await supabase
+        .from("ai_team_members")
+        .select("id, name, whatsapp_number")
+        .eq("id", ownerSellerId)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (seller?.id) {
+        ownedLeadAssistantMode = true;
+        assistantSellerName = seller.name || null;
+        // Re-notifica o vendedor dono que o lead voltou a falar (throttle 45min). O lead
+        // esta na linha do AGENTE, nao na do vendedor — sem isso o vendedor nao saberia.
+        const _at = ((currentMemory as any)?.atendimento) || {};
+        const renotifyAtMs = _at.transfer_renotify_at ? Date.parse(_at.transfer_renotify_at) : 0;
+        const shouldRenotify = (Date.now() - renotifyAtMs) > 45 * 60 * 1000;
+        if (!dryRun && shouldRenotify && isPedroV2SendingEnabled() && seller.whatsapp_number) {
+          const inst = input.wa_instance || await resolvePedroInstance(supabase, {
+            user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
+          });
+          const leadPhone = remoteJidToPhone(remoteJid);
+          await sendPedroText(inst, { to: seller.whatsapp_number, text: `*Seu lead respondeu por aqui* 👀\n\n*${lead.lead_name || pushName || "Lead"}* (+${leadPhone}) mandou:\n"${String(text || "").slice(0, 300)}"\n\n*Atender:* https://wa.me/${leadPhone}` }).catch(() => {});
+          const nowIso = new Date().toISOString();
+          (currentMemory as any).atendimento = { ..._at, transfer_renotify_at: nowIso };
+          try {
+            await supabase.from("pedro_conversation_state").upsert({
+              lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,
+              state: { ...(currentMemory || {}), atendimento: { ..._at, transfer_renotify_at: nowIso } },
+              updated_at: nowIso,
+            }, { onConflict: "lead_id,agent_id" });
+          } catch (_e) { /* nao bloqueante */ }
         }
-        if (shouldRenotifySeller && lastTransfer?.to_member_id) {
-          const { data: seller } = await supabase.from("ai_team_members").select("whatsapp_number, name").eq("id", lastTransfer.to_member_id).maybeSingle();
-          if (seller?.whatsapp_number) {
-            await sendPedroText(inst, { to: seller.whatsapp_number, text: `*Seu lead respondeu por aqui* 👀\n\n*${lead.lead_name || pushName || "Lead"}* (+${leadPhone}) mandou:\n"${String(text || "").slice(0, 300)}"\n\n*Atender:* https://wa.me/${leadPhone}` }).catch(() => {});
-          }
-        }
-        try {
-          await supabase.from("pedro_conversation_state").upsert({
-            lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,
-            state: {
-              ...(currentMemory || {}),
-              atendimento: {
-                ..._at,
-                transfer_notice_at: shouldNoticeLead ? new Date(nowMs).toISOString() : _at.transfer_notice_at,
-                transfer_renotify_at: shouldRenotifySeller ? new Date(nowMs).toISOString() : _at.transfer_renotify_at,
-              },
-            },
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "lead_id,agent_id" });
-        } catch (_e) { /* nao bloqueante */ }
       }
-      return {
-        ok: true,
-        dry_run: dryRun,
-        correlation_id: correlationId,
-        identity,
-        lead_id: lead.id,
-        next_action: "post_transfer_hold_24h",
-      };
     }
   }
 
@@ -1188,6 +1184,18 @@ export async function processPedroV2Turn(
     vehicle_resolution: vehicleResolution,
     usage_sink: usageSink,
   });
+  // MODO ASSISTENTE: lead com vendedor dono NUNCA recebe foto do agente (roteia pro
+  // vendedor) nem handoff de rodizio (ja tem dono). Rebaixa para reply_only.
+  if (ownedLeadAssistantMode) {
+    if (brainPlan.action === "photo_request") {
+      brainPlan.action = "reply_only";
+      brainPlan.use_memory_vehicle = false;
+      brainPlan.reason = `assistant_mode_route_photos_to_seller:${brainPlan.reason || ""}`;
+    } else if (brainPlan.action === "handoff") {
+      brainPlan.action = "reply_only";
+      brainPlan.reason = `assistant_mode_no_requalify_handoff:${brainPlan.reason || ""}`;
+    }
+  }
   const contextualIntent = mergeBrainPlanIntoIntent(contextualIntentBase, brainPlan, vehicleResolution);
   const nextMemory = !dryRun && lead?.id
     ? await updatePedroMemoryFromIntent(supabase, {
@@ -1277,14 +1285,17 @@ export async function processPedroV2Turn(
     ? stockResult.items
     : [];
   const photoVehiclesPool = memoryPhotoVehicles.length > 0 ? memoryPhotoVehicles : freshSpecificStock;
-  const shouldSendVehiclePhotos = brainPlan.action === "photo_request"
-    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0);
+  // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
+  // pede fotos explicitamente.
+  const shouldSendVehiclePhotos = !ownedLeadAssistantMode && (brainPlan.action === "photo_request"
+    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0));
 
   let reply = shouldSendVehiclePhotos
     ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: photoVehiclesPool }, text)
     : await generatePedroBrainReply({
         agent: input.agent,
         agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
+        assigned_seller_name: assistantSellerName,
         memory: nextMemory,
         intent: contextualIntent,
         stock_result: stockResult,
@@ -1335,6 +1346,7 @@ export async function processPedroV2Turn(
     const brainClosing = await generatePedroBrainReply({
       agent: input.agent,
       agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
+      assigned_seller_name: assistantSellerName,
       memory: effectiveMemory,
       intent: contextualIntent,
       stock_result: stockResult,
@@ -1538,7 +1550,7 @@ export async function processPedroV2Turn(
     || (adContext?.vehicle_query ? String(adContext.vehicle_query).trim() : null)
     || (vehicleResolution?.query ? String(vehicleResolution.query).trim() : null)
     || null;
-  if (!dryRun && lead?.id && _automationRules.transfer.enabled && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
+  if (!dryRun && lead?.id && !ownedLeadAssistantMode && _automationRules.transfer.enabled && (contextualIntent.needs_handoff || brainReadyToTransfer || silentTransfer) && identity.kind !== "seller") {
     try {
       handoffResult = await executePedroV2Handoff(supabase, {
         user_id: input.agent.user_id,

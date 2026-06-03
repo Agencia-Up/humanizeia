@@ -457,6 +457,7 @@ function cleanJson(text: string) {
 export async function generatePedroBrainReply(input: {
   agent?: any;
   agent_system_prompt?: string | null;
+  assigned_seller_name?: string | null;
   memory?: PedroV2LeadMemory | null;
   intent?: PedroV2IntentResult | null;
   stock_result?: any;
@@ -471,6 +472,9 @@ export async function generatePedroBrainReply(input: {
 }) {
   const hasPresented = checkAgentHasPresented(input.recent_history, input.memory?.recent_turns);
   const agentName = sanitizeAgentName(input.agent?.name);
+  // Vendedor dono do lead (modo assistente): quando presente, o agente vira ASSISTENTE
+  // do vendedor — nao requalifica, nao manda foto, roteia tudo para ele.
+  const assignedSellerName = (input.assigned_seller_name || "").trim() || null;
   const fallback = fallbackReply({ ...input, recent_history: input.recent_history });
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallback;
@@ -530,6 +534,17 @@ export async function generatePedroBrainReply(input: {
             content:
               [
                 `Voce e o ${agentName}, consultor humano da ${input.agent?.company_name || "Icom Motors"} no WhatsApp.`,
+                ...(assignedSellerName ? [
+                  `== MODO ASSISTENTE DO VENDEDOR (REGRA MAXIMA — PREVALECE SOBRE TUDO, INCLUSIVE O PORTAL) ==`,
+                  `Este lead JA esta em atendimento com o vendedor ${assignedSellerName}. Voce NAO e o vendedor dele agora — voce e um ASSISTENTE que da um suporte rapido e PASSA a bola pro ${assignedSellerName}.`,
+                  `- PROIBIDO requalificar: NAO pergunte nome, CPF, troca, entrada, forma de pagamento, e NAO ofereca agendar visita. O ${assignedSellerName} ja cuida disso. NUNCA pergunte "pretende pagar a vista ou financiar?" e afins.`,
+                  `- Responda a DUVIDA do lead de forma curta usando stock.facts (confirmar se tem o carro, preco, se esta disponivel). Se ele clicou em outro anuncio, confirme o carro e o valor.`,
+                  `- SEMPRE feche dizendo que o ${assignedSellerName} ja esta cuidando do atendimento e que voce vai avisa-lo (ex.: "o ${assignedSellerName} ja esta com seu atendimento, vou avisar ele que voce voltou — ele ja te chama").`,
+                  `- Se o lead pedir FOTOS, NAO mande: diga que vai pedir pro ${assignedSellerName} te enviar.`,
+                  `- NUNCA defina pronto_para_transferir nem transferir_silencioso = true (o lead JA tem vendedor).`,
+                  `- UMA mensagem curta. Sem funil, sem elogio, sem pergunta-isca.`,
+                  ``,
+                ] : []),
                 "Sua DIRETRIZ PRINCIPAL e o System Prompt do Portal abaixo: siga o passo-a-passo, as PERGUNTAS OBRIGATORIAS, as ramificacoes do funil e as regras de transferencia dele A RISCA e na ordem. Seja humano e natural na FORMA (tom, ritmo, palavras), mas NUNCA pule etapas nem perguntas do funil dele.",
                 "O System Prompt do Portal manda no QUE perguntar (funil, perguntas obrigatorias, ramificacoes) e na personalidade. POReM as REGRAS DE FORMA abaixo (concisao, sem pergunta-isca, sem elogio, 1 balao, desqualificacao) sao INEGOCIAVEIS e PREVALECEM inclusive sobre o portal: se o portal mandar 'sempre termine com uma pergunta de conducao', 'crie conexao' ou 'demonstre empatia/elogie', IGNORE essa parte de FORMA e siga as regras abaixo. O portal decide O QUE; estas regras decidem COMO.",
                 "",
@@ -635,8 +650,9 @@ export async function generatePedroBrainReply(input: {
     const qualificacao_coletada = (parsed?.qualificacao_coletada && typeof parsed.qualificacao_coletada === "object")
       ? parsed.qualificacao_coletada
       : null;
-    const pronto_para_transferir = parsed?.pronto_para_transferir === true;
-    const transferir_silencioso = parsed?.transferir_silencioso === true;
+    // Modo assistente: lead com vendedor dono NUNCA dispara transferencia (ja tem dono).
+    const pronto_para_transferir = parsed?.pronto_para_transferir === true && !assignedSellerName;
+    const transferir_silencioso = parsed?.transferir_silencioso === true && !assignedSellerName;
     const temperatura = ["quente", "morno", "frio", "desqualificado"].includes(String(parsed?.temperatura || "").toLowerCase())
       ? String(parsed.temperatura).toLowerCase()
       : null;
