@@ -73,6 +73,19 @@ function isAffirmativeText(message?: string | null) {
     /\b(pode mandar|manda pra mim|manda ai|me manda|envia pra mim|quero ver|quero sim|pode enviar)\b/.test(normalized);
 }
 
+// Resposta CURTA que SELECIONA qual veiculo o lead quer ver, em reacao a uma oferta
+// de fotos ("qual voce quer ver, o 2024 ou o 2020?"). O lead responde so "2024",
+// "o primeiro", "o preto" — e isso significa "manda as fotos DESSE". Sem isso, o
+// agente nao reconhecia "2024" como pedido de foto e o lead saia sem as imagens.
+function isPhotoSelectorReply(message?: string | null) {
+  const n = normalizeText(message);
+  if (!n) return false;
+  if (n.split(/\s+/).filter(Boolean).length > 4) return false; // so respostas curtas
+  return /\b(19|20)\d{2}\b/.test(n) // ano: 2024, 2020...
+    || /\b(primeiro|segundo|terceiro|o 1|o 2|o 3|numero 1|numero 2|opcao 1|opcao 2|esse|este|esse ai|aquele)\b/.test(n)
+    || /\b(preto|branco|prata|cinza|vermelho|azul|verde|dourado|bege|marrom|amarelo|laranja|vinho)\b/.test(n);
+}
+
 function hasRecentPhotoOffer(input: {
   memory?: PedroV2LeadMemory | null;
   recent_history?: any[];
@@ -94,8 +107,10 @@ function hasRecentPhotoOffer(input: {
   if (!text) return false;
   // Se a ultima msg do agente foi uma PERGUNTA DE QUALIFICACAO/agendamento, nao e oferta de foto.
   if (/\b(troca|entrada|pagamento|financ|cpf|nascimento|nome|loja|visita|test ?drive|orcamento|parcela|valor)\b/.test(text)) return false;
-  // Conta como oferta de fotos SO se a ultima msg do agente OFERECEU/perguntou sobre enviar fotos.
-  return (/\b(quer|posso|gostaria|deseja|quer que eu|te mando|posso te mostrar)\b/.test(text) && /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(text));
+  // Conta como "contexto de foto" se a ultima msg do agente OFERECEU/perguntou OU
+  // PROMETEU enviar fotos (ex.: "vou separar as fotos", "consigo te mandar as fotos").
+  // Assim a resposta-seletora do lead ("2024", "o preto") e reconhecida como pedido.
+  return (/\b(quer|posso|gostaria|deseja|quer que eu|te mando|posso te mostrar|vou mandar|vou enviar|vou separar|vou te mandar|consigo te mandar|consigo mandar|te envio|separar as fotos|qual.*ver primeiro)\b/.test(text) && /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(text));
 }
 
 function detectPhotoTarget(message?: string | null) {
@@ -151,7 +166,7 @@ function fallbackPlan(input: {
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const photo = isPhotoText(input.message);
-  const acceptedPhotoOffer = isAffirmativeText(input.message) && hasRecentPhotoOffer(input);
+  const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input);
 
   if (isSocialQuestion(input.message)) {
     return {
@@ -348,7 +363,7 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const photo = isPhotoText(input.message);
-  const acceptedPhotoOffer = isAffirmativeText(input.message) && hasRecentPhotoOffer(input);
+  const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input);
 
   if (acceptedPhotoOffer && hasPresentedVehicles && !vehicle.possible_new_topic) {
     plan.action = "photo_request";
@@ -423,7 +438,10 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // fotos (acceptedPhotoOffer). Evita o agente mandar foto "do nada" quando o LLM
   // marca photo_request so porque fotos ja foram pedidas antes na conversa (ex: o
   // lead disse "Gostei dele" e levou fotos sem pedir).
-  if (plan.action === "photo_request" && !isPhotoText(input.message) && !acceptedPhotoOffer) {
+  // Excecao: resposta-seletora curta ("2024", "o primeiro", "o preto") COM veiculos
+  // ja apresentados = o lead esta escolhendo qual ver -> liberar as fotos.
+  const photoSelectorReply = isPhotoSelectorReply(input.message) && hasPresentedVehicles;
+  if (plan.action === "photo_request" && !isPhotoText(input.message) && !acceptedPhotoOffer && !photoSelectorReply) {
     plan.action = "reply_only";
     plan.intent = "vehicle_reference";
     plan.use_memory_vehicle = false;

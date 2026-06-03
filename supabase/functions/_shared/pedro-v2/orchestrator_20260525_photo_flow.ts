@@ -453,8 +453,11 @@ function messageVehicleAttributeScore(message: string, vehicle: any) {
     if (new RegExp(`\\b${body}\\b`).test(normalized)) score += indexed.includes(body) ? 4 : -1;
   }
 
-  for (const year of normalized.match(/\b20\d{2}\b/g) || []) {
-    score += indexed.includes(year) ? 4 : -2;
+  // Ano e um discriminador FORTE entre unidades do mesmo modelo (ex.: HB20 2024 vs
+  // HB20 2020). Pontua alto para o ano bater passar do limiar de selecao (>=5) e
+  // vencer o empate de nome de modelo. Sem isso, "o 2020" caia no 1o da lista.
+  for (const year of normalized.match(/\b(?:19|20)\d{2}\b/g) || []) {
+    score += indexed.includes(year) ? 6 : -3;
   }
 
   const modelTokens = normalizePhotoText([vehicle?.modelo, vehicle?.versao].filter(Boolean).join(" "))
