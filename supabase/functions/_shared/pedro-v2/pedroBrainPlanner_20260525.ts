@@ -67,7 +67,20 @@ function isPhotoText(message?: string | null) {
   return false;
 }
 
+// Emojis positivos que, SOZINHOS, equivalem a um "sim" quando o lead esta reagindo
+// a uma oferta ("quer ver as fotos?" -> 👍 = sim). normalizeText() apaga emojis
+// (sao non-word), entao precisamos testar a string CRUA, antes de normalizar.
+function hasPositiveEmoji(message?: string | null) {
+  if (!message) return false;
+  // 👍👍🏻..🏿 👌 ✅ ✔ 🙏 🔥 ❤ 😍 🙂 😊 😀 😁 👊 🤙 ✌ 🤩 🥳 💯
+  return /[\u{1F44D}\u{1F44C}\u{2705}\u{2714}\u{1F64F}\u{1F525}\u{2764}\u{1F60D}\u{1F642}\u{1F60A}\u{1F600}\u{1F601}\u{1F44A}\u{1F919}\u{270C}\u{1F929}\u{1F973}\u{1F4AF}]/u.test(message);
+}
+
 function isAffirmativeText(message?: string | null) {
+  // Emoji-afirmativo (👍, 👌, ✅, 🙏...) sozinho tambem conta como "sim". Testar ANTES
+  // de normalizar, pois normalizeText() remove emojis. Caso classico: lead responde
+  // so um 👍 a "quer ver as fotos?" e o agente ignorava.
+  if (hasPositiveEmoji(message)) return true;
   const n = normalizeText(message);
   if (!n) return false;
   // Afirmativo ISOLADO ou no INICIO da frase. Antes exigia a palavra exata ("^sim$"),
@@ -75,6 +88,15 @@ function isAffirmativeText(message?: string | null) {
   // e o lead que respondia "Sim por favor" a uma oferta de foto NAO recebia as fotos.
   if (/^(sim|s|ss|claro|isso|isso ai|perfeito|com certeza|pode ser|aham|uhum|ok|ta bom|beleza|blz|bora|vamos|quero|queria|pode|manda|envia)\b/.test(n)) return true;
   if (/\b(pode mandar|pode sim|pode enviar|manda pra mim|manda ai|manda sim|me manda|me envia|envia pra mim|envia sim|quero ver|quero sim|quero as fotos|gostaria de ver)\b/.test(n)) return true;
+  // "por favor" e suas abreviacoes/erros de digitacao comuns como afirmacao educada
+  // ("sim, por favor" / "por favor" / "pf" / "pfv" / "porfa"). Caso do print: lead
+  // respondeu "Pir favor" (erro de "Por favor") a uma oferta de foto e foi ignorado.
+  if (/\b(por favor|porfavor|porfa|pfvr|pfv|pff)\b/.test(n)) return true;
+  if (/^pf$/.test(n)) return true;
+  // Mensagem CURTA contendo "favor" pega erros de digitacao de "por favor"
+  // ("pir favor", "por favr", "por favo", "favor").
+  const words = n.split(/\s+/).filter(Boolean);
+  if (words.length <= 3 && /\bfavor\b/.test(n)) return true;
   return false;
 }
 
