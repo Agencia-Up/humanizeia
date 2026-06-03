@@ -679,6 +679,10 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        // gpt-4o-mini: baseline que JA identificava o veiculo da imagem do anuncio.
+        // (gpt-4o foi testado mas retornou nulo no fluxo — mantido mini, que funciona.)
+        // O ano antes era ancorado por um EXEMPLO no prompt ("...2023"); o prompt
+        // abaixo foi de-ancorado para ler o ANO impresso na arte.
         model: "gpt-4o-mini",
         temperature: 0,
         response_format: { type: "json_object" },
@@ -694,7 +698,7 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
               {
                 type: "text",
                 text:
-                  "Leia o texto visivel e identifique o veiculo anunciado. vehicle_query deve ser algo pesquisavel no estoque, incluindo marca, modelo, versao, ano, cambio e preco quando aparecerem. Exemplos: Renault Duster Authentique 1.6 2020 automatico; Fiat Argo Drive 1.0 2023.",
+                  "Leia o texto visivel e identifique o veiculo anunciado. vehicle_query deve ser algo pesquisavel no estoque, incluindo marca, modelo, versao e ANO. IMPORTANTE: use SEMPRE o ANO impresso na arte do anuncio (selo/etiqueta) — NUNCA o ano dos exemplos abaixo. Formato (NAO copie os anos; use o ano que estiver na imagem): 'Renault Duster Authentique 1.6 AAAA automatico'; 'Fiat Argo Drive 1.0 AAAA'. Inclua a cor do carro e o preco no summary quando aparecerem.",
               },
               { type: "image_url", image_url: { url: imageDataUrl } },
             ],

@@ -113,10 +113,12 @@ function detectPhotoTarget(message?: string | null) {
 
 function adVehicleGuidance() {
   return [
-    "Lead veio de anuncio/link/imagem com veiculo identificado.",
-    "Consulte o estoque apenas para confirmar esse veiculo especifico.",
-    "Nao liste alternativas, modelos similares ou catalogo sem o lead pedir.",
-    "Depois da consulta, responda como consultor: apresente-se se for primeiro contato, confirme o carro do anuncio e pergunte se ele quer detalhes, fotos ou tem alguma duvida.",
+    "Lead veio de anuncio/link/imagem com veiculo identificado (veja ad_context: vehicle_query tem marca/modelo/ano; summary pode ter a cor e o preco do anuncio).",
+    "Consulte o estoque para CONFIRMAR esse veiculo especifico.",
+    "CRITICO: se houver VARIOS do mesmo modelo no estoque, apresente APENAS o que BATE com o ANO e a COR do anuncio (ad_context). NUNCA afirme specs (ano, cor, preco, km) de um carro DIFERENTE do que foi anunciado — isso confunde o cliente ('o anuncio era preto 2025 e voce falou branco 2023').",
+    "Se NENHUM do estoque bater com o ano/cor do anuncio, NAO invente nem afirme que e o mesmo carro: diga que vai confirmar a disponibilidade desse exato do anuncio e, se quiser, mostre o(s) parecido(s) deixando claro que sao outras unidades.",
+    "Nao liste alternativas/catalogo sem o lead pedir.",
+    "Responda como consultor: apresente-se se for 1o contato, confirme o carro do anuncio (modelo + ano) e pergunte se quer fotos/detalhes.",
   ].join(" ");
 }
 
