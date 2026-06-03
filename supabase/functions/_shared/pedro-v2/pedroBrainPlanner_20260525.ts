@@ -135,8 +135,8 @@ function adVehicleGuidance() {
   return [
     "Lead veio de anuncio/link/imagem com veiculo identificado (veja ad_context: vehicle_query tem marca/modelo/ano; summary pode ter a cor e o preco do anuncio).",
     "Consulte o estoque para CONFIRMAR esse veiculo especifico.",
-    "CRITICO: se houver VARIOS do mesmo modelo no estoque, apresente APENAS o que BATE com o ANO e a COR do anuncio (ad_context). NUNCA afirme specs (ano, cor, preco, km) de um carro DIFERENTE do que foi anunciado — isso confunde o cliente ('o anuncio era preto 2025 e voce falou branco 2023').",
-    "Se NENHUM do estoque bater com o ano/cor do anuncio, NAO invente nem afirme que e o mesmo carro: diga que vai confirmar a disponibilidade desse exato do anuncio e, se quiser, mostre o(s) parecido(s) deixando claro que sao outras unidades.",
+    "REGRA DE MATCH: o que importa para casar e MODELO + ANO. Se o estoque TEM o mesmo modelo e o mesmo ANO do anuncio, ESSE e o carro do anuncio — APRESENTE ele (mesmo que a COR ou a versao/trim tenham pequena diferenca em relacao a arte; a cor da arte as vezes nao bate com a unidade — apenas informe a cor REAL do estoque). NAO diga 'nao temos' se o modelo+ano existem.",
+    "So diga que NAO tem o exato quando NENHUMA unidade do estoque tiver o mesmo MODELO + ANO do anuncio. Nesse caso, NAO invente nem afirme specs de um carro diferente: diga que vai confirmar a disponibilidade desse exato e ofereca o(s) parecido(s) deixando claro que sao OUTRAS unidades (outro ano/versao).",
     "Nao liste alternativas/catalogo sem o lead pedir.",
     "Responda como consultor: apresente-se se for 1o contato, confirme o carro do anuncio (modelo + ano) e pergunte se quer fotos/detalhes.",
   ].join(" ");

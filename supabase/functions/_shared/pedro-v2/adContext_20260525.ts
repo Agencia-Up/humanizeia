@@ -839,8 +839,19 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     : fetchedImage.dataUrl || embeddedImage || imageUrlCandidate || null;
   const imageInference = imageDataUrl ? await inferVehicleFromImage(imageDataUrl) : null;
   const explicitTextIsStrong = Boolean(explicitAdInference.vehicle_query && Number(explicitAdInference.confidence || 0) >= 0.75);
-  const best = explicitTextIsStrong
-    ? explicitAdInference
+  // O TEXTO do anuncio (copy do anunciante, ex.: "Compass Longitude T270 2023") e
+  // AUTORITATIVO para o ANO/spec — a VISAO (OCR da imagem) erra digito (leu "2022" no
+  // lugar de "2023"), o que fazia o agente dizer "nao temos o 2022" + oferecer um
+  // similar errado e DEPOIS dizer "temos o 2023" (contradicao entre turnos). Por isso:
+  // se a inferencia de TEXTO tem um veiculo COM ANO e confianca decente, ela vence a
+  // visao. A visao so manda quando NAO ha veiculo legivel no texto (anuncio so-imagem).
+  const textCandidate = explicitAdInference.vehicle_query ? explicitAdInference
+    : (textInference.vehicle_query ? textInference : null);
+  const textHasYear = Boolean(textCandidate?.vehicle_query
+    && /\b(19|20)\d{2}\b/.test(String(textCandidate.vehicle_query))
+    && Number(textCandidate.confidence || 0) >= 0.55);
+  const best = (explicitTextIsStrong || textHasYear) && textCandidate
+    ? textCandidate
     : imageInference && Number(imageInference.confidence || 0) >= Math.max(0.45, Number(textInference.confidence || 0))
       ? imageInference
       : textInference;

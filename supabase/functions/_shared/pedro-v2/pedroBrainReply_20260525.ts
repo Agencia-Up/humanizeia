@@ -477,7 +477,16 @@ export async function generatePedroBrainReply(input: {
 
   const allFacts = stockFacts(input.stock_result);
   const adVehicleConsultation = isCurrentTurnAdVehicleConsultation(input);
-  const facts = adVehicleConsultation ? allFacts.slice(0, 1) : allFacts;
+  // Consulta de anuncio mostra 1 veiculo (o do anuncio). BUG corrigido: pegava
+  // allFacts[0] CEGAMENTE -> com 3 Compass no estoque, mostrava o 2019 e dizia "nao
+  // temos o 2023" (o 2023 estava na lista, mas nem chegava ao LLM). Agora escolhe o
+  // fato que BATE com o ANO do anuncio; se nao houver esse ano, cai no 1o (e o LLM,
+  // pela guidance, diz que nao tem o exato e oferece o parecido como outra unidade).
+  const _adYear = (String(input.ad_context?.vehicle_query || "").match(/\b(?:19|20)\d{2}\b/) || [])[0] || null;
+  const _adMatchedFact = _adYear ? allFacts.find((f: any) => String(f?.ano || "").includes(_adYear)) : null;
+  const facts = adVehicleConsultation
+    ? (_adMatchedFact ? [_adMatchedFact] : allFacts.slice(0, 1))
+    : allFacts;
   // VEICULO EM FOCO: o carro que o lead esta de fato discutindo (resolvido OU o
   // ultimo apresentado), com FATOS explicitos. Serve para o LLM responder
   // perguntas de atributo (preco/km/cor/ano) sobre ELE — e NUNCA sobre o carro
