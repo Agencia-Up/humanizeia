@@ -330,3 +330,24 @@
   ofereceu_fotos respondendo "👍" -> photo_request. Leads transferidos -> guard v48.
 - PROXIMAS FASES do plano: 3 (tom humano: derrubar 68% de "?" + cortar elogios) e
   4 (grounding de veiculo por ID + harness de regressao com as conversas reais).
+
+## 2026-06-03 — Auditoria do relatorio Antigravity (5 pontos) + correcoes (v51)
+
+- Build `2026-06-03-audit-fixes-stock-resolver-v51`. Dev pediu para validar os 5 bugs que
+  o Antigravity apontou e corrigir os reais NA RAIZ (sem remendo).
+- VEREDITO: #2 e #1 reais; #4 parcial; #3 quase falso-positivo; #5 arquivo errado.
+- #2 (REAL, grave) `stockSearch_20260525_photo_flow.ts` scoreVehicle: cor/adjetivos
+  ("prata","completo","conservado") entravam como modelTerm e levavam -10 cada, zerando
+  o carro CERTO -> "nao temos". Fix: `ATTRIBUTE_NOISE_TOKENS` + `isAttributeOrNoiseToken`
+  fora da penalidade (bonus de desempate se casam). Mesmo fix em detectDynamicModelTerms.
+  Teste: score -5 -> +25. Ao vivo: "tracker prata completo bem conservado top" -> 4 carros.
+- #1 (REAL) `vehicleResolver_20260525_brain.ts`: match dinamico so pegava marca-antes-do-
+  modelo. Fix: bidirecional (forward+backward) + `NON_MODEL_WORDS` (cor nao vira modelo)
+  + 7 aliases que faltavam (nivus, spin, prisma, sandero, yaris, fox, voyage). Ao vivo:
+  "vcs tem nivus?" -> Volkswagen Nivus.
+- #4 (parcial) `orchestrator_*`: guard de idempotencia anti-resposta-dupla ANTES do envio
+  (suprime se outra invocacao concorrente ja respondeu apos a msg do turno). Resposta do
+  turno so e salva como assistant DEPOIS do envio -> sem auto-supressao.
+- #3 (hardening) handoff `_hasNome` aceita pushName (lead qualificado nao trava por nome).
+- #5 NAO corrigido: o reply ativo e `pedroBrainReply_20260525.ts`, nao o replyGenerator do
+  relatorio; fallback so em queda da OpenAI e ja tem tom ok. Documentado.
