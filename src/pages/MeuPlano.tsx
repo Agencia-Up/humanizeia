@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,19 +6,25 @@ import { Progress } from '@/components/ui/progress';
 import {
   Zap, TrendingUp, CheckCircle2, XCircle, CreditCard, AlertTriangle,
   RefreshCcw, Star, Clock, BarChart3, Info,
-  Bot, PenTool, Instagram, Mail, Brain, Target, ChevronLeft,
+  Bot, PenTool, Instagram, Mail, Brain, Target, ChevronLeft, Coins,
 } from 'lucide-react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { useSubscription, PLANS, ATENDIMENTO_PACKAGES, type PlanId } from '@/hooks/useSubscription';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { supabase } from '@/integrations/supabase/client';
 
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
 function fmtR(n: number) { return `R$ ${n.toFixed(2).replace('.', ',')}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+// 'YYYY-MM-DD' -> 'DD/MM' sem deslocar o dia por fuso (ancorando ao meio-dia).
+function fmtDia(iso?: string | null) {
+  if (!iso) return '--';
+  return new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
 
 const AGENT_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   davi: Instagram,
@@ -116,6 +122,29 @@ export default function MeuPlano() {
   const [buyingPkg, setBuyingPkg] = useState<number | null>(null);
   const [upgradingPlan, setUpgradingPlan] = useState<PlanId | null>(null);
 
+  // Custo das conversas (IA) do PROPRIO cliente, ja com a margem aplicada no
+  // servidor. A RPC e SECURITY DEFINER e so devolve o que e do auth.uid() —
+  // nunca o custo real nem o markup.
+  const [custo, setCusto] = useState<any>(null);
+  const [custoLoading, setCustoLoading] = useState(true);
+  useEffect(() => {
+    if (!user) { setCusto(null); setCustoLoading(false); return; }
+    let alive = true;
+    (async () => {
+      setCustoLoading(true);
+      try {
+        const { data, error: rpcErr } = await (supabase as any).rpc('cliente_meu_custo_overview');
+        if (!alive) return;
+        setCusto(rpcErr ? null : data);
+      } catch {
+        if (alive) setCusto(null);
+      } finally {
+        if (alive) setCustoLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [user]);
+
   if (loading || sellerLoading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -158,6 +187,19 @@ export default function MeuPlano() {
   const isCritical = remaining <= 10;
   const renewDate = new Date(subscription.renewal_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const chartData = buildChartData(transactions);
+
+  // ── Custo das conversas (IA) — dados para o grafico por dia ──────────
+  const custoTotais = custo?.totais ?? null;
+  const custoNConversas = Number(custoTotais?.n_conversas ?? 0);
+  const custoTemDados = !!custoTotais && custoNConversas > 0;
+  const custoMaxVal = Number(custoTotais?.dia_maior_valor ?? 0);
+  const custoMinVal = Number(custoTotais?.dia_menor_valor ?? 0);
+  const custoMedio = custoNConversas > 0 ? Number(custoTotais?.custo_cliente_brl ?? 0) / custoNConversas : 0;
+  const custoChart = (custo?.por_dia ?? []).map((d: any) => ({
+    dia: fmtDia(d.dia),
+    custo: Number(d.custo_cliente_brl),
+    n: Number(d.n_conversas),
+  }));
 
   const handlePurchase = async (amount: number, price: number) => {
     setBuyingPkg(amount);
@@ -315,6 +357,69 @@ export default function MeuPlano() {
       {/* ── Overview tab ───────────────────────────────────────────── */}
       {tab === 'overview' && (
         <div className="space-y-5">
+          {/* Custo das suas conversas (IA) */}
+          <div className="rounded-xl border border-border/50 bg-card/50 p-5">
+            <h3 className="font-semibold mb-1 flex items-center gap-2">
+              <Coins className="h-4 w-4 text-primary" /> Custo das suas conversas (IA)
+            </h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Quanto cada conversa do seu atendimento inteligente custou neste ciclo.
+            </p>
+
+            {custoLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
+                <RefreshCcw className="h-4 w-4 animate-spin" /> Carregando custos...
+              </div>
+            ) : !custoTemDados ? (
+              <div className="text-sm text-muted-foreground py-6">
+                Ainda não há conversas registradas neste ciclo. Assim que seu atendimento inteligente
+                conversar com leads, o custo aparece aqui.
+              </div>
+            ) : (
+              <>
+                {/* Mini-stats */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                  {[
+                    { label: 'Custo total no ciclo', value: fmtR(Number(custoTotais.custo_cliente_brl)) },
+                    { label: 'Conversas', value: fmt(custoNConversas) },
+                    { label: 'Custo médio/conversa', value: fmtR(custoMedio) },
+                    { label: 'Dia que mais gastou', value: `${fmtDia(custoTotais.dia_maior)} · ${fmtR(custoMaxVal)}` },
+                  ].map((s) => (
+                    <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5">
+                      <p className="text-xs text-muted-foreground">{s.label}</p>
+                      <p className="font-bold mt-0.5">{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Grafico de custo por dia */}
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={custoChart}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="dia" tick={{ fill: '#9CA3AF', fontSize: 11 }} />
+                    <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} tickFormatter={(v: number) => `R$ ${v}`} />
+                    <Tooltip
+                      contentStyle={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 8, color: '#F9FAFB' }}
+                      formatter={(v: number) => [fmtR(Number(v)), 'Custo']}
+                    />
+                    <Bar dataKey="custo" radius={[4, 4, 0, 0]}>
+                      {custoChart.map((d: any, i: number) => (
+                        <Cell
+                          key={i}
+                          fill={d.custo === custoMaxVal ? '#10B981' : d.custo === custoMinVal ? '#6B7280' : '#5C6BC0'}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap gap-4 mt-2 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Dia que mais gastou</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500 inline-block" /> Dia que menos gastou ({fmtDia(custoTotais.dia_menor)} · {fmtR(custoMinVal)})</span>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Chart */}
           <div className="rounded-xl border border-border/50 bg-card/50 p-5">
             <h3 className="font-semibold mb-4 flex items-center gap-2">
