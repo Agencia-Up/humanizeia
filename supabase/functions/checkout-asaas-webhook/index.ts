@@ -42,6 +42,23 @@ const WEBHOOK_TOKEN =
   Deno.env.get('ASAAS_WEBHOOK_SECRET') ||
   '';
 
+// ── Entitlement liberado por um pagamento confirmado do checkout publico ─────
+// Decisao do Wander (03/06/2026): o checkout cobra R$497 -> plano BASICO.
+// `tokens_included` conta ATENDIMENTOS do ciclo (basico = 150), conforme a
+// escala vigente do projeto. Quando houver checkout para Pro/Max, dar a cada
+// um o seu plan_id/cota (a reconciliacao de precos/tiers fica como tarefa a
+// parte). NAO mexe no gating de agentes por plano (frente separada).
+const CHECKOUT_PLAN_ID = 'basico';
+const CHECKOUT_ATENDIMENTOS = 150;
+
+// Renovacao do ciclo a partir do `plano` do checkout (mensal/anual).
+function computeRenewalISO(plano: string | null | undefined): string {
+  const d = new Date();
+  if (String(plano) === 'anual') d.setDate(d.getDate() + 365);
+  else d.setDate(d.getDate() + 30);
+  return d.toISOString();
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') {
@@ -193,6 +210,59 @@ serve(async (req: Request) => {
           }
         }
 
+        // ── Liberar acesso: provisionar user_subscriptions ─────────────────
+        // SEGURANÇA: em conta que JÁ EXISTE, só atualizamos plano/cota/status/
+        // renovação. NÃO mexemos em tokens_used/tokens_purchased pra não zerar o
+        // saldo de atendimentos do ciclo corrente nem recargas avulsas.
+        // Em conta NOVA, inicializamos a linha zerada.
+        // Feito ANTES de marcar pending='paid' pra que, se houver crash/redelivery,
+        // o re-processamento ainda provisione (idempotente) antes do guard cortar.
+        if (userId) {
+          const renewalISO = computeRenewalISO(pending.plano);
+          const { data: existingSub } = await supabase
+            .from('user_subscriptions')
+            .select('id')
+            .eq('user_id', userId)
+            .maybeSingle();
+
+          if (existingSub) {
+            const { error: updErr } = await supabase
+              .from('user_subscriptions')
+              .update({
+                plan_id: CHECKOUT_PLAN_ID,
+                status: 'active',
+                tokens_included: CHECKOUT_ATENDIMENTOS,
+                renewal_date: renewalISO,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('user_id', userId);
+            if (updErr) {
+              console.error(`[checkout-asaas-webhook] erro ao atualizar user_subscriptions: ${updErr.message}`);
+              throw updErr;
+            }
+            console.log(`[checkout-asaas-webhook] assinatura ATUALIZADA — user=${userId} plan=${CHECKOUT_PLAN_ID} cota=${CHECKOUT_ATENDIMENTOS}`);
+          } else {
+            const { error: insErr } = await supabase
+              .from('user_subscriptions')
+              .insert({
+                user_id: userId,
+                plan_id: CHECKOUT_PLAN_ID,
+                status: 'active',
+                tokens_included: CHECKOUT_ATENDIMENTOS,
+                tokens_used: 0,
+                tokens_purchased: 0,
+                renewal_date: renewalISO,
+              });
+            if (insErr) {
+              console.error(`[checkout-asaas-webhook] erro ao inserir user_subscriptions: ${insErr.message}`);
+              throw insErr;
+            }
+            console.log(`[checkout-asaas-webhook] assinatura CRIADA — user=${userId} plan=${CHECKOUT_PLAN_ID} cota=${CHECKOUT_ATENDIMENTOS}`);
+          }
+        } else {
+          console.warn(`[checkout-asaas-webhook] sem userId após pagamento — não foi possível provisionar acesso (pending=${pending.id})`);
+        }
+
         // Atualizar pending pra paid
         await supabase.from('checkout_pending').update({
           status: 'paid',
@@ -201,10 +271,6 @@ serve(async (req: Request) => {
         }).eq('id', pending.id);
 
         console.log(`[checkout-asaas-webhook] ✅ PAGO — pending=${pending.id} user=${userId}`);
-
-        // TODO (próxima iteração): inserir/atualizar na tabela `subscriptions` interna
-        // pra liberar acesso PRO. Aguardando confirmação de qual hook/tabela usar
-        // (useSubscription.ts no frontend).
         break;
       }
 
@@ -213,6 +279,18 @@ serve(async (req: Request) => {
           status: 'awaiting_payment',
           error_message: 'Pagamento vencido. Cliente precisa renovar.',
         }).eq('id', pending.id);
+
+        // Suspender acesso enquanto o pagamento estiver vencido.
+        // Só mexe em status — preserva cota/plano pra reativar fácil quando pagar.
+        if (pending.user_id) {
+          const { error: susErr } = await supabase
+            .from('user_subscriptions')
+            .update({ status: 'suspended', updated_at: new Date().toISOString() })
+            .eq('user_id', pending.user_id);
+          if (susErr) console.warn(`[checkout-asaas-webhook] falha ao suspender assinatura: ${susErr.message}`);
+          else console.log(`[checkout-asaas-webhook] assinatura SUSPENSA — user=${pending.user_id}`);
+        }
+
         console.log(`[checkout-asaas-webhook] ⚠️ VENCIDO — pending=${pending.id}`);
         break;
       }
@@ -222,8 +300,20 @@ serve(async (req: Request) => {
         await supabase.from('checkout_pending').update({
           status: 'cancelled',
         }).eq('id', pending.id);
+
+        // Bloquear acesso: marca a assinatura como cancelada.
+        // Mantém a linha (histórico/cota) — só o status muda; o gating de
+        // acesso no frontend checa status='active'.
+        if (pending.user_id) {
+          const { error: cancErr } = await supabase
+            .from('user_subscriptions')
+            .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+            .eq('user_id', pending.user_id);
+          if (cancErr) console.warn(`[checkout-asaas-webhook] falha ao cancelar assinatura: ${cancErr.message}`);
+          else console.log(`[checkout-asaas-webhook] assinatura CANCELADA — user=${pending.user_id}`);
+        }
+
         console.log(`[checkout-asaas-webhook] ❌ CANCELADO — pending=${pending.id}`);
-        // TODO: bloquear acesso PRO na tabela subscriptions
         break;
       }
 
