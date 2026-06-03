@@ -289,3 +289,23 @@
 - Marcos recebeu evolucoes em CRM manual, importacao/listas, campanhas, follow-up, instancias para vendedores, performance e exclusao em massa.
 - Base teste/staging e scripts isolados configurados em producao e homologacao.
 - Corrigidos bugs historicos de conexao com Supabase e fluxos Uazapi.
+
+## 2026-06-03 — Pedro v2: aceite de foto por emoji/"por favor" (v49) + diagnostico de inteligencia
+
+- Build `2026-06-03-affirmative-emoji-favor-v49` (deploy da `main`, verificado no ar via dry-run).
+- BUG (lead Rene, anuncio Jeep Renegade): agente ofereceu "Gostaria de ver fotos?",
+  lead respondeu `👍🏼` + "Pir favor" e o agente IGNOROU, foi para qualificacao.
+  Causa: `isAffirmativeText` nao reconhecia emoji positivo (normalizeText apaga emojis)
+  nem "por favor"/erros de digitacao. `veiculos_apresentados` ja tinha o Jeep (16 fotos).
+- Fix em `pedroBrainPlanner_20260525.ts`: `hasPositiveEmoji()` (testa string crua) +
+  "por favor/porfa/pf/pfv" + msg curta com "favor". Gate `hasRecentPhotoOffer` mantido
+  (emoji so dispara foto apos oferta recente). 16 casos unitarios passando.
+- DIAGNOSTICO em logs reais (pedro_v2_turn_logs + wa_chat_history, 27/05-03/06, 563 turnos):
+  - 68% das msgs do agente terminam com "?" (robotizacao/interrogatorio) — alto.
+  - intent "unknown" em ~27% dos turnos (150/563) — camada de intencao fraca.
+  - 9% das msgs com elogio/validacao vazia; 12% longas (>240 chars).
+  - Onde `photo_request` dispara, as fotos enviam OK (uazapi 200) — o gargalo e DETECCAO.
+- 2 sub-agentes de pesquisa web (OpenAI/Anthropic/LangGraph) -> recomendacao central:
+  trocar deteccao por regex por planner LLM com Structured Outputs (enum de acao +
+  confidence + few-shot dos casos reais), classificar SEMPRE relativo a ultima pergunta
+  do agente, e grounding de veiculo por ID. Plano cirurgico de 4 fases entregue ao dev.
