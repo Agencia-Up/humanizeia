@@ -944,6 +944,23 @@ export default function Checkout() {
 
         </div>
       </main>
+
+      {/* ── RODAPE — identidade legal da empresa (conformidade Meta/WhatsApp) ── */}
+      <footer className="border-t mt-4" style={{ borderColor: 'rgba(15, 38, 71, 0.10)' }}>
+        <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-between sm:text-left">
+          <p className="text-xs leading-relaxed" style={{ color: 'rgba(15, 38, 71, 0.80)' }}>
+            <span className="font-semibold" style={{ color: 'var(--brand-navy)' }}>Agencia Up Business LTDA</span>
+            <span style={{ opacity: 0.75 }}>&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs" style={{ color: 'rgba(15, 38, 71, 0.60)' }}>
+            <span>© {new Date().getFullYear()} LOGOS|IA</span>
+            <span style={{ opacity: 0.4 }}>·</span>
+            <a href="/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="hover:underline">Privacidade</a>
+            <span style={{ opacity: 0.4 }}>·</span>
+            <a href="/terms-of-service.html" target="_blank" rel="noopener noreferrer" className="hover:underline">Termos de Uso</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
