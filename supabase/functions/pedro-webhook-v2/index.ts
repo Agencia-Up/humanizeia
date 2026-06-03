@@ -8,7 +8,7 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 
-const PEDRO_V2_BUILD = "2026-06-03-affirmative-emoji-favor-v49";
+const PEDRO_V2_BUILD = "2026-06-03-planner-structured-context-v50";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||

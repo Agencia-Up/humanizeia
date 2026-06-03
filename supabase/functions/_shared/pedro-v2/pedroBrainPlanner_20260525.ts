@@ -140,6 +140,43 @@ function hasRecentPhotoOffer(input: {
   return (/\b(quer|posso|gostaria|deseja|quer que eu|te mando|posso te mostrar|vou mandar|vou enviar|vou separar|vou te mandar|consigo te mandar|consigo mandar|te envio|separar as fotos|qual.*ver primeiro)\b/.test(text) && /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(text));
 }
 
+// Resume O QUE O AGENTE ACABOU DE FAZER na ultima fala, para o planner interpretar a
+// resposta do lead EM RELACAO a isso. Sem esse sinal, "👍" / "2024" / "pode" / "pir favor"
+// viravam intent="unknown" porque o LLM nao sabia a que estavam respondendo.
+function getLastAgentText(input: {
+  memory?: PedroV2LeadMemory | null;
+  recent_history?: any[];
+}): string {
+  const turns = [
+    ...(Array.isArray(input.recent_history) ? input.recent_history : []),
+    ...(Array.isArray(input.memory?.recent_turns) ? input.memory.recent_turns : []),
+  ];
+  const agentTurns = turns.filter((turn) =>
+    ["agent", "assistant", "consultor", "outgoing"].includes(String(turn?.role || turn?.direction || "").toLowerCase())
+  );
+  const last = agentTurns[agentTurns.length - 1];
+  return String(last?.text || last?.content || last?.message || "");
+}
+
+// Classifica o TIPO da ultima pergunta/oferta do agente, para o planner interpretar
+// respostas curtas/emojis EM CONTEXTO (regra #1 do prompt do planner).
+function classifyPendingQuestion(input: {
+  memory?: PedroV2LeadMemory | null;
+  recent_history?: any[];
+}): string {
+  const raw = getLastAgentText(input);
+  const t = normalizeText(raw);
+  if (!t) return "nenhum";
+  // Oferta/promessa de fotos tem prioridade (reaproveita a mesma deteccao do enforcement).
+  if (hasRecentPhotoOffer(input)) return "ofereceu_fotos";
+  if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t) && /\b(pretende|vai|forma|paga|pagar|prefere|quer)\b/.test(t)) return "perguntou_pagamento";
+  if (/\b(troca|usado na troca|carro na troca|tem (um )?carro)\b/.test(t)) return "perguntou_troca";
+  if (/\b(nome|cpf|nascimento|telefone|e mail|email|whatsapp)\b/.test(t)) return "perguntou_dados";
+  if (/\b(qual (carro|modelo|veiculo)|que carro|qual veiculo|esta procurando|procura|tipo de carro|qual seria)\b/.test(t)) return "perguntou_veiculo";
+  if (/[?]\s*$/.test(raw.trim())) return "fez_pergunta";
+  return "afirmacao";
+}
+
 function detectPhotoTarget(message?: string | null) {
   const normalized = normalizeText(message);
   if (/\b(roda|rodas|pneu|pneus|aro|calota)\b/.test(normalized)) return "wheel";
@@ -493,6 +530,41 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   return plan;
 }
 
+// Schema da SAIDA ESTRUTURADA do planner (OpenAI Structured Outputs, strict). Garante
+// que action/intent/confidence sempre venham validos — sem regex parseando texto livre.
+const PLAN_JSON_SCHEMA = {
+  name: "pedro_plan",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["lead_interpretation", "action", "intent", "confidence", "search_query", "search_filters", "photo_target", "use_memory_vehicle", "response_guidance", "reason"],
+    properties: {
+      lead_interpretation: { type: "string", description: "Em 1 frase: como voce leu a mensagem do lead em relacao ao pending_question." },
+      action: { type: "string", enum: ["reply_only", "stock_search", "photo_request", "handoff", "clarify"] },
+      intent: { type: "string", enum: ["stock_lookup", "price_question", "vehicle_reference", "photo_request", "financing", "trade_in", "location", "human_request", "seller_ack", "complaint", "small_talk", "unknown"] },
+      confidence: { type: "number" },
+      search_query: { type: ["string", "null"] },
+      search_filters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["modelo_desejado", "tipo_veiculo", "ano", "cor", "preco_max"],
+        properties: {
+          modelo_desejado: { type: ["string", "null"] },
+          tipo_veiculo: { type: ["string", "null"], enum: ["suv", "pickup", "hatch", "sedan", "moto", null] },
+          ano: { type: ["string", "null"] },
+          cor: { type: ["string", "null"] },
+          preco_max: { type: ["number", "null"] },
+        },
+      },
+      photo_target: { type: ["string", "null"] },
+      use_memory_vehicle: { type: "boolean" },
+      response_guidance: { type: "string" },
+      reason: { type: "string" },
+    },
+  },
+};
+
 export async function planPedroTurn(input: {
   agent?: any;
   message: string;
@@ -509,70 +581,96 @@ export async function planPedroTurn(input: {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallback;
 
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  // SINAIS DETERMINISTICOS de contexto: o QUE o agente acabou de fazer (pending_question)
+  // e o texto da ultima fala dele. Sem isso o LLM nao interpretava respostas curtas/emojis
+  // ("👍", "2024", "sim", "pir favor") e caia em intent="unknown".
+  const pendingQuestion = classifyPendingQuestion(input);
+  const lastAgentMessage = getLastAgentText(input).slice(0, 400);
+
+  const systemPrompt = [
+    "Voce e o CEREBRO/orquestrador do Pedro v2 (consultor de vendas de carros). Sua tarefa e DECIDIR a proxima acao — NAO escreva a resposta final ao lead.",
+    "Retorne JSON valido com: lead_interpretation, action, intent, confidence, search_query, search_filters, photo_target, use_memory_vehicle, response_guidance, reason.",
+    "",
+    "== REGRA #1 (A MAIS IMPORTANTE): INTERPRETE A MENSAGEM DO LEAD EM RELACAO AO QUE O AGENTE ACABOU DE FAZER ==",
+    "O campo 'pending_question' diz o que o agente perguntou/ofereceu na ULTIMA fala ('last_agent_message' tem o texto). Uma resposta CURTA, um EMOJI ou algo ambiguo do lead RESPONDE a isso — NUNCA classifique como 'unknown' quando ha um pending_question claro:",
+    "- pending_question='ofereceu_fotos': se o lead reagir de forma POSITIVA, CURTA ou com EMOJI (ex.: 'sim', 'pode', 'quero', 'manda', 'por favor', 'pf', '👍', '👌', '🙏', uma COR, um ANO tipo '2024', 'o primeiro', 'esse', 'isso') => action='photo_request', use_memory_vehicle=true. Vale mesmo com erro de digitacao ('pir favor', 'mostra ai').",
+    "- pending_question='perguntou_pagamento': se o lead responder a forma de pagamento ('a vista', 'financiado', 'financiamento', 'troca', 'parcelado') => action='reply_only' e siga a qualificacao. NAO mande fotos.",
+    "- pending_question='perguntou_troca'/'perguntou_dados'/'perguntou_veiculo': trate a resposta curta como resposta AQUELA pergunta (geralmente 'reply_only'; use 'stock_search' so se o lead citar um carro NOVO de interesse).",
+    "- pending_question='nenhum'/'fez_pergunta': trate conforme o conteudo da mensagem.",
+    "",
+    "== EXEMPLOS (pending_question -> mensagem do lead -> action) ==",
+    "ofereceu_fotos -> '👍' -> photo_request",
+    "ofereceu_fotos -> 'Pir favor' -> photo_request",
+    "ofereceu_fotos -> 'sim, pode mandar' -> photo_request",
+    "ofereceu_fotos -> '2024' (escolhendo qual ver) -> photo_request",
+    "ofereceu_fotos -> 'o preto' -> photo_request",
+    "perguntou_pagamento -> 'financiamento' -> reply_only (segue qualificando, sem foto)",
+    "perguntou_troca -> 'tenho um Onix 2019' -> reply_only (registra a troca; NAO troca o carro de interesse pelo carro da troca)",
+    "nenhum -> 'oi, tudo bem?' -> reply_only",
+    "qualquer -> 'quero falar com um vendedor' -> handoff",
+    "",
+    "== RESOLUCAO DE VEICULOS (INTELIGENCIA SEMANTICA) ==",
+    "- Identifique se a mensagem atual do lead (lead_message) ou o contexto recente cita algum veiculo (marca, modelo ou versao), mesmo com erros graves de digitacao, abreviacoes ou escrita fonetica (ex: 'reguede' -> 'Jeep Renegade', 'tcross' -> 'Volkswagen T-Cross', 'oroqui' -> 'Renault Oroch', 'mini cuper' -> 'Mini Cooper').",
+    "- Se um veiculo for mencionado, defina 'action'='stock_search' e coloque o nome canonico (Marca + Modelo, ex: 'Jeep Renegade') em 'search_query'.",
+    "- Preencha 'search_filters.modelo_desejado' com o modelo e 'search_filters.tipo_veiculo' com 'suv','pickup','hatch','sedan' ou 'moto'.",
+    "- Nao confie cegamente no 'vehicle_resolution' heuristico se voce puder deduzir semanticamente o veiculo a partir da mensagem do lead.",
+    "",
+    "== ORQUESTRACAO GERAL ==",
+    "- A mensagem ATUAL do lead vence a memoria antiga (se ele mudou de carro, respeite o novo).",
+    "- Pedido explicito de foto de veiculo ja apresentado/em contexto => 'photo_request'.",
+    "- Nunca invente que enviou fotos sem a acao 'photo_request'.",
+    "- 'confidence' = 0 a 1 (quao certo voce esta da acao). Use 'lead_interpretation' para explicar em 1 frase como leu a mensagem em relacao ao pending_question.",
+    "",
+    "== HANDOFF ==",
+    "- Defina 'action'='handoff' SOMENTE quando o lead pediu EXPLICITAMENTE falar com um humano/vendedor/consultor (ex: 'quero falar com um vendedor', 'me passa pra um atendente').",
+    "  ATENCAO — NAO e handoff aqui (use 'reply_only' e deixe o agente conduzir a QUALIFICACAO do System Prompt, uma pergunta por vez, ANTES de qualquer transferencia):",
+    "  - querer comprar ('quero comprar', 'vou querer', 'fechar', 'gostei');",
+    "  - querer AGENDAR visita/test-drive ('quero agendar', 'posso ir ai?', 'marcar visita') — o agente coleta dia/horario + dados antes;",
+    "  - interesse vago, duvida de preco, pedir foto ou so perguntar sobre um modelo.",
+    "  A decisao de transferir o lead JA QUALIFICADO e tomada na resposta (campo 'pronto_para_transferir' do brain), NAO aqui.",
+    "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque.",
+  ].join("\n");
+
+  const userPayload = JSON.stringify({
+    lead_message: input.message,
+    enriched_message: input.enriched_message,
+    pending_question: pendingQuestion,
+    last_agent_message: lastAgentMessage,
+    memory: input.memory || {},
+    heuristic_intent: input.heuristic_intent || null,
+    ad_context: input.ad_context || null,
+    media_context: input.media_context || null,
+    recent_history: input.recent_history || [],
+    vehicle_resolution: input.vehicle_resolution,
+  });
+
+  // OTIMIZACAO DE CUSTO: o planner e DECISAO ESTRUTURADA (temp 0.1), nao a resposta ao
+  // cliente — roda em gpt-4o-mini (~16x mais barato). O reply continua em gpt-4o.
+  const baseBody: Record<string, any> = {
+    model: "gpt-4o-mini",
+    temperature: 0.1,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPayload },
+    ],
+  };
+
+  const callPlanner = async (responseFormat: any) =>
+    await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        // OTIMIZACAO DE CUSTO: o planner e uma DECISAO ESTRUTURADA (action/intent/
-        // search_query em JSON, temp 0.1), nao a resposta ao cliente — entao roda em
-        // gpt-4o-mini (~16x mais barato que gpt-4o). A qualidade da CONVERSA fica
-        // intacta (o reply continua em gpt-4o). Rede de seguranca: o resolvedor
-        // heuristico de veiculo + normalizePlan corrigem/validam a saida do planner.
-        // (O reply usa sanitizeModel(agent.model); o planner NAO.)
-        model: "gpt-4o-mini",
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              [
-                "Voce e o cerebro/orquestrador Pedro v2. Decida a proxima acao, sem escrever resposta final ao lead.",
-                "Retorne JSON valido com: action, intent, confidence, search_query, search_filters, photo_target, use_memory_vehicle, response_guidance, reason.",
-                "",
-                "REGRAS DE RESOLUÇÃO DE VEÍCULOS (INTELIGÊNCIA SEMÂNTICA):",
-                "- Identifique se a mensagem atual do lead (lead_message) ou o contexto recente cita algum veículo (marca, modelo ou versão), mesmo com erros graves de digitação, abreviações ou escrita fonética (ex: 'reguede' -> 'Jeep Renegade', 'tcross' -> 'Volkswagen T-Cross', 'oroqui' -> 'Renault Oroch', 'mini cuper' -> 'Mini Cooper').",
-                "- Se um veículo for mencionado, defina 'action' como 'stock_search' (para buscar no estoque) e coloque o nome do veículo corrigido/canônico (Marca + Modelo, ex: 'Jeep Renegade') em 'search_query'.",
-                "- Preencha em 'search_filters' o campo 'modelo_desejado' com o modelo correto e 'tipo_veiculo' com 'suv', 'pickup', 'hatch', 'sedan' ou 'moto'.",
-                "- Não confie cegamente no 'vehicle_resolution' heurístico se você puder deduzir semanticamente o veículo correto a partir da mensagem do lead.",
-                "",
-                "REGRAS DE ORQUESTRAÇÃO GERAIS:",
-                "- A mensagem atual do lead sempre vence o contexto da memória antiga (se ele mudou de carro, respeite o novo carro).",
-                "- Se o lead pedir fotos de um veículo já apresentado ou em contexto seguro, defina 'action' como 'photo_request'.",
-                "- Se o lead respondeu afirmativamente (sim/pode/manda) após uma oferta recente de fotos, defina 'action' como 'photo_request' com 'use_memory_vehicle' true.",
-                "- Se for apenas uma saudação comum, use 'reply_only'.",
-                "- Nunca invente que enviou fotos sem a ação 'photo_request'.",
-                "",
-                "REGRA DE TRANSFERÊNCIA (HANDOFF) — defina 'action' como 'handoff' SOMENTE quando o lead pediu EXPLICITAMENTE falar com um humano/vendedor/consultor (ex: 'quero falar com um vendedor', 'me passa pra um atendente').",
-                "  ATENÇÃO — NÃO é handoff aqui (use 'reply_only' e deixe o agente conduzir a QUALIFICAÇÃO do System Prompt, uma pergunta por vez, ANTES de qualquer transferência):",
-                "  - querer comprar ('quero comprar', 'vou querer', 'fechar', 'gostei');",
-                "  - querer AGENDAR uma visita/test-drive ('quero agendar', 'posso ir aí?', 'marcar visita') — o agente deve coletar dia/horário + dados antes;",
-                "  - interesse vago, dúvida de preço, pedir foto ou só perguntar sobre um modelo.",
-                "  Nesses casos a decisão de transferir o lead JÁ QUALIFICADO é tomada na resposta (campo 'pronto_para_transferir' do brain), NÃO aqui.",
-                "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque."
-              ].join("\n"),
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              lead_message: input.message,
-              enriched_message: input.enriched_message,
-              memory: input.memory || {},
-              heuristic_intent: input.heuristic_intent || null,
-              ad_context: input.ad_context || null,
-              media_context: input.media_context || null,
-              recent_history: input.recent_history || [],
-              vehicle_resolution: input.vehicle_resolution,
-            }),
-          },
-        ],
-      }),
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...baseBody, response_format: responseFormat }),
     });
 
+  try {
+    // 1) SAIDA ESTRUTURADA ESTRITA: o schema garante action/intent/confidence sempre validos.
+    let res = await callPlanner({ type: "json_schema", json_schema: PLAN_JSON_SCHEMA });
+    // 2) DEGRADACAO GRACIOSA: se a API rejeitar o schema, cai p/ json_object (o prompt
+    //    melhorado segue valendo) e so depois p/ o fallback heuristico. Sem regressao.
+    if (!res.ok) {
+      console.warn(`[PedroV2] planner json_schema rejeitado (${res.status}); degradando p/ json_object`);
+      res = await callPlanner({ type: "json_object" });
+    }
     if (!res.ok) return fallback;
     const data = await res.json();
     if (input.usage_sink) input.usage_sink.tokens += sumOpenAiTokens(data);
