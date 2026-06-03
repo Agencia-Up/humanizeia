@@ -296,6 +296,53 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
+
+    // ── Segurança: confirma que o chamador é dono da conta (user_id = master_id) ──
+    // Sem isso, qualquer um com a anon key pública poderia criar instâncias na
+    // conta de OUTRO usuário (consumindo o pool do plano dele). Espelha a checagem
+    // de get-evolution-qrcode / verify-instance-status.
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const anonClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!);
+    const callerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const { data: { user: caller }, error: callerErr } = await anonClient.auth.getUser(callerToken);
+    if (callerErr || !caller) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const { data: callerSellerRows } = await supabase
+      .from('ai_team_members')
+      .select('id, user_id')
+      .eq('auth_user_id', caller.id)
+      .eq('is_active', true);
+    const allowedMasterIds = new Set<string>([
+      caller.id,
+      ...((callerSellerRows || []).map((r: any) => r.user_id).filter(Boolean)),
+    ]);
+    if (body.user_id && !allowedMasterIds.has(body.user_id)) {
+      return new Response(JSON.stringify({ success: false, error: 'Ação não autorizada para esta conta.' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // Se a instância é para um vendedor específico, ele precisa pertencer a esta conta.
+    if (body.seller_member_id) {
+      const { data: memberRow } = await supabase
+        .from('ai_team_members')
+        .select('id, user_id')
+        .eq('id', body.seller_member_id)
+        .maybeSingle();
+      if (!memberRow || memberRow.user_id !== body.user_id) {
+        return new Response(JSON.stringify({ success: false, error: 'Vendedor inválido para esta conta.' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     const provider = body.provider || 'evolution';
 
     // ── Validação de pool de instâncias da conta (master + vendedores) ──
