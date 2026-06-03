@@ -16,19 +16,10 @@ import { z } from 'zod';
 const emailSchema = z.string().email('Email inválido');
 const passwordSchema = z.string().min(6, 'Senha deve ter no mínimo 6 caracteres');
 
-// Helper: chama a Edge Function send-email
-async function sendEmail(payload: Record<string, string>) {
-  try {
-    await supabase.functions.invoke('send-email', { body: payload });
-  } catch (err) {
-    console.warn('send-email error (não crítico):', err);
-  }
-}
-
 export default function Auth() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { signIn, signUp, user } = useAuth();
+  const { signIn, user } = useAuth();
   const { toast } = useToast();
   const { isDarkMode, toggleDarkMode } = useAppStore();
 
@@ -47,14 +38,6 @@ export default function Auth() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPass, setShowLoginPass] = useState(false);
-
-  // Cadastro
-  const [signupName, setSignupName] = useState('');
-  const [signupEmail, setSignupEmail] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
-  const [signupConfirm, setSignupConfirm] = useState('');
-  const [showSignupPass, setShowSignupPass] = useState(false);
-  const [showSignupConfirm, setShowSignupConfirm] = useState(false);
 
   // Recuperação de senha
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -93,84 +76,6 @@ export default function Auth() {
       }
     } catch (err: any) {
       console.error("Erro crítico no Login:", err);
-      toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // ─── CADASTRO ─────────────────────────────────────────────────────────────
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const emailResult = emailSchema.safeParse(signupEmail);
-    if (!emailResult.success) {
-      toast({ title: 'Email inválido', description: emailResult.error.errors[0].message, variant: 'destructive' });
-      return;
-    }
-    const passResult = passwordSchema.safeParse(signupPassword);
-    if (!passResult.success) {
-      toast({ title: 'Senha inválida', description: passResult.error.errors[0].message, variant: 'destructive' });
-      return;
-    }
-    if (signupPassword !== signupConfirm) {
-      toast({ title: 'Senhas não coincidem', description: 'Verifique e tente novamente.', variant: 'destructive' });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: signupEmail,
-        password: signupPassword,
-        options: {
-          data: { full_name: signupName },
-        },
-      });
-
-      if (error) {
-        let msg = 'Não foi possível criar sua conta.';
-        if (error.message.includes('already registered') || error.message.includes('already been registered')) {
-          msg = 'Este e-mail já está cadastrado em nossa base.';
-        }
-        toast({ 
-          title: 'Erro no cadastro', 
-          description: msg, 
-          variant: 'destructive' 
-        });
-        return;
-      }
-
-      // Verificação defensiva de conta existente (identities)
-      const identities = data?.user?.identities ?? [];
-      if (data?.user && identities.length === 0) {
-        toast({
-          title: 'Conta já existente',
-          description: 'Este e-mail já possui um cadastro pendente ou ativo. Tente fazer login.',
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      // Registro realizado com sucesso
-      toast({
-        title: '🎉 Cadastro realizado!',
-        description: 'Enviamos um e-mail de confirmação. Por favor, verifique sua caixa de entrada.',
-      });
-
-      // Envia email de boas-vindas/onboarding via Edge Function (Auxiliar)
-      try {
-        await sendEmail({
-          type: 'welcome',
-          email: signupEmail,
-          name: signupName || 'Usuário',
-          redirectTo: window.location.origin,
-        });
-      } catch (e) {
-        console.warn('Erro ao enviar e-mail de boas-vindas:', e);
-      }
-    } catch (err: any) {
-      console.error("Erro crítico no Cadastro:", err);
       toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
@@ -385,91 +290,38 @@ export default function Auth() {
                 </form>
               </TabsContent>
 
-              {/* ── ABA CADASTRO ── */}
+              {/* ── ABA CRIAR CONTA — pagamento primeiro ── */}
+              {/* Para abrir conta é preciso assinar um plano. O cadastro
+                  acontece automaticamente após o pagamento confirmado na
+                  Asaas (o webhook cria o login e envia o acesso por email). */}
               <TabsContent value="signup" className="mt-0">
-                <form onSubmit={handleSignup} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-name">Nome completo</Label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="signup-name"
-                        type="text"
-                        placeholder="Seu nome"
-                        className="pl-10"
-                        value={signupName}
-                        onChange={(e) => setSignupName(e.target.value)}
-                      />
-                    </div>
+                <div className="space-y-4 text-center">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                    <Lock className="h-6 w-6 text-primary" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold text-foreground">
+                      Crie sua conta assinando um plano
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      O acesso é liberado assim que o pagamento for confirmado.
+                      Você escolhe o plano, paga com segurança e recebe seu
+                      login por email — tudo automático.
+                    </p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-email">Email</Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="signup-email"
-                        type="email"
-                        placeholder="seu@email.com"
-                        className="pl-10"
-                        value={signupEmail}
-                        onChange={(e) => setSignupEmail(e.target.value)}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-password">Senha</Label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="signup-password"
-                        type={showSignupPass ? 'text' : 'password'}
-                        placeholder="Mínimo 6 caracteres"
-                        className="pl-10 pr-10"
-                        value={signupPassword}
-                        onChange={(e) => setSignupPassword(e.target.value)}
-                        required
-                      />
-                      <button
-                        type="button"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        onClick={() => setShowSignupPass(!showSignupPass)}
-                      >
-                        {showSignupPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-confirm">Confirmar senha</Label>
-                    <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="signup-confirm"
-                        type={showSignupConfirm ? 'text' : 'password'}
-                        placeholder="Repita sua senha"
-                        className="pl-10 pr-10"
-                        value={signupConfirm}
-                        onChange={(e) => setSignupConfirm(e.target.value)}
-                        required
-                      />
-                      <button
-                        type="button"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        onClick={() => setShowSignupConfirm(!showSignupConfirm)}
-                      >
-                        {showSignupConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <Button type="submit" className="w-full gradient-primary text-primary-foreground" disabled={isLoading}>
-                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Criar minha conta
+                  <Button
+                    type="button"
+                    className="w-full gradient-primary text-primary-foreground"
+                    onClick={() => navigate('/checkout?plano=pro&ciclo=mensal')}
+                  >
+                    Ver planos e assinar
                   </Button>
-                </form>
+
+                  <p className="text-xs text-muted-foreground">
+                    Já tem conta? Use a aba <span className="font-medium text-foreground">Entrar</span> aqui em cima.
+                  </p>
+                </div>
               </TabsContent>
             </CardContent>
           </Tabs>

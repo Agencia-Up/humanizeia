@@ -14,17 +14,28 @@ const ORG_EXEMPT_PATHS  = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 // Paths that bypass the quiz-completed check
 const QUIZ_EXEMPT_PATHS = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 
+// ── Trava de pagamento (paywall) ─────────────────────────────────────────────
+// So vale pra CONTAS NOVAS. Contas criadas ANTES desta data de corte sao
+// "grandfathered": entram normalmente, sem checagem de pagamento. As 18 contas
+// atuais (criadas ate 28/05/2026) ficam protegidas por essa data. Funcionarios
+// (sellers) tambem sao isentos: usam o plano do patrao, nao pagam.
+// O cliente novo (owner) so passa daqui se tiver assinatura status='active'
+// — o que so acontece depois do webhook da Asaas confirmar o pagamento.
+const LOCK_CUTOFF = Date.parse('2026-06-03T00:00:00Z');
+
+type ProfileState = 'ok' | 'no_org' | 'no_quiz' | 'no_payment';
+
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Survives React Fast Refresh (HMR) re-renders because it lives in module scope.
 // Key: `userId:pathname` → cached profile state.
 // This prevents ProtectedRoute from firing a DB round-trip (and showing a
 // full-page spinner that remounts children) after every file save.
-const profileCache = new Map<string, 'ok' | 'no_org' | 'no_quiz'>();
+const profileCache = new Map<string, ProfileState>();
 
 export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
   const location = useLocation();
-  const [profileState, setProfileState] = useState<'loading' | 'ok' | 'no_org' | 'no_quiz'>('loading');
+  const [profileState, setProfileState] = useState<'loading' | ProfileState>('loading');
   // Track in-flight request so we never update state on an unmounted component
   const abortRef = useRef<AbortController | null>(null);
 
@@ -57,50 +68,69 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
 
     // Cancel any previous in-flight request
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-    supabase
-      .from('profiles')
-      .select('organization_id, quiz_completed, role')
-      .eq('id', user.id)
-      .single()
-      .then(({ data, error }) => {
-        if (abortRef.current?.signal.aborted) return;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('organization_id, quiz_completed, role')
+          .eq('id', user.id)
+          .single();
 
-        let next: 'ok' | 'no_org' | 'no_quiz';
+        if (ac.signal.aborted) return;
+
+        // Sellers (funcionários) nunca precisam de org própria, quiz nem pagamento
+        const isSeller = !error && !!data && (data as any).role === 'seller';
+
+        let next: ProfileState;
         if (error || !data) {
           next = 'no_org';
+        } else if (isSeller) {
+          next = 'ok';
         } else {
-          // Sellers (funcionários) nunca precisam de org própria nem quiz
-          const isSeller = (data as any).role === 'seller';
-          if (isSeller) {
-            next = 'ok';
-          } else {
-            const hasOrg   = !!data.organization_id;
-            const doneQuiz = !!(data as any).quiz_completed
-              || localStorage.getItem(`quiz_completed_${user.id}`) === 'true';
+          const hasOrg   = !!data.organization_id;
+          const doneQuiz = !!(data as any).quiz_completed
+            || localStorage.getItem(`quiz_completed_${user.id}`) === 'true';
 
-            if (!hasOrg && !isOrgExempt) {
-              next = 'no_org';
-            } else if (!doneQuiz && !isQuizExempt) {
-              next = 'no_quiz';
-            } else {
-              next = 'ok';
-            }
+          if (!hasOrg && !isOrgExempt) {
+            next = 'no_org';
+          } else if (!doneQuiz && !isQuizExempt) {
+            next = 'no_quiz';
+          } else {
+            next = 'ok';
+          }
+        }
+
+        // ── Trava de pagamento: só pra cliente novo (owner criado a partir da
+        // data de corte). Sellers e contas antigas nunca caem aqui. Se a
+        // assinatura não estiver 'active', manda pro checkout pra pagar.
+        const createdMs = user.created_at ? Date.parse(user.created_at) : NaN;
+        const isNewAccount = Number.isFinite(createdMs) && createdMs >= LOCK_CUTOFF;
+        if (next === 'ok' && !isSeller && isNewAccount) {
+          const { data: sub } = await supabase
+            .from('user_subscriptions')
+            .select('status')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          if (ac.signal.aborted) return;
+          if ((sub as any)?.status !== 'active') {
+            next = 'no_payment';
           }
         }
 
         profileCache.set(cacheKey, next);
         setProfileState(next);
-      })
-      .catch(() => {
-        if (!abortRef.current?.signal.aborted) {
+      } catch {
+        if (!ac.signal.aborted) {
           setProfileState('no_org');
         }
-      });
+      }
+    })();
 
     return () => {
-      abortRef.current?.abort();
+      ac.abort();
     };
   }, [user?.id, location.pathname]);
 
@@ -126,6 +156,11 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
 
   if (profileState === 'no_quiz' && !isQuizExempt) {
     return <Navigate to="/niche-quiz" replace />;
+  }
+
+  // Cliente novo sem pagamento confirmado → manda pagar antes de liberar.
+  if (profileState === 'no_payment') {
+    return <Navigate to="/checkout?plano=pro&ciclo=mensal" replace />;
   }
 
   return <>{children}</>;
