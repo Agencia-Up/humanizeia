@@ -54,3 +54,8 @@ tests/staging-seeds/
 /.env
 /secrets.txt
 pedro_v2_architecture_and_credentials.md
+
+# Scripts de diagnóstico locais — contêm service-role key hardcoded; NUNCA commitar.
+scratch/
+.tmp-*/
+test_vision.cjs
