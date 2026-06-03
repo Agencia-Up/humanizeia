@@ -2125,12 +2125,22 @@ export default function LandingPage() {
           </div>
 
           {/* Bottom bar */}
-          <div
-            className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
-            style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)', color: 'rgba(250, 248, 242, 0.55)' }}
-          >
-            <span>© {new Date().getFullYear()} LOGOS|IA. Todos os direitos reservados.</span>
-            <span>Feito no Brasil 🇧🇷</span>
+          <div className="pt-6" style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)' }}>
+            <div
+              className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
+              style={{ color: 'rgba(250, 248, 242, 0.55)' }}
+            >
+              <span>© {new Date().getFullYear()} LOGOS|IA. Todos os direitos reservados.</span>
+              <span>Feito no Brasil 🇧🇷</span>
+            </div>
+
+            {/* Dados da empresa (CNPJ/cidade) — mesma fonte/seção, tom discreto */}
+            <p
+              className="mt-3 text-center sm:text-left text-[11px] leading-relaxed"
+              style={{ color: 'rgba(250, 248, 242, 0.40)' }}
+            >
+              Agencia Up Business LTDA&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP
+            </p>
           </div>
 
         </div>
