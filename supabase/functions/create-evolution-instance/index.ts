@@ -315,15 +315,19 @@ Deno.serve(async (req) => {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    // IMPORTANTE: autorizacao usa active_in_system (vendedor habilitado na
-    // plataforma), NAO is_active. is_active reflete estado da linha/instancia
-    // (cai pra false quando a instancia desconecta), entao filtrar por is_active
-    // bloqueava o vendedor de (re)conectar justamente quando ele mais precisa.
+    // ISOLAMENTO (03/06/2026): autorizacao por PERTENCIMENTO (auth_user_id),
+    // SEM nenhum filtro de flag mutavel. Espelha verify-instance-status, que ja
+    // esta estavel em prod. is_active e active_in_system mudam de forma
+    // independente e imprevisivel (disconnect de instancia, pausa do vendedor,
+    // distribuicao de leads), entao QUALQUER filtro de flag aqui derruba o
+    // vendedor legitimo na hora de (re)conectar. A seguranca NAO depende dessas
+    // flags: vem (1) do auth_user_id (o vendedor E este usuario autenticado) e
+    // (2) da checagem seller_member_id -> user_id logo abaixo. Remover o filtro
+    // e estritamente mais seguro p/ disponibilidade e identico p/ multi-tenant.
     const { data: callerSellerRows } = await supabase
       .from('ai_team_members')
       .select('id, user_id')
-      .eq('auth_user_id', caller.id)
-      .eq('active_in_system', true);
+      .eq('auth_user_id', caller.id);
     const allowedMasterIds = new Set<string>([
       caller.id,
       ...((callerSellerRows || []).map((r: any) => r.user_id).filter(Boolean)),

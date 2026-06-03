@@ -106,9 +106,11 @@ function formatWaNumber(raw: string | null | undefined): string {
   return `+${d}`;
 }
 
+// Mantido em sincronia com INSTANCE_LIMITS_BY_PLAN do backend
+// (create-evolution-instance): basico 10, pro 15, enterprise 15.
 const INSTANCE_LIMITS: Record<string, number> = {
   basico: 10,
-  pro: 10,
+  pro: 15,
   enterprise: 15,
 };
 
