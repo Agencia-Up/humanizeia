@@ -336,6 +336,24 @@ function buildDeterministicStockReply(input: {
   return `${intro}\n\n${list}${more}\n\nQual dessas faz mais sentido pra voce?`;
 }
 
+// Limpa MARKDOWN/URLs que o WhatsApp NAO renderiza (saiam crus pro cliente, feio):
+// - [texto](url) e ![alt](url) de imagem/blob viram nada (fotos vao como MIDIA, nao link);
+// - links markdown comuns mantem so o texto; URLs cruas de imagem/blob somem;
+// - **negrito** vira *negrito* (sintaxe do WhatsApp).
+function stripMarkdownForWhatsApp(text: string): string {
+  let t = String(text || "");
+  t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, ""); // imagem markdown
+  t = t.replace(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_m, label, url) =>
+    /blob\.core\.windows\.net|bndv|\.(jpe?g|png|webp|gif)(\?|$)/i.test(url) ? "" : String(label)
+  );
+  t = t.replace(/https?:\/\/\S*(?:blob\.core\.windows\.net|bndv)\S*/gi, "");
+  t = t.replace(/https?:\/\/\S+\.(?:jpe?g|png|webp|gif)(?:\?\S*)?/gi, "");
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
+  t = t.replace(/^[ \t]*(?:Foto|Imagem|Veja a foto|Veja a imagem)\s*:?\s*$/gim, "");
+  t = t.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return t;
+}
+
 function ensureStockReplyFormatting(input: {
   text: string;
   facts: any[];
@@ -345,8 +363,9 @@ function ensureStockReplyFormatting(input: {
   stock_result?: any;
   ad_vehicle_consultation?: boolean;
 }) {
-  // Retorna o texto original da LLM diretamente para não travar a personalidade e formatação humana natural.
-  return input.text;
+  // Mantem a formatacao humana da LLM, mas LIMPA markdown/URLs que o WhatsApp nao
+  // renderiza (link de imagem cru "[Veja a foto](https://...blob...)" vazava pro cliente).
+  return stripMarkdownForWhatsApp(input.text);
 }
 
 function fallbackReply(input: {
@@ -510,7 +529,7 @@ export async function generatePedroBrainReply(input: {
                 "- ESPELHE o tamanho do cliente: cliente curto/objetivo => voce curto. Sem floreios, sem frases de preenchimento, sem repetir o que ja foi dito. Uma ideia por mensagem.",
                 "- Siga a sua personalidade principal do portal na escrita das mensagens.",
                 "- Se houver veiculos em stock.facts, liste as opcoes de forma natural e amigavel conforme sua personalidade. Diga os dados principais (modelo, ano, preco, km) sem formatacao mecanica, apenas integre de forma conversacional.",
-                "- Se stock.facts.imagem existir, forneca a URL da imagem de forma limpa na sua mensagem para o lead.",
+                "- NUNCA cole URL de imagem nem use markdown/links ('[texto](url)' ou '![..](..)') — o WhatsApp NAO renderiza e a URL crua aparece feia pro cliente. Para mostrar o carro, OFERECA enviar as fotos (a ferramenta de fotos manda a midia de verdade).",
                 "- Se o plano atual for 'photo_request', a tool de fotos ja selecionou e enviara as imagens. Escreva apenas um fechamento humano amigavel, sem prometer novas fotos.",
                 "- Nunca invente veiculos ou dados (ano, preco, km) que nao estejam descritos em stock.facts.",
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",

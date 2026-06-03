@@ -861,9 +861,24 @@ async function savePhotoReference(supabase: any, input: {
 // um 2o turno (agente respondia 2x / se reapresentava / pedia o modelo que o anuncio
 // ja trazia). 10s unifica o bloco -> 1 turno com o veiculo do anuncio resolvido.
 const PEDRO_V2_DEBOUNCE_MS = 10000;
+// Janela maior para mensagens curtas/fragmentadas (ver debounceWindowMs).
+const PEDRO_V2_DEBOUNCE_FRAGMENT_MS = 18000;
 
 function sleepMs(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Janela de debounce ADAPTATIVA. Mensagens curtas e sem pergunta ("ok", "vamos",
+// "vê", "cobinado", "brigado"...) quase sempre vêm em RAJADA — o lead digita em
+// pedaços com pausas de mais de 10s entre eles. Para agrupar tudo num turno só
+// (e nao responder 2x), essas esperam mais. Mensagem "completa" (uma pergunta ou
+// frase com >=4 palavras) mantem a janela padrao para resposta rapida.
+function debounceWindowMs(text: string): number {
+  const t = String(text || "").trim();
+  const words = t.split(/\s+/).filter(Boolean).length;
+  const isQuestion = /\?/.test(t);
+  if (!isQuestion && words <= 3) return PEDRO_V2_DEBOUNCE_FRAGMENT_MS;
+  return PEDRO_V2_DEBOUNCE_MS;
 }
 
 // Junta as mensagens do lead ainda NAO respondidas (desde a ultima resposta do
@@ -1031,7 +1046,7 @@ export async function processPedroV2Turn(
   // So em conversa real (nao dry_run) e v2 (este orquestrador). Mensagem unica = mesmo
   // comportamento + a espera.
   if (!dryRun && lead?.id && text && myUserMsgId) {
-    await sleepMs(PEDRO_V2_DEBOUNCE_MS);
+    await sleepMs(debounceWindowMs(text));
     const { data: latestUserMsg } = await supabase
       .from("wa_chat_history")
       .select("id")
