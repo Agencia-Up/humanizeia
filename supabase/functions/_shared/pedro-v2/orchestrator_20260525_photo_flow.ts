@@ -1281,6 +1281,38 @@ export async function processPedroV2Turn(
     };
   }
 
+  // SEARCH-AND-RETRY (fix relatorio mestre / Falha 5 - Edison): a busca ESPECIFICA nao
+  // achou nada -> NAO encerra de maos vazias. Faz uma 2a busca AMPLA (mesma categoria e/ou
+  // teto de preco, SEM o modelo/marca) e oferece os parecidos como ALTERNATIVA, em vez de
+  // "nao temos" + pular pro funil de pagamento. O searchPedroStock ja ordena por preco
+  // crescente (mais em conta primeiro). So dispara quando havia um modelo/marca especifico.
+  if (stockFilters && !isGenericQuery && stockResult?.success
+      && Array.isArray(stockResult.items) && stockResult.items.length === 0) {
+    const _hadSpecificModel = Boolean((stockFilters as any).modelo_desejado || (stockFilters as any).modelo || (stockFilters as any).marca);
+    const _broadType = (stockFilters as any).tipo_veiculo || null;
+    const _broadPriceMax = Number((stockFilters as any).preco_max) || null;
+    if (_hadSpecificModel && (_broadType || _broadPriceMax)) {
+      const altResult = await searchPedroStock(supabase, {
+        user_id: input.agent.user_id,
+        query: "",
+        filters: { tipo_veiculo: _broadType, preco_max: _broadPriceMax },
+        limit: 6,
+      });
+      if (altResult?.success && Array.isArray(altResult.items) && altResult.items.length > 0) {
+        const _wanted = (stockFilters as any).query || (stockFilters as any).modelo_desejado || "o modelo que voce pediu";
+        const _alts = altResult.items.slice(0, 4);
+        stockResult = {
+          success: true,
+          total: _alts.length,
+          items: _alts,
+          is_alternatives: true,
+          response_guidance: `NAO temos no estoque o veiculo exato pedido (${_wanted}). Seja honesto e CURTO sobre isso e ofereca ESTES parecidos como ALTERNATIVA (mesma faixa de preco/categoria), perguntando se quer ver algum. NUNCA pule para qualificacao de pagamento sem antes oferecer estas opcoes.`,
+        };
+        log("info", "pedro_v2_search_and_retry", { wanted: String(_wanted).slice(0, 40), alternatives: _alts.length });
+      }
+    }
+  }
+
   // FOTO GARANTIDA (rede de seguranca): se o lead pediu fotos EXPLICITAMENTE e
   // temos veiculos para mostrar — da memoria (ja apresentados) OU de uma busca
   // ESPECIFICA recem-feita NESTE turno — enviamos as imagens de verdade. Sem isso,
