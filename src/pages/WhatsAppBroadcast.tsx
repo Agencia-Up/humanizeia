@@ -242,7 +242,8 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         .from('wa_instances')
         .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at')
         .eq('user_id', effectiveUserId)
-        .eq('is_active', true);
+        .eq('is_active', true)
+        .eq('status', 'connected'); // só números REALMENTE conectados podem disparar
       if (isolateBySeller) {
         instancesQuery = instancesQuery.eq('seller_member_id', seller!.id);
       } else {
@@ -996,7 +997,7 @@ Não numere as variações. Não inclua explicações adicionais.`
               </Card>
             ) : (
               campaigns.map(campaign => (
-                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} />
+                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} hasConnectedInstance={instances.length > 0} />
               ))
             )}
           </TabsContent>

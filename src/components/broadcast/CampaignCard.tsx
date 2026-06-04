@@ -50,9 +50,10 @@ interface CampaignCardProps {
   campaign: WACampaign;
   onRefresh: () => void;
   onEdit?: (campaign: WACampaign) => void;
+  hasConnectedInstance?: boolean;
 }
 
-export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps) {
+export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance }: CampaignCardProps) {
   const { toast } = useToast();
   const [isStarting, setIsStarting] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
@@ -65,6 +66,14 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
     : 0;
 
   const startCampaign = async () => {
+    if (hasConnectedInstance === false) {
+      toast({
+        title: 'Nenhum número WhatsApp conectado',
+        description: 'Conecte (ou reconecte) um número na aba Instâncias antes de disparar. Sem número conectado a campanha não envia.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setIsStarting(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();

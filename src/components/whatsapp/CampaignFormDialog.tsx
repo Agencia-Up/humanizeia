@@ -20,7 +20,7 @@ import { ptBR } from 'date-fns/locale';
 import {
   Loader2, Plus, Eye, Sparkles, Clock, RotateCcw, CalendarIcon,
   Image, Video, FileText, Music, X, Tag, Pencil, Smartphone,
-  Flame, Info, Zap, MessageSquare, Upload, Trash2,
+  Flame, Info, Zap, MessageSquare, Upload, Trash2, AlertTriangle,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -147,7 +147,13 @@ export function CampaignFormDialog({
       setWarmupInitial(editingCampaign.regras_aquecimento?.initial_messages ?? 20);
       setWarmupDailyLimit((editingCampaign.regras_aquecimento as any)?.limite_diario_inicial ?? 50);
       setWarmupRampDays((editingCampaign.regras_aquecimento as any)?.dias_rampa ?? 14);
-      setInstanceId(editingCampaign.instance_id || 'auto');
+      // Só mantém a instância salva se ela ainda existir E estiver conectada;
+      // senão cai pra 'auto' (evita "fantasma" de número que não existe mais).
+      setInstanceId(
+        editingCampaign.instance_id && instances.some(i => i.id === editingCampaign.instance_id)
+          ? editingCampaign.instance_id
+          : 'auto',
+      );
       setMediaUrl(editingCampaign.media_url || '');
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
@@ -303,20 +309,29 @@ export function CampaignFormDialog({
                 <Smartphone className="h-4 w-4 text-muted-foreground" />
                 Instância WhatsApp
               </Label>
-              <Select value={instanceId} onValueChange={setInstanceId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a instância" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
-                  {instances.map(inst => (
-                    <SelectItem key={inst.id} value={inst.id}>
-                      {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
-                      {inst.status !== 'connected' && ' ⚠️'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {instances.length === 0 ? (
+                <div className="flex gap-2 items-start rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs">
+                  <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                  <div className="text-red-300">
+                    <strong>Nenhum número WhatsApp conectado.</strong> Conecte (ou reconecte) um número na aba
+                    Instâncias antes de disparar — sem número conectado, a campanha não envia.
+                  </div>
+                </div>
+              ) : (
+                <Select value={instanceId} onValueChange={setInstanceId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a instância" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
+                    {instances.map(inst => (
+                      <SelectItem key={inst.id} value={inst.id}>
+                        {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <Separator />
