@@ -11,6 +11,8 @@ export type PedroVehicleResolution = {
   current_message_overrides_memory: boolean;
   used_memory: boolean;
   possible_new_topic: boolean;
+  has_multiple_vehicles: boolean;
+  all_matched_models: string[];
 };
 
 type VehicleAlias = {
@@ -139,17 +141,13 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function matchVehicleInText(text?: string | null) {
+export function matchAllVehiclesInText(text?: string | null) {
   const normalized = normalizeText(text);
-  if (!normalized) return null;
-  
-  let best: {
-    vehicle: VehicleAlias;
-    confidence: number;
-    reason: string;
-  } | null = null;
+  if (!normalized) return [];
 
-  // 1. Tenta correspondência com a lista de aliases pré-definidos
+  const matchedModels = new Map<string, { vehicle: VehicleAlias; confidence: number; reason: string }>();
+
+  // 1. Aliases pré-definidos
   for (const vehicle of VEHICLE_ALIASES) {
     for (const alias of vehicle.aliases) {
       const normalizedAlias = normalizeText(alias);
@@ -157,8 +155,8 @@ function matchVehicleInText(text?: string | null) {
       const direct = new RegExp(`\\b${normalizedAlias.replace(/\s+/g, "\\s+")}\\b`).test(normalized);
       if (direct) {
         const confidence = normalizedAlias === vehicle.canonical ? 0.95 : 0.9;
-        if (!best || confidence > best.confidence) {
-          best = { vehicle, confidence, reason: `alias:${alias}` };
+        if (!matchedModels.has(vehicle.canonical) || confidence > matchedModels.get(vehicle.canonical)!.confidence) {
+          matchedModels.set(vehicle.canonical, { vehicle, confidence, reason: `alias:${alias}` });
         }
       }
     }
@@ -174,47 +172,49 @@ function matchVehicleInText(text?: string | null) {
         const score = similarity(token, aliasTokens[0]);
         if (score >= 0.78) {
           const confidence = 0.68 + score * 0.22;
-          if (!best || confidence > best.confidence) {
-            best = { vehicle, confidence, reason: `fuzzy:${token}->${aliasTokens[0]}` };
+          if (!matchedModels.has(vehicle.canonical) || confidence > matchedModels.get(vehicle.canonical)!.confidence) {
+            matchedModels.set(vehicle.canonical, { vehicle, confidence, reason: `fuzzy:${token}->${aliasTokens[0]}` });
           }
         }
       }
     }
   }
 
-  if (best) return best;
-
-  // 3. Detecção dinâmica: MARCA conhecida + palavra de modelo ADJACENTE (antes OU depois).
-  // Antes so olhava o que vinha DEPOIS da marca, entao a inversao de sintaxe perdia o
-  // veiculo: "Nivus da Volkswagen" / "Tem Nivus no estoque da VW?" (marca depois do modelo)
-  // nao casavam. Agora procura o modelo depois da marca e, se nao achar, ANTES dela.
-  // (Fix relatorio Antigravity #1.)
+  // 3. Detecção dinâmica: MARCA conhecida + palavra de modelo ADJACENTE
   const dynTokens = normalized.split(/\s+/).filter(Boolean);
   const isModelCandidate = (tk: string) =>
     tk.length >= 3 && !WEAK_WORDS.has(tk) && !KNOWN_BRANDS.includes(tk) && !NON_MODEL_WORDS.has(tk);
   for (const brand of KNOWN_BRANDS) {
     const bi = dynTokens.indexOf(brand);
     if (bi === -1) continue;
-    // Modelo logo DEPOIS da marca; se nao houver, o mais proximo ANTES dela.
     const forward = dynTokens.slice(bi + 1).find(isModelCandidate);
     const backward = dynTokens.slice(0, bi).reverse().find(isModelCandidate);
     const modelCandidate = forward || backward;
     if (modelCandidate) {
       const label = `${capitalize(brand)} ${capitalize(modelCandidate)}`;
-      return {
-        vehicle: {
-          canonical: modelCandidate,
-          label,
-          type: inferVehicleType(label) || "carro",
-          aliases: [modelCandidate],
-        },
-        confidence: 0.85,
-        reason: `dynamic_brand_match:${brand}:${modelCandidate}`,
-      };
+      const canonical = modelCandidate.toLowerCase();
+      if (!matchedModels.has(canonical)) {
+        matchedModels.set(canonical, {
+          vehicle: {
+            canonical,
+            label,
+            type: inferVehicleType(label) || "carro",
+            aliases: [modelCandidate],
+          },
+          confidence: 0.85,
+          reason: `dynamic_brand_match:${brand}:${modelCandidate}`,
+        });
+      }
     }
   }
 
-  return null;
+  return Array.from(matchedModels.values());
+}
+
+export function matchVehicleInText(text?: string | null) {
+  const matches = matchAllVehiclesInText(text);
+  if (matches.length === 0) return null;
+  return matches.sort((a, b) => b.confidence - a.confidence)[0];
 }
 
 function inferVehicleType(text?: string | null) {
@@ -267,7 +267,24 @@ export function resolvePedroVehicleTurn(input: {
 }): PedroVehicleResolution {
   const message = input.message || "";
   const enriched = input.enriched_message || "";
-  const messageMatch = matchVehicleInText(message) || matchVehicleInText(enriched);
+  
+  const allMatches = [
+    ...matchAllVehiclesInText(message),
+    ...matchAllVehiclesInText(enriched)
+  ];
+  
+  // Deduplicate matches by canonical model to avoid duplicates
+  const uniqueMatchesMap = new Map<string, typeof allMatches[0]>();
+  for (const m of allMatches) {
+    if (!uniqueMatchesMap.has(m.vehicle.canonical) || m.confidence > uniqueMatchesMap.get(m.vehicle.canonical)!.confidence) {
+      uniqueMatchesMap.set(m.vehicle.canonical, m);
+    }
+  }
+  const uniqueMatches = Array.from(uniqueMatchesMap.values());
+  const has_multiple_vehicles = uniqueMatches.length > 1;
+  const all_matched_models = uniqueMatches.map(m => m.vehicle.label);
+  
+  const messageMatch = uniqueMatches.sort((a, b) => b.confidence - a.confidence)[0] || null;
   const currentType = inferVehicleType(message) || inferVehicleType(enriched);
   const adVehicle = input.ad_context?.vehicle_query || null;
   const mediaVehicle = input.media_context?.vehicle_query || null;
@@ -286,6 +303,8 @@ export function resolvePedroVehicleTurn(input: {
       current_message_overrides_memory: true,
       used_memory: false,
       possible_new_topic: Boolean(memoryQuery && normalizeText(memoryQuery) !== normalizeText(messageMatch.vehicle.label)),
+      has_multiple_vehicles,
+      all_matched_models,
     };
   }
 
@@ -302,6 +321,8 @@ export function resolvePedroVehicleTurn(input: {
       current_message_overrides_memory: true,
       used_memory: false,
       possible_new_topic: Boolean(memoryQuery && normalizeText(memoryQuery) !== normalizeText(adVehicle)),
+      has_multiple_vehicles,
+      all_matched_models,
     };
   }
 
@@ -318,6 +339,8 @@ export function resolvePedroVehicleTurn(input: {
       current_message_overrides_memory: true,
       used_memory: false,
       possible_new_topic: Boolean(memoryQuery && normalizeText(memoryQuery) !== normalizeText(mediaVehicle)),
+      has_multiple_vehicles,
+      all_matched_models,
     };
   }
 
@@ -333,6 +356,8 @@ export function resolvePedroVehicleTurn(input: {
       current_message_overrides_memory: true,
       used_memory: false,
       possible_new_topic: Boolean(memoryQuery),
+      has_multiple_vehicles,
+      all_matched_models,
     };
   }
 
@@ -349,6 +374,8 @@ export function resolvePedroVehicleTurn(input: {
       current_message_overrides_memory: false,
       used_memory: true,
       possible_new_topic: false,
+      has_multiple_vehicles,
+      all_matched_models,
     };
   }
 
@@ -363,5 +390,7 @@ export function resolvePedroVehicleTurn(input: {
     current_message_overrides_memory: false,
     used_memory: false,
     possible_new_topic: false,
+    has_multiple_vehicles,
+    all_matched_models,
   };
 }

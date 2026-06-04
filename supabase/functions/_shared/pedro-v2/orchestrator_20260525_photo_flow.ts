@@ -881,6 +881,7 @@ async function savePresentedVehicles(supabase: any, input: {
   const nextState = {
     ...(input.current || {}),
     veiculos_apresentados: input.vehicles.slice(0, 30),
+    ultima_foto: null, // Limpa referencia de fotos antigas quando novos carros sao apresentados em texto
     atendimento: {
       ...(input.current?.atendimento || {}),
       etapa: "apresentando_opcoes",
@@ -1588,18 +1589,19 @@ export async function processPedroV2Turn(
   // mensagem que disparou este turno, NAO envia de novo — evita resposta dupla no WhatsApp
   // e gasto dobrado de tokens. O debounce ja cobre o caso comum; este fecha a brecha de
   // race (a resposta deste turno so e salva como 'assistant' DEPOIS do envio, abaixo).
-  if (!dryRun && reply.ok && lead?.id && myUserMsgCreatedAt && isPedroV2SendingEnabled()) {
-    const { data: priorAssistant } = await supabase
+  if (!dryRun && reply.ok && lead?.id && myUserMsgId && isPedroV2SendingEnabled()) {
+    const { data: latestUserMsg } = await supabase
       .from("wa_chat_history")
       .select("id")
       .eq("agent_id", input.agent.id)
       .eq("remote_jid", remoteJid)
-      .eq("role", "assistant")
-      .gt("created_at", myUserMsgCreatedAt)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (priorAssistant?.id) {
-      log("info", "pedro_v2_duplicate_reply_suppressed", { remote_jid: remoteJid });
+
+    if (latestUserMsg?.id && latestUserMsg.id !== myUserMsgId) {
+      log("info", "pedro_v2_superseded_by_newer_message", { remote_jid: remoteJid, current: myUserMsgId, newer: latestUserMsg.id });
       return {
         ok: true,
         dry_run: dryRun,
@@ -1608,6 +1610,29 @@ export async function processPedroV2Turn(
         lead_id: lead.id,
         next_action: "duplicate_reply_suppressed",
       };
+    }
+
+    if (myUserMsgCreatedAt) {
+      const { data: priorAssistant } = await supabase
+        .from("wa_chat_history")
+        .select("id")
+        .eq("agent_id", input.agent.id)
+        .eq("remote_jid", remoteJid)
+        .eq("role", "assistant")
+        .gt("created_at", myUserMsgCreatedAt)
+        .limit(1)
+        .maybeSingle();
+      if (priorAssistant?.id) {
+        log("info", "pedro_v2_duplicate_reply_suppressed", { remote_jid: remoteJid });
+        return {
+          ok: true,
+          dry_run: dryRun,
+          correlation_id: correlationId,
+          identity,
+          lead_id: lead.id,
+          next_action: "duplicate_reply_suppressed",
+        };
+      }
     }
   }
 

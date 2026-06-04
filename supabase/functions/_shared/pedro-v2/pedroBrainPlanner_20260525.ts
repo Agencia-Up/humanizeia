@@ -425,112 +425,26 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
   }
 
-  const vehicle = input.vehicle_resolution;
+  // ── REDE DE SEGURANÇA BÁSICA DE FOTOS ────────────────────────────────────────
+  // Apenas garante consistência do estado (se a LLM aceitou enviar fotos do carro
+  // em contexto, liga a flag de uso de memória).
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
-  const photo = isPhotoText(input.message);
   const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input);
 
-  if (acceptedPhotoOffer && hasPresentedVehicles && !vehicle.possible_new_topic) {
-    plan.action = "photo_request";
-    plan.intent = "photo_request";
-    plan.photo_target = detectPhotoTarget(input.message);
+  if (acceptedPhotoOffer && hasPresentedVehicles && plan.action === "photo_request") {
     plan.use_memory_vehicle = true;
-    plan.reason = "enforced_accepted_recent_photo_offer";
-    plan.response_guidance = "Lead aceitou a oferta recente de fotos. Acione a tool de fotos usando o veiculo em contexto; nao prometa fotos sem enviar midia.";
   }
 
-  // NAO sobrescreve a decisao do LLM quando a intencao e financiamento/troca/pedido de
-  // humano so porque a frase cita um carro (fix relatorio mestre #3): "quero financiar o
-  // Onix" ou "dou meu HB20 na troca" nao deve virar uma busca de estoque cega. (Handoff ja
-  // tem backstop proprio na ETAPA C abaixo.)
-  const _nonOverrideIntents = ["financing", "trade_in", "human_request"];
-  if (vehicle.has_current_vehicle_signal && vehicle.query && !_nonOverrideIntents.includes(String(raw?.intent || ""))) {
-    plan.action = photo && hasPresentedVehicles && !vehicle.possible_new_topic ? "photo_request" : "stock_search";
-    plan.search_query = vehicle.query;
-    plan.search_filters = {
-      ...(plan.search_filters || {}),
-      modelo_desejado: vehicle.query,
-      tipo_veiculo: vehicle.vehicle_type || plan.search_filters?.tipo_veiculo || null,
-    };
-    plan.use_memory_vehicle = vehicle.used_memory;
-    plan.reason = `enforced_current_vehicle:${vehicle.reason}`;
-  }
-
-  if (input.ad_context?.has_ad_context && input.ad_context?.vehicle_query && vehicle.query && plan.action === "stock_search" && !hasRecentConversation(input)) {
-    plan.intent = "vehicle_reference";
-    plan.search_query = vehicle.query;
-    plan.search_filters = {
-      ...(plan.search_filters || {}),
-      modelo_desejado: vehicle.query,
-      tipo_veiculo: vehicle.vehicle_type || plan.search_filters?.tipo_veiculo || null,
-    };
-    plan.use_memory_vehicle = false;
-    plan.response_guidance = adVehicleGuidance();
-    plan.reason = `enforced_ad_vehicle_consultation:${vehicle.reason}`;
-  }
-
-  if (input.ad_context?.has_ad_context && !input.ad_context?.vehicle_query && !vehicle.query) {
-    plan.action = "clarify";
-    plan.intent = "vehicle_reference";
-    plan.search_query = null;
-    plan.use_memory_vehicle = false;
-    plan.reason = "enforced_ad_without_vehicle";
-  }
-
-  if (photo && !hasPresentedVehicles && vehicle.query) {
-    plan.action = "stock_search";
-    plan.reason = `enforced_photo_needs_stock:${vehicle.reason}`;
-  }
-
-  if (isSimpleGreeting(input.message) && !input.ad_context?.has_ad_context && !vehicle.query) {
-    const continuing = hasRecentConversation(input);
-    plan.action = "reply_only";
-    plan.intent = "small_talk";
-    plan.search_query = null;
-    plan.use_memory_vehicle = false;
-    plan.response_guidance = continuing
-      ? "Cumprimento em conversa existente. Nao se apresente de novo; responda como continuidade da conversa."
-      : "Primeiro contato comum. Seja humano, se apresente e faca uma pergunta aberta simples.";
-    plan.reason = continuing ? "enforced_greeting_existing_context" : "enforced_plain_greeting";
-  }
-
-  if (isSocialQuestion(input.message)) {
-    plan.action = "reply_only";
-    plan.intent = "small_talk";
-    plan.search_query = null;
-    plan.use_memory_vehicle = false;
-    plan.response_guidance = "Responda a pergunta social do lead de forma humana; nao se apresente de novo.";
-    plan.reason = "enforced_social_question";
-  }
-
-  // GUARD ANTI-FOTO-NAO-PEDIDA: so envia imagens se o lead PEDIR explicitamente
-  // (isPhotoText: 'foto', 'painel', 'interior'...) ou ACEITAR uma oferta recente de
-  // fotos (acceptedPhotoOffer). Evita o agente mandar foto "do nada" quando o LLM
-  // marca photo_request so porque fotos ja foram pedidas antes na conversa (ex: o
-  // lead disse "Gostei dele" e levou fotos sem pedir).
-  // Excecao: resposta-seletora curta ("2024", "o primeiro", "o preto") COM veiculos
-  // ja apresentados = o lead esta escolhendo qual ver -> liberar as fotos.
+  // Anti-envio acidental: impede que a LLM envie fotos do nada se o lead não pediu de fato
+  const photo = isPhotoText(input.message);
   const photoSelectorReply = isPhotoSelectorReply(input.message) && hasPresentedVehicles;
-  if (plan.action === "photo_request" && !isPhotoText(input.message) && !acceptedPhotoOffer && !photoSelectorReply) {
+  if (plan.action === "photo_request" && !photo && !acceptedPhotoOffer && !photoSelectorReply) {
     plan.action = "reply_only";
     plan.intent = "vehicle_reference";
     plan.use_memory_vehicle = false;
     plan.photo_target = null;
     plan.reason = `blocked_unrequested_photo:${plan.reason || ""}`;
-    plan.response_guidance = "O lead NAO pediu fotos nem aceitou oferta de fotos. NAO envie imagens. Conduza a conversa/qualificacao conforme o System Prompt do Portal, uma pergunta por vez.";
-  }
-
-  // ETAPA C: preserva a decisao de HANDOFF do cerebro (lead qualificado/agendou/
-  // pediu humano) contra as regras de veiculo/estoque acima. Pedido explicito de
-  // FOTO ainda vence (intencao clara de imagem).
-  if (raw?.action === "handoff" && plan.action !== "photo_request") {
-    plan.action = "handoff";
-    plan.intent = "human_request";
-    plan.use_memory_vehicle = false;
-    if (typeof raw?.response_guidance !== "string" || !raw.response_guidance.trim()) {
-      plan.response_guidance = "Lead qualificado, agendou visita ou pediu um humano. Despeca-se de forma curta e amigavel avisando que um consultor de vendas vai entrar em contato em breve, e agradeca. Nao acione estoque nem prometa mais nada.";
-    }
-    plan.reason = `enforced_handoff:${raw?.reason || plan.reason || "qualificado"}`;
+    plan.response_guidance = "O lead não pediu fotos de forma explícita. Não envie imagens. Apenas responda conversando de forma humana e continue a qualificação ou tire dúvidas.";
   }
 
   return plan;
