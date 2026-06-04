@@ -5089,7 +5089,6 @@ const MASTER_TABS = [
   { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
-  { id: 'followups',    label: 'Follow-ups',   icon: CalendarClock, emoji: '📅' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
   { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
@@ -5112,6 +5111,7 @@ export default function PedroSDR() {
   // Dono dos dados: master usa o proprio id; vendedor usa o id do master (os
   // agentes/leads/inbox ficam gravados sob o master, nao sob o auth do vendedor).
   const inboxOwnerId = masterUserId || user?.id;
+  const [showFollowupDash, setShowFollowupDash] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
@@ -5208,6 +5208,25 @@ export default function PedroSDR() {
 
             {/* CRM / Meus Leads */}
             <TabsContent value="crm" className="mt-0">
+              {/* Dashboard de Follow-ups — seção recolhível (somente master) */}
+              {!isSeller && inboxOwnerId && (
+                <div className="mb-3">
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => setShowFollowupDash(v => !v)}
+                    className="h-8 text-xs gap-1.5 border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                  >
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    Dashboard de Follow-ups
+                    <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showFollowupDash ? 'rotate-90' : ''}`} />
+                  </Button>
+                  {showFollowupDash && (
+                    <div className="mt-3">
+                      <FollowupDashboard userId={inboxOwnerId} />
+                    </div>
+                  )}
+                </div>
+              )}
               <CrmAvancadoTab userId={user?.id} />
             </TabsContent>
 
@@ -5221,13 +5240,6 @@ export default function PedroSDR() {
                 />
               )}
             </TabsContent>
-
-            {/* Follow-ups — dashboard de métricas (somente master) */}
-            {!isSeller && (
-              <TabsContent value="followups" className="mt-0">
-                <FollowupDashboard userId={inboxOwnerId} />
-              </TabsContent>
-            )}
 
             {/* Vendedores */}
             {(!isSeller || visibleFeatures.tab_vendedores) && (
