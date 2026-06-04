@@ -17,7 +17,7 @@ import {
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
-  Pin, PinOff, Image, Mic, Video, Smartphone, Upload, X, Trash2,
+  Pin, PinOff, Image, Mic, Video, Upload, X, Trash2,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
   Pencil, Check, Trophy,
 } from 'lucide-react';
@@ -37,7 +37,6 @@ import * as XLSX from 'xlsx';
 const WhatsAppAIAgent    = lazy(() => import('./WhatsAppAIAgent'));
 const CrmAoVivo          = lazy(() => import('./CrmAoVivo')); // mantido pra retrocompat (rota /whatsapp/crm-ao-vivo)
 const DashboardTV        = lazy(() => import('./DashboardTV'));
-const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
@@ -5089,7 +5088,6 @@ const MASTER_TABS = [
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
-  { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
 
@@ -5099,7 +5097,6 @@ const ALL_SELLER_TABS = [
   { id: 'ao-vivo',     label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
-  { id: 'instancias',  label: 'Instâncias',   icon: Smartphone,    emoji: '📱', featureKey: 'tab_instancias' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
   { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -5243,13 +5240,6 @@ export default function PedroSDR() {
               {(!isSeller || visibleFeatures.tab_crm_ao_vivo) && (
                 <TabsContent value="ao-vivo" className="mt-0 h-full">
                   <DashboardTV embedded />
-                </TabsContent>
-              )}
-
-              {/* Instâncias */}
-              {(!isSeller || visibleFeatures.tab_instancias) && (
-                <TabsContent value="instancias" className="mt-0 h-full">
-                  <WhatsAppInstances embedded />
                 </TabsContent>
               )}
 
