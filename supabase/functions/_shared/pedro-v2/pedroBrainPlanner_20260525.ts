@@ -425,6 +425,28 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
   }
 
+  // ── REDE DE SEGURANÇA: BUSCA DE VEÍCULO (restaurada — evidência real, caso Patricia) ──
+  // O agente disse "não temos Jeep Compass" SEM TER BUSCADO — e há 3 Compass no estoque.
+  // PROVADO nos turn-logs: turnos com veiculo referenciado vinham action=reply_generation,
+  // filtros={}, stock_total=0 (a LLM escolheu reply_only e ALUCINOU a indisponibilidade).
+  // Regra: se o lead REFERENCIA um veiculo resolvivel (has_current_vehicle_signal + query)
+  // e a LLM ia apenas CONVERSAR (reply_only/clarify), FORCA stock_search — o agente NUNCA
+  // pode afirmar disponibilidade ("temos"/"nao temos") sem ter consultado o estoque.
+  // (photo_request e handoff NAO sao tocados; so promove reply_only/clarify -> stock_search.)
+  const _vr = input.vehicle_resolution;
+  if (_vr?.has_current_vehicle_signal && _vr?.query && (plan.action === "reply_only" || plan.action === "clarify")) {
+    plan.action = "stock_search";
+    plan.intent = plan.intent === "small_talk" ? "stock_lookup" : plan.intent;
+    plan.search_query = _vr.query;
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      modelo_desejado: _vr.query,
+      tipo_veiculo: _vr.vehicle_type || (plan.search_filters as any)?.tipo_veiculo || null,
+    };
+    plan.use_memory_vehicle = _vr.used_memory ?? plan.use_memory_vehicle;
+    plan.reason = `enforced_current_vehicle_search:${plan.reason || ""}`;
+  }
+
   // ── REDE DE SEGURANÇA: ACEITE DE FOTO (restaurada — evidência real, caso Renê) ──
   // O agente ofereceu fotos, o lead respondeu "👍🏼" + "Pir favor", e o PLANNER LLM
   // classificou como vehicle_reference (NAO photo_request) -> nenhuma foto saiu = venda
