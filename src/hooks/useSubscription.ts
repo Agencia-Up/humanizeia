@@ -52,7 +52,7 @@ export interface Subscription {
   id: string;
   user_id: string;
   plan_id: PlanId;
-  status: 'active' | 'suspended' | 'cancelled';
+  status: 'active' | 'pending' | 'suspended' | 'cancelled';
   tokens_included: number;
   tokens_used: number;
   tokens_purchased: number;
@@ -136,13 +136,16 @@ export function useSubscription() {
         'select user_subscriptions',
       );
 
-      // Se não existe subscription, cria uma automaticamente (plano basico)
+      // Se não existe subscription, cria uma PENDENTE (travada) — não libera
+      // acesso grátis. Só o webhook da Asaas (após pagamento confirmado) muda
+      // o status pra 'active'. Contas antigas já têm linha, então este fallback
+      // praticamente nunca dispara pra elas — é só uma rede de segurança.
       if (!data || selErr) {
         const newSub = {
           user_id: user.id,
           plan_id: 'basico',
-          status: 'active',
-          tokens_included: 150,
+          status: 'pending',
+          tokens_included: 0,
           tokens_used: 0,
           tokens_purchased: 0,
           renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),

@@ -30,7 +30,8 @@ import {
 interface CheckoutResult {
   pendingId?: string;
   method: 'pix' | 'cartao' | 'boleto';
-  plano: 'mensal' | 'anual';
+  plano: 'pro' | 'basico' | 'mensal' | 'anual'; // pro|basico (legado: mensal|anual)
+  ciclo?: 'mensal' | 'anual';
   email: string;
   pix?: {
     payload?: string;
@@ -152,7 +153,7 @@ export default function CheckoutSuccess() {
                 className="w-full sm:w-auto gap-2"
                 style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
               >
-                <Link to="/checkout?plano=mensal">
+                <Link to="/checkout?plano=pro&ciclo=mensal">
                   Ir pro checkout <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>
@@ -420,7 +421,7 @@ export default function CheckoutSuccess() {
               <Button
                 onClick={() => {
                   sessionStorage.removeItem('checkout_result');
-                  navigate(`/checkout?plano=${result.plano}`, { replace: true });
+                  navigate(`/checkout?plano=${result.plano}&ciclo=${result.ciclo || 'mensal'}`, { replace: true });
                 }}
                 className="w-full sm:w-auto gap-2 font-bold"
                 style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}

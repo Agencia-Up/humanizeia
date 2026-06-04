@@ -205,6 +205,29 @@
 }
 
 @layer base {
+  /* ──────────────────────────────────────────────────────────────────────
+   * Checkout premium — escopo de cores TRAVADO em claro.
+   * O checkout e pagina de conversao de "empresa seria": precisa de alto
+   * contraste e visual premium independente do tema (claro/escuro) do app.
+   * Forcamos os tokens shadcn pros valores de light mode dentro deste escopo,
+   * entao texto navy/foreground fica sempre legivel sobre fundo claro.
+   * ────────────────────────────────────────────────────────────────────── */
+  .checkout-light {
+    --background: 220 30% 98%;
+    --foreground: 222 47% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 16%;
+    --muted: 220 16% 94%;
+    --muted-foreground: 220 14% 42%;
+    --border: 220 18% 88%;
+    --input: 220 18% 88%;
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer base {
   * {
     @apply border-border;
   }

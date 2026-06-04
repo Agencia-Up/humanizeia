@@ -1,9 +1,12 @@
 /**
  * Checkout.tsx — Página de pagamento do plano PRO (Prompt 10 — landing redesign 16/05)
  *
- * Fluxo:
- *   /checkout?plano=mensal     → R$ 497/mês
- *   /checkout?plano=anual      → R$ 4.970/ano (economia 2 meses)
+ * Fluxo (links separados por plano; ciclo alternável na própria tela):
+ *   /checkout?plano=pro&ciclo=mensal    → Plano PRO mensal
+ *   /checkout?plano=pro&ciclo=anual     → Plano PRO anual
+ *   /checkout?plano=basico&ciclo=mensal → Plano Básico mensal
+ *   Compat: ?plano=mensal|anual ainda cai no PRO com o ciclo correspondente.
+ *   Preços vêm ao vivo da edge function checkout-pricing (fundador/normal).
  *
  * 3 etapas:
  *   1) Dados pessoais (nome, e-mail, CPF/CNPJ, telefone)
@@ -25,7 +28,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { supabase } from '@/integrations/supabase/client';
-import { useAppStore } from '@/store/appStore';
 import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, CheckCircle2, CreditCard, FileText,
@@ -34,7 +36,8 @@ import {
 
 /* ── Tipos ─────────────────────────────────────────────────────────────── */
 type Step = 1 | 2 | 3;
-type Billing = 'mensal' | 'anual';
+type Ciclo = 'mensal' | 'anual';
+type PlanType = 'pro' | 'basico';
 type PaymentMethod = 'pix' | 'cartao' | 'boleto';
 type PersonType = 'pf' | 'pj';
 
@@ -102,14 +105,38 @@ function maskExpiry(v: string): string {
   const d = onlyDigits(v).slice(0, 4);
   return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
 }
+function brl(v: number): string {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
 
 /* ── Componente principal ──────────────────────────────────────────────── */
 export default function Checkout() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isDarkMode } = useAppStore();
-  const planoParam = (searchParams.get('plano') || 'mensal') as Billing;
-  const billing: Billing = planoParam === 'anual' ? 'anual' : 'mensal';
+  // ?plano=pro|basico (links separados por plano). Compat: plano=mensal|anual → Pro.
+  const planoRaw = searchParams.get('plano') || 'pro';
+  const planType: PlanType = planoRaw === 'basico' ? 'basico' : 'pro';
+  const cicloFromPlano: Ciclo | null =
+    planoRaw === 'anual' ? 'anual' : planoRaw === 'mensal' ? 'mensal' : null;
+  const cicloParam = searchParams.get('ciclo');
+  const initialCiclo: Ciclo =
+    cicloParam === 'anual' ? 'anual'
+    : cicloParam === 'mensal' ? 'mensal'
+    : (cicloFromPlano ?? 'mensal');
+  const [ciclo, setCiclo] = useState<Ciclo>(initialCiclo);
+
+  // Preços ao vivo (checkout-pricing): resolve fundador/normal + setup/recorrência.
+  const [pricing, setPricing] = useState<any>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('checkout-pricing', { body: {} });
+        if (alive && !error && data) setPricing(data);
+      } catch { /* mantém o estado de carregamento; UI mostra "—" até resolver */ }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const [step, setStep] = useState<Step>(1);
 
@@ -145,15 +172,51 @@ export default function Checkout() {
   const canGoToStep3 = step1Valid && step2Valid;
   const canSubmit = canGoToStep3 && agreedTerms && !submitting;
 
-  // Valores do plano
-  const priceMonthlyDisplay = billing === 'anual' ? 'R$ 4.970/ano' : 'R$ 497/mês';
-  const priceEquivalent = billing === 'anual' ? 'R$ 414,17/mês equivalente' : 'cobrado mensalmente';
-  const totalToday = billing === 'anual' ? 'R$ 6.469,00' : 'R$ 1.996,00'; // setup + 1ª mensalidade
+  // ── Valores do plano (do checkout-pricing; mostra "—" enquanto carrega) ──
+  const planLabel = planType === 'pro' ? 'PRO' : 'Básico';
+  const planPricing: any = pricing ? pricing[planType] : null;
+  const cyclePricing: any = planPricing ? planPricing[ciclo] : null;
+  const setupValue: number | null = cyclePricing?.setup ?? null;
+  const recurrenceValue: number | null = cyclePricing?.recurrence ?? null;
+  const totalTodayValue: number | null =
+    setupValue != null && recurrenceValue != null ? setupValue + recurrenceValue : null;
+  const atendimentos: number | null = planPricing?.atendimentos ?? null;
+  const isFundador: boolean = planType === 'pro' && planPricing?.tier === 'fundador';
+  const foundersLeft: number | null = planType === 'pro' ? (planPricing?.foundersLeft ?? null) : null;
 
-  // Persiste billing no <title> pra clareza
+  const recurrenceDisplay =
+    recurrenceValue != null ? `${brl(recurrenceValue)}${ciclo === 'anual' ? '/ano' : '/mês'}` : '—';
+  const setupDisplay = setupValue != null ? brl(setupValue) : '—';
+  const totalTodayDisplay = totalTodayValue != null ? brl(totalTodayValue) : '—';
+  const priceEquivalent =
+    ciclo === 'anual' && recurrenceValue != null
+      ? `${brl(recurrenceValue / 12)}/mês equivalente`
+      : 'cobrado mensalmente';
+  const economiaAnual =
+    planPricing && ciclo === 'anual'
+      ? planPricing.mensal.recurrence * 12 - planPricing.anual.recurrence
+      : 0;
+
+  const benefits = planType === 'pro'
+    ? [
+        `${atendimentos ?? 300} atendimentos por ciclo`,
+        'Pedro 24/7 no WhatsApp',
+        'Marcos · CRM ao vivo + disparo',
+        'Importação ilimitada',
+        'Multi-vendedor',
+        'Suporte humano via WhatsApp',
+      ]
+    : [
+        `${atendimentos ?? 150} atendimentos por ciclo`,
+        'Pedro 24/7 no WhatsApp',
+        'CRM com seus leads',
+        'Suporte humano via WhatsApp',
+      ];
+
+  // Persiste plano/ciclo no <title> pra clareza
   useEffect(() => {
-    document.title = `Checkout PRO ${billing === 'anual' ? 'Anual' : 'Mensal'} · LOGOS|IA`;
-  }, [billing]);
+    document.title = `Checkout ${planLabel} ${ciclo === 'anual' ? 'Anual' : 'Mensal'} · LOGOS|IA`;
+  }, [planLabel, ciclo]);
 
   // Submit final — chama edge function checkout-create-subscription (Prompt 11)
   // Se a edge function não estiver deployada ainda, mostra mensagem amigável.
@@ -163,7 +226,8 @@ export default function Checkout() {
 
     try {
       const payload: any = {
-        plano: billing,
+        plano: planType,
+        ciclo,
         personType,
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
@@ -222,7 +286,8 @@ export default function Checkout() {
       sessionStorage.setItem('checkout_result', JSON.stringify({
         pendingId,
         method: paymentMethod,
-        plano: billing,
+        plano: planType,
+        ciclo,
         email,
         pix: setup?.pix,
         boleto: setup?.boleto,
@@ -244,7 +309,13 @@ export default function Checkout() {
   const docMasked = personType === 'pf' ? maskCPF(docNumber) : maskCNPJ(docNumber);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div
+      className="checkout-light min-h-screen text-foreground"
+      style={{
+        background:
+          'radial-gradient(1200px 600px at 50% -10%, rgba(212,160,23,0.06), transparent 60%), linear-gradient(180deg, #FBFCFE 0%, #EEF2F8 100%)',
+      }}
+    >
 
       {/* ── HEADER simplificado ───────────────────────────────────── */}
       <header
@@ -256,7 +327,7 @@ export default function Checkout() {
       >
         <div className="px-4 md:px-6 py-3.5 max-w-6xl mx-auto flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center shrink-0 hover:opacity-80 transition-opacity">
-            <LogosIALogo size="sm" variant={isDarkMode ? 'dark' : 'light'} />
+            <LogosIALogo size="sm" variant="light" />
           </Link>
           <div
             className="flex items-center gap-1.5 text-xs md:text-sm font-medium"
@@ -695,7 +766,7 @@ export default function Checkout() {
                     <a href="/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="underline font-medium" style={{ color: 'var(--brand-navy)' }}>
                       Política de Privacidade
                     </a>
-                    . Entendo que o plano PRO é cobrado de forma recorrente e posso cancelar a qualquer momento.
+                    . Entendo que o plano {planLabel} é cobrado de forma recorrente e posso cancelar a qualquer momento.
                   </label>
                 </div>
 
@@ -725,7 +796,7 @@ export default function Checkout() {
                     {submitting ? 'Processando...' : (
                       <>
                         <Lock className="h-5 w-5" />
-                        Pagar agora — {totalToday}
+                        Pagar agora — {totalTodayDisplay}
                       </>
                     )}
                   </Button>
@@ -737,88 +808,130 @@ export default function Checkout() {
           {/* ── COLUNA DIREITA — SIDEBAR DE RESUMO ──────────────── */}
           <aside className="lg:sticky lg:top-24 lg:self-start">
             <div
-              className="rounded-2xl p-6 md:p-7"
+              className="rounded-2xl overflow-hidden"
               style={{
-                background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)',
+                background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
                 color: 'var(--brand-cream)',
-                boxShadow: 'var(--shadow-strong)',
+                boxShadow: '0 24px 60px -20px rgba(15, 38, 71, 0.55)',
+                border: '1px solid rgba(212, 160, 23, 0.22)',
               }}
             >
-              {/* Badge */}
-              <Badge
-                className="mb-4 border-0 px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
-              >
-                ★ Plano PRO
-              </Badge>
+              {/* Faixa de destaque dourada no topo */}
+              <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
 
-              {/* Tipo de cobrança */}
-              <h3 className="text-2xl font-extrabold mb-1" style={{ fontFamily: 'var(--font-display)' }}>
-                PRO · {billing === 'anual' ? 'Anual' : 'Mensal'}
-              </h3>
-              <p className="text-xs opacity-75 mb-5">Cobrança {billing === 'anual' ? 'anual' : 'mensal'}, cancelamento livre</p>
+              <div className="p-6 md:p-7">
+                {/* Badge + fundador */}
+                <div className="flex items-center justify-between gap-2 mb-5">
+                  <Badge
+                    className="border-0 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
+                    style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}
+                  >
+                    ★ Plano {planLabel}
+                  </Badge>
+                  {isFundador && foundersLeft != null && foundersLeft > 0 && (
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full"
+                      style={{ background: 'rgba(212, 160, 23, 0.15)', color: 'var(--brand-gold)', border: '1px solid rgba(212, 160, 23, 0.35)' }}
+                    >
+                      {foundersLeft === 1 ? 'Resta 1 vaga' : `Fundador · ${foundersLeft} vagas`}
+                    </span>
+                  )}
+                </div>
 
-              {/* Valor */}
-              <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
-                <p
-                  className="text-3xl md:text-4xl font-black"
-                  style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}
-                >
-                  {priceMonthlyDisplay}
+                {/* Toggle Mensal/Anual */}
+                <div className="inline-flex p-1 rounded-full mb-5" style={{ background: 'rgba(250, 248, 242, 0.10)', border: '1px solid rgba(250, 248, 242, 0.10)' }}>
+                  {(['mensal', 'anual'] as const).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCiclo(c)}
+                      className="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
+                      style={{
+                        background: ciclo === c ? 'var(--brand-gold)' : 'transparent',
+                        color: ciclo === c ? 'var(--brand-navy)' : 'rgba(250, 248, 242, 0.85)',
+                        boxShadow: ciclo === c ? '0 2px 8px rgba(212, 160, 23, 0.35)' : 'none',
+                      }}
+                    >
+                      {c === 'mensal' ? 'Mensal' : 'Anual'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Tipo de cobrança */}
+                <h3 className="text-2xl font-extrabold mb-1" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}>
+                  {planLabel} · {ciclo === 'anual' ? 'Anual' : 'Mensal'}
+                </h3>
+                <p className="text-xs mb-5" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                  Cobrança {ciclo === 'anual' ? 'anual' : 'mensal'} · cancelamento livre
                 </p>
-                <p className="text-xs opacity-75 mt-1">{priceEquivalent}</p>
-                {billing === 'anual' && (
-                  <p className="text-xs mt-1 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                    Economia: R$ 994 (2 meses grátis)
+
+                {/* Mensalidade */}
+                <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.14)' }}>
+                  <p
+                    className="text-4xl md:text-[2.75rem] leading-none font-black"
+                    style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}
+                  >
+                    {recurrenceDisplay}
                   </p>
-                )}
-              </div>
-
-              {/* Taxa de implementação */}
-              <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.15)' }}>
-                <div className="flex justify-between items-baseline mb-1">
-                  <span className="text-sm">Taxa de implementação</span>
-                  <span className="text-sm font-semibold">R$ 1.499</span>
+                  <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>{priceEquivalent}</p>
+                  {economiaAnual > 0 && (
+                    <p
+                      className="text-[11px] mt-2 inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md"
+                      style={{ background: 'rgba(22, 163, 74, 0.18)', color: '#5BE49B' }}
+                    >
+                      Economia de {brl(economiaAnual)} no ano
+                    </p>
+                  )}
                 </div>
-                <p className="text-[10px] opacity-65">Cobrada uma única vez no primeiro pagamento</p>
-              </div>
 
-              {/* Total hoje */}
-              <div className="mb-6">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-xs uppercase tracking-wider opacity-75">Total hoje</span>
-                  <span className="text-2xl font-extrabold" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}>
-                    {totalToday}
-                  </span>
+                {/* Taxa de implementação */}
+                <div className="mb-5 pb-5" style={{ borderBottom: '1px solid rgba(250, 248, 242, 0.14)' }}>
+                  <div className="flex justify-between items-baseline mb-1">
+                    <span className="text-sm" style={{ color: 'rgba(250, 248, 242, 0.88)' }}>Taxa de implementação</span>
+                    <span className="text-sm font-bold" style={{ color: 'var(--brand-cream)' }}>{setupDisplay}</span>
+                  </div>
+                  <p className="text-[10px]" style={{ color: 'rgba(250, 248, 242, 0.55)' }}>Cobrada uma única vez no primeiro pagamento</p>
                 </div>
-                <p className="text-[10px] opacity-65 mt-1">
-                  {billing === 'anual' ? '(R$ 1.499 setup + R$ 4.970 anual)' : '(R$ 1.499 setup + R$ 497 mensalidade)'}
-                </p>
-              </div>
 
-              {/* Lista de benefícios resumida */}
-              <ul className="space-y-2 text-xs">
-                {[
-                  'Pedro 24/7 no WhatsApp',
-                  'Marcos · CRM ao vivo + disparo',
-                  'Importação ilimitada',
-                  'Multi-vendedor',
-                  'Suporte humano via WhatsApp',
-                ].map((b) => (
-                  <li key={b} className="flex items-start gap-2">
-                    <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" style={{ color: 'var(--brand-gold)' }} />
-                    <span className="opacity-90">{b}</span>
-                  </li>
-                ))}
-              </ul>
+                {/* Total hoje — painel dourado em destaque */}
+                <div
+                  className="mb-6 rounded-xl p-4"
+                  style={{ background: 'rgba(212, 160, 23, 0.10)', border: '1px solid rgba(212, 160, 23, 0.30)' }}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-[11px] uppercase tracking-widest font-semibold" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>Total hoje</span>
+                    <span className="text-[1.75rem] leading-none font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-gold)' }}>
+                      {totalTodayDisplay}
+                    </span>
+                  </div>
+                  <p className="text-[10px] mt-1.5 text-right" style={{ color: 'rgba(250, 248, 242, 0.60)' }}>
+                    {setupDisplay} de setup + {recurrenceDisplay}
+                  </p>
+                </div>
 
-              {/* Selo de segurança */}
-              <div
-                className="mt-6 pt-5 flex items-center justify-center gap-2 text-[11px]"
-                style={{ borderTop: '1px solid rgba(250, 248, 242, 0.15)', color: 'rgba(250, 248, 242, 0.70)' }}
-              >
-                <Shield className="h-3.5 w-3.5" />
-                <span>Pagamento 100% seguro · SSL/TLS</span>
+                {/* Lista de benefícios */}
+                <ul className="space-y-2.5 text-[13px]">
+                  {benefits.map((b) => (
+                    <li key={b} className="flex items-start gap-2.5">
+                      <span
+                        className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
+                        style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}
+                      >
+                        <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
+                      </span>
+                      <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Selo de segurança */}
+                <div
+                  className="mt-6 pt-5 flex items-center justify-center gap-2 text-[11px]"
+                  style={{ borderTop: '1px solid rgba(250, 248, 242, 0.14)', color: 'rgba(250, 248, 242, 0.72)' }}
+                >
+                  <Shield className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
+                  <span>Pagamento 100% seguro · SSL/TLS</span>
+                </div>
               </div>
             </div>
 
@@ -831,6 +944,23 @@ export default function Checkout() {
 
         </div>
       </main>
+
+      {/* ── RODAPE — identidade legal da empresa (conformidade Meta/WhatsApp) ── */}
+      <footer className="border-t mt-4" style={{ borderColor: 'rgba(15, 38, 71, 0.10)' }}>
+        <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-between sm:text-left">
+          <p className="text-xs leading-relaxed" style={{ color: 'rgba(15, 38, 71, 0.80)' }}>
+            <span className="font-semibold" style={{ color: 'var(--brand-navy)' }}>Agencia Up Business LTDA</span>
+            <span style={{ opacity: 0.75 }}>&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs" style={{ color: 'rgba(15, 38, 71, 0.60)' }}>
+            <span>© {new Date().getFullYear()} LOGOS|IA</span>
+            <span style={{ opacity: 0.4 }}>·</span>
+            <a href="/privacy-policy.html" target="_blank" rel="noopener noreferrer" className="hover:underline">Privacidade</a>
+            <span style={{ opacity: 0.4 }}>·</span>
+            <a href="/terms-of-service.html" target="_blank" rel="noopener noreferrer" className="hover:underline">Termos de Uso</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

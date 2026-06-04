@@ -1571,14 +1571,14 @@ export default function LandingPage() {
                 background: 'rgba(212, 160, 23, 0.08)',
               }}
             >
-              Plano único
+              Oferta Fundador
             </Badge>
 
             <h2
               className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-3 text-foreground"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Um plano. <span style={{ color: 'var(--brand-gold)' }}>Tudo desbloqueado</span>. Sem pegadinha.
+              Escolha seu plano. <span style={{ color: 'var(--brand-gold)' }}>Tudo desbloqueado</span>. Sem pegadinha.
             </h2>
 
             <p className="text-base md:text-lg text-muted-foreground max-w-xl mx-auto">
@@ -1587,57 +1587,238 @@ export default function LandingPage() {
           </div>
 
           {/* ── CARD PRO — USA A ARTE COMPLETA COMO IMAGEM ─────────── */}
-          <div className="relative max-w-2xl mx-auto">
+          <div className="relative mx-auto">
 
-            {/* Glow externo dourado em volta */}
-            <div
-              className="absolute -inset-6 rounded-[2.5rem] blur-3xl opacity-30 pointer-events-none"
-              style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
-            />
+            {/* ── DOIS CARDS: PRO FUNDADOR + BASICO (lado a lado) ── */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 max-w-4xl mx-auto items-stretch">
 
-            {/* Wrapper relative pra posicionar o link clicável SOBRE o botão da imagem */}
-            <div className="relative rounded-[2rem] overflow-hidden" style={{
-              boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.50), 0 0 80px rgba(212, 160, 23, 0.25)',
-            }}>
+              {/* ===== CARD PRO FUNDADOR (destaque dourado) ===== */}
+              <div className="relative">
+                {/* Glow externo dourado */}
+                <div
+                  className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
+                  style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
+                />
+                <div
+                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
+                  style={{
+                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
+                    border: '2px solid var(--brand-gold)',
+                    boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)',
+                  }}
+                >
+                  {/* Faixa dourada no topo */}
+                  <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
 
-              {/* Arte completa do plano (logo + preços + features + botão) */}
-              <img
-                src="/plano-pro-oferta.png"
-                alt="Plano PRO — R$ 1.497 setup + R$ 497/mês — CRM, WhatsApp, IA, suporte prioritário"
-                className="block w-full h-auto select-none"
-                draggable={false}
-              />
+                  {/* Ribbon Oferta Fundador */}
+                  <div className="px-6 md:px-8 pt-6">
+                    <div
+                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                      style={{ background: 'rgba(212, 160, 23, 0.15)', border: '1px solid rgba(212, 160, 23, 0.40)' }}
+                    >
+                      <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
+                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'var(--brand-gold)' }}>
+                        Oferta Fundador · 10 primeiros
+                      </span>
+                    </div>
+                  </div>
 
-              {/* Link clicável posicionado SOBRE o botão "QUERO COMEÇAR AGORA" da imagem
-                 (proporções calibradas pro mockup 862x1050 — área do botão dourado) */}
-              <Link
-                to="/checkout?plano=mensal"
-                className="absolute inset-x-[6%] bottom-[6%] top-[83%] rounded-2xl focus:outline-none focus:ring-4 focus:ring-yellow-400/50 hover:bg-white/5 transition-colors"
-                aria-label="Quero começar agora — assinar plano PRO"
-                title="Quero começar agora — assinar plano PRO"
-              >
-                <span className="sr-only">Quero começar agora</span>
-              </Link>
+                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
+                    <h3
+                      className="text-3xl font-black uppercase tracking-wide"
+                      style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
+                    >
+                      Pro
+                    </h3>
+                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                      Pague o preço do Básico e leve o Pro completo.
+                    </p>
+
+                    {/* Preço mensal */}
+                    <div className="flex items-end gap-1 leading-none">
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
+                      <span
+                        className="text-6xl font-black leading-none"
+                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}
+                      >
+                        497
+                      </span>
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
+                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
+                    </div>
+                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                      + R$ 1.497 de implementação (pagamento único)
+                    </p>
+
+                    {/* Highlight 300 conversas */}
+                    <div
+                      className="mt-5 mb-5 rounded-xl p-3 text-center"
+                      style={{ background: 'rgba(212, 160, 23, 0.12)', border: '1px solid rgba(212, 160, 23, 0.30)' }}
+                    >
+                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
+                        300 conversas/mês
+                      </span>
+                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
+                        incluídas no atendimento com IA
+                      </span>
+                    </div>
+
+                    {/* Features */}
+                    <ul className="space-y-2.5 text-sm flex-1">
+                      {[
+                        'CRM completo de leads',
+                        'Até 10 conexões de WhatsApp',
+                        'Disparo em massa segmentado',
+                        'Follow-up automático 24/7',
+                        'IA de atendimento (Pedro + Marcos)',
+                        'Exportação de planilhas e relatórios',
+                        'Suporte prioritário',
+                      ].map((f) => (
+                        <li key={f} className="flex items-start gap-2.5">
+                          <span
+                            className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
+                            style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}
+                          >
+                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
+                          </span>
+                          <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    {/* CTA — único botão */}
+                    <Button
+                      asChild
+                      size="lg"
+                      className="mt-7 w-full text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
+                      style={{
+                        background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
+                        color: 'var(--brand-navy)',
+                        boxShadow: '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)',
+                        border: '2px solid var(--brand-gold-hover)',
+                      }}
+                    >
+                      <Link to="/checkout?plano=pro&ciclo=mensal">
+                        Quero o Pro Fundador <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ===== CARD BASICO ===== */}
+              <div className="relative">
+                <div
+                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
+                  style={{
+                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
+                    border: '1px solid rgba(212, 160, 23, 0.30)',
+                    boxShadow: '0 24px 60px -20px rgba(15, 38, 71, 0.50)',
+                  }}
+                >
+                  <div className="h-1.5 w-full" style={{ background: 'rgba(212, 160, 23, 0.45)' }} />
+
+                  <div className="px-6 md:px-8 pt-6">
+                    <div
+                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                      style={{ background: 'rgba(250, 248, 242, 0.08)', border: '1px solid rgba(250, 248, 242, 0.18)' }}
+                    >
+                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'rgba(250, 248, 242, 0.85)' }}>
+                        Plano de entrada
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
+                    <h3
+                      className="text-3xl font-black uppercase tracking-wide"
+                      style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
+                    >
+                      Básico
+                    </h3>
+                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                      Comece a vender com IA no WhatsApp.
+                    </p>
+
+                    {/* Preço mensal */}
+                    <div className="flex items-end gap-1 leading-none">
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
+                      <span
+                        className="text-6xl font-black leading-none"
+                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.30)' }}
+                      >
+                        497
+                      </span>
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,00</span>
+                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
+                    </div>
+                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                      + R$ 1.497 de implementação (pagamento único)
+                    </p>
+
+                    {/* Highlight 150 conversas */}
+                    <div
+                      className="mt-5 mb-5 rounded-xl p-3 text-center"
+                      style={{ background: 'rgba(250, 248, 242, 0.06)', border: '1px solid rgba(250, 248, 242, 0.14)' }}
+                    >
+                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
+                        150 conversas/mês
+                      </span>
+                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                        incluídas no atendimento com IA
+                      </span>
+                    </div>
+
+                    {/* Features */}
+                    <ul className="space-y-2.5 text-sm flex-1">
+                      {[
+                        'CRM completo de leads',
+                        'Até 5 conexões de WhatsApp',
+                        'Disparo em massa segmentado',
+                        'Follow-up automático 24/7',
+                        'IA de atendimento (Pedro + Marcos)',
+                        'Exportação de planilhas e relatórios',
+                        'Suporte por e-mail',
+                      ].map((f) => (
+                        <li key={f} className="flex items-start gap-2.5">
+                          <span
+                            className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
+                            style={{ width: 18, height: 18, background: 'rgba(250, 248, 242, 0.12)' }}
+                          >
+                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-cream)' }} />
+                          </span>
+                          <span style={{ color: 'rgba(250, 248, 242, 0.88)' }}>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    {/* CTA — único botão */}
+                    <Button
+                      asChild
+                      size="lg"
+                      className="mt-7 w-full text-base font-bold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
+                      style={{
+                        background: 'transparent',
+                        color: 'var(--brand-cream)',
+                        border: '2px solid var(--brand-gold)',
+                      }}
+                    >
+                      <Link to="/checkout?plano=basico&ciclo=mensal">
+                        Assinar o Básico <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
             </div>
 
-            {/* CTA explícito embaixo (fallback acessível + visível) */}
-            <div className="mt-6 text-center">
-              <Button
-                asChild
-                size="lg"
-                className="px-10 text-base md:text-lg font-extrabold gap-2 py-6 transition-all hover:translate-y-[-2px] uppercase tracking-wider"
-                style={{
-                  background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
-                  color: 'var(--brand-navy)',
-                  boxShadow: '0 12px 32px rgba(212, 160, 23, 0.50), inset 0 -3px 0 rgba(0,0,0,0.20)',
-                  border: '2px solid var(--brand-gold-hover)',
-                }}
-              >
-                <Link to="/checkout?plano=mensal">
-                  Quero começar agora <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                </Link>
-              </Button>
-              <p className="text-xs text-muted-foreground mt-3 flex items-center justify-center gap-1.5">
+            {/* Nota do fundador + microcopy de segurança */}
+            <div className="mt-8 text-center">
+              <p className="text-sm font-semibold" style={{ color: 'var(--brand-gold)' }}>
+                Oferta Pro Fundador: os 10 primeiros assinam o Pro pagando o preço do Básico.
+              </p>
+              <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <Lock className="h-3 w-3" />
                 Ambiente seguro · Liberação em 5 min · Cancele quando quiser
               </p>
@@ -1812,7 +1993,7 @@ export default function LandingPage() {
                     },
                     {
                       Icon: Database,
-                      title: 'Tokens disponível 150 mil',
+                      title: '300 conversas/mês inclusas',
                       desc: 'Mais inteligência, mais automações e mais resultados.',
                     },
                     {
@@ -1873,7 +2054,7 @@ export default function LandingPage() {
                 >
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 md:gap-4">
                     {[
-                      { Icon: Users, top: '150 MIL', bottom: 'TOKENS DISPONÍVEL' },
+                      { Icon: Users, top: '300', bottom: 'CONVERSAS / MÊS' },
                       { Icon: Phone, top: 'ATÉ 10', bottom: 'CONEXÕES DE WHATSAPP' },
                       { Icon: ShieldCheck, top: 'SEGURANÇA', bottom: 'E DADOS PROTEGIDOS' },
                     ].map((h, i) => (
@@ -2124,24 +2305,30 @@ export default function LandingPage() {
 
           </div>
 
-          {/* Company identity */}
-          <div
-            className="pt-6 text-xs"
-            style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)', color: 'rgba(250, 248, 242, 0.55)' }}
-          >
-            <p className="leading-relaxed">
-              <span className="font-semibold" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>Agencia Up Business LTDA</span>
-              <span>&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
-            </p>
-          </div>
-
           {/* Bottom bar */}
-          <div
-            className="pt-4 mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
-            style={{ color: 'rgba(250, 248, 242, 0.55)' }}
-          >
-            <span>© {new Date().getFullYear()} LOGOS|IA. Todos os direitos reservados.</span>
-            <span>Feito no Brasil 🇧🇷</span>
+          <div className="pt-6" style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)' }}>
+            <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:items-center sm:justify-between sm:text-left">
+
+              {/* Identidade da empresa + CNPJ — visivel pra conformidade legal/Meta */}
+              <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
+                <span className="font-semibold" style={{ color: 'var(--brand-cream)' }}>Agencia Up Business LTDA</span>
+                <span className="opacity-75">&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
+              </p>
+
+              {/* Copyright + links legais + selo — mesma secao/fonte */}
+              <div
+                className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs sm:justify-end"
+                style={{ color: 'rgba(250, 248, 242, 0.60)' }}
+              >
+                <span>© {new Date().getFullYear()} LOGOS|IA</span>
+                <span className="opacity-40">·</span>
+                <a href="/privacy-policy.html" className="opacity-85 hover:opacity-100 transition-opacity">Política de Privacidade</a>
+                <span className="opacity-40">·</span>
+                <a href="/terms-of-service.html" className="opacity-85 hover:opacity-100 transition-opacity">Termos de Uso</a>
+                <span className="opacity-40">·</span>
+                <span>Feito no Brasil 🇧🇷</span>
+              </div>
+            </div>
           </div>
 
         </div>
