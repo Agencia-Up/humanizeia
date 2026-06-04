@@ -2124,10 +2124,21 @@ export default function LandingPage() {
 
           </div>
 
+          {/* Company identity */}
+          <div
+            className="pt-6 text-xs"
+            style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)', color: 'rgba(250, 248, 242, 0.55)' }}
+          >
+            <p className="leading-relaxed">
+              <span className="font-semibold" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>Agencia Up Business LTDA</span>
+              <span>&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
+            </p>
+          </div>
+
           {/* Bottom bar */}
           <div
-            className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
-            style={{ borderTop: '1px solid rgba(250, 248, 242, 0.10)', color: 'rgba(250, 248, 242, 0.55)' }}
+            className="pt-4 mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
+            style={{ color: 'rgba(250, 248, 242, 0.55)' }}
           >
             <span>© {new Date().getFullYear()} LOGOS|IA. Todos os direitos reservados.</span>
             <span>Feito no Brasil 🇧🇷</span>
