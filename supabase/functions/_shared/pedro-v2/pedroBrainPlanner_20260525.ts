@@ -434,7 +434,7 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // pode afirmar disponibilidade ("temos"/"nao temos") sem ter consultado o estoque.
   // (photo_request e handoff NAO sao tocados; so promove reply_only/clarify -> stock_search.)
   const _vr = input.vehicle_resolution;
-  if (_vr?.has_current_vehicle_signal && _vr?.query && (plan.action === "reply_only" || plan.action === "clarify")) {
+  if (_vr?.has_current_vehicle_signal && _vr?.query && plan.intent !== "trade_in" && (plan.action === "reply_only" || plan.action === "clarify")) {
     plan.action = "stock_search";
     plan.intent = plan.intent === "small_talk" ? "stock_lookup" : plan.intent;
     plan.search_query = _vr.query;
@@ -562,7 +562,7 @@ export async function planPedroTurn(input: {
     "",
     "== RESOLUCAO DE VEICULOS (INTELIGENCIA SEMANTICA) ==",
     "- Identifique se a mensagem atual do lead (lead_message) ou o contexto recente cita algum veiculo (marca, modelo ou versao), mesmo com erros graves de digitacao, abreviacoes ou escrita fonetica (ex: 'reguede' -> 'Jeep Renegade', 'tcross' -> 'Volkswagen T-Cross', 'oroqui' -> 'Renault Oroch', 'mini cuper' -> 'Mini Cooper').",
-    "- Se um veiculo for mencionado, defina 'action'='stock_search' e coloque o nome canonico (Marca + Modelo, ex: 'Jeep Renegade') em 'search_query'.",
+    "- Se um veiculo for mencionado, defina 'action'='stock_search' e coloque o nome canonico (Marca + Modelo, ex: 'Jeep Renegade') em 'search_query'. ATENÇÃO: se o cliente estiver apenas OFERECENDO o veículo dele como TROCA/entrada (intent='trade_in'), defina 'action'='reply_only' e NÃO coloque o carro da troca em 'search_query' (e nem faça busca dele no estoque).",
     "- Preencha 'search_filters.modelo_desejado' com o modelo e 'search_filters.tipo_veiculo' com 'suv','pickup','hatch','sedan' ou 'moto'.",
     "- Nao confie cegamente no 'vehicle_resolution' heuristico se voce puder deduzir semanticamente o veiculo a partir da mensagem do lead.",
     "",
