@@ -41,6 +41,7 @@ const WhatsAppInstances  = lazy(() => import('./WhatsAppInstances'));
 const WhatsAppInbox      = lazy(() => import('./WhatsAppInbox'));
 import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder';
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
+import FollowupDashboard from '@/components/pedro/FollowupDashboard';
 import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
@@ -5088,6 +5089,7 @@ const MASTER_TABS = [
   { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
+  { id: 'followups',    label: 'Follow-ups',   icon: CalendarClock, emoji: '📅' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
   { id: 'instancias',   label: 'Instâncias',   icon: Smartphone,    emoji: '📱' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
@@ -5219,6 +5221,13 @@ export default function PedroSDR() {
                 />
               )}
             </TabsContent>
+
+            {/* Follow-ups — dashboard de métricas (somente master) */}
+            {!isSeller && (
+              <TabsContent value="followups" className="mt-0">
+                <FollowupDashboard userId={inboxOwnerId} />
+              </TabsContent>
+            )}
 
             {/* Vendedores */}
             {(!isSeller || visibleFeatures.tab_vendedores) && (
