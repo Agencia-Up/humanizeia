@@ -352,9 +352,15 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       }
 
       toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });
-      setEditingCampaign(null);
+      // Fecha o modal PRIMEIRO; adia reset + refetch pro proximo tick pra nao
+      // atropelar a limpeza do overlay do Radix. Sem isso, o body as vezes fica
+      // com pointer-events:none e a tela "congela" ate dar F5.
       setDialogOpen(false);
-      fetchData();
+      setTimeout(() => {
+        if (typeof document !== 'undefined') document.body.style.removeProperty('pointer-events');
+        setEditingCampaign(null);
+        fetchData();
+      }, 120);
     } catch (err: any) {
       toast({ title: 'Erro ao salvar campanha', description: err.message, variant: 'destructive' });
     } finally {
