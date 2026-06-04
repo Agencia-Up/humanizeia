@@ -677,7 +677,7 @@ export function ConnectionsTab() {
               <Button
                 size="sm"
                 className="w-full text-xs gradient-primary text-primary-foreground"
-                onClick={() => navigate('/whatsapp/instances')}
+                onClick={() => navigate('/integrations?tab=whatsapp')}
               >
                 <ExternalLink className="h-3 w-3 mr-1" />
                 {connectedWa.length > 0 ? 'Gerenciar instâncias' : 'Conectar WhatsApp'}
