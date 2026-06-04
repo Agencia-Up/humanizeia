@@ -31,7 +31,9 @@ const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
 // O MAXIMO o vendedor define na campanha; o MINIMO e travado aqui no codigo e
 // nao pode ser burlado (mesmo que a campanha tenha min menor). Robusto contra
 // acumulo de itens vencidos via cooldown por campanha.
-const MARCOS_MIN_DELAY_FLOOR_SECONDS = 300;
+const MARCOS_MIN_DELAY_FLOOR_SECONDS = 120; // piso ABSOLUTO entre mensagens: 2 min (o vendedor pode descer ate aqui)
+const DEFAULT_DELAY_MIN_SECONDS = 300;  // padrao quando a campanha nao define: 5 min
+const DEFAULT_DELAY_MAX_SECONDS = 1620; // padrao quando a campanha nao define: 27 min
 
 // AVISO (#3): cria notificacao no portal (sino) quando um disparo TRAVA por numero
 // desconectado. Dedupe: no maximo 1 aviso por campanha a cada 30min (nao spamma o
@@ -788,9 +790,10 @@ Deno.serve(async (req) => {
         
         // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
         const isCurrentContactCold = !item.contact_metadata?.last_message_at;
-        // TRAVA: piso de 300s (o vendedor define o maximo; o minimo nunca cai abaixo de 5min).
-        const configuredMinD = Math.max(MARCOS_MIN_DELAY_FLOOR_SECONDS, delayRules.min || campaign?.min_delay_seconds || 20);
-        const configuredMaxD = Math.max(configuredMinD, delayRules.max || campaign?.max_delay_seconds || 60);
+        // TRAVA: piso absoluto de 120s (2 min). O vendedor define min/max na campanha
+        // (padrao 5-27 min); nunca cai abaixo de 2 min. Sem config => 5-27 min.
+        const configuredMinD = Math.max(MARCOS_MIN_DELAY_FLOOR_SECONDS, Number(delayRules.min) || campaign?.min_delay_seconds || DEFAULT_DELAY_MIN_SECONDS);
+        const configuredMaxD = Math.max(configuredMinD, Number(delayRules.max) || campaign?.max_delay_seconds || DEFAULT_DELAY_MAX_SECONDS);
         
         const minD = isCurrentContactCold
           ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)

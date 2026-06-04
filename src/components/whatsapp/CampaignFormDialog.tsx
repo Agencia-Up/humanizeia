@@ -97,8 +97,9 @@ export function CampaignFormDialog({
   const [prompt, setPrompt] = useState('');
   const [template, setTemplate] = useState('');
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
-  const [delayMin, setDelayMin] = useState(35);
-  const [delayMax, setDelayMax] = useState(89);
+  // Delay entre mensagens em MINUTOS (UI). Salvo em segundos. Padrão 5-27 min; range 2-60 min.
+  const [delayMin, setDelayMin] = useState(5);
+  const [delayMax, setDelayMax] = useState(27);
   const [rotationMsgs, setRotationMsgs] = useState(10);
   const [rotationPause, setRotationPause] = useState(300);
   const [warmupEnabled, setWarmupEnabled] = useState(false);
@@ -137,8 +138,9 @@ export function CampaignFormDialog({
           : editingCampaign.message_template || ''
       );
       setSelectedLists(editingCampaign.listas_alvo || []);
-      setDelayMin(editingCampaign.regras_delay?.min ?? 35);
-      setDelayMax(editingCampaign.regras_delay?.max ?? 89);
+      // Banco guarda segundos; UI mostra minutos (clamp 2-60).
+      setDelayMin(Math.min(60, Math.max(2, Math.round((Number(editingCampaign.regras_delay?.min) || 300) / 60))));
+      setDelayMax(Math.min(60, Math.max(2, Math.round((Number(editingCampaign.regras_delay?.max) || 1620) / 60))));
       setRotationMsgs(editingCampaign.regras_rodizio?.mensagens_por_instancia ?? 10);
       setRotationPause(editingCampaign.regras_rodizio?.pausa_entre_instancias ?? 300);
       setWarmupEnabled(editingCampaign.regras_aquecimento?.enabled ?? false);
@@ -177,7 +179,7 @@ export function CampaignFormDialog({
 
   const resetForm = () => {
     setName(''); setPrompt(''); setTemplate('');
-    setSelectedLists([]); setDelayMin(35); setDelayMax(89);
+    setSelectedLists([]); setDelayMin(5); setDelayMax(27);
     setRotationMsgs(10); setRotationPause(300);
     setWarmupEnabled(false); setWarmupInitial(20);
     setWarmupDailyLimit(50); setWarmupRampDays(14);
@@ -224,7 +226,7 @@ export function CampaignFormDialog({
       prompt_base: prompt,
       message_template: template,
       listas_alvo: selectedLists,
-      regras_delay: { min: delayMin, max: delayMax },
+      regras_delay: { min: delayMin * 60, max: delayMax * 60 }, // minutos (UI) -> segundos (banco)
       regras_rodizio: { mensagens_por_instancia: rotationMsgs, pausa_entre_instancias: rotationPause },
       regras_aquecimento: {
         enabled: warmupEnabled,
@@ -601,20 +603,21 @@ export function CampaignFormDialog({
                 Configuração de Delays Dinâmicos
               </Label>
               <p className="text-xs text-muted-foreground">
-                Intervalo aleatório entre cada mensagem enviada. Valores maiores reduzem risco de bloqueio.
+                Intervalo aleatório entre cada mensagem enviada, em <strong>minutos</strong>. Padrão 5–27 min.
+                O sistema nunca dispara mais rápido que o mínimo configurado — piso de segurança anti-ban de 2 min.
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <span className="text-xs text-muted-foreground">Mínimo: {delayMin}s</span>
-                  <Slider value={[delayMin]} onValueChange={([v]) => { setDelayMin(v); if (v > delayMax) setDelayMax(v); }} min={5} max={300} step={1} />
+                  <span className="text-xs text-muted-foreground">Mínimo: {delayMin} min</span>
+                  <Slider value={[delayMin]} onValueChange={([v]) => { setDelayMin(v); if (v > delayMax) setDelayMax(v); }} min={2} max={60} step={1} />
                 </div>
                 <div className="space-y-1.5">
-                  <span className="text-xs text-muted-foreground">Máximo: {delayMax}s</span>
-                  <Slider value={[delayMax]} onValueChange={([v]) => { setDelayMax(v); if (v < delayMin) setDelayMin(v); }} min={5} max={300} step={1} />
+                  <span className="text-xs text-muted-foreground">Máximo: {delayMax} min</span>
+                  <Slider value={[delayMax]} onValueChange={([v]) => { setDelayMax(v); if (v < delayMin) setDelayMin(v); }} min={2} max={60} step={1} />
                 </div>
               </div>
               <p className="text-xs text-muted-foreground italic">
-                Salvo como: {`{ "min": ${delayMin}, "max": ${delayMax} }`}
+                Salvo como: {`{ "min": ${delayMin * 60}, "max": ${delayMax * 60} }`} (segundos).
               </p>
             </div>
 

@@ -899,7 +899,7 @@ Não numere as variações. Não inclua explicações adicionais.`
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground">
               <div className="flex gap-2 items-start">
                 <span className="text-amber-400 shrink-0 mt-0.5">1.</span>
-                <p><strong className="text-foreground">Delay mínimo de 30s:</strong> Configure pelo menos 30-60s entre mensagens. Envios rápidos demais acionam o anti-spam do WhatsApp.</p>
+                <p><strong className="text-foreground">Intervalo entre mensagens:</strong> O sistema usa de 2 a 60 minutos entre disparos (padrão 5–27 min). Quanto maior, menor o risco de bloqueio. Abaixo de 2 min não é permitido.</p>
               </div>
               <div className="flex gap-2 items-start">
                 <span className="text-amber-400 shrink-0 mt-0.5">2.</span>
