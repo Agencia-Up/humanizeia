@@ -7,8 +7,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
   Play, Pause, CheckCircle, XCircle, Clock, Zap, Loader2,
-  RotateCcw, Wand2, Trash2, MoreVertical, Pencil,
+  RotateCcw, Wand2, Trash2, MoreVertical, Pencil, FileBarChart,
 } from 'lucide-react';
+import { CampaignDeliveryReport } from '@/components/broadcast/CampaignDeliveryReport';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,6 +58,7 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
   const [isPausing, setIsPausing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const progress = campaign.total_contacts > 0
     ? Math.round((campaign.sent_count / campaign.total_contacts) * 100)
@@ -190,6 +192,9 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
                       <Pause className="h-4 w-4 mr-2" /> Pausar
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuItem onClick={() => setReportOpen(true)}>
+                    <FileBarChart className="h-4 w-4 mr-2" /> Relatório de entregas
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => setShowDeleteConfirm(true)}
                     className="text-destructive focus:text-destructive"
@@ -241,6 +246,20 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
               )}
             </div>
           </div>
+
+          {/* Relatório de entregas — disponível assim que a campanha começa */}
+          {campaign.status !== 'draft' && (
+            <div className="mt-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground px-0"
+                onClick={() => setReportOpen(true)}
+              >
+                <FileBarChart className="h-3.5 w-3.5" /> Ver relatório de entregas
+              </Button>
+            </div>
+          )}
 
           {/* Action buttons for draft/paused */}
           {(campaign.status === 'draft' || campaign.status === 'paused') && (
@@ -296,6 +315,13 @@ export function CampaignCard({ campaign, onRefresh, onEdit }: CampaignCardProps)
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CampaignDeliveryReport
+        campaignId={campaign.id}
+        campaignName={campaign.name}
+        open={reportOpen}
+        onOpenChange={setReportOpen}
+      />
     </>
   );
 }
