@@ -20,7 +20,7 @@ import { ptBR } from 'date-fns/locale';
 import {
   Loader2, Plus, Eye, Sparkles, Clock, RotateCcw, CalendarIcon,
   Image, Video, FileText, Music, X, Tag, Pencil, Smartphone,
-  Flame, Info, Zap, MessageSquare, Upload, Trash2,
+  Flame, Info, Zap, MessageSquare, Upload, Trash2, AlertTriangle,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -56,6 +56,7 @@ interface WaInstance {
   friendly_name: string;
   phone_number: string | null;
   status: string;
+  created_at?: string | null;
 }
 
 interface CampaignFormDialogProps {
@@ -96,8 +97,9 @@ export function CampaignFormDialog({
   const [prompt, setPrompt] = useState('');
   const [template, setTemplate] = useState('');
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
-  const [delayMin, setDelayMin] = useState(35);
-  const [delayMax, setDelayMax] = useState(89);
+  // Delay entre mensagens em MINUTOS (UI). Salvo em segundos. Padrão 5-27 min; range 2-60 min.
+  const [delayMin, setDelayMin] = useState(5);
+  const [delayMax, setDelayMax] = useState(27);
   const [rotationMsgs, setRotationMsgs] = useState(10);
   const [rotationPause, setRotationPause] = useState(300);
   const [warmupEnabled, setWarmupEnabled] = useState(false);
@@ -136,15 +138,22 @@ export function CampaignFormDialog({
           : editingCampaign.message_template || ''
       );
       setSelectedLists(editingCampaign.listas_alvo || []);
-      setDelayMin(editingCampaign.regras_delay?.min ?? 35);
-      setDelayMax(editingCampaign.regras_delay?.max ?? 89);
+      // Banco guarda segundos; UI mostra minutos (clamp 2-60).
+      setDelayMin(Math.min(60, Math.max(2, Math.round((Number(editingCampaign.regras_delay?.min) || 300) / 60))));
+      setDelayMax(Math.min(60, Math.max(2, Math.round((Number(editingCampaign.regras_delay?.max) || 1620) / 60))));
       setRotationMsgs(editingCampaign.regras_rodizio?.mensagens_por_instancia ?? 10);
       setRotationPause(editingCampaign.regras_rodizio?.pausa_entre_instancias ?? 300);
       setWarmupEnabled(editingCampaign.regras_aquecimento?.enabled ?? false);
       setWarmupInitial(editingCampaign.regras_aquecimento?.initial_messages ?? 20);
       setWarmupDailyLimit((editingCampaign.regras_aquecimento as any)?.limite_diario_inicial ?? 50);
       setWarmupRampDays((editingCampaign.regras_aquecimento as any)?.dias_rampa ?? 14);
-      setInstanceId(editingCampaign.instance_id || 'auto');
+      // Só mantém a instância salva se ela ainda existir E estiver conectada;
+      // senão cai pra 'auto' (evita "fantasma" de número que não existe mais).
+      setInstanceId(
+        editingCampaign.instance_id && instances.some(i => i.id === editingCampaign.instance_id)
+          ? editingCampaign.instance_id
+          : 'auto',
+      );
       setMediaUrl(editingCampaign.media_url || '');
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
@@ -176,7 +185,7 @@ export function CampaignFormDialog({
 
   const resetForm = () => {
     setName(''); setPrompt(''); setTemplate('');
-    setSelectedLists([]); setDelayMin(35); setDelayMax(89);
+    setSelectedLists([]); setDelayMin(5); setDelayMax(27);
     setRotationMsgs(10); setRotationPause(300);
     setWarmupEnabled(false); setWarmupInitial(20);
     setWarmupDailyLimit(50); setWarmupRampDays(14);
@@ -223,7 +232,7 @@ export function CampaignFormDialog({
       prompt_base: prompt,
       message_template: template,
       listas_alvo: selectedLists,
-      regras_delay: { min: delayMin, max: delayMax },
+      regras_delay: { min: delayMin * 60, max: delayMax * 60 }, // minutos (UI) -> segundos (banco)
       regras_rodizio: { mensagens_por_instancia: rotationMsgs, pausa_entre_instancias: rotationPause },
       regras_aquecimento: {
         enabled: warmupEnabled,
@@ -300,20 +309,29 @@ export function CampaignFormDialog({
                 <Smartphone className="h-4 w-4 text-muted-foreground" />
                 Instância WhatsApp
               </Label>
-              <Select value={instanceId} onValueChange={setInstanceId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a instância" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
-                  {instances.map(inst => (
-                    <SelectItem key={inst.id} value={inst.id}>
-                      {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
-                      {inst.status !== 'connected' && ' ⚠️'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {instances.length === 0 ? (
+                <div className="flex gap-2 items-start rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs">
+                  <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                  <div className="text-red-300">
+                    <strong>Nenhum número WhatsApp conectado.</strong> Conecte (ou reconecte) um número na aba
+                    Instâncias antes de disparar — sem número conectado, a campanha não envia.
+                  </div>
+                </div>
+              ) : (
+                <Select value={instanceId} onValueChange={setInstanceId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a instância" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
+                    {instances.map(inst => (
+                      <SelectItem key={inst.id} value={inst.id}>
+                        {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <Separator />
@@ -600,20 +618,21 @@ export function CampaignFormDialog({
                 Configuração de Delays Dinâmicos
               </Label>
               <p className="text-xs text-muted-foreground">
-                Intervalo aleatório entre cada mensagem enviada. Valores maiores reduzem risco de bloqueio.
+                Intervalo aleatório entre cada mensagem enviada, em <strong>minutos</strong>. Padrão 5–27 min.
+                O sistema nunca dispara mais rápido que o mínimo configurado — piso de segurança anti-ban de 2 min.
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <span className="text-xs text-muted-foreground">Mínimo: {delayMin}s</span>
-                  <Slider value={[delayMin]} onValueChange={([v]) => { setDelayMin(v); if (v > delayMax) setDelayMax(v); }} min={5} max={300} step={1} />
+                  <span className="text-xs text-muted-foreground">Mínimo: {delayMin} min</span>
+                  <Slider value={[delayMin]} onValueChange={([v]) => { setDelayMin(v); if (v > delayMax) setDelayMax(v); }} min={2} max={60} step={1} />
                 </div>
                 <div className="space-y-1.5">
-                  <span className="text-xs text-muted-foreground">Máximo: {delayMax}s</span>
-                  <Slider value={[delayMax]} onValueChange={([v]) => { setDelayMax(v); if (v < delayMin) setDelayMin(v); }} min={5} max={300} step={1} />
+                  <span className="text-xs text-muted-foreground">Máximo: {delayMax} min</span>
+                  <Slider value={[delayMax]} onValueChange={([v]) => { setDelayMax(v); if (v < delayMin) setDelayMin(v); }} min={2} max={60} step={1} />
                 </div>
               </div>
               <p className="text-xs text-muted-foreground italic">
-                Salvo como: {`{ "min": ${delayMin}, "max": ${delayMax} }`}
+                Salvo como: {`{ "min": ${delayMin * 60}, "max": ${delayMax * 60} }`} (segundos).
               </p>
             </div>
 
@@ -711,6 +730,43 @@ export function CampaignFormDialog({
                   </div>
                 </div>
               )}
+
+              {/* Capacidade de disparo do número segundo o aquecimento (mesma conta do backend) */}
+              {(() => {
+                const sel = instances.find(i => i.id === instanceId);
+                const ageDays = sel?.created_at
+                  ? Math.floor((Date.now() - new Date(sel.created_at).getTime()) / 86400000)
+                  : null;
+                const init = Math.max(1, warmupInitial || 20);
+                const target = Math.max(init, warmupDailyLimit || 50);
+                const rampDays = Math.max(1, warmupRampDays || 14);
+                const capFor = (age: number) =>
+                  age >= rampDays ? target : Math.max(init, Math.floor(init + (target - init) * (age / rampDays)));
+                if (!warmupEnabled) {
+                  return (
+                    <div className="flex gap-2 items-start rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                      <Flame className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="text-amber-200/90">
+                        <strong>Aquecimento desligado.</strong> Cada número vai disparar até <strong>200/dia</strong> (tratado como número pronto).
+                        Se o número for novo, há <strong>risco maior de bloqueio</strong> pelo WhatsApp — considere ligar o aquecimento.
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="flex gap-2 items-start rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
+                    <Flame className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                    <div className="text-blue-200/90">
+                      {sel && ageDays !== null ? (
+                        <>Pelo aquecimento, <strong>{sel.friendly_name || 'este número'}</strong> (criado há {ageDays} dia{ageDays === 1 ? '' : 's'}) suporta <strong>~{capFor(ageDays)} disparos hoje</strong>, subindo até <strong>{target}/dia</strong> em {rampDays} dias.</>
+                      ) : (
+                        <>Cada número começa em <strong>~{init}/dia</strong> e sobe até <strong>{target}/dia</strong> em {rampDays} dias (conforme a idade de cada número). Mantenha intervalos longos para proteger os números.</>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <p className="text-xs text-muted-foreground italic">
                 Salvo como: {`{ "enabled": ${warmupEnabled}, "initial_messages": ${warmupInitial}, "limite_diario_inicial": ${warmupDailyLimit}, "dias_rampa": ${warmupRampDays} }`}
               </p>

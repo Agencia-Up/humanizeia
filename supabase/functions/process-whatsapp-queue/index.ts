@@ -20,6 +20,10 @@ const SCHEDULED_CAMPAIGN_AUTO_START_LIMIT = 20;
 // ===== ANTI-BAN: Default safety limits =====
 const DEFAULT_DAILY_LIMIT_NEW_INSTANCE = 10; // New numbers (<3 days): max 10 msgs/day
 const DEFAULT_DAILY_LIMIT_MATURE_INSTANCE = 200; // Mature numbers (>14 days): max 200 msgs/day
+// Aquecimento (warmup) — piso/alvo padrão quando a campanha liga o aquecimento
+// mas não preenche os campos. Curva sobe do piso (dia 0) até o alvo (fim da rampa).
+const DEFAULT_WARMUP_INITIAL_DAILY = 20; // dia 0: um número ativo aguenta pelo menos isto
+const DEFAULT_WARMUP_TARGET_DAILY = 50;  // alvo ao fim da rampa, sem config explícita
 const WARMUP_RAMP_DAYS = 14; // Days to reach full capacity
 const COLD_CONTACT_MIN_DELAY_SECONDS = 45; // Minimum delay for cold contacts (no prior interaction)
 const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
@@ -27,7 +31,9 @@ const COLD_CONTACT_MAX_DELAY_SECONDS = 120; // Maximum delay for cold contacts
 // O MAXIMO o vendedor define na campanha; o MINIMO e travado aqui no codigo e
 // nao pode ser burlado (mesmo que a campanha tenha min menor). Robusto contra
 // acumulo de itens vencidos via cooldown por campanha.
-const MARCOS_MIN_DELAY_FLOOR_SECONDS = 300;
+const MARCOS_MIN_DELAY_FLOOR_SECONDS = 120; // piso ABSOLUTO entre mensagens: 2 min (o vendedor pode descer ate aqui)
+const DEFAULT_DELAY_MIN_SECONDS = 300;  // padrao quando a campanha nao define: 5 min
+const DEFAULT_DELAY_MAX_SECONDS = 1620; // padrao quando a campanha nao define: 27 min
 
 // AVISO (#3): cria notificacao no portal (sino) quando um disparo TRAVA por numero
 // desconectado. Dedupe: no maximo 1 aviso por campanha a cada 30min (nao spamma o
@@ -784,9 +790,10 @@ Deno.serve(async (req) => {
         
         // ===== ANTI-BAN: Use MUCH longer delays for cold contacts =====
         const isCurrentContactCold = !item.contact_metadata?.last_message_at;
-        // TRAVA: piso de 300s (o vendedor define o maximo; o minimo nunca cai abaixo de 5min).
-        const configuredMinD = Math.max(MARCOS_MIN_DELAY_FLOOR_SECONDS, delayRules.min || campaign?.min_delay_seconds || 20);
-        const configuredMaxD = Math.max(configuredMinD, delayRules.max || campaign?.max_delay_seconds || 60);
+        // TRAVA: piso absoluto de 120s (2 min). O vendedor define min/max na campanha
+        // (padrao 5-27 min); nunca cai abaixo de 2 min. Sem config => 5-27 min.
+        const configuredMinD = Math.max(MARCOS_MIN_DELAY_FLOOR_SECONDS, Number(delayRules.min) || campaign?.min_delay_seconds || DEFAULT_DELAY_MIN_SECONDS);
+        const configuredMaxD = Math.max(configuredMinD, Number(delayRules.max) || campaign?.max_delay_seconds || DEFAULT_DELAY_MAX_SECONDS);
         
         const minD = isCurrentContactCold
           ? Math.max(configuredMinD, COLD_CONTACT_MIN_DELAY_SECONDS)
@@ -1004,8 +1011,13 @@ async function selectSmartInstance(
   todaySentByInstance: Map<string, number>,
 ): Promise<Instance | null> {
   const aquecimento = campaign?.regras_aquecimento || {};
-  const warmupDailyLimit = aquecimento.limite_diario_inicial || null;
-  const warmupRampDays = aquecimento.dias_rampa || WARMUP_RAMP_DAYS;
+  // O aquecimento SÓ vale quando a chave está explicitamente LIGADA (enabled === true).
+  // Com a chave desligada, o número é tratado como pronto — sem rampa nenhuma.
+  const warmupEnabled = (aquecimento as any).enabled === true;
+  // Piso (dia 0) = initial_messages configurado. Alvo (fim da rampa) = limite_diario_inicial.
+  const warmupInitial = Math.max(1, Number((aquecimento as any).initial_messages) || DEFAULT_WARMUP_INITIAL_DAILY);
+  const warmupTarget = Math.max(warmupInitial, Number((aquecimento as any).limite_diario_inicial) || DEFAULT_WARMUP_TARGET_DAILY);
+  const warmupRampDays = Math.max(1, Number((aquecimento as any).dias_rampa) || WARMUP_RAMP_DAYS);
 
   const rodizio = campaign?.regras_rodizio || {};
   const rotationLimit = Math.max(1, rodizio.mensagens_por_instancia || campaign?.rotation_messages_per_instance || 10);
@@ -1076,22 +1088,19 @@ async function selectSmartInstance(
 
     let dailyLimit: number;
 
-    if (warmupDailyLimit) {
-      // User-configured warmup
-      if (instanceAgeDays < warmupRampDays) {
-        const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / warmupRampDays);
-        dailyLimit = Math.floor(warmupDailyLimit * rampMultiplier);
-      } else {
-        dailyLimit = warmupDailyLimit;
-      }
+    if (!warmupEnabled) {
+      // Aquecimento DESLIGADO → sem rampa. Número tratado como pronto, no teto
+      // maduro de segurança (200/dia). É escolha do cliente desligar a chave.
+      dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
+    } else if (instanceAgeDays >= warmupRampDays) {
+      // Rampa concluída → capacidade alvo configurada.
+      dailyLimit = warmupTarget;
     } else {
-      // DEFAULT safety warmup (always applied when no custom config)
-      if (instanceAgeDays < WARMUP_RAMP_DAYS) {
-        const rampMultiplier = Math.min(1, (instanceAgeDays + 1) / WARMUP_RAMP_DAYS);
-        dailyLimit = Math.max(5, Math.floor(DEFAULT_DAILY_LIMIT_NEW_INSTANCE + (DEFAULT_DAILY_LIMIT_MATURE_INSTANCE - DEFAULT_DAILY_LIMIT_NEW_INSTANCE) * rampMultiplier));
-      } else {
-        dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
-      }
+      // Rampa LINEAR do piso (initial_messages, dia 0) até o alvo (limite_diario_inicial).
+      // Nunca abaixo do piso configurado — corrige o bug antigo que ramping de ~0
+      // dava floor(50*2/14)=7/dia num número de 1 dia.
+      const ramped = warmupInitial + (warmupTarget - warmupInitial) * (instanceAgeDays / warmupRampDays);
+      dailyLimit = Math.max(warmupInitial, Math.floor(ramped));
     }
 
     const candidateSentToday = todaySentByInstance.get(candidate.id) ?? candidate.messages_sent_today ?? 0;

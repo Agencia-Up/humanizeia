@@ -14,8 +14,9 @@ import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
 import {
   Send, Plus, CheckCircle, XCircle, MessageCircle, Users,
-  Upload, Loader2, Trash2, List, Zap, Sparkles, Pencil, Check, X,
+  Upload, Loader2, Trash2, List, Zap, Sparkles, Pencil, Check, X, LayoutDashboard,
 } from 'lucide-react';
+import { BroadcastDashboard } from '@/components/broadcast/BroadcastDashboard';
 import { Input } from '@/components/ui/input';
 import { CSVUploadDialog } from '@/components/broadcast/CSVUploadDialog';
 import { CampaignCard, type WACampaign } from '@/components/broadcast/CampaignCard';
@@ -54,6 +55,7 @@ interface WAInstance {
   health_score: number;
   provider: string;
   status: string;
+  created_at: string | null;
 }
 
 const isGeneratedAITemplate = (value?: string | null) => /^\[IA\]\s*/i.test((value || '').trim());
@@ -238,9 +240,10 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // mas não opera com número alheio).
       let instancesQuery = (supabase as any)
         .from('wa_instances')
-        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id')
+        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at')
         .eq('user_id', effectiveUserId)
-        .eq('is_active', true);
+        .eq('is_active', true)
+        .eq('status', 'connected'); // só números REALMENTE conectados podem disparar
       if (isolateBySeller) {
         instancesQuery = instancesQuery.eq('seller_member_id', seller!.id);
       } else {
@@ -349,9 +352,15 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       }
 
       toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });
-      setEditingCampaign(null);
+      // Fecha o modal PRIMEIRO; adia reset + refetch pro proximo tick pra nao
+      // atropelar a limpeza do overlay do Radix. Sem isso, o body as vezes fica
+      // com pointer-events:none e a tela "congela" ate dar F5.
       setDialogOpen(false);
-      fetchData();
+      setTimeout(() => {
+        if (typeof document !== 'undefined') document.body.style.removeProperty('pointer-events');
+        setEditingCampaign(null);
+        fetchData();
+      }, 120);
     } catch (err: any) {
       toast({ title: 'Erro ao salvar campanha', description: err.message, variant: 'destructive' });
     } finally {
@@ -897,7 +906,7 @@ Não numere as variações. Não inclua explicações adicionais.`
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground">
               <div className="flex gap-2 items-start">
                 <span className="text-amber-400 shrink-0 mt-0.5">1.</span>
-                <p><strong className="text-foreground">Delay mínimo de 30s:</strong> Configure pelo menos 30-60s entre mensagens. Envios rápidos demais acionam o anti-spam do WhatsApp.</p>
+                <p><strong className="text-foreground">Intervalo entre mensagens:</strong> O sistema usa de 2 a 60 minutos entre disparos (padrão 5–27 min). Quanto maior, menor o risco de bloqueio. Abaixo de 2 min não é permitido.</p>
               </div>
               <div className="flex gap-2 items-start">
                 <span className="text-amber-400 shrink-0 mt-0.5">2.</span>
@@ -959,6 +968,9 @@ Não numere as variações. Não inclua explicações adicionais.`
             <TabsTrigger value="campaigns" className="flex items-center gap-1">
               <Zap className="h-4 w-4" /> Campanhas
             </TabsTrigger>
+            <TabsTrigger value="dashboard" className="flex items-center gap-1">
+              <LayoutDashboard className="h-4 w-4" /> Dashboard
+            </TabsTrigger>
             <TabsTrigger value="lists" className="flex items-center gap-1">
               <List className="h-4 w-4" /> Listas ({lists.length})
             </TabsTrigger>
@@ -991,9 +1003,13 @@ Não numere as variações. Não inclua explicações adicionais.`
               </Card>
             ) : (
               campaigns.map(campaign => (
-                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} />
+                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} hasConnectedInstance={instances.length > 0} />
               ))
             )}
+          </TabsContent>
+
+          <TabsContent value="dashboard" className="mt-4">
+            <BroadcastDashboard campaigns={campaigns} userId={effectiveUserId} />
           </TabsContent>
 
           <TabsContent value="lists" className="mt-4 space-y-4">
