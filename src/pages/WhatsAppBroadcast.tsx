@@ -1009,7 +1009,7 @@ Não numere as variações. Não inclua explicações adicionais.`
           </TabsContent>
 
           <TabsContent value="dashboard" className="mt-4">
-            <BroadcastDashboard campaigns={campaigns} />
+            <BroadcastDashboard campaigns={campaigns} userId={effectiveUserId} />
           </TabsContent>
 
           <TabsContent value="lists" className="mt-4 space-y-4">
