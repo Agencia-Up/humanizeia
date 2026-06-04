@@ -442,3 +442,28 @@
 - PLANO DE INTELIGENCIA COMPLETO: Fase 1 (emoji/por favor v49) + Fase 2 (planner estruturado
   v50) + Auditoria 1 (v51) + Auditoria 2/modo assistente (v52) + relatorio mestre (v53/v54) +
   anuncio MODELO-first (v55) + Fase 3 tom (v56). 3 relatorios Antigravity 100% endereçados.
+
+## 2026-06-04 — FOTO ERRADA: trava de modelo do topico (v57)
+
+- Build `2026-06-04-photo-topic-lock-v57`. Bug (lead 5512988987269): apresentou 3 Cretas,
+  lead pediu "fotos do preto", agente mandou foto de JEEP RENEGADE. Causa: pool de foto era
+  [Tracker prata, Jeep preto] (busca SUV anterior; Cretas nunca salvos) e o seletor casava
+  "preto" por COR contra a lista inteira -> unico preto = Jeep -> imagem errada.
+- Metodo: workflow multi-agente (7 agentes) — descobriu que JA existia uma trava de modelo
+  (sameVehicleModel/topicAnchor) mas so armada COM busca fresca; no turno de foto-por-memoria
+  ficava null e a cor casava cross-modelo. Fix:
+  - pickReferencedVehicle ganha topicAnchor: cor/atributo so seleciona DENTRO do modelo do
+    topico; nome de modelo/ordinal vencem.
+  - topicAnchorVehicle armado tambem sem busca fresca (quando o pool e HOMOGENEO).
+  - photoVehiclesPool INVERTIDO: prefere estoque fresco do topico a memoria velha.
+  - topicIsAmbiguous: pool velho heterogeneo + pedido so por cor -> NAO manda foto, pergunta
+    qual carro (ambiguousPhotoPlan action=clarify). Principio: nunca mandar modelo errado.
+- ATENCAO p/ futuro: os AGENTES DO WORKFLOW EDITARAM o orchestrator direto (2 editores
+  concorrentes). Auditei: sem duplicacao, esbuild ok, KNOWN_PHOTO_MODEL_TOKENS removido.
+  MAS o sameVehicleModel deles tinha BUG (casava por qualquer token; "Flex"/"Aut" no nome
+  faziam Tracker==Jeep -> pool "homogeneo" -> Jeep mandado igual). Pego em TESTE UNITARIO.
+  Reescrito p/ chave marca:nome-do-modelo com MODEL_NOISE_TOKENS. SEMPRE auditar+testar
+  codigo de agente de workflow antes de aceitar.
+- Validado: 5 casos unitarios (sameVehicleModel Tracker!=Jeep apesar de flex/aut; pool
+  homo/hetero) + live (Mauricio agora roteia o Creta certo via modo assistente; "fotos do
+  onix" normal ok).
