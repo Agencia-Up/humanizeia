@@ -423,4 +423,22 @@
   _adModelo.includes(m)). 5 casos unitarios + validacao AO VIVO: anuncio Mini Cooper 2023 ->
   "Temos um Mini Cooper aqui sim! ...2019 cinza R$108.990" (positivo); Corolla ausente ->
   honesto + Polo. Compass 2023 com 2023 no estoque -> desempate preservado.
-- PENDENTE: Fase 3 (tom humano) — aprovada pelo dev, e a proxima.
+## 2026-06-04 — Fase 3 (tom humano) (v56)
+
+- Build `2026-06-04-tom-humano-fase3-v56` + deploy do generate-agent-funnel-prompt.
+- RE-DIAGNOSTICO honesto (logs recentes vs base): o trabalho anterior (prompt campeao +
+  concisao) JA tinha derrubado a maior parte: pergunta-isca 16%->7%, msgs longas 12%->4%.
+  O "?" de 62% e majoritariamente LEGITIMO (qualificacao "a vista ou financiar?", CTA
+  "quer ver fotos?") — NAO forcado pra baixo (prejudicaria a qualificacao). System prompt
+  salvo do Carvalho ja esta no formato campeao (proibe isca/elogio).
+- Tics residuais reais: aberturas "Otimo!"/"Perfeito!" e filler "estou a disposicao".
+  Cirurgia fina (sem deixar frio):
+  - pedroBrainReply (REGRAS DE FORMA, aplica a TODOS os agentes acima do portal): PROIBIDO
+    abrir com interjeicao de entusiasmo ISOLADA; PROIBIDO filler de cortesia no fim. ("Otimo"
+    no meio da frase como concordancia segue permitido — evita tom frio/abrupto.)
+  - generate-agent-funnel-prompt: mesmas 2 regras no prompt gerado (fonte, agentes futuros).
+- Validado: 4 dry-runs (3 aberturas limpas; 1 "Otimo," conector aceitavel; 0 filler).
+- NOTA: sanitizeModel forca o reply em gpt-4o mesmo o agente configurado como claude-3.5.
+- PLANO DE INTELIGENCIA COMPLETO: Fase 1 (emoji/por favor v49) + Fase 2 (planner estruturado
+  v50) + Auditoria 1 (v51) + Auditoria 2/modo assistente (v52) + relatorio mestre (v53/v54) +
+  anuncio MODELO-first (v55) + Fase 3 tom (v56). 3 relatorios Antigravity 100% endereçados.
