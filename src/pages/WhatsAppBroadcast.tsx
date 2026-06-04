@@ -14,8 +14,9 @@ import { useClaudeChat } from '@/hooks/useClaudeChat';
 import { CampaignFormDialog, CampaignFormData } from '@/components/whatsapp/CampaignFormDialog';
 import {
   Send, Plus, CheckCircle, XCircle, MessageCircle, Users,
-  Upload, Loader2, Trash2, List, Zap, Sparkles, Pencil, Check, X,
+  Upload, Loader2, Trash2, List, Zap, Sparkles, Pencil, Check, X, LayoutDashboard,
 } from 'lucide-react';
+import { BroadcastDashboard } from '@/components/broadcast/BroadcastDashboard';
 import { Input } from '@/components/ui/input';
 import { CSVUploadDialog } from '@/components/broadcast/CSVUploadDialog';
 import { CampaignCard, type WACampaign } from '@/components/broadcast/CampaignCard';
@@ -960,6 +961,9 @@ Não numere as variações. Não inclua explicações adicionais.`
             <TabsTrigger value="campaigns" className="flex items-center gap-1">
               <Zap className="h-4 w-4" /> Campanhas
             </TabsTrigger>
+            <TabsTrigger value="dashboard" className="flex items-center gap-1">
+              <LayoutDashboard className="h-4 w-4" /> Dashboard
+            </TabsTrigger>
             <TabsTrigger value="lists" className="flex items-center gap-1">
               <List className="h-4 w-4" /> Listas ({lists.length})
             </TabsTrigger>
@@ -995,6 +999,10 @@ Não numere as variações. Não inclua explicações adicionais.`
                 <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} />
               ))
             )}
+          </TabsContent>
+
+          <TabsContent value="dashboard" className="mt-4">
+            <BroadcastDashboard campaigns={campaigns} />
           </TabsContent>
 
           <TabsContent value="lists" className="mt-4 space-y-4">
