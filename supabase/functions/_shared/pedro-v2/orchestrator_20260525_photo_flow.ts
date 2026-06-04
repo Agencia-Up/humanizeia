@@ -7,6 +7,7 @@ import { resolveAutomationRules } from "../automation/rules.ts";
 import { managerPhones } from "../transfer/managers.ts";
 import { pickInterestVehicleFromState } from "../transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText, LeadTransferStatusKey } from "../transfer/leadStatus.ts";
+import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, mapQualificacaoToLeadColumns, classifyLeadSdr } from "../transfer/leadSdrCategory.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -1193,7 +1194,7 @@ export async function processPedroV2Turn(
   if (lead?.id && identity.kind !== "seller") {
     const { data: lastTransfer } = await supabase
       .from("ai_lead_transfers")
-      .select("created_at, transfer_status")
+      .select("created_at, transfer_status, to_member_id")
       .eq("lead_id", lead.id)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -1203,24 +1204,51 @@ export async function processPedroV2Turn(
     const _st = String(lastTransfer?.transfer_status || "").toLowerCase();
     const transferUsable = !["expired", "failed", "rejected", "canceled", "cancelled"].includes(_st);
     if (transferUsable && transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000) {
-      // Avisa o LEAD uma unica vez por transferencia (throttle via transfer_notice_at), depois silencia.
       const _at = ((currentMemory as any)?.atendimento) || {};
+      // Avisa o LEAD uma unica vez por transferencia (throttle via transfer_notice_at).
       const noticeAtMs = _at.transfer_notice_at ? Date.parse(_at.transfer_notice_at) : 0;
       const shouldNoticeLead = !(noticeAtMs && noticeAtMs >= transferAtMs);
-      if (!dryRun && shouldNoticeLead && isPedroV2SendingEnabled()) {
+      // Avisa o VENDEDOR (dono da transferencia) UMA UNICA VEZ que o lead voltou a
+      // responder dentro das 24h (throttle via transfer_seller_renotified_at). Decisao do
+      // dono: ele precisa saber que o lead mandou mensagem, mas so 1 aviso por transferencia.
+      const sellerNotifiedAtMs = _at.transfer_seller_renotified_at ? Date.parse(_at.transfer_seller_renotified_at) : 0;
+      const shouldNotifySeller = !(sellerNotifiedAtMs && sellerNotifiedAtMs >= transferAtMs);
+      const _nowIso = new Date().toISOString();
+      const _nextAt: Record<string, any> = { ..._at };
+      if (!dryRun && (shouldNoticeLead || shouldNotifySeller) && isPedroV2SendingEnabled()) {
         const inst = input.wa_instance || await resolvePedroInstance(supabase, {
           user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
         });
-        await sendPedroText(inst, { to: remoteJidToPhone(remoteJid), text: "Seu atendimento já está com um dos nossos consultores de vendas, ele já vai entrar em contato com você. É só aguardar um momentinho! 😊" }).catch(() => {});
+        // 1) LEAD: confirma 1x que o consultor vai entrar em contato.
+        if (shouldNoticeLead) {
+          await sendPedroText(inst, { to: remoteJidToPhone(remoteJid), text: "Seu atendimento já está com um dos nossos consultores de vendas, ele já vai entrar em contato com você. É só aguardar um momentinho! 😊" }).catch(() => {});
+          _nextAt.transfer_notice_at = _nowIso;
+        }
+        // 2) VENDEDOR: avisa 1x que o lead respondeu (busca o dono da ultima transferencia).
+        if (shouldNotifySeller && lastTransfer?.to_member_id) {
+          try {
+            const { data: _seller } = await supabase
+              .from("ai_team_members").select("name, whatsapp_number")
+              .eq("id", lastTransfer.to_member_id).maybeSingle();
+            if (_seller?.whatsapp_number) {
+              const _leadNm = lead.lead_name || pushName || "O lead";
+              const _leadPh = remoteJidToPhone(remoteJid);
+              const _sellerMsg = `🔔 *${_leadNm} voltou a responder*\nO lead que foi te encaminhado mandou mensagem agora. Da uma olhada quando puder.\n\n*Atender:* https://wa.me/${_leadPh}`;
+              await sendPedroText(inst, { to: _seller.whatsapp_number, text: _sellerMsg }).catch(() => {});
+              _nextAt.transfer_seller_renotified_at = _nowIso;
+            }
+          } catch (_e) { /* nao bloqueante */ }
+        }
+        // Grava as flags (lead + vendedor) de uma vez so.
         try {
           await supabase.from("pedro_conversation_state").upsert({
             lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,
-            state: { ...(currentMemory || {}), atendimento: { ..._at, transfer_notice_at: new Date().toISOString() } },
-            updated_at: new Date().toISOString(),
+            state: { ...(currentMemory || {}), atendimento: _nextAt },
+            updated_at: _nowIso,
           }, { onConflict: "lead_id,agent_id" });
         } catch (_e) { /* nao bloqueante */ }
       }
-      // SILENCIO: nao processa o resto do turno e NAO re-notifica o vendedor.
+      // SILENCIO: nao processa o resto do turno (o agente nao responde mais ate 24h).
       return {
         ok: true,
         dry_run: dryRun,
@@ -1796,22 +1824,30 @@ export async function processPedroV2Turn(
         // STATUS PADRONIZADO do lead (mesmo nos 2 caminhos). Derivado dos sinais
         // que ja existem — nada inventado.
         const _temp = String((reply as any)?.temperatura || "").toLowerCase();
-        const _statusKey: LeadTransferStatusKey = isRenotify
-          ? "retornou"
-          : contextualIntent.needs_handoff
-          ? "pediu_atendente"
-          : silentTransfer
-          ? (_temp === "desqualificado" ? "desqualificado" : "pouco_qualificado")
-          : "qualificado";
+        // 3 CATEGORIAS do SDR (decisao do dono 04/06): 🎯 Qualificado / 🧊 Pouco
+        // Qualificado / 💤 Inativo. Derivado dos dados coletados (qualificacao_coletada
+        // + carro do anuncio). silentTransfer (lead frio/desqualificado) NUNCA e
+        // 'qualificado'. A mesma regra alimenta o briefing E o status_crm gravado abaixo.
+        const _qcCat = {
+          client_name: _q.nome || lead?.lead_name || pushName || null,
+          vehicle_interest: _q.interesse || _veiculoInteresse || (effectiveMemory as any)?.interesse?.modelo_desejado || null,
+          payment_method: _q.forma_pagamento || null,
+          trade_in_vehicle: _q.carro_troca || null,
+          down_payment: _q.valor_entrada || null,
+          visit_scheduled: _q.dia_agendamento || null,
+          cpf: (_q as any).cpf || null,
+          status_crm: (lead as any)?.status_crm || null,
+        };
+        const _sdrCat = classifyLeadSdrCategory(_qcCat, { ready_to_transfer: brainReadyToTransfer && !silentTransfer });
+        // Cabecalho: so distingue o lead que RETORNOU (vendedor ja e dono). Nos demais,
+        // titulo neutro — a categoria vai na linha de status (so as 3 categorias).
         const sellerHeader = isRenotify
-          ? `*LEAD RETORNOU (Pedro v2)*\nUm cliente que ja era seu voltou a conversar e demonstrou interesse. Retome o atendimento.`
-          : silentTransfer
-          ? `*LEAD PARA FOLLOW-UP (nao avancou agora) - Pedro v2*\nCliente nao se desqualificou de vez; vale retomar depois.`
-          : `*NOVO LEAD QUALIFICADO (Pedro v2)*`;
+          ? `*LEAD RETORNOU (Pedro v2)*\nUm cliente que ja era seu voltou a conversar. Retome o atendimento.`
+          : `*NOVO LEAD PARA ATENDIMENTO (Pedro v2)*`;
         const sellerFooter = isRenotify
           ? `*Atender:* https://wa.me/${leadPhone}`
           : `*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
-        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${leadTransferStatusLine(_statusKey)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
+        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
 
         // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
@@ -1820,11 +1856,30 @@ export async function processPedroV2Turn(
         const _gerentes = managerPhones(input.agent);
         if (!isRenotify && _gerentes.length > 0) {
           const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${leadTransferStatusText(_statusKey)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
           for (const gp of _gerentes) {
             try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
           }
         }
+
+        // PERSISTENCIA PRO DASHBOARD: grava a categoria (status_crm) + os dados coletados
+        // na tabela do lead. NUNCA sobrescreve um estado movido pelo vendedor (classifyLeadSdr
+        // preserva PROTECTED) nem apaga dado existente (so escreve campo com valor). Best-effort:
+        // a persistencia jamais derruba a transferencia, que ja foi enviada acima.
+        try {
+          const _persistCat = classifyLeadSdr({ ..._qcCat, status_crm: (lead as any)?.status_crm }, { ready_to_transfer: brainReadyToTransfer && !silentTransfer });
+          const { safe, extra } = mapQualificacaoToLeadColumns(_q, _temp);
+          const _leadPatch: Record<string, any> = { ...safe };
+          if (["inativo", "pouco_qualificado", "qualificado"].includes(_persistCat as string)) {
+            _leadPatch.status_crm = _persistCat;
+          }
+          if (Object.keys(_leadPatch).length > 0) {
+            await supabase.from("ai_crm_leads").update(_leadPatch).eq("id", lead.id);
+          }
+          if (Object.keys(extra).length > 0) {
+            try { await supabase.from("ai_crm_leads").update(extra).eq("id", lead.id); } catch (_e2) { /* colunas de tipo incerto */ }
+          }
+        } catch (_e) { /* persistencia best-effort */ }
       }
     } catch (e) {
       console.warn("[PedroV2] Falha ao executar handoff (Etapa C):", e);
@@ -1872,6 +1927,19 @@ export async function processPedroV2Turn(
       reply_text: reply.text || "",
       reply_source: reply.source || null,
     });
+    // PERSISTENCIA POR TURNO (pro dashboard E pra cron de inatividade ja achar os dados
+    // na hora de transferir): grava na tabela do lead o que o cerebro coletou NESTE turno.
+    // So campos com valor (nunca apaga o que o vendedor preencheu), best-effort (nunca
+    // derruba o turno). NAO mexe em status_crm aqui — a categoria e definida na transferencia.
+    if (_qc) {
+      try {
+        const { safe, extra } = mapQualificacaoToLeadColumns(_qc, String((reply as any)?.temperatura || "").toLowerCase() || null);
+        if (Object.keys(safe).length > 0) await supabase.from("ai_crm_leads").update(safe).eq("id", lead.id);
+        if (Object.keys(extra).length > 0) {
+          try { await supabase.from("ai_crm_leads").update(extra).eq("id", lead.id); } catch (_e2) { /* coluna de tipo incerto */ }
+        }
+      } catch (_e) { /* persistencia best-effort */ }
+    }
   }
 
   if (!dryRun) {

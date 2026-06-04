@@ -28,6 +28,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { logTransferFailure, type TransferFailureReason } from '../_shared/pedro-v2/logTransferFailure.ts';
+import { classifyLeadSdr } from '../_shared/transfer/leadSdrCategory.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -62,6 +63,9 @@ interface Lead {
   budget: string | null;
   client_city: string | null;
   visit_scheduled: string | null;
+  trade_in_vehicle: string | null;
+  down_payment: string | null;
+  cpf: string | null;
   last_user_reply_at: string | null;
   last_interaction_at: string | null;
   created_at: string;
@@ -69,45 +73,15 @@ interface Lead {
 }
 
 function classify(lead: Lead, isInactiveTransfer: boolean): string {
-  // Status protegido — preserva
-  if (lead.status_crm && PROTECTED_STATUSES.has(lead.status_crm)) {
-    return lead.status_crm;
-  }
-
-  // ── 1. INATIVO ────────────────────────────────────────────────────────
-  // Lead que foi transferido AUTOMATICAMENTE por inatividade pela cron
-  // (ai_lead_transfers.transfer_reason ILIKE '%inatividade%' — depois de
-  // 10 minutos sem resposta do cliente). Esse é o sinal definitivo do
-  // sistema de que o cliente não engajou.
-  if (isInactiveTransfer) {
-    return 'inativo';
-  }
-
-  // Conta campos preenchidos pelo agente IA
-  const filledFields = COMPLETION_FIELDS.filter(f => {
-    const v = (lead as any)[f];
-    return v !== null && v !== undefined && String(v).trim() !== '';
-  });
-  const completion = filledFields.length / COMPLETION_FIELDS.length;
-  const hasAllRequired = REQUIRED_FIELDS.every(f => {
-    const v = (lead as any)[f];
-    return v !== null && v !== undefined && String(v).trim() !== '';
-  });
-
-  // ── 2. QUALIFICADO ────────────────────────────────────────────────────
-  // Cliente respondeu, deu nome+interesse e ≥60% dos campos preenchidos
-  if (hasAllRequired && completion >= COMPLETION_THRESHOLD) {
-    return 'qualificado';
-  }
-
-  // ── 3. POUCO QUALIFICADO ──────────────────────────────────────────────
-  // Conversou, deu alguma info, mas faltou completar (ou objeção no meio)
-  if (filledFields.length > 0 || ['pouco_qualificado', 'medio_qualificado', 'interessado'].includes(lead.status_crm || '')) {
-    return 'pouco_qualificado';
-  }
-
-  // Sem dados, sem transferência — preserva (fica como 'novo')
-  return lead.status_crm || 'novo';
+  // FONTE UNICA da regra das 3 categorias (compartilhada com o orquestrador e o cron de
+  // 12min via _shared/transfer/leadSdrCategory.ts). Garante que o status_crm que o agente
+  // grava na transferencia NAO seja rebaixado aqui de hora em hora (antes, um lead
+  // qualificado com poucos campos virava 'pouco_qualificado' no proximo ciclo).
+  //   - INATIVO: transferido por inatividade SEM dado profundo (so anuncio/nome).
+  //   - POUCO QUALIFICADO: deu CPF/troca/financiamento/entrada/cidade/agendamento e nao fechou.
+  //   - QUALIFICADO: nome + interesse + dados suficientes.
+  // Preserva estados movidos pelo vendedor (PROTECTED) e 'novo' (for_briefing=false).
+  return String(classifyLeadSdr(lead, { by_inactivity: isInactiveTransfer }));
 }
 
 // Detecta chamada de SISTEMA (cron): o bearer e um JWT com role=service_role.
@@ -198,7 +172,7 @@ Deno.serve(async (req) => {
     // 1. Carrega leads da conta
     const { data: leads, error } = await supabaseService
       .from('ai_crm_leads')
-      .select('id, status, status_crm, assigned_to_id, remote_jid, client_name, vehicle_interest, payment_method, budget, client_city, visit_scheduled, last_user_reply_at, last_interaction_at, created_at, summary')
+      .select('id, status, status_crm, assigned_to_id, remote_jid, client_name, vehicle_interest, payment_method, budget, client_city, visit_scheduled, trade_in_vehicle, down_payment, cpf, last_user_reply_at, last_interaction_at, created_at, summary')
       .eq('user_id', masterId);
     if (error) throw new Error(error.message);
 
