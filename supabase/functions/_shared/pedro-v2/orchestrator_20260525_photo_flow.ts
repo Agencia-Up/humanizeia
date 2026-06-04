@@ -1179,66 +1179,56 @@ export async function processPedroV2Turn(
     if (batched) text = batched;
   }
 
-  // === MODO ASSISTENTE DO VENDEDOR (lead transferido / com dono) ===
-  // Um lead JA transferido tem um VENDEDOR HUMANO cuidando. O agente NAO deve requalificar
-  // nem assumir a venda — atua como ASSISTENTE: responde duvidas/info do carro (inclusive
-  // clique em anuncio NOVO), NAO refaz o funil, ROTEIA fotos/proximos passos para o vendedor
-  // dono e re-notifica esse vendedor. Cobre o periodo de 24h (transferencia recente) E leads
-  // com assigned_to_id persistente (donos mesmo apos 24h). Substitui o antigo "silencio total
-  // pos-transferencia" (v48) — que ate ignorava clique em anuncio novo (Casos 1/2/3 do dono).
-  let ownedLeadAssistantMode = false;
-  let assistantSellerName: string | null = null;
+  // === HOLD POS-TRANSFERENCIA (24h) ===
+  // Regra do dono (revisada 04/06): DENTRO de 24h apos a transferencia, o agente avisa o
+  // LEAD UMA UNICA VEZ que o consultor vai entrar em contato e DEPOIS FICA EM SILENCIO (nao
+  // responde mais nada — senao vira loop infinito). NAO re-notifica o vendedor (e no mesmo
+  // dia, ele ja sabe — evita o spam de "seu lead respondeu por aqui"). Passadas as 24h, o
+  // lead e tratado NORMALMENTE (fluxo completo); se precisar transferir, o transferRouter
+  // manda para o MESMO vendedor (returning_lead_renotify via assigned_to_id).
+  // ownedLeadAssistantMode/assistantSellerName ficam SEMPRE false/null (modo assistente
+  // desativado por decisao do dono) — mantidos so para compat das referencias abaixo.
+  const ownedLeadAssistantMode = false;
+  const assistantSellerName: string | null = null;
   if (lead?.id && identity.kind !== "seller") {
     const { data: lastTransfer } = await supabase
       .from("ai_lead_transfers")
-      .select("created_at, to_member_id, transfer_status, is_confirmed")
+      .select("created_at, transfer_status")
       .eq("lead_id", lead.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     const transferAtMs = lastTransfer?.created_at ? Date.parse(lastTransfer.created_at) : 0;
-    // Transferencia FALHA/EXPIRADA/REJEITADA nao "prende" o lead (fix relatorio mestre #1):
-    // se o vendedor nunca assumiu, o lead deve voltar ao fluxo normal (qualificar/reatribuir),
-    // sem ficar em limbo. Pendente e confirmada contam como vinculo valido na janela de 24h.
-    const _transferStatus = String(lastTransfer?.transfer_status || "").toLowerCase();
-    const transferUsable = !["expired", "failed", "rejected", "canceled", "cancelled"].includes(_transferStatus);
-    const recentTransferWithin24h = Boolean(transferUsable && transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000);
-    // Vendedor DONO: assigned_to_id persistente (vale mesmo apos 24h); na falta dele, o
-    // destinatario de uma transferencia recente (<24h) ainda nao atribuida. Owner inativo
-    // NAO entra (is_active) -> o lead cai no fluxo normal e pode ser reatribuido.
-    const ownerSellerId = (lead as any).assigned_to_id || (recentTransferWithin24h ? lastTransfer?.to_member_id : null) || null;
-    if (ownerSellerId) {
-      const { data: seller } = await supabase
-        .from("ai_team_members")
-        .select("id, name, whatsapp_number")
-        .eq("id", ownerSellerId)
-        .eq("is_active", true)
-        .maybeSingle();
-      if (seller?.id) {
-        ownedLeadAssistantMode = true;
-        assistantSellerName = seller.name || null;
-        // Re-notifica o vendedor dono que o lead voltou a falar (throttle 45min). O lead
-        // esta na linha do AGENTE, nao na do vendedor — sem isso o vendedor nao saberia.
-        const _at = ((currentMemory as any)?.atendimento) || {};
-        const renotifyAtMs = _at.transfer_renotify_at ? Date.parse(_at.transfer_renotify_at) : 0;
-        const shouldRenotify = (Date.now() - renotifyAtMs) > 45 * 60 * 1000;
-        if (!dryRun && shouldRenotify && isPedroV2SendingEnabled() && seller.whatsapp_number) {
-          const inst = input.wa_instance || await resolvePedroInstance(supabase, {
-            user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
-          });
-          const leadPhone = remoteJidToPhone(remoteJid);
-          await sendPedroText(inst, { to: seller.whatsapp_number, text: `*Seu lead respondeu por aqui* 👀\n\n*${lead.lead_name || pushName || "Lead"}* (+${leadPhone}) mandou:\n"${String(text || "").slice(0, 300)}"\n\n*Atender:* https://wa.me/${leadPhone}` }).catch(() => {});
-          const nowIso = new Date().toISOString();
-          (currentMemory as any).atendimento = { ..._at, transfer_renotify_at: nowIso };
-          try {
-            await supabase.from("pedro_conversation_state").upsert({
-              lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,
-              state: { ...(currentMemory || {}), atendimento: { ..._at, transfer_renotify_at: nowIso } },
-              updated_at: nowIso,
-            }, { onConflict: "lead_id,agent_id" });
-          } catch (_e) { /* nao bloqueante */ }
-        }
+    // Transferencia FALHA/EXPIRADA/REJEITADA nao prende o lead -> fluxo normal.
+    const _st = String(lastTransfer?.transfer_status || "").toLowerCase();
+    const transferUsable = !["expired", "failed", "rejected", "canceled", "cancelled"].includes(_st);
+    if (transferUsable && transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000) {
+      // Avisa o LEAD uma unica vez por transferencia (throttle via transfer_notice_at), depois silencia.
+      const _at = ((currentMemory as any)?.atendimento) || {};
+      const noticeAtMs = _at.transfer_notice_at ? Date.parse(_at.transfer_notice_at) : 0;
+      const shouldNoticeLead = !(noticeAtMs && noticeAtMs >= transferAtMs);
+      if (!dryRun && shouldNoticeLead && isPedroV2SendingEnabled()) {
+        const inst = input.wa_instance || await resolvePedroInstance(supabase, {
+          user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
+        });
+        await sendPedroText(inst, { to: remoteJidToPhone(remoteJid), text: "Seu atendimento já está com um dos nossos consultores de vendas, que vai falar com você por aqui. É só aguardar um momentinho! 😊" }).catch(() => {});
+        try {
+          await supabase.from("pedro_conversation_state").upsert({
+            lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,
+            state: { ...(currentMemory || {}), atendimento: { ..._at, transfer_notice_at: new Date().toISOString() } },
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "lead_id,agent_id" });
+        } catch (_e) { /* nao bloqueante */ }
       }
+      // SILENCIO: nao processa o resto do turno e NAO re-notifica o vendedor.
+      return {
+        ok: true,
+        dry_run: dryRun,
+        correlation_id: correlationId,
+        identity,
+        lead_id: lead.id,
+        next_action: "post_transfer_hold_24h",
+      };
     }
   }
 
