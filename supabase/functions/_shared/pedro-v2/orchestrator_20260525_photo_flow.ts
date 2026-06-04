@@ -516,23 +516,82 @@ function pickVehicleByModelName(message: string, vehicles: any[]) {
   return { index: ranked[0].index, reason: "model_name_match", key: vehicleKey(ranked[0].vehicle) };
 }
 
-function pickReferencedVehicle(message: string, memory: any, vehicles: any[]) {
+// Tokens de RUIDO no nome do modelo (combustivel, cambio, cilindrada, trim, tracao):
+// NAO identificam o modelo. CRITICO: sem filtrar, "Tracker ... Flex Aut" e "Renegade
+// ... Flex Aut" compartilham "flex"/"aut" e seriam tratados como o MESMO modelo — o que
+// faria o pool [Tracker, Jeep] parecer homogeneo e o bug do Jeep-no-lugar-do-Creta
+// CONTINUAR. (Pego em teste unitario.)
+const MODEL_NOISE_TOKENS = new Set([
+  "flex", "aut", "automatico", "automatica", "manual", "mecanico", "mecanica", "mec",
+  "gasolina", "diesel", "alcool", "etanol", "turbo", "cvt", "tsi", "tgdi", "mpi", "gdi",
+  "aspirado", "ecotec", "16v", "12v", "8v", "ltz", "lt", "ls", "4x2", "4x4", "cabine", "dupla",
+]);
+
+// Chave de MODELO = marca + 1o token significativo do modelo (o NOME do modelo), ignorando
+// cor/ano/cilindrada/combustivel/cambio/trim. Ex.: "Chevrolet Tracker LTZ 1.8 Flex Aut" ->
+// "chevrolet:tracker"; "Jeep Renegade 1.8 Flex Aut" -> "jeep:renegade"; "Hyundai Creta
+// Attitude"/"Creta N Line" -> "hyundai:creta".
+function vehicleModelKey(vehicle: any): string {
+  const marca = normalizePhotoText(vehicle?.marca || "");
+  const modelToken = normalizePhotoText(vehicle?.modelo || "")
+    .split(/\s+/)
+    .find((token) => token.length >= 3 && !MODEL_NOISE_TOKENS.has(token) && !/^\d/.test(token)) || "";
+  return `${marca}:${modelToken}`;
+}
+
+// Dois veiculos sao do MESMO modelo se compartilham marca + nome do modelo. Cor/ano/
+// versao/trim NAO entram (sao discriminadores DENTRO do modelo, nunca entre modelos).
+// Sem marca nem modelo identificavel -> false (conservador: trata como heterogeneo ->
+// o seletor entra em modo seguro e pede esclarecimento em vez de mandar carro errado).
+function sameVehicleModel(a: any, b: any): boolean {
+  const keyA = vehicleModelKey(a);
+  if (keyA.replace(":", "").trim() === "") return false;
+  return keyA === vehicleModelKey(b);
+}
+
+// TRAVA DE MODELO DO TOPICO: o seletor SO pode escolher um veiculo cujo modelo
+// bate com o topico atual da conversa (o veiculo que o agente acabou de
+// apresentar/discutir). Cor/atributo seleciona DENTRO do topico — nunca troca de
+// modelo. `topicAnchor` e o veiculo-ancora do topico (1o do pool fresco ou
+// ultima_foto). Sem ancora confiavel, nao restringe (comportamento legado).
+function pickReferencedVehicle(message: string, memory: any, vehicles: any[], topicAnchor?: any) {
   const explicitIndex = explicitVehicleOrdinal(message);
   if (explicitIndex !== null) {
     const index = clampVehicleIndex(explicitIndex, vehicles);
     return { index, explicit: true, reason: "explicit_ordinal", key: vehicleKey(vehicles[index]) };
   }
 
-  const attributeMatch = pickVehicleByMessageAttributes(message, vehicles);
-  if (attributeMatch) {
-    return { ...attributeMatch, explicit: true };
-  }
-
-  // Nome do modelo/marca citado vence a continuidade/memoria (mensagem atual
-  // sempre ganha do contexto antigo). So cai na memoria se nada for citado.
+  // Nome do modelo/marca citado na mensagem vence tudo: o lead nomeou o carro
+  // explicitamente, entao a trava do topico nao se aplica (ele pode estar
+  // pedindo outro modelo de proposito).
   const modelMatch = pickVehicleByModelName(message, vehicles);
   if (modelMatch) {
     return { ...modelMatch, explicit: true };
+  }
+
+  // Atributo/cor (ex.: "manda o preto") SO pode escolher DENTRO do modelo do
+  // topico. Sem isso, "preto" casava num carro de OUTRO modelo so pela cor
+  // (bug: lead no Creta pede "o preto" e recebe foto de Jeep Renegade preto).
+  const attributeScope = topicAnchor
+    ? vehicles.filter((v) => sameVehicleModel(v, topicAnchor))
+    : vehicles;
+  const attributeMatch = pickVehicleByMessageAttributes(message, attributeScope);
+  if (attributeMatch) {
+    // pickVehicleByMessageAttributes indexa sobre attributeScope; remapeia para o
+    // index real em `vehicles` pela chave do veiculo escolhido.
+    const chosen = attributeScope[attributeMatch.index];
+    const realIndex = vehicles.findIndex((v) => vehicleKey(v) === vehicleKey(chosen));
+    return { ...attributeMatch, index: realIndex >= 0 ? realIndex : attributeMatch.index, explicit: true };
+  }
+
+  // Quando o atributo nao casou DENTRO do topico, mas o lead pediu por cor/atributo
+  // e ha ancora de topico, NUNCA cai na memoria velha de outro modelo: ancora o
+  // proprio topico (o veiculo que o agente acabou de apresentar).
+  if (topicAnchor) {
+    const anchorIndex = vehicles.findIndex((v) => vehicleKey(v) === vehicleKey(topicAnchor));
+    if (anchorIndex >= 0) {
+      return { index: anchorIndex, explicit: false, reason: "topic_anchor_vehicle", key: vehicleKey(topicAnchor) };
+    }
   }
 
   const lastKey = memory?.ultima_foto?.veiculo_key || memory?.referencia?.ultimo_veiculo_key || null;
@@ -585,6 +644,22 @@ function messageAsksForPhotos(message: string): boolean {
   if (/\b(quero ver|queria ver|gostaria de ver|posso ver|da pra ver|deixa eu ver|consigo ver|tem como ver)\b/.test(normalized)) return true;
   if (/\bver (o carro|ele|ela|esse|essa|esse carro|essa|mais|as foto|as fotos|as imagens|melhor)\b/.test(normalized)) return true;
   return false;
+}
+
+// O pedido de foto e resolvido SO por ATRIBUTO/COR (ex.: "manda o preto", "umas do
+// branco automatico") — sem citar o NOME de um modelo presente no pool nem um ordinal
+// explicito ("o primeiro", "o 2024"). Nesses casos a selecao depende inteiramente de o
+// pool estar alinhado ao topico; se o pool for ambiguo, e mais seguro pedir
+// esclarecimento do que casar a cor contra uma lista velha e mandar outro modelo.
+// Recebe o pool para reusar pickVehicleByModelName (mesma deteccao de nome do seletor):
+// se a mensagem nomeia um modelo do pool ("fotos do creta preto"), NAO e atributo puro.
+function photoRequestIsAttributeOnly(message: string, pool: any[]): boolean {
+  if (explicitVehicleOrdinal(message) !== null) return false;
+  const normalized = normalizePhotoText(message);
+  const hasAttribute = /\b(automatico|automatica|aut|manual|mecanico|mecanica|mec|branco|preto|prata|cinza|grafite|azul|vermelho|verde|laranja|amarelo|bege|marrom|vinho|sedan|hatch|suv|picape|pickup|caminhonete|20\d{2})\b/.test(normalized);
+  if (!hasAttribute) return false;
+  if (Array.isArray(pool) && pool.length > 0 && pickVehicleByModelName(message, pool)) return false;
+  return true;
 }
 
 function uniqueIndexes(indexes: number[], total: number, max = 5) {
@@ -718,7 +793,7 @@ function buildPhotoReplyText(target: PhotoTarget, vehicle: any, message: string)
   return pickPhrase(`${vehicleKey(vehicle)} ${target} ${message} ${label}`, phrases[target]);
 }
 
-function buildVehiclePhotoReply(memory: any, message: string) {
+function buildVehiclePhotoReply(memory: any, message: string, topicAnchor?: any) {
   const vehicles = Array.isArray(memory?.veiculos_apresentados) ? memory.veiculos_apresentados : [];
   if (vehicles.length === 0) {
     return {
@@ -729,7 +804,31 @@ function buildVehiclePhotoReply(memory: any, message: string) {
     };
   }
 
-  const reference = pickReferencedVehicle(message, memory, vehicles);
+  const reference = pickReferencedVehicle(message, memory, vehicles, topicAnchor);
+
+  // REDE DE SEGURANCA ANTI-MODELO-ERRADO: o lead pediu por COR/ATRIBUTO (ex.: "o
+  // preto"), sem nomear o modelo nem dar ordinal, e o pool tem MAIS DE UM modelo
+  // distinto SEM ancora confiavel de topico. Nesse caso a cor e ambigua entre
+  // modelos — escolher pela cor pode mandar o carro de OUTRO modelo (bug: lead no
+  // Creta pede "o preto" e o unico preto da memoria velha era um Jeep Renegade).
+  // Em vez de adivinhar e enviar a foto errada, pede para o lead confirmar o modelo.
+  const attributeOnly = reference.reason === "message_attribute_match";
+  const distinctModelCount = (() => {
+    const seen: any[] = [];
+    for (const v of vehicles) {
+      if (!seen.some((s) => sameVehicleModel(s, v))) seen.push(v);
+    }
+    return seen.length;
+  })();
+  if (attributeOnly && !topicAnchor && distinctModelCount > 1) {
+    return {
+      ok: true,
+      text: "Pra eu nao te mandar foto trocada: qual deles voce quer ver, me confirma o modelo?",
+      source: "vehicle_photos_ambiguous_model",
+      media: [],
+    };
+  }
+
   const index = reference.index;
   const vehicle = vehicles[index] || vehicles[0];
   // Fotos ja enviadas SO contam se for o MESMO veiculo da ultima vez (senao reseta).
@@ -1324,14 +1423,68 @@ export async function processPedroV2Turn(
   const freshSpecificStock = (!isGenericQuery && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0)
     ? stockResult.items
     : [];
-  const photoVehiclesPool = memoryPhotoVehicles.length > 0 ? memoryPhotoVehicles : freshSpecificStock;
+  // TOPICO ATUAL = o que o agente acabou de buscar/apresentar NESTE turno. O estoque
+  // fresco e a fonte de verdade do topico (a memoria pode estar VELHA, presa em
+  // veiculos de uma busca anterior que o lead ja abandonou). Quando ha estoque fresco,
+  // ele e o pool E a ancora de modelo do topico.
+  const photoVehiclesPool = freshSpecificStock.length > 0 ? freshSpecificStock : memoryPhotoVehicles;
+  // ANCORA DE MODELO DO TOPICO (TRAVA do seletor — ver pickReferencedVehicle): o
+  // veiculo cujo MODELO define o foco atual. Cor/atributo so seleciona DENTRO desse
+  // modelo; nunca pula para outro modelo (bug 5512988987269: lead no Creta pede "o
+  // preto" e recebia foto de um Jeep Renegade preto de uma busca de SUV anterior).
+  //   1) Estoque fresco: 1o item da busca recem-feita (o modelo recem-pesquisado).
+  //   2) Sem estoque fresco: NAO confia em UM campo isolado (veiculos_apresentados[0]
+  //      ou ultima_foto podem estar VELHOS/contaminados). Usa o modelo PREDOMINANTE
+  //      do pool como ancora SOMENTE quando o pool e HOMOGENEO (todos do mesmo modelo
+  //      = o topico esta coerente). Pool HETEROGENEO (modelos diferentes, resto de uma
+  //      busca ampla abandonada, ex.: [Tracker, Jeep]) NAO tem topico confiavel ->
+  //      ancora = null e o seletor entra em modo seguro (ver topicIsAmbiguous abaixo).
+  const poolModelsHomogeneous = photoVehiclesPool.length > 0
+    && photoVehiclesPool.every((v: any) => sameVehicleModel(v, photoVehiclesPool[0]));
+  let topicAnchorVehicle: any = null;
+  if (freshSpecificStock.length > 0) {
+    topicAnchorVehicle = freshSpecificStock[0];
+  } else if (poolModelsHomogeneous) {
+    topicAnchorVehicle = photoVehiclesPool[0];
+  }
+  // Topico AMBIGUO: lead pediu fotos mas NAO ha estoque fresco e o pool de memoria e
+  // heterogeneo (modelos misturados) -> nao da pra saber a QUAL modelo "o preto" se
+  // refere sem chutar. Em vez de mandar um carro aleatorio de outro modelo, pedimos
+  // esclarecimento. So vale para pedido por ATRIBUTO/COR (sem nome de modelo nem
+  // ordinal explicito): se o lead nomeou o carro ou disse "o primeiro", o seletor
+  // resolve com seguranca e nao precisa de clarificacao.
+  const topicIsAmbiguous = freshSpecificStock.length === 0
+    && photoVehiclesPool.length > 1
+    && !poolModelsHomogeneous
+    && photoRequestIsAttributeOnly(text, photoVehiclesPool);
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
-  // pede fotos explicitamente.
-  const shouldSendVehiclePhotos = !ownedLeadAssistantMode && (brainPlan.action === "photo_request"
+  // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
+  // heterogeneo + pedido so por cor): pedir esclarecimento e mais seguro que chutar
+  // um modelo errado.
+  const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous
+    && (brainPlan.action === "photo_request"
     || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0));
 
+  // Quando o topico esta ambiguo, instrui o cerebro a perguntar QUAL carro o lead quer
+  // em vez de mandar foto. NAO reaproveita um modelo aleatorio da lista velha.
+  const ambiguousPhotoPlan = topicIsAmbiguous
+    ? {
+        ...brainPlan,
+        action: "clarify" as const,
+        use_memory_vehicle: false,
+        response_guidance: "O lead pediu fotos por COR/atributo, mas nao da pra saber com seguranca a QUAL carro ele se refere (a conversa tem modelos diferentes em contexto). NAO envie fotos nem cite um modelo especifico: pergunte de forma curta e natural QUAL carro (qual modelo) ele quer ver as fotos.",
+        reason: `ambiguous_photo_topic_clarify:${brainPlan.reason || ""}`,
+      }
+    : brainPlan;
+  if (topicIsAmbiguous) {
+    log("info", "pedro_v2_ambiguous_photo_topic_clarify", {
+      lead_id: lead?.id || null,
+      pool_size: photoVehiclesPool.length,
+    });
+  }
+
   let reply = shouldSendVehiclePhotos
-    ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: photoVehiclesPool }, text)
+    ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: photoVehiclesPool }, text, topicAnchorVehicle)
     : await generatePedroBrainReply({
         agent: input.agent,
         agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
@@ -1340,7 +1493,7 @@ export async function processPedroV2Turn(
         intent: contextualIntent,
         stock_result: stockResult,
         message: enrichedText,
-        plan: brainPlan,
+        plan: ambiguousPhotoPlan,
         vehicle_resolution: vehicleResolution,
         ad_context: adContext,
         media_context: sanitizePedroMediaContext(mediaContext),
