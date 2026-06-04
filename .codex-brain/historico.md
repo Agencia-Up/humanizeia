@@ -530,3 +530,22 @@
   inativa (assigned_seller_name sempre null).
 - Validado live: 5 leads reais transferidos <24h (status confirmed) -> todos
   post_transfer_hold_24h (silencio). esbuild ok.
+
+## 2026-06-04 — Match de MODELO vence categoria inferida (v61)
+
+- Build `2026-06-04-model-overrides-category-v61`. Dono frustrado (com razao): "quero um
+  polo 2013" -> "nao temos", oferece Polo 2025. MAS ha VW Polo Sedan 1.6 2012/2013 prata
+  R$44.990 no estoque. EU TINHA DITO que a busca estava "ok" — estava ERRADO.
+- RAIZ SISTEMICA (provada): "polo" infere tipo_veiculo=hatch (modelo Polo listado como
+  hatch) e passesRequestedVehicleType EXCLUIA o Polo SEDAN (subcat sedan != hatch) ANTES do
+  match de modelo. Confirmado: "tem polo?" so trazia 2025 hatch; "tem polo sedan?" achava.
+- FIX NA RAIZ (afeta TODO modelo dual-carroceria: Polo, Onix, HB20/HB20S, Virtus...): quando
+  o lead NOMEIA modelo (modelTerms != []), a subcategoria vira so preferencia de ranking,
+  NUNCA exclui. Categoria so e filtro rigido em busca POR CATEGORIA (sem modelo).
+  passesRequestedVehicleType(+hasModelQuery); rankVehicles passa modelTerms.length>0.
+- Validado: "quero um polo 2013" -> apresenta Polo Sedan 2013 (rank 1 por ano); "hatch ate
+  60 mil" -> ainda filtra hatches (sem regressao).
+- META: o dono criticou (com razao) que ando REATIVO (corrige print a print) em vez de
+  atacar o motor de busca de forma sistemica. Proposto: auditoria/overhaul holistico do
+  matching (achar todos os filtros rigidos/edge-cases de uma vez) + o plano de cache local
+  + pg_trgm (versao robusta) como evolucao de infra.
