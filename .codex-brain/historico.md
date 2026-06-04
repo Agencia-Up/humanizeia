@@ -376,3 +376,27 @@
   INATIVO) -> cai no fluxo normal (correto). Lead novo -> fluxo normal completo.
 - OBS p/ o dono: o vendedor Bruno Henrique esta INATIVO no sistema (por isso o lead do
   Francisco nao e roteado pra ele). Reativar o Bruno ou aceitar a reatribuicao.
+
+## 2026-06-03 — Relatorio MESTRE Antigravity: v53 (estruturais) + v54 (search-and-retry)
+
+- 3o relatorio (mestre): 5 falhas reais + 5 causas raiz + diffs. Falhas 1/2/3 ja estavam
+  corrigidas (v52/v49). Corrigi as demais na raiz, em 2 deploys verificaveis.
+- v53 `2026-06-03-master-fixes-amnesia-cutoff-v53`:
+  - AMNESIA (#2): `qualificacao_coletada` do reply (nome/interesse/troca/entrada/pagamento/
+    agendamento) NAO era persistido -> agente repetia perguntas. Agora mescla na memoria
+    antes de salvar (orchestrator, save final). BONUS: como o LLM separa interesse de
+    carro_troca, corrige na RAIZ a poluicao de troca em interesse.modelo_desejado. 9 testes.
+  - CUTOFF (#5): historico era `lead_created_at - 2000ms` (2 ocorrencias) -> 30min, p/ nao
+    perder as 1as msgs do lead quando a webhook atrasa.
+  - STATUS TRANSFERENCIA (#1): modo assistente agora ignora transfer expired/failed/rejected/
+    canceled -> lead nao fica em limbo, volta ao fluxo normal (pendente/confirmada valem).
+  - OVERRIDE LLM (#3): normalizePlan nao forca stock_search quando intent e financing/
+    trade_in/human_request (handoff ja tinha backstop na ETAPA C). Validado: "taxa de
+    financiamento?" -> intent=financing, reply_only (nao forca busca cega).
+- v54 `2026-06-03-search-and-retry-alternatives-v54`:
+  - SEARCH-AND-RETRY (Falha 5 / Edison): busca especifica vazia -> 2a busca AMPLA (mesma
+    categoria/teto de preco, sem modelo) e oferece parecidos como ALTERNATIVA (is_alternatives
+    + response_guidance), em vez de "nao temos" + funil vazio. searchPedroStock ja ordena por
+    preco crescente. Validado: "tem corolla ate 80 mil?" -> oferece Peugeot 2008/208 na faixa.
+- NAO mexido do relatorio: Mod 5 (intentRouter troca) — resolvido pela amnesia (mais robusto
+  que o regex). Falha 4 (resposta dupla) — guard de idempotencia v51.
