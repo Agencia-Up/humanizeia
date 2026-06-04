@@ -118,7 +118,7 @@ export function CampaignFormDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
-  const [aiModel, setAiModel] = useState<string>('gpt-4o');
+  const [aiModel, setAiModel] = useState<string>('gpt-4o-mini');
   const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
   const [replyAutoTag, setReplyAutoTag] = useState('');
   const [replyAutoMessage, setReplyAutoMessage] = useState('');
@@ -158,7 +158,7 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
-      setAiModel(editingCampaign.ai_model || 'gpt-4o');
+      setAiModel('gpt-4o-mini'); // só o modelo econômico por enquanto
       setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
       setReplyAutoTag(editingCampaign.reply_auto_tag || '');
       setReplyAutoMessage(editingCampaign.reply_auto_message || '');
@@ -194,7 +194,7 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
-    setAiModel('gpt-4o');
+    setAiModel('gpt-4o-mini');
     setIncludeOptoutButtons(false);
     setReplyAutoTag('');
     setReplyAutoMessage('');
@@ -405,20 +405,19 @@ export function CampaignFormDialog({
                 </div>
               </div>
 
-              {/* Inteligência da IA (modelo OpenAI) */}
+              {/* Modelo de IA (econômico) */}
               <div className="space-y-2 mt-3">
-                <Label className="text-xs font-medium">Inteligência da IA (modelo OpenAI)</Label>
-                <div className="grid grid-cols-2 gap-2">
+                <Label className="text-xs font-medium">Modelo de IA</Label>
+                <div className="grid grid-cols-1 gap-2">
                   {[
-                    { value: 'gpt-4o', label: '🧠 Mais Inteligente', desc: 'Melhor qualidade de copy (GPT-4o)' },
-                    { value: 'gpt-4o-mini', label: '⚡ Econômico', desc: 'Mais rápido e gasta menos tokens (GPT-4o mini)' },
+                    { value: 'gpt-4o-mini', label: '⚡ OpenAI — GPT-4o mini (econômico)', desc: 'Gera as variações gastando menos tokens.' },
                   ].map(opt => (
                     <button
                       key={opt.value}
                       type="button"
                       onClick={() => setAiModel(opt.value)}
                       className={cn(
-                        "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-xs transition-all",
+                        "flex flex-col items-center gap-0.5 rounded-lg border p-2.5 text-xs transition-all",
                         aiModel === opt.value
                           ? "border-primary bg-primary/5 text-primary"
                           : "border-border hover:border-primary/30 text-muted-foreground"
@@ -429,6 +428,9 @@ export function CampaignFormDialog({
                     </button>
                   ))}
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Em breve: DeepSeek (mais barata) — assim que a chave for configurada.
+                </p>
               </div>
             </div>
 
