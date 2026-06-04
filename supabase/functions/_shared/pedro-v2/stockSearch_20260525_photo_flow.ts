@@ -310,7 +310,7 @@ function isLikelyMotorcycle(vehicle: BndvVehicle) {
   return /\b(yamaha|kawasaki|shineray|harley|dafra|triumph|ducati|ktm|bajaj|haojue|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|scooter)\b/.test(indexed);
 }
 
-function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string, any>) {
+function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string, any>, hasModelQuery = false) {
   const requestedType = inferRequestedVehicleType(filters);
   if (requestedType === "moto") {
     return isLikelyMotorcycle(vehicle);
@@ -319,11 +319,19 @@ function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string
     if (isLikelyMotorcycle(vehicle)) return false;
   }
 
-  const requestedSubcat = inferVehicleSubcategory(filters);
-  if (requestedSubcat !== "qualquer") {
-    const vehicleSubcat = getVehicleSubcategory(vehicle);
-    if (vehicleSubcat !== "unknown" && vehicleSubcat !== requestedSubcat) {
-      return false;
+  // SUBCATEGORIA (hatch/sedan/suv/pickup) so e filtro RIGIDO em busca POR CATEGORIA.
+  // BUG (lead "quero um polo 2013"): "polo" INFERE hatch (o modelo Polo e listado como
+  // hatch), e esse filtro EXCLUIA o Polo SEDAN 2013 que existe no estoque -> "nao temos".
+  // Quando o lead NOMEIA um MODELO, o match por modelo MANDA: o Polo Sedan tambem e um
+  // "polo" que o lead quer. A categoria inferida vira so preferencia de ranking (scoreVehicle),
+  // nunca exclui. So filtra de verdade quando NAO ha modelo especifico (busca por categoria).
+  if (!hasModelQuery) {
+    const requestedSubcat = inferVehicleSubcategory(filters);
+    if (requestedSubcat !== "qualquer") {
+      const vehicleSubcat = getVehicleSubcategory(vehicle);
+      if (vehicleSubcat !== "unknown" && vehicleSubcat !== requestedSubcat) {
+        return false;
+      }
     }
   }
 
@@ -469,8 +477,9 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
 
 function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
   const modelTerms = detectDynamicModelTerms(filters);
+  const hasModelQuery = modelTerms.length > 0;
   const typedVehicles = vehicles
-    .filter((vehicle) => passesRequestedVehicleType(vehicle, filters))
+    .filter((vehicle) => passesRequestedVehicleType(vehicle, filters, hasModelQuery))
     .filter((vehicle) => vehicleMatchesStrictModel(vehicle, modelTerms));
   const searchText = buildSearchText(filters);
   const hasSearch = searchTokens(searchText).length > 0 ||
