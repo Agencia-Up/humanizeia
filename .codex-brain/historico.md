@@ -400,3 +400,27 @@
     preco crescente. Validado: "tem corolla ate 80 mil?" -> oferece Peugeot 2008/208 na faixa.
 - NAO mexido do relatorio: Mod 5 (intentRouter troca) — resolvido pela amnesia (mais robusto
   que o regex). Falha 4 (resposta dupla) — guard de idempotencia v51.
+
+## 2026-06-04 — Anuncio MODELO-first: apresentar positivo o carro que existe (v55)
+
+- Build `2026-06-04-ad-model-first-positive-v55`. Dor: lead de anuncio "Mini Cooper 2023"
+  (Mauricio) — estoque tem Mini Cooper 1.5 2019 cinza — e o agente ABRIA NEGATIVO ("nao
+  temos o 2023, mas temos opcao proxima"), gerando desconfianca/perda.
+- Metodo (pedido do dev): workflow MULTI-AGENTE (7 agentes: 3 analise + 3 solucao + 1 sintese)
+  com a EVIDENCIA REAL em maos. Convergiram: o ANO do anuncio (metadado/arte do FB) era
+  criterio HARD de match em 4 pontos -> _adMatchedFact=null quando ano nao bate -> "nao temos".
+- Correcao MODELO-first (ano = desempate, nunca eliminatorio), 7 edits:
+  1. adContext.adContextToMemory: modelo_desejado = stripYear (modelo limpo); veiculo_citado cru.
+  2. pedroBrainReply selecao de fato (CRITICO): _adModelFacts casa por MODELO; _adExactYear so
+     desempata. Flags ad_model_in_stock/ad_year_matched no payload.
+  3. pedroBrainReply hard_rule: anuncio -> nunca "nao temos"; modelo existe -> apresenta positivo.
+  4. pedroBrainReply buildAdVehicleConsultationFallback: abertura positiva + caso honesto vazio.
+  5. pedroBrainPlanner adVehicleGuidance: REGRA DE MATCH = MODELO manda, ano secundario.
+  6. pedroBrainReply gancho-alternativa: so dispara se MODELO ausente.
+  7. orchestrator is_alternatives: linguagem por "modelo".
+- BUG pego no teste: o filtro proposto pelos agentes tinha l.includes(m) (label contem o
+  proprio modelName -> casava TODO carro). Corrigido p/ l.includes(_adModelo) || (m>=3 &&
+  _adModelo.includes(m)). 5 casos unitarios + validacao AO VIVO: anuncio Mini Cooper 2023 ->
+  "Temos um Mini Cooper aqui sim! ...2019 cinza R$108.990" (positivo); Corolla ausente ->
+  honesto + Polo. Compass 2023 com 2023 no estoque -> desempate preservado.
+- PENDENTE: Fase 3 (tom humano) — aprovada pelo dev, e a proxima.
