@@ -438,7 +438,12 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.response_guidance = "Lead aceitou a oferta recente de fotos. Acione a tool de fotos usando o veiculo em contexto; nao prometa fotos sem enviar midia.";
   }
 
-  if (vehicle.has_current_vehicle_signal && vehicle.query) {
+  // NAO sobrescreve a decisao do LLM quando a intencao e financiamento/troca/pedido de
+  // humano so porque a frase cita um carro (fix relatorio mestre #3): "quero financiar o
+  // Onix" ou "dou meu HB20 na troca" nao deve virar uma busca de estoque cega. (Handoff ja
+  // tem backstop proprio na ETAPA C abaixo.)
+  const _nonOverrideIntents = ["financing", "trade_in", "human_request"];
+  if (vehicle.has_current_vehicle_signal && vehicle.query && !_nonOverrideIntents.includes(String(raw?.intent || ""))) {
     plan.action = photo && hasPresentedVehicles && !vehicle.possible_new_topic ? "photo_request" : "stock_search";
     plan.search_query = vehicle.query;
     plan.search_filters = {

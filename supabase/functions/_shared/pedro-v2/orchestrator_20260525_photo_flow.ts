@@ -268,8 +268,11 @@ async function loadRecentConversationHistory(supabase: any, input: {
       .in("phone", inboxPhoneCandidates(input.remote_jid));
 
     if (input.lead_created_at) {
-      // Permitir uma folga de 2 segundos para o caso de gravação assíncrona
-      const cutoff = new Date(new Date(input.lead_created_at).getTime() - 2000).toISOString();
+      // Folga de 30min no cutoff (fix relatorio mestre #5): se a webhook do Evolution/UAZAPI
+      // atrasar para criar o lead, as 1as mensagens do cliente (que geraram o lead) caiam fora
+      // do filtro temporal e o agente respondia "as cegas". Como ha order desc + limit(24),
+      // alargar o cutoff nao traz historico antigo demais — so recupera as msgs iniciais.
+      const cutoff = new Date(new Date(input.lead_created_at).getTime() - 30 * 60 * 1000).toISOString();
       inboxQuery = inboxQuery.gte("created_at", cutoff);
     }
 
@@ -293,7 +296,7 @@ async function loadRecentConversationHistory(supabase: any, input: {
       .eq("remote_jid", input.remote_jid);
 
     if (input.lead_created_at) {
-      const cutoff = new Date(new Date(input.lead_created_at).getTime() - 2000).toISOString();
+      const cutoff = new Date(new Date(input.lead_created_at).getTime() - 30 * 60 * 1000).toISOString();
       historyQuery = historyQuery.gte("created_at", cutoff);
     }
 
@@ -1088,13 +1091,18 @@ export async function processPedroV2Turn(
   if (lead?.id && identity.kind !== "seller") {
     const { data: lastTransfer } = await supabase
       .from("ai_lead_transfers")
-      .select("created_at, to_member_id")
+      .select("created_at, to_member_id, transfer_status, is_confirmed")
       .eq("lead_id", lead.id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     const transferAtMs = lastTransfer?.created_at ? Date.parse(lastTransfer.created_at) : 0;
-    const recentTransferWithin24h = Boolean(transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000);
+    // Transferencia FALHA/EXPIRADA/REJEITADA nao "prende" o lead (fix relatorio mestre #1):
+    // se o vendedor nunca assumiu, o lead deve voltar ao fluxo normal (qualificar/reatribuir),
+    // sem ficar em limbo. Pendente e confirmada contam como vinculo valido na janela de 24h.
+    const _transferStatus = String(lastTransfer?.transfer_status || "").toLowerCase();
+    const transferUsable = !["expired", "failed", "rejected", "canceled", "cancelled"].includes(_transferStatus);
+    const recentTransferWithin24h = Boolean(transferUsable && transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000);
     // Vendedor DONO: assigned_to_id persistente (vale mesmo apos 24h); na falta dele, o
     // destinatario de uma transferencia recente (<24h) ainda nao atribuida. Owner inativo
     // NAO entra (is_active) -> o lead cai no fluxo normal e pode ser reatribuido.
@@ -1612,11 +1620,42 @@ export async function processPedroV2Turn(
   }
 
   if (!dryRun && lead?.id && reply.ok) {
+    // AMNESIA CONVERSACIONAL (fix relatorio mestre #2): o cerebro (gpt-4o) extrai os dados
+    // qualificados em 'qualificacao_coletada' (nome, interesse REAL de compra, troca,
+    // entrada, pagamento, agendamento), mas isso NAO era persistido — o estado estruturado
+    // ficava vazio e o agente repetia as MESMAS perguntas no turno seguinte. Aqui mesclamos
+    // de volta na memoria. Bonus: como o LLM separa 'interesse' (compra) de 'carro_troca',
+    // isso tambem CORRIGE a poluicao do carro de troca em interesse.modelo_desejado.
+    const _qc = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : null;
+    let memToSave: any = memoryAfterReply || {};
+    if (_qc) {
+      const _b = (v: any) => v === true || v === false;
+      memToSave = {
+        ...memToSave,
+        lead: { ...(memToSave.lead || {}), nome: _qc.nome || memToSave.lead?.nome || null },
+        interesse: {
+          ...(memToSave.interesse || {}),
+          modelo_desejado: _qc.interesse || memToSave.interesse?.modelo_desejado || null,
+        },
+        negociacao: {
+          ...(memToSave.negociacao || {}),
+          tem_troca: _b(_qc.tem_troca) ? _qc.tem_troca : memToSave.negociacao?.tem_troca ?? null,
+          carro_troca: _qc.carro_troca || memToSave.negociacao?.carro_troca || null,
+          valor_entrada: _qc.valor_entrada || memToSave.negociacao?.valor_entrada || null,
+          forma_pagamento: _qc.forma_pagamento || memToSave.negociacao?.forma_pagamento || null,
+        },
+        atendimento: {
+          ...(memToSave.atendimento || {}),
+          sabe_localizacao: _b(_qc.sabe_localizacao) ? _qc.sabe_localizacao : memToSave.atendimento?.sabe_localizacao ?? null,
+          dia_agendamento: _qc.dia_agendamento || memToSave.atendimento?.dia_agendamento || null,
+        },
+      };
+    }
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,
       agent_id: input.agent.id,
       user_id: input.agent.user_id,
-      current: memoryAfterReply,
+      current: memToSave,
       incoming_text: text,
       reply_text: reply.text || "",
       reply_source: reply.source || null,
