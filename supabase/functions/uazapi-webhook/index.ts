@@ -2515,15 +2515,25 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Response('Instance not found', { headers: corsHeaders })
   }
 
+  // ===== ISOLAMENTO POR FINALIDADE DO NÚMERO (camada extra de segurança) =====
+  // Número de disparo em massa / teste NUNCA aciona a IA, mesmo se por engano
+  // estiver na lista de instâncias de um agente. A camada principal continua
+  // sendo o instance_ids do agente (abaixo); esta é a trava de cinto.
+  if (waInstance.purpose === 'bulk_sender' || waInstance.purpose === 'test') {
+    console.log(`[ISOLAMENTO] [IGNORADO] numero=${instanceName} agente=- motivo=finalidade_${waInstance.purpose}`);
+    return new Response('Ignored non-agent number', { headers: corsHeaders })
+  }
+
   const { data: agent } = await supabase.from('wa_ai_agents')
     .select('*').eq('user_id', waInstance.user_id).eq('is_active', true).contains('instance_ids', [waInstance.id]).maybeSingle()
 
   if (!agent) {
-    console.log(`[Webhook] No matching active agent for instanceId: ${waInstance.id}`);
+    // Nenhum agente ATIVO tem este número vinculado → a IA não responde.
+    console.log(`[ISOLAMENTO] [IGNORADO] numero=${instanceName} agente=- motivo=sem_agente_ativo_vinculado`);
     return new Response('No matching active agent', { headers: corsHeaders })
   }
 
-  console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
+  console.log(`[ISOLAMENTO] [ROTEADO] numero=${instanceName} agente=${agent.id} (${agent.name}) motivo=numero_do_agente`);
 
   const guardedSellerAck = await maybeHandleSellerAck(supabase, waInstance, agent, remoteJid);
   if (guardedSellerAck.isSeller) {
