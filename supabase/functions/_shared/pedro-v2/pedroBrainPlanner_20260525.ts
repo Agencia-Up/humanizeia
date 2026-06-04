@@ -425,14 +425,23 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
   }
 
-  // ── REDE DE SEGURANÇA BÁSICA DE FOTOS ────────────────────────────────────────
-  // Apenas garante consistência do estado (se a LLM aceitou enviar fotos do carro
-  // em contexto, liga a flag de uso de memória).
+  // ── REDE DE SEGURANÇA: ACEITE DE FOTO (restaurada — evidência real, caso Renê) ──
+  // O agente ofereceu fotos, o lead respondeu "👍🏼" + "Pir favor", e o PLANNER LLM
+  // classificou como vehicle_reference (NAO photo_request) -> nenhuma foto saiu = venda
+  // perdida (PROVADO em log real do lead Rene). O LLM erra justamente esse caso, entao
+  // mantemos esta rede FINA: se o lead ACEITOU uma oferta RECENTE de fotos (afirmativo/
+  // emoji/cor/ano DEPOIS de o agente oferecer fotos) e ha veiculos apresentados, FORCA
+  // photo_request mesmo que o LLM tenha decidido outra coisa. Narrow e seguro:
+  // hasRecentPhotoOffer exige que a ULTIMA fala do agente tenha oferecido fotos — nunca
+  // dispara foto "do nada". (Demais enforcements do normalizePlan ficam a cargo do LLM.)
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input);
 
-  if (acceptedPhotoOffer && hasPresentedVehicles && plan.action === "photo_request") {
+  if (acceptedPhotoOffer && hasPresentedVehicles && !input.vehicle_resolution?.possible_new_topic) {
+    plan.action = "photo_request";
+    plan.intent = "photo_request";
     plan.use_memory_vehicle = true;
+    plan.reason = `enforced_accepted_recent_photo_offer:${plan.reason || ""}`;
   }
 
   // Anti-envio acidental: impede que a LLM envie fotos do nada se o lead não pediu de fato
