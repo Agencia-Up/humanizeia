@@ -467,3 +467,28 @@
 - Validado: 5 casos unitarios (sameVehicleModel Tracker!=Jeep apesar de flex/aut; pool
   homo/hetero) + live (Mauricio agora roteia o Creta certo via modo assistente; "fotos do
   onix" normal ok).
+
+## 2026-06-04 — REINTEGRACAO Antigravity + restaura rede de foto (v58) + GOVERNANCA
+
+- ATENCAO/GOVERNANCA: o Antigravity (rodado pelo dono na MESMA maquina/repo) editou os
+  MESMOS arquivos do Pedro v2 e DEPLOYOU por cima do v57 (commit 0fdeab2). Problema dos
+  "dois AIs se atropelando". Auditei o que sobreviveu vs o que ele removeu.
+- SOBREVIVEU (intacto + vivo): Fase 2 planner (PLAN_JSON_SCHEMA, classifyPendingQuestion,
+  hasPositiveEmoji), ad MODELO-first (v55, _adModelFacts), modo assistente (v52), amnesia
+  (v53, memToSave), search-retry (v54), trava de foto (v57, topicIsAmbiguous/vehicleModelKey),
+  tom (v56), idempotencia (v51).
+- Antigravity ADICIONOU (bom, mantido): multi-veiculo (vehicleResolver: has_multiple_vehicles,
+  all_matched_models), fix de concorrencia (myUserMsgId vs latest), reset de ultima_foto ao
+  trocar topico em savePresentedVehicles.
+- Antigravity REMOVEU: TODO o enforcement do normalizePlan (enforced_accepted_recent_photo_offer
+  v49, guard financiamento v53, enforced_ad_vehicle_consultation, enforced_current_vehicle).
+  Filosofia dele = confiar 100% no LLM.
+- Testei AO VIVO: anuncio (MODELO-first), busca de veiculo e multi-veiculo funcionam SEM os
+  enforcements (LLM da conta pos-Fase 2). MAS o aceite de foto (v49) eu tenho PROVA (log Rene)
+  de que o LLM erra (👍🏼+Pir favor -> vehicle_reference -> sem foto).
+- DECISAO DO DONO: "eu reintegro + restauro as redes; so eu edito o Pedro daqui pra frente".
+  v58: restaurei SO o enforcement de aceite de foto no normalizePlan (FORCA photo_request se
+  acceptedPhotoOffer + apresentados + nao novo topico). Mantive a autonomia do resto.
+  Build `2026-06-04-reintegra-antigravity-photo-net-v58`. Validado live: multi-veiculo +
+  anuncio + busca OK; rede de foto unit-provada.
+- ACAO DO DONO: NAO rodar o Antigravity nos arquivos do Pedro v2 de novo (senao re-atropela).
