@@ -272,7 +272,12 @@ function inferRequestedVehicleType(filters: Record<string, any>): "carro" | "mot
 }
 
 function inferVehicleSubcategory(filters: Record<string, any>): "hatch" | "sedan" | "suv" | "pickup" | "qualquer" {
-  const explicit = normalizeText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria || filters?.subcategoria || filters?.body_type);
+  // NAO le filters.body_type aqui DE PROPOSITO: body_type (carroceria que o lead digitou)
+  // e sinal de RANKING (scoreVehicle +40/-25), NUNCA de eliminacao. Esta funcao alimenta
+  // passesRequestedVehicleType, que DESCARTA veiculos — e o lead nomeando "polo hatch" NAO
+  // pode sumir com o Polo Sedan (fix v61). A categoria pura ("quero um sedan") ja e captada
+  // por filters.query/tipo_veiculo abaixo, entao body_type aqui seria redundante e perigoso.
+  const explicit = normalizeText(filters?.tipo_veiculo || filters?.tipo || filters?.categoria || filters?.subcategoria);
   // PRECEDENCIA do sinal estruturado: se o tipo do veiculo ja diz a subcategoria,
   // usa ele direto, antes de olhar texto livre. (Sem isso, o blob do anuncio com
   // "Sedan" ganhava do tipo_veiculo "hatch" e zerava a busca -> "nao temos".)
@@ -456,21 +461,39 @@ function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
     if (originalTokens.includes(modelToken)) score += 5;
   }
 
+  // PREFERENCIA FORTE por CARROCERIA EXPLICITA (o lead DIGITOU 'hatch'/'sedan'/'suv'/
+  // 'pickup'). filters.body_type so e preenchido (no orchestrator) quando o lead ESCREVEU
+  // a palavra — carroceria so INFERIDA do modelo NUNCA chega aqui, entao 'quero um polo'
+  // segue trazendo o Polo Sedan (fix v61 intacto). +40 sobe a carroceria pedida ao 1o
+  // lugar; -25 empurra a outra pra baixo SEM eliminar (a outra ainda aparece, abaixo).
+  const explicitBody = normalizeText(filters?.body_type || "");
+  if (explicitBody && ["hatch", "sedan", "suv", "pickup"].includes(explicitBody)) {
+    const vSub = getVehicleSubcategory(vehicle);
+    if (vSub !== "unknown") {
+      score += (vSub === explicitBody) ? 40 : -25;
+    }
+  }
+
   const requiredTokens = Math.min(2, originalTokens.length);
   if (originalTokens.length > 0 && matchedTokens.length < requiredTokens && score < 5) score = 0;
   return { score, matchedTokens };
 }
 
-function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>, relaxed = false) {
+function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>, relaxed = false, allowPriceless = false) {
   const price = Number(vehicle.saleValue || 0);
-  if (price <= 0) return false;
+  // Carro sem preco (R$0 / null) e ERRO DE CADASTRO do lojista, NAO "veiculo invalido".
+  // Quando o lead NOMEIA o modelo (allowPriceless=true), o carro NAO pode sumir so por
+  // isso — caso real Cruze 2014 saleValue=0: o agente negava um carro que EXISTE = perda
+  // de venda. Em busca por CATEGORIA (sem modelo) o R$0 segue escondido (ruido de cadastro).
+  if (price <= 0 && !allowPriceless) return false;
   if (relaxed) return true;
   const year = Number(vehicle.year || 0);
   const mileage = Number(vehicle.km || 0);
   return (
     (!filters?.ano_min || year >= Number(filters.ano_min)) &&
     (!filters?.ano_max || year <= Number(filters.ano_max)) &&
-    (!filters?.preco_max || price <= Number(filters.preco_max)) &&
+    // teto de preco NAO se aplica a carro sem preco (nao da pra comparar valor inexistente).
+    (!filters?.preco_max || price <= 0 || price <= Number(filters.preco_max)) &&
     (!filters?.km_max || mileage <= Number(filters.km_max))
   );
 }
@@ -478,6 +501,8 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
 function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
   const modelTerms = detectDynamicModelTerms(filters);
   const hasModelQuery = modelTerms.length > 0;
+  // Lead nomeou o modelo -> carro do modelo sem preco (erro de cadastro) NAO pode sumir.
+  const allowPriceless = hasModelQuery;
   const typedVehicles = vehicles
     .filter((vehicle) => passesRequestedVehicleType(vehicle, filters, hasModelQuery))
     .filter((vehicle) => vehicleMatchesStrictModel(vehicle, modelTerms));
@@ -488,13 +513,13 @@ function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
 
   if (!hasSearch) {
     return typedVehicles
-      .filter((vehicle) => passesNumericFilters(vehicle, filters))
+      .filter((vehicle) => passesNumericFilters(vehicle, filters, false, allowPriceless))
       .map((vehicle) => ({ vehicle, score: 1, matchedTokens: [] as string[], relaxed: false }));
   }
 
   const ranked = typedVehicles
     .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: false }))
-    .filter((item) => item.score > 0 && passesNumericFilters(item.vehicle, filters))
+    .filter((item) => item.score > 0 && passesNumericFilters(item.vehicle, filters, false, allowPriceless))
     .sort((left, right) => right.score - left.score);
 
   if (ranked.length > 0) return ranked;
@@ -533,7 +558,10 @@ function toPedroVehicle(vehicle: BndvVehicle, rank: { score: number; matchedToke
     versao: vehicle.versionName || null,
     ano: vehicle.year || null,
     km: vehicle.km || null,
-    preco: vehicle.saleValue || null,
+    preco: Number(vehicle.saleValue) > 0 ? vehicle.saleValue : null,
+    // Carro sem preco cadastrado (R$0/null) — sinaliza pro reply dizer "confirmar valor"
+    // em vez de mostrar R$0 ou negar (o carro EXISTE).
+    preco_a_confirmar: !(Number(vehicle.saleValue) > 0),
     cor: vehicle.color || null,
     combustivel: vehicle.fuelName || null,
     cambio: vehicle.transmissionName || null,
@@ -614,8 +642,10 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
   const vehicles = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
   const ranked = rankVehicles(vehicles, filters).sort((left, right) => {
     if (right.score !== left.score) return right.score - left.score;
-    const leftPrice = Number(left.vehicle.saleValue || 0);
-    const rightPrice = Number(right.vehicle.saleValue || 0);
+    // Carro sem preco (R$0/null) vai pro FIM do desempate (Infinity), nunca pro topo —
+    // senao um carro de preco-a-confirmar apareceria "mais barato" que todos.
+    const leftPrice = Number(left.vehicle.saleValue) > 0 ? Number(left.vehicle.saleValue) : Number.POSITIVE_INFINITY;
+    const rightPrice = Number(right.vehicle.saleValue) > 0 ? Number(right.vehicle.saleValue) : Number.POSITIVE_INFINITY;
     if (leftPrice !== rightPrice) return leftPrice - rightPrice;
     return Number(right.vehicle.year || 0) - Number(left.vehicle.year || 0);
   });

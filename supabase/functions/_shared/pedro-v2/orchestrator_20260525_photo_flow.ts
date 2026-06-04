@@ -1351,6 +1351,18 @@ export async function processPedroV2Turn(
       isGenericQuery = false;
       (stockFilters as any).budget_cheapest = true;
     }
+
+    // CARROCERIA EXPLICITA (fix v62): so quando o lead ESCREVEU a palavra de carroceria.
+    // Vira filtro de RANKING (scoreVehicle +40/-25), NUNCA de busca/eliminacao. Captura
+    // PALAVRAS DE CARROCERIA APENAS — nome de modelo jamais entra aqui (senao reintroduz
+    // o bug do "polo" eliminar o Polo Sedan, fix v61). A busca-ampla de alternativas NAO
+    // herda body_type (ela monta filtros do zero, sem spread de stockFilters).
+    let _bodyType: string | null = null;
+    if (/\b(suv|utilitario)\b/.test(_budgetText)) _bodyType = "suv";
+    else if (/\b(sedan|seda|tres volumes|3 volumes)\b/.test(_budgetText)) _bodyType = "sedan";
+    else if (/\b(hatch|hatchback)\b/.test(_budgetText)) _bodyType = "hatch";
+    else if (/\b(picape|pickup|caminhonete|camionete|cabine dupla)\b/.test(_budgetText)) _bodyType = "pickup";
+    if (_bodyType) (stockFilters as any).body_type = _bodyType;
   }
 
   if (stockFilters && !isGenericQuery) {

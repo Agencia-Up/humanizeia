@@ -204,6 +204,9 @@ function stockFacts(stockResult: any) {
     combustivel: vehicle?.combustivel || null,
     preco: vehicle?.preco || null,
     preco_formatado: money(vehicle?.preco),
+    // Carro EXISTE mas sem preco cadastrado (R$0/null): o reply apresenta pelo modelo/ano/
+    // km/cor e diz que CONFIRMA o valor — nunca mostra R$0 nem nega o carro (regra C2).
+    preco_a_confirmar: Boolean(vehicle?.preco_a_confirmar) || !(Number(vehicle?.preco) > 0),
     imagem: vehicle?.principal_image || vehicle?.fotos?.[0] || null,
     match_score: vehicle?.match_score || null,
     relaxed_match: Boolean(vehicle?.relaxed_match),
@@ -653,6 +656,7 @@ export async function generatePedroBrainReply(input: {
                 "Retorne no JSON a chave 'presented_vehicle_indices' listando os indices (1-baseados, campo 'index') dos veiculos citados no texto.",
                 "CONSULTA DE ANUNCIO (quando ad_vehicle_consultation=true): o ANO do anuncio (stock.ad_year_from_ad) e APROXIMADO e pode estar errado (vem da arte/metadado do Facebook). NUNCA abra com 'nao temos'. Se stock.ad_model_in_stock=true, ABRA POSITIVAMENTE confirmando que TEM ('Temos um <modelo> aqui sim!') e apresente o carro de stock.facts com o ano/cor/preco REAIS do estoque, com naturalidade, SEM destacar que o ano do anuncio era outro (so mencione/corrija se o lead perguntar). So diga honestamente que NAO tem quando stock.ad_model_in_stock=false — ai ofereca um parecido, sem inventar specs.",
                 "DISPONIBILIDADE POR MODELO (NUNCA minta 'nao temos'): se o lead pede uma ESPECIFICACAO (combustivel/cambio/cor/versao/ano) que o estoque nao tem MAS o MODELO existe em stock.facts com outra spec, NUNCA diga 'nao temos o <modelo> <spec>'. Apresente POSITIVAMENTE o que TEM informando a spec REAL (ex.: lead quer 'Toro flex' e o estoque tem Toro diesel -> 'A Toro que tenho aqui e a diesel, nao a flex — quer ver?'). So diga que NAO tem quando o MODELO inteiro nao existir no estoque.",
+                "PRECO A CONFIRMAR: se um item de stock.facts tiver preco_a_confirmar=true, o carro EXISTE e voce DEVE apresenta-lo pelo modelo/ano/km/cor REAIS — NUNCA diga R$0, NUNCA mostre preco zerado, NUNCA negue esse carro. Em vez do valor, diga com naturalidade que vai CONFIRMAR o preco com o time e ja retorna (ex.: 'Esse eu preciso confirmar o valor certinho pra voce, ja te falo'). So omita o preco DESSE item; os demais itens com preco seguem normais.",
                 "NUNCA afirme 'nao temos' um carro SEM que o estoque tenha sido consultado neste fluxo: se stock.success for false ou stock.facts vier vazio por falta de busca (e nao porque o modelo realmente nao existe), NAO negue — confirme/pergunte qual modelo ou diga que vai verificar. So negue disponibilidade com base em stock.facts real."
               ],
             }),
