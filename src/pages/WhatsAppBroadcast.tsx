@@ -351,6 +351,16 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         return;
       }
 
+      // ISOLAMENTO: número escolhido pra disparo vira 'bulk_sender' (sai de vez da
+      // elegibilidade de agente de IA). Só marca se ainda não tem finalidade.
+      if (payload.instance_id) {
+        await (supabase as any)
+          .from('wa_instances')
+          .update({ purpose: 'bulk_sender' })
+          .eq('id', payload.instance_id)
+          .is('purpose', null);
+      }
+
       toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });
       // Fecha o modal PRIMEIRO; adia reset + refetch pro proximo tick pra nao
       // atropelar a limpeza do overlay do Radix. Sem isso, o body as vezes fica
