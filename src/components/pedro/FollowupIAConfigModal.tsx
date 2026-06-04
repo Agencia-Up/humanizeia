@@ -28,7 +28,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, Clock, MessageSquare, Send, Zap, Info, AlertTriangle, Pause, Play, ShieldCheck } from 'lucide-react';
+import { Loader2, Clock, MessageSquare, Send, Zap, Info, AlertTriangle, Pause, Play, ShieldCheck, BarChart3 } from 'lucide-react';
+import FollowupDashboard from '@/components/pedro/FollowupDashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -126,7 +127,7 @@ export function FollowupIAConfigModal({
   const [starting, setStarting] = useState(false);
   const [togglingPause, setTogglingPause] = useState(false);
   const [config, setConfig] = useState<FollowupIAConfig>(DEFAULT_CONFIG);
-  const [activeTab, setActiveTab] = useState<'horario' | 'mensagens' | 'disparo'>('horario');
+  const [activeTab, setActiveTab] = useState<'horario' | 'mensagens' | 'disparo' | 'historico'>('horario');
   // UI do filtro por data (deriva de config.periodo_dias).
   const [dateMode, setDateMode] = useState<DateMode>('todos');
   const [customDays, setCustomDays] = useState<number>(60);
@@ -384,7 +385,7 @@ export function FollowupIAConfigModal({
           </div>
         ) : (
           <Tabs value={activeTab} onValueChange={v => setActiveTab(v as typeof activeTab)} className="mt-2">
-            <TabsList className="grid grid-cols-3 w-full">
+            <TabsList className="grid grid-cols-4 w-full">
               <TabsTrigger value="horario" className="gap-1.5 text-xs">
                 <Clock className="h-3.5 w-3.5" /> Horário
               </TabsTrigger>
@@ -393,6 +394,9 @@ export function FollowupIAConfigModal({
               </TabsTrigger>
               <TabsTrigger value="disparo" className="gap-1.5 text-xs">
                 <Send className="h-3.5 w-3.5" /> Disparo em Massa
+              </TabsTrigger>
+              <TabsTrigger value="historico" className="gap-1.5 text-xs">
+                <BarChart3 className="h-3.5 w-3.5" /> Histórico
               </TabsTrigger>
             </TabsList>
 
@@ -593,6 +597,11 @@ export function FollowupIAConfigModal({
                   Configurações otimizadas para evitar bloqueios no WhatsApp não-oficial. Quanto maior o intervalo e menor a quantidade/dia, menor o risco de banimento. O piso de 3 min entre mensagens é fixo e não pode ser reduzido.
                 </p>
               </div>
+            </TabsContent>
+
+            {/* ── Aba 4: Histórico — dashboard de disparos do dia ──────── */}
+            <TabsContent value="historico" className="pt-4">
+              <FollowupDashboard userId={user?.id} />
             </TabsContent>
           </Tabs>
         )}
