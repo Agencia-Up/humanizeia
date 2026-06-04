@@ -492,3 +492,24 @@
   Build `2026-06-04-reintegra-antigravity-photo-net-v58`. Validado live: multi-veiculo +
   anuncio + busca OK; rede de foto unit-provada.
 - ACAO DO DONO: NAO rodar o Antigravity nos arquivos do Pedro v2 de novo (senao re-atropela).
+
+## 2026-06-04 — BUSCA DE ESTOQUE: forca busca + nunca mente "nao temos" (v59)
+
+- Build `2026-06-04-force-stock-search-net-v59`. Dor recorrente do dono ("sempre e a busca
+  no estoque"). Caso Patricia: agente disse "nao temos Compass" e "nao temos Toro flex" —
+  mas HA 3 Compass + 1 Toro diesel no estoque.
+- DIAGNOSTICO (turn-logs reais + busca direta): o BNDV TEM os carros (busca direta achou).
+  MAS nos turnos da Patricia: action=reply_generation, filtros={}, stock_total=0 -> a busca
+  NEM RODAVA. A LLM escolhia reply_only e ALUCINAVA "nao temos". = 2a consequencia da remocao
+  (Antigravity) do enforced_current_vehicle.
+- Fix (2a rede critica restaurada com evidencia):
+  1. planner normalizePlan: se has_current_vehicle_signal + query e a LLM ia reply_only/clarify,
+     FORCA stock_search (enforced_current_vehicle_search). Agente nunca afirma disponibilidade
+     sem buscar. photo/handoff intactos.
+  2. reply hard_rules: (a) MODELO existe mas spec (combustivel/cambio/cor/versao/ano) difere ->
+     apresentar POSITIVO a spec real ("a Toro que tenho e diesel, nao flex"), nunca "nao temos
+     flex"; (b) NUNCA negar disponibilidade sem stock.facts real.
+- Validado live: "se tiver compass" -> apresenta 3 Compass; "toro flex" -> apresenta a diesel
+  positivo; "toro ou compass" -> busca; "corolla" (ausente) -> honesto + alternativas.
+- LICAO: o agente NAO pode confiar 100% no LLM para claims de estoque — precisa FORCAR a busca.
+  Ja foram 2 redes restauradas (foto v58, busca v59) por causa da remocao do Antigravity.
