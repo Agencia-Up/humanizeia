@@ -513,3 +513,20 @@
   positivo; "toro ou compass" -> busca; "corolla" (ausente) -> honesto + alternativas.
 - LICAO: o agente NAO pode confiar 100% no LLM para claims de estoque — precisa FORCAR a busca.
   Ja foram 2 redes restauradas (foto v58, busca v59) por causa da remocao do Antigravity.
+
+## 2026-06-04 — Hold pos-transferencia 24h revisado: avisa lead 1x + silencio (v60)
+
+- Build `2026-06-04-post-transfer-24h-hold-silent-v60`. O "modo assistente" (v52) criava
+  LOOP e SPAMAVA o vendedor com "Seu lead respondeu por aqui 👀" no mesmo dia.
+- NOVA regra do dono (substitui v52, reverte p/ hold v48 sem re-notify):
+  - DENTRO de 24h da transferencia: avisa o LEAD 1x ("consultor vai entrar em contato,
+    aguarde") via throttle transfer_notice_at, depois SILENCIA (return post_transfer_hold_24h).
+    NAO re-notifica o vendedor (mesmo dia, ele ja sabe). Transferencia expired/failed/etc
+    nao prende.
+  - DEPOIS de 24h: trata o lead NORMALMENTE; transfer -> MESMO vendedor (transferRouter via
+    assigned_to_id -> returning_lead_renotify).
+- ownedLeadAssistantMode/assistantSellerName agora SEMPRE false/null (refs downstream viram
+  no-op -> comportamento normal). A persona "MODO ASSISTENTE DO VENDEDOR" no reply fica
+  inativa (assigned_seller_name sempre null).
+- Validado live: 5 leads reais transferidos <24h (status confirmed) -> todos
+  post_transfer_hold_24h (silencio). esbuild ok.
