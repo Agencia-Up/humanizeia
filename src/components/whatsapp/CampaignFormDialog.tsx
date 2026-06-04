@@ -56,6 +56,7 @@ interface WaInstance {
   friendly_name: string;
   phone_number: string | null;
   status: string;
+  created_at?: string | null;
 }
 
 interface CampaignFormDialogProps {
@@ -711,6 +712,43 @@ export function CampaignFormDialog({
                   </div>
                 </div>
               )}
+
+              {/* Capacidade de disparo do número segundo o aquecimento (mesma conta do backend) */}
+              {(() => {
+                const sel = instances.find(i => i.id === instanceId);
+                const ageDays = sel?.created_at
+                  ? Math.floor((Date.now() - new Date(sel.created_at).getTime()) / 86400000)
+                  : null;
+                const init = Math.max(1, warmupInitial || 20);
+                const target = Math.max(init, warmupDailyLimit || 50);
+                const rampDays = Math.max(1, warmupRampDays || 14);
+                const capFor = (age: number) =>
+                  age >= rampDays ? target : Math.max(init, Math.floor(init + (target - init) * (age / rampDays)));
+                if (!warmupEnabled) {
+                  return (
+                    <div className="flex gap-2 items-start rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                      <Flame className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="text-amber-200/90">
+                        <strong>Aquecimento desligado.</strong> Cada número vai disparar até <strong>200/dia</strong> (tratado como número pronto).
+                        Se o número for novo, há <strong>risco maior de bloqueio</strong> pelo WhatsApp — considere ligar o aquecimento.
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="flex gap-2 items-start rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
+                    <Flame className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                    <div className="text-blue-200/90">
+                      {sel && ageDays !== null ? (
+                        <>Pelo aquecimento, <strong>{sel.friendly_name || 'este número'}</strong> (criado há {ageDays} dia{ageDays === 1 ? '' : 's'}) suporta <strong>~{capFor(ageDays)} disparos hoje</strong>, subindo até <strong>{target}/dia</strong> em {rampDays} dias.</>
+                      ) : (
+                        <>Cada número começa em <strong>~{init}/dia</strong> e sobe até <strong>{target}/dia</strong> em {rampDays} dias (conforme a idade de cada número). Mantenha intervalos longos para proteger os números.</>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <p className="text-xs text-muted-foreground italic">
                 Salvo como: {`{ "enabled": ${warmupEnabled}, "initial_messages": ${warmupInitial}, "limite_diario_inicial": ${warmupDailyLimit}, "dias_rampa": ${warmupRampDays} }`}
               </p>

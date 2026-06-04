@@ -54,6 +54,7 @@ interface WAInstance {
   health_score: number;
   provider: string;
   status: string;
+  created_at: string | null;
 }
 
 const isGeneratedAITemplate = (value?: string | null) => /^\[IA\]\s*/i.test((value || '').trim());
@@ -238,7 +239,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // mas não opera com número alheio).
       let instancesQuery = (supabase as any)
         .from('wa_instances')
-        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id')
+        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at')
         .eq('user_id', effectiveUserId)
         .eq('is_active', true);
       if (isolateBySeller) {
