@@ -57,6 +57,7 @@ interface WaInstance {
   phone_number: string | null;
   status: string;
   created_at?: string | null;
+  purpose?: string | null;
 }
 
 interface CampaignFormDialogProps {
@@ -150,7 +151,7 @@ export function CampaignFormDialog({
       // Só mantém a instância salva se ela ainda existir E estiver conectada;
       // senão cai pra 'auto' (evita "fantasma" de número que não existe mais).
       setInstanceId(
-        editingCampaign.instance_id && instances.some(i => i.id === editingCampaign.instance_id)
+        editingCampaign.instance_id && instances.some(i => i.id === editingCampaign.instance_id && i.purpose !== 'agent')
           ? editingCampaign.instance_id
           : 'auto',
       );
@@ -309,29 +310,33 @@ export function CampaignFormDialog({
                 <Smartphone className="h-4 w-4 text-muted-foreground" />
                 Instância WhatsApp
               </Label>
-              {instances.length === 0 ? (
-                <div className="flex gap-2 items-start rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs">
-                  <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                  <div className="text-red-300">
-                    <strong>Nenhum número WhatsApp conectado.</strong> Conecte (ou reconecte) um número na aba
-                    Instâncias antes de disparar — sem número conectado, a campanha não envia.
+              {(() => {
+                // ISOLAMENTO: número de AGENTE de IA não pode ser usado pra disparo.
+                const bulkInstances = instances.filter(i => i.purpose !== 'agent');
+                return bulkInstances.length === 0 ? (
+                  <div className="flex gap-2 items-start rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs">
+                    <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                    <div className="text-red-300">
+                      <strong>Nenhum número de disparo conectado.</strong> Conecte um número (que não seja
+                      o número do agente de IA) na aba Instâncias antes de disparar.
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <Select value={instanceId} onValueChange={setInstanceId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione a instância" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
-                    {instances.map(inst => (
-                      <SelectItem key={inst.id} value={inst.id}>
-                        {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+                ) : (
+                  <Select value={instanceId} onValueChange={setInstanceId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a instância" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
+                      {bulkInstances.map(inst => (
+                        <SelectItem key={inst.id} value={inst.id}>
+                          {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                );
+              })()}
             </div>
 
             <Separator />

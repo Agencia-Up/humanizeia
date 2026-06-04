@@ -240,7 +240,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // mas não opera com número alheio).
       let instancesQuery = (supabase as any)
         .from('wa_instances')
-        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at')
+        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at, purpose')
         .eq('user_id', effectiveUserId)
         .eq('is_active', true)
         .eq('status', 'connected'); // só números REALMENTE conectados podem disparar
