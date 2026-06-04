@@ -380,7 +380,7 @@ async function generateFollowupText(opts: {
   const fallbacks: Record<string, string> = {
     reengage: "E ai, conseguiu dar uma olhada? Posso te ajudar com mais alguma coisa? 😊",
     check_help: "Ainda esta por ai? Posso te ajudar com mais alguma coisa? 😊",
-    farewell: "Vou pedir para um dos nossos consultores de vendas continuar com voce por aqui, ta? Obrigado pelo papo, ja ja alguem te chama! 😊",
+    farewell: "Vou pedir para um dos nossos consultores de vendas dar continuidade no seu atendimento, ta? Ele ja vai entrar em contato com voce. Obrigado pelo papo! 😊",
   };
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallbacks[opts.kind];
@@ -390,7 +390,7 @@ async function generateFollowupText(opts: {
   const goal: Record<string, string> = {
     reengage: "O cliente parou de responder ha ~5 min. Escreva UMA mensagem curta e natural retomando o ULTIMO assunto da conversa (o veiculo/fotos/valores que estavam vendo), convidando a continuar. Sem pressionar.",
     check_help: "SEGUNDA tentativa (~8 min sem resposta). A 1a mensagem JA retomou o veiculo/assunto — NAO repita isso. Aqui escreva algo bem CURTO so checando presenca, no estilo 'Ainda esta por ai?' ou 'Ainda posso te ajudar?'. NAO mencione veiculo, fotos, valores nem 'outras opcoes'. Apenas 1 frase curta.",
-    farewell: "O cliente nao respondeu (~12 min). Escreva UMA mensagem curta e amigavel avisando que um consultor de vendas vai dar continuidade por aqui e agradecendo o contato.",
+    farewell: "O cliente nao respondeu (~12 min). Escreva UMA mensagem curta e amigavel avisando que um consultor de vendas vai ENTRAR EM CONTATO com ele em breve e agradecendo o contato. IMPORTANTE: NAO diga que o atendimento continua 'por aqui'/'neste numero'/'aqui mesmo' — o vendedor fala de OUTRO numero. Use 'vai entrar em contato', nunca prometa que ele responde por este WhatsApp.",
   };
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {

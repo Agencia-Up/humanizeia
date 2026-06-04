@@ -1211,7 +1211,7 @@ export async function processPedroV2Turn(
         const inst = input.wa_instance || await resolvePedroInstance(supabase, {
           user_id: input.agent.user_id, agent_id: input.agent.id, instance_id: input.wa_instance?.id,
         });
-        await sendPedroText(inst, { to: remoteJidToPhone(remoteJid), text: "Seu atendimento já está com um dos nossos consultores de vendas, que vai falar com você por aqui. É só aguardar um momentinho! 😊" }).catch(() => {});
+        await sendPedroText(inst, { to: remoteJidToPhone(remoteJid), text: "Seu atendimento já está com um dos nossos consultores de vendas, ele já vai entrar em contato com você. É só aguardar um momentinho! 😊" }).catch(() => {});
         try {
           await supabase.from("pedro_conversation_state").upsert({
             lead_id: lead.id, agent_id: input.agent.id, user_id: input.agent.user_id,

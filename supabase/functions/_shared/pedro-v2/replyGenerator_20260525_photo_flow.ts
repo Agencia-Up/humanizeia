@@ -263,7 +263,7 @@ export function generatePedroSalesReply(input: {
   if (intent === "human_request") {
     return {
       ok: true,
-      text: "Perfeito, vou pedir para um consultor continuar com voce por aqui.",
+      text: "Perfeito, vou pedir para um consultor de vendas entrar em contato com voce.",
       source: "handoff_reply",
       presented_vehicle_indices: [],
     };
