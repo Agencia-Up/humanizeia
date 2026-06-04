@@ -881,9 +881,15 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
 
 export function adContextToMemory(adContext: PedroV2AdContext): PedroV2LeadMemory {
   if (!adContext.has_ad_context) return {};
+  // O ANO do anuncio (metadado/arte do Facebook) e IMPRECISO e NAO pode entrar no
+  // modelo_desejado (campo que alimenta busca/match). "Mini Cooper 2023" colado fazia o
+  // match com o estoque "Mini Cooper 2019" falhar -> agente dizia "nao temos". Gravamos o
+  // MODELO LIMPO aqui; o texto cru do anuncio fica preservado em veiculo_citado (auditoria).
+  const stripYear = (s?: string | null) =>
+    String(s || "").replace(/\b(?:19|20)\d{2}\b/g, "").replace(/\s+/g, " ").trim();
   return {
     interesse: {
-      modelo_desejado: adContext.vehicle_query || null,
+      modelo_desejado: stripYear(adContext.vehicle_query) || null,
       tipo_veiculo: adContext.vehicle_type || null,
     },
     referencia: {

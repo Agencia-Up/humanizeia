@@ -1306,7 +1306,7 @@ export async function processPedroV2Turn(
           total: _alts.length,
           items: _alts,
           is_alternatives: true,
-          response_guidance: `NAO temos no estoque o veiculo exato pedido (${_wanted}). Seja honesto e CURTO sobre isso e ofereca ESTES parecidos como ALTERNATIVA (mesma faixa de preco/categoria), perguntando se quer ver algum. NUNCA pule para qualificacao de pagamento sem antes oferecer estas opcoes.`,
+          response_guidance: `NAO temos no estoque o MODELO pedido (${_wanted}). Seja honesto e CURTO sobre isso e ofereca ESTES parecidos como ALTERNATIVA (mesma faixa de preco/categoria), perguntando se quer ver algum. NUNCA pule para qualificacao de pagamento sem antes oferecer estas opcoes.`,
         };
         log("info", "pedro_v2_search_and_retry", { wanted: String(_wanted).slice(0, 40), alternatives: _alts.length });
       }

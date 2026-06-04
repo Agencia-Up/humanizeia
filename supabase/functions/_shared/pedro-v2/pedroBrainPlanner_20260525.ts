@@ -194,10 +194,11 @@ function adVehicleGuidance() {
   return [
     "Lead veio de anuncio/link/imagem com veiculo identificado (veja ad_context: vehicle_query tem marca/modelo/ano; summary pode ter a cor e o preco do anuncio).",
     "Consulte o estoque para CONFIRMAR esse veiculo especifico.",
-    "REGRA DE MATCH: o que importa para casar e MODELO + ANO. Se o estoque TEM o mesmo modelo e o mesmo ANO do anuncio, ESSE e o carro do anuncio — APRESENTE ele (mesmo que a COR ou a versao/trim tenham pequena diferenca em relacao a arte; a cor da arte as vezes nao bate com a unidade — apenas informe a cor REAL do estoque). NAO diga 'nao temos' se o modelo+ano existem.",
-    "So diga que NAO tem o exato quando NENHUMA unidade do estoque tiver o mesmo MODELO + ANO do anuncio. Nesse caso, NAO invente nem afirme specs de um carro diferente: diga que vai confirmar a disponibilidade desse exato e ofereca o(s) parecido(s) deixando claro que sao OUTRAS unidades (outro ano/versao).",
+    "REGRA DE MATCH (MODELO manda): o que casa o anuncio com o estoque e o MODELO. O ANO do anuncio e frequentemente IMPRECISO (arte/metadado generico do Facebook) — trate-o como detalhe secundario, NUNCA como condicao de disponibilidade.",
+    "Se o estoque TEM o mesmo MODELO do anuncio (mesmo que o ANO, a COR ou a versao/trim sejam diferentes da arte), ESSE e o carro: ABRA POSITIVAMENTE confirmando que TEM ('Temos um <modelo> aqui sim!') e informe os dados REAIS da unidade (ano, cor, km, preco do estoque). NUNCA abra com 'nao temos' nem trate a unidade como 'opcao proxima' so porque o ano do anuncio nao bate (so corrija o ano se o lead insistir).",
+    "So diga honestamente que NAO tem quando NENHUMA unidade do MESMO MODELO existir no estoque. Nesse caso, sem inventar specs, ofereca o(s) parecido(s) como alternativa.",
     "Nao liste alternativas/catalogo sem o lead pedir.",
-    "Responda como consultor: apresente-se se for 1o contato, confirme o carro do anuncio (modelo + ano) e pergunte se quer fotos/detalhes.",
+    "Responda como consultor: apresente-se se for 1o contato, confirme o carro do anuncio e pergunte se quer fotos/detalhes.",
   ].join(" ");
 }
 

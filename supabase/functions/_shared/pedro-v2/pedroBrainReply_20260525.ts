@@ -295,9 +295,14 @@ function buildAdVehicleConsultationFallback(input: {
   const agentName = sanitizeAgentName(input.agent?.name);
   const companyName = input.agent?.company_name || "Icom Motors";
 
+  // Abertura POSITIVA por MODELO (espelha a logica MODELO-first do caminho LLM). O rotulo
+  // do anuncio sai SEM o ano (impreciso); os dados reais vem do fato do estoque. Quando o
+  // modelo NAO existe (facts vazio), versao honesta oferecendo parecidos.
+  const modeloAnuncio = String(input.ad_context?.vehicle_query || "").replace(/\b(?:19|20)\d{2}\b/g, "").replace(/\s+/g, " ").trim() || "esse carro do anuncio";
+  const modeloReal = vehicle?.modelo || modeloAnuncio;
   const stockLine = vehicle
-    ? `Vi que voce veio pelo anuncio do ${label}. Ele aparece aqui no estoque${details ? `: ${details}` : "."}`
-    : `Vi que voce veio pelo anuncio do ${label}. Vou cuidar dele com voce pra nao te passar nada errado.`;
+    ? `Temos um ${modeloReal} aqui sim! No estoque tem ${vehicle.label}${details ? ` — ${details}` : "."}`
+    : `Vi que voce veio pelo anuncio do ${modeloAnuncio}. Esse modelo eu nao tenho agora, mas consigo te mostrar uns parecidos — quer ver?`;
 
   if (input.has_presented) {
     return [
@@ -481,13 +486,27 @@ export async function generatePedroBrainReply(input: {
 
   const allFacts = stockFacts(input.stock_result);
   const adVehicleConsultation = isCurrentTurnAdVehicleConsultation(input);
-  // Consulta de anuncio mostra 1 veiculo (o do anuncio). BUG corrigido: pegava
-  // allFacts[0] CEGAMENTE -> com 3 Compass no estoque, mostrava o 2019 e dizia "nao
-  // temos o 2023" (o 2023 estava na lista, mas nem chegava ao LLM). Agora escolhe o
-  // fato que BATE com o ANO do anuncio; se nao houver esse ano, cai no 1o (e o LLM,
-  // pela guidance, diz que nao tem o exato e oferece o parecido como outra unidade).
-  const _adYear = (String(input.ad_context?.vehicle_query || "").match(/\b(?:19|20)\d{2}\b/) || [])[0] || null;
-  const _adMatchedFact = _adYear ? allFacts.find((f: any) => String(f?.ano || "").includes(_adYear)) : null;
+  // CONSULTA DE ANUNCIO = MODELO-first. O ANO do anuncio (metadado/arte do Facebook) e
+  // IMPRECISO; antes o fato era escolhido pelo ANO ("Mini Cooper 2023") e, como o estoque
+  // era 2019, _adMatchedFact ficava null -> o LLM dizia "nao temos o 2023". Agora casamos
+  // pelo MODELO (o que o estoque TEM) e usamos o ano so como DESEMPATE, nunca eliminatorio.
+  const _adQuery = String(input.ad_context?.vehicle_query || "");
+  const _adYear = (_adQuery.match(/\b(?:19|20)\d{2}\b/) || [])[0] || null;
+  const _adModelo = normalizeText(_adQuery.replace(/\b(?:19|20)\d{2}\b/g, ""));
+  const _adModelFacts = _adModelo
+    ? allFacts.filter((f: any) => {
+        const m = normalizeText(f?.modelo || "");
+        const l = normalizeText(f?.label || "");
+        // Casa se o LABEL do estoque contem o modelo do anuncio, OU se o modelo do anuncio
+        // contem o modelName do estoque (token >=3 p/ evitar falso-positivo). NUNCA usar
+        // l.includes(m): o label sempre contem o proprio modelName -> casaria TODO carro.
+        return l.includes(_adModelo) || (m.length >= 3 && _adModelo.includes(m));
+      })
+    : [];
+  const _adExactYear = _adYear ? _adModelFacts.find((f: any) => String(f?.ano || "").includes(_adYear)) : null;
+  const _adMatchedFact = _adExactYear || _adModelFacts[0] || null;
+  const _adModelInStock = _adModelFacts.length > 0;
+  const _adYearMatched = Boolean(_adExactYear);
   const facts = adVehicleConsultation
     ? (_adMatchedFact ? [_adMatchedFact] : allFacts.slice(0, 1))
     : allFacts;
@@ -573,7 +592,7 @@ export async function generatePedroBrainReply(input: {
                 "",
                 "DIRETRIZES DE APOIO (use SOMENTE quando o seu System Prompt do Portal nao especificar o passo a passo — o Portal sempre prevalece; e SEMPRE respeitando a regra de CONCISAO: no maximo UM gancho curto por mensagem, nunca empilhado com outra pergunta):",
                 "- O GANCHO VISUAL: Sempre que houver veículo no estoque (stock.facts), ofereça proativamente enviar fotos ou vídeos adicionais para atrair o interesse.",
-                "- O GANCHO DA SOLUÇÃO ALTERNATIVA: Se o veículo procurado não estiver no estoque, não encerre a conversa de mãos vazias. Ofereça opções semelhantes (mesma categoria, valor ou câmbio) e chame para fotos.",
+                "- O GANCHO DA SOLUÇÃO ALTERNATIVA: Se o MODELO procurado não existir no estoque (nenhuma unidade), não encerre a conversa de mãos vazias. Ofereça opções semelhantes (mesma categoria, valor ou câmbio) e chame para fotos. (Se o modelo EXISTE com ano/cor diferentes, NÃO use este gancho — apresente a unidade real de forma positiva.)",
                 "- O GANCHO DA QUALIFICAÇÃO: Conduza a conversa para as etapas seguintes de forma amigável: pergunte se tem carro na troca, ofereça simular financiamento perguntando sobre a entrada, ou convide para visitar a loja e fazer um test drive.",
                 "",
                 "QUALIFICAÇÃO OBRIGATÓRIA (siga o passo-a-passo do seu System Prompt do Portal):",
@@ -615,6 +634,10 @@ export async function generatePedroBrainReply(input: {
                 error: input.stock_result?.error || null,
                 is_generic_query: Boolean(input.stock_result?.is_generic_query),
                 response_guidance: input.stock_result?.response_guidance || null,
+                ad_model_in_stock: adVehicleConsultation ? _adModelInStock : null,
+                ad_year_from_ad: adVehicleConsultation ? _adYear : null,
+                ad_year_matched: adVehicleConsultation ? _adYearMatched : null,
+                ad_year_is_approximate: adVehicleConsultation ? true : null,
               },
               tool_result: input.tool_result || null,
               ad_vehicle_consultation: adVehicleConsultation,
@@ -625,7 +648,8 @@ export async function generatePedroBrainReply(input: {
                 "VEICULO EM FOCO: perguntas de ATRIBUTO (preço, km, cor, ano, câmbio, versão, combustível) e referências ('dele', 'desse', 'esse carro') são SEMPRE sobre o 'veiculo_em_foco' (ou stock.facts) — NUNCA sobre o carro de TROCA do cliente. Se 'veiculo_em_foco' tiver o dado, responda direto com ele; NUNCA diga que não tem a informação de um carro que está em 'veiculo_em_foco'.",
                 "Se 'memory_summary.interesse.modelo_desejado' divergir de 'veiculo_em_foco', o 'veiculo_em_foco' PREVALECE (o campo interesse pode estar desatualizado ou conter o carro de troca por engano).",
                 "Se a tool de fotos foi ativada (tool_result.type === 'vehicle_photos'), confirme o envio das fotos sem prometer novos envios.",
-                "Retorne no JSON a chave 'presented_vehicle_indices' listando os indices (1-baseados, campo 'index') dos veiculos citados no texto."
+                "Retorne no JSON a chave 'presented_vehicle_indices' listando os indices (1-baseados, campo 'index') dos veiculos citados no texto.",
+                "CONSULTA DE ANUNCIO (quando ad_vehicle_consultation=true): o ANO do anuncio (stock.ad_year_from_ad) e APROXIMADO e pode estar errado (vem da arte/metadado do Facebook). NUNCA abra com 'nao temos'. Se stock.ad_model_in_stock=true, ABRA POSITIVAMENTE confirmando que TEM ('Temos um <modelo> aqui sim!') e apresente o carro de stock.facts com o ano/cor/preco REAIS do estoque, com naturalidade, SEM destacar que o ano do anuncio era outro (so mencione/corrija se o lead perguntar). So diga honestamente que NAO tem quando stock.ad_model_in_stock=false — ai ofereca um parecido, sem inventar specs."
               ],
             }),
           },
