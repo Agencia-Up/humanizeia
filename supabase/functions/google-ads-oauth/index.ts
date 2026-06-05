@@ -21,9 +21,33 @@ async function getAuthenticatedUser(req: Request) {
   return data.user.id;
 }
 
-function handleAuthorize(redirect_uri: string, state?: string) {
-  const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
-  const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
+// Chaves do app Google: primeiro do banco (geridas pelo operador no painel),
+// com fallback pro env. Try/catch protege ambiente sem a migration.
+async function getGoogleAppCreds(): Promise<{ clientId: string; clientSecret: string; developerToken: string }> {
+  let clientId = "", clientSecret = "", developerToken = "";
+  try {
+    const svc = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data } = await svc
+      .from("platform_app_credentials")
+      .select("app_id, app_secret, extra")
+      .eq("provider", "google_ads")
+      .maybeSingle();
+    clientId = (data?.app_id || "").trim();
+    clientSecret = (data?.app_secret || "").trim();
+    developerToken = ((data?.extra && data.extra.developer_token) || "").trim();
+  } catch (_e) { /* cai no env */ }
+  return {
+    clientId: clientId || Deno.env.get("GOOGLE_CLIENT_ID") || "",
+    clientSecret: clientSecret || Deno.env.get("GOOGLE_CLIENT_SECRET") || "",
+    developerToken: developerToken || Deno.env.get("GOOGLE_ADS_DEVELOPER_TOKEN") || "",
+  };
+}
+
+async function handleAuthorize(redirect_uri: string, state?: string) {
+  const { clientId, clientSecret } = await getGoogleAppCreds();
 
   if (!clientId || !clientSecret) {
     return new Response(
@@ -69,9 +93,7 @@ async function handleCallback(req: Request, code: string, redirect_uri: string) 
     });
   }
 
-  const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
-  const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
-  const developerToken = Deno.env.get("GOOGLE_ADS_DEVELOPER_TOKEN") || "";
+  const { clientId, clientSecret, developerToken } = await getGoogleAppCreds();
 
   // Exchange code for tokens
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {

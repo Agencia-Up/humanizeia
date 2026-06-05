@@ -23,6 +23,30 @@ async function getAuthenticatedUser(req: Request) {
   return user.id;
 }
 
+// Chaves do app Meta: primeiro do banco (geridas pelo operador no painel),
+// com fallback pro env. Try/catch garante que, se a tabela nao existir
+// (ex.: ambiente sem a migration), cai no env e nao quebra.
+async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string }> {
+  let appId = "", appSecret = "";
+  try {
+    const svc = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data } = await svc
+      .from("platform_app_credentials")
+      .select("app_id, app_secret")
+      .eq("provider", "meta")
+      .maybeSingle();
+    appId = (data?.app_id || "").trim();
+    appSecret = (data?.app_secret || "").trim();
+  } catch (_e) { /* cai no env */ }
+  return {
+    appId: appId || Deno.env.get("META_APP_ID") || "",
+    appSecret: appSecret || Deno.env.get("META_APP_SECRET") || "",
+  };
+}
+
 async function fetchMetaResource(endpoint: string, token: string) {
   try {
     const res = await fetch(`${META_GRAPH_URL}/${endpoint}&access_token=${token}`);
@@ -91,7 +115,7 @@ async function fetchFullAccountData(token: string) {
 }
 
 async function handleAuthorize(redirect_uri: string, state?: string) {
-  const appId = Deno.env.get("META_APP_ID")!;
+  const { appId } = await getMetaAppCreds();
   const scopes = [
     "ads_management",
     "ads_read",
@@ -118,8 +142,7 @@ async function handleCallback(req: Request, code: string, redirect_uri: string) 
     });
   }
 
-  const appId = Deno.env.get("META_APP_ID")!;
-  const appSecret = Deno.env.get("META_APP_SECRET")!;
+  const { appId, appSecret } = await getMetaAppCreds();
 
   // Exchange code for short-lived token
   const tokenRes = await fetch(

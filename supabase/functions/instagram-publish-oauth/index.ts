@@ -6,8 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const META_APP_ID     = Deno.env.get('META_APP_ID') ?? '';
-const META_APP_SECRET = Deno.env.get('META_APP_SECRET') ?? '';
+const ENV_META_APP_ID     = Deno.env.get('META_APP_ID') ?? '';
+const ENV_META_APP_SECRET = Deno.env.get('META_APP_SECRET') ?? '';
 const SUPABASE_URL    = Deno.env.get('SUPABASE_URL') ?? '';
 const REDIRECT_URI    = 'https://seyljsqmhlopkcauhlor.supabase.co/functions/v1/instagram-publish-oauth';
 const GRAPH           = 'https://graph.facebook.com/v21.0';
@@ -19,6 +19,20 @@ serve(async (req) => {
     SUPABASE_URL,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   );
+
+  // Chaves do app Meta: primeiro do banco (operador), fallback pro env.
+  // O Instagram usa o MESMO app da Meta (provider 'meta').
+  let META_APP_ID = ENV_META_APP_ID;
+  let META_APP_SECRET = ENV_META_APP_SECRET;
+  try {
+    const { data: cred } = await supabase
+      .from('platform_app_credentials')
+      .select('app_id, app_secret')
+      .eq('provider', 'meta')
+      .maybeSingle();
+    if (cred?.app_id?.trim()) META_APP_ID = cred.app_id.trim();
+    if (cred?.app_secret?.trim()) META_APP_SECRET = cred.app_secret.trim();
+  } catch (_e) { /* mantem env */ }
 
   try {
     const url = new URL(req.url);
