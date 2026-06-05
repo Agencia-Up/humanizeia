@@ -957,6 +957,8 @@ interface CrmLead {
   status_crm: string;
   summary?: string | null;
   next_followup_at: string | null;
+  // Status da reativacao (Follow-up IA) pra badge do card: sent/responded/transferred.
+  reactivation_status?: string | null;
   seller_notes_count: number;
   assigned_to_id: string | null;
   member?: { id: string; name: string } | null;
@@ -1467,6 +1469,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const teamData:  TeamMember[] = teamRes.data || [];
       const agentsData: any[] = agentsRes.data || [];
 
+      // Status de FOLLOW-UP (reativacao) por lead, pro badge discreto do card.
+      // 1 query por master (RLS: so o dono ve os proprios). Opcional — se falhar, sem badge.
+      const reactByLead = new Map<string, string>();
+      try {
+        const { data: reactRows } = await (supabase as any)
+          .from('pedro_followup_reactivation')
+          .select('lead_id, status')
+          .eq('user_id', effectiveUserId);
+        for (const r of reactRows || []) reactByLead.set(r.lead_id, r.status);
+      } catch { /* badge de follow-up e opcional */ }
+
       // ── HIDRATAÇÃO JS: monta lead.member e lead.agent usando os arrays já buscados
       // Substitui o JOIN PostgREST que falhava silenciosamente. Mais robusto.
       const teamById = new Map(teamData.map((t: any) => [t.id, { id: t.id, name: t.name }]));
@@ -1475,6 +1488,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         ...l,
         member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
         agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
+        reactivation_status: reactByLead.get(l.id) ?? null,
       }));
       const leadsByPhone = new Map<string, CrmLead>();
       for (const lead of hydratedLeads) {
@@ -2257,6 +2271,38 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       if (processed > 0) await fetchData(true);
     } catch (err: any) {
       toast({ title: 'Erro ao disparar follow-ups', description: err.message, variant: 'destructive' });
+    } finally {
+      setTriggerLoading(false);
+    }
+  };
+
+  // "Iniciar Follow-up agora" -> dispara o MOTOR DE REATIVACAO (pedro-auto-followup) na
+  // coluna de inativos. O motor respeita SEMPRE as regras do painel (horario, dias,
+  // teto/dia, intervalo, pausa) — manda o 1o agora e o cron (5/5min) continua o lote
+  // espacado, sem blast (protege o numero). Se o motor estiver desligado globalmente,
+  // avisa em vez de prometer envio.
+  const handleStartReactivation = async () => {
+    setTriggerLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('pedro-auto-followup', { body: {} });
+      if (error) throw error;
+      const d = (data as any) ?? {};
+      if (d.disabled) {
+        toast({
+          title: '⏸️ Follow-up ainda não está ativo no servidor',
+          description: 'O motor de reativação está desligado globalmente. Avise o suporte para liberar.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      const sent = Number(d.total_sent) || 0;
+      toast({
+        title: sent > 0 ? `✅ Follow-up iniciado — ${sent} enviado(s) agora` : '✅ Follow-up iniciado',
+        description: 'As próximas mensagens vão saindo espaçadas, respeitando o horário, o teto por dia e o intervalo configurados.',
+      });
+      await fetchData(true);
+    } catch (err: any) {
+      toast({ title: 'Erro ao iniciar follow-up', description: err.message, variant: 'destructive' });
     } finally {
       setTriggerLoading(false);
     }
@@ -3977,14 +4023,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               Follow-up IA
             </Button>
           )}
-          {/* Modal de config do Follow-up IA. "Iniciar agora" chama o disparo
-              atual (pedro-trigger-followup). Aplicação das configs (horário,
-              jitter, IA generativa) virá nas Fases 2+ do plano. */}
+          {/* Modal de config do Follow-up IA. "Iniciar agora" chama o MOTOR DE
+              REATIVACAO (pedro-auto-followup): dispara na coluna de inativos
+              respeitando as regras do painel (horario, teto/dia, intervalo, pausa),
+              gera a mensagem por IA e o cron continua o lote espacado. */}
           {!isMarcosCrm && (
             <FollowupIAConfigModal
               open={followupIAModalOpen}
               onOpenChange={setFollowupIAModalOpen}
-              onStartFollowup={async () => { await handleTriggerFollowups(); }}
+              onStartFollowup={async () => { await handleStartReactivation(); }}
             />
           )}
           {!isSeller && !isMarcosCrm && (
@@ -4469,6 +4516,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                   {lead.next_followup_at && (
                     <span className="flex items-center gap-1 text-[10px] text-cyan-400"><Clock className="h-3 w-3" />{fmtDate(lead.next_followup_at)}</span>
                   )}
+                  {/* Badge discreto de follow-up (reativacao): so um sinal pra bater o olho. */}
+                  {lead.reactivation_status === 'transferred' ? (
+                    <span className="text-[10px] text-emerald-400" title="Recuperado pelo follow-up">♻️ recuperado</span>
+                  ) : (lead.reactivation_status === 'sent' || lead.reactivation_status === 'responded') ? (
+                    <span className="text-[10px] text-cyan-400" title="Em follow-up de reativação">♻️ follow-up</span>
+                  ) : null}
                   <Badge variant="outline" className="text-[10px] h-5 capitalize">{lead.status_crm || 'novo'}</Badge>
                   <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>

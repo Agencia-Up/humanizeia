@@ -258,6 +258,9 @@ export async function executePedroV2Handoff(
     qualificacao?: Record<string, any> | null;
     seller_response_min?: number | null;
     veiculo_interesse?: string | null;
+    // Recuperacao por follow-up: vendedor do 1o atendimento, pra rotear de volta pra ele
+    // (mesmo sem transferencia confirmada antes). Quando setado e ativo, pula o rodizio.
+    preferred_seller_id?: string | null;
   },
 ): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
   const nowIso = new Date().toISOString();
@@ -344,13 +347,25 @@ export async function executePedroV2Handoff(
     if (notExpired) return { ok: false, seller: null, briefing: "", reason: "already_pending" };
   }
 
-  // 3) Escolhe vendedor: vendedor anterior do lead, senao round-robin.
-  const choice = await chooseSellerForPedroTransfer(supabase, {
-    user_id: input.user_id,
-    agent_id: input.agent_id,
-    remote_jid: input.remote_jid,
-    lead_id: input.lead_id,
-  });
+  // 3) Escolhe vendedor. RECUPERACAO por follow-up: tenta primeiro o vendedor do 1o
+  //    atendimento (preferred_seller_id), mesmo SEM transferencia confirmada antes —
+  //    senao cairia no rodizio e iria pra outro vendedor (rule #3). Depois: vendedor
+  //    anterior do lead (confirmado/assigned) e, por fim, rodizio.
+  let choice: { seller: any; reason: string } | null = null;
+  if (input.preferred_seller_id) {
+    const { data: pref } = await supabase
+      .from("ai_team_members").select("*")
+      .eq("id", input.preferred_seller_id).eq("is_active", true).maybeSingle();
+    if (pref) choice = { seller: pref, reason: "reactivation_same_seller" };
+  }
+  if (!choice?.seller) {
+    choice = await chooseSellerForPedroTransfer(supabase, {
+      user_id: input.user_id,
+      agent_id: input.agent_id,
+      remote_jid: input.remote_jid,
+      lead_id: input.lead_id,
+    });
+  }
   if (!choice?.seller) return { ok: false, seller: null, briefing: "", reason: "no_active_seller" };
 
   // 4) Claim atomico anti-corrida: encaminha so se o lead ainda NAO tem dono. O

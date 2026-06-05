@@ -1260,6 +1260,44 @@ export async function processPedroV2Turn(
     }
   }
 
+  // === FASE C — REATIVACAO (Follow-up IA) ===
+  // Se este lead estava na fila de reativacao (coluna "Lead Inativo", recebeu um
+  // "cutucao" do motor pedro-auto-followup) e VOLTOU a responder agora:
+  //  1) marca 'responded' (para de cutucar — sai do rodizio de envio).
+  //  2) guarda que e uma RECUPERACAO + o vendedor do 1o atendimento, pra na hora de
+  //     transferir mandar pro MESMO vendedor com o selo "recuperado pelo follow-up".
+  // O resto do turno segue NORMAL: o cerebro requalifica o lead (coleta dados de novo).
+  let reactivationRecovery = false;
+  let reactivationSellerId: string | null = null;
+  if (lead?.id && identity.kind !== "seller") {
+    try {
+      const { data: _react } = await supabase
+        .from("pedro_followup_reactivation")
+        .select("id, status")
+        .eq("lead_id", lead.id)
+        .maybeSingle();
+      if (_react && (_react.status === "sent" || _react.status === "responded")) {
+        reactivationRecovery = true;
+        if (!dryRun && _react.status === "sent") {
+          await supabase.from("pedro_followup_reactivation")
+            .update({ status: "responded", responded_at: new Date().toISOString() })
+            .eq("id", _react.id);
+        }
+        // Vendedor do 1o atendimento = to_member_id da ultima transferencia (mesmo que
+        // tenha ficado pendente). Usado pra rotear a recuperacao de volta pra ele.
+        const { data: _lastT } = await supabase
+          .from("ai_lead_transfers")
+          .select("to_member_id")
+          .eq("lead_id", lead.id)
+          .not("to_member_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        reactivationSellerId = _lastT?.to_member_id || null;
+      }
+    } catch (_e) { /* deteccao de reativacao nao pode derrubar o turno */ }
+  }
+
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text), mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
@@ -1810,6 +1848,9 @@ export async function processPedroV2Turn(
         qualificacao: _q,
         seller_response_min: _automationRules.transfer.seller_response_min,
         veiculo_interesse: _veiculoInteresse,
+        // RECUPERACAO por follow-up: força o MESMO vendedor do 1o atendimento (rule #3),
+        // mesmo que ele nao tenha confirmado antes (senao cairia no rodizio).
+        preferred_seller_id: reactivationRecovery ? reactivationSellerId : null,
       });
       if (handoffResult?.ok && handoffResult.seller?.whatsapp_number && isPedroV2SendingEnabled()) {
         const handoffInstance = input.wa_instance || await resolvePedroInstance(supabase, {
@@ -1839,6 +1880,9 @@ export async function processPedroV2Turn(
           status_crm: (lead as any)?.status_crm || null,
         };
         const _sdrCat = classifyLeadSdrCategory(_qcCat, { ready_to_transfer: brainReadyToTransfer && !silentTransfer });
+        // Selo de RECUPERACAO: lead que tinha esfriado e voltou pelo follow-up. Vai no topo
+        // do briefing do vendedor E do gerente (rules #4 e #5), sem mudar o resto.
+        const _recoveryTag = reactivationRecovery ? "♻️ *RECUPERADO PELO FOLLOW-UP*\n" : "";
         // Cabecalho: so distingue o lead que RETORNOU (vendedor ja e dono). Nos demais,
         // titulo neutro — a categoria vai na linha de status (so as 3 categorias).
         const sellerHeader = isRenotify
@@ -1847,7 +1891,7 @@ export async function processPedroV2Turn(
         const sellerFooter = isRenotify
           ? `*Atender:* https://wa.me/${leadPhone}`
           : `*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
-        const sellerNotif = `${sellerHeader}\n\n*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
+        const sellerNotif = `${sellerHeader}\n\n${_recoveryTag}*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
 
         // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
@@ -1856,10 +1900,20 @@ export async function processPedroV2Turn(
         const _gerentes = managerPhones(input.agent);
         if (!isRenotify && _gerentes.length > 0) {
           const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+          const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n${_recoveryTag}🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
           for (const gp of _gerentes) {
             try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
           }
+        }
+
+        // RECUPERACAO: marca a reativacao como 'transferred' (encerra a fila de cutucao +
+        // alimenta o dashboard de recuperados, rule #6). So quando veio do follow-up.
+        if (reactivationRecovery) {
+          try {
+            await supabase.from("pedro_followup_reactivation")
+              .update({ status: "transferred", transferred_at: new Date().toISOString() })
+              .eq("lead_id", lead.id);
+          } catch (_e) { /* nao bloqueante */ }
         }
 
         // PERSISTENCIA PRO DASHBOARD: grava a categoria (status_crm) + os dados coletados
