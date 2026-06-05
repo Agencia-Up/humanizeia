@@ -1152,6 +1152,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [triggerLoading, setTriggerLoading] = useState(false);
   // F1 Follow-up IA: modal de configuração (substitui o disparo direto do botão "Follow-ups")
   const [followupIAModalOpen, setFollowupIAModalOpen] = useState(false);
+  const [isFollowupActive, setIsFollowupActive] = useState(false);
   const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
@@ -1241,6 +1242,18 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // Fase 6.4 hotfix: expõe pro escopo do componente pra DynamicSelect usar
       if (effectiveUserId && effectiveUserId !== effectiveUserIdState) {
         setEffectiveUserIdState(effectiveUserId);
+      }
+
+      // Carrega o status do follow-up automático (Checklist 2.2)
+      try {
+        const { data: followConfig } = await (supabase as any)
+          .from('followup_ia_config')
+          .select('is_active')
+          .eq('user_id', effectiveUserId)
+          .maybeSingle();
+        setIsFollowupActive(!!followConfig?.is_active);
+      } catch (err) {
+        console.warn('[PedroSDR] Erro ao carregar status do follow-up:', err);
       }
 
       const todayStart = new Date();
@@ -4015,11 +4028,20 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               variant="outline" size="sm"
               onClick={() => setFollowupIAModalOpen(true)}
               disabled={triggerLoading}
-              title="Configurar disparo automático de reativação de leads inativos pelo Pedro IA"
-              className="h-7 px-2.5 text-xs gap-1.5 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+              title={`Configurar reativação automática (Follow-up IA está ${isFollowupActive ? 'ATIVO' : 'PAUSADO'})`}
+              className={`h-7 px-2.5 text-xs gap-1.5 transition-all ${
+                isFollowupActive
+                  ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/10 hover:text-emerald-300'
+                  : 'border-zinc-500/30 text-zinc-400 hover:bg-zinc-500/10'
+              }`}
             >
-              {triggerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+              {triggerLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Zap className={`h-3.5 w-3.5 ${isFollowupActive ? 'text-emerald-400 fill-emerald-400/20' : 'text-zinc-500'}`} />
+              )}
               Follow-up IA
+              <span className={`h-1.5 w-1.5 rounded-full ${isFollowupActive ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
             </Button>
           )}
           {/* Modal de config do Follow-up IA. "Iniciar agora" chama o MOTOR DE
@@ -4029,8 +4051,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           {!isMarcosCrm && (
             <FollowupIAConfigModal
               open={followupIAModalOpen}
-              onOpenChange={setFollowupIAModalOpen}
-              onStartFollowup={async () => { await handleStartReactivation(); }}
+              onOpenChange={(val) => {
+                setFollowupIAModalOpen(val);
+                if (!val) fetchData(true); // Atualiza status ao fechar o modal
+              }}
+              onStartFollowup={async () => {
+                await handleStartReactivation();
+                fetchData(true);
+              }}
             />
           )}
           {!isSeller && !isMarcosCrm && (

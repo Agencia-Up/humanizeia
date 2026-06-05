@@ -103,10 +103,47 @@ async function sendUazapiTextMessage(
   return false;
 }
 
-// ── Geracao da mensagem de reativacao com IA OpenAI (gpt-4o-mini) ────────────────
-function applyTemplateVars(tpl: string, leadName: string, carro: string): string {
-  return (tpl || "")
-    .replace(/\{nome\}/gi, leadName || "")
+// ── Higienização de Nome e Saudação Inteligente (Checklist 4 e 5) ───────────────
+function isValidName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name.trim().toLowerCase();
+  const invalidNames = ["lead", "desconhecido", "cliente", "contato", "sem nome", "user", "desconhecida", "—", "unknown"];
+  if (n === "" || invalidNames.includes(n)) return false;
+  // Se contiver caracteres de telefone ou for número puro
+  if (/^\+?\d+$/.test(n.replace(/[\s\-\(\)]/g, ""))) return false;
+  return true;
+}
+
+function getBrasiliaGreeting(d: Date): string {
+  // Ajusta fuso de Brasília (UTC-3)
+  const b = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+  const hour = b.getUTCHours();
+  if (hour >= 5 && hour < 12) return "Bom dia";
+  if (hour >= 12 && hour < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+function applyTemplateVars(tpl: string, leadName: string | null | undefined, greeting: string, carro: string): string {
+  const hasName = isValidName(leadName);
+  let resolvedTpl = tpl || "";
+  
+  // Substitui a saudação
+  resolvedTpl = resolvedTpl.replace(/\{saudacao\}/gi, greeting);
+  
+  if (hasName) {
+    resolvedTpl = resolvedTpl.replace(/\{nome\}/gi, leadName!.trim());
+  } else {
+    // Remove o placeholder {nome} e ajusta pontuações e espaçamentos órfãos
+    resolvedTpl = resolvedTpl
+      .replace(/,\s*\{nome\}/gi, "")
+      .replace(/\{nome\}\s*,/gi, "")
+      .replace(/\{nome\}/gi, "")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s+([,\.!;\?])/g, "$1")
+      .replace(/^(Oi|Olá|Bom dia|Boa tarde|Boa noite)\s*,\s*/i, "$1, ");
+  }
+  
+  return resolvedTpl
     .replace(/\{carro\}/gi, carro || "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -118,23 +155,27 @@ async function generateReactivationMessage(opts: {
   mensagemBase: string;
   transcript: string;
   agentName: string;
+  greeting: string;
 }): Promise<string | null> {
-  const { apiKey, leadName, mensagemBase, transcript, agentName } = opts;
+  const { apiKey, leadName, mensagemBase, transcript, agentName, greeting } = opts;
   if (!apiKey) return null;
 
+  const hasName = isValidName(leadName);
   const systemPrompt =
 `Voce e ${agentName || "o assistente de vendas"} de uma concessionaria de carros, falando por WhatsApp.
 Sua tarefa: escrever UMA mensagem curta e natural pra REATIVAR um lead que ficou parado (esfriou).
 Regras da mensagem:
 - Portugues do Brasil, tom humano, simpatico e direto (WhatsApp, nao e e-mail).
 - 1 a 2 frases. Curta. Sem enrolacao, sem markdown, sem emojis em excesso (no maximo 1).
-- Personalize com o nome do lead e, se aparecer no historico, o carro de interesse.
+- ${hasName ? `Comece a mensagem saudando o cliente pelo nome próprio (${leadName}). Ex: "${greeting} ${leadName}!" ou similar.` : `O cliente NÃO tem um nome próprio válido cadastrado. NÃO use nenhuma saudação personalizada nem tente inventar nomes. Comece com uma saudação geral do horário: "${greeting}!" ou similar.`}
+- Se o veículo de interesse aparecer no historico de mensagens, personalize citando o carro de interesse. Caso contrário, fale de forma genérica sobre o interesse em um carro.
 - NAO invente informacoes que nao estao no historico.
 - Termine com uma pergunta leve que convide a responder.
 - Use a "mensagem de referencia" do master so como GUIA de intencao/tom, nao copie literal.`;
 
   const userMsg =
-`Nome do lead: ${leadName || "(desconhecido)"}
+`Nome do lead: ${hasName ? leadName : "(desconhecido)"}
+Saudacao recomendada por horario: "${greeting}"
 Mensagem de referencia do master (guia de tom/intencao): "${mensagemBase || "Oi, tudo bem? Ainda tem interesse?"}"
 
 Historico recente da conversa (mais antigo no topo):
@@ -409,6 +450,8 @@ serve(async (req) => {
 
         let message: string | null = null;
         const wantsIA = cfg.gerar_variacoes_ia !== false;
+        const greeting = getBrasiliaGreeting(now);
+
         if (wantsIA) {
           message = await generateReactivationMessage({
             apiKey: openaiKey,
@@ -416,11 +459,12 @@ serve(async (req) => {
             mensagemBase: cfg.mensagem_base || "",
             transcript,
             agentName: "o assistente",
+            greeting,
           });
         }
         // Fallback (IA off ou falhou): template base com variaveis.
         if (!message) {
-          message = applyTemplateVars(cfg.mensagem_base || "Oi {nome}, tudo bem? Ainda tem interesse?", lead.lead_name || "", carro);
+          message = applyTemplateVars(cfg.mensagem_base || "Oi {nome}, tudo bem? Ainda tem interesse?", lead.lead_name, greeting, carro);
         }
 
         // 5d. DRY-RUN: nao envia, nao grava. So mostra o que faria.
@@ -447,6 +491,22 @@ serve(async (req) => {
 
         if (!sent) {
           r.actions.push({ lead_id: lead.lead_id, error: "envio_falhou" });
+          
+          // Grava log histórico de falha (defensivo)
+          try {
+            await supabase.from("pedro_followup_logs").insert({
+              user_id: cfg.user_id,
+              lead_id: lead.lead_id,
+              remote_jid: remoteJid,
+              message: message,
+              status: "failed",
+              error_message: "UazAPI: envio falhou",
+              type: "ia"
+            });
+          } catch (logErr) {
+            console.warn("[auto-followup] Erro ao gravar log de falha em pedro_followup_logs (migration pendente):", logErr);
+          }
+
           // Marca toque pra rodar a fila (nao trava no mesmo lead).
           await supabase.from("pedro_followup_reactivation")
             .upsert({
@@ -458,7 +518,7 @@ serve(async (req) => {
         }
 
         // 5f. Sucesso: grava estado (status='sent' => aguardando resposta),
-        //     incrementa contagem, persiste no historico de chat.
+        //     incrementa contagem, persiste no historico de chat e grava no log histórico.
         await supabase.from("pedro_followup_reactivation")
           .upsert({
             user_id: cfg.user_id,
@@ -477,6 +537,20 @@ serve(async (req) => {
           role: "assistant",
           content: `[Follow-up IA] ${message}`,
         });
+
+        // Grava log histórico de sucesso (defensivo)
+        try {
+          await supabase.from("pedro_followup_logs").insert({
+            user_id: cfg.user_id,
+            lead_id: lead.lead_id,
+            remote_jid: remoteJid,
+            message: message,
+            status: "sent",
+            type: "ia"
+          });
+        } catch (logErr) {
+          console.warn("[auto-followup] Erro ao gravar log de sucesso em pedro_followup_logs (migration pendente):", logErr);
+        }
 
         totalSent++;
         r.actions.push({ lead_id: lead.lead_id, lead_name: lead.lead_name, sent: true, instance: instName });

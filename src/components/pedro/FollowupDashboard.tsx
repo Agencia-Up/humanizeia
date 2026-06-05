@@ -85,6 +85,8 @@ interface DispatchItem {
   vendedor: string;
   tipo: 'ia' | 'manual';
   intervaloMin: number | null; // minutos desde o disparo anterior (null no 1º)
+  status?: string;
+  errorMessage?: string | null;
 }
 interface HourBucket {
   hora: string;
@@ -111,28 +113,85 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
       const { startISO, endISO } = spDayBoundsISO(selectedDate);
       const month = spMonthBoundsISO(selectedDate);
 
-      const [dayRes, monthRes] = await Promise.all([
-        (supabase as any)
-          .from('wa_chat_history')
-          .select('id, remote_jid, content, created_at')
-          .eq('user_id', userId)
-          .eq('role', 'assistant')
-          .ilike('content', '[Follow-up%')
-          .gte('created_at', startISO)
-          .lte('created_at', endISO)
-          .order('created_at', { ascending: true }),
-        (supabase as any)
-          .from('wa_chat_history')
+      let msgs: Array<{
+        id: string;
+        remote_jid: string | null;
+        content: string | null;
+        created_at: string;
+        status?: string;
+        error_message?: string | null;
+        type?: string;
+      }> = [];
+      let totalMonth = 0;
+      let usingLegacyFallback = false;
+
+      // Tenta ler os dados detalhados na tabela pedro_followup_logs
+      const { data: logsData, error: logsError } = await (supabase as any)
+        .from('pedro_followup_logs')
+        .select('id, remote_jid, message, status, error_message, type, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', startISO)
+        .lte('created_at', endISO)
+        .order('created_at', { ascending: true });
+
+      if (logsError) {
+        console.warn('[FollowupDashboard] pedro_followup_logs indisponível. Usando fallback legacy:', logsError.message);
+        usingLegacyFallback = true;
+      } else {
+        msgs = (logsData || []).map((l: any) => ({
+          id: l.id,
+          remote_jid: l.remote_jid,
+          content: l.message,
+          created_at: l.created_at,
+          status: l.status,
+          error_message: l.error_message,
+          type: l.type
+        }));
+
+        const { count, error: monthError } = await (supabase as any)
+          .from('pedro_followup_logs')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId)
-          .eq('role', 'assistant')
-          .ilike('content', '[Follow-up%')
           .gte('created_at', month.startISO)
-          .lt('created_at', month.endISO),
-      ]);
+          .lt('created_at', month.endISO);
+        
+        if (!monthError) {
+          totalMonth = count || 0;
+        }
+      }
 
-      const msgs: Array<{ id: string; remote_jid: string | null; content: string | null; created_at: string }> =
-        dayRes.data || [];
+      // Fallback defensivo com wa_chat_history
+      if (usingLegacyFallback) {
+        const [dayRes, monthRes] = await Promise.all([
+          (supabase as any)
+            .from('wa_chat_history')
+            .select('id, remote_jid, content, created_at')
+            .eq('user_id', userId)
+            .eq('role', 'assistant')
+            .ilike('content', '[Follow-up%')
+            .gte('created_at', startISO)
+            .lte('created_at', endISO)
+            .order('created_at', { ascending: true }),
+          (supabase as any)
+            .from('wa_chat_history')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('role', 'assistant')
+            .ilike('content', '[Follow-up%')
+            .gte('created_at', month.startISO)
+            .lt('created_at', month.endISO),
+        ]);
+
+        msgs = (dayRes.data || []).map((m: any) => ({
+          id: m.id,
+          remote_jid: m.remote_jid,
+          content: m.content,
+          created_at: m.created_at,
+          status: 'sent',
+          type: (m.content || '').startsWith('[Follow-up IA]') ? 'ia' : 'manual'
+        }));
+        totalMonth = monthRes.count || 0;
+      }
 
       // Leads (nome + vendedor) por remote_jid
       const jids = Array.from(new Set(msgs.map((m) => m.remote_jid).filter(Boolean))) as string[];
@@ -144,7 +203,6 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
           .eq('user_id', userId)
           .in('remote_jid', jids);
         for (const l of leads || []) {
-          // 1 lead por remote_jid (pega o primeiro encontrado)
           if (!leadMap[l.remote_jid]) {
             leadMap[l.remote_jid] = { lead_name: l.lead_name, member_id: l.assigned_to_member_id };
           }
@@ -179,14 +237,24 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
         const intervaloMin = prev
           ? Math.round((new Date(m.created_at).getTime() - new Date(prev.created_at).getTime()) / 60000)
           : null;
+
+        let tipo: 'ia' | 'manual' = 'ia';
+        if (m.type) {
+          tipo = m.type === 'manual' ? 'manual' : 'ia';
+        } else {
+          tipo = (m.content || '').startsWith('[Follow-up IA]') ? 'ia' : 'manual';
+        }
+
         return {
           id: m.id,
           hora: spHourMin(m.created_at),
           nome: lead?.lead_name || 'Lead',
           fone: fmtPhone(m.remote_jid),
           vendedor: (memberId && memberMap[memberId]) || 'Sem vendedor',
-          tipo: (m.content || '').startsWith('[Follow-up IA]') ? 'ia' : 'manual',
+          tipo,
           intervaloMin,
+          status: m.status,
+          errorMessage: m.error_message
         };
       });
 
@@ -370,15 +438,32 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
                       <UserCheck className="h-2.5 w-2.5" /> {it.vendedor}
                     </p>
                   </div>
-                  <Badge
-                    className={
-                      it.tipo === 'ia'
-                        ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30 text-[10px] shrink-0'
-                        : 'bg-amber-500/15 text-amber-400 border-amber-500/30 text-[10px] shrink-0'
-                    }
-                  >
-                    {it.tipo === 'ia' ? 'IA' : 'Manual'}
-                  </Badge>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <Badge
+                      className={
+                        it.tipo === 'ia'
+                          ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30 text-[10px]'
+                          : 'bg-amber-500/15 text-amber-400 border-amber-500/30 text-[10px]'
+                      }
+                    >
+                      {it.tipo === 'ia' ? 'IA' : 'Manual'}
+                    </Badge>
+                    {it.status === 'failed' && (
+                      <Badge variant="outline" className="bg-rose-500/10 text-rose-400 border-rose-500/20 text-[9px]" title={it.errorMessage || 'Falha no envio'}>
+                        Falhou
+                      </Badge>
+                    )}
+                    {it.status === 'responded' && (
+                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px]">
+                        Respondido
+                      </Badge>
+                    )}
+                    {it.status === 'delivered' && (
+                      <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[9px]">
+                        Entregue
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
