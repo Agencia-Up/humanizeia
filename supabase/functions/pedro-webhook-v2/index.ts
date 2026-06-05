@@ -179,21 +179,63 @@ Deno.serve(async (req) => {
     }, 423);
   }
 
-  const { data: agents, error: agentError } = await supabase
-    .from("wa_ai_agents")
-    .select("*")
-    .eq("user_id", waInstance.user_id)
-    .eq("is_active", true);
+  // ===== ISOLAMENTO POR FINALIDADE DO NÚMERO (alinha v2 com v1/uazapi-webhook) =====
+  // Só o número EXPLICITAMENTE vinculado a um agente ativo (instance_ids) aciona a
+  // IA. Número geral da operação (disparo/instância: purpose bulk_sender/test, OU
+  // sem agente vinculado) NÃO responde com IA — a mensagem RECEBIDA é gravada no
+  // inbox pra aparecer no follow-up manual (Pedro/Marcos). REMOVIDO o fallback
+  // perigoso (agentLooksLikePedro / activeAgents[0]) que sequestrava qualquer
+  // numero novo conectado FORA do agente (ex.: conectado em Integracoes).
+  const isBulkOrTest = waInstance.purpose === "bulk_sender" || waInstance.purpose === "test";
 
-  const activeAgents = Array.isArray(agents) ? agents : [];
-  const agent =
-    activeAgents.find((item) => agentUsesInstance(item, waInstance.id)) ||
-    activeAgents.find(agentLooksLikePedro) ||
-    activeAgents[0] ||
-    null;
+  let agent: any = null;
+  if (!isBulkOrTest) {
+    const { data: agents } = await supabase
+      .from("wa_ai_agents")
+      .select("*")
+      .eq("user_id", waInstance.user_id)
+      .eq("is_active", true);
+    const activeAgents = Array.isArray(agents) ? agents : [];
+    agent = activeAgents.find((item) => agentUsesInstance(item, waInstance.id)) || null;
+  }
 
-  if (agentError || !agent) {
-    return jsonResponse({ ok: false, error: "active_agent_not_found" }, 404);
+  if (!agent) {
+    // Número geral (instância/disparo): grava a RECEBIDA no inbox e sai (sem IA),
+    // pra o time fazer follow-up manual vendo as respostas do cliente.
+    const motivoIso = isBulkOrTest ? `finalidade_${waInstance.purpose}` : "sem_agente_ativo_vinculado";
+    console.log(`[pedro-webhook-v2] [INBOX-ONLY] numero=${instanceName} agente=- motivo=${motivoIso}`);
+    try {
+      const inMsg = pickIncomingMessage(payload);
+      const remoteJidRaw =
+        inMsg?.key?.remoteJid || inMsg?.chatid || inMsg?.sender || inMsg?.from || payload?.chatid || "";
+      const phoneOnly = String(remoteJidRaw).replace(/@.*$/, "").replace(/\D/g, "");
+      const rawText =
+        inMsg?.message?.conversation ||
+        inMsg?.message?.extendedTextMessage?.text ||
+        inMsg?.text ||
+        inMsg?.body ||
+        inMsg?.caption ||
+        inMsg?.content;
+      const inboxText = (typeof rawText === "string" && rawText.trim()) ? rawText : "[mídia recebida]";
+      const inboxMsgId = inMsg?.key?.id || inMsg?.messageid || inMsg?.id || null;
+      const pushNm = inMsg?.pushName || inMsg?.senderName || inMsg?.notifyName || null;
+      if (phoneOnly) {
+        await supabase.from("wa_inbox").insert({
+          user_id: waInstance.user_id,
+          instance_id: waInstance.id,
+          phone: phoneOnly,
+          contact_name: pushNm,
+          direction: "incoming",
+          message_type: "text",
+          content: inboxText,
+          is_read: false,
+          remote_message_id: typeof inboxMsgId === "string" ? inboxMsgId : null,
+        });
+      }
+    } catch (inboxErr) {
+      console.error("[pedro-webhook-v2] [INBOX-ONLY] erro ao gravar no inbox:", (inboxErr as any)?.message || inboxErr);
+    }
+    return jsonResponse({ ok: true, ignored: "no_linked_agent_inbox_only", instance: instanceName });
   }
 
   const result = await processPedroV2Turn(supabase, {
