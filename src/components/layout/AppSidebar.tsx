@@ -120,9 +120,13 @@ const systemItems = [
   { title: 'Meu Plano',        url: '/meu-plano',     icon: CreditCard },
   { title: 'Integrações',      url: '/integrations',  icon: Plug },
   { title: 'Meu Perfil',       url: '/perfil',        icon: Users },
-  { title: 'Configurações',    url: '/settings',      icon: Settings },
-  // Fase 6.5 — gerencia cidades + origens dinâmicas
-  { title: 'Campos Dinâmicos', url: '/configuracoes/campos-dinamicos', icon: Sparkles },
+];
+
+// ── Configurações (master) — Geral + Campos Dinâmicos + Regras de Segurança ────
+const configItems = [
+  { title: 'Geral',               url: '/settings',                       icon: Settings },
+  { title: 'Campos Dinâmicos',    url: '/configuracoes/campos-dinamicos', icon: Sparkles },
+  { title: 'Regras de Segurança', url: '/dashboard/security-rules',       icon: Shield },
 ];
 
 // ── NavItem simples ────────────────────────────────────────────────────────────
@@ -440,20 +444,24 @@ export function AppSidebar() {
 
             {/* ── Sistema ── */}
             <NavGroup label="Sistema" defaultOpen={false} collapsed={collapsed}>
-              {systemItems.map(item => {
-                // Fase 6.5f: badge dinâmico com contador de pendentes pra "Campos Dinâmicos"
-                const isDynamicFields = item.url === '/configuracoes/campos-dinamicos';
-                const itemWithBadge = isDynamicFields
-                  ? { ...item, badge: dynamicFieldsPendingCount }
-                  : item;
-                return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
-              })}
-              {/* Regras de Seguranca — master only (a pagina ja bloqueia vendedor). */}
-              <NavItem collapsed={collapsed} item={{ title: 'Regras de Segurança', url: '/dashboard/security-rules', icon: Shield }} />
+              {systemItems.map(item => (
+                <NavItem key={item.url} item={item} collapsed={collapsed} />
+              ))}
               {/* FASE 4 — Painel interno de margem de IA. SO o superadmin (operador) ve. */}
               {isAdmin && (
                 <NavItem collapsed={collapsed} item={{ title: 'Margem (IA)', url: '/admin/margem', icon: Wallet }} />
               )}
+            </NavGroup>
+
+            {/* ── Configurações (master): Geral + Campos Dinâmicos + Regras de Segurança ── */}
+            <NavGroup label="Configurações" defaultOpen={false} collapsed={collapsed}>
+              {configItems.map(item => {
+                // Fase 6.5f: badge de pendentes em "Campos Dinâmicos".
+                const itemWithBadge = item.url === '/configuracoes/campos-dinamicos'
+                  ? { ...item, badge: dynamicFieldsPendingCount }
+                  : item;
+                return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
+              })}
             </NavGroup>
           </>
         )}
