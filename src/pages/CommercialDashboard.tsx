@@ -151,7 +151,7 @@ function statByDate(items: any[], date: Date) {
   }).length;
 }
 
-function CompactKpi({
+export function CompactKpi({
   title,
   value,
   sub,
@@ -180,7 +180,7 @@ function CompactKpi({
   );
 }
 
-function FunnelPanel({
+export function FunnelPanel({
   title,
   badge,
   items,
@@ -220,7 +220,7 @@ function FunnelPanel({
   );
 }
 
-function useCommercialDashboardData(userId: string | undefined, dateRange: DateRange) {
+export function useCommercialDashboardData(userId: string | undefined, dateRange: DateRange) {
   const { isSeller, seller, masterUserId, loading: sellerLoading } = useSellerProfile(userId);
   const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(true);

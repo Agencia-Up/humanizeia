@@ -2515,15 +2515,48 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Response('Instance not found', { headers: corsHeaders })
   }
 
-  const { data: agent } = await supabase.from('wa_ai_agents')
-    .select('*').eq('user_id', waInstance.user_id).eq('is_active', true).contains('instance_ids', [waInstance.id]).maybeSingle()
+  // ===== ISOLAMENTO POR FINALIDADE DO NÚMERO =====
+  // Só o número vinculado a um agente ATIVO aciona a IA. Número geral da operação
+  // (disparo/instância: purpose bulk_sender/test, OU simplesmente sem agente ativo
+  // vinculado) NÃO responde com IA — mas a mensagem RECEBIDA é gravada no inbox pra
+  // aparecer no follow-up manual (Pedro/Marcos). fromMe já foi filtrado antes de
+  // processMessage, então aqui é sempre mensagem recebida do lead.
+  const isBulkOrTest = waInstance.purpose === 'bulk_sender' || waInstance.purpose === 'test';
 
-  if (!agent) {
-    console.log(`[Webhook] No matching active agent for instanceId: ${waInstance.id}`);
-    return new Response('No matching active agent', { headers: corsHeaders })
+  let agent: any = null;
+  if (!isBulkOrTest) {
+    const { data: matchedAgent } = await supabase.from('wa_ai_agents')
+      .select('*').eq('user_id', waInstance.user_id).eq('is_active', true).contains('instance_ids', [waInstance.id]).maybeSingle()
+    agent = matchedAgent;
   }
 
-  console.log(`[Webhook] Agente encontrado: ${agent.name} (ID: ${agent.id})`);
+  if (!agent) {
+    // Número geral (instância/disparo): grava a RECEBIDA no inbox e sai (sem IA),
+    // pra o time conseguir fazer follow-up manual vendo as respostas do cliente.
+    const motivoIso = isBulkOrTest ? `finalidade_${waInstance.purpose}` : 'sem_agente_ativo_vinculado';
+    console.log(`[ISOLAMENTO] [INBOX-ONLY] numero=${instanceName} agente=- motivo=${motivoIso}`);
+    try {
+      const phoneOnly = remoteJid.replace(/@.*$/, '').replace(/\D/g, '');
+      const inboxMsgId = rawMsgObj?.messageid || rawMsgObj?.id?.id || rawMsgObj?.key?.id || null;
+      const inboxText = (userText && userText.trim()) ? userText : '[mídia recebida]';
+      await supabase.from('wa_inbox').insert({
+        user_id: waInstance.user_id,
+        instance_id: waInstance.id,
+        phone: phoneOnly,
+        contact_name: pushName || null,
+        direction: 'incoming',
+        message_type: 'text',
+        content: inboxText,
+        is_read: false,
+        remote_message_id: inboxMsgId,
+      });
+    } catch (inboxErr) {
+      console.error('[ISOLAMENTO] [INBOX-ONLY] erro ao gravar no inbox:', (inboxErr as any)?.message || inboxErr);
+    }
+    return new Response('Recorded to inbox (non-agent number)', { headers: corsHeaders })
+  }
+
+  console.log(`[ISOLAMENTO] [ROTEADO] numero=${instanceName} agente=${agent.id} (${agent.name}) motivo=numero_do_agente`);
 
   const guardedSellerAck = await maybeHandleSellerAck(supabase, waInstance, agent, remoteJid);
   if (guardedSellerAck.isSeller) {

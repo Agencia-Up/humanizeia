@@ -57,6 +57,7 @@ interface WaInstance {
   phone_number: string | null;
   status: string;
   created_at?: string | null;
+  purpose?: string | null;
 }
 
 interface CampaignFormDialogProps {
@@ -118,7 +119,7 @@ export function CampaignFormDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
-  const [aiModel, setAiModel] = useState<string>('gpt-4o');
+  const [aiModel, setAiModel] = useState<string>('gpt-4o-mini');
   const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
   const [replyAutoTag, setReplyAutoTag] = useState('');
   const [replyAutoMessage, setReplyAutoMessage] = useState('');
@@ -150,7 +151,7 @@ export function CampaignFormDialog({
       // Só mantém a instância salva se ela ainda existir E estiver conectada;
       // senão cai pra 'auto' (evita "fantasma" de número que não existe mais).
       setInstanceId(
-        editingCampaign.instance_id && instances.some(i => i.id === editingCampaign.instance_id)
+        editingCampaign.instance_id && instances.some(i => i.id === editingCampaign.instance_id && i.purpose !== 'agent')
           ? editingCampaign.instance_id
           : 'auto',
       );
@@ -158,7 +159,7 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
-      setAiModel(editingCampaign.ai_model || 'gpt-4o');
+      setAiModel('gpt-4o-mini'); // só o modelo econômico por enquanto
       setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
       setReplyAutoTag(editingCampaign.reply_auto_tag || '');
       setReplyAutoMessage(editingCampaign.reply_auto_message || '');
@@ -194,7 +195,7 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
-    setAiModel('gpt-4o');
+    setAiModel('gpt-4o-mini');
     setIncludeOptoutButtons(false);
     setReplyAutoTag('');
     setReplyAutoMessage('');
@@ -309,29 +310,33 @@ export function CampaignFormDialog({
                 <Smartphone className="h-4 w-4 text-muted-foreground" />
                 Instância WhatsApp
               </Label>
-              {instances.length === 0 ? (
-                <div className="flex gap-2 items-start rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs">
-                  <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                  <div className="text-red-300">
-                    <strong>Nenhum número WhatsApp conectado.</strong> Conecte (ou reconecte) um número na aba
-                    Instâncias antes de disparar — sem número conectado, a campanha não envia.
+              {(() => {
+                // ISOLAMENTO: número de AGENTE de IA não pode ser usado pra disparo.
+                const bulkInstances = instances.filter(i => i.purpose !== 'agent');
+                return bulkInstances.length === 0 ? (
+                  <div className="flex gap-2 items-start rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs">
+                    <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                    <div className="text-red-300">
+                      <strong>Nenhum número de disparo conectado.</strong> Conecte um número (que não seja
+                      o número do agente de IA) na aba Instâncias antes de disparar.
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <Select value={instanceId} onValueChange={setInstanceId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione a instância" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
-                    {instances.map(inst => (
-                      <SelectItem key={inst.id} value={inst.id}>
-                        {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+                ) : (
+                  <Select value={instanceId} onValueChange={setInstanceId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione a instância" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">🔄 Automático (rodízio)</SelectItem>
+                      {bulkInstances.map(inst => (
+                        <SelectItem key={inst.id} value={inst.id}>
+                          {inst.friendly_name} {inst.phone_number ? `(${inst.phone_number})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                );
+              })()}
             </div>
 
             <Separator />
@@ -405,20 +410,19 @@ export function CampaignFormDialog({
                 </div>
               </div>
 
-              {/* Inteligência da IA (modelo OpenAI) */}
+              {/* Modelo de IA (econômico) */}
               <div className="space-y-2 mt-3">
-                <Label className="text-xs font-medium">Inteligência da IA (modelo OpenAI)</Label>
-                <div className="grid grid-cols-2 gap-2">
+                <Label className="text-xs font-medium">Modelo de IA</Label>
+                <div className="grid grid-cols-1 gap-2">
                   {[
-                    { value: 'gpt-4o', label: '🧠 Mais Inteligente', desc: 'Melhor qualidade de copy (GPT-4o)' },
-                    { value: 'gpt-4o-mini', label: '⚡ Econômico', desc: 'Mais rápido e gasta menos tokens (GPT-4o mini)' },
+                    { value: 'gpt-4o-mini', label: '⚡ OpenAI — GPT-4o mini (econômico)', desc: 'Gera as variações gastando menos tokens.' },
                   ].map(opt => (
                     <button
                       key={opt.value}
                       type="button"
                       onClick={() => setAiModel(opt.value)}
                       className={cn(
-                        "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-xs transition-all",
+                        "flex flex-col items-center gap-0.5 rounded-lg border p-2.5 text-xs transition-all",
                         aiModel === opt.value
                           ? "border-primary bg-primary/5 text-primary"
                           : "border-border hover:border-primary/30 text-muted-foreground"
@@ -429,6 +433,9 @@ export function CampaignFormDialog({
                     </button>
                   ))}
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Em breve: DeepSeek (mais barata) — assim que a chave for configurada.
+                </p>
               </div>
             </div>
 

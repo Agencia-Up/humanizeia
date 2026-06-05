@@ -240,7 +240,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       // mas não opera com número alheio).
       let instancesQuery = (supabase as any)
         .from('wa_instances')
-        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at')
+        .select('id, friendly_name, phone_number, is_active, health_score, provider, status, seller_member_id, created_at, purpose')
         .eq('user_id', effectiveUserId)
         .eq('is_active', true)
         .eq('status', 'connected'); // só números REALMENTE conectados podem disparar
@@ -333,7 +333,7 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         media_type: data.media_type || null,
         tags: data.tags.length > 0 ? data.tags : null,
         variation_level: data.variation_level || 'medium',
-        ai_model: data.ai_model || 'gpt-4o',
+        ai_model: data.ai_model || 'gpt-4o-mini',
         include_optout_buttons: data.include_optout_buttons ?? false,
         // Modelo: vendedor cria campanha → fica isolada por seller_member_id
         seller_member_id: (isSeller && seller?.id) ? seller.id : null,
@@ -349,6 +349,16 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
         toast({ title: result.error, description: details, variant: 'destructive' });
         setSaving(false);
         return;
+      }
+
+      // ISOLAMENTO: número escolhido pra disparo vira 'bulk_sender' (sai de vez da
+      // elegibilidade de agente de IA). Só marca se ainda não tem finalidade.
+      if (payload.instance_id) {
+        await (supabase as any)
+          .from('wa_instances')
+          .update({ purpose: 'bulk_sender' })
+          .eq('id', payload.instance_id)
+          .is('purpose', null);
       }
 
       toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });
@@ -393,7 +403,7 @@ Não numere as variações. Não inclua explicações adicionais.`
   // 3 contatos fictícios (definidos no edge function) ou amostragem dos leads
   // selecionados quando vier do Marcos CRM. Cada mensagem respeita system prompt
   // específico do nível (Conservador/Moderado/Criativo).
-  const handleGeneratePreview = async (prompt: string, variationLevel = 'medium', aiModel = 'gpt-4o') => {
+  const handleGeneratePreview = async (prompt: string, variationLevel = 'medium', aiModel = 'gpt-4o-mini') => {
     if (!prompt.trim()) {
       toast({ title: 'Escreva o prompt base antes de gerar previa', variant: 'destructive' });
       return;
@@ -474,7 +484,7 @@ Não numere as variações. Não inclua explicações adicionais.`
       media_type: campaign.media_type || '',
       tags: campaign.tags || [],
       variation_level: campaign.variation_level || 'medium',
-      ai_model: campaign.ai_model || 'gpt-4o',
+      ai_model: campaign.ai_model || 'gpt-4o-mini',
       include_optout_buttons: campaign.include_optout_buttons ?? false,
       reply_auto_tag: campaign.reply_auto_tag || '',
       reply_auto_message: campaign.reply_auto_message || '',

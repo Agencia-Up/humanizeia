@@ -27,11 +27,18 @@
   <body>
     <div id="root"></div>
 
-    <!-- Static legal links for crawlers/verification tools that don't execute JavaScript -->
-    <footer>
+    <!--
+      Static legal links for crawlers / verification tools that don't execute JavaScript.
+      Visually hidden for humans (a styled footer is rendered by the React app inside #root),
+      but kept in the HTML source so non-JS crawlers still find the legal links + company data.
+    -->
+    <footer style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">
       <a href="/privacy-policy.html">Política de Privacidade</a>
       <span> | </span>
       <a href="/terms-of-service.html">Termos de Serviço</a>
+      <span> | </span>
+      <a href="/data-deletion.html">Exclusão de Dados</a>
+      <p>Agencia Up Business LTDA — CNPJ 45.660.833/0001-17 — Taubaté/SP</p>
     </footer>
 
     <script type="module" src="/src/main.tsx"></script>

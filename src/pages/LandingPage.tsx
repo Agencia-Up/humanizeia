@@ -2286,7 +2286,7 @@ export default function LandingPage() {
               <ul className="space-y-2.5 text-sm">
                 <li><a href="#como-funciona" className="opacity-80 hover:opacity-100 transition-opacity">Como funciona</a></li>
                 <li><a href="#faq" className="opacity-80 hover:opacity-100 transition-opacity">FAQ</a></li>
-                <li><a href="mailto:carvalho@scalpergx.com.br" className="opacity-80 hover:opacity-100 transition-opacity">Contato</a></li>
+                <li><a href="mailto:suporte@logosiabrasil.com" className="opacity-80 hover:opacity-100 transition-opacity">Contato</a></li>
                 <li><Link to="/auth" className="opacity-80 hover:opacity-100 transition-opacity">Login</Link></li>
               </ul>
             </div>
