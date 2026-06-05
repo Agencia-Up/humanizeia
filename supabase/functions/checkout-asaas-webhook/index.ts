@@ -239,12 +239,20 @@ serve(async (req: Request) => {
             userId = created.user?.id || null;
             console.log(`[checkout-asaas-webhook] usuário criado: ${userId}`);
 
-            // Gerar recovery link pro usuário definir senha (Supabase envia por email)
-            const { error: resetErr } = await supabase.auth.admin.generateLink({
-              type: 'recovery',
-              email: pending.email,
-            });
-            if (resetErr) console.warn(`[checkout-asaas-webhook] falha ao gerar recovery link: ${resetErr.message}`);
+            // ENVIA o e-mail de acesso (definir senha). FIX: antes usava
+            // admin.generateLink(type:'recovery'), que SO GERA o link e NAO dispara
+            // e-mail nenhum (o link era descartado) -> cliente pagava e ficava trancado
+            // pra fora. A function send-email (type:'reset_password') gera o recovery
+            // link E despacha o e-mail via Resend. Best-effort: nao derruba o webhook.
+            try {
+              const { error: mailErr } = await supabase.functions.invoke('send-email', {
+                body: { type: 'reset_password', email: pending.email, name: pending.full_name },
+              });
+              if (mailErr) console.warn(`[checkout-asaas-webhook] falha ao enviar e-mail de acesso: ${mailErr.message}`);
+              else console.log(`[checkout-asaas-webhook] e-mail de acesso (definir senha) enviado para ${pending.email}`);
+            } catch (mailEx) {
+              console.warn(`[checkout-asaas-webhook] excecao ao enviar e-mail de acesso: ${(mailEx as any)?.message || mailEx}`);
+            }
           }
         }
 

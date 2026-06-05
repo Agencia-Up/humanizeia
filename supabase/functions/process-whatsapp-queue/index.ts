@@ -1089,9 +1089,21 @@ async function selectSmartInstance(
     let dailyLimit: number;
 
     if (!warmupEnabled) {
-      // Aquecimento DESLIGADO → sem rampa. Número tratado como pronto, no teto
-      // maduro de segurança (200/dia). É escolha do cliente desligar a chave.
-      dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
+      // Aquecimento DESLIGADO → sem rampa configurada. MAS, por seguranca anti-ban,
+      // numero NOVO (<14 dias) AINDA respeita uma rampa por IDADE: desligar a chave
+      // NAO pode liberar 200/dia num chip recem-criado (risco de ban). So numero
+      // MADURO (>=14 dias, ou sem created_at -> idade 999) vai direto ao teto de 200.
+      // (FIX: antes liberava 200/dia liso ja no dia 0 com a chave desligada.)
+      dailyLimit = instanceAgeDays >= WARMUP_RAMP_DAYS
+        ? DEFAULT_DAILY_LIMIT_MATURE_INSTANCE
+        : Math.max(
+            DEFAULT_DAILY_LIMIT_NEW_INSTANCE,
+            Math.floor(
+              DEFAULT_DAILY_LIMIT_NEW_INSTANCE +
+              (DEFAULT_DAILY_LIMIT_MATURE_INSTANCE - DEFAULT_DAILY_LIMIT_NEW_INSTANCE) *
+              (instanceAgeDays / WARMUP_RAMP_DAYS)
+            ),
+          );
     } else if (instanceAgeDays >= warmupRampDays) {
       // Rampa concluída → capacidade alvo configurada.
       dailyLimit = warmupTarget;

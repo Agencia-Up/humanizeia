@@ -103,7 +103,10 @@ export function CampaignFormDialog({
   const [delayMax, setDelayMax] = useState(27);
   const [rotationMsgs, setRotationMsgs] = useState(10);
   const [rotationPause, setRotationPause] = useState(300);
-  const [warmupEnabled, setWarmupEnabled] = useState(false);
+  // FIX anti-ban: default ON. Antes vinha OFF -> numero NOVO podia disparar 200/dia
+  // no dia 0 (risco de banimento). Com aquecimento ligado por padrao, numero novo
+  // respeita a rampa por idade; quem quiser 200/dia desliga explicitamente (aviso ambar).
+  const [warmupEnabled, setWarmupEnabled] = useState(true);
   const [warmupInitial, setWarmupInitial] = useState(20);
   // 28/05/2026 — keys que o backend (process-whatsapp-queue) realmente le.
   // Sem elas, o warmup nunca era aplicado mesmo com o toggle ligado.
@@ -188,7 +191,7 @@ export function CampaignFormDialog({
     setName(''); setPrompt(''); setTemplate('');
     setSelectedLists([]); setDelayMin(5); setDelayMax(27);
     setRotationMsgs(10); setRotationPause(300);
-    setWarmupEnabled(false); setWarmupInitial(20);
+    setWarmupEnabled(true); setWarmupInitial(20);
     setWarmupDailyLimit(50); setWarmupRampDays(14);
     setStartDate(undefined); setStartTime('08:00');
     setEndDate(undefined); setEndTime('18:00');
