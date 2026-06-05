@@ -12,6 +12,8 @@ import {
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import { useGoogleAdsConnection } from '@/hooks/useGoogleAdsConnection';
 import { useAuth } from '@/hooks/useAuth';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { OperatorAppConfig } from './OperatorAppConfig';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -313,6 +315,7 @@ const COMING_SOON_PLATFORMS = [
 export function ConnectionsTab() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { isAdmin } = useIsAdmin();
   const { isLocked } = useIntegrationAccess();
   const meta = useMetaConnection();
   const google = useGoogleAdsConnection();
@@ -870,6 +873,9 @@ export function ConnectionsTab() {
                 ⚠️ {activePlatform.warning}
               </div>
             )}
+
+            {/* Configuracao do app — so admin da plataforma (chaves do app). */}
+            {isAdmin && <OperatorAppConfig platformId={activePlatform.id} />}
 
             <div className="flex items-center gap-2 rounded-lg bg-success/5 border border-success/20 p-3 text-xs text-muted-foreground">
               <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
