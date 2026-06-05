@@ -197,6 +197,36 @@ async function resolveAgentInstance(supabase: any, agentId: string | null, cache
   return inst;
 }
 
+// TRAVA DE 24h (regra do dono): so reativa lead SEM atendimento da IA ha MAIS de 24h —
+// nao enche o saco de quem acabou de falar com o agente (caso real: lead falou 11:04,
+// recusou, e recebeu reativacao 11:07). Como a RPC retorna a fila em rodizio (ordenada por
+// last_sent_at), pegamos um LOTE de candidatos e devolvemos o 1o que esta quieto ha >24h —
+// preservando a ordem do rodizio. (A mesma trava esta na migration da RPC, pra quando as
+// migrations forem aplicadas; aqui e a rede que ja vale em producao.)
+const REACT_MIN_QUIET_HOURS = 24;
+async function pickEligibleByRecency(supabase: any, rows: any[]): Promise<any> {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const ids = rows.map((r: any) => r.lead_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: leads } = await supabase
+    .from("ai_crm_leads")
+    .select("id, last_interaction_at, last_user_reply_at, last_agent_reply_at, created_at")
+    .in("id", ids);
+  const byId = new Map((leads || []).map((l: any) => [l.id, l]));
+  const cutoff = Date.now() - REACT_MIN_QUIET_HOURS * 60 * 60 * 1000;
+  const ms = (v: any) => (v ? Date.parse(v) || 0 : 0);
+  for (const r of rows) { // rows ja vem na ordem do rodizio
+    const l = byId.get(r.lead_id);
+    if (!l) continue;
+    const lastTouch = Math.max(
+      ms(l.last_interaction_at), ms(l.last_user_reply_at),
+      ms(l.last_agent_reply_at), ms(l.created_at),
+    );
+    if (lastTouch > 0 && lastTouch < cutoff) return r; // atendido ha >24h -> elegivel
+  }
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
@@ -331,12 +361,13 @@ serve(async (req) => {
             };
           }
         } else {
+          // Busca um LOTE da fila (rodizio) e pega o 1o quieto ha >24h (trava do dono).
           const { data: rows } = await supabase.rpc("get_next_reactivation_lead", {
             p_user_id: cfg.user_id,
             p_periodo_dias: cfg.periodo_dias ?? null,
-            p_limit: 1,
+            p_limit: 25,
           });
-          lead = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+          lead = await pickEligibleByRecency(supabase, rows);
         }
 
         if (!lead) { r.actions.push({ note: "fila_vazia" }); break; }
