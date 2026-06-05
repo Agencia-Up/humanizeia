@@ -107,10 +107,20 @@ export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance
   const pauseCampaign = async () => {
     setIsPausing(true);
     try {
-      await supabase
+      // BUG 1: o update precisa CONFIRMAR que pegou a linha. Com RLS de vendedor
+      // ou sessao expirada, um update sem .select() bate 0 linhas SEM erro — e a
+      // tela mostrava "pausada" enquanto o banco seguia 'running' (o worker
+      // continuava disparando). Agora confirmamos a linha afetada.
+      const { data: updated, error: pauseErr } = await supabase
         .from('wa_campaigns')
         .update({ status: 'paused' })
-        .eq('id', campaign.id);
+        .eq('id', campaign.id)
+        .select('id');
+
+      if (pauseErr) throw pauseErr;
+      if (!updated || updated.length === 0) {
+        throw new Error('Nao foi possivel pausar a campanha (sem permissao ou sessao expirada). Recarregue a pagina e tente de novo.');
+      }
 
       // Return in-flight items to pending so campaign can resume from where it stopped
       await supabase
@@ -122,7 +132,7 @@ export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance
       toast({ title: '⏸️ Campanha pausada' });
       onRefresh();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao pausar', description: err.message, variant: 'destructive' });
     } finally {
       setIsPausing(false);
     }
@@ -255,6 +265,20 @@ export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance
               )}
             </div>
           </div>
+
+          {/* BUG 2: torna o motivo da falha visivel no card principal (nao so no
+              relatorio). Causa mais comum em prod: numero do vendedor desconectado. */}
+          {campaign.failed_count > 0 && (
+            <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-[11px] text-destructive">
+              <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                <strong>{campaign.failed_count} envio(s) falharam.</strong> Causa comum: o número do vendedor está desconectado.{' '}
+                <button type="button" className="underline font-medium" onClick={() => setReportOpen(true)}>
+                  Ver motivo no relatório
+                </button>
+              </span>
+            </div>
+          )}
 
           {/* Relatório de entregas — disponível assim que a campanha começa */}
           {campaign.status !== 'draft' && (

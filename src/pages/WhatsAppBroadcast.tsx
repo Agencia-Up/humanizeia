@@ -362,15 +362,22 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       }
 
       toast({ title: editingCampaign ? '✅ Campanha atualizada!' : '✅ Campanha criada!' });
-      // Fecha o modal PRIMEIRO; adia reset + refetch pro proximo tick pra nao
-      // atropelar a limpeza do overlay do Radix. Sem isso, o body as vezes fica
-      // com pointer-events:none e a tela "congela" ate dar F5.
+      // BUG 3: o overlay do Radix as vezes deixa pointer-events:none no body e a
+      // tela "congela" ate dar F5. O timeout fixo de 120ms corria com a latencia
+      // de prod (animacao de fechamento mais lenta) e nem sempre limpava. Agora
+      // limpamos o body em varios momentos (antes/durante/depois do commit de
+      // fechamento do Radix) e so entao resetamos + recarregamos.
       setDialogOpen(false);
-      setTimeout(() => {
+      const clearOverlay = () => {
         if (typeof document !== 'undefined') document.body.style.removeProperty('pointer-events');
+      };
+      clearOverlay();
+      [80, 200, 400].forEach((ms) => setTimeout(clearOverlay, ms));
+      setTimeout(() => {
+        clearOverlay();
         setEditingCampaign(null);
         fetchData();
-      }, 120);
+      }, 220);
     } catch (err: any) {
       toast({ title: 'Erro ao salvar campanha', description: err.message, variant: 'destructive' });
     } finally {
