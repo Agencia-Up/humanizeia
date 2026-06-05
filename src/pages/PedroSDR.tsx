@@ -3964,7 +3964,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               )}
             </>
           )}
-          {!isMarcosCrm && (
+          {!isSeller && !isMarcosCrm && (
             <Button
               variant="outline" size="sm"
               onClick={() => setFollowupIAModalOpen(true)}
@@ -3979,7 +3979,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           {/* Modal de config do Follow-up IA. "Iniciar agora" chama o disparo
               atual (pedro-trigger-followup). Aplicação das configs (horário,
               jitter, IA generativa) virá nas Fases 2+ do plano. */}
-          {!isMarcosCrm && (
+          {/* Follow-up IA = automatico, master-only. Vendedor nao ve (regra de
+              visibilidade do follow-up automatico). */}
+          {!isSeller && !isMarcosCrm && (
             <FollowupIAConfigModal
               open={followupIAModalOpen}
               onOpenChange={setFollowupIAModalOpen}

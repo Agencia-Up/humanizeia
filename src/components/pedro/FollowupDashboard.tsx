@@ -76,6 +76,14 @@ function fmtPhone(remoteJid?: string | null): string {
   return digits || '—';
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  novo: 'Novo', em_atendimento: 'Em atendimento', qualificado: 'Qualificado',
+  medio_qualificado: 'Médio qualificado', pouco_qualificado: 'Pouco qualificado',
+  transferido: 'Transferido', inativo: 'Inativo', fechado: 'Fechado', perdido: 'Perdido',
+  sem_etapa: 'Sem etapa',
+};
+const stageLabel = (s: string): string => STAGE_LABELS[s] || s;
+
 /* ── Tipos ─────────────────────────────────────────────────────────────── */
 interface DispatchItem {
   id: string;
@@ -85,6 +93,7 @@ interface DispatchItem {
   vendedor: string;
   tipo: 'ia' | 'manual';
   intervaloMin: number | null; // minutos desde o disparo anterior (null no 1º)
+  stage: string | null;        // etapa do funil do lead (status_crm)
 }
 interface HourBucket {
   hora: string;
@@ -136,17 +145,17 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
 
       // Leads (nome + vendedor) por remote_jid
       const jids = Array.from(new Set(msgs.map((m) => m.remote_jid).filter(Boolean))) as string[];
-      let leadMap: Record<string, { lead_name: string | null; member_id: string | null }> = {};
+      let leadMap: Record<string, { lead_name: string | null; member_id: string | null; stage: string | null }> = {};
       if (jids.length) {
         const { data: leads } = await (supabase as any)
           .from('ai_crm_leads')
-          .select('remote_jid, lead_name, assigned_to_member_id')
+          .select('remote_jid, lead_name, assigned_to_member_id, status_crm')
           .eq('user_id', userId)
           .in('remote_jid', jids);
         for (const l of leads || []) {
           // 1 lead por remote_jid (pega o primeiro encontrado)
           if (!leadMap[l.remote_jid]) {
-            leadMap[l.remote_jid] = { lead_name: l.lead_name, member_id: l.assigned_to_member_id };
+            leadMap[l.remote_jid] = { lead_name: l.lead_name, member_id: l.assigned_to_member_id, stage: l.status_crm };
           }
         }
       }
@@ -187,6 +196,7 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
           vendedor: (memberId && memberMap[memberId]) || 'Sem vendedor',
           tipo: (m.content || '').startsWith('[Follow-up IA]') ? 'ia' : 'manual',
           intervaloMin,
+          stage: lead?.stage || null,
         };
       });
 
@@ -205,6 +215,13 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
   }, [fetchData]);
 
   const hasData = dayCount > 0;
+  const iaCount = items.filter((i) => i.tipo === 'ia').length;
+  const manualCount = items.filter((i) => i.tipo === 'manual').length;
+  const stageBreakdown = (() => {
+    const m: Record<string, number> = {};
+    for (const i of items) { const k = i.stage || 'sem_etapa'; m[k] = (m[k] || 0) + 1; }
+    return Object.entries(m).map(([stage, count]) => ({ stage, count })).sort((a, b) => b.count - a.count);
+  })();
 
   return (
     <div className="space-y-3">
@@ -272,6 +289,40 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
           </CardContent>
         </Card>
       </div>
+
+      {/* Por etapa do funil + automático vs manual */}
+      {hasData && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-1 pt-3"><CardTitle className="text-xs">Por etapa do funil</CardTitle></CardHeader>
+            <CardContent className="pb-3">
+              <div className="space-y-1.5 max-h-32 overflow-auto">
+                {stageBreakdown.map((s) => (
+                  <div key={s.stage} className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground truncate">{stageLabel(s.stage)}</span>
+                    <span className="font-semibold text-foreground tabular-nums">{s.count}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-1 pt-3"><CardTitle className="text-xs">Automático vs Manual</CardTitle></CardHeader>
+            <CardContent className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 p-2.5 text-center">
+                  <p className="text-lg font-bold text-cyan-400 tabular-nums">{iaCount}</p>
+                  <p className="text-[10px] text-muted-foreground">por IA</p>
+                </div>
+                <div className="flex-1 rounded-lg bg-amber-500/10 border border-amber-500/20 p-2.5 text-center">
+                  <p className="text-lg font-bold text-amber-400 tabular-nums">{manualCount}</p>
+                  <p className="text-[10px] text-muted-foreground">manual</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Gráfico por hora */}
       <Card className="bg-card border-border/50">
