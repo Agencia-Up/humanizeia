@@ -266,7 +266,11 @@ const App = () => (
                 <Route path="/briefing/:nicho" element={<ProtectedRoute><Lazy><BriefingDetails /></Lazy></ProtectedRoute>} />
 
                 <Route path="/tela-inicial"       element={<ProtectedRoute><Lazy><AgentHub /></Lazy></ProtectedRoute>} />
-                <Route path="/dashboard"          element={<ProtectedRoute><Lazy><CommercialDashboard /></Lazy></ProtectedRoute>} />
+                {/* [Unificado 05/06/2026] Dashboard foi absorvido pelo Painel Geral.
+                    /dashboard redireciona; a tela antiga segue acessivel em /dashboard-antigo
+                    pra comparacao e reversao facil. */}
+                <Route path="/dashboard"          element={<Navigate to="/painel-geral" replace />} />
+                <Route path="/dashboard-antigo"   element={<ProtectedRoute><Lazy><CommercialDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="/metrics"            element={<ProtectedRoute><Lazy><MetricsDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="/connect-accounts"   element={<ProtectedRoute><Lazy><ConnectAccounts /></Lazy></ProtectedRoute>} />
                 {/* ── Agentes principais (master + sellers com permissao) ── */}

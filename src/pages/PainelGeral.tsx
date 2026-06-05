@@ -25,13 +25,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
+import { useNavigate } from 'react-router-dom';
 import {
   Loader2, Users, Trophy, ArrowRightLeft, BarChart3, Bot, Layers,
   Calendar as CalendarIcon, TrendingUp, CheckCircle2, AlertCircle,
+  UserCheck, Megaphone, Target, Clock, Sparkles,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
+// [Unificado 05/06/2026] Reaproveita hook de dados + componentes do antigo
+// Dashboard (CommercialDashboard) — funis, alertas, origem, transferencias,
+// retomadas — pra tudo viver dentro do Painel Geral, sem duplicar grafico/ranking.
+import { useCommercialDashboardData, CompactKpi, FunnelPanel } from './CommercialDashboard';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -188,6 +194,11 @@ export default function PainelGeral() {
   const [loading, setLoading] = useState(true);
 
   const dateRange = resolveDateRange(period, customRange);
+
+  // [Unificado] Dados extras do antigo Dashboard (funis, alertas, origem,
+  // transferencias, retomadas), no MESMO periodo selecionado aqui.
+  const navigate = useNavigate();
+  const { data: dashData } = useCommercialDashboardData(user?.id, dateRange);
 
   useEffect(() => {
     if (!user?.id || profileLoading) return;
@@ -410,6 +421,19 @@ export default function PainelGeral() {
     combined.qualidadeMedia >= 40 ? 'bg-amber-500/15 text-amber-400' :
     'bg-red-500/15 text-red-400';
 
+  // [Unificado] Origem e conversao (derivado dos dados do antigo Dashboard).
+  const dTotal = dashData.pedroTotal + dashData.marcosTotal;
+  const paidShare = dTotal > 0 ? Math.round((dashData.pedroTotal / dTotal) * 100) : 0;
+  const manualShare = dTotal > 0 ? 100 - paidShare : 0;
+  const closedPedro = dashData.pedroFunnel.find(i => i.label === 'Fechado')?.value || 0;
+  const closedMarcos = dashData.marcosFunnel.find(i => i.label.toLowerCase().includes('fechado'))?.value || 0;
+  const closedRate = dTotal > 0 ? Math.round(((closedPedro + closedMarcos) / dTotal) * 100) : 0;
+  const originCards = [
+    { label: 'IA / Pago', value: `${paidShare}%`, sub: `${dashData.pedroTotal} leads do Pedro`, color: 'bg-blue-500/15 text-blue-300' },
+    { label: 'Manual', value: `${manualShare}%`, sub: `${dashData.marcosTotal} leads do Marcos`, color: 'bg-purple-500/15 text-purple-300' },
+    { label: 'Fechados', value: `${closedRate}%`, sub: `${closedPedro + closedMarcos} oportunidades`, color: 'bg-emerald-500/15 text-emerald-300' },
+  ];
+
   return (
     <MainLayout>
       <div className="space-y-6 p-4 lg:p-6">
@@ -564,6 +588,65 @@ export default function PainelGeral() {
           </Card>
         </div>
 
+        {/* ── [Unificado] Operação: Transferências + Retomadas ─────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <CompactKpi title="Transferencias" value={dashData.pedroTransferred} sub={`${dashData.pedroWaiting} aguardando acao`} icon={UserCheck} accent="bg-cyan-500/15 text-cyan-300" />
+          <CompactKpi title="Retomadas" value={dashData.marcosFollowups} sub={`${dashData.marcosCampaigns} campanhas ativas`} icon={Megaphone} accent="bg-amber-500/15 text-amber-300" />
+        </div>
+
+        {/* ── [Unificado] Funil Pedro + Funil Marcos ───────────────────────── */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <FunnelPanel title="Funil Pedro" badge="IA responde e transfere" items={dashData.pedroFunnel} />
+          <FunnelPanel title="Funil Marcos" badge="CRM manual" items={dashData.marcosFunnel} />
+        </div>
+
+        {/* ── [Unificado] Origem e conversão + Alertas inteligentes ────────── */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+            <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
+              <Target className="h-4 w-4 text-primary" />
+              Origem e conversao
+            </h3>
+            <div className="grid gap-3">
+              {originCards.map(card => (
+                <div key={card.label} className="flex items-center justify-between rounded-xl border border-border/40 bg-background/35 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">{card.label}</p>
+                    <p className="text-xs text-muted-foreground">{card.sub}</p>
+                  </div>
+                  <span className={`rounded-xl px-3 py-1.5 text-xl font-bold ${card.color}`}>{card.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+            <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
+              <AlertCircle className="h-4 w-4 text-amber-300" />
+              Alertas inteligentes
+            </h3>
+            <div className="space-y-3">
+              {dashData.alerts.map(alert => {
+                const Icon = alert.tone === 'good' ? CheckCircle2 : alert.tone === 'warn' ? AlertCircle : Clock;
+                const tone = alert.tone === 'good'
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                  : alert.tone === 'warn'
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                    : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
+                return (
+                  <div key={alert.title} className={`flex gap-3 rounded-xl border p-3 ${tone}`}>
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{alert.title}</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">{alert.body}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         {/* ── Gráfico de atividade sobreposto ──────────────────────────────── */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-2">
@@ -641,6 +724,32 @@ export default function PainelGeral() {
           </CardContent>
         </Card>
         )}
+
+        {/* ── [Unificado] Ações sugeridas ──────────────────────────────────── */}
+        <Card className="bg-card border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-yellow-300" />
+              Ações sugeridas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <button onClick={() => navigate('/pedro?tab=crm')} className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-left transition-colors hover:bg-blue-500/15">
+                <p className="text-sm font-semibold text-foreground">Revisar leads do Pedro</p>
+                <p className="text-xs text-muted-foreground">Acompanhar IA, transferencias e vendedores.</p>
+              </button>
+              <button onClick={() => navigate('/marcos?tab=performance')} className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-3 text-left transition-colors hover:bg-purple-500/15">
+                <p className="text-sm font-semibold text-foreground">Ver performance do Marcos</p>
+                <p className="text-xs text-muted-foreground">Campanhas, listas, follow-ups e CRM manual.</p>
+              </button>
+              <button onClick={() => navigate('/whatsapp/broadcast')} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left transition-colors hover:bg-amber-500/15">
+                <p className="text-sm font-semibold text-foreground">Criar campanha</p>
+                <p className="text-xs text-muted-foreground">Retomar leads parados com seguranca.</p>
+              </button>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Erro silencioso fallback */}
         {!data && (

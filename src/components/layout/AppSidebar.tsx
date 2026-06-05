@@ -1,5 +1,4 @@
 import {
-  LayoutDashboard,
   Home,
   BarChart3,
   Brain,
@@ -346,7 +345,7 @@ export function AppSidebar() {
                 {visibleFeatures.sidebar_dashboard && (
                   <>
                     <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
-                    <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+                    {/* [Unificado] item "Dashboard" removido — virou parte do Painel Geral. */}
                   </>
                 )}
                 {/* 29/05/2026: Painel Geral também no vendedor (igual ao master),
@@ -403,7 +402,7 @@ export function AppSidebar() {
             {/* ── Dashboard ── */}
             <NavGroup label="Painel" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Tela inicial', url: '/tela-inicial', icon: Home }} />
-              <NavItem collapsed={collapsed} item={{ title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard }} />
+              {/* [Unificado] item "Dashboard" removido — virou parte do Painel Geral. */}
               {/* Painel Geral — soma Pedro + Marcos. Master only. */}
               <NavItem collapsed={collapsed} item={{ title: 'Painel Geral', url: '/painel-geral', icon: BarChart3 }} />
             </NavGroup>
