@@ -87,13 +87,13 @@ const allSellerSystemItems = [
 
 // ── Agentes Seller — filtrados por visibleFeatures (unificado com Dashboard) ─
 const allSellerAgentItems: { title: string; url: string; icon: any; featureKey: keyof VisibleFeatures }[] = [
-  { title: 'José',    url: '/jose',            icon: Radar,     featureKey: 'agent_jose' },
-  { title: 'Salomão', url: '/salomao',         icon: Sparkles,  featureKey: 'agent_salomao' },
-  { title: 'Paulo',   url: '/copywriter',      icon: PenTool,   featureKey: 'agent_paulo' },
-  { title: 'Maria',   url: '/creative-studio', icon: Palette,   featureKey: 'agent_maria' },
-  { title: 'Davi',    url: '/davi',            icon: Instagram, featureKey: 'agent_davi' },
-  { title: 'João',    url: '/joao',            icon: Mail,      featureKey: 'agent_joao' },
-  { title: 'Daniel',  url: '/daniel',          icon: Brain,     featureKey: 'agent_daniel' },
+  { title: 'José Tráfego Pago',    url: '/jose',            icon: Radar,     featureKey: 'agent_jose' },
+  { title: 'Salomão Orquestrador', url: '/salomao',         icon: Sparkles,  featureKey: 'agent_salomao' },
+  { title: 'Paulo Copywriting',    url: '/copywriter',      icon: PenTool,   featureKey: 'agent_paulo' },
+  { title: 'Maria Designer',       url: '/creative-studio', icon: Palette,   featureKey: 'agent_maria' },
+  { title: 'Davi Social Mídia',    url: '/davi',            icon: Instagram, featureKey: 'agent_davi' },
+  { title: 'João E-mail MKT',      url: '/joao',            icon: Mail,      featureKey: 'agent_joao' },
+  { title: 'Daniel Estrategista',  url: '/daniel',          icon: Brain,     featureKey: 'agent_daniel' },
 ];
 
 // ── Marcos — sub-itens Leads & WhatsApp ──────────────────────────────────────
@@ -376,7 +376,7 @@ export function AppSidebar() {
                     <NavItem collapsed={collapsed} item={{ title: 'Pedro SDR', url: '/pedro', icon: Bot }} />
                   )}
                   {showMarcosSeller && (
-                    <NavItem collapsed={collapsed} item={{ title: 'Marcos', url: '/marcos', icon: Users }} />
+                    <NavItem collapsed={collapsed} item={{ title: 'Marcos CRM', url: '/marcos', icon: Users }} />
                   )}
                   {sellerExtraAgents.map(item => (
                     <NavItem key={item.url} item={item} collapsed={collapsed} />
@@ -418,22 +418,22 @@ export function AppSidebar() {
                   Antes era NavMarcosExpandable com sub-itens duplicados no
                   sidebar, comportamento diferente do Pedro/José. */}
               {showMarcos && (
-                <NavItem collapsed={collapsed} item={{ title: 'Marcos', url: '/marcos', icon: Users }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Marcos CRM', url: '/marcos', icon: Users }} />
               )}
 
               {/* José — Pro+ */}
               {showJose && (
-                <NavItem collapsed={collapsed} item={{ title: 'José', url: '/jose', icon: Radar }} />
+                <NavItem collapsed={collapsed} item={{ title: 'José Tráfego Pago', url: '/jose', icon: Radar }} />
               )}
 
               {/* Enterprise (Pro Max) */}
               {showEnterprise && <>
-                <NavItem collapsed={collapsed} item={{ title: 'Salomão', url: '/salomao', icon: Sparkles }} />
-                <NavItem collapsed={collapsed} item={{ title: 'Paulo', url: '/copywriter', icon: PenTool }} />
-                <NavItem collapsed={collapsed} item={{ title: 'Maria', url: '/creative-studio', icon: Palette }} />
-                <NavItem collapsed={collapsed} item={{ title: 'Davi', url: '/davi', icon: Instagram }} />
-                <NavItem collapsed={collapsed} item={{ title: 'João', url: '/joao', icon: Mail }} />
-                <NavItem collapsed={collapsed} item={{ title: 'Daniel', url: '/daniel', icon: Brain }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Salomão Orquestrador', url: '/salomao', icon: Sparkles }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Paulo Copywriting', url: '/copywriter', icon: PenTool }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Maria Designer', url: '/creative-studio', icon: Palette }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Davi Social Mídia', url: '/davi', icon: Instagram }} />
+                <NavItem collapsed={collapsed} item={{ title: 'João E-mail MKT', url: '/joao', icon: Mail }} />
+                <NavItem collapsed={collapsed} item={{ title: 'Daniel Estrategista', url: '/daniel', icon: Brain }} />
               </>}
             </NavGroup>
 
