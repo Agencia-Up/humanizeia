@@ -31,6 +31,19 @@ import {
 import { format, isToday, isYesterday } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+/* Normaliza telefone p/ casar wa_inbox.phone (geralmente SEM o 55) com
+   ai_crm_leads.remote_jid (COM o 55). Retorna chaves candidatas tolerando o
+   9o digito do celular, pra o filtro do vendedor nao falhar por formato. */
+function phoneKeys(raw: string | null | undefined): string[] {
+  let d = String(raw || '').split('@')[0].replace(/\D/g, '');
+  if (d.startsWith('55') && d.length > 11) d = d.slice(2); // remove codigo do pais
+  const keys = new Set<string>();
+  if (d) keys.add(d);
+  if (d.length === 11 && d[2] === '9') keys.add(d.slice(0, 2) + d.slice(3)); // sem o 9
+  if (d.length === 10) keys.add(d.slice(0, 2) + '9' + d.slice(2));            // com o 9
+  return Array.from(keys);
+}
+
 /* ── Tipos ──────────────────────────────────────────────────────────── */
 interface InboxMessage {
   id: string;
@@ -157,9 +170,10 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         .select('remote_jid')
         .eq('user_id', effectiveUserId)
         .eq('assigned_to_id', seller.id);
-      const phones = new Set<string>(
-        (data || []).map((l: any) => (l.remote_jid || '').split('@')[0]).filter(Boolean)
-      );
+      const phones = new Set<string>();
+      for (const l of (data || [])) {
+        for (const k of phoneKeys((l as any).remote_jid)) phones.add(k);
+      }
       setSellerLeadPhones(phones);
     })();
   }, [isSeller, seller, effectiveUserId]);
@@ -178,7 +192,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .eq('is_active', true)
       .order('instance_name');
     if (isSeller && seller?.id) {
-      query = query.eq('seller_member_id', seller.id);
+      // BUG inbox vendedor: as conversas dos leads dele vivem no numero do
+      // MASTER (a IA atende ali e depois atribui o lead). Entao o inbox do
+      // vendedor precisa ler as instancias do master (seller_member_id IS NULL)
+      // + a propria dele. A restricao aos leads do vendedor e feita por
+      // telefone em fetchConversations (sellerLeadPhones).
+      query = query.or(`seller_member_id.is.null,seller_member_id.eq.${seller.id}`);
     } else {
       // Master: só inbox das próprias instâncias (não dos vendedores)
       query = query.is('seller_member_id', null);
@@ -241,7 +260,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     let convList = Array.from(convMap.values());
     // Vendedor: filtra conversas apenas dos leads atribuídos a ele
     if (isSeller && sellerLeadPhones) {
-      convList = convList.filter(c => sellerLeadPhones.has(c.phone));
+      convList = convList.filter(c => phoneKeys(c.phone).some(k => sellerLeadPhones!.has(k)));
     }
     setConversations(convList);
     if (isInitial) setLoading(false);
