@@ -12,9 +12,11 @@
 // Persiste em public.followup_ia_config (1 row por master, UNIQUE user_id).
 // Tabela criada na migration 20260527230000_followup_ia_config.sql.
 //
-// CRÍTICO: este modal SÓ persiste configuração. A APLICAÇÃO desses settings na
-// edge function pedro-trigger-followup vem nas Fases 2+. Por enquanto, salvar
-// não muda comportamento atual do disparo.
+// NOTA (05/06/2026): a config E honrada pelo pedro-auto-followup (reativacao),
+// que checa is_active e PARA na pausa. As funcoes pedro-trigger-followup e
+// cron-lead-followup ainda NAO checam is_active (correcao no spec do Douglas,
+// Ponto 0). Enquanto isso, "Pausar" silencia a reativacao automatica, mas nao
+// os disparos manuais nem a nutricao de 5 min. Os textos abaixo refletem isso.
 // ============================================================================
 
 import { useEffect, useState } from 'react';
@@ -273,10 +275,10 @@ export function FollowupIAConfigModal({
       if (saved) {
         setConfig(saved);
         toast({
-          title: next ? '✅ Follow-up ATIVADO' : '⏸️ Follow-up PAUSADO',
+          title: next ? '✅ Follow-up ATIVADO' : '⏸️ Reativação PAUSADA',
           description: next
             ? 'O Pedro voltou a disparar follow-up na coluna de inativos.'
-            : 'Nenhum follow-up vai disparar até você ativar de novo.',
+            : 'A reativação automática de leads inativos foi pausada.',
         });
       }
     } finally {
@@ -352,7 +354,7 @@ export function FollowupIAConfigModal({
                 <p className="text-[11px] text-muted-foreground">
                   {config.is_active
                     ? 'Disparando na coluna de inativos.'
-                    : 'Não dispara para ninguém até ativar.'}
+                    : 'Reativação automática pausada.'}
                 </p>
               </div>
             </div>
