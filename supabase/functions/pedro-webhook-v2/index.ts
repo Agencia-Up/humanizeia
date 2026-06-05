@@ -229,6 +229,7 @@ Deno.serve(async (req) => {
           message_type: "text",
           content: inboxText,
           is_read: false,
+          is_archived: false,
           remote_message_id: typeof inboxMsgId === "string" ? inboxMsgId : null,
         });
       }
