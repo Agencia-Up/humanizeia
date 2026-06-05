@@ -161,6 +161,7 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const SetSellerPassword = lazy(() => import("./pages/SetSellerPassword"));
 const AgentHub = lazy(() => import("./pages/AgentHub"));
 const CommercialDashboard = lazy(() => import("./pages/CommercialDashboard"));
+const SecurityRulesPage = lazy(() => import("./pages/SecurityRulesPage"));
 const MetricsDashboard = lazy(() => import("./pages/Dashboard"));
 const Tutorials = lazy(() => import("./pages/Tutorials"));
 const AICreativeStudio = lazy(() => import("./pages/AICreativeStudio"));
@@ -271,6 +272,7 @@ const App = () => (
                     pra comparacao e reversao facil. */}
                 <Route path="/dashboard"          element={<Navigate to="/painel-geral" replace />} />
                 <Route path="/dashboard-antigo"   element={<ProtectedRoute><Lazy><CommercialDashboard /></Lazy></ProtectedRoute>} />
+                <Route path="/dashboard/security-rules" element={<ProtectedRoute><Lazy><SecurityRulesPage /></Lazy></ProtectedRoute>} />
                 <Route path="/metrics"            element={<ProtectedRoute><Lazy><MetricsDashboard /></Lazy></ProtectedRoute>} />
                 <Route path="/connect-accounts"   element={<ProtectedRoute><Lazy><ConnectAccounts /></Lazy></ProtectedRoute>} />
                 {/* ── Agentes principais (master + sellers com permissao) ── */}

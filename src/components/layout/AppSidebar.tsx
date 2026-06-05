@@ -1,4 +1,5 @@
 import {
+  Shield,
   Home,
   BarChart3,
   Brain,
@@ -447,6 +448,8 @@ export function AppSidebar() {
                   : item;
                 return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
               })}
+              {/* Regras de Seguranca — master only (a pagina ja bloqueia vendedor). */}
+              <NavItem collapsed={collapsed} item={{ title: 'Regras de Segurança', url: '/dashboard/security-rules', icon: Shield }} />
               {/* FASE 4 — Painel interno de margem de IA. SO o superadmin (operador) ve. */}
               {isAdmin && (
                 <NavItem collapsed={collapsed} item={{ title: 'Margem (IA)', url: '/admin/margem', icon: Wallet }} />
