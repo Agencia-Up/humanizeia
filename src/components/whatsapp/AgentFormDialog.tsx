@@ -28,6 +28,7 @@ interface Instance {
   instance_name: string;
   is_active: boolean;
   provider: string;
+  purpose?: string | null;
 }
 
 interface AIAgent {
@@ -752,6 +753,11 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: agent?.id ? 'Agente atualizado!' : 'Agente criado! 🤖' });
+      // ISOLAMENTO: marca os números escolhidos como finalidade 'agent', pra eles
+      // ficarem fora do disparo em massa e o webhook tratá-los como números de IA.
+      if (selectedInstanceIds.length > 0) {
+        await (supabase as any).from('wa_instances').update({ purpose: 'agent' }).in('id', selectedInstanceIds);
+      }
       // Sync to n8n after successful save
       await syncToN8n(payload);
       onSaved();
@@ -994,9 +1000,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                                 // Se for novo, mostra apenas as livres
                                 const isCurrentAgentInstance = (selectedInstanceIds || []).includes(inst.id);
                                 if (isCurrentAgentInstance) return true;
-                                
-                                const isInstanceInUse = (agents || []).some(a => 
-                                    a?.id !== agent?.id && 
+
+                                // ISOLAMENTO: número de disparo em massa / teste NÃO pode virar
+                                // número de agente — fica fora da seleção.
+                                if (inst.purpose === 'bulk_sender' || inst.purpose === 'test') return false;
+
+                                const isInstanceInUse = (agents || []).some(a =>
+                                    a?.id !== agent?.id &&
                                     (a?.instance_id === inst.id || a?.instance_ids?.includes(inst.id))
                                 );
                                 return !isInstanceInUse;

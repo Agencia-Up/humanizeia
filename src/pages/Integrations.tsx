@@ -5,8 +5,11 @@ import { LeadCaptureTab } from '@/components/settings/LeadCaptureTab';
 import { useIntegrationAccess } from '@/components/settings/integrationAccess';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Plug, Wrench, Terminal, Crown } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Plug, Wrench, Terminal, Crown, Smartphone, Loader2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+
+const WhatsAppInstances = lazy(() => import('./WhatsAppInstances'));
 
 function BasicoPlanBanner() {
   const { isBasico } = useIntegrationAccess();
@@ -40,6 +43,14 @@ function BasicoPlanBanner() {
 }
 
 export default function Integrations() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'connections';
+  const handleTabChange = (v: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', v);
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -52,11 +63,15 @@ export default function Integrations() {
 
         <BasicoPlanBanner />
 
-        <Tabs defaultValue="connections" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
           <TabsList className="bg-muted/50">
             <TabsTrigger value="connections" className="gap-2">
               <Plug className="h-4 w-4" />
               Conexões
+            </TabsTrigger>
+            <TabsTrigger value="whatsapp" className="gap-2">
+              <Smartphone className="h-4 w-4" />
+              Instâncias do WhatsApp
             </TabsTrigger>
             <TabsTrigger value="other" className="gap-2">
               <Wrench className="h-4 w-4" />
@@ -76,6 +91,18 @@ export default function Integrations() {
               </p>
             </div>
             <ConnectionsTab />
+          </TabsContent>
+
+          <TabsContent value="whatsapp" className="space-y-4">
+            <div className="rounded-lg border border-border/40 bg-card/40 p-4 flex gap-3">
+              <span className="text-lg shrink-0">📱</span>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <strong className="text-foreground">Instâncias do WhatsApp</strong> — Conecte aqui o número do WhatsApp da operação. Esse número é usado no follow-up manual do Pedro e do Marcos e no disparo em massa. O número do agente de IA é conectado dentro do próprio agente.
+              </p>
+            </div>
+            <Suspense fallback={<div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
+              <WhatsAppInstances embedded />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="other" className="space-y-4">

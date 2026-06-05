@@ -320,7 +320,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     if (isInitialMount.current) setLoading(true);
     try {
       const [{ data: inst, error: instancesError }, { data: agentsData, error: agentsError }] = await Promise.all([
-        supabase.from('wa_instances').select('id, friendly_name, instance_name, is_active, provider').eq('user_id', effectiveUserId),
+        supabase.from('wa_instances').select('id, friendly_name, instance_name, is_active, provider, purpose').eq('user_id', effectiveUserId),
         (supabase as any).from('wa_ai_agents').select('*').eq('user_id', effectiveUserId).order('created_at', { ascending: false }),
       ]);
       if (instancesError) throw instancesError;

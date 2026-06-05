@@ -72,7 +72,9 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'tab_performance',    label: 'Performance',            desc: 'Métricas e resultados',          icon: BarChart3,      group: 'tab' },
   { key: 'tab_agente_ia',      label: 'Agente IA',              desc: 'Configuração do agente',         icon: Bot,            group: 'tab' },
   { key: 'tab_crm_ao_vivo',    label: 'Painel ao Vivo',         desc: 'Leads em tempo real',            icon: Radio,          group: 'tab' },
-  { key: 'tab_instancias',     label: 'Instâncias WhatsApp',    desc: 'Conexões de WhatsApp',           icon: Smartphone,     group: 'tab' },
+  // 'tab_instancias' (aba Instâncias dentro do Pedro) foi removida no refactor
+  // de isolamento — gestão de números de robô vive só em /whatsapp/instances
+  // (controlada pelo toggle 'marcos_instancias' abaixo).
   { key: 'tab_vendedores',     label: 'Vendedores',             desc: 'Gestão da equipe',               icon: UserCog,        group: 'tab' },
   // ── CRM & WhatsApp (Marcos) ──
   { key: 'marcos_crm',         label: 'CRM Kanban',             desc: 'Pipeline visual de vendas',      icon: LayoutGrid,     group: 'marcos' },
