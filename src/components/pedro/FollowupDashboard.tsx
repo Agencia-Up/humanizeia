@@ -125,73 +125,89 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
       let totalMonth = 0;
       let usingLegacyFallback = false;
 
-      // Tenta ler os dados detalhados na tabela pedro_followup_logs
-      const { data: logsData, error: logsError } = await (supabase as any)
-        .from('pedro_followup_logs')
-        .select('id, remote_jid, message, status, error_message, type, created_at')
-        .eq('user_id', userId)
-        .gte('created_at', startISO)
-        .lte('created_at', endISO)
-        .order('created_at', { ascending: true });
-
-      if (logsError) {
-        console.warn('[FollowupDashboard] pedro_followup_logs indisponível. Usando fallback legacy:', logsError.message);
-        usingLegacyFallback = true;
-      } else {
-        msgs = (logsData || []).map((l: any) => ({
-          id: l.id,
-          remote_jid: l.remote_jid,
-          content: l.message,
-          created_at: l.created_at,
-          status: l.status,
-          error_message: l.error_message,
-          type: l.type
-        }));
-
-        const { count, error: monthError } = await (supabase as any)
+      // Busca híbrida: tenta ler logs detalhados e combina com histórico de chat
+      const [logsRes, chatRes, logsMonthRes, chatMonthRes] = await Promise.all([
+        (supabase as any)
           .from('pedro_followup_logs')
-          .select('id', { count: 'exact', head: true })
+          .select('id, remote_jid, message, status, error_message, type, created_at')
+          .eq('user_id', userId)
+          .gte('created_at', startISO)
+          .lte('created_at', endISO)
+          .order('created_at', { ascending: true }),
+        (supabase as any)
+          .from('wa_chat_history')
+          .select('id, remote_jid, content, created_at')
+          .eq('user_id', userId)
+          .eq('role', 'assistant')
+          .ilike('content', '[Follow-up%')
+          .gte('created_at', startISO)
+          .lte('created_at', endISO)
+          .order('created_at', { ascending: true }),
+        (supabase as any)
+          .from('pedro_followup_logs')
+          .select('remote_jid, created_at')
           .eq('user_id', userId)
           .gte('created_at', month.startISO)
-          .lt('created_at', month.endISO);
-        
-        if (!monthError) {
-          totalMonth = count || 0;
+          .lt('created_at', month.endISO),
+        (supabase as any)
+          .from('wa_chat_history')
+          .select('remote_jid, created_at')
+          .eq('user_id', userId)
+          .eq('role', 'assistant')
+          .ilike('content', '[Follow-up%')
+          .gte('created_at', month.startISO)
+          .lt('created_at', month.endISO)
+      ]);
+
+      const dayLogs = logsRes.data || [];
+      const dayChats = chatRes.data || [];
+      const mLogs = logsMonthRes.data || [];
+      const mChats = chatMonthRes.data || [];
+
+      // 1. Processa e unifica os logs do dia
+      const dayMsgs = dayLogs.map((l: any) => ({
+        id: l.id,
+        remote_jid: l.remote_jid,
+        content: l.message,
+        created_at: l.created_at,
+        status: l.status,
+        error_message: l.error_message,
+        type: l.type
+      }));
+
+      for (const m of dayChats) {
+        const isDupe = dayLogs.some((l: any) => 
+          l.remote_jid === m.remote_jid && 
+          Math.abs(new Date(l.created_at).getTime() - new Date(m.created_at).getTime()) < 15000
+        );
+        if (!isDupe) {
+          dayMsgs.push({
+            id: m.id,
+            remote_jid: m.remote_jid,
+            content: m.content,
+            created_at: m.created_at,
+            status: 'sent',
+            type: (m.content || '').startsWith('[Follow-up IA]') ? 'ia' : 'manual'
+          });
         }
       }
 
-      // Fallback defensivo com wa_chat_history
-      if (usingLegacyFallback) {
-        const [dayRes, monthRes] = await Promise.all([
-          (supabase as any)
-            .from('wa_chat_history')
-            .select('id, remote_jid, content, created_at')
-            .eq('user_id', userId)
-            .eq('role', 'assistant')
-            .ilike('content', '[Follow-up%')
-            .gte('created_at', startISO)
-            .lte('created_at', endISO)
-            .order('created_at', { ascending: true }),
-          (supabase as any)
-            .from('wa_chat_history')
-            .select('id', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('role', 'assistant')
-            .ilike('content', '[Follow-up%')
-            .gte('created_at', month.startISO)
-            .lt('created_at', month.endISO),
-        ]);
+      dayMsgs.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      msgs = dayMsgs;
 
-        msgs = (dayRes.data || []).map((m: any) => ({
-          id: m.id,
-          remote_jid: m.remote_jid,
-          content: m.content,
-          created_at: m.created_at,
-          status: 'sent',
-          type: (m.content || '').startsWith('[Follow-up IA]') ? 'ia' : 'manual'
-        }));
-        totalMonth = monthRes.count || 0;
+      // 2. Calcula e unifica o total do mês
+      let uniqueMonthCount = mLogs.length;
+      for (const mc of mChats) {
+        const isDupe = mLogs.some((ml: any) => 
+          ml.remote_jid === mc.remote_jid && 
+          Math.abs(new Date(ml.created_at).getTime() - new Date(mc.created_at).getTime()) < 15000
+        );
+        if (!isDupe) {
+          uniqueMonthCount++;
+        }
       }
+      totalMonth = uniqueMonthCount;
+
 
       // Leads (nome + vendedor) por remote_jid
       const jids = Array.from(new Set(msgs.map((m) => m.remote_jid).filter(Boolean))) as string[];
