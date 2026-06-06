@@ -350,7 +350,7 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     try {
       const ids = agent.instance_ids?.length ? agent.instance_ids : (agent.instance_id ? [agent.instance_id] : []);
       if (ids.length > 0) {
-        await Promise.all(ids.map(id => supabase.functions.invoke('delete-evolution-instance', { body: { instance_id: id, user_id: effectiveUserId } })));
+        await Promise.all(ids.map(id => supabase.functions.invoke('delete-uazapi-instance', { body: { instance_id: id, user_id: effectiveUserId } })));
       }
       const { error } = await (supabase as any).from('wa_ai_agents').delete().eq('id', agent.id);
       if (error) throw error;

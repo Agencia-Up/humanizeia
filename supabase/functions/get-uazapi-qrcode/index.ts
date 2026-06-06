@@ -31,20 +31,42 @@ function buildInstanceHeaders(instanceToken: string, adminToken?: string) {
   };
 }
 
-function extractQrCodeCandidate(value: unknown): string | null {
+function looksLikeBase64Image(value: string) {
+  const normalized = value.replace(/\s/g, '');
+  return normalized.length > 200 &&
+    /^[A-Za-z0-9+/=]+$/.test(normalized) &&
+    /^(iVBORw0KGgo|\/9j\/|R0lGODlh|R0lGODdh|UklGR)/.test(normalized);
+}
+
+function isRawQrPayloadKey(keyHint?: string) {
+  return [
+    'qrcode',
+    'qrCode',
+    'qr_code',
+    'qr',
+    'code',
+    'connectionKey',
+  ].includes(keyHint || '');
+}
+
+function extractQrCodeCandidate(value: unknown, keyHint?: string): string | null {
   if (!value) return null;
 
   if (typeof value === 'string') {
     const normalized = value.trim();
     if (!normalized) return null;
     if (normalized.startsWith('data:image/')) return normalized;
-    if (normalized.length > 200 && /^[A-Za-z0-9+/=\r\n]+$/.test(normalized)) return normalized;
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    if (looksLikeBase64Image(normalized)) return normalized;
+    // Some UaZapi responses return the WhatsApp QR payload as raw
+    // text. Return it so the React UI can render it through qrcode.react.
+    if (isRawQrPayloadKey(keyHint) && normalized.length > 40) return normalized;
     return null;
   }
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = extractQrCodeCandidate(item);
+      const found = extractQrCodeCandidate(item, keyHint);
       if (found) return found;
     }
     return null;
@@ -66,7 +88,7 @@ function extractQrCodeCandidate(value: unknown): string | null {
 
     for (const key of priorityKeys) {
       if (key in record) {
-        const found = extractQrCodeCandidate(record[key]);
+        const found = extractQrCodeCandidate(record[key], key);
         if (found) return found;
       }
     }
@@ -110,8 +132,9 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-  const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
-  const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+  const legacyUazapiToken = Deno.env.get('UAZAPI_API') || Deno.env.get('UAZAPI-API');
+  const uazapiUrl = Deno.env.get('UAZAPI_URL') || Deno.env.get('EVOLUTION_API_URL') || (legacyUazapiToken ? 'https://logosiabrasilcom.uazapi.com' : '');
+  const uazapiAdminToken = Deno.env.get('UAZAPI_ADMIN_TOKEN') || legacyUazapiToken || Deno.env.get('EVOLUTION_API_KEY');
 
   try {
     const authHeader = req.headers.get('Authorization');
@@ -197,7 +220,7 @@ Deno.serve(async (req) => {
         .from('wa_instances')
         .select('id, user_id, seller_member_id, instance_name, api_url, api_key_encrypted')
         .eq('user_id', requestedMasterId)
-        .eq('provider', 'evolution')
+        .in('provider', ['uazapi', 'evolution'])
         .in('status', ['waiting_qr', 'disconnected'])
         .order('created_at', { ascending: false })
         .limit(1);
@@ -236,12 +259,12 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: 'Nenhuma instancia encontrada' }, 404);
     }
 
-    const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
+    const baseUrl = (apiUrl || uazapiUrl || '').replace(/\/$/, '');
     const instanceToken = apiKey || '';
-    const adminToken = evolutionApiKey || '';
+    const adminToken = uazapiAdminToken || '';
 
     if (!baseUrl || (!instanceToken && !adminToken)) {
-      return jsonResponse({ success: false, error: 'Credenciais da Evolution API nao encontradas' }, 500);
+      return jsonResponse({ success: false, error: 'Credenciais da UaZapi nao encontradas' }, 500);
     }
 
     let currentState = 'disconnected';
@@ -264,7 +287,7 @@ Deno.serve(async (req) => {
       } catch {}
     }
 
-    console.log(`[get-evolution-qrcode] Instance ${instanceName} state: ${currentState}`);
+    console.log(`[get-uazapi-qrcode] Instance ${instanceName} state: ${currentState}`);
 
     const updateInstance = async (updates: Record<string, unknown>) => {
       if (instanceId) {
@@ -355,12 +378,12 @@ Deno.serve(async (req) => {
       });
 
       const qrText = await qrRes.text();
-      console.log(`[get-evolution-qrcode] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+      console.log(`[get-uazapi-qrcode] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
 
       try {
         const qrData = JSON.parse(qrText);
-        console.log(`[get-evolution-qrcode] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
-        console.log(`[get-evolution-qrcode] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
+        console.log(`[get-uazapi-qrcode] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
+        console.log(`[get-uazapi-qrcode] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
         qrCode = extractQrCodeCandidate(qrData) || qrCode;
         connected = parseConnectionState(qrData).connected;
       } catch {}
@@ -383,7 +406,7 @@ Deno.serve(async (req) => {
       qr_code: qrCode,
     });
   } catch (error: unknown) {
-    console.error('[get-evolution-qrcode] Error:', error);
+    console.error('[get-uazapi-qrcode] Error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonResponse({ success: false, error: message }, 500);
   }

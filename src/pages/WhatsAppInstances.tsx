@@ -10,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useSubscription } from '@/hooks/useSubscription';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
-import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
+import { UazapiConnectDialog } from '@/components/uazapi/UazapiConnectDialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -107,7 +107,7 @@ function formatWaNumber(raw: string | null | undefined): string {
 }
 
 // Mantido em sincronia com INSTANCE_LIMITS_BY_PLAN do backend
-// (create-evolution-instance): basico 10, pro 15, enterprise 15.
+// (create-uazapi-instance): basico 10, pro 15, enterprise 15.
 const INSTANCE_LIMITS: Record<string, number> = {
   basico: 10,
   pro: 15,
@@ -277,7 +277,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     try {
       // requester_auth_id = auth.uid() do solicitante (master OU vendedor).
       // A edge function valida autorização: master via user_id, vendedor via seller_member_id.
-      const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
+      const { data, error } = await supabase.functions.invoke('delete-uazapi-instance', {
         body: { instance_id: deleteId, requester_auth_id: user.id },
       });
       if (error) throw error;
@@ -303,7 +303,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const handleSyncWebhook = async (instance: WaInstance) => {
     setSyncingId(instance.id);
     try {
-      const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+      const { data, error } = await supabase.functions.invoke('sync-uazapi-webhook', {
         body: { instance_id: instance.id, user_id: user?.id },
       });
       if (error) throw error;
@@ -689,7 +689,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
         </Card>
       </div>
 
-      <EvolutionConnectDialog
+      <UazapiConnectDialog
         open={connectOpen}
         onOpenChange={(open) => {
           setConnectOpen(open);

@@ -21,6 +21,7 @@ import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, T
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
+import { WhatsAppQrCode } from '@/components/uazapi/WhatsAppQrCode';
 
 interface Instance {
   id: string;
@@ -328,7 +329,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     // 2. Polling Fallback (Caso o Realtime falhe)
     pollingRef.current = setInterval(async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
+        const { data, error } = await supabase.functions.invoke('get-uazapi-qrcode', {
           body: { user_id: effectiveUserId!, instance_name: slug },
         });
         if (error) {
@@ -412,7 +413,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
         try {
           const { data: { session } } = await supabase.auth.getSession();
-          const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+          const { data, error } = await supabase.functions.invoke('sync-uazapi-webhook', {
             body: { instance_id: instId, user_id: effectiveUserId },
             headers: {
               Authorization: `Bearer ${session?.access_token}`
@@ -447,9 +448,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     const slug = `${generateSlug(name) || 'agente'}-${randomSuffix}`;
     console.log('[QR] Gerando instância única:', slug);
     try {
-      const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
+      const { data, error } = await supabase.functions.invoke('create-uazapi-instance', {
         body: {
-          provider: 'evolution',
+          provider: 'uazapi',
           instance_name: slug,
           friendly_name: `WhatsApp - ${name} (${randomSuffix})`,
           user_id: effectiveUserId!,
@@ -469,7 +470,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       if (!finalQrCode && createdInstanceId) {
           console.warn("[QR] QR Code não veio na resposta inicial. Tentando busca secundária via instance_id:", createdInstanceId);
           await new Promise(r => setTimeout(r, 3000));
-          const { data: qrData, error: qrErr } = await supabase.functions.invoke('get-evolution-qrcode', {
+          const { data: qrData, error: qrErr } = await supabase.functions.invoke('get-uazapi-qrcode', {
               body: { instance_id: createdInstanceId, user_id: effectiveUserId! }
           });
           console.info("[QR] Resposta fallback:", JSON.stringify(qrData));
@@ -509,7 +510,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     console.log('[Delete] Iniciando exclusão da instância:', id);
     try {
       // Step 1: Try Edge Function (Full cleanup)
-      const { data, error: funcError } = await supabase.functions.invoke('delete-evolution-instance', {
+      const { data, error: funcError } = await supabase.functions.invoke('delete-uazapi-instance', {
         body: { instance_id: id, user_id: effectiveUserId }
       });
       
@@ -547,7 +548,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       // Pega a sessão atual para garantir autenticação
       const { data: { session } } = await supabase.auth.getSession();
       
-      const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+      const { data, error } = await supabase.functions.invoke('sync-uazapi-webhook', {
         body: { instance_id: id, user_id: effectiveUserId },
         headers: {
             Authorization: `Bearer ${session?.access_token}`
@@ -938,11 +939,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </div>
                 ) : qrCode ? (
                   <div className="flex flex-col items-center gap-4 p-4 border rounded-lg bg-white">
-                    <img
-                      src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
-                      className="w-48 h-48 rounded shadow-sm"
-                      alt="QR Code"
-                    />
+                    <WhatsAppQrCode value={qrCode} className="w-48 h-48 rounded shadow-sm" size={192} />
                     <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse mb-2">
                        <Loader2 className="w-3 h-3 animate-spin" /> Aguardando leitura no celular...
                     </div>

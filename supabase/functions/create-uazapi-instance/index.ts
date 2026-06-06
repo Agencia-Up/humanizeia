@@ -19,20 +19,42 @@ function buildInstanceHeaders(instanceToken: string, adminToken?: string) {
   };
 }
 
-function extractQrCodeCandidate(value: unknown): string | null {
+function looksLikeBase64Image(value: string) {
+  const normalized = value.replace(/\s/g, '');
+  return normalized.length > 200 &&
+    /^[A-Za-z0-9+/=]+$/.test(normalized) &&
+    /^(iVBORw0KGgo|\/9j\/|R0lGODlh|R0lGODdh|UklGR)/.test(normalized);
+}
+
+function isRawQrPayloadKey(keyHint?: string) {
+  return [
+    'qrcode',
+    'qrCode',
+    'qr_code',
+    'qr',
+    'code',
+    'connectionKey',
+  ].includes(keyHint || '');
+}
+
+function extractQrCodeCandidate(value: unknown, keyHint?: string): string | null {
   if (!value) return null;
 
   if (typeof value === 'string') {
     const normalized = value.trim();
     if (!normalized) return null;
     if (normalized.startsWith('data:image/')) return normalized;
-    if (normalized.length > 200 && /^[A-Za-z0-9+/=\r\n]+$/.test(normalized)) return normalized;
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    if (looksLikeBase64Image(normalized)) return normalized;
+    // UaZapi/Evolution variants sometimes return the WhatsApp QR payload as
+    // raw text instead of a rendered PNG. Keep it so the frontend can render it.
+    if (isRawQrPayloadKey(keyHint) && normalized.length > 40) return normalized;
     return null;
   }
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = extractQrCodeCandidate(item);
+      const found = extractQrCodeCandidate(item, keyHint);
       if (found) return found;
     }
     return null;
@@ -54,7 +76,7 @@ function extractQrCodeCandidate(value: unknown): string | null {
 
     for (const key of priorityKeys) {
       if (key in record) {
-        const found = extractQrCodeCandidate(record[key]);
+        const found = extractQrCodeCandidate(record[key], key);
         if (found) return found;
       }
     }
@@ -97,7 +119,7 @@ function includesNormalized(value: string | null | undefined, allowed: string[])
 
 async function resolveWebhookFunction(supabase: any, userId: string | null | undefined) {
   // Migracao total v1->v2: o flag global liga o v2 para TODOS os usuarios
-  // (consistente com sync-evolution-webhook). Reversivel via PEDRO_V2_ENABLED=false.
+  // (consistente com sync-uazapi-webhook). Reversivel via PEDRO_V2_ENABLED=false.
   if (["true", "1", "yes", "on", "enabled"].includes(String(Deno.env.get('PEDRO_V2_ENABLED') || '').toLowerCase().trim())) {
     return 'pedro-webhook-v2';
   }
@@ -113,7 +135,7 @@ async function resolveWebhookFunction(supabase: any, userId: string | null | und
 
   const { data, error } = await supabase.auth.admin.getUserById(userId);
   if (error) {
-    console.warn('[create-evolution-instance] Could not resolve user email for Pedro v2 gate:', error.message);
+    console.warn('[create-uazapi-instance] Could not resolve user email for Pedro v2 gate:', error.message);
     return 'uazapi-webhook';
   }
 
@@ -198,7 +220,7 @@ async function findExistingUazapiToken(baseUrl: string, adminHeaders: Record<str
     try {
       const res = await fetch(`${baseUrl}${endpoint}`, { method: 'GET', headers: adminHeaders });
       const text = await res.text();
-      console.log(`[create-evolution-instance] lookup ${endpoint} response (${res.status}): ${text.substring(0, 300)}`);
+      console.log(`[create-uazapi-instance] lookup ${endpoint} response (${res.status}): ${text.substring(0, 300)}`);
       if (!res.ok) continue;
       const payload = JSON.parse(text);
       const found = findInPayloadByName(payload, instanceName);
@@ -284,7 +306,7 @@ async function validatePoolLimits(
 }
 
 Deno.serve(async (req) => {
-  console.log(`[create-evolution-instance] Received ${req.method} request`);
+  console.log(`[create-uazapi-instance] Received ${req.method} request`);
 
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -300,7 +322,7 @@ Deno.serve(async (req) => {
     // ── Segurança: confirma que o chamador é dono da conta (user_id = master_id) ──
     // Sem isso, qualquer um com a anon key pública poderia criar instâncias na
     // conta de OUTRO usuário (consumindo o pool do plano dele). Espelha a checagem
-    // de get-evolution-qrcode / verify-instance-status.
+    // de get-uazapi-qrcode / verify-instance-status.
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
@@ -351,7 +373,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const provider = body.provider || 'evolution';
+    const provider = body.provider || 'uazapi';
 
     // ── Validação de pool de instâncias da conta (master + vendedores) ──
     // Sempre antes de criar: count total da conta < limite do plano do master.
@@ -368,9 +390,9 @@ Deno.serve(async (req) => {
       return await handleMetaProvider(supabase, body);
     }
 
-    return await handleEvolutionProvider(supabase, body);
+    return await handleUazapiProvider(supabase, body);
   } catch (error: unknown) {
-    console.error('[create-evolution-instance] Error:', error);
+    console.error('[create-uazapi-instance] Error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(JSON.stringify({ success: false, error: message }), {
       status: 500,
@@ -392,7 +414,7 @@ async function handleMetaProvider(supabase: any, body: any) {
     });
   }
 
-  console.log(`[create-evolution-instance] Verifying Meta API for phone_number_id: ${phone_number_id}`);
+  console.log(`[create-uazapi-instance] Verifying Meta API for phone_number_id: ${phone_number_id}`);
 
   try {
     const verifyRes = await fetch(
@@ -447,7 +469,7 @@ async function handleMetaProvider(supabase: any, body: any) {
       .single();
 
     if (insertErr) {
-      console.error('[create-evolution-instance] Meta insert error:', insertErr);
+      console.error('[create-uazapi-instance] Meta insert error:', insertErr);
       return new Response(JSON.stringify({ success: false, error: insertErr.message }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -474,14 +496,15 @@ async function handleMetaProvider(supabase: any, body: any) {
   }
 }
 
-async function handleEvolutionProvider(supabase: any, body: any) {
+async function handleUazapiProvider(supabase: any, body: any) {
   const { instance_name, user_id, friendly_name, seller_member_id } = body;
 
-  // 28/05/2026 — Cliente NUNCA usa Evolution API. Sempre UaZapi.
-  // UAZAPI_URL / UAZAPI_TOKEN sao as keys preferidas; legacy EVOLUTION_*
+  // 28/05/2026 — Cliente usa UaZapi. UAZAPI_* sao os secrets oficiais.
+  // Legacy EVOLUTION_*
   // mantidas como fallback pra nao quebrar deploys atuais.
-  let api_url = Deno.env.get('UAZAPI_URL') || Deno.env.get('EVOLUTION_API_URL');
-  let api_key = Deno.env.get('UAZAPI_ADMIN_TOKEN') || Deno.env.get('EVOLUTION_API_KEY');
+  const legacyUazapiToken = Deno.env.get('UAZAPI_API') || Deno.env.get('UAZAPI-API');
+  let api_url = Deno.env.get('UAZAPI_URL') || Deno.env.get('EVOLUTION_API_URL') || (legacyUazapiToken ? 'https://logosiabrasilcom.uazapi.com' : '');
+  let api_key = Deno.env.get('UAZAPI_ADMIN_TOKEN') || legacyUazapiToken || Deno.env.get('EVOLUTION_API_KEY');
   let credSource = 'env';
 
   // Fallback — herdar URL de uma instância ativa do master (mesmo painel UaZapi).
@@ -508,7 +531,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
       success: false,
       error: `API do WhatsApp (UaZapi) sem credenciais no servidor. Faltando: ${[
         !api_url ? 'UAZAPI_URL' : null,
-        !api_key ? 'UAZAPI_ADMIN_TOKEN (admin token UaZapi)' : null,
+        !api_key ? 'UAZAPI_ADMIN_TOKEN (admin token UaZapi) ou UAZAPI-API' : null,
       ].filter(Boolean).join(', ')}. Configure os secrets no Supabase.`,
     }), {
       status: 500,
@@ -721,12 +744,12 @@ async function handleEvolutionProvider(supabase: any, body: any) {
         body: attempt.body ? JSON.stringify(attempt.body) : undefined,
       });
       const qrText = await qrRes.text();
-      console.log(`[create-evolution-instance] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+      console.log(`[create-uazapi-instance] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
       if (!qrRes.ok) continue;
       try {
         const qrData = JSON.parse(qrText);
-        console.log(`[create-evolution-instance] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
-        console.log(`[create-evolution-instance] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
+        console.log(`[create-uazapi-instance] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
+        console.log(`[create-uazapi-instance] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
         qrCode = extractQrCodeCandidate(qrData);
       } catch {}
       if (qrCode) break;
@@ -775,10 +798,10 @@ async function handleEvolutionProvider(supabase: any, body: any) {
       }
     }
 
-    console.log(`[create-evolution-instance] Webhook response: ${webhookRes.status}`);
-    console.log(`[create-evolution-instance] Webhook set for ${uazapiInstanceName}`);
+    console.log(`[create-uazapi-instance] Webhook response: ${webhookRes.status}`);
+    console.log(`[create-uazapi-instance] Webhook set for ${uazapiInstanceName}`);
   } catch (webhookErr) {
-    console.warn('[create-evolution-instance] Failed to set webhook:', webhookErr);
+    console.warn('[create-uazapi-instance] Failed to set webhook:', webhookErr);
   }
 
   const insertPayload = {
@@ -791,7 +814,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     phone_number: '',
     status: 'waiting_qr',
     is_active: false,
-    provider: 'evolution',
+    provider: 'uazapi',
   };
 
   const { data: insertedInstance, error: insertErr } = await supabase
@@ -801,7 +824,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     .single();
 
   if (insertErr) {
-    console.error('[create-evolution-instance] DB insert error:', insertErr);
+    console.error('[create-uazapi-instance] DB insert error:', insertErr);
     await supabase.from('whatsapp_config').upsert({
       user_id,
       api_url: baseUrl,
@@ -817,7 +840,7 @@ async function handleEvolutionProvider(supabase: any, body: any) {
     instance_id: insertedInstance?.id || null,
     instance_name: uazapiInstanceName,
     qr_code: qrCode,
-    provider: 'evolution',
+    provider: 'uazapi',
     create_attempt: successfulAttempt,
   }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
