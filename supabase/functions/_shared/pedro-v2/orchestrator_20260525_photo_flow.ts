@@ -1776,6 +1776,7 @@ export async function processPedroV2Turn(
             remote_jid: remoteJid,
             role: "assistant",
             content: reply.text,
+            metadata: reply.media && reply.media.length > 0 ? { media: reply.media } : null,
           });
         } catch (err) {
           console.warn("[PedroV2] Failed to save assistant reply to chat history:", err);
@@ -1794,6 +1795,7 @@ export async function processPedroV2Turn(
           remote_jid: remoteJid,
           role: "assistant",
           content: reply.text,
+          metadata: reply.media && reply.media.length > 0 ? { media: reply.media } : null,
         });
       } catch (err) {
         console.warn("[PedroV2] Failed to save assistant reply to chat history:", err);

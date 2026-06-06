@@ -48,6 +48,7 @@ interface Message {
   content: string | null;
   message_type: string;
   media_url: string | null;
+  media_list?: { file?: string; url?: string; type?: string; caption?: string }[] | null;
   created_at: string;
   contact_name: string | null;
 }
@@ -236,24 +237,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
       try {
         const { data: histData } = await (supabase as any)
           .from('wa_chat_history')
-          .select('id, remote_jid, role, content, created_at')
+          .select('id, remote_jid, role, content, metadata, created_at')
           .eq('user_id', userId)
           .in('remote_jid', phoneCandidates(selectedLeadPhone))
           .order('created_at', { ascending: true })
           .range(0, 999);
-        historyRows = (histData || []).map((r: any): Message => ({
-          id: `wch-${r.id}`,
-          phone: cleanPhone(r.remote_jid),
-          // wa_chat_history guarda o NOME da instancia, nao o UUID -> nunca usar
-          // pra envio. Deixamos null pra nao poluir o resolveInstanceId().
-          instance_id: null,
-          direction: r.role === 'assistant' ? 'outgoing' : 'incoming',
-          content: r.content ?? '',
-          message_type: 'text',
-          media_url: null,
-          created_at: r.created_at,
-          contact_name: null,
-        }));
+        historyRows = (histData || []).map((r: any): Message => {
+          const mediaList = r.metadata?.media || null;
+          const firstMedia = mediaList?.[0] || null;
+          return {
+            id: `wch-${r.id}`,
+            phone: cleanPhone(r.remote_jid),
+            // wa_chat_history guarda o NOME da instancia, nao o UUID -> nunca usar
+            // pra envio. Deixamos null pra nao poluir o resolveInstanceId().
+            instance_id: null,
+            direction: r.role === 'assistant' ? 'outgoing' : 'incoming',
+            content: r.content ?? '',
+            message_type: firstMedia ? (firstMedia.type || 'image') : 'text',
+            media_url: firstMedia ? (firstMedia.file || firstMedia.url) : null,
+            media_list: mediaList,
+            created_at: r.created_at,
+            contact_name: null,
+          };
+        });
       } catch {
         // silencioso — mantem somente o wa_inbox
       }
@@ -803,7 +809,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                           )}
                         </div>
                         {lead.summary && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate whitespace-pre-line">{lead.summary}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate block whitespace-nowrap overflow-hidden text-ellipsis max-w-[180px] sm:max-w-[240px] md:max-w-[200px] lg:max-w-[260px]" title={lead.summary}>
+                            {lead.summary.replace(/\r?\n|\r/g, ' ')}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -914,10 +922,23 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                               ? 'bg-primary/20 text-foreground rounded-br-md'
                               : 'bg-muted/60 text-foreground rounded-bl-md'
                           }`}>
-                            {msg.media_url && msg.message_type === 'image' && (
-                              <a href={msg.media_url} target="_blank" rel="noopener noreferrer">
-                                <img src={msg.media_url} alt="" className="max-w-full rounded-lg mb-1.5 max-h-48 object-cover" />
-                              </a>
+                            {msg.media_list && msg.media_list.length > 0 ? (
+                              <div className={`grid ${msg.media_list.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-1.5 mb-1.5 max-w-[280px]`}>
+                                {msg.media_list.map((m: any, idx: number) => {
+                                  const url = m.file || m.url;
+                                  return (
+                                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="overflow-hidden rounded-lg block aspect-square border border-border/30 bg-muted/20">
+                                      <img src={url} alt="" className="w-full h-full object-cover hover:scale-105 transition-transform duration-200" />
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              msg.media_url && msg.message_type === 'image' && (
+                                <a href={msg.media_url} target="_blank" rel="noopener noreferrer">
+                                  <img src={msg.media_url} alt="" className="max-w-full rounded-lg mb-1.5 max-h-48 object-cover" />
+                                </a>
+                              )
                             )}
                             {msg.media_url && (msg.message_type === 'audio' || msg.message_type === 'ptt' || msg.message_type === 'voice') && (
                               <audio controls src={msg.media_url} className="max-w-full mb-1.5" />
