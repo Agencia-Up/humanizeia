@@ -1734,44 +1734,67 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  // Provedor de IA pra gerar as variacoes do disparo (seletor por campanha):
-  //  - Se a campanha escolheu DeepSeek (ai_model contem 'deepseek') E a secret
-  //    DEEPSEEK_API_KEY estiver setada -> usa a API direta do DeepSeek.
-  //  - Senao -> usa o gateway da Lovable (Gemini Flash), como antes.
+  // ===== Provedores de IA com FALLBACK AUTOMATICO =====
+  // Pre-selecao padrao: DeepSeek. Se um provedor falhar (ex.: acabaram os
+  // tokens/saldo, 401/402/429, timeout) passa AUTOMATICAMENTE pro proximo.
+  //  - DeepSeek selecionado  -> tenta DeepSeek -> OpenAI -> Lovable (rede final)
+  //  - OpenAI selecionado    -> tenta OpenAI  -> DeepSeek -> Lovable (rede final)
+  // A Lovable (Gemini) fica como ultima rede de seguranca pra nunca travar a fila.
   const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-  const wantsDeepSeek = (aiModel || "").toLowerCase().includes("deepseek");
-  const useDeepSeek = wantsDeepSeek && !!DEEPSEEK_API_KEY;
-  const aiUrl = useDeepSeek
-    ? "https://api.deepseek.com/v1/chat/completions"
-    : "https://ai.gateway.lovable.dev/v1/chat/completions";
-  const aiKey = useDeepSeek ? DEEPSEEK_API_KEY! : LOVABLE_API_KEY;
-  const modelToUse = useDeepSeek ? "deepseek-chat" : "google/gemini-2.5-flash";
+  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+  const allProviders: Record<string, { url: string; key?: string; model: string }> = {
+    deepseek: { url: "https://api.deepseek.com/v1/chat/completions", key: DEEPSEEK_API_KEY, model: "deepseek-chat" },
+    openai: { url: "https://api.openai.com/v1/chat/completions", key: OPENAI_API_KEY, model: "gpt-4o-mini" },
+    lovable: { url: "https://ai.gateway.lovable.dev/v1/chat/completions", key: LOVABLE_API_KEY, model: "google/gemini-2.5-flash" },
+  };
+  const m = (aiModel || "").toLowerCase();
+  const wantsOpenAI = (m.includes("openai") || m.includes("gpt")) && !m.includes("deepseek");
+  const order = wantsOpenAI ? ["openai", "deepseek", "lovable"] : ["deepseek", "openai", "lovable"];
+  const chain = order.map((n) => ({ name: n, ...allProviders[n] })).filter((p) => !!p.key);
 
-  const response = await fetchWithTimeout(aiUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: modelToUse,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: config.temp,
-      max_tokens: 500,
-    }),
-  }, AI_FETCH_TIMEOUT_MS);
+  let content: string | null = null;
+  let lastErr = "";
+  for (const prov of chain) {
+    try {
+      const resp = await fetchWithTimeout(prov.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${prov.key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: prov.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: config.temp,
+          max_tokens: 500,
+        }),
+      }, AI_FETCH_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`AI gateway error: ${response.status} - ${errText}`);
+      if (!resp.ok) {
+        lastErr = `${prov.name} ${resp.status} - ${(await resp.text()).slice(0, 180)}`;
+        console.warn(`[AI-FALLBACK] ${prov.name} falhou (${resp.status}), tentando proximo provedor...`);
+        continue;
+      }
+
+      const data = await resp.json();
+      const c = data.choices?.[0]?.message?.content;
+      if (c && c.trim()) {
+        if (prov.name !== order[0]) console.log(`[AI-FALLBACK] gerado via ${prov.name} (fallback)`);
+        content = c;
+        break;
+      }
+      lastErr = `${prov.name} resposta vazia`;
+      console.warn(`[AI-FALLBACK] ${prov.name} retornou vazio, tentando proximo provedor...`);
+    } catch (e: any) {
+      lastErr = `${prov.name} ${e?.message || e}`;
+      console.warn(`[AI-FALLBACK] ${prov.name} exception, tentando proximo provedor...`, e?.message || e);
+    }
   }
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Empty AI response");
+  if (!content) throw new Error(`Todos os provedores de IA falharam: ${lastErr}`);
 
   // Strip any markdown formatting
   return content.trim().replace(/\*\*/g, "").replace(/\*/g, "").replace(/^#+\s*/gm, "").replace(/^[-]\s+/gm, "");

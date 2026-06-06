@@ -119,7 +119,7 @@ export function CampaignFormDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [variationLevel, setVariationLevel] = useState<string>('medium');
-  const [aiModel, setAiModel] = useState<string>('gpt-4o-mini');
+  const [aiModel, setAiModel] = useState<string>('deepseek-chat');
   const [includeOptoutButtons, setIncludeOptoutButtons] = useState(false);
   const [replyAutoTag, setReplyAutoTag] = useState('');
   const [replyAutoMessage, setReplyAutoMessage] = useState('');
@@ -159,7 +159,7 @@ export function CampaignFormDialog({
       setMediaType(editingCampaign.media_type || '');
       setTags(editingCampaign.tags || []);
       setVariationLevel(editingCampaign.variation_level || 'medium');
-      setAiModel('gpt-4o-mini'); // só o modelo econômico por enquanto
+      setAiModel((editingCampaign as any).ai_model || 'deepseek-chat'); // preserva o salvo; padrão DeepSeek
       setIncludeOptoutButtons(editingCampaign.include_optout_buttons ?? false);
       setReplyAutoTag(editingCampaign.reply_auto_tag || '');
       setReplyAutoMessage(editingCampaign.reply_auto_message || '');
@@ -195,7 +195,7 @@ export function CampaignFormDialog({
     setInstanceId('auto'); setMediaUrl(''); setMediaType('');
     setTags([]); setTagInput('');
     setVariationLevel('medium');
-    setAiModel('gpt-4o-mini');
+    setAiModel('deepseek-chat');
     setIncludeOptoutButtons(false);
     setReplyAutoTag('');
     setReplyAutoMessage('');
@@ -415,8 +415,8 @@ export function CampaignFormDialog({
                 <Label className="text-xs font-medium">Modelo de IA</Label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: 'gpt-4o-mini', label: '⚡ Padrão (econômico)', desc: 'Gera as variações gastando menos tokens.' },
-                    { value: 'deepseek-chat', label: '🧠 DeepSeek', desc: 'Usa a sua chave do DeepSeek (mais barata).' },
+                    { value: 'deepseek-chat', label: '🧠 DeepSeek (recomendado)', desc: 'Copy de WhatsApp com a sua chave DeepSeek.' },
+                    { value: 'gpt-4o-mini', label: '⚡ OpenAI', desc: 'GPT-4o mini como alternativa.' },
                   ].map(opt => (
                     <button
                       key={opt.value}
@@ -435,7 +435,7 @@ export function CampaignFormDialog({
                   ))}
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  DeepSeek usa a chave configurada nas Secrets (DEEPSEEK_API_KEY). Sem a chave, o disparo cai no padrão automaticamente.
+                  Fallback automático: se acabarem os tokens/saldo do provedor escolhido, o disparo passa sozinho pro outro (DeepSeek ↔ OpenAI) sem travar a fila.
                 </p>
               </div>
             </div>
