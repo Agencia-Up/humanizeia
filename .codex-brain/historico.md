@@ -573,3 +573,16 @@
   atacar o motor de busca de forma sistemica. Proposto: auditoria/overhaul holistico do
   matching (achar todos os filtros rigidos/edge-cases de uma vez) + o plano de cache local
   + pg_trgm (versao robusta) como evolucao de infra.
+
+## 2026-06-06 — Inbox do Vendedor & Inbox IA do Gerente corrigidos
+
+- **Inbox do Vendedor (wa_inbox / webhook):**
+  - O inbox do vendedor (aba "Inbox" / Marcos) estava vazio porque o webhook principal (`pedro-webhook-v2`) descartava qualquer mensagem recebida/enviada que pertencesse a instâncias de vendedores (`seller_member_id` não nulo).
+  - Alteramos o webhook (`pedro-webhook-v2/index.ts`) para que, quando a mensagem pertença a uma instância de vendedor, ela ignore a IA (nunca dispara respostas automáticas da IA do Pedro no número pessoal do vendedor), mas registre as mensagens e mídias (fotos com e sem legenda) diretamente na tabela `wa_inbox`.
+  - Deploy realizado na produção: build `2026-06-06-seller-inbox-only-v67`.
+  - Validado localmente com o script `test_seller_inbox.mjs` contra a instância `leandro-a66b0377`, verificando inserções corretas em `wa_inbox`.
+- **Inbox IA do Gerente (wa_chat_history / RLS):**
+  - O inbox IA do gerente (aba "Inbox IA" do Pedro) exibia "0 msgs" e "Nenhuma mensagem nesta conversa" mesmo quando o banco de dados continha mensagens de histórico (`wa_chat_history`).
+  - **Causa raiz:** O Row Level Security (RLS) estava ativado na tabela `wa_chat_history` na produção, mas **nenhuma política RLS de SELECT/CRUD havia sido aplicada**. Isso fazia o Postgres negar silenciosamente todos os acessos do frontend (retornando zero linhas), enquanto o webhook gravava com service_role normalmente.
+  - **Correção:** Executamos comandos SQL na produção via CLI do Supabase linkado (`apply_chat_history_policies.sql`) para recriar as políticas RLS na tabela `wa_chat_history`, permitindo que usuários autenticados (`authenticated`) visualizem e gerenciem seus próprios históricos (filtrados por `user_id = auth.uid()`).
+  - **Verificação:** Rodamos a listagem de políticas em `pg_policies` na produção e confirmamos as 4 políticas ativas (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) para a tabela `wa_chat_history`.
