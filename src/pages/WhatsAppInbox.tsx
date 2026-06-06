@@ -148,6 +148,28 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const recordTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordCancelRef  = useRef<(() => void) | null>(null);
 
+  // Ajusta o layout do MainLayout quando o Inbox estiver aberto para virar full-screen (estilo WhatsApp Web)
+  useEffect(() => {
+    const wrapper = document.getElementById('main-scroll-container');
+    const footer = document.getElementById('main-layout-footer');
+    if (wrapper) {
+      wrapper.style.overflow = 'hidden';
+      wrapper.style.padding = '0';
+    }
+    if (footer) {
+      footer.style.display = 'none';
+    }
+    return () => {
+      if (wrapper) {
+        wrapper.style.overflow = '';
+        wrapper.style.padding = '';
+      }
+      if (footer) {
+        footer.style.display = '';
+      }
+    };
+  }, []);
+
   /* ── Fetch phones dos leads atribuídos ao vendedor ────────────── */
   useEffect(() => {
     if (!isSeller || !seller || !effectiveUserId) return;

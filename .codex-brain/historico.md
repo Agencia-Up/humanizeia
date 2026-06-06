@@ -577,6 +577,201 @@
 ## 2026-06-06 — Inbox do Vendedor & Inbox IA do Gerente corrigidos
 
 - **Inbox do Vendedor (wa_inbox / webhook):**
+- Raiz comum: agente nao tinha o conceito de "lead com dono". Decisao do dono (perguntada):
+  dentro de 24h responder como ASSISTENTE (nao silenciar); fotos = rotear pro vendedor.
+- Implementacao:
+  - orchestrator: trocou o "post_transfer_hold_24h" (silencio) por deteccao de dono via
+    `assigned_to_id` (persistente, vale apos 24h) OU transferencia recente (<24h). Dono
+    INATIVO (is_active=false) NAO entra -> cai no fluxo normal p/ reatribuir.
+    `ownedLeadAssistantMode` + `assistantSellerName`. Re-notifica o vendedor (throttle 45min).
+    Rebaixa photo_request/handoff -> reply_only; `shouldSendVehiclePhotos &&
+    !ownedLeadAssistantMode`; gate do auto-handoff `&& !ownedLeadAssistantMode`.
+  - pedroBrainReply: novo input `assigned_seller_name`; persona "MODO ASSISTENTE" como
+    REGRA MAXIMA (prevalece sobre o funil): nao requalifica, responde duvida/info do carro,
+    cita o vendedor pelo nome e diz que vai avisa-lo; fotos roteadas pro vendedor;
+    pronto_para_transferir/transferir_silencioso travados em false.
+- Validado ao vivo nos 3 leads reais: ...1347 (Joao Santos) e ...1418 (Matheus) -> modo
+  assistente perfeito (responde + cita vendedor, sem requalificar); ...8151 (Bruno Henrique
+  INATIVO) -> cai no fluxo normal (correto). Lead novo -> fluxo normal completo.
+- OBS p/ o dono: o vendedor Bruno Henrique esta INATIVO no sistema (por isso o lead do
+  Francisco nao e roteado pra ele). Reativar o Bruno ou aceitar a reatribuicao.
+
+## 2026-06-03 — Relatorio MESTRE Antigravity: v53 (estruturais) + v54 (search-and-retry)
+
+- 3o relatorio (mestre): 5 falhas reais + 5 causas raiz + diffs. Falhas 1/2/3 ja estavam
+  corrigidas (v52/v49). Corrigi as demais na raiz, em 2 deploys verificaveis.
+- v53 `2026-06-03-master-fixes-amnesia-cutoff-v53`:
+  - AMNESIA (#2): `qualificacao_coletada` do reply (nome/interesse/troca/entrada/pagamento/
+    agendamento) NAO era persistido -> agente repetia perguntas. Agora mescla na memoria
+    antes de salvar (orchestrator, save final). BONUS: como o LLM separa interesse de
+    carro_troca, corrige na RAIZ a poluicao de troca em interesse.modelo_desejado. 9 testes.
+  - CUTOFF (#5): historico era `lead_created_at - 2000ms` (2 ocorrencias) -> 30min, p/ nao
+    perder as 1as msgs do lead quando a webhook atrasa.
+  - STATUS TRANSFERENCIA (#1): modo assistente agora ignora transfer expired/failed/rejected/
+    canceled -> lead nao fica em limbo, volta ao fluxo normal (pendente/confirmada valem).
+  - OVERRIDE LLM (#3): normalizePlan nao forca stock_search quando intent e financing/
+    trade_in/human_request (handoff ja tinha backstop na ETAPA C). Validado: "taxa de
+    financiamento?" -> intent=financing, reply_only (nao forca busca cega).
+- v54 `2026-06-03-search-and-retry-alternatives-v54`:
+  - SEARCH-AND-RETRY (Falha 5 / Edison): busca especifica vazia -> 2a busca AMPLA (mesma
+    categoria/teto de preco, sem modelo) e oferece parecidos como ALTERNATIVA (is_alternatives
+    + response_guidance), em vez de "nao temos" + funil vazio. searchPedroStock ja ordena por
+    preco crescente. Validado: "tem corolla ate 80 mil?" -> oferece Peugeot 2008/208 na faixa.
+- NAO mexido do relatorio: Mod 5 (intentRouter troca) — resolvido pela amnesia (mais robusto
+  que o regex). Falha 4 (resposta dupla) — guard de idempotencia v51.
+
+## 2026-06-04 — Anuncio MODELO-first: apresentar positivo o carro que existe (v55)
+
+- Build `2026-06-04-ad-model-first-positive-v55`. Dor: lead de anuncio "Mini Cooper 2023"
+  (Mauricio) — estoque tem Mini Cooper 1.5 2019 cinza — e o agente ABRIA NEGATIVO ("nao
+  temos o 2023, mas temos opcao proxima"), gerando desconfianca/perda.
+- Metodo (pedido do dev): workflow MULTI-AGENTE (7 agentes: 3 analise + 3 solucao + 1 sintese)
+  com a EVIDENCIA REAL em maos. Convergiram: o ANO do anuncio (metadado/arte do FB) era
+  criterio HARD de match em 4 pontos -> _adMatchedFact=null quando ano nao bate -> "nao temos".
+- Correcao MODELO-first (ano = desempate, nunca eliminatorio), 7 edits:
+  1. adContext.adContextToMemory: modelo_desejado = stripYear (modelo limpo); veiculo_citado cru.
+  2. pedroBrainReply selecao de fato (CRITICO): _adModelFacts casa por MODELO; _adExactYear so
+     desempata. Flags ad_model_in_stock/ad_year_matched no payload.
+  3. pedroBrainReply hard_rule: anuncio -> nunca "nao temos"; modelo existe -> apresenta positivo.
+  4. pedroBrainReply buildAdVehicleConsultationFallback: abertura positiva + caso honesto vazio.
+  5. pedroBrainPlanner adVehicleGuidance: REGRA DE MATCH = MODELO manda, ano secundario.
+  6. pedroBrainReply gancho-alternativa: so dispara se MODELO ausente.
+  7. orchestrator is_alternatives: linguagem por "modelo".
+- BUG pego no teste: o filtro proposto pelos agentes tinha l.includes(m) (label contem o
+  proprio modelName -> casava TODO carro). Corrigido p/ l.includes(_adModelo) || (m>=3 &&
+  _adModelo.includes(m)). 5 casos unitarios + validacao AO VIVO: anuncio Mini Cooper 2023 ->
+  "Temos um Mini Cooper aqui sim! ...2019 cinza R$108.990" (positivo); Corolla ausente ->
+  honesto + Polo. Compass 2023 com 2023 no estoque -> desempate preservado.
+## 2026-06-04 — Fase 3 (tom humano) (v56)
+
+- Build `2026-06-04-tom-humano-fase3-v56` + deploy do generate-agent-funnel-prompt.
+- RE-DIAGNOSTICO honesto (logs recentes vs base): o trabalho anterior (prompt campeao +
+  concisao) JA tinha derrubado a maior parte: pergunta-isca 16%->7%, msgs longas 12%->4%.
+  O "?" de 62% e majoritariamente LEGITIMO (qualificacao "a vista ou financiar?", CTA
+  "quer ver fotos?") — NAO forcado pra baixo (prejudicaria a qualificacao). System prompt
+  salvo do Carvalho ja esta no formato campeao (proibe isca/elogio).
+- Tics residuais reais: aberturas "Otimo!"/"Perfeito!" e filler "estou a disposicao".
+  Cirurgia fina (sem deixar frio):
+  - pedroBrainReply (REGRAS DE FORMA, aplica a TODOS os agentes acima do portal): PROIBIDO
+    abrir com interjeicao de entusiasmo ISOLADA; PROIBIDO filler de cortesia no fim. ("Otimo"
+    no meio da frase como concordancia segue permitido — evita tom frio/abrupto.)
+  - generate-agent-funnel-prompt: mesmas 2 regras no prompt gerado (fonte, agentes futuros).
+- Validado: 4 dry-runs (3 aberturas limpas; 1 "Otimo," conector aceitavel; 0 filler).
+- NOTA: sanitizeModel forca o reply em gpt-4o mesmo o agente configurado como claude-3.5.
+- PLANO DE INTELIGENCIA COMPLETO: Fase 1 (emoji/por favor v49) + Fase 2 (planner estruturado
+  v50) + Auditoria 1 (v51) + Auditoria 2/modo assistente (v52) + relatorio mestre (v53/v54) +
+  anuncio MODELO-first (v55) + Fase 3 tom (v56). 3 relatorios Antigravity 100% endereçados.
+
+## 2026-06-04 — FOTO ERRADA: trava de modelo do topico (v57)
+
+- Build `2026-06-04-photo-topic-lock-v57`. Bug (lead 5512988987269): apresentou 3 Cretas,
+  lead pediu "fotos do preto", agente mandou foto de JEEP RENEGADE. Causa: pool de foto era
+  [Tracker prata, Jeep preto] (busca SUV anterior; Cretas nunca salvos) e o seletor casava
+  "preto" por COR contra a lista inteira -> unico preto = Jeep -> imagem errada.
+- Metodo: workflow multi-agente (7 agentes) — descobriu que JA existia uma trava de modelo
+  (sameVehicleModel/topicAnchor) mas so armada COM busca fresca; no turno de foto-por-memoria
+  ficava null e a cor casava cross-modelo. Fix:
+  - pickReferencedVehicle ganha topicAnchor: cor/atributo so seleciona DENTRO do modelo do
+    topico; nome de modelo/ordinal vencem.
+  - topicAnchorVehicle armado tintambem sem busca fresca (quando o pool e HOMOGENEO).
+  - photoVehiclesPool INVERTIDO: prefere estoque fresco do topico a memoria velha.
+  - topicIsAmbiguous: pool velho heterogeneo + pedido so por cor -> NAO manda foto, pergunta
+    qual carro (ambiguousPhotoPlan action=clarify). Principio: nunca mandar modelo errado.
+- ATENCAO p/ futuro: os AGENTES DO WORKFLOW EDITARAM o orchestrator direto (2 editores
+  concorrentes). Auditei: sem duplicacao, esbuild ok, KNOWN_PHOTO_MODEL_TOKENS removido.
+  MAS o sameVehicleModel deles tinha BUG (casava por qualquer token; "Flex"/"Aut" no nome
+  faziam Tracker==Jeep -> pool "homogeneo" -> Jeep mandado igual). Pego em TESTE UNITARIO.
+  Reescrito p/ chave marca:nome-do-modelo com MODEL_NOISE_TOKENS. SEMPRE auditar+testar
+  codigo de agente de workflow antes de aceitar.
+- Validado: 5 casos unitarios (sameVehicleModel Tracker!=Jeep apesar de flex/aut; pool
+  homo/hetero) + live (Mauricio agora roteia o Creta certo via modo assistente; "fotos do
+  onix" normal ok).
+
+## 2026-06-04 — REINTEGRACAO Antigravity + restaura rede de foto (v58) + GOVERNANCA
+
+- ATENCAO/GOVERNANCA: o Antigravity (rodado pelo dono na MESMA maquina/repo) editou os
+  MESMOS arquivos do Pedro v2 e DEPLOYOU por cima do v57 (commit 0fdeab2). Problema dos
+  "dois AIs se atropelando". Auditei o que sobreviveu vs o que ele removeu.
+- SOBREVIVEU (intacto + vivo): Fase 2 planner (PLAN_JSON_SCHEMA, classifyPendingQuestion,
+  hasPositiveEmoji), ad MODELO-first (v55, _adModelFacts), modo assistente (v52), amnesia
+  (v53, memToSave), search-retry (v54), trava de foto (v57, topicIsAmbiguous/vehicleModelKey),
+  tom (v56), idempotencia (v51).
+- Antigravity ADICIONOU (bom, mantido): multi-veiculo (vehicleResolver: has_multiple_vehicles,
+  all_matched_models), fix de concorrencia (myUserMsgId vs latest), reset de ultima_foto ao
+  trocar topico em savePresentedVehicles.
+- Antigravity REMOVEU: TODO o enforcement do normalizePlan (enforced_accepted_recent_photo_offer
+  v49, guard financiamento v53, enforced_ad_vehicle_consultation, enforced_current_vehicle).
+  Filosofia dele = confiar 100% no LLM.
+- Testei AO VIVO: anuncio (MODELO-first), busca de veiculo e multi-veiculo funcionam SEM os
+  enforcements (LLM da conta pos-Fase 2). MAS o aceite de foto (v49) eu tenho PROVA (log Rene)
+  de que o LLM erra (👍🏼+Pir favor -> vehicle_reference -> sem foto).
+- DECISAO DO DONO: "eu reintegro + restauro as redes; so eu edito o Pedro daqui pra frente".
+  v58: restaurei SO o enforcement de aceite de foto no normalizePlan (FORCA photo_request se
+  acceptedPhotoOffer + apresentados + nao novo topico). Mantive a autonomia do resto.
+  Build `2026-06-04-reintegra-antigravity-photo-net-v58`. Validado live: multi-veiculo +
+  anuncio + busca OK; rede de foto unit-provada.
+- ACAO DO DONO: NAO rodar o Antigravity nos arquivos do Pedro v2 de novo (senao re-atropela).
+
+## 2026-06-04 — BUSCA DE ESTOQUE: forca busca + nunca mente "nao temos" (v59)
+
+- Build `2026-06-04-force-stock-search-net-v59`. Dor recorrente do dono ("sempre e a busca
+  no estoque"). Caso Patricia: agente disse "nao temos Compass" e "nao temos Toro flex" —
+  mas HA 3 Compass + 1 Toro diesel no estoque.
+- DIAGNOSTICO (turn-logs reais + busca direta): o BNDV TEM os carros (busca direta achou).
+  MAS nos turnos da Patricia: action=reply_generation, filtros={}, stock_total=0 -> a busca
+  NEM RODAVA. A LLM escolhia reply_only e ALUCINAVA "nao temos". = 2a consequencia da remocao
+  (Antigravity) do enforced_current_vehicle.
+- Fix (2a rede critica restaurada com evidencia):
+  1. planner normalizePlan: se has_current_vehicle_signal + query e a LLM ia reply_only/clarify,
+     FORCA stock_search (enforced_current_vehicle_search). Agente nunca afirma disponibilidade
+     sem buscar. photo/handoff intactos.
+  2. reply hard_rules: (a) MODELO existe mas spec (combustivel/cambio/cor/versao/ano) difere ->
+     apresentar POSITIVO a spec real ("a Toro que tenho e diesel, nao flex"), nunca "nao temos
+     flex"; (b) NUNCA negar disponibilidade sem stock.facts real.
+- Validado live: "se tiver compass" -> apresenta 3 Compass; "toro flex" -> apresenta a diesel
+  positivo; "toro ou compass" -> busca; "corolla" (ausente) -> honesto + alternativas.
+- LICAO: o agente NAO pode confiar 100% no LLM para claims de estoque — precisa FORCAR a busca.
+  Ja foram 2 redes restauradas (foto v58, busca v59) por causa da remocao do Antigravity.
+
+## 2026-06-04 — Hold pos-transferencia 24h revisado: avisa lead 1x + silencio (v60)
+
+- Build `2026-06-04-post-transfer-24h-hold-silent-v60`. O "modo assistente" (v52) criava
+  LOOP e SPAMAVA o vendedor com "Seu lead respondeu por aqui 👀" no mesmo dia.
+- NOVA regra do dono (substitui v52, reverte p/ hold v48 sem re-notify):
+  - DENTRO de 24h da transferencia: avisa o LEAD 1x ("consultor vai entrar em contato,
+    aguarde") via throttle transfer_notice_at, depois SILENCIA (return post_transfer_hold_24h).
+    NAO re-notifica o vendedor (mesmo dia, ele ja sabe). Transferencia expired/failed/etc
+    nao prende.
+  - DEPOIS de 24h: trata o lead NORMALMENTE; transfer -> MESMO vendedor (transferRouter via
+    assigned_to_id -> returning_lead_renotify).
+- ownedLeadAssistantMode/assistantSellerName agora SEMPRE false/null (refs downstream viram
+  no-op -> comportamento normal). A persona "MODO ASSISTENTE DO VENDEDOR" no reply fica
+  inativa (assigned_seller_name sempre null).
+- Validado live: 5 leads reais transferidos <24h (status confirmed) -> todos
+  post_transfer_hold_24h (silencio). esbuild ok.
+
+## 2026-06-04 — Match de MODELO vence categoria inferida (v61)
+
+- Build `2026-06-04-model-overrides-category-v61`. Dono frustrado (com razao): "quero um
+  polo 2013" -> "nao temos", oferece Polo 2025. MAS ha VW Polo Sedan 1.6 2012/2013 prata
+  R$44.990 no estoque. EU TINHA DITO que a busca estava "ok" — estava ERRADO.
+- RAIZ SISTEMICA (provada): "polo" infere tipo_veiculo=hatch (modelo Polo listado como
+  hatch) e passesRequestedVehicleType EXCLUIA o Polo SEDAN (subcat sedan != hatch) ANTES do
+  match de modelo. Confirmado: "tem polo?" so trazia 2025 hatch; "tem polo sedan?" achava.
+- FIX NA RAIZ (afeta TODO modelo dual-carroceria: Polo, Onix, HB20/HB20S, Virtus...): quando
+  o lead NOMEIA modelo (modelTerms != []), a subcategoria vira so preferencia de ranking,
+  NUNCA exclui. Categoria so e filtro rigido em busca POR CATEGORIA (sem modelo).
+  passesRequestedVehicleType(+hasModelQuery); rankVehicles passa modelTerms.length>0.
+- Validado: "quero um polo 2013" -> apresenta Polo Sedan 2013 (rank 1 por ano); "hatch ate
+  60 mil" -> ainda filtra hatches (sem regressao).
+- META: o dono criticou (com razao) que ando REATIVO (corrige print a print) em vez de
+  atacar o motor de busca de forma sistemica. Proposto: auditoria/overhaul holistico do
+  matching (achar todos os filtros rigidos/edge-cases de uma vez) + o plano de cache local
+  + pg_trgm (versao robusta) como evolucao de infra.
+
+## 2026-06-06 — Inbox do Vendedor & Inbox IA do Gerente corrigidos
+
+- **Inbox do Vendedor (wa_inbox / webhook):**
   - O inbox do vendedor (aba "Inbox" / Marcos) estava vazio porque o webhook principal (`pedro-webhook-v2`) descartava qualquer mensagem recebida/enviada que pertencesse a instâncias de vendedores (`seller_member_id` não nulo).
   - Alteramos o webhook (`pedro-webhook-v2/index.ts`) para que, quando a mensagem pertença a uma instância de vendedor, ela ignore a IA (nunca dispara respostas automáticas da IA do Pedro no número pessoal do vendedor), mas registre as mensagens e mídias (fotos com e sem legenda) diretamente na tabela `wa_inbox`.
   - Deploy realizado na produção: build `2026-06-06-seller-inbox-only-v67`.
@@ -586,3 +781,10 @@
   - **Causa raiz:** O Row Level Security (RLS) estava ativado na tabela `wa_chat_history` na produção, mas **nenhuma política RLS de SELECT/CRUD havia sido aplicada**. Isso fazia o Postgres negar silenciosamente todos os acessos do frontend (retornando zero linhas), enquanto o webhook gravava com service_role normalmente.
   - **Correção:** Executamos comandos SQL na produção via CLI do Supabase linkado (`apply_chat_history_policies.sql`) para recriar as políticas RLS na tabela `wa_chat_history`, permitindo que usuários autenticados (`authenticated`) visualizem e gerenciem seus próprios históricos (filtrados por `user_id = auth.uid()`).
   - **Verificação:** Rodamos a listagem de políticas em `pg_policies` na produção e confirmamos as 4 políticas ativas (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) para a tabela `wa_chat_history`.
+- **Ajustes de Layout (Estilo WhatsApp Web — Todas as Contas & Inbox):**
+  - **Problema:** O chat "estourava" a página do layout principal, forçando a aparição da barra de rolagem na página inteira e empurrando o footer e o input de digitação para fora do campo visível (forçando o usuário a dar scroll vertical completo para poder digitar).
+  - **Correção:** 
+    1. No `MainLayout.tsx`, adicionamos IDs únicos ao contêiner de rolagem principal (`id="main-scroll-container"`) e ao rodapé da plataforma (`id="main-layout-footer"`). Adicionamos também um padding interno na div do botão voltar para manter seu alinhamento original em telas sem padding.
+    2. Em `WhatsAppInbox.tsx` (inbox do Marcos) e `AgentInboxTab.tsx` (inbox do Pedro), injetamos um hook `useEffect` que, ao montar o inbox, zera o padding do contêiner principal do `MainLayout`, define seu `overflow` como `hidden` e oculta o `footer`. Ao desmontar, restaura os estilos e exibição originais.
+    3. Em `AgentInboxTab.tsx`, alteramos a classe da div principal de `h-[calc(100vh-180px)]` para `h-full` para que ela preencha de forma dinâmica e fluida 100% da área útil das abas de visualização.
+  - **Resultado:** A rolagem de página foi totalmente bloqueada apenas durante a visualização dos inbox, fazendo a lista de contatos e a área de mensagens rolarem apenas internamente. O campo de digitação ficou 100% fixo no rodapé e o cabeçalho fixo no topo, igual ao WhatsApp Web.

@@ -56,10 +56,10 @@ export function MainLayout({ children }: MainLayoutProps) {
 
           <TokenAlertBanner />
 
-          <div className="flex-1 flex flex-col overflow-auto p-4 lg:p-6">
+          <div id="main-scroll-container" className="flex-1 flex flex-col overflow-auto p-4 lg:p-6">
             {/* Botão Voltar — aparece em todas as páginas exceto no Dashboard */}
             {showBackButton && (
-              <div className="mb-3 -mt-1">
+              <div className="mb-3 -mt-1 px-4 lg:px-6 pt-2">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -83,7 +83,7 @@ export function MainLayout({ children }: MainLayoutProps) {
               {children}
             </main>
 
-            <footer className="mt-auto pt-6 pb-3 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
+            <footer id="main-layout-footer" className="mt-auto pt-6 pb-3 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
               <span>© {new Date().getFullYear()} LOGOS<span style={{ color: 'var(--brand-gold)' }}>|IA</span></span>
               <span className="text-border">•</span>
               <Link to="/privacy" className="hover:text-primary transition-colors">Política de Privacidade</Link>
