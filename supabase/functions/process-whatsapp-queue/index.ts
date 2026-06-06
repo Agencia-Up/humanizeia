@@ -169,6 +169,7 @@ interface Instance {
   health_score: number;
   messages_sent_today: number;
   created_at: string;
+  contacts_count: number | null;
   provider: string;
   meta_config: any;
   last_used_at: string | null;
@@ -1098,21 +1099,47 @@ async function selectSmartInstance(
       ? Math.floor((Date.now() - new Date(candidate.created_at).getTime()) / (1000 * 60 * 60 * 24))
       : 999;
 
+    // ===== MATURIDADE REAL (footprint Uazapi) =====
+    // A idade da instância (created_at) reseta quando o número é RECONECTADO no
+    // painel — o que jogava um número de anos pra "dia 0" e o limitava como chip
+    // novo. Para corrigir, usamos o footprint REAL do número (qtd de contatos/
+    // conversas que a Uazapi devolve na conexão): se o número já é estabelecido
+    // (>= MATURE_CONTACTS_THRESHOLD), tratamos como MADURO mesmo recém-conectado.
+    const MATURE_CONTACTS_THRESHOLD = 50;
+    const footprint = candidate.contacts_count ?? 0;
+    const hasMatureFootprint = footprint >= MATURE_CONTACTS_THRESHOLD;
+    // Idade EFETIVA: footprint maduro vale como número >= fim da rampa.
+    const effectiveAgeDays = hasMatureFootprint
+      ? Math.max(instanceAgeDays, WARMUP_RAMP_DAYS)
+      : instanceAgeDays;
+
     let dailyLimit: number;
 
     if (!warmupEnabled) {
-      // Aquecimento DESLIGADO → sem rampa. Número tratado como pronto, no teto
-      // maduro de segurança (200/dia). É escolha do cliente desligar a chave.
-      dailyLimit = DEFAULT_DAILY_LIMIT_MATURE_INSTANCE;
-    } else if (instanceAgeDays >= warmupRampDays) {
-      // Rampa concluída → capacidade alvo configurada.
+      // Aquecimento DESLIGADO. Número MADURO (footprint real OU >=14d) → teto
+      // pleno (200/dia). Número NOVO sem footprint → AINDA respeita rampa por
+      // idade (anti-ban): desligar a chave não libera 200/dia num chip novo.
+      dailyLimit = effectiveAgeDays >= WARMUP_RAMP_DAYS
+        ? DEFAULT_DAILY_LIMIT_MATURE_INSTANCE
+        : Math.max(
+            DEFAULT_DAILY_LIMIT_NEW_INSTANCE,
+            Math.floor(
+              DEFAULT_DAILY_LIMIT_NEW_INSTANCE +
+              (DEFAULT_DAILY_LIMIT_MATURE_INSTANCE - DEFAULT_DAILY_LIMIT_NEW_INSTANCE) *
+              (effectiveAgeDays / WARMUP_RAMP_DAYS)
+            ),
+          );
+    } else if (effectiveAgeDays >= warmupRampDays) {
+      // Rampa concluída (ou footprint maduro) → capacidade alvo configurada.
       dailyLimit = warmupTarget;
     } else {
       // Rampa LINEAR do piso (initial_messages, dia 0) até o alvo (limite_diario_inicial).
-      // Nunca abaixo do piso configurado — corrige o bug antigo que ramping de ~0
-      // dava floor(50*2/14)=7/dia num número de 1 dia.
-      const ramped = warmupInitial + (warmupTarget - warmupInitial) * (instanceAgeDays / warmupRampDays);
+      const ramped = warmupInitial + (warmupTarget - warmupInitial) * (effectiveAgeDays / warmupRampDays);
       dailyLimit = Math.max(warmupInitial, Math.floor(ramped));
+    }
+
+    if (hasMatureFootprint && instanceAgeDays < WARMUP_RAMP_DAYS) {
+      console.log(`[MATURITY] ${candidate.instance_name}: footprint=${footprint} contatos → tratado como MADURO (limite ${dailyLimit}/dia) apesar de conectado há ${instanceAgeDays}d`);
     }
 
     const candidateSentToday = todaySentByInstance.get(candidate.id) ?? candidate.messages_sent_today ?? 0;

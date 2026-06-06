@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
 
     const { data: instance, error: dbError } = await supabase
       .from('wa_instances')
-      .select('id, user_id, seller_member_id, instance_name, provider, status, is_active, api_url, api_key_encrypted')
+      .select('id, user_id, seller_member_id, instance_name, provider, status, is_active, api_url, api_key_encrypted, contacts_count')
       .eq('id', instance_id)
       .single();
 
@@ -244,6 +244,35 @@ Deno.serve(async (req) => {
       if (instance.status === 'connected' && realStatus === 'disconnected') {
         updateData.health_score = 0;
         updateData.shadow_ban_suspect = true;
+      }
+    }
+
+    // ===== FOOTPRINT / MATURIDADE DO NÚMERO (uma vez por número) =====
+    // Na primeira vez que o número conecta, puxa a quantidade de contatos da
+    // Uazapi. É a "prova" de número estabelecido: o worker de Disparo usa isso
+    // pra liberar o teto diário de um número ANTIGO mesmo recém-(re)conectado,
+    // em vez de tratá-lo como chip novo (created_at reseta na reconexão).
+    // Não bloqueia nem derruba o status se falhar.
+    if (isConnected && (instance as { contacts_count?: number | null }).contacts_count == null) {
+      try {
+        const cRes = await fetch(`${baseUrl}/chat/fetchContacts/${instance.instance_name}`, {
+          method: 'GET',
+          headers,
+        });
+        if (cRes.ok) {
+          const cData = await cRes.json();
+          const list = Array.isArray(cData) ? cData : (cData?.contacts || cData?.data || []);
+          if (Array.isArray(list)) {
+            updateData.contacts_count = list.length;
+            updateData.contacts_synced_at = new Date().toISOString();
+            console.log(`[verify-instance] ${instance.instance_name} footprint: ${list.length} contatos`);
+          }
+        } else {
+          console.warn(`[verify-instance] fetchContacts retornou ${cRes.status} — footprint não sincronizado`);
+          await cRes.text();
+        }
+      } catch (cErr) {
+        console.warn('[verify-instance] footprint fetch falhou:', cErr);
       }
     }
 
