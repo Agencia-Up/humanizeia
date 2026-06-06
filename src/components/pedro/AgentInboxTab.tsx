@@ -148,28 +148,6 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordCancelRef = useRef(false);
 
-  // Ajusta o layout do MainLayout quando o Inbox IA estiver aberto para virar full-screen (estilo WhatsApp Web)
-  useEffect(() => {
-    const wrapper = document.getElementById('main-scroll-container');
-    const footer = document.getElementById('main-layout-footer');
-    if (wrapper) {
-      wrapper.style.overflow = 'hidden';
-      wrapper.style.padding = '0';
-    }
-    if (footer) {
-      footer.style.display = 'none';
-    }
-    return () => {
-      if (wrapper) {
-        wrapper.style.overflow = '';
-        wrapper.style.padding = '';
-      }
-      if (footer) {
-        footer.style.display = '';
-      }
-    };
-  }, []);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -720,7 +698,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-col h-full bg-card rounded-xl border border-border/50 overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-230px)] bg-card rounded-xl border border-border/50 overflow-hidden">
       {/* ── Top Bar: Seletor de Agente ── */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30">
         <Bot className="h-5 w-5 text-violet-400 shrink-0" />
