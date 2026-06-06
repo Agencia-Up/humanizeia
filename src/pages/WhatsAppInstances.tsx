@@ -145,12 +145,18 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
         body: { instance_id: instanceId },
       });
       if (error) throw error;
+
+      if (data?.connected_phone) {
+        setInstances(prev => prev.map(i =>
+          i.id === instanceId ? { ...i, phone_number: data.connected_phone } : i
+        ));
+      }
       
       if (data?.status_changed) {
         // Update local state
         setInstances(prev => prev.map(i => 
           i.id === instanceId 
-            ? { ...i, status: data.current_status, is_active: data.is_connected, health_score: data.is_connected ? i.health_score : 0 }
+            ? { ...i, status: data.current_status, is_active: data.is_connected, phone_number: data.connected_phone || i.phone_number, health_score: data.is_connected ? i.health_score : 0 }
             : i
         ));
         if (!silent) {
@@ -176,7 +182,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     setIsVerifyingAll(true);
     try {
       // Bulk audit no servidor: verifica todas as instâncias da conta contra a
-      // Evolution API e DESATIVA (is_active=false) as que estão zumbi.
+      // UaZapi e DESATIVA (is_active=false) as que estao zumbi.
       const { data, error } = await supabase.functions.invoke('audit-master-instances', { body: {} });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -211,10 +217,17 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
       if (error) throw error;
       const list = (data as unknown as WaInstance[]) || [];
       setInstances(list);
-      // NÃO disparar auto-verify ao abrir a página — era a causa principal da
-      // instabilidade: a cada montagem rodava audit-master-instances que faz
-      // N requests à UaZapi (uma por instância) e gerava toasts de erro em
-      // cascata. Master clica "Verificar Todos" quando quiser checar.
+      if (!skipVerify) {
+        const missingConnectedPhone = list
+          .filter(i => i.status === 'connected' && i.is_active && !i.phone_number)
+          .slice(0, 3);
+
+        if (missingConnectedPhone.length > 0) {
+          void Promise.all(missingConnectedPhone.map(i => verifyInstanceStatus(i.id, true)));
+        }
+      }
+      // Nao dispara auditoria geral ao abrir a pagina; so corrige, em silencio,
+      // instancias conectadas que ainda nao gravaram o telefone.
     } catch (err: any) {
       console.error('Error fetching instances:', err);
     } finally {
