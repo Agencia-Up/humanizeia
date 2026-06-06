@@ -8,7 +8,7 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 
-const PEDRO_V2_BUILD = "2026-06-04-silent-transfer-on-disinterest-v66";
+const PEDRO_V2_BUILD = "2026-06-06-seller-inbox-only-v67";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||
@@ -164,8 +164,116 @@ Deno.serve(async (req) => {
   // the master's Pedro agent (agentLooksLikePedro / activeAgents[0]) and answers
   // on the seller's line. The v1 webhook (uazapi-webhook) avoids this by REQUIRING
   // .contains('instance_ids', [instance.id]); v2 lost that guard.
+  // ── HARD RULE: a seller's number is NEVER answered by the AI ────────────────
+  // Only the master's configured number (the instance linked inside the AI agent)
+  // may run Pedro. Seller instances always carry seller_member_id: they connect
+  // and show "connected" for the seller's own manual use, but must NEVER be
+  // hijacked by the AI.
+  //
+  // FIX: Embora a IA nunca responda, precisamos registrar as mensagens que passam
+  // por aqui na tabela wa_inbox para que o Inbox do Vendedor no portal funcione.
   if (waInstance.seller_member_id) {
-    return jsonResponse({ ok: true, ignored: "seller_instance_no_ai", instance: instanceName });
+    try {
+      const inMsg = pickIncomingMessage(payload);
+      
+      // 1. Resolver JID real tratando LIDs de privacidade do WhatsApp
+      let remoteJidRaw =
+        inMsg?.key?.remoteJid || inMsg?.chatid || inMsg?.sender || inMsg?.from || payload?.chatid || "";
+      
+      if (String(remoteJidRaw).endsWith("@lid")) {
+        const altRaw = String(
+          inMsg?.key?.remoteJidAlt ||
+          inMsg?.remoteJidAlt ||
+          inMsg?.key?.senderPn ||
+          inMsg?.senderPn ||
+          payload?.remoteJidAlt ||
+          payload?.senderPn ||
+          ""
+        );
+        if (altRaw.endsWith("@s.whatsapp.net")) {
+          remoteJidRaw = altRaw;
+        } else {
+          const altDigits = altRaw.replace(/\D/g, "");
+          if (altDigits.length >= 10) {
+            remoteJidRaw = `${altDigits}@s.whatsapp.net`;
+          }
+        }
+      }
+
+      // 2. Extrair apenas o telefone no formato DDD + número (com DDI 55)
+      const phoneOnly = String(remoteJidRaw).replace(/@.*$/, "").replace(/\D/g, "");
+
+      if (phoneOnly) {
+        // 3. Identificar se a mensagem veio do vendedor (outgoing) ou do lead (incoming)
+        const fromMe = inMsg?.key?.fromMe === true || inMsg?.fromMe === true;
+        const direction = fromMe ? "outgoing" : "incoming";
+        const isRead = fromMe; // Mensagens enviadas pelo vendedor são marcadas como lidas por padrão
+
+        // 4. Mapear tipos de mídias e extrair URLs de anexo
+        let mediaUrl: string | null = null;
+        let messageType = "text";
+        
+        const isImage = String(inMsg?.messageType || "").toLowerCase().includes("image") || !!inMsg?.message?.imageMessage;
+        const isAudio = String(inMsg?.messageType || "").toLowerCase().includes("audio") || String(inMsg?.messageType || "").toLowerCase().includes("ptt") || !!inMsg?.message?.audioMessage;
+        const isVideo = String(inMsg?.messageType || "").toLowerCase().includes("video") || !!inMsg?.message?.videoMessage;
+        const isDocument = String(inMsg?.messageType || "").toLowerCase().includes("document") || !!inMsg?.message?.documentMessage;
+
+        if (isImage) {
+          messageType = "image";
+          mediaUrl = inMsg?.mediaUrl || inMsg?.directUrl || inMsg?.media_url || inMsg?.url || inMsg?.message?.imageMessage?.url || null;
+        } else if (isAudio) {
+          messageType = "audio";
+          mediaUrl = inMsg?.mediaUrl || inMsg?.directUrl || inMsg?.media_url || inMsg?.url || inMsg?.message?.audioMessage?.url || null;
+        } else if (isVideo) {
+          messageType = "video";
+          mediaUrl = inMsg?.mediaUrl || inMsg?.directUrl || inMsg?.media_url || inMsg?.url || inMsg?.message?.videoMessage?.url || null;
+        } else if (isDocument) {
+          messageType = "document";
+          mediaUrl = inMsg?.mediaUrl || inMsg?.directUrl || inMsg?.media_url || inMsg?.url || inMsg?.message?.documentMessage?.url || null;
+        }
+
+        // 5. Extrair o conteúdo textual (com fallback descritivo para mídias sem legenda)
+        const rawText =
+          inMsg?.message?.conversation || 
+          inMsg?.message?.extendedTextMessage?.text ||
+          inMsg?.message?.imageMessage?.caption ||
+          inMsg?.message?.videoMessage?.caption ||
+          inMsg?.text || inMsg?.body || inMsg?.caption || inMsg?.content;
+
+        let inboxText = "";
+        if (typeof rawText === "string" && rawText.trim()) {
+          inboxText = rawText.trim();
+        } else {
+          if (messageType === "image") inboxText = "[imagem recebida]";
+          else if (messageType === "audio") inboxText = "[áudio recebido]";
+          else if (messageType === "video") inboxText = "[vídeo recebido]";
+          else if (messageType === "document") inboxText = "[documento recebido]";
+          else inboxText = "[midia recebida]";
+        }
+
+        const inboxMsgId = inMsg?.key?.id || inMsg?.messageid || inMsg?.id || null;
+        const pushNm = inMsg?.pushName || inMsg?.senderName || inMsg?.notifyName || null;
+
+        // 6. Persistir no banco de dados (o índice único wa_inbox_remote_msg_unique evitará duplicidades)
+        await supabase.from("wa_inbox").insert({
+          user_id: waInstance.user_id,
+          instance_id: waInstance.id,
+          phone: phoneOnly,
+          contact_name: pushNm,
+          direction: direction,
+          message_type: messageType,
+          content: inboxText,
+          media_url: mediaUrl,
+          is_read: isRead,
+          is_archived: false,
+          remote_message_id: typeof inboxMsgId === "string" ? inboxMsgId : null,
+        });
+      }
+    } catch (e) {
+      console.error("[pedro-webhook-v2] [SELLER-INBOX-ONLY] erro ao gravar no wa_inbox:", (e as any)?.message || e);
+    }
+    
+    return jsonResponse({ ok: true, ignored: "seller_instance_inbox_only", instance: instanceName });
   }
 
   const gate = await isPedroV2EnabledForUser(supabase, waInstance.user_id);
