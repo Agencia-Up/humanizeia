@@ -601,7 +601,8 @@ Deno.serve(async (req) => {
                 variationLevel,
                 fixedTemplate,
                 supabase,
-                item.user_id
+                item.user_id,
+                campaign?.ai_model
               );
 
               const hash = await generateHash(finalMessage);
@@ -1634,7 +1635,8 @@ async function generateAIMessage(
   variationLevel: string,
   messageTemplate: string | null,
   supabaseClient?: any,
-  userId?: string
+  userId?: string,
+  aiModel?: string
 ): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
@@ -1736,14 +1738,25 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  // Provedor de IA pra gerar as variacoes do disparo (seletor por campanha):
+  //  - DeepSeek (ai_model contem 'deepseek') E DEEPSEEK_API_KEY setado -> API
+  //    direta do DeepSeek. Senao -> gateway da Lovable (Gemini Flash).
+  const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
+  const useDeepSeek = (aiModel || "").toLowerCase().includes("deepseek") && !!DEEPSEEK_API_KEY;
+  const aiUrl = useDeepSeek
+    ? "https://api.deepseek.com/v1/chat/completions"
+    : "https://ai.gateway.lovable.dev/v1/chat/completions";
+  const aiKey = useDeepSeek ? DEEPSEEK_API_KEY! : LOVABLE_API_KEY;
+  const modelToUse = useDeepSeek ? "deepseek-chat" : "google/gemini-2.5-flash";
+
+  const response = await fetchWithTimeout(aiUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${aiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+      model: modelToUse,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
