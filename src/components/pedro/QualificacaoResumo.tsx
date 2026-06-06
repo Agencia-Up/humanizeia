@@ -45,7 +45,7 @@ function cell(v: string | number): string {
   return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-interface RawLead { status_crm: string | null; created_at: string; }
+interface RawLead { status_crm: string | null; status: string | null; created_at: string; }
 
 export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
   const [period, setPeriod] = useState<Period>('30d');
@@ -60,7 +60,7 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
       try {
         const { data } = await (supabase as any)
           .from('ai_crm_leads')
-          .select('status_crm, created_at')
+          .select('status_crm, status, created_at')
           .eq('user_id', masterUserId)
           .limit(10000);
         if (!cancelled) setLeads((data || []) as RawLead[]);
@@ -80,10 +80,13 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
     let q = 0, p = 0, i = 0, o = 0;
     for (const l of f) {
       const s = (l.status_crm || '').toLowerCase();
+      const st = (l.status || '').toLowerCase();
       if (s === 'qualificado') q++;
       else if (s === 'pouco_qualificado') p++;
       else if (s === 'inativo') i++;
-      else o++;
+      // "Em andamento": lead ainda sendo atendido pelo agente antes da transferência
+      // Exclui leads já transferidos/em_atendimento/fechados pelo vendedor
+      else if (!['transferido', 'em_atendimento', 'fechado'].includes(st)) o++;
     }
     const classif = q + p + i;
     const pct = classif > 0 ? Math.round((q / classif) * 100) : 0;
@@ -108,7 +111,7 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
     lines.push(['Qualificados', m.q, pctOf(m.q)].map(cell).join(sep));
     lines.push(['Pouco qualificados', m.p, pctOf(m.p)].map(cell).join(sep));
     lines.push(['Inativos', m.i, pctOf(m.i)].map(cell).join(sep));
-    lines.push(['Em andamento (novo/negociação)', m.o, '—'].map(cell).join(sep));
+    lines.push(['Em andamento (atendimento ativo pelo agente)', m.o, '—'].map(cell).join(sep));
     lines.push(['TOTAL', m.total, ''].map(cell).join(sep));
 
     const csv = '﻿' + lines.join('\r\n'); // BOM p/ Excel ler acentos certo
@@ -141,12 +144,12 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
         ['Qualificados', m.q, pctOf(m.q)],
         ['Pouco qualificados', m.p, pctOf(m.p)],
         ['Inativos', m.i, pctOf(m.i)],
-        ['Em andamento (novo/negociação)', m.o, '—'],
+        ['Em andamento (atendimento ativo)', m.o, '—'],
       ],
       totalRow: ['TOTAL', m.total, ''],
       note:
-        'A qualificação (Qualificado / Pouco qualificado / Inativo) é feita automaticamente pela IA. ' +
-        'Leads "em andamento" (novo / negociação) não entram no cálculo de % sobre classificados.',
+        'A qualificação (Qualificado / Pouco qualificado / Inativo) é feita automaticamente pela IA no momento da transferência. ' +
+        'Leads "em andamento" são aqueles que o agente está atendendo ativamente, antes da transferência ao vendedor.',
     });
   }
 
@@ -220,7 +223,7 @@ export function QualificacaoResumo({ masterUserId }: { masterUserId: string }) {
               <NivelCard icon={Award} label="Qualificados" value={m.q} color="text-emerald-400" ring="border-emerald-500/30 bg-emerald-500/5" />
               <NivelCard icon={Activity} label="Pouco qualificados" value={m.p} color="text-amber-400" ring="border-amber-500/30 bg-amber-500/5" />
               <NivelCard icon={CircleSlash} label="Inativos" value={m.i} color="text-slate-400" ring="border-slate-500/30 bg-slate-500/5" />
-              <NivelCard icon={Users} label="Em andamento" value={m.o} color="text-blue-400" ring="border-blue-500/30 bg-blue-500/5" sub="novo / negociação" />
+              <NivelCard icon={Users} label="Em andamento" value={m.o} color="text-blue-400" ring="border-blue-500/30 bg-blue-500/5" sub="atendimento ativo pelo agente" />
             </div>
 
             {/* Barra de proporção (sobre os já classificados) */}
