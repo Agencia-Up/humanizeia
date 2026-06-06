@@ -1724,14 +1724,27 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  // Provedor de IA pra gerar as variacoes do disparo:
+  //  - Se a secret DEEPSEEK_API_KEY estiver setada -> usa a API direta do
+  //    DeepSeek (modelo deepseek-chat, compativel com OpenAI).
+  //  - Senao -> mantem o gateway da Lovable (Gemini Flash) como antes.
+  // Assim, basta colar a chave do DeepSeek nas Secrets do Supabase pra o
+  // disparo passar a gerar as mensagens com o DeepSeek.
+  const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
+  const aiUrl = DEEPSEEK_API_KEY
+    ? "https://api.deepseek.com/v1/chat/completions"
+    : "https://ai.gateway.lovable.dev/v1/chat/completions";
+  const aiKey = DEEPSEEK_API_KEY || LOVABLE_API_KEY;
+  const aiModel = DEEPSEEK_API_KEY ? "deepseek-chat" : "google/gemini-2.5-flash";
+
+  const response = await fetchWithTimeout(aiUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${aiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+      model: aiModel,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
