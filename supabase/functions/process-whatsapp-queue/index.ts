@@ -846,6 +846,17 @@ Deno.serve(async (req) => {
         console.error(`Error processing queue item ${item.id}:`, err);
         const errMsg = err instanceof Error ? err.message : "Unknown error";
 
+        // NUMERO INVALIDO/ERRADO: e culpa do NUMERO, nao da instancia. Marca
+        // failed e pula JA — SEM incrementar o circuit-breaker da instancia.
+        // (Senao uma lista com varios numeros ruins derruba a instancia inteira
+        // do vendedor: 5 falhas e o disparo dele para de vez.)
+        if (isInvalidNumberError(errMsg)) {
+          console.warn(`[INVALID-NUMBER] item ${item.id} phone=${item.phone} -> failed (sem retry, sem circuit-breaker): ${errMsg}`);
+          await markFailed(supabase, item.id, `Numero invalido ou errado (pulado): ${errMsg}`.slice(0, 480));
+          failed++; processed++;
+          continue;
+        }
+
         // ===== DETECT DISCONNECTED INSTANCE (503 "session is not reconnectable") =====
         // UazAPI returns 503 with "disconnected" or "not reconnectable" when the WhatsApp
         // session is dead. Mark the instance as disconnected immediately in the DB so
@@ -897,13 +908,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (isInvalidNumberError(errMsg)) {
-          // NUMERO ERRADO/INVALIDO: nao adianta re-tentar (vai falhar sempre).
-          // Marca como erro NA HORA e a fila segue pro proximo numero — nunca
-          // trava por causa de um numero que nao da pra disparar.
-          console.warn(`[INVALID-NUMBER] item ${item.id} phone=${item.phone} -> failed sem retry: ${errMsg}`);
-          await markFailed(supabase, item.id, `Numero invalido ou errado (pulado): ${errMsg}`.slice(0, 480));
-        } else if (item.retry_count < MAX_RETRIES) {
+        if (item.retry_count < MAX_RETRIES) {
           const retryDelay = Math.min(60000 * Math.pow(3, item.retry_count), 3600000);
           await supabase
             .from("wa_queue")
