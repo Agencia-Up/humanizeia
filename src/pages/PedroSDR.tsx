@@ -5233,13 +5233,13 @@ export default function PedroSDR() {
     <MainLayout>
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center gap-3 px-1 pt-1 pb-4">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-500/20 to-cyan-600/20 border border-blue-500/30 flex items-center justify-center">
-            <Bot className="h-5 w-5 text-blue-400" />
+        <div className="flex items-center gap-3 px-4 lg:px-6 pt-1 pb-2">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500/20 to-cyan-600/20 border border-blue-500/30 flex items-center justify-center shrink-0">
+            <Bot className="h-4 w-4 text-blue-400" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-foreground">Pedro</h1>
+              <h1 className="text-lg font-bold text-foreground leading-tight">Pedro</h1>
               <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse mr-1.5 inline-block" />
                 Agente Online
@@ -5250,7 +5250,7 @@ export default function PedroSDR() {
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] leading-normal text-muted-foreground">
               {isSeller ? 'Painel do Vendedor — seus leads e atendimentos' : 'Funil do Agente — Qualificação de Leads & Automação Comercial'}
             </p>
           </div>
@@ -5258,13 +5258,13 @@ export default function PedroSDR() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
-          <div className="border-b border-border/40">
+          <div className="px-4 lg:px-6 border-b border-border/40">
             <TabsList className="h-auto bg-transparent p-0 gap-1">
               {tabs.map(tab => (
                 <TabsTrigger
                   key={tab.id}
                   value={tab.id}
-                  className="flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-none border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:bg-transparent text-muted-foreground hover:text-foreground transition-all"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-none border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:bg-transparent text-muted-foreground hover:text-foreground transition-all"
                 >
                   <span>{tab.emoji}</span>
                   <span>{tab.label}</span>

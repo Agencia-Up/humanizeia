@@ -698,7 +698,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-col h-[calc(100vh-230px)] bg-card rounded-xl border border-border/50 overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden">
       {/* ── Top Bar: Seletor de Agente ── */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30">
         <Bot className="h-5 w-5 text-violet-400 shrink-0" />

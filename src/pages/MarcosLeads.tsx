@@ -112,31 +112,31 @@ export default function MarcosLeads() {
     <MainLayout>
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 pt-6 pb-4">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-500/20 to-violet-600/20 border border-purple-500/30 flex items-center justify-center">
-            <Users className="h-5 w-5 text-purple-400" />
+        <div className="flex items-center gap-3 px-4 lg:px-6 pt-1 pb-2">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-500/20 to-violet-600/20 border border-purple-500/30 flex items-center justify-center shrink-0">
+            <Users className="h-4 w-4 text-purple-400" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-foreground">Marcos</h1>
+              <h1 className="text-lg font-bold text-foreground leading-tight">Marcos</h1>
               <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[10px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse mr-1.5 inline-block" />
                 Agente Online
               </Badge>
             </div>
-            <p className="text-xs text-muted-foreground">Captação de Leads, Formulários & Disparo em Massa</p>
+            <p className="text-[11px] leading-normal text-muted-foreground">Captação de Leads, Formulários & Disparo em Massa</p>
           </div>
         </div>
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
-          <div className="px-6 border-b border-border/40">
+          <div className="px-4 lg:px-6 border-b border-border/40">
             <TabsList className="bg-transparent h-auto p-0 gap-1">
               {tabs.map(tab => (
                 <TabsTrigger
                   key={tab.id}
                   value={tab.id}
-                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none rounded-t-md px-3 py-2 text-xs gap-1.5"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none rounded-t-md px-3 py-1.5 text-xs gap-1.5"
                 >
                   <tab.icon className="h-3.5 w-3.5" />
                   {tab.label}

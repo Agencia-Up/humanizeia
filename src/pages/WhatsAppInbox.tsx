@@ -672,7 +672,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   return (
     <Wrapper>
-      <div className={`flex flex-col ${embedded ? 'h-[calc(100vh-230px)]' : 'h-[calc(100vh-140px)]'} overflow-hidden`}>
+      <div className={`flex flex-col ${embedded ? 'h-[calc(100vh-210px)]' : 'h-[calc(100vh-120px)]'} overflow-hidden`}>
 
         {/* ══════════════════════════════════════════════════════════
             TOPO: seletor de instância (tabs)

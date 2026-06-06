@@ -46,6 +46,8 @@ export function MainLayout({ children }: MainLayoutProps) {
     document.body.style.removeProperty('pointer-events');
   });
 
+  const isFullPageApp = ['/marcos', '/pedro', '/whatsapp/inbox'].includes(location.pathname);
+
   return (
     <SidebarProvider defaultOpen={sidebarOpen} open={sidebarOpen} onOpenChange={setSidebarOpen}>
       <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -56,10 +58,21 @@ export function MainLayout({ children }: MainLayoutProps) {
 
           <TokenAlertBanner />
 
-          <div id="main-scroll-container" className="flex-1 flex flex-col overflow-auto p-4 lg:p-6">
+          <div
+            id="main-scroll-container"
+            className={`flex-1 flex flex-col ${
+              isFullPageApp
+                ? 'overflow-hidden px-4 pb-2 pt-2 lg:px-6 lg:pb-3 lg:pt-3'
+                : 'overflow-auto p-4 lg:p-6'
+            }`}
+          >
             {/* Botão Voltar — aparece em todas as páginas exceto no Dashboard */}
             {showBackButton && (
-              <div className="mb-3 -mt-1 px-4 lg:px-6 pt-2">
+              <div
+                className={`px-4 lg:px-6 ${
+                  isFullPageApp ? 'mb-2 -mt-2 pt-0' : 'mb-3 -mt-1 pt-2'
+                }`}
+              >
                 <Button
                   variant="ghost"
                   size="sm"
@@ -79,17 +92,19 @@ export function MainLayout({ children }: MainLayoutProps) {
               </div>
             )}
 
-            <main className="flex-1">
+            <main className={`flex-1 ${isFullPageApp ? 'flex flex-col min-h-0' : ''}`}>
               {children}
             </main>
 
-            <footer id="main-layout-footer" className="mt-auto pt-6 pb-3 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
-              <span>© {new Date().getFullYear()} LOGOS<span style={{ color: 'var(--brand-gold)' }}>|IA</span></span>
-              <span className="text-border">•</span>
-              <Link to="/privacy" className="hover:text-primary transition-colors">Política de Privacidade</Link>
-              <span className="text-border">•</span>
-              <Link to="/terms" className="hover:text-primary transition-colors">Termos de Serviço</Link>
-            </footer>
+            {!isFullPageApp && (
+              <footer id="main-layout-footer" className="mt-auto pt-6 pb-3 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3 flex-wrap">
+                <span>© {new Date().getFullYear()} LOGOS<span style={{ color: 'var(--brand-gold)' }}>|IA</span></span>
+                <span className="text-border">•</span>
+                <Link to="/privacy" className="hover:text-primary transition-colors">Política de Privacidade</Link>
+                <span className="text-border">•</span>
+                <Link to="/terms" className="hover:text-primary transition-colors">Termos de Serviço</Link>
+              </footer>
+            )}
           </div>
         </SidebarInset>
       </div>
