@@ -413,9 +413,10 @@ export function CampaignFormDialog({
               {/* Modelo de IA (econômico) */}
               <div className="space-y-2 mt-3">
                 <Label className="text-xs font-medium">Modelo de IA</Label>
-                <div className="grid grid-cols-1 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: 'gpt-4o-mini', label: '⚡ OpenAI — GPT-4o mini (econômico)', desc: 'Gera as variações gastando menos tokens.' },
+                    { value: 'gpt-4o-mini', label: '⚡ Padrão (econômico)', desc: 'Gera as variações gastando menos tokens.' },
+                    { value: 'deepseek-chat', label: '🧠 DeepSeek', desc: 'Usa a sua chave do DeepSeek (mais barata).' },
                   ].map(opt => (
                     <button
                       key={opt.value}
@@ -434,7 +435,7 @@ export function CampaignFormDialog({
                   ))}
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  Em breve: DeepSeek (mais barata) — assim que a chave for configurada.
+                  DeepSeek usa a chave configurada nas Secrets (DEEPSEEK_API_KEY). Sem a chave, o disparo cai no padrão automaticamente.
                 </p>
               </div>
             </div>

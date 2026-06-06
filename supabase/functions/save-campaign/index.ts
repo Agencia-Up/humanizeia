@@ -247,9 +247,9 @@ Deno.serve(async (req) => {
       errors.push("variation_level deve ser 'low', 'medium' ou 'high'.");
     }
 
-    // Validate ai_model (seletor de inteligencia OpenAI)
-    if (ai_model && !["gpt-4o", "gpt-4o-mini"].includes(ai_model)) {
-      errors.push("ai_model deve ser 'gpt-4o' ou 'gpt-4o-mini'.");
+    // Validate ai_model (seletor de IA: OpenAI/padrao ou DeepSeek)
+    if (ai_model && !["gpt-4o", "gpt-4o-mini", "deepseek-chat"].includes(ai_model)) {
+      errors.push("ai_model deve ser 'gpt-4o', 'gpt-4o-mini' ou 'deepseek-chat'.");
     }
 
     if (errors.length > 0) {

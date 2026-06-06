@@ -601,7 +601,8 @@ Deno.serve(async (req) => {
                 variationLevel,
                 fixedTemplate,
                 supabase,
-                item.user_id
+                item.user_id,
+                campaign?.ai_model
               );
 
               const hash = await generateHash(finalMessage);
@@ -1622,7 +1623,8 @@ async function generateAIMessage(
   variationLevel: string,
   messageTemplate: string | null,
   supabaseClient?: any,
-  userId?: string
+  userId?: string,
+  aiModel?: string
 ): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
@@ -1724,18 +1726,18 @@ REGRAS OBRIGATÓRIAS:
     ? `Mensagem base para reescrever: "${messageTemplate}"\nIntenção da campanha: ${promptBase}${personalizationContext}${conversationHistory}\n\nCrie uma variação COMPLETAMENTE DIFERENTE e ÚNICA. Não copie a estrutura da mensagem base.`
     : `Intenção da mensagem: ${promptBase}${personalizationContext}${conversationHistory}\n\nGere uma mensagem 100% única, personalizada e natural.`;
 
-  // Provedor de IA pra gerar as variacoes do disparo:
-  //  - Se a secret DEEPSEEK_API_KEY estiver setada -> usa a API direta do
-  //    DeepSeek (modelo deepseek-chat, compativel com OpenAI).
-  //  - Senao -> mantem o gateway da Lovable (Gemini Flash) como antes.
-  // Assim, basta colar a chave do DeepSeek nas Secrets do Supabase pra o
-  // disparo passar a gerar as mensagens com o DeepSeek.
+  // Provedor de IA pra gerar as variacoes do disparo (seletor por campanha):
+  //  - Se a campanha escolheu DeepSeek (ai_model contem 'deepseek') E a secret
+  //    DEEPSEEK_API_KEY estiver setada -> usa a API direta do DeepSeek.
+  //  - Senao -> usa o gateway da Lovable (Gemini Flash), como antes.
   const DEEPSEEK_API_KEY = Deno.env.get("DEEPSEEK_API_KEY");
-  const aiUrl = DEEPSEEK_API_KEY
+  const wantsDeepSeek = (aiModel || "").toLowerCase().includes("deepseek");
+  const useDeepSeek = wantsDeepSeek && !!DEEPSEEK_API_KEY;
+  const aiUrl = useDeepSeek
     ? "https://api.deepseek.com/v1/chat/completions"
     : "https://ai.gateway.lovable.dev/v1/chat/completions";
-  const aiKey = DEEPSEEK_API_KEY || LOVABLE_API_KEY;
-  const aiModel = DEEPSEEK_API_KEY ? "deepseek-chat" : "google/gemini-2.5-flash";
+  const aiKey = useDeepSeek ? DEEPSEEK_API_KEY! : LOVABLE_API_KEY;
+  const modelToUse = useDeepSeek ? "deepseek-chat" : "google/gemini-2.5-flash";
 
   const response = await fetchWithTimeout(aiUrl, {
     method: "POST",
@@ -1744,7 +1746,7 @@ REGRAS OBRIGATÓRIAS:
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: aiModel,
+      model: modelToUse,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
