@@ -37,7 +37,7 @@ const PROVIDER_MAP: Record<string, ProviderCfg> = {
       { key: 'app_id', label: 'App ID (META_APP_ID)' },
       { key: 'app_secret', label: 'App Secret (META_APP_SECRET)', secret: true },
     ],
-    redirect: 'https://humanizeia.lovable.app/integrations/meta?meta_callback=true',
+    redirect: 'https://humanizeia.lovable.app/settings?meta_callback=true',
   },
   instagram_publisher: {
     provider: 'meta',

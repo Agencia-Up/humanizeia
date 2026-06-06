@@ -798,9 +798,7 @@ export function ConnectionsTab() {
                     <Button
                       size="sm"
                       className="w-full text-xs gradient-primary text-primary-foreground"
-                      onClick={() => (platform.id === 'meta' || platform.id === 'instagram_publisher')
-                        ? navigate(`/integrations/${platform.id === 'meta' ? 'meta' : 'instagram'}`)
-                        : setSelectedPlatform(platform.id)}
+                      onClick={() => setSelectedPlatform(platform.id)}
                       disabled={status === 'connecting'}
                     >
                       {status === 'connecting' ? (
@@ -837,9 +835,9 @@ export function ConnectionsTab() {
       {/* Detail / How-to modal */}
       <Dialog open={!!selectedPlatform} onOpenChange={(open) => !open && setSelectedPlatform(null)}>
         {activePlatform && (
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <div className="flex items-center gap-3 mb-1">
+          <DialogContent className="sm:max-w-md max-h-[88vh] flex flex-col gap-0 p-0">
+            <DialogHeader className="shrink-0 px-6 pt-6 pb-3">
+              <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${activePlatform.iconBg}`}>
                   {activePlatform.icon}
                 </div>
@@ -850,73 +848,79 @@ export function ConnectionsTab() {
               </div>
             </DialogHeader>
 
-            <div className="space-y-1 mt-2">
-              <p className="text-sm font-medium text-foreground mb-3">📋 Passo a passo</p>
-              {activePlatform.steps.map((step, i) => (
-                <div key={i} className="flex gap-3 pb-4 relative">
-                  <div className="flex flex-col items-center">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold shrink-0">
-                      {i + 1}
+            {/* Corpo rolavel — mantem o modal enquadrado na tela (nao estoura em notebook) */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 space-y-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground mb-2">📋 Passo a passo</p>
+                {activePlatform.steps.map((step, i) => (
+                  <div key={i} className="flex gap-3 pb-3 relative">
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-[11px] font-bold shrink-0">
+                        {i + 1}
+                      </div>
+                      {i < activePlatform.steps.length - 1 && (
+                        <div className="w-px flex-1 bg-border/50 mt-1.5" />
+                      )}
                     </div>
-                    {i < activePlatform.steps.length - 1 && (
-                      <div className="w-px flex-1 bg-border/50 mt-1.5" />
-                    )}
+                    <div>
+                      <p className="font-medium text-sm leading-tight">{step.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{step.description}</p>
+                    </div>
                   </div>
-                  <div className="pt-0.5">
-                    <p className="font-medium text-sm">{step.title}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {activePlatform.warning && (
-              <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-600 dark:text-amber-400">
-                ⚠️ {activePlatform.warning}
+                ))}
               </div>
-            )}
 
-            {/* Configuracao do app — so admin da plataforma (chaves do app). */}
-            {isAdmin && <OperatorAppConfig platformId={activePlatform.id} />}
+              {activePlatform.warning && (
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-600 dark:text-amber-400">
+                  ⚠️ {activePlatform.warning}
+                </div>
+              )}
 
-            <div className="flex items-center gap-2 rounded-lg bg-success/5 border border-success/20 p-3 text-xs text-muted-foreground">
-              <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
-              <span>
-                <strong className="text-foreground">100% seguro.</strong> Nós só lemos dados — nunca alteramos suas campanhas.
-              </span>
+              {/* Configuracao do app — so admin da plataforma (chaves do app). */}
+              {isAdmin && <OperatorAppConfig platformId={activePlatform.id} />}
+
+              <div className="flex items-center gap-2 rounded-lg bg-success/5 border border-success/20 p-3 text-xs text-muted-foreground">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
+                <span>
+                  <strong className="text-foreground">100% seguro.</strong> Nós só lemos dados — nunca alteramos suas campanhas.
+                </span>
+              </div>
             </div>
 
-            {activePlatform.status === 'available' && getConnectionStatus(activePlatform.id) !== 'connected' && (
-              <Button
-                className="w-full gradient-primary text-primary-foreground font-semibold"
-                onClick={() => {
-                  setSelectedPlatform(null);
-                  handleConnect(activePlatform.id);
-                }}
-              >
-                <ExternalLink className="h-4 w-4 mr-2" />
-                Conectar agora — {activePlatform.name}
-              </Button>
-            )}
+            {/* Rodape fixo — o botao de acao fica sempre visivel */}
+            <div className="shrink-0 border-t border-border/40 px-6 py-4">
+              {activePlatform.status === 'available' && getConnectionStatus(activePlatform.id) !== 'connected' && (
+                <Button
+                  className="w-full gradient-primary text-primary-foreground font-semibold"
+                  onClick={() => {
+                    setSelectedPlatform(null);
+                    handleConnect(activePlatform.id);
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Conectar agora — {activePlatform.name}
+                </Button>
+              )}
 
-            {activePlatform.status === 'available' && getConnectionStatus(activePlatform.id) === 'connected' && (
-              <Button
-                variant="outline"
-                className="w-full text-destructive hover:text-destructive"
-                onClick={() => {
-                  setSelectedPlatform(null);
-                  handleDisconnect(activePlatform.id);
-                }}
-              >
-                Desconectar {activePlatform.name}
-              </Button>
-            )}
+              {activePlatform.status === 'available' && getConnectionStatus(activePlatform.id) === 'connected' && (
+                <Button
+                  variant="outline"
+                  className="w-full text-destructive hover:text-destructive"
+                  onClick={() => {
+                    setSelectedPlatform(null);
+                    handleDisconnect(activePlatform.id);
+                  }}
+                >
+                  Desconectar {activePlatform.name}
+                </Button>
+              )}
 
-            {activePlatform.status === 'coming_soon' && (
-              <p className="text-center text-xs text-muted-foreground">
-                Esta integração estará disponível em breve. Fique ligado nas atualizações!
-              </p>
-            )}
+              {activePlatform.status === 'coming_soon' && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Esta integração estará disponível em breve. Fique ligado nas atualizações!
+                </p>
+              )}
+            </div>
           </DialogContent>
         )}
       </Dialog>
