@@ -897,7 +897,13 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (item.retry_count < MAX_RETRIES) {
+        if (isInvalidNumberError(errMsg)) {
+          // NUMERO ERRADO/INVALIDO: nao adianta re-tentar (vai falhar sempre).
+          // Marca como erro NA HORA e a fila segue pro proximo numero — nunca
+          // trava por causa de um numero que nao da pra disparar.
+          console.warn(`[INVALID-NUMBER] item ${item.id} phone=${item.phone} -> failed sem retry: ${errMsg}`);
+          await markFailed(supabase, item.id, `Numero invalido ou errado (pulado): ${errMsg}`.slice(0, 480));
+        } else if (item.retry_count < MAX_RETRIES) {
           const retryDelay = Math.min(60000 * Math.pow(3, item.retry_count), 3600000);
           await supabase
             .from("wa_queue")
@@ -1144,6 +1150,23 @@ async function selectSmartInstance(
 
 // UazAPI (logos-ia.uazapi.com) can expose either the V6 send endpoints
 // or the legacy Evolution-compatible message endpoints with the instance name.
+// Erro de NUMERO invalido/errado (numero nao existe / nao e WhatsApp / formato
+// recusado pela API). Nesses casos NAO adianta re-tentar — marca failed e pula.
+function isInvalidNumberError(msg: string): boolean {
+  const m = (msg || "").toLowerCase();
+  return (
+    m.includes("the number") ||
+    m.includes("invalid number") ||
+    m.includes("not a valid") ||
+    m.includes("number not") ||
+    m.includes("not registered") ||
+    m.includes("not on whatsapp") ||
+    m.includes("no whatsapp") ||
+    m.includes("numero invalido") || m.includes("número inválido") ||
+    m.includes('"exists":false') || m.includes('"exists": false')
+  );
+}
+
 function isUazAPIInstance(instance: Instance): boolean {
   return instance.api_url.includes("uazapi");
 }
