@@ -164,11 +164,11 @@ export function useMetaConnection() {
     }
   };
 
-  const startOAuth = async () => {
+  const startOAuth = async (redirectPath: string = '/settings?meta_callback=true') => {
     setIsConnecting(true);
     try {
       const productionOrigin = 'https://humanizeia.lovable.app';
-      const redirectUri = `${productionOrigin}/settings?meta_callback=true`;
+      const redirectUri = `${productionOrigin}${redirectPath}`;
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
           action: 'authorize',
@@ -191,11 +191,11 @@ export function useMetaConnection() {
     }
   };
 
-  const handleCallback = async (code: string) => {
+  const handleCallback = async (code: string, redirectPath: string = '/settings?meta_callback=true') => {
     setIsConnecting(true);
     try {
       const productionOrigin = 'https://humanizeia.lovable.app';
-      const redirectUri = `${productionOrigin}/settings?meta_callback=true`;
+      const redirectUri = `${productionOrigin}${redirectPath}`;
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
           action: 'callback',
@@ -262,6 +262,43 @@ export function useMetaConnection() {
     }
   };
 
+  // Salva MULTIPLAS contas de anuncio de uma vez (wizard de onboarding).
+  const saveAccounts = async (accounts: any[]): Promise<boolean> => {
+    if (!pendingToken || accounts.length === 0) return false;
+    setIsConnecting(true);
+    try {
+      for (const account of accounts) {
+        const { error } = await supabase.functions.invoke('meta-oauth', {
+          body: {
+            action: 'save_account',
+            account_id: account.id,
+            account_name: account.name,
+            currency: account.currency,
+            timezone: account.timezone_name,
+            access_token: pendingToken,
+          },
+        });
+        if (error) throw error;
+      }
+      setPendingToken(null);
+      setAvailableAccounts([]);
+      setPixels([]);
+      setPages([]);
+      setBusinesses([]);
+      await fetchConnectedAccount();
+      return true;
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao salvar',
+        description: err.message || 'Nao foi possivel salvar as contas.',
+        variant: 'destructive',
+      });
+      return false;
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const disconnect = async () => {
     if (!connectedAccount) return;
     try {
@@ -298,6 +335,8 @@ export function useMetaConnection() {
     startOAuth,
     handleCallback,
     selectAccount,
+    saveAccounts,
+    hasPendingToken: pendingToken !== null,
     selectConnectedAccount,
     disconnect,
     connectWithToken,
