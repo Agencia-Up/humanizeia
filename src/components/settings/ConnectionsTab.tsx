@@ -798,7 +798,9 @@ export function ConnectionsTab() {
                     <Button
                       size="sm"
                       className="w-full text-xs gradient-primary text-primary-foreground"
-                      onClick={() => setSelectedPlatform(platform.id)}
+                      onClick={() => (platform.id === 'meta' || platform.id === 'instagram_publisher')
+                        ? navigate(`/integrations/${platform.id === 'meta' ? 'meta' : 'instagram'}`)
+                        : setSelectedPlatform(platform.id)}
                       disabled={status === 'connecting'}
                     >
                       {status === 'connecting' ? (
