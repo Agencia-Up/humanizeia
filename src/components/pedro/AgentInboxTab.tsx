@@ -809,7 +809,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                           )}
                         </div>
                         {lead.summary && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate block whitespace-nowrap overflow-hidden text-ellipsis max-w-[180px] sm:max-w-[240px] md:max-w-[200px] lg:max-w-[260px]" title={lead.summary}>
+                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate block whitespace-nowrap overflow-hidden text-ellipsis w-full" title={lead.summary}>
                             {lead.summary.replace(/\r?\n|\r/g, ' ')}
                           </p>
                         )}

@@ -1129,11 +1129,34 @@ export async function processPedroV2Turn(
     ? mediaContext.text
     : rawText;
 
+  if (!text && mediaContext.has_media_context) {
+    if (mediaContext.kind === "image") {
+      text = "[imagem recebida]";
+    } else if (mediaContext.kind === "audio") {
+      text = "[áudio recebido]";
+    } else if (mediaContext.kind === "video") {
+      text = "[vídeo recebido]";
+    } else if (mediaContext.kind === "document") {
+      text = "[documento recebido]";
+    } else {
+      text = "[mídia recebida]";
+    }
+  }
+
   // Salvar mensagem do usuário no histórico (transferências/CRM/debounce). Captura o id.
   let myUserMsgId: string | null = null;
   let myUserMsgCreatedAt: string | null = null;
   if (!dryRun && lead?.id && text) {
     try {
+      const userMetadata = mediaContext.has_media_context ? {
+        media: [{
+          file: mediaContext.media_url || mediaContext.media_data_url || null,
+          url: mediaContext.media_url || mediaContext.media_data_url || null,
+          type: mediaContext.kind || "image",
+          caption: mediaContext.text || ""
+        }]
+      } : null;
+
       const { data: insertedUserMsg } = await supabase.from("wa_chat_history").insert({
         user_id: input.agent.user_id,
         agent_id: input.agent.id,
@@ -1141,6 +1164,7 @@ export async function processPedroV2Turn(
         remote_jid: remoteJid,
         role: "user",
         content: text,
+        metadata: userMetadata,
       }).select("id, created_at").maybeSingle();
       myUserMsgId = insertedUserMsg?.id || null;
       myUserMsgCreatedAt = insertedUserMsg?.created_at || null;
@@ -1767,15 +1791,25 @@ export async function processPedroV2Turn(
     }
     if (sendResult?.ok) {
       await markAgentReplyForLead(supabase, lead?.id || null);
-      if (reply.text) {
+      const hasTextOrMediaOut = Boolean(reply.text || (reply.media && reply.media.length > 0));
+      if (hasTextOrMediaOut) {
         try {
+          let replyContent = reply.text || "";
+          if (!replyContent && reply.media && reply.media.length > 0) {
+            const first = reply.media[0];
+            if (first.type === "image") replyContent = "[imagem enviada]";
+            else if (first.type === "audio") replyContent = "[áudio enviado]";
+            else if (first.type === "video") replyContent = "[vídeo enviado]";
+            else if (first.type === "document") replyContent = "[documento enviado]";
+            else replyContent = "[mídia enviada]";
+          }
           await supabase.from("wa_chat_history").insert({
             user_id: input.agent.user_id,
             agent_id: input.agent.id,
             instance_id: input.wa_instance?.instance_name,
             remote_jid: remoteJid,
             role: "assistant",
-            content: reply.text,
+            content: replyContent,
             metadata: reply.media && reply.media.length > 0 ? { media: reply.media } : null,
           });
         } catch (err) {
@@ -1786,15 +1820,25 @@ export async function processPedroV2Turn(
   } else if (!dryRun && reply.ok) {
     sendResult = { ok: true, dry_run: true, reason: "PEDRO_V2_SEND_ENABLED_disabled" };
     await markAgentReplyForLead(supabase, lead?.id || null);
-    if (reply.text) {
+    const hasTextOrMediaOut = Boolean(reply.text || (reply.media && reply.media.length > 0));
+    if (hasTextOrMediaOut) {
       try {
+        let replyContent = reply.text || "";
+        if (!replyContent && reply.media && reply.media.length > 0) {
+          const first = reply.media[0];
+          if (first.type === "image") replyContent = "[imagem enviada]";
+          else if (first.type === "audio") replyContent = "[áudio enviado]";
+          else if (first.type === "video") replyContent = "[vídeo enviado]";
+          else if (first.type === "document") replyContent = "[documento enviado]";
+          else replyContent = "[mídia enviada]";
+        }
         await supabase.from("wa_chat_history").insert({
           user_id: input.agent.user_id,
           agent_id: input.agent.id,
           instance_id: input.wa_instance?.instance_name,
           remote_jid: remoteJid,
           role: "assistant",
-          content: reply.text,
+          content: replyContent,
           metadata: reply.media && reply.media.length > 0 ? { media: reply.media } : null,
         });
       } catch (err) {
