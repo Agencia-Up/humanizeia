@@ -17,6 +17,8 @@ import { JoseChat } from '@/components/jose/JoseChat';
 import { SegmentKnowledgeBase } from '@/components/jose/SegmentKnowledgeBase';
 import { JoseCreativeLibrary } from '@/components/jose/JoseCreativeLibrary';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 import {
   useApolloAgent, useApolloCronConfig,
   ApolloAction, ApolloEnrichedCampaign, ApolloDatePreset,
@@ -25,6 +27,7 @@ import {
   Activity, AlertTriangle, Brain, CheckCircle, CheckCircle2, Clock,
   Loader2, MessageCircle, Phone, Plug, Radar, RefreshCw,
   Settings, TrendingDown, TrendingUp, Zap, ChevronRight, Layers, Image,
+  Download, FileSpreadsheet, Target,
 } from 'lucide-react';
 
 // ── Segment Profiles (hardcoded base — extends DB records) ────────────────────
@@ -306,6 +309,233 @@ function ActionCard({
 }
 
 // ── CronSettings ──────────────────────────────────────────────────────────────
+
+function LeadQualityPanel({
+  accountId,
+  datePreset,
+  currencySymbol,
+}: {
+  accountId?: string;
+  datePreset: ApolloDatePreset;
+  currencySymbol: string;
+}) {
+  const { toast } = useToast();
+  const [report, setReport] = useState<any | null>(null);
+  const [recommendations, setRecommendations] = useState<any | null>(null);
+  const [loading, setLoading] = useState(false);
+  const campaigns = report?.campanhas || [];
+  const totals = report?.total || {};
+
+  const invokeQuality = async (action: string, extra: Record<string, any> = {}) => {
+    const { data, error } = await supabase.functions.invoke('meta-lead-quality', {
+      body: { action, targetAccountId: accountId, date_preset: datePreset, ...extra },
+    });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    return data;
+  };
+
+  const generateReport = async () => {
+    setLoading(true);
+    try {
+      const data = await invokeQuality('report');
+      setReport(data.report);
+      setRecommendations(null);
+      toast({ title: 'Relatorio gerado', description: 'Dados consolidados por campanha, conjunto e anuncio.' });
+    } catch (err: any) {
+      toast({ title: 'Erro no relatorio', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const syncCosts = async () => {
+    setLoading(true);
+    try {
+      const data = await invokeQuality('sync_costs');
+      toast({ title: 'Custos sincronizados', description: `${data.rows || 0} linhas importadas da Meta.` });
+      const reportData = await invokeQuality('report');
+      setReport(reportData.report);
+      setRecommendations(null);
+    } catch (err: any) {
+      toast({ title: 'Erro ao sincronizar Meta', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendToJose = async () => {
+    setLoading(true);
+    try {
+      const data = await invokeQuality('send_to_jose');
+      setReport(data.report);
+      setRecommendations(data.jose_recommendations);
+      toast({ title: 'Enviado ao Jose', description: 'Recomendacoes geradas com base na qualidade real dos leads.' });
+    } catch (err: any) {
+      toast({ title: 'Erro ao enviar ao Jose', description: err.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportExcel = async () => {
+    if (!report) return;
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(report.campanhas || []), 'Campanhas');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(report.conjuntos || []), 'Conjuntos');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(report.anuncios || []), 'Anuncios');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(report.feedback_vendedores || []), 'Feedback Vendedores');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(report.custos || []), 'Custos');
+    XLSX.writeFile(wb, `relatorio-jose-leads-${report.period.start}-${report.period.end}.xlsx`);
+  };
+
+  const exportPdf = async () => {
+    if (!report) return;
+    const { jsPDF } = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
+    const doc = new jsPDF({ orientation: 'landscape' });
+    doc.setFontSize(16);
+    doc.text('Logos IA - Relatorio Jose', 14, 14);
+    doc.setFontSize(10);
+    doc.text(`Periodo: ${report.period.start} a ${report.period.end}`, 14, 22);
+    autoTable(doc, {
+      startY: 30,
+      head: [['Campanha', 'Leads', 'Qualif.', 'Aproveit.', 'CPL', 'Custo qualif.', 'Invest.']],
+      body: (report.campanhas || []).map((c: any) => [
+        c.name,
+        c.leads_total,
+        `${Math.round((c.taxa_qualificacao || 0) * 100)}%`,
+        `${Math.round((c.taxa_aproveitamento || 0) * 100)}%`,
+        `${currencySymbol} ${fmt(c.cpl || 0)}`,
+        `${currencySymbol} ${fmt(c.custo_por_qualificado || 0)}`,
+        `${currencySymbol} ${fmt(c.investimento_total || 0)}`,
+      ]),
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [249, 115, 22] },
+    });
+    const y = (doc as any).lastAutoTable?.finalY || 120;
+    doc.text('Recomendacoes do Jose', 14, y + 12);
+    doc.setFontSize(8);
+    const fallback = {
+      campanhas_piores: [...(report.campanhas || [])].sort((a: any, b: any) => (b.cpl || 0) - (a.cpl || 0)).slice(0, 3).map((c: any) => c.name),
+      campanhas_melhores: [...(report.campanhas || [])].sort((a: any, b: any) => (b.taxa_qualificacao || 0) - (a.taxa_qualificacao || 0)).slice(0, 3).map((c: any) => c.name),
+    };
+    const text = recommendations?.analise_texto || JSON.stringify(recommendations || fallback, null, 2);
+    doc.text(doc.splitTextToSize(text, 260), 14, y + 20);
+    doc.save(`relatorio-jose-leads-${report.period.start}-${report.period.end}.pdf`);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Qualidade dos leads Meta + Pedro</p>
+          <p className="text-xs text-muted-foreground">CPL real, qualificacao do Pedro e feedback dos vendedores.</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button size="sm" variant="outline" onClick={syncCosts} disabled={loading} className="gap-1.5">
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Sincronizar Meta
+          </Button>
+          <Button size="sm" onClick={generateReport} disabled={loading} className="gap-1.5">
+            <Target className="h-3.5 w-3.5" />
+            Gerar relatorio
+          </Button>
+          <Button size="sm" variant="secondary" onClick={sendToJose} disabled={loading} className="gap-1.5">
+            <Brain className="h-3.5 w-3.5" />
+            Enviar ao Jose
+          </Button>
+        </div>
+      </div>
+
+      {report ? (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              ['Leads', totals.leads_total || 0],
+              ['Qualificados', totals.leads_qualificados || 0],
+              ['Aproveit.', `${Math.round((totals.taxa_aproveitamento || 0) * 100)}%`],
+              ['CPL', `${currencySymbol} ${fmt(totals.cpl || 0)}`],
+              ['Custo qualif.', `${currencySymbol} ${fmt(totals.custo_por_qualificado || 0)}`],
+            ].map(([label, value]) => (
+              <Card key={String(label)}>
+                <CardContent className="p-3">
+                  <p className="text-[10px] text-muted-foreground">{label}</p>
+                  <p className="text-lg font-bold">{value}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <Card>
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm">Por campanha</CardTitle>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={exportPdf} className="gap-1.5">
+                  <Download className="h-3.5 w-3.5" /> PDF
+                </Button>
+                <Button size="sm" variant="outline" onClick={exportExcel} className="gap-1.5">
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-muted-foreground">
+                  <tr className="border-b border-border/60">
+                    <th className="text-left py-2 pr-3">Campanha</th>
+                    <th className="text-right py-2 px-3">Leads</th>
+                    <th className="text-right py-2 px-3">Qualif.</th>
+                    <th className="text-right py-2 px-3">Aproveit.</th>
+                    <th className="text-right py-2 px-3">CPL</th>
+                    <th className="text-right py-2 pl-3">Invest.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.map((c: any) => (
+                    <tr key={c.id} className="border-b border-border/30">
+                      <td className="py-2 pr-3 max-w-[260px] truncate">{c.name}</td>
+                      <td className="text-right py-2 px-3">{c.leads_total}</td>
+                      <td className="text-right py-2 px-3">{Math.round((c.taxa_qualificacao || 0) * 100)}%</td>
+                      <td className="text-right py-2 px-3">{Math.round((c.taxa_aproveitamento || 0) * 100)}%</td>
+                      <td className="text-right py-2 px-3">{currencySymbol} {fmt(c.cpl || 0)}</td>
+                      <td className="text-right py-2 pl-3">{currencySymbol} {fmt(c.investimento_total || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {campaigns.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-8">Sem leads com origem Meta no periodo.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {recommendations && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Recomendacoes do Jose</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <pre className="text-xs whitespace-pre-wrap rounded-lg bg-muted/40 p-3 overflow-auto max-h-72">
+                  {recommendations.analise_texto || JSON.stringify(recommendations, null, 2)}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      ) : (
+        <Card className="border-dashed">
+          <CardContent className="py-10 text-center">
+            <Target className="h-9 w-9 mx-auto text-muted-foreground/40" />
+            <p className="text-sm font-medium mt-3">Nenhum relatorio carregado</p>
+            <p className="text-xs text-muted-foreground mt-1">Sincronize a Meta ou gere o relatorio do periodo selecionado.</p>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 function CronSettings({
   activeSegment,
@@ -758,7 +988,7 @@ export default function JoseTrafego() {
         {/* ── 4 Tabs ── */}
         {accountId && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="w-full grid grid-cols-5 h-10">
+            <TabsList className="w-full grid grid-cols-6 h-10">
               <TabsTrigger value="chat" className="text-xs gap-1">
                 <MessageCircle className="h-3.5 w-3.5" />
                 Conversar
@@ -780,6 +1010,10 @@ export default function JoseTrafego() {
                     {pendingActions.length}
                   </Badge>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="quality" className="text-xs gap-1">
+                <Target className="h-3.5 w-3.5" />
+                Qualidade
               </TabsTrigger>
               <TabsTrigger value="creatives" className="text-xs gap-1">
                 <Image className="h-3.5 w-3.5" />
@@ -942,6 +1176,14 @@ export default function JoseTrafego() {
             </TabsContent>
 
             {/* ── BIBLIOTECA DE CRIATIVOS ── */}
+            <TabsContent value="quality" className="mt-4">
+              <LeadQualityPanel
+                accountId={accountId}
+                datePreset={datePreset}
+                currencySymbol={currencySymbol}
+              />
+            </TabsContent>
+
             <TabsContent value="creatives" className="mt-4">
               <JoseCreativeLibrary segmentSlug={activeSegment} accountId={accountId} />
             </TabsContent>

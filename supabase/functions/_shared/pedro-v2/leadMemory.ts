@@ -102,6 +102,7 @@ export async function persistPedroV2ContactUtm(
   supabase: any,
   input: {
     user_id: string;
+    lead_id?: string | null;
     phone: string; // digitos
     name?: string | null;
     adContext: any; // PedroV2AdContext
@@ -122,6 +123,15 @@ export async function persistPedroV2ContactUtm(
       /* url malformada — ignora */
     }
     const fromUrl = (k: string) => (params?.get(k) || "").trim() || null;
+    const metaId = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = fromUrl(key);
+        if (!value) continue;
+        const normalized = value.replace(/^act_/, "");
+        if (/^\d{5,30}$/.test(normalized)) return normalized;
+      }
+      return null;
+    };
 
     const src = String(ad.source || "").toLowerCase();
     const isSocialAd = src.includes("facebook") || src.includes("fb.me") ||
@@ -135,6 +145,10 @@ export async function persistPedroV2ContactUtm(
     const utm_campaign = fromUrl("utm_campaign") || (ad.title || null);
     const utm_medium = fromUrl("utm_medium");
     const utm_content = fromUrl("utm_content");
+    const campaign_id = metaId("campaign_id", "utm_campaign_id", "hsa_cam");
+    const adset_id = metaId("adset_id", "utm_adset_id", "hsa_grp");
+    const ad_id = metaId("ad_id", "utm_ad_id", "hsa_ad");
+    const entry_channel = src.includes("instagram") ? "Instagram" : src.includes("facebook") ? "Facebook" : "WhatsApp";
 
     const patch: Record<string, any> = {};
     if (utm_source) patch.utm_source = utm_source;
@@ -162,6 +176,37 @@ export async function persistPedroV2ContactUtm(
         last_message_at: new Date().toISOString(),
         ...patch,
       });
+    }
+
+    if (input.lead_id) {
+      const leadPatch: Record<string, any> = {
+        entry_channel,
+        entry_datetime: new Date().toISOString(),
+        paid_origin_payload: {
+          source: ad.source || null,
+          url: ad.url || null,
+          title: ad.title || null,
+          summary: ad.summary || null,
+          raw_text: ad.raw_text || null,
+          utm_source,
+          utm_medium,
+          utm_campaign,
+          utm_content,
+          fbclid,
+        },
+        updated_at: new Date().toISOString(),
+      };
+      if (campaign_id) leadPatch.campaign_id = campaign_id;
+      if (utm_campaign) leadPatch.campaign_name = utm_campaign;
+      if (adset_id) leadPatch.adset_id = adset_id;
+      if (ad_id) leadPatch.ad_id = ad_id;
+      if (utm_content) leadPatch.ad_name = utm_content;
+
+      await supabase
+        .from("ai_crm_leads")
+        .update(leadPatch)
+        .eq("id", input.lead_id)
+        .eq("user_id", input.user_id);
     }
   } catch (e) {
     console.warn("[persistPedroV2ContactUtm] falhou (ignorado):", e);

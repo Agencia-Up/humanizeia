@@ -48,6 +48,9 @@ verify_jwt = false
 [functions.meta-api]
 verify_jwt = false
 
+[functions.meta-lead-quality]
+verify_jwt = false
+
 [functions.meta-oauth]
 verify_jwt = false
 

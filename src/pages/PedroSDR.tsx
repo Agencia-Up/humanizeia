@@ -743,6 +743,15 @@ const STATUS_CRM_OPTIONS = [
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
+const SELLER_META_FEEDBACK_OPTIONS = [
+  { value: 'lead_bom', label: 'Lead bom' },
+  { value: 'lead_ruim', label: 'Lead ruim' },
+  { value: 'sem_interesse', label: 'Sem interesse' },
+  { value: 'nao_respondeu', label: 'Nao respondeu' },
+  { value: 'agendou', label: 'Agendou' },
+  { value: 'venda_realizada', label: 'Venda realizada' },
+] as const;
+
 // ─── Origem do Lead (Prompt 1.1) ───────────────────────────────────────────
 // Bate com CHECK constraint da migration 20260516120000_lead_origem
 // Usado pelo PEDRO. Marcos tem lista propria abaixo (MARCOS_ORIGEM_OPTIONS).
@@ -961,6 +970,14 @@ interface CrmLead {
   member?: { id: string; name: string } | null;
   agent?: { name: string } | null;
   created_at: string;
+  campaign_id?: string | null;
+  campaign_name?: string | null;
+  adset_id?: string | null;
+  adset_name?: string | null;
+  ad_id?: string | null;
+  ad_name?: string | null;
+  entry_channel?: string | null;
+  entry_datetime?: string | null;
   source?: string | null;
   custom_fields?: Record<string, any> | null;
   // Fase 6 — campos enriched (todos opcionais; só renderizam badge se vierem)
@@ -1132,6 +1149,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [fbReason, setFbReason]           = useState('');
   const [fbReasonOpen, setFbReasonOpen]   = useState<string | null>(null);
   const [fbObservations, setFbObservations] = useState('');
+  const [sellerMetaFeedback, setSellerMetaFeedback] = useState('');
+  const [sellerMetaFeedbackLoading, setSellerMetaFeedbackLoading] = useState(false);
   // Lead feedback history popup
   const [fbHistoryOpen, setFbHistoryOpen] = useState(false);
   const [leadFeedbacks, setLeadFeedbacks] = useState<Feedback[]>([]);
@@ -1398,7 +1417,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, entry_channel, entry_datetime')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -1594,6 +1613,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   const loadLeadDetail = async (lead: CrmLead) => {
     setSelectedLead(lead);
+    setSellerMetaFeedback('');
 
     if (isMarcosCrm) {
       const [notesRes, schedRes] = await Promise.all([
@@ -1623,7 +1643,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       return;
     }
 
-    const [notesRes, schedRes, transfersRes] = await Promise.all([
+    const [notesRes, schedRes, transfersRes, sellerFeedbackRes] = await Promise.all([
       (supabase as any)
         .from('pedro_crm_notes')
         .select('id, lead_id, content, is_pinned, created_at, member:ai_team_members(name)')
@@ -1641,10 +1661,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         .select('id, lead_id, transfer_reason, notes, created_at, to_member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name)')
         .eq('lead_id', lead.id)
         .order('created_at', { ascending: false }),
+      (supabase as any)
+        .from('seller_feedbacks')
+        .select('feedback')
+        .eq('lead_id', lead.id)
+        .maybeSingle(),
     ]);
     setNotes(notesRes.data || []);
     setSchedules(schedRes.data || []);
     setTransfers(transfersRes.data || []);
+    setSellerMetaFeedback(sellerFeedbackRes.data?.feedback || '');
   };
 
   const handleAddNote = async () => {
@@ -1893,6 +1919,30 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
       setFbLoading(false);
+    }
+  };
+
+  const handleSaveSellerMetaFeedback = async () => {
+    if (!selectedLead || !sellerMetaFeedback) return;
+    setSellerMetaFeedbackLoading(true);
+    try {
+      const { error } = await supabase.functions.invoke('meta-lead-quality', {
+        body: {
+          action: 'seller_feedback',
+          lead_id: selectedLead.id,
+          feedback: sellerMetaFeedback,
+        },
+      });
+      if (error) throw error;
+      toast({ title: 'Feedback salvo', description: 'O Jose usara este dado no relatorio de qualidade.' });
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao salvar feedback',
+        description: err?.message || 'Nao foi possivel salvar o feedback do vendedor.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSellerMetaFeedbackLoading(false);
     }
   };
 
@@ -3436,6 +3486,53 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </CardContent>
           </Card>
         </div>
+
+        {!isMarcosCrm && (
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-primary" /> Feedback para trafego
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {(selectedLead.campaign_name || selectedLead.campaign_id || selectedLead.ad_name || selectedLead.ad_id) && (
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-1">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Origem Meta</p>
+                  <p className="text-xs text-foreground">
+                    {selectedLead.campaign_name || selectedLead.campaign_id || 'Campanha nao identificada'}
+                  </p>
+                  {(selectedLead.ad_name || selectedLead.ad_id) && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Anuncio: {selectedLead.ad_name || selectedLead.ad_id}
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Select value={sellerMetaFeedback || undefined} onValueChange={setSellerMetaFeedback}>
+                  <SelectTrigger className="h-9 text-xs flex-1">
+                    <SelectValue placeholder="Resultado do contato..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SELLER_META_FEEDBACK_OPTIONS.map(option => (
+                      <SelectItem key={option.value} value={option.value} className="text-xs">
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  className="h-9"
+                  onClick={handleSaveSellerMetaFeedback}
+                  disabled={!sellerMetaFeedback || sellerMetaFeedbackLoading}
+                >
+                  {sellerMetaFeedbackLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── Feedback Estruturado para Gerente ────────────────────────
             Renderiza pra Pedro E Marcos. handleSendFeedback + loadLeadFeedbackHistory

@@ -1054,6 +1054,7 @@ export async function processPedroV2Turn(
   if (!dryRun && adContext?.has_ad_context) {
     await persistPedroV2ContactUtm(supabase, {
       user_id: input.agent.user_id,
+      lead_id: lead?.id || null,
       phone: remoteJidToPhone(remoteJid),
       name: pushName,
       adContext,
