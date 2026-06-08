@@ -114,6 +114,28 @@ const DATE_PRESETS: { value: ApolloDatePreset; label: string }[] = [
   { value: 'last_30d', label: 'Últimos 30 dias' },
 ];
 
+// ── Métrica PRINCIPAL por objetivo da campanha ─────────────────────────────────
+// O que importa muda com o objetivo: Mensagens → Custo por Conversa Iniciada;
+// Leads → Custo por Lead; Vendas → ROAS; Tráfego → CPC; Alcance → CPM.
+function mainMetricFor(campaign: ApolloEnrichedCampaign, sym: string): { label: string; value: string; tip: string } {
+  const obj = (campaign.objective || '').toUpperCase();
+  const cpa = campaign.cpa || 0;
+  const money = (v: number) => `${sym} ${fmt(v)}`;
+  if (obj.includes('ENGAGEMENT') || obj.includes('MESSAGE') || obj.includes('CONVERSATION'))
+    return { label: 'Custo por Conversa Iniciada', value: cpa > 0 ? money(cpa) : '—', tip: 'Quanto você paga por cada conversa de WhatsApp/Direct iniciada. É a métrica principal das campanhas de mensagens.' };
+  if (obj.includes('LEAD'))
+    return { label: 'Custo por Lead', value: cpa > 0 ? money(cpa) : '—', tip: 'Quanto custa cada lead capturado pelo formulário.' };
+  if (obj.includes('SALE') || obj.includes('CONVERSION'))
+    return campaign.roas > 0
+      ? { label: 'ROAS', value: `${fmt(campaign.roas)}x`, tip: 'Retorno sobre o investimento — quanto retorna por R$1 gasto em anúncio.' }
+      : { label: 'Custo por Resultado', value: cpa > 0 ? money(cpa) : '—', tip: 'Quanto custa cada conversão/venda.' };
+  if (obj.includes('TRAFFIC') || obj.includes('LINK_CLICK'))
+    return { label: 'Custo por Clique', value: campaign.cpc > 0 ? money(campaign.cpc) : '—', tip: 'Quanto você paga por clique no anúncio.' };
+  if (obj.includes('AWARENESS') || obj.includes('REACH') || obj.includes('VIDEO_VIEW'))
+    return { label: 'CPM (custo/mil)', value: campaign.cpm > 0 ? money(campaign.cpm) : '—', tip: 'Custo para mil impressões — métrica de alcance/reconhecimento.' };
+  return { label: 'Custo por Resultado', value: cpa > 0 ? money(cpa) : (campaign.cpc > 0 ? money(campaign.cpc) : '—'), tip: 'Métrica principal estimada para este objetivo.' };
+}
+
 // ── CampaignCard ──────────────────────────────────────────────────────────────
 
 function CampaignCard({
@@ -153,6 +175,23 @@ function CampaignCard({
       </div>
 
       <Progress value={s} className="h-1.5" />
+
+      {/* Métrica PRINCIPAL por objetivo — em destaque */}
+      {(() => {
+        const m = mainMetricFor(campaign, currencySymbol);
+        return (
+          <div className="rounded-md bg-primary/10 border border-primary/25 px-3 py-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-muted-foreground">{m.label}</span>
+              <Tooltip>
+                <TooltipTrigger asChild><HelpCircle className="h-2.5 w-2.5 text-muted-foreground/50 cursor-help" /></TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[220px]"><p className="text-xs">{m.tip}</p></TooltipContent>
+              </Tooltip>
+            </div>
+            <span className="text-lg font-bold text-primary whitespace-nowrap">{m.value}</span>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-3 gap-2 text-xs">
         {[
@@ -506,7 +545,7 @@ function TrendSummary({ snapshots, currencySymbol }: { snapshots: any[]; currenc
 // Cacheia a última sessão + estado da UI POR CONTA no localStorage, pra restaurar
 // instantâneo ao sair e voltar pra tela — SEM refazer chamadas à API do Meta.
 const APOLLO_CACHE_PREFIX = 'jose:apollo:v1:';
-interface ApolloUICache { session: unknown; datePreset: string; activeTab: string; savedAt: number; }
+interface ApolloUICache { session: unknown; datePreset: string; activeTab: string; statusFilter?: string; savedAt: number; }
 function readApolloCache(accountId?: string): ApolloUICache | null {
   if (!accountId || typeof window === 'undefined') return null;
   try {
@@ -535,6 +574,7 @@ export default function ApolloDashboard() {
   const [loadingAdsets, setLoadingAdsets] = useState<Record<string, boolean>>({});
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null); // timestamp da última sincronização (Fase 1)
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all'); // filtro de status (Fase 2)
   const [aiLogEntries, setAiLogEntries] = useState<AILogEntry[]>([]);
   const [aiLogOpen, setAiLogOpen] = useState(true);
   const prevIsAnalyzing = useRef(false);
@@ -551,6 +591,7 @@ export default function ApolloDashboard() {
         hydrateSession(cached.session as any);
         if (cached.datePreset) setDatePreset(cached.datePreset as ApolloDatePreset);
         if (cached.activeTab) setActiveTab(cached.activeTab);
+        if (cached.statusFilter) setStatusFilter(cached.statusFilter as 'all' | 'active' | 'paused');
         if (cached.savedAt) setLastUpdatedAt(cached.savedAt);
       } else {
         loadSavedSession(accountId).then((saved: any) => {
@@ -564,9 +605,9 @@ export default function ApolloDashboard() {
   //    Usa o lastUpdatedAt como carimbo — trocar de aba/período NÃO refaz a sync. ──
   useEffect(() => {
     if (accountId && session && lastUpdatedAt) {
-      writeApolloCache(accountId, { session, datePreset, activeTab, savedAt: lastUpdatedAt });
+      writeApolloCache(accountId, { session, datePreset, activeTab, statusFilter, savedAt: lastUpdatedAt });
     }
-  }, [accountId, session, datePreset, activeTab, lastUpdatedAt]);
+  }, [accountId, session, datePreset, activeTab, statusFilter, lastUpdatedAt]);
   // ── AI Log: populate when analysis starts ──
   useEffect(() => {
     if (isAnalyzing && !prevIsAnalyzing.current) {
@@ -898,20 +939,40 @@ export default function ApolloDashboard() {
             {/* Campaigns */}
             {session && (
               <TabsContent value="campaigns" className="mt-4">
-                {session.campaigns.length === 0
-                  ? <Card><CardContent className="py-12 flex flex-col items-center gap-2"><AlertTriangle className="h-8 w-8 text-muted-foreground" /><p className="text-sm text-muted-foreground">Nenhuma campanha no período.</p></CardContent></Card>
-                  : <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {[...session.campaigns].sort((a, b) => a.health_score - b.health_score).map(c => (
-                        <CampaignCard
-                          key={c.id} campaign={c} currencySymbol={currencySymbol}
-                          accountId={accountId} datePreset={datePreset}
-                          onDrillDown={() => handleDrillDown(c.id)}
-                          adsets={adsetCache[c.id] || null}
-                          isLoadingAdsets={!!loadingAdsets[c.id]}
-                        />
-                      ))}
-                    </div>
-                }
+                {(() => {
+                  const all = session.campaigns;
+                  const activeCount = all.filter((c: any) => c.effective_status === 'ACTIVE').length;
+                  const pausedCount = all.length - activeCount;
+                  const filtered = [...all]
+                    .filter((c: any) => statusFilter === 'all' ? true : statusFilter === 'active' ? c.effective_status === 'ACTIVE' : c.effective_status !== 'ACTIVE')
+                    .sort((a: any, b: any) => a.health_score - b.health_score);
+                  return (
+                    <>
+                      {/* Filtro de status (Fase 2) */}
+                      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                        {(([['all', `Todas (${all.length})`], ['active', `Ativas (${activeCount})`], ['paused', `Pausadas (${pausedCount})`]]) as const).map(([val, label]) => (
+                          <Button key={val} size="sm" variant={statusFilter === val ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setStatusFilter(val as 'all' | 'active' | 'paused')}>
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
+                      {filtered.length === 0
+                        ? <Card><CardContent className="py-12 flex flex-col items-center gap-2"><AlertTriangle className="h-8 w-8 text-muted-foreground" /><p className="text-sm text-muted-foreground">Nenhuma campanha {statusFilter === 'active' ? 'ativa' : statusFilter === 'paused' ? 'pausada' : ''} no período.</p></CardContent></Card>
+                        : <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {filtered.map((c: any) => (
+                              <CampaignCard
+                                key={c.id} campaign={c} currencySymbol={currencySymbol}
+                                accountId={accountId} datePreset={datePreset}
+                                onDrillDown={() => handleDrillDown(c.id)}
+                                adsets={adsetCache[c.id] || null}
+                                isLoadingAdsets={!!loadingAdsets[c.id]}
+                              />
+                            ))}
+                          </div>
+                      }
+                    </>
+                  );
+                })()}
               </TabsContent>
             )}
 
