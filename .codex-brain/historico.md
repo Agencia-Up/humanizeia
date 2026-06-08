@@ -791,3 +791,19 @@
     3. No `AgentInboxTab.tsx` (inbox do Pedro), redefinimos a altura da div principal para `h-[calc(100vh-230px)]` (descontando o header do PedroSDR).
   - **Resultado:** A viewport agora limita perfeitamente a altura dos painéis do inbox. Os contêineres internos de mensagens (`flex-1 min-h-0 overflow-y-auto`) e de contatos identificam a altura limite correta do monitor e ativam suas próprias barras de rolagem internas originais. O campo de digitação fica sempre fixado no rodapé visível da tela, exatamente como no WhatsApp Web e no Chatwoot.
 
+
+---
+
+## [dev-aloan] 2026-06-08 — Pedro v2 v70/v70b: inteligência de busca (Codex) validada + 1 regressão corrigida
+
+- **Contexto:** O Codex subiu uma leva de correções nos 5 arquivos vivos do Pedro (vehicleResolver, stockSearch, planner, orchestrator, reply) + teste `pedro-v2-stock-safety.test.ts`. dev-aloan avaliou, validou e finalizou.
+- **Validação:** esbuild OK nos 5 + webhook; `vitest` 7/7; `tsc --noEmit` 0 erros; sem conflito com a v66 (leadSdrCategory/SDR/fase C intactos).
+- **O que as mudanças do Codex resolvem (provado em dry-run real, Icom/Carvalho):**
+  - typo/alias: `flontie/frontie/fronteir`→Frontier, `disel`→diesel, marca `mini`.
+  - palavras comuns NÃO viram modelo: `entrada`→não busca Strada, `preta`→não busca Creta.
+  - preço de ANÚNCIO divergente não elimina a unidade real (rankVehicles relaxa filtro numérico).
+  - força busca de ESTOQUE REAL em pergunta objetiva (km/valor/ano/disponível).
+  - TRAVA DE MÍDIA: foto só do veículo certo (bloqueia foto errada).
+- **Regressão que o Codex introduziu e a dev-aloan CORRIGIU (v70b):** `enforced_stock_question_search` sem modelo/contexto (ex.: "qual o valor que você tem?") forçava busca vazia → "não temos nenhum veículo". Corrigido: sem modelo resolvido ⇒ `stock_broad` (mostra estoque). Provado: n=24 "Temos várias opções..." em vez de "não temos".
+- **Pendência menor (não bloqueia):** "o que tiver de picape?" (busca ampla por categoria) ainda traz não-picapes no pool — o filtro `tipo_veiculo` se perde no broad. A resposta lidera com picape real, mas vale refinar depois.
+- **Build no ar:** `2026-06-06-search-intel-codex-v70b`. Commits `557172d6` (fix) sobre o de promoção do Codex. Deploy só `pedro-webhook-v2` a partir do `main`.
