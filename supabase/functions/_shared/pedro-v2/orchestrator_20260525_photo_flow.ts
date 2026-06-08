@@ -91,15 +91,38 @@ function pickPushName(payload: any): string {
     "Lead";
 }
 
-function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any) {
+function normalizePlannerText(value?: string | null) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function leadMessageHasExplicitPriceCeiling(message?: string | null) {
+  const text = normalizePlannerText(message);
+  if (!/\d/.test(text)) return false;
+  return /\b(ate|maximo|maxima|no maximo|orcamento|budget|tenho|tenho ate|procuro ate|quero ate|faixa de|na faixa|valor maximo|limite)\b/.test(text);
+}
+
+function leadMessageAsksBroadStock(message?: string | null) {
+  const text = normalizePlannerText(message);
+  if (!text) return false;
+  return /\b(o que tiver|que tiver|qualquer um|qualquer carro|opcoes|opcao|outros modelos|qual outro|outro modelo|tem em estoque|tem ai|tem disponivel)\b/.test(text)
+    || /\b(quero|procuro|busco|preciso|tem|temos|gostaria)\b.{0,30}\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(text);
+}
+
+function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any, options?: any) {
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
-  return {
+  const broadStock = Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
+  const filters: Record<string, any> = {
     ...(memory?.interesse || {}),
     ...(intent?.extracted?.interesse || {}),
     ...(brainPlan?.search_filters || {}),
     query:
-      currentVehicleQuery ||
+      (broadStock ? "" : currentVehicleQuery) ||
       intent?.extracted?.interesse?.modelo_desejado ||
       (allowMemoryVehicle ? memory?.interesse?.modelo_desejado : null) ||
       (allowMemoryVehicle ? memory?.referencia?.veiculo_citado : null) ||
@@ -109,6 +132,23 @@ function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: a
       memory?.referencia?.texto_referencia ||
       "",
   };
+
+  if (broadStock) {
+    filters.stock_broad = true;
+    filters.query = "";
+    delete filters.modelo_desejado;
+    delete filters.modelo;
+    delete filters.marca;
+  }
+
+  const adHasVehicle = Boolean(options?.ad_context?.has_ad_context && options?.ad_context?.vehicle_query);
+  const explicitBudget = leadMessageHasExplicitPriceCeiling(options?.lead_message);
+  if (adHasVehicle && filters.preco_max && !explicitBudget) {
+    filters.ad_price = filters.preco_max;
+    delete filters.preco_max;
+  }
+
+  return filters;
 }
 
 function mergeAdAndMediaContext(adContext: any, mediaContext: any) {
@@ -645,6 +685,59 @@ function messageAsksForPhotos(message: string): boolean {
   if (/\b(quero ver|queria ver|gostaria de ver|posso ver|da pra ver|deixa eu ver|consigo ver|tem como ver)\b/.test(normalized)) return true;
   if (/\bver (o carro|ele|ela|esse|essa|esse carro|essa|mais|as foto|as fotos|as imagens|melhor)\b/.test(normalized)) return true;
   return false;
+}
+
+function requestedVehicleQueryForMediaGuard(plan: any, vehicleResolution: any, stockFilters: any) {
+  const query = String(
+    plan?.search_query ||
+    plan?.search_filters?.modelo_desejado ||
+    stockFilters?.modelo_desejado ||
+    vehicleResolution?.query ||
+    ""
+  ).trim();
+  return query || null;
+}
+
+function queryIsBroadOrGenericVehicle(value?: string | null) {
+  const normalized = normalizePhotoText(value || "");
+  if (!normalized) return true;
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  return tokens.every((token) => [
+    "carro", "carros", "veiculo", "veiculos", "estoque", "opcao", "opcoes",
+    "outro", "outra", "picape", "pickup", "caminhonete", "camionete", "suv",
+    "sedan", "hatch", "foto", "fotos",
+  ].includes(token));
+}
+
+function vehicleMatchesRequestedQuery(vehicle: any, query?: string | null) {
+  if (!vehicle || queryIsBroadOrGenericVehicle(query)) return true;
+  const vehicleText = normalizePhotoText([
+    vehicle?.marca,
+    vehicle?.modelo,
+    vehicle?.versao,
+    vehicle?.ano,
+  ].filter(Boolean).join(" "));
+  const queryTokens = normalizePhotoText(query || "")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3)
+    .filter((token) => !MODEL_NOISE_TOKENS.has(token))
+    .filter((token) => !/^(?:19|20)\d{2}$/.test(token))
+    .filter((token) => ![
+      "carro", "veiculo", "modelo", "versao", "foto", "fotos", "preco", "valor",
+      "automatico", "automatica", "manual", "flex", "diesel", "gasolina",
+    ].includes(token));
+  if (queryTokens.length === 0) return true;
+  return queryTokens.every((token) => vehicleText.includes(token));
+}
+
+function buildBlockedWrongVehiclePhotoReply(requestedQuery: string) {
+  return {
+    ok: true,
+    text: `Pra eu nao te mandar foto errada: vou confirmar as fotos do ${requestedQuery} certinho no estoque.`,
+    source: "vehicle_photos_vehicle_mismatch_blocked",
+    media: [],
+  };
 }
 
 // O pedido de foto e resolvido SO por ATRIBUTO/COR (ex.: "manda o preto", "umas do
@@ -1385,6 +1478,10 @@ export async function processPedroV2Turn(
     vehicle_resolution: vehicleResolution,
     usage_sink: usageSink,
   });
+  if (adContext?.has_ad_context && adContext?.vehicle_query && brainPlan?.search_filters?.preco_max && !leadMessageHasExplicitPriceCeiling(text)) {
+    brainPlan.search_filters.ad_price = brainPlan.search_filters.preco_max;
+    delete brainPlan.search_filters.preco_max;
+  }
   // MODO ASSISTENTE: lead com vendedor dono NUNCA recebe foto do agente (roteia pro
   // vendedor) nem handoff de rodizio (ja tem dono). Rebaixa para reply_only.
   if (ownedLeadAssistantMode) {
@@ -1423,7 +1520,10 @@ export async function processPedroV2Turn(
   });
 
   const stockFilters = contextualIntent.needs_stock_search
-    ? buildStockFilters(contextualIntent, nextMemory, enrichedText, brainPlan, vehicleResolution)
+    ? buildStockFilters(contextualIntent, nextMemory, enrichedText, brainPlan, vehicleResolution, {
+        lead_message: text,
+        ad_context: adContext,
+      })
     : null;
 
   let stockResult = null;
@@ -1441,6 +1541,13 @@ export async function processPedroV2Turn(
     
     if (isUrl || isWeak || tokens.length === 0) {
       isGenericQuery = true;
+    }
+
+    const broadStockIntent = Boolean((stockFilters as any).stock_broad || leadMessageAsksBroadStock(text));
+    if (broadStockIntent) {
+      isGenericQuery = false;
+      (stockFilters as any).stock_broad = true;
+      (stockFilters as any).query = "";
     }
 
     // CRITERIO DE PRECO/SEGMENTO ("mais economico/barato/popular/em conta/basico")
@@ -1606,6 +1713,19 @@ export async function processPedroV2Turn(
         recent_history: recentHistory,
         usage_sink: usageSink,
       });
+
+  if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
+    const requestedPhotoQuery = requestedVehicleQueryForMediaGuard(brainPlan, vehicleResolution, stockFilters);
+    if (requestedPhotoQuery && !vehicleMatchesRequestedQuery((reply as any).vehicle, requestedPhotoQuery)) {
+      log("warn", "pedro_v2_media_vehicle_mismatch_blocked", {
+        lead_id: lead?.id || null,
+        requested_query: requestedPhotoQuery,
+        selected_vehicle_label: (reply as any).selected_vehicle_label || cleanVehicleLabel((reply as any).vehicle || {}),
+        selected_vehicle_key: (reply as any).selected_vehicle_key || null,
+      });
+      reply = buildBlockedWrongVehiclePhotoReply(requestedPhotoQuery);
+    }
+  }
 
   let effectiveMemory = nextMemory;
   if (stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {

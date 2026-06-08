@@ -67,6 +67,32 @@ function isPhotoText(message?: string | null) {
   return false;
 }
 
+function hasStockQuestionSignal(message?: string | null) {
+  const normalized = normalizeText(message);
+  if (!normalized) return false;
+  if (/\b(km|quilometragem|rodado|rodagem|ano|valor|preco|quanto|custa|disponivel|estoque|tem|venderam|vendeu|diesel|disel|automatico|manual)\b/.test(normalized)) return true;
+  if (/\b(qual outro|outro|outra|opcao|opcoes|parecido|similar|semelhante|o que tiver|que tiver)\b/.test(normalized)) return true;
+  if (/\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized)) return true;
+  return false;
+}
+
+function asksBroadStock(message?: string | null) {
+  const normalized = normalizeText(message);
+  if (!normalized) return false;
+  return /\b(o que tiver|que tiver|qualquer um|qualquer carro|opcoes|opcao|outros modelos|qual outro|outro modelo|tem em estoque|tem ai|tem disponivel)\b/.test(normalized)
+    || /\b(quero|procuro|busco|preciso|tem|temos|gostaria)\b.{0,30}\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized);
+}
+
+function memoryVehicleQuery(memory?: PedroV2LeadMemory | null) {
+  return String(
+    memory?.interesse?.modelo_desejado ||
+    memory?.referencia?.veiculo_citado ||
+    memory?.veiculos_apresentados?.[0]?.label ||
+    [memory?.veiculos_apresentados?.[0]?.marca, memory?.veiculos_apresentados?.[0]?.modelo].filter(Boolean).join(" ") ||
+    ""
+  ).trim() || null;
+}
+
 // Emojis positivos que, SOZINHOS, equivalem a um "sim" quando o lead esta reagindo
 // a uma oferta ("quer ver as fotos?" -> 👍 = sim). normalizeText() apaga emojis
 // (sao non-word), entao precisamos testar a string CRUA, antes de normalizar.
@@ -317,6 +343,30 @@ function fallbackPlan(input: {
     };
   }
 
+  if (hasStockQuestionSignal(input.message) && !["trade_in", "financing", "location"].includes(String(heuristic?.intent || ""))) {
+    const broadStock = asksBroadStock(input.message);
+    const memoryVehicle = memoryVehicleQuery(input.memory);
+    if (broadStock || memoryVehicle || heuristic?.needs_stock_search) {
+      return {
+        action: "stock_search",
+        intent: heuristic?.intent === "unknown" ? "stock_lookup" : (heuristic?.intent || "stock_lookup"),
+        confidence: Math.max(0.72, heuristic?.confidence || 0),
+        search_query: broadStock ? null : memoryVehicle,
+        search_filters: {
+          ...(heuristic?.extracted?.interesse || {}),
+          ...(broadStock ? { stock_broad: true } : { modelo_desejado: memoryVehicle }),
+        },
+        photo_target: null,
+        use_memory_vehicle: !broadStock && Boolean(memoryVehicle),
+        response_guidance: broadStock
+          ? "Cliente pediu opcoes/estoque de forma ampla. Consulte o estoque real e apresente poucas opcoes relevantes; nao diga que precisa de modelo especifico."
+          : "Cliente perguntou dado objetivo do veiculo em contexto. Consulte o estoque real antes de responder valor, ano, km ou disponibilidade.",
+        reason: broadStock ? "fallback_broad_stock_question" : "fallback_memory_vehicle_stock_question",
+        source: "fallback",
+      };
+    }
+  }
+
   if (input.ad_context?.has_ad_context && !input.ad_context?.vehicle_query) {
     return {
       action: "clarify",
@@ -438,6 +488,9 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // (photo_request e handoff NAO sao tocados; so promove reply_only/clarify -> stock_search.)
   const _vr = input.vehicle_resolution;
   const hasLlmVehicle = !!plan.search_query || !!plan.search_filters?.modelo_desejado;
+  const stockQuestion = hasStockQuestionSignal(input.message);
+  const broadStockQuestion = asksBroadStock(input.message);
+  const memoryVehicle = memoryVehicleQuery(input.memory);
   if ((_vr?.has_current_vehicle_signal || hasLlmVehicle) && plan.intent !== "trade_in" && (plan.action === "reply_only" || plan.action === "clarify")) {
     plan.action = "stock_search";
     plan.intent = plan.intent === "small_talk" ? "stock_lookup" : plan.intent;
@@ -451,6 +504,20 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
     plan.use_memory_vehicle = _vr?.used_memory ?? plan.use_memory_vehicle;
     plan.reason = `enforced_llm_or_heuristic_vehicle_search:${plan.reason || ""}`;
+  }
+
+  if (stockQuestion && plan.intent !== "trade_in" && (plan.action === "reply_only" || plan.action === "clarify")) {
+    plan.action = "stock_search";
+    plan.intent = plan.intent === "small_talk" || plan.intent === "unknown" ? "stock_lookup" : plan.intent;
+    plan.search_query = broadStockQuestion ? null : (plan.search_query || _vr?.query || plan.search_filters?.modelo_desejado || memoryVehicle || null);
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      ...(broadStockQuestion ? { stock_broad: true } : {}),
+      modelo_desejado: broadStockQuestion ? null : (plan.search_query || _vr?.query || memoryVehicle || null),
+      tipo_veiculo: plan.search_filters?.tipo_veiculo || _vr?.vehicle_type || null,
+    };
+    plan.use_memory_vehicle = !broadStockQuestion && Boolean(_vr?.used_memory || memoryVehicle || plan.use_memory_vehicle);
+    plan.reason = `enforced_stock_question_search:${plan.reason || ""}`;
   }
 
   // ── REDE DE SEGURANÇA: ACEITE DE FOTO (restaurada — evidência real, caso Renê) ──
@@ -476,12 +543,27 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   const photo = isPhotoText(input.message);
   const photoSelectorReply = isPhotoSelectorReply(input.message) && hasPresentedVehicles;
   if (plan.action === "photo_request" && !photo && !acceptedPhotoOffer && !photoSelectorReply) {
-    plan.action = "reply_only";
-    plan.intent = "vehicle_reference";
-    plan.use_memory_vehicle = false;
-    plan.photo_target = null;
-    plan.reason = `blocked_unrequested_photo:${plan.reason || ""}`;
+    if (stockQuestion) {
+      plan.action = "stock_search";
+      plan.intent = plan.intent === "photo_request" ? "stock_lookup" : plan.intent;
+      plan.search_query = broadStockQuestion ? null : (plan.search_query || _vr?.query || memoryVehicle || null);
+      plan.search_filters = {
+        ...(plan.search_filters || {}),
+        ...(broadStockQuestion ? { stock_broad: true } : {}),
+        modelo_desejado: broadStockQuestion ? null : (plan.search_query || _vr?.query || memoryVehicle || null),
+      };
+      plan.use_memory_vehicle = !broadStockQuestion && Boolean(memoryVehicle || plan.use_memory_vehicle);
+      plan.photo_target = null;
+      plan.reason = `blocked_unrequested_photo_to_stock_search:${plan.reason || ""}`;
+      plan.response_guidance = "O lead nao pediu fotos, mas pediu estoque/opcoes/dados do veiculo. Consulte estoque real e responda sem enviar imagens.";
+    } else {
+      plan.action = "reply_only";
+      plan.intent = "vehicle_reference";
+      plan.use_memory_vehicle = false;
+      plan.photo_target = null;
+      plan.reason = `blocked_unrequested_photo:${plan.reason || ""}`;
     plan.response_guidance = "O lead não pediu fotos de forma explícita. Não envie imagens. Apenas responda conversando de forma humana e continue a qualificação ou tire dúvidas.";
+    }
   }
 
   return plan;

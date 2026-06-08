@@ -251,7 +251,17 @@ function isCurrentTurnAdVehicleConsultation(input: {
   vehicle_resolution: PedroVehicleResolution;
   message: string;
 }) {
-  return String(input.plan?.reason || "").startsWith("enforced_ad_vehicle_consultation");
+  if (String(input.plan?.reason || "").startsWith("enforced_ad_vehicle_consultation")) return true;
+  const adVehicle = normalizeText(input.ad_context?.vehicle_query || "");
+  if (!input.ad_context?.has_ad_context || !adVehicle || input.plan?.action !== "stock_search") return false;
+  const planVehicle = normalizeText(input.plan?.search_query || input.plan?.search_filters?.modelo_desejado || "");
+  const resolvedVehicle = normalizeText(input.vehicle_resolution?.query || "");
+  return Boolean(
+    (planVehicle && (planVehicle.includes(adVehicle) || adVehicle.includes(planVehicle))) ||
+    (resolvedVehicle && (resolvedVehicle.includes(adVehicle) || adVehicle.includes(resolvedVehicle))) ||
+    input.vehicle_resolution?.source === "ad_context" ||
+    input.vehicle_resolution?.source === "media_context"
+  );
 }
 
 function looksLikePhotoPromise(text: string) {

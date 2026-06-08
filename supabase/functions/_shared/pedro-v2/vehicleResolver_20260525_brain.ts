@@ -33,6 +33,7 @@ const VEHICLE_ALIASES: VehicleAlias[] = [
   { canonical: "montana", label: "Chevrolet Montana", type: "pickup", aliases: ["montana", "chevrolet montana"] },
   { canonical: "hilux", label: "Toyota Hilux", type: "pickup", aliases: ["hilux", "hilux sw4"] },
   { canonical: "ranger", label: "Ford Ranger", type: "pickup", aliases: ["ranger", "ford ranger"] },
+  { canonical: "frontier", label: "Nissan Frontier", type: "pickup", aliases: ["frontier", "nissan frontier", "flontie", "frontie", "fronteir", "frontere"] },
   { canonical: "s10", label: "Chevrolet S10", type: "pickup", aliases: ["s10", "s 10", "chevrolet s10"] },
   { canonical: "amarok", label: "Volkswagen Amarok", type: "pickup", aliases: ["amarok", "amaroc"] },
   { canonical: "hb20", label: "Hyundai HB20", type: "hatch", aliases: ["hb20", "hb 20", "hb20s"] },
@@ -79,7 +80,8 @@ const WEAK_WORDS = new Set([
   "essa", "este", "esta", "sobre", "quero", "queria", "saber", "mais", "de",
   "da", "do", "dos", "das", "um", "uma", "com", "sem", "para", "por", "ate",
   "automatico", "manual", "flex", "gasolina", "diesel", "aut", "mec", "fotos", 
-  "foto", "detalhes", "modelo", "versao", "ano", "cor", "km"
+  "foto", "detalhes", "modelo", "versao", "ano", "cor", "km", "tambem", "também",
+  "informacoes", "informacao", "cidade", "loja", "endereco", "quilometragem"
 ]);
 
 // Tokens que NUNCA sao modelo (cor/estado/segmento). Impede o match dinamico de
@@ -90,6 +92,8 @@ const NON_MODEL_WORDS = new Set([
   "novo", "nova", "seminovo", "seminova", "usado", "usada", "completo", "completa",
   "barato", "barata", "economico", "economica", "popular", "basico", "lindo", "bonito",
   "conservado", "conservada", "automatico", "manual", "flex",
+  "entrada", "entradas", "pagamento", "financiamento", "financiar", "parcela", "parcelas",
+  "troca", "trocar", "tambem", "também", "interessa", "interesse", "valor", "preco",
 ]);
 
 const REFERENCE_WORDS = /\b(esse|essa|este|esta|aquele|aquela|dele|dela|do\s+\d|da\s+\d|primeiro|primeira|segundo|segunda|terceiro|terceira|quarto|quarta|quinto|quinta|foto|fotos|imagem|imagens|painel|interior|banco|bancos|roda|rodas|traseira|frente|lateral)\b/;
@@ -170,6 +174,7 @@ export function matchAllVehiclesInText(text?: string | null) {
       const aliasTokens = words(alias);
       if (aliasTokens.length !== 1) continue;
       for (const token of tokens) {
+        if (NON_MODEL_WORDS.has(token) || WEAK_WORDS.has(token) || KNOWN_BRANDS.includes(token)) continue;
         const score = similarity(token, aliasTokens[0]);
         if (score >= 0.78) {
           const confidence = 0.68 + score * 0.22;
@@ -195,6 +200,7 @@ export function matchAllVehiclesInText(text?: string | null) {
       const label = `${capitalize(brand)} ${capitalize(modelCandidate)}`;
       const canonical = modelCandidate.toLowerCase();
       if (!matchedModels.has(canonical)) {
+        const confidence = /\d/.test(modelCandidate) ? 0.93 : 0.85;
         matchedModels.set(canonical, {
           vehicle: {
             canonical,
@@ -202,7 +208,7 @@ export function matchAllVehiclesInText(text?: string | null) {
             type: inferVehicleType(label) || "carro",
             aliases: [modelCandidate],
           },
-          confidence: 0.85,
+          confidence,
           reason: `dynamic_brand_match:${brand}:${modelCandidate}`,
         });
       }

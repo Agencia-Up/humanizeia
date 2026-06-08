@@ -49,6 +49,11 @@ function normalizeText(value?: string | null) {
     .replace(/\beco\s*sport\b/g, "ecosport")
     .replace(/\bfree\s*style\b/g, "freestyle")
     .replace(/\bcresta\b/g, "creta")
+    .replace(/\bflontie\b/g, "frontier")
+    .replace(/\bfrontie\b/g, "frontier")
+    .replace(/\bfronteir\b/g, "frontier")
+    .replace(/\bfrontere\b/g, "frontier")
+    .replace(/\bdisel\b/g, "diesel")
     .replace(/\boroque\b/g, "oroch")
     .replace(/\boroqui\b/g, "oroch")
     .replace(/\boroki\b/g, "oroch")
@@ -67,7 +72,7 @@ function normalizeText(value?: string | null) {
 
 const KNOWN_BRANDS = [
   "chevrolet", "fiat", "jeep", "renault", "hyundai", "mitsubishi", "volkswagen", "vw", 
-  "ford", "toyota", "honda", "citroen", "peugeot", "nissan", "chery", "byd", "gwm"
+  "ford", "toyota", "honda", "citroen", "peugeot", "nissan", "chery", "byd", "gwm", "mini"
 ];
 
 const WEAK_WORDS = new Set([
@@ -85,6 +90,10 @@ const WEAK_WORDS = new Set([
   "barato", "barata", "baratos", "baratas", "baratinho", "baratinha",
   "popular", "populares", "basico", "basica", "simples", "conta", "em",
   "barateza", "acessivel", "acessivel", "custo", "beneficio",
+  // conversa/negociacao: nunca sao modelo
+  "entrada", "entradas", "pagamento", "financiamento", "financiar", "parcela", "parcelas",
+  "troca", "trocar", "tambem", "interessa", "interesse", "informacao", "informacoes",
+  "cidade", "loja", "endereco", "qual", "outro", "outra", "opcao", "opcoes",
 ]);
 
 // TOKENS DE ATRIBUTO/RUIDO: descrevem cor, carroceria, estado de conservacao ou ANO —
@@ -130,9 +139,10 @@ function getQueryTokens(searchText: string) {
   if (/\b(creta|hb20)\b/.test(norm)) expansions.push("hyundai");
   if (/\basx\b/.test(norm)) expansions.push("mitsubishi");
   if (/\becosport\b/.test(norm)) expansions.push("ford");
+  if (/\b(cooper|mini)\b/.test(norm)) expansions.push("mini");
   if (/\b(corolla|yaris)\b/.test(norm)) expansions.push("toyota");
   if (/\b(civic|city|fit)\b/.test(norm)) expansions.push("honda");
-  if (/\bkicks\b/.test(norm)) expansions.push("nissan");
+  if (/\b(kicks|frontier)\b/.test(norm)) expansions.push("nissan");
   if (/\b(polo|virtus|nivus|tcross|fox|gol|voyage)\b/.test(norm)) expansions.push("volkswagen vw");
 
   const expansionTokens = expansions
@@ -523,7 +533,13 @@ function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
     .sort((left, right) => right.score - left.score);
 
   if (ranked.length > 0) return ranked;
-  if (modelTerms.length > 0) return []; // Se tinha termo de modelo rígido e não achou, não afrouxa para evitar misturar carros
+  if (modelTerms.length > 0) {
+    // Modelo rigido encontrado, mas filtros numericos podem ter eliminado a unidade real.
+    return typedVehicles
+      .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: true }))
+      .filter((item) => item.score > 0 && passesNumericFilters(item.vehicle, filters, true, allowPriceless))
+      .sort((left, right) => right.score - left.score);
+  }
 
   return typedVehicles
     .map((vehicle) => ({ vehicle, ...scoreVehicle(vehicle, filters), relaxed: true }))
