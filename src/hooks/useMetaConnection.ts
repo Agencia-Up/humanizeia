@@ -204,7 +204,12 @@ export function useMetaConnection() {
       const origin = window.location.origin;
       const loginUrl = new URL('/api/meta/login', origin);
       loginUrl.searchParams.set('user_id', user.id);
-      loginUrl.searchParams.set('return_to', `${origin}/settings`);
+      // Volta pra MESMA página de onde o usuário clicou — é onde o
+      // MetaAdsSettingsTab está montado e consome a sessão OAuth (lê
+      // ?meta_oauth_session=). Antes ia fixo p/ /settings, onde esse
+      // componente não existe, então a sessão nunca era consumida e as
+      // contas não apareciam pra selecionar.
+      loginUrl.searchParams.set('return_to', `${origin}${window.location.pathname}`);
       window.location.href = loginUrl.toString();
     } catch (err: any) {
       toast({
