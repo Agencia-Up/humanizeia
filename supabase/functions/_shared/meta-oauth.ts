@@ -126,14 +126,25 @@ async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string }> 
   };
 }
 
+function forceHttps(origin: string): string {
+  // Atrás do proxy do EasyPanel/Vercel o scheme interno vira http; a Meta EXIGE
+  // https no redirect_uri. Força https para domínios públicos, mantendo http só
+  // para localhost (dev).
+  const clean = origin.replace(/\/+$/g, "");
+  if (clean.startsWith("http://") && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(clean)) {
+    return "https://" + clean.slice("http://".length);
+  }
+  return clean;
+}
+
 function getExternalOrigin(req: Request, url: URL) {
   const logosiaOrigin = req.headers.get("x-logosia-origin") || url.searchParams.get("public_origin");
-  if (logosiaOrigin) return logosiaOrigin.replace(/\/+$/g, "");
+  if (logosiaOrigin) return forceHttps(logosiaOrigin);
 
   const forwardedHost = req.headers.get("x-forwarded-host");
   const forwardedProto = req.headers.get("x-forwarded-proto") || "https";
-  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
-  return Deno.env.get("PUBLIC_SITE_URL") || Deno.env.get("SITE_URL") || url.origin;
+  if (forwardedHost) return forceHttps(`${forwardedProto}://${forwardedHost}`);
+  return forceHttps(Deno.env.get("PUBLIC_SITE_URL") || Deno.env.get("SITE_URL") || url.origin);
 }
 
 function safeReturnTo(req: Request, url: URL, rawReturnTo: string | null) {
