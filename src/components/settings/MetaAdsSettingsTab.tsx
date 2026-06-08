@@ -31,11 +31,9 @@ export function MetaAdsSettingsTab() {
     connectWithToken,
   } = useMetaConnection();
 
-  const [appId, setAppId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [accountId, setAccountId] = useState('');
   const [showToken, setShowToken] = useState(false);
-  const [showAppId, setShowAppId] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAnother, setShowAddAnother] = useState(false);
 
@@ -73,7 +71,6 @@ export function MetaAdsSettingsTab() {
     if (!accessToken.trim()) return;
     const result = await connectWithToken(accessToken.trim(), accountId.trim() || undefined);
     if (result.success && !result.needsSelection) {
-      setAppId('');
       setAccessToken('');
       setAccountId('');
       setShowAddAnother(false);
@@ -187,35 +184,13 @@ export function MetaAdsSettingsTab() {
                 <div className="h-px flex-1 bg-border" />
               </div>
 
-              {/* Manual Token Fields */}
+              {/* Caminho manual — só Token + Conta. O App ID/Secret são configurados
+                  UMA vez na seção de configuração do app (admin) e já são usados pelo
+                  botão "Conectar Meta" acima. Não precisa colar o App ID de novo aqui. */}
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="meta-app-id" className="flex items-center gap-2">
-                    <Hash className="h-4 w-4" />
-                    App ID (ID do Aplicativo)
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      id="meta-app-id"
-                      type={showAppId ? 'text' : 'password'}
-                      placeholder="Cole o ID do seu App Meta aqui..."
-                      value={appId}
-                      onChange={(e) => setAppId(e.target.value)}
-                      disabled={isConnecting}
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowAppId(!showAppId)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showAppId ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Encontre em <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">developers.facebook.com/apps</a> → Configurações → Básico
-                  </p>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  O App ID e o App Secret você configura <strong>uma vez só</strong> na configuração do app (admin) — já valem pro botão <strong>"Conectar Meta"</strong> acima. Aqui, no caminho manual, basta colar um Access Token (e, se quiser, a conta).
+                </p>
 
                 <div className="space-y-2">
                   <Label htmlFor="meta-token" className="flex items-center gap-2">
