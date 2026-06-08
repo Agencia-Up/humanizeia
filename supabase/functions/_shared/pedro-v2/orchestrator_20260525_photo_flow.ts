@@ -1204,6 +1204,19 @@ export async function processPedroV2Turn(
     if (batched) text = batched;
   }
 
+  // === CHECK AI_PAUSED CONTROL ===
+  if (lead?.ai_paused) {
+    console.log(`[PedroV2] IA pausada para ${remoteJid}. Mensagem gravada no historico, ignorando resposta automatica.`);
+    return {
+      ok: true,
+      dry_run: dryRun,
+      correlation_id: correlationId,
+      identity,
+      lead_id: lead?.id || null,
+      next_action: "ai_paused",
+    };
+  }
+
   // === HOLD POS-TRANSFERENCIA (24h) ===
   // Regra do dono (revisada 04/06): DENTRO de 24h apos a transferencia, o agente avisa o
   // LEAD UMA UNICA VEZ que o consultor vai entrar em contato e DEPOIS FICA EM SILENCIO (nao

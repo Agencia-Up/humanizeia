@@ -1745,6 +1745,7 @@ const V1_VEHICLE_ALIASES: V1VehicleAlias[] = [
   { canonical: "kicks", type: "suv", aliases: ["kicks", "kick", "nissan kicks"] },
   { canonical: "city", type: "sedan", aliases: ["city", "honda city"] },
   { canonical: "fit", type: "hatch", aliases: ["fit", "honda fit"] },
+  { canonical: "cooper", type: "hatch", aliases: ["cooper", "mini cooper", "mini cuper", "mini", "mimi cooper", "mini cooper 1.5"] },
 ];
 
 function modelNormalize(value?: string | null): string {

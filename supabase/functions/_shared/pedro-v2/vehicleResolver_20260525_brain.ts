@@ -65,11 +65,12 @@ const VEHICLE_ALIASES: VehicleAlias[] = [
   { canonical: "nivus", label: "Volkswagen Nivus", type: "suv", aliases: ["nivus", "volkswagen nivus", "vw nivus", "nivos", "nivuz", "nivius"] },
   { canonical: "fox", label: "Volkswagen Fox", type: "hatch", aliases: ["fox", "vw fox", "volkswagen fox"] },
   { canonical: "voyage", label: "Volkswagen Voyage", type: "sedan", aliases: ["voyage", "vw voyage", "volkswagen voyage", "voiage", "voiagi"] },
+  { canonical: "cooper", label: "Mini Cooper", type: "hatch", aliases: ["cooper", "mini cooper", "mini cuper", "mini", "mimi cooper", "mini cooper 1.5"] },
 ];
 
 const KNOWN_BRANDS = [
   "chevrolet", "fiat", "jeep", "renault", "hyundai", "mitsubishi", "volkswagen", "vw", 
-  "ford", "toyota", "honda", "citroen", "peugeot", "nissan", "chery", "byd", "gwm"
+  "ford", "toyota", "honda", "citroen", "peugeot", "nissan", "chery", "byd", "gwm", "mini"
 ];
 
 const WEAK_WORDS = new Set([
