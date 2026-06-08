@@ -199,17 +199,12 @@ function CampaignCard({
         );
       })()}
 
+      {/* Secundárias essenciais (sempre visíveis) — leitura rápida */}
       <div className="grid grid-cols-3 gap-2 text-xs">
         {[
           { label: 'Gasto', val: `${currencySymbol} ${fmt(campaign.spend)}` },
           { label: 'CTR', val: `${fmt(campaign.ctr)}%`, highlight: campaign.ctr >= 1.5 ? 'text-emerald-400' : campaign.ctr > 0 ? 'text-amber-400' : '' },
-          { label: 'CPC', val: `${currencySymbol} ${fmt(campaign.cpc)}` },
-          { label: 'Impressões', val: campaign.impressions.toLocaleString('pt-BR') },
           { label: 'Frequência', val: fmt(campaign.frequency), highlight: campaign.frequency > 4 ? 'text-red-400' : campaign.frequency > 3 ? 'text-amber-400' : '' },
-          { label: 'ROAS', val: campaign.roas > 0 ? `${fmt(campaign.roas)}x` : '—', highlight: campaign.roas >= 3 ? 'text-emerald-400' : campaign.roas > 0 ? 'text-amber-400' : '' },
-          { label: 'Conversões', val: String(campaign.conversions || 0) },
-          { label: 'CPA', val: campaign.cpa > 0 ? `${currencySymbol} ${fmt(campaign.cpa)}` : '—' },
-          { label: 'Orçamento/dia', val: campaign.daily_budget ? `${currencySymbol} ${fmt(campaign.daily_budget)}` : 'N/A' },
         ].map(({ label, val, highlight }) => (
           <div key={label}>
             <MetricLabel label={label} />
@@ -217,6 +212,33 @@ function CampaignCard({
           </div>
         ))}
       </div>
+
+      {/* Demais métricas — escondidas por padrão (sem tabela densa), expansível */}
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <button className="group flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+            <ChevronRight className="h-2.5 w-2.5 transition-transform group-data-[state=open]:rotate-90" />
+            Mais métricas
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="grid grid-cols-3 gap-2 text-xs mt-1.5 pt-1.5 border-t border-border/30">
+            {[
+              { label: 'CPC', val: `${currencySymbol} ${fmt(campaign.cpc)}` },
+              { label: 'Impressões', val: campaign.impressions.toLocaleString('pt-BR') },
+              { label: 'ROAS', val: campaign.roas > 0 ? `${fmt(campaign.roas)}x` : '—', highlight: campaign.roas >= 3 ? 'text-emerald-400' : campaign.roas > 0 ? 'text-amber-400' : '' },
+              { label: 'Conversões', val: String(campaign.conversions || 0) },
+              { label: 'CPA', val: campaign.cpa > 0 ? `${currencySymbol} ${fmt(campaign.cpa)}` : '—' },
+              { label: 'Orçamento/dia', val: campaign.daily_budget ? `${currencySymbol} ${fmt(campaign.daily_budget)}` : 'N/A' },
+            ].map(({ label, val, highlight }) => (
+              <div key={label}>
+                <MetricLabel label={label} />
+                <p className={`font-semibold text-xs ${highlight || ''}`}>{val}</p>
+              </div>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Level 6: Creative Fatigue + Budget Pacing */}
       {(campaign as any).creative_fatigue && (
