@@ -31,20 +31,42 @@ function buildInstanceHeaders(instanceToken: string, adminToken?: string) {
   };
 }
 
-function extractQrCodeCandidate(value: unknown): string | null {
+function looksLikeBase64Image(value: string) {
+  const normalized = value.replace(/\s/g, '');
+  return normalized.length > 200 &&
+    /^[A-Za-z0-9+/=]+$/.test(normalized) &&
+    /^(iVBORw0KGgo|\/9j\/|R0lGODlh|R0lGODdh|UklGR)/.test(normalized);
+}
+
+function isRawQrPayloadKey(keyHint?: string) {
+  return [
+    'qrcode',
+    'qrCode',
+    'qr_code',
+    'qr',
+    'code',
+    'connectionKey',
+  ].includes(keyHint || '');
+}
+
+function extractQrCodeCandidate(value: unknown, keyHint?: string): string | null {
   if (!value) return null;
 
   if (typeof value === 'string') {
     const normalized = value.trim();
     if (!normalized) return null;
     if (normalized.startsWith('data:image/')) return normalized;
-    if (normalized.length > 200 && /^[A-Za-z0-9+/=\r\n]+$/.test(normalized)) return normalized;
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    if (looksLikeBase64Image(normalized)) return normalized;
+    // Some UaZapi responses return the WhatsApp QR payload as raw
+    // text. Return it so the React UI can render it through qrcode.react.
+    if (isRawQrPayloadKey(keyHint) && normalized.length > 40) return normalized;
     return null;
   }
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = extractQrCodeCandidate(item);
+      const found = extractQrCodeCandidate(item, keyHint);
       if (found) return found;
     }
     return null;
@@ -66,7 +88,7 @@ function extractQrCodeCandidate(value: unknown): string | null {
 
     for (const key of priorityKeys) {
       if (key in record) {
-        const found = extractQrCodeCandidate(record[key]);
+        const found = extractQrCodeCandidate(record[key], key);
         if (found) return found;
       }
     }
@@ -101,6 +123,101 @@ function parseConnectionState(payload: any) {
   return { state, connected };
 }
 
+const PHONE_KEY_HINTS = ['owner', 'jid', 'wid', 'wuid', 'me', 'number', 'phone', 'phonenumber', 'msisdn'];
+
+function extractWhatsappNumber(root: unknown): string {
+  let jidMatch = '';
+  let keyMatch = '';
+  const seen = new WeakSet<object>();
+
+  const walk = (value: unknown, keyHint = ''): void => {
+    if (jidMatch) return;
+    if (typeof value === 'string') {
+      const jid = value.match(/(\d{10,15})(?::\d+)?@(?:s\.whatsapp\.net|c\.us)/);
+      if (jid) { jidMatch = jid[1]; return; }
+      if (!keyMatch && PHONE_KEY_HINTS.includes(keyHint.toLowerCase()) && !value.includes('/')) {
+        const digits = value.replace(/\D/g, '');
+        if (digits.length >= 10 && digits.length <= 15) keyMatch = digits;
+      }
+      return;
+    }
+    if (typeof value === 'number') {
+      if (!keyMatch && PHONE_KEY_HINTS.includes(keyHint.toLowerCase())) {
+        const digits = String(value);
+        if (digits.length >= 10 && digits.length <= 15) keyMatch = digits;
+      }
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    if (seen.has(value as object)) return;
+    seen.add(value as object);
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, keyHint);
+      return;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      walk(nested, key);
+    }
+  };
+
+  walk(root);
+  return jidMatch || keyMatch || '';
+}
+
+function findInstanceRecord(value: unknown, instanceName: string): unknown {
+  if (!value || typeof value !== 'object') return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findInstanceRecord(item, instanceName);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const directName = String(
+    record.instanceName ||
+    record.instance_name ||
+    record.name ||
+    (record.instance as any)?.instanceName ||
+    (record.instance as any)?.instance_name ||
+    (record.instance as any)?.name ||
+    ''
+  );
+  if (directName === instanceName) return record;
+
+  for (const nested of Object.values(record)) {
+    const found = findInstanceRecord(nested, instanceName);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function fetchConnectedPhone(baseUrl: string, adminToken: string, instanceName: string): Promise<string> {
+  if (!adminToken) return '';
+  const endpoints = ['/instance/all', '/instance/list', '/instance/fetchInstances'];
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'GET',
+        headers: buildAdminHeaders(adminToken),
+      });
+      const text = await res.text();
+      console.log(`[get-uazapi-qrcode] phone lookup ${endpoint} (${res.status}): ${text.substring(0, 300)}`);
+      if (!res.ok) continue;
+      const data = JSON.parse(text);
+      const matched = findInstanceRecord(data, instanceName);
+      const phone = extractWhatsappNumber(matched);
+      if (phone) return phone;
+    } catch (error) {
+      console.warn(`[get-uazapi-qrcode] phone lookup failed at ${endpoint}:`, error);
+    }
+  }
+
+  return '';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -110,8 +227,9 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-  const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
-  const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+  const legacyUazapiToken = Deno.env.get('UAZAPI_API') || Deno.env.get('UAZAPI-API');
+  const uazapiUrl = Deno.env.get('UAZAPI_URL') || (legacyUazapiToken ? 'https://logosiabrasilcom.uazapi.com' : '');
+  const uazapiAdminToken = Deno.env.get('UAZAPI_ADMIN_TOKEN') || legacyUazapiToken;
 
   try {
     const authHeader = req.headers.get('Authorization');
@@ -197,7 +315,7 @@ Deno.serve(async (req) => {
         .from('wa_instances')
         .select('id, user_id, seller_member_id, instance_name, api_url, api_key_encrypted')
         .eq('user_id', requestedMasterId)
-        .eq('provider', 'evolution')
+        .eq('provider', 'uazapi')
         .in('status', ['waiting_qr', 'disconnected'])
         .order('created_at', { ascending: false })
         .limit(1);
@@ -236,16 +354,17 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: 'Nenhuma instancia encontrada' }, 404);
     }
 
-    const baseUrl = (apiUrl || evolutionApiUrl || '').replace(/\/$/, '');
+    const baseUrl = (apiUrl || uazapiUrl || '').replace(/\/$/, '');
     const instanceToken = apiKey || '';
-    const adminToken = evolutionApiKey || '';
+    const adminToken = uazapiAdminToken || '';
 
     if (!baseUrl || (!instanceToken && !adminToken)) {
-      return jsonResponse({ success: false, error: 'Credenciais da Evolution API nao encontradas' }, 500);
+      return jsonResponse({ success: false, error: 'Credenciais da UaZapi nao encontradas' }, 500);
     }
 
     let currentState = 'disconnected';
     let currentConnected = false;
+    let currentStatePayload: unknown = null;
 
     const stateAttempts = [
       { label: 'status-token', url: `${baseUrl}/instance/status`, headers: buildInstanceHeaders(instanceToken || adminToken, adminToken) },
@@ -260,11 +379,12 @@ Deno.serve(async (req) => {
         const parsed = parseConnectionState(stateData);
         currentState = parsed.state || currentState;
         currentConnected = parsed.connected;
+        currentStatePayload = stateData;
         break;
       } catch {}
     }
 
-    console.log(`[get-evolution-qrcode] Instance ${instanceName} state: ${currentState}`);
+    console.log(`[get-uazapi-qrcode] Instance ${instanceName} state: ${currentState}`);
 
     const updateInstance = async (updates: Record<string, unknown>) => {
       if (instanceId) {
@@ -285,19 +405,10 @@ Deno.serve(async (req) => {
     };
 
     if (currentConnected) {
-      let phoneNumber = '';
-      try {
-        const infoRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
-          headers: buildAdminHeaders(adminToken || instanceToken),
-        });
-        if (infoRes.ok) {
-          const instances = await infoRes.json();
-          const inst = Array.isArray(instances)
-            ? instances.find((i: any) => i.instance?.instanceName === instanceName || i.instanceName === instanceName)
-            : null;
-          phoneNumber = String(inst?.instance?.owner || inst?.owner || '').replace(/@.*$/, '');
-        }
-      } catch {}
+      let phoneNumber = extractWhatsappNumber(currentStatePayload);
+      if (!phoneNumber) {
+        phoneNumber = await fetchConnectedPhone(baseUrl, adminToken || instanceToken, instanceName);
+      }
 
       const updates = {
         status: 'connected',
@@ -323,6 +434,7 @@ Deno.serve(async (req) => {
 
     let qrCode: string | null = null;
     let connected = false;
+    let connectedPhone = '';
 
     const qrAttempts = [
       {
@@ -355,14 +467,15 @@ Deno.serve(async (req) => {
       });
 
       const qrText = await qrRes.text();
-      console.log(`[get-evolution-qrcode] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
+      console.log(`[get-uazapi-qrcode] ${attempt.label} QR response (${qrRes.status}): ${qrText.substring(0, 300)}`);
 
       try {
         const qrData = JSON.parse(qrText);
-        console.log(`[get-evolution-qrcode] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
-        console.log(`[get-evolution-qrcode] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
+        console.log(`[get-uazapi-qrcode] ${attempt.label} top-level keys: ${Object.keys(qrData || {}).join(', ')}`);
+        console.log(`[get-uazapi-qrcode] ${attempt.label} instance keys: ${Object.keys(qrData?.instance || {}).join(', ')}`);
         qrCode = extractQrCodeCandidate(qrData) || qrCode;
         connected = parseConnectionState(qrData).connected;
+        connectedPhone = extractWhatsappNumber(qrData) || connectedPhone;
       } catch {}
 
       if (qrCode || connected) {
@@ -371,8 +484,13 @@ Deno.serve(async (req) => {
     }
 
     if (connected) {
-      await updateInstance({ status: 'connected', is_active: true, updated_at: new Date().toISOString() });
-      await updateMasterConfigIfNeeded({ is_active: true, updated_at: new Date().toISOString() });
+      if (!connectedPhone) {
+        connectedPhone = await fetchConnectedPhone(baseUrl, adminToken || instanceToken, instanceName);
+      }
+      const updates: Record<string, unknown> = { status: 'connected', is_active: true, updated_at: new Date().toISOString() };
+      if (connectedPhone) updates.phone_number = connectedPhone;
+      await updateInstance(updates);
+      await updateMasterConfigIfNeeded({ is_active: true, ...(connectedPhone ? { phone_number: connectedPhone } : {}), updated_at: new Date().toISOString() });
     } else if (qrCode) {
       await updateInstance({ status: 'waiting_qr', is_active: false, updated_at: new Date().toISOString() });
     }
@@ -381,9 +499,10 @@ Deno.serve(async (req) => {
       success: true,
       connected,
       qr_code: qrCode,
+      phone_number: connectedPhone || null,
     });
   } catch (error: unknown) {
-    console.error('[get-evolution-qrcode] Error:', error);
+    console.error('[get-uazapi-qrcode] Error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonResponse({ success: false, error: message }, 500);
   }

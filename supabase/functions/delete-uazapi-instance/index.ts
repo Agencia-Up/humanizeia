@@ -79,7 +79,7 @@ serve(async (req: Request) => {
 
     const { instance_name, api_url, api_key_encrypted } = inst;
     const instanceToken = api_key_encrypted;
-    const baseUrl = api_url?.replace(/\/$/, "") || Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, "");
+    const baseUrl = api_url?.replace(/\/$/, "") || Deno.env.get('UAZAPI_URL')?.replace(/\/$/, "") || Deno.env.get('EVOLUTION_API_URL')?.replace(/\/$/, "");
 
     console.log(`[delete-instance V8.3] Deletando instância: ${instance_name} (${instance_id})`);
 

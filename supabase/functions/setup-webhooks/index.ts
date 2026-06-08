@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const EVOLUTION_WEBHOOK_EVENTS = [
+const UAZAPI_WEBHOOK_EVENTS = [
   "MESSAGES_UPSERT",
   "MESSAGES_SET",
   "MESSAGES_UPDATE",
@@ -13,7 +13,7 @@ function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
     url: webhookUrl,
     webhook_by_events: false,
     webhook_base64: false,
-    events: EVOLUTION_WEBHOOK_EVENTS,
+    events: UAZAPI_WEBHOOK_EVENTS,
     ...(instanceName ? { instanceName } : {}),
   };
 }
@@ -32,18 +32,19 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL")!;
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY")!;
+    const legacyUazapiToken = Deno.env.get("UAZAPI_API") || Deno.env.get("UAZAPI-API");
+    const uazapiUrl = Deno.env.get("UAZAPI_URL") || Deno.env.get("EVOLUTION_API_URL") || (legacyUazapiToken ? "https://logosiabrasilcom.uazapi.com" : "");
+    const uazapiAdminToken = Deno.env.get("UAZAPI_ADMIN_TOKEN") || legacyUazapiToken || Deno.env.get("EVOLUTION_API_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
-    const baseUrl = evolutionApiUrl.replace(/\/+$/, "");
+    const baseUrl = uazapiUrl.replace(/\/+$/, "");
 
     // Get all UazAPI instances
     const { data: instances } = await supabase
       .from("wa_instances")
       .select("id, instance_name, user_id")
-      .eq("provider", "evolution");
+      .in("provider", ["uazapi", "evolution"]);
 
     if (!instances || instances.length === 0) {
       return new Response(JSON.stringify({ success: false, error: "No instances found" }), {
@@ -58,7 +59,7 @@ Deno.serve(async (req) => {
         // Check current webhook
         const checkRes = await fetch(`${baseUrl}/webhook/find/${inst.instance_name}`, {
           method: "GET",
-          headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+          headers: { "Content-Type": "application/json", apikey: uazapiAdminToken },
         });
         let currentWebhook = null;
         if (checkRes.ok) {
@@ -74,7 +75,7 @@ Deno.serve(async (req) => {
 
         let setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+          headers: { "Content-Type": "application/json", apikey: uazapiAdminToken },
           body: JSON.stringify(webhookPayload),
         });
 
@@ -83,7 +84,7 @@ Deno.serve(async (req) => {
           await setRes.text(); // consume body
           setRes = await fetch(`${baseUrl}/webhook/set/${inst.instance_name}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+            headers: { "Content-Type": "application/json", apikey: uazapiAdminToken },
             body: JSON.stringify(buildWebhookPayload(webhookUrl, inst.instance_name)),
           });
         }
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
           await setRes.text().catch(() => "");
           setRes = await fetch(`${baseUrl}/webhook/instance`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", apikey: evolutionApiKey },
+            headers: { "Content-Type": "application/json", apikey: uazapiAdminToken },
             body: JSON.stringify(buildWebhookPayload(webhookUrl, inst.instance_name)),
           });
         }

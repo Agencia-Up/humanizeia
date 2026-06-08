@@ -10,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useSubscription } from '@/hooks/useSubscription';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
-import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
+import { UazapiConnectDialog } from '@/components/uazapi/UazapiConnectDialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -107,7 +107,7 @@ function formatWaNumber(raw: string | null | undefined): string {
 }
 
 // Mantido em sincronia com INSTANCE_LIMITS_BY_PLAN do backend
-// (create-evolution-instance): basico 10, pro 15, enterprise 15.
+// (create-uazapi-instance): basico 10, pro 15, enterprise 15.
 const INSTANCE_LIMITS: Record<string, number> = {
   basico: 10,
   pro: 15,
@@ -145,12 +145,18 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
         body: { instance_id: instanceId },
       });
       if (error) throw error;
+
+      if (data?.connected_phone) {
+        setInstances(prev => prev.map(i =>
+          i.id === instanceId ? { ...i, phone_number: data.connected_phone } : i
+        ));
+      }
       
       if (data?.status_changed) {
         // Update local state
         setInstances(prev => prev.map(i => 
           i.id === instanceId 
-            ? { ...i, status: data.current_status, is_active: data.is_connected, health_score: data.is_connected ? i.health_score : 0 }
+            ? { ...i, status: data.current_status, is_active: data.is_connected, phone_number: data.connected_phone || i.phone_number, health_score: data.is_connected ? i.health_score : 0 }
             : i
         ));
         if (!silent) {
@@ -176,7 +182,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     setIsVerifyingAll(true);
     try {
       // Bulk audit no servidor: verifica todas as instâncias da conta contra a
-      // Evolution API e DESATIVA (is_active=false) as que estão zumbi.
+      // UaZapi e DESATIVA (is_active=false) as que estao zumbi.
       const { data, error } = await supabase.functions.invoke('audit-master-instances', { body: {} });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -211,10 +217,17 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
       if (error) throw error;
       const list = (data as unknown as WaInstance[]) || [];
       setInstances(list);
-      // NÃO disparar auto-verify ao abrir a página — era a causa principal da
-      // instabilidade: a cada montagem rodava audit-master-instances que faz
-      // N requests à UaZapi (uma por instância) e gerava toasts de erro em
-      // cascata. Master clica "Verificar Todos" quando quiser checar.
+      if (!skipVerify) {
+        const missingConnectedPhone = list
+          .filter(i => i.status === 'connected' && i.is_active && !i.phone_number)
+          .slice(0, 3);
+
+        if (missingConnectedPhone.length > 0) {
+          void Promise.all(missingConnectedPhone.map(i => verifyInstanceStatus(i.id, true)));
+        }
+      }
+      // Nao dispara auditoria geral ao abrir a pagina; so corrige, em silencio,
+      // instancias conectadas que ainda nao gravaram o telefone.
     } catch (err: any) {
       console.error('Error fetching instances:', err);
     } finally {
@@ -277,7 +290,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     try {
       // requester_auth_id = auth.uid() do solicitante (master OU vendedor).
       // A edge function valida autorização: master via user_id, vendedor via seller_member_id.
-      const { data, error } = await supabase.functions.invoke('delete-evolution-instance', {
+      const { data, error } = await supabase.functions.invoke('delete-uazapi-instance', {
         body: { instance_id: deleteId, requester_auth_id: user.id },
       });
       if (error) throw error;
@@ -303,7 +316,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
   const handleSyncWebhook = async (instance: WaInstance) => {
     setSyncingId(instance.id);
     try {
-      const { data, error } = await supabase.functions.invoke('sync-evolution-webhook', {
+      const { data, error } = await supabase.functions.invoke('sync-uazapi-webhook', {
         body: { instance_id: instance.id, user_id: user?.id },
       });
       if (error) throw error;
@@ -689,7 +702,7 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
         </Card>
       </div>
 
-      <EvolutionConnectDialog
+      <UazapiConnectDialog
         open={connectOpen}
         onOpenChange={(open) => {
           setConnectOpen(open);

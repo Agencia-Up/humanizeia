@@ -13,7 +13,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { CheckCircle, XCircle, Loader2, MessageCircle, Plug } from 'lucide-react';
 import { useWhatsAppConfig } from '@/hooks/useWhatsAppConfig';
-import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
+import { UazapiConnectDialog } from '@/components/uazapi/UazapiConnectDialog';
 
 export function WhatsAppSettingsTab() {
   const {
@@ -177,7 +177,7 @@ export function WhatsAppSettingsTab() {
         </CardContent>
       </Card>
 
-      <EvolutionConnectDialog
+      <UazapiConnectDialog
         open={connectOpen}
         onOpenChange={setConnectOpen}
       />

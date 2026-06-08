@@ -13,6 +13,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 //  (2) como reforço, aceita chaves conhecidas de telefone com valor "limpo" de 10-15 dígitos.
 const PHONE_KEY_HINTS = ['owner', 'jid', 'wid', 'wuid', 'me', 'number', 'phone', 'phonenumber', 'msisdn'];
 
+function buildAdminHeaders(apiKey: string) {
+  return {
+    'Content-Type': 'application/json',
+    apikey: apiKey,
+    token: apiKey,
+    admintoken: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
+
 function extractWhatsappNumber(root: unknown): string {
   let jidMatch = '';
   let keyMatch = '';
@@ -45,6 +55,60 @@ function extractWhatsappNumber(root: unknown): string {
 
   walk(root);
   return jidMatch || keyMatch || '';
+}
+
+function findInstanceRecord(value: unknown, instanceName: string): unknown {
+  if (!value || typeof value !== 'object') return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findInstanceRecord(item, instanceName);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const directName = String(
+    record.instanceName ||
+    record.instance_name ||
+    record.name ||
+    (record.instance as any)?.instanceName ||
+    (record.instance as any)?.instance_name ||
+    (record.instance as any)?.name ||
+    ''
+  );
+  if (directName === instanceName) return record;
+
+  for (const nested of Object.values(record)) {
+    const found = findInstanceRecord(nested, instanceName);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function fetchConnectedPhone(baseUrl: string, adminToken: string, instanceName: string): Promise<string> {
+  if (!adminToken) return '';
+  const endpoints = ['/instance/all', '/instance/list', '/instance/fetchInstances'];
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'GET',
+        headers: buildAdminHeaders(adminToken),
+      });
+      const text = await res.text();
+      console.log(`[verify-instance] phone lookup ${endpoint} (${res.status}): ${text.substring(0, 300)}`);
+      if (!res.ok) continue;
+      const data = JSON.parse(text);
+      const matched = findInstanceRecord(data, instanceName);
+      const phone = extractWhatsappNumber(matched);
+      if (phone) return phone;
+    } catch (error) {
+      console.warn(`[verify-instance] phone lookup failed at ${endpoint}:`, error);
+    }
+  }
+
+  return '';
 }
 
 Deno.serve(async (req) => {
@@ -216,7 +280,11 @@ Deno.serve(async (req) => {
 
     // Extrai o número conectado de forma AGNÓSTICA ao nome do campo (ver helper acima).
     // Roda sempre que houver resposta — o próprio número é o sinal de que está conectado.
-    const connectedPhone = extractWhatsappNumber(stateData);
+    let connectedPhone = extractWhatsappNumber(stateData);
+    if (!connectedPhone && isConnected) {
+      const adminToken = Deno.env.get('UAZAPI_ADMIN_TOKEN') || Deno.env.get('UAZAPI_API') || Deno.env.get('UAZAPI-API') || instKey;
+      connectedPhone = await fetchConnectedPhone(baseUrl, adminToken, instance.instance_name);
+    }
     console.log(`[verify-instance] ${instance.instance_name} connected phone extracted: ${connectedPhone || '(none)'}`);
 
     // Update the DB with the real status

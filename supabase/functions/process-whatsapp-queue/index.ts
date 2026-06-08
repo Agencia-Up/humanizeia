@@ -1154,7 +1154,7 @@ async function selectSmartInstance(
 
 // ====================== PROVIDER ABSTRACTION ======================
 
-// UazAPI (logos-ia.uazapi.com) can expose either the V6 send endpoints
+// UazAPI (logosiabrasilcom.uazapi.com) can expose either the V6 send endpoints
 // or the legacy Evolution-compatible message endpoints with the instance name.
 // Erro de NUMERO invalido/errado (numero nao existe / nao e WhatsApp / formato
 // recusado pela API). Nesses casos NAO adianta re-tentar — marca failed e pula.
@@ -1174,7 +1174,7 @@ function isInvalidNumberError(msg: string): boolean {
 }
 
 function isUazAPIInstance(instance: Instance): boolean {
-  return instance.api_url.includes("uazapi");
+  return instance.provider === "uazapi" || instance.api_url.includes("uazapi");
 }
 
 async function sendMessageByProvider(
@@ -1193,7 +1193,7 @@ async function sendMessageByProvider(
   return await sendToEvolutionAPI(instance, phone, text, mediaUrl, mediaType);
 }
 
-// ====================== UAZAPI (logos-ia.uazapi.com) ======================
+// ====================== UAZAPI (logosiabrasilcom.uazapi.com) ======================
 // UazAPI uses token-based auth (header "token"), no instance name in path.
 // Endpoint: POST /send/text  Body: { number, text }
 

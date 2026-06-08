@@ -9,14 +9,15 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { WhatsAppQrCode } from '@/components/uazapi/WhatsAppQrCode';
 import {
   Loader2, CheckCircle, QrCode, RefreshCw, Smartphone, Globe,
 } from 'lucide-react';
 
 type Step = 'provider' | 'instance' | 'meta_credentials' | 'qrcode' | 'connected';
-type Provider = 'evolution' | 'meta';
+type Provider = 'uazapi' | 'meta';
 
-interface EvolutionConnectDialogProps {
+interface UazapiConnectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected?: () => void;
@@ -24,7 +25,7 @@ interface EvolutionConnectDialogProps {
   initialFriendlyName?: string;
 }
 
-export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initialInstanceName, initialFriendlyName }: EvolutionConnectDialogProps) {
+export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialInstanceName, initialFriendlyName }: UazapiConnectDialogProps) {
   const { user } = useAuth();
   const { isSeller, seller } = useSellerProfile(user?.id);
   const queryClient = useQueryClient();
@@ -36,9 +37,9 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const effectiveSellerMemberId = (isSeller && seller?.id) ? seller.id : null;
 
   const [step, setStep] = useState<Step>('provider');
-  const [provider, setProvider] = useState<Provider>('evolution');
+  const [provider, setProvider] = useState<Provider>('uazapi');
 
-  // Evolution fields
+  // UaZapi fields
   const [friendlyName, setFriendlyName] = useState('');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
@@ -54,7 +55,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const realtimeChannel = useRef<any>(null);
   // Mutex pra race condition: Realtime e polling disparam handleSuccess em
   // paralelo. Sem flag, queryClient invalida 2x, onConnected chama 2x,
-  // sync-evolution-webhook é chamado em duplicata (causa instabilidade).
+  // sync-uazapi-webhook é chamado em duplicata (causa instabilidade).
   const successHandledRef = useRef(false);
 
   useEffect(() => {
@@ -62,14 +63,14 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
       if (initialInstanceName) {
         setFriendlyName(initialFriendlyName || initialInstanceName);
         setActiveSlug(initialInstanceName);
-        setProvider('evolution');
+        setProvider('uazapi');
         // Reconectar instância existente: buscar QR diretamente sem criar nova
         handleReconnectExisting(initialInstanceName);
       }
     } else {
       stopPolling();
       setStep('provider');
-      setProvider('evolution');
+      setProvider('uazapi');
       setQrCode(null);
       setIsCreating(false);
       setFriendlyName('');
@@ -100,9 +101,9 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     setIsCreating(true);
     setActiveSlug(slug);
     try {
-      const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
+      const { data, error } = await supabase.functions.invoke('create-uazapi-instance', {
         body: {
-          provider: 'evolution',
+          provider: 'uazapi',
           instance_name: String(slug),
           friendly_name: String(friendlyName || activeOverride || ""),
           user_id: String(effectiveOwnerId || ""),
@@ -140,7 +141,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     setIsCreating(true);
     setStep('qrcode');
     try {
-      const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
+      const { data, error } = await supabase.functions.invoke('get-uazapi-qrcode', {
         body: {
           user_id: effectiveOwnerId || user!.id,
           instance_name: slug,
@@ -169,7 +170,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     }
     setIsCreating(true);
     try {
-      const { data, error } = await supabase.functions.invoke('create-evolution-instance', {
+      const { data, error } = await supabase.functions.invoke('create-uazapi-instance', {
         body: {
           provider: 'meta',
           user_id: effectiveOwnerId,
@@ -217,7 +218,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     // 2. Polling Fallback
     pollingRef.current = setInterval(async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('get-evolution-qrcode', {
+        const { data, error } = await supabase.functions.invoke('get-uazapi-qrcode', {
           body: {
             user_id: effectiveOwnerId || user!.id,
             instance_name: slug,
@@ -238,7 +239,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     // Mutex contra race condition Realtime + polling. Sem isso, ambos os
     // canais disparam handleSuccess quase simultaneamente quando status muda
     // pra 'connected', causando invalidateQueries 2x, onConnected 2x, e
-    // sync-evolution-webhook duplicado.
+    // sync-uazapi-webhook duplicado.
     if (successHandledRef.current) return;
     successHandledRef.current = true;
 
@@ -247,7 +248,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
     queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
     onConnected?.();
 
-    // Auto-sync webhook URL with the Evolution/UAZAPI instance
+    // Auto-sync webhook URL with the UaZapi instance
     if (activeSlug && user) {
       try {
         const { data: inst } = await supabase
@@ -257,13 +258,13 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           .eq('user_id', effectiveOwnerId || user.id)
           .maybeSingle();
         if (inst?.id) {
-          await supabase.functions.invoke('sync-evolution-webhook', {
+          await supabase.functions.invoke('sync-uazapi-webhook', {
             body: { instance_id: inst.id, user_id: effectiveOwnerId || user.id },
           });
-          console.log('[EvolutionConnect] Webhook sincronizado para', activeSlug);
+          console.log('[UazapiConnect] Webhook sincronizado para', activeSlug);
         }
       } catch (e) {
-        console.warn('[EvolutionConnect] Falha ao sincronizar webhook:', e);
+        console.warn('[UazapiConnect] Falha ao sincronizar webhook:', e);
       }
     }
   };
@@ -271,7 +272,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
   const handleRefreshQr = async () => {
     if (!activeSlug) return;
     try {
-      const { data } = await supabase.functions.invoke('get-evolution-qrcode', {
+      const { data } = await supabase.functions.invoke('get-uazapi-qrcode', {
         body: {
           user_id: effectiveOwnerId || user!.id,
           instance_name: activeSlug,
@@ -316,7 +317,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
         {step === 'provider' && (
           <div className="space-y-3 py-2">
             <button
-              onClick={() => { setProvider('evolution'); setStep('instance'); }}
+              onClick={() => { setProvider('uazapi'); setStep('instance'); }}
               className="w-full flex items-center gap-4 p-4 rounded-lg border border-border hover:border-green-500/50 hover:bg-green-500/5 transition-all text-left"
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-green-500/10 shrink-0">
@@ -345,7 +346,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
           </div>
         )}
 
-        {/* Evolution: Just name + create */}
+        {/* UaZapi: Just name + create */}
         {step === 'instance' && (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -410,11 +411,7 @@ export function EvolutionConnectDialog({ open, onOpenChange, onConnected, initia
             <div className="flex flex-col items-center gap-4">
               {qrCode ? (
                 <div className="rounded-xl border border-border/50 bg-white p-4">
-                  <img
-                    src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
-                    alt="QR Code WhatsApp"
-                    className="h-64 w-64"
-                  />
+                  <WhatsAppQrCode value={qrCode} className="h-64 w-64" size={256} />
                 </div>
               ) : (
                 <div className="flex h-64 w-64 items-center justify-center rounded-xl border border-dashed border-border">

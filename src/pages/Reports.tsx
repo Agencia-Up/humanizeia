@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { ReportPreview } from '@/components/reports/ReportPreview';
 import { WhatsAppRecipientDialog } from '@/components/reports/WhatsAppRecipientDialog';
 import { ScheduleTemplateCard } from '@/components/reports/ScheduleTemplateCard';
-import { EvolutionConnectDialog } from '@/components/evolution/EvolutionConnectDialog';
+import { UazapiConnectDialog } from '@/components/uazapi/UazapiConnectDialog';
 
 const AVAILABLE_METRICS = [
   { tipo: 'spend', label: 'Gasto Total', emoji: '💰', formato: 'currency' },
@@ -587,7 +587,7 @@ export default function Reports() {
         )}
 
         {/* ── Evolution Connect Dialog ── */}
-        <EvolutionConnectDialog
+        <UazapiConnectDialog
           open={setupWhatsAppOpen}
           onOpenChange={setSetupWhatsAppOpen}
           onConnected={handleEvolutionConnected}

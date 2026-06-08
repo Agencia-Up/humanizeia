@@ -11,22 +11,23 @@ async function getInstanceConfig(supabase: any, userId: string) {
     .from('wa_instances')
     .select('*')
     .eq('user_id', userId)
-    .eq('provider', 'evolution');
+    .in('provider', ['uazapi', 'evolution']);
 
   if (instances && instances.length > 0) {
     // For UazAPI instances, use env vars for credentials
-    const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
-    const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+    const legacyUazapiToken = Deno.env.get('UAZAPI_API') || Deno.env.get('UAZAPI-API');
+    const uazapiUrl = Deno.env.get('UAZAPI_URL') || Deno.env.get('EVOLUTION_API_URL') || (legacyUazapiToken ? 'https://logosiabrasilcom.uazapi.com' : '');
+    const uazapiAdminToken = Deno.env.get('UAZAPI_ADMIN_TOKEN') || legacyUazapiToken || Deno.env.get('EVOLUTION_API_KEY');
 
     // Return all active instances
     return instances.map((inst: any) => {
-      if (inst.provider === 'evolution') {
+      if (inst.provider === 'uazapi' || inst.provider === 'evolution') {
         return {
           id: inst.id,
-          apiUrl: evolutionApiUrl || inst.api_url,
-          apiKey: evolutionApiKey || inst.api_key_encrypted,
+          apiUrl: uazapiUrl || inst.api_url,
+          apiKey: uazapiAdminToken || inst.api_key_encrypted,
           instanceName: inst.instance_name,
-          provider: 'evolution',
+          provider: 'uazapi',
         };
       }
       // Meta instances use stored credentials
@@ -50,15 +51,16 @@ async function getInstanceConfig(supabase: any, userId: string) {
 
   if (!config) return null;
 
-  const evolutionApiUrl = Deno.env.get('EVOLUTION_API_URL');
-  const evolutionApiKey = Deno.env.get('EVOLUTION_API_KEY');
+  const legacyUazapiToken = Deno.env.get('UAZAPI_API') || Deno.env.get('UAZAPI-API');
+  const uazapiUrl = Deno.env.get('UAZAPI_URL') || Deno.env.get('EVOLUTION_API_URL') || (legacyUazapiToken ? 'https://logosiabrasilcom.uazapi.com' : '');
+  const uazapiAdminToken = Deno.env.get('UAZAPI_ADMIN_TOKEN') || legacyUazapiToken || Deno.env.get('EVOLUTION_API_KEY');
 
   return [{
     id: null,
-    apiUrl: evolutionApiUrl || config.api_url,
-    apiKey: evolutionApiKey || config.api_key,
+    apiUrl: uazapiUrl || config.api_url,
+    apiKey: uazapiAdminToken || config.api_key,
     instanceName: config.instance_name,
-    provider: 'evolution',
+    provider: 'uazapi',
   }];
 }
 
@@ -70,7 +72,7 @@ async function fetchOwnGroups(baseUrl: string, apiKey: string, instanceName: str
   if (!res.ok) {
     const errText = await res.text();
     console.error(`[wa-extract-groups] Error (${res.status}) for ${instanceName}:`, errText.substring(0, 300));
-    throw new Error(`Evolution API retornou status ${res.status} para instância ${instanceName}`);
+    throw new Error(`UaZapi retornou status ${res.status} para instância ${instanceName}`);
   }
 
   const data = await res.json();
@@ -147,7 +149,7 @@ async function extractContacts(
       const tried = new Set<string>();
 
       for (const cfg of orderedConfigs) {
-        if (!cfg || cfg.provider !== 'evolution') continue;
+        if (!cfg || cfg.provider !== 'uazapi') continue;
         const key = `${cfg.id || ''}:${cfg.instanceName || ''}`;
         if (tried.has(key)) continue;
         tried.add(key);
@@ -374,7 +376,7 @@ Deno.serve(async (req) => {
     if (!configs || configs.length === 0) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'Nenhuma instância WhatsApp ativa encontrada. Verifique se seu servidor Evolution API está online.',
+        error: 'Nenhuma instância WhatsApp ativa encontrada. Verifique se seu servidor UaZapi está online.',
       }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -388,8 +390,8 @@ Deno.serve(async (req) => {
       if (found) config = found;
     }
     // Prefer UazAPI instances for group operations
-    const evolutionConfig = configs.find((c: any) => c.provider === 'evolution');
-    if (evolutionConfig) config = evolutionConfig;
+    const uazapiConfig = configs.find((c: any) => c.provider === 'uazapi');
+    if (uazapiConfig) config = uazapiConfig;
 
     const baseUrl = config.apiUrl.replace(/\/$/, '');
 
@@ -428,7 +430,7 @@ Deno.serve(async (req) => {
     const allGroups: any[] = [];
 
     for (const c of configs) {
-      if (c.provider !== 'evolution') {
+      if (c.provider !== 'uazapi') {
         console.log(`[wa-extract-groups] Skipping non-UazAPI instance: ${c.instanceName} (${c.provider})`);
         continue;
       }

@@ -18,7 +18,7 @@ verify_jwt = false
 [functions.claude-strategy]
 verify_jwt = false
 
-[functions.create-evolution-instance]
+[functions.create-uazapi-instance]
 verify_jwt = false
 
 [functions.edit-image]
@@ -36,7 +36,7 @@ verify_jwt = false
 [functions.generate-creative]
 verify_jwt = false
 
-[functions.get-evolution-qrcode]
+[functions.get-uazapi-qrcode]
 verify_jwt = false
 
 [functions.google-ads-api]
@@ -69,7 +69,13 @@ verify_jwt = false
 [functions.shopify-integration]
 verify_jwt = false
 
-[functions.test-evolution-connection]
+[functions.test-uazapi-connection]
+verify_jwt = false
+
+[functions.delete-uazapi-instance]
+verify_jwt = false
+
+[functions.sync-uazapi-webhook]
 verify_jwt = false
 
 [functions.test-integration]
