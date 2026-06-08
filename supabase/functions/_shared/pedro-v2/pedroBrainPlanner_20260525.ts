@@ -513,7 +513,16 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   const stockQuestion = hasStockQuestionSignal(input.message);
   const broadStockQuestion = asksBroadStock(input.message);
   const memoryVehicle = memoryVehicleQuery(input.memory);
-  if ((_vr?.has_current_vehicle_signal || hasLlmVehicle) && plan.intent !== "trade_in" && !isPureVehicleComment(input.message) && (plan.action === "reply_only" || plan.action === "clarify")) {
+  // A rede so deve forcar busca quando o lead esta PERGUNTANDO disponibilidade/preco de veiculo.
+  // Intencoes que NAO sao isso (financiamento, agendamento, localizacao, troca, despedida, etc.)
+  // nao podem virar busca so porque ha um carro na memoria — senao o agente re-busca e cospe fotos
+  // no meio de uma conversa de financiamento (caso real 98863-4239: "quero ver financiamento" -> 5 fotos).
+  const intentNaoEhBuscaDeVeiculo = [
+    "trade_in", "financing", "payment", "scheduling", "schedule", "visit", "agendamento",
+    "location", "small_talk", "greeting", "handoff", "human_request", "seller_ack",
+    "goodbye", "farewell", "thanks", "objection",
+  ].includes(String(plan.intent || ""));
+  if ((_vr?.has_current_vehicle_signal || hasLlmVehicle) && !intentNaoEhBuscaDeVeiculo && !isPureVehicleComment(input.message) && (plan.action === "reply_only" || plan.action === "clarify")) {
     plan.action = "stock_search";
     plan.intent = plan.intent === "small_talk" ? "stock_lookup" : plan.intent;
     if (!plan.search_query) {

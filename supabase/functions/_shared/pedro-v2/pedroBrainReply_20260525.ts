@@ -495,7 +495,6 @@ export async function generatePedroBrainReply(input: {
   const assignedSellerName = (input.assigned_seller_name || "").trim() || null;
   const fallback = fallbackReply({ ...input, recent_history: input.recent_history });
   const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return fallback;
 
   const allFacts = stockFacts(input.stock_result);
   const adVehicleConsultation = isCurrentTurnAdVehicleConsultation(input);
@@ -549,18 +548,40 @@ export async function generatePedroBrainReply(input: {
   })();
   const currentTime = saoPauloNowInfo();
   const chatHistory = buildChatHistory(input.recent_history || input.memory?.recent_turns || [], input.message);
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  // ── PROVEDOR DA RESPOSTA (conversa com o cliente): Claude principal (teste) / OpenAI / DeepSeek. ──
+  // Env PEDRO_REPLY_PROVIDER (anthropic|openai|deepseek), default 'anthropic'. Claude NAO e compativel
+  // com OpenAI: /v1/messages, x-api-key, 'system' top-level, sem response_format, saida content[].text.
+  const replyProvider = String(Deno.env.get("PEDRO_REPLY_PROVIDER") || "anthropic").toLowerCase();
+  const anthropicKeyR = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
+  const deepseekKeyR = Deno.env.get("DEEPSEEK_API_KEY");
+  const replyIsAnthropic = (replyProvider === "anthropic" || replyProvider === "claude") && !!anthropicKeyR;
+  const replyIsDeepseek = replyProvider === "deepseek" && !!deepseekKeyR;
+  const replyKey = replyIsAnthropic ? anthropicKeyR : replyIsDeepseek ? deepseekKeyR : apiKey;
+  if (!replyKey) return fallback;
+  const replyModel = replyIsAnthropic
+    ? (Deno.env.get("PEDRO_REPLY_MODEL_ANTHROPIC") || "claude-sonnet-4-6")
+    : replyIsDeepseek
+    ? (Deno.env.get("PEDRO_REPLY_MODEL_DEEPSEEK") || "deepseek-chat")
+    : sanitizeModel(input.agent?.model);
+  const callReply = async (msgs: any[]) => {
+    if (replyIsAnthropic) {
+      const sys = `${String(msgs[0]?.content ?? "")}\n\nResponda APENAS com o objeto JSON pedido, sem texto fora do JSON e sem cercas de codigo.`;
+      const conv = msgs.slice(1).map((m: any) => ({ role: m?.role === "assistant" ? "assistant" : "user", content: String(m?.content ?? "") }));
+      return await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": replyKey as string, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+        body: JSON.stringify({ model: replyModel, max_tokens: 1500, system: sys, messages: conv }),
+      });
+    }
+    const url = replyIsDeepseek ? "https://api.deepseek.com/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
+    return await fetch(url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: sanitizeModel(input.agent?.model),
-        temperature: 0.35,
-        response_format: { type: "json_object" },
-        messages: [
+      headers: { Authorization: `Bearer ${replyKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: replyModel, temperature: 0.35, response_format: { type: "json_object" }, messages: msgs }),
+    });
+  };
+  try {
+    const replyMessages: any[] = [
           {
             role: "system",
             content:
@@ -677,14 +698,20 @@ export async function generatePedroBrainReply(input: {
             role: "user",
             content: input.message,
           },
-        ],
-      }),
-    });
+    ];
+    const res = await callReply(replyMessages);
 
     if (!res.ok) return fallback;
     const data = await res.json();
-    if (input.usage_sink) input.usage_sink.tokens += sumOpenAiTokens(data);
-    const content = String(data?.choices?.[0]?.message?.content || "{}");
+    // SAIDA: OpenAI/DeepSeek -> choices[0].message.content ; Anthropic -> content[].text
+    if (input.usage_sink) {
+      input.usage_sink.tokens += replyIsAnthropic
+        ? Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0)
+        : sumOpenAiTokens(data);
+    }
+    const content = replyIsAnthropic
+      ? String((Array.isArray(data?.content) ? data.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
+      : String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
     const rawText = String(parsed?.text || "").trim();
     let presented_vehicle_indices = Array.isArray(parsed?.presented_vehicle_indices)
