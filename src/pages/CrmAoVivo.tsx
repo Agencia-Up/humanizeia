@@ -95,15 +95,15 @@ const LIVE_COLUMNS = [
 const CRM_STATUS_COLUMNS = [
   { id: 'novo',                 title: 'Novo',                 main: C.cyan,   light: C.cyanL,   bg: C.cyanBg },
   { id: 'inativo',              title: 'Lead Inativo',         main: C.red,    light: C.redL,    bg: C.redBg },
-  { id: 'carro_nao_disponivel', title: 'Carro nao disponivel', main: C.red,    light: C.redL,    bg: C.redBg },
+  { id: 'carro_nao_disponivel', title: 'Carro não disponível', main: C.red,    light: C.redL,    bg: C.redBg },
   { id: 'em_atendimento',       title: 'Agendamento',          main: C.purple, light: C.purpleL, bg: C.purpleBg },
-  { id: 'negociacao',           title: 'Negociacao',           main: C.orange, light: C.orangeL, bg: C.orangeBg },
+  { id: 'negociacao',           title: 'Negociação',           main: C.orange, light: C.orangeL, bg: C.orangeBg },
   { id: 'fechado',              title: 'Fechado',              main: C.green,  light: C.greenL,  bg: C.greenBg },
   { id: 'perdido',              title: 'Perdido',              main: C.red,    light: C.redL,    bg: C.redBg },
 ];
 
 const PEDRO_LIVE_COLUMNS = [
-  { id: 'nao_transferido', title: 'Nao transferido', main: C.amber, light: C.amberL, bg: C.amberBg, assignmentOnly: true },
+  { id: 'nao_transferido', title: 'Não transferido', main: C.amber, light: C.amberL, bg: C.amberBg, assignmentOnly: true },
   ...CRM_STATUS_COLUMNS,
 ];
 
@@ -251,7 +251,7 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
             color: '#fff',
             outline: 'none',
           }}
-          title="Etapa do CRM Avancado"
+          title="Etapa do CRM Avançado"
         >
           {CRM_STATUS_COLUMNS.map((status) => (
             <option key={status.id} value={status.id}>{status.title}</option>
