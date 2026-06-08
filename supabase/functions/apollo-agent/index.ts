@@ -366,14 +366,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
+    // ── AI Analysis: Claude (Anthropic) como IA PRINCIPAL do José ──
+    // Lê CLAUDE_API_KEY (com fallback ANTHROPIC_API_KEY). OpenAI fica só como
+    // fallback quando NÃO houver chave do Claude configurada.
+    const CLAUDE_KEY = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
     const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
-    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
+    const AI_KEY = CLAUDE_KEY || OPENAI_KEY;
+    const useOpenAI = !CLAUDE_KEY && !!OPENAI_KEY;
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(AI_KEY, !!OPENAI_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
+      aiResult = await runApolloAI(AI_KEY, useOpenAI, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
