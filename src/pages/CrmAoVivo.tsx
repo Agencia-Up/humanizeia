@@ -12,12 +12,14 @@ import {
   CalendarClock,
   CalendarDays,
   Crown,
+  DollarSign,
   Expand,
   Flame,
   GripVertical,
   History as HistoryIcon,
   Loader2,
   MonitorPlay,
+  Phone,
   RefreshCw,
   Sparkles,
   TrendingUp,
@@ -25,6 +27,7 @@ import {
   Users,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
@@ -124,6 +127,40 @@ function getTransferLabel(t: any) {
 }
 
 /* ── COMPONENTE CARD (Memoizado para performance) ─────────── */
+function formatBRL(value: number) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+    Number.isFinite(value) ? value : 0,
+  );
+}
+
+function formatDateKey(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getCostDateBounds(f: DateFilter, customStart?: string, customEnd?: string) {
+  const today = new Date();
+  if (f === 'all') return { from: null as string | null, to: null as string | null };
+  if (f === 'custom') {
+    return {
+      from: customStart || null,
+      to: customEnd || customStart || null,
+    };
+  }
+  const from = getThreshold(f, customStart) || today;
+  return { from: formatDateKey(from), to: formatDateKey(today) };
+}
+
+function formatLeadPhone(raw?: string | null) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  const br = digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
+  if (br.length === 11) return `(${br.slice(0, 2)}) ${br.slice(2, 7)}-${br.slice(7)}`;
+  if (br.length === 10) return `(${br.slice(0, 2)}) ${br.slice(2, 6)}-${br.slice(6)}`;
+  return br || 'Sem telefone';
+}
+
 const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer, pendingTransfer, onStatusChange, statusUpdatingLeadId }: any) => {
   const [msg, setMsg] = useState('');
   const [showHist, setShowHist] = useState(false);
@@ -439,6 +476,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const [transfers, setTransfers] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
+  const [totalAdSpend, setTotalAdSpend] = useState(0);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [detailSellerId, setDetailSellerId] = useState('');
+  const [detailNotes, setDetailNotes] = useState('');
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [newLeadFlash, setNewLeadFlash] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -514,6 +555,47 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => { fetchLiveDataRef.current = fetchLiveData; }, [fetchLiveData]);
 
   useEffect(() => { fetchLiveData(); }, [fetchLiveData]);
+
+  useEffect(() => {
+    if (!effectiveUserId || isSeller) {
+      setTotalAdSpend(0);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const bounds = getCostDateBounds(dateFilter, customStart, customEnd);
+        let q = (supabase as any)
+          .from('campaign_costs')
+          .select('entity_level, spend, date')
+          .eq('user_id', effectiveUserId);
+
+        if (bounds.from) q = q.gte('date', bounds.from);
+        if (bounds.to) q = q.lte('date', bounds.to);
+
+        const { data, error } = await q;
+        if (error) throw error;
+
+        const rows = Array.isArray(data) ? data : [];
+        const level = rows.some((r: any) => r.entity_level === 'campaign')
+          ? 'campaign'
+          : rows.some((r: any) => r.entity_level === 'adset')
+            ? 'adset'
+            : 'ad';
+        const spend = rows
+          .filter((r: any) => r.entity_level === level)
+          .reduce((sum: number, r: any) => sum + (Number(r.spend) || 0), 0);
+
+        if (!cancelled) setTotalAdSpend(spend);
+      } catch (error) {
+        console.warn('[CrmAoVivo] erro ao buscar custos de campanha', error);
+        if (!cancelled) setTotalAdSpend(0);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [effectiveUserId, isSeller, dateFilter, customStart, customEnd]);
 
   // ── Auto-sync: envia leads transferidos para o CRM do Marcos ──────────────
   // Roda toda vez que leads muda; o Set evita re-enviar o mesmo lead.
@@ -832,6 +914,22 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     return res;
   }, [filteredLeads, pendingTransfersMap]);
 
+  const untransferredLeads = useMemo(
+    () => filteredLeads.filter(lead => !lead.assigned_to_id && !pendingTransfersMap.get(lead.id)),
+    [filteredLeads, pendingTransfersMap],
+  );
+
+  const costPerLead = filteredLeads.length > 0 ? totalAdSpend / filteredLeads.length : 0;
+  const selectedLead = useMemo(
+    () => selectedLeadId ? (leads.find(lead => lead.id === selectedLeadId) || null) : null,
+    [leads, selectedLeadId],
+  );
+
+  useEffect(() => {
+    setDetailSellerId('');
+    setDetailNotes('');
+  }, [selectedLeadId]);
+
   // ── Exportar/forçar sync de TODOS leads do filtro para Marcos ─────────────
   const handleExportToMarcos = useCallback(async () => {
     if (!effectiveUserId || filteredLeads.length === 0) return;
@@ -952,7 +1050,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const targetSellerId = sellerIdOverride || nextSeller?.id;
     if (!targetSellerId || !user) {
       toast.warning('Selecione um vendedor ou ative ao menos um na fila.');
-      return;
+      return false;
     }
     const targetSeller = sellerIdOverride
       ? activeMembers.find((m: any) => m.id === sellerIdOverride)
@@ -995,12 +1093,14 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           description: 'Briefing IA enviado ao vendedor. Gerente notificado.',
         });
       }
-      fetchLiveData();
+      await fetchLiveData();
+      return true;
     } catch (e: any) {
       console.error('Transfer error:', e);
       toast.error('Erro ao transferir lead', {
         description: e?.message || 'Verifique a instancia do WhatsApp e tente novamente.',
       });
+      return false;
     } finally {
       setTransferringLeadId(null);
     }
@@ -1182,10 +1282,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </div>
           </header>
 
-          <section style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+          <section style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 10 }}>
             {[
               { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : `Leads - ${dateLabel}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
               { icon: <Flame className="h-5 w-5" />, label: 'Qualificados', value: totalQualified, main: C.green, light: C.greenL, bg: C.greenBg },
+              { icon: <DollarSign className="h-5 w-5" />, label: 'Custo por Lead', value: formatBRL(costPerLead), main: C.amber, light: C.amberL, bg: C.amberBg },
               { icon: <UserCheck className="h-5 w-5" />, label: 'Em atendimento', value: attendedNow, main: C.orange, light: C.orangeL, bg: C.orangeBg },
               { icon: <Crown className="h-5 w-5" />, label: 'Vendedores online', value: activeMembers.length, main: C.purple, light: C.purpleL, bg: C.purpleBg },
               { icon: <CalendarClock className="h-5 w-5" />, label: 'Atualização', value: lastUpdatedAt ? new Date(lastUpdatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--', main: C.cyan, light: C.cyanL, bg: C.cyanBg },
@@ -1492,10 +1593,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* ── MÉTRICAS ──────────────────────────────── */}
-      <div style={{ padding: '8px 24px 20px', display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2,1fr)' : 'repeat(5,1fr)', gap: 14 }}>
+      <div style={{ padding: '8px 24px 20px', display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2,1fr)' : 'repeat(6, minmax(0, 1fr))', gap: 14 }}>
         {[
           { icon: <Users className="h-5 w-5" />, label: dateFilter === 'all' ? 'Leads no pipeline' : dateFilter === 'custom' ? `Leads — ${customStart || '?'} a ${customEnd || '?'}` : `Leads — ${DATE_FILTERS.find(f=>f.value===dateFilter)?.label}`, value: filteredLeads.length, main: C.blue, light: C.blueL, bg: C.blueBg },
           { icon: <Flame className="h-5 w-5" />, label: 'Qualificados', value: totalQualified, main: C.green, light: C.greenL, bg: C.greenBg },
+          { icon: <DollarSign className="h-5 w-5" />, label: 'Custo por Lead', value: formatBRL(costPerLead), main: C.amber, light: C.amberL, bg: C.amberBg },
           { icon: <UserCheck className="h-5 w-5" />, label: 'Em atendimento', value: attendedNow, main: C.orange, light: C.orangeL, bg: C.orangeBg },
           { icon: <Crown className="h-5 w-5" />, label: 'Vendedores online', value: activeMembers.length, main: C.purple, light: C.purpleL, bg: C.purpleBg },
           { icon: <CalendarClock className="h-5 w-5" />, label: 'Atualização',
@@ -1648,6 +1750,137 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
               </div>
             </div>
           </section>
+
+          {/* LEADS NAO TRANSFERIDOS */}
+          <section style={{ ...cardStyle, overflow: 'hidden' }}>
+            <div style={{ background: C.orangeBg, borderBottom: `2px solid ${C.orange}`, padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.2em', color: C.orangeL, fontWeight: 700, opacity: 0.7 }}>Pendentes de repasse</p>
+                <h2 style={{ fontSize: 18, fontWeight: 800, color: C.orangeL, marginTop: 1 }}>Leads Não Transferidos</h2>
+              </div>
+              <span style={{ minWidth: 32, height: 32, borderRadius: 10, background: 'rgba(0,0,0,0.22)', border: `1px solid ${C.orange}`, color: C.orangeL, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900 }}>
+                {untransferredLeads.length}
+              </span>
+            </div>
+
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 330, overflowY: 'auto' }}>
+              {untransferredLeads.length === 0 ? (
+                <div style={{ borderRadius: 10, border: '1.5px dashed rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', padding: '22px 14px', textAlign: 'center', color: '#64748B', fontSize: 12 }}>
+                  Nenhum lead sem vendedor no período.
+                </div>
+              ) : untransferredLeads.map(lead => {
+                const selected = selectedLeadId === lead.id;
+                return (
+                  <button
+                    key={lead.id}
+                    type="button"
+                    onClick={() => setSelectedLeadId(lead.id)}
+                    style={{
+                      borderRadius: 10,
+                      border: `1.5px solid ${selected ? C.orange : 'rgba(255,255,255,0.08)'}`,
+                      background: selected ? C.orangeBg : 'rgba(255,255,255,0.035)',
+                      padding: '11px 12px',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                    }}
+                  >
+                    <Phone style={{ width: 15, height: 15, color: selected ? C.orangeL : '#64748B', flexShrink: 0 }} />
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'block', fontSize: 13, fontWeight: 800, color: '#F8FAFC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {lead.lead_name || 'Lead sem nome'}
+                      </span>
+                      <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {formatLeadPhone(lead.remote_jid)}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {selectedLead && (
+            <section style={{ ...cardStyle, overflow: 'hidden', borderColor: C.orange }}>
+              <div style={{ background: C.orangeBg, borderBottom: `2px solid ${C.orange}`, padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.2em', color: C.orangeL, fontWeight: 700, opacity: 0.7 }}>Detalhe do lead</p>
+                  <h2 style={{ fontSize: 18, fontWeight: 800, color: C.orangeL, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedLead.lead_name || 'Lead sem nome'}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedLeadId(null)}
+                  style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.2)', color: '#CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+                  title="Fechar detalhe"
+                >
+                  <X style={{ width: 14, height: 14 }} />
+                </button>
+              </div>
+
+              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ borderRadius: 10, background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)', padding: '11px 12px' }}>
+                  <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: '#64748B', fontWeight: 800 }}>Telefone</p>
+                  <p style={{ marginTop: 4, fontSize: 14, fontWeight: 800, color: '#F8FAFC' }}>{formatLeadPhone(selectedLead.remote_jid)}</p>
+                </div>
+
+                <select
+                  value={CRM_STATUS_IDS.has(selectedLead.status_crm) ? selectedLead.status_crm : 'novo'}
+                  onChange={(e) => handleStatusChange(selectedLead.id, e.target.value)}
+                  disabled={statusUpdatingLeadId === selectedLead.id}
+                  style={{ width: '100%', padding: '9px 10px', fontSize: 12, borderRadius: 9, background: 'rgba(0,0,0,0.25)', border: `1px solid ${C.orange}`, color: '#fff', outline: 'none' }}
+                  title="Etapa do CRM Avançado"
+                >
+                  {CRM_STATUS_COLUMNS.map(status => (
+                    <option key={status.id} value={status.id}>{status.title}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={detailSellerId}
+                  onChange={(e) => setDetailSellerId(e.target.value)}
+                  disabled={transferringLeadId === selectedLead.id}
+                  style={{ width: '100%', padding: '9px 10px', fontSize: 12, borderRadius: 9, background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', outline: 'none' }}
+                >
+                  <option value="">Selecionar vendedor</option>
+                  {activeMembers.map((m: any) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+
+                <textarea
+                  value={detailNotes}
+                  onChange={(e) => setDetailNotes(e.target.value)}
+                  placeholder="Observação para o vendedor"
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical', minHeight: 72, padding: '9px 10px', fontSize: 12, borderRadius: 9, background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', outline: 'none' }}
+                />
+
+                <Button
+                  size="sm"
+                  disabled={transferringLeadId === selectedLead.id || !detailSellerId}
+                  onClick={async () => {
+                    const ok = await handleManualTransfer(selectedLead.id, detailNotes, detailSellerId);
+                    if (ok) {
+                      setDetailNotes('');
+                      setDetailSellerId('');
+                    }
+                  }}
+                  style={{ background: C.orange, color: '#fff', fontWeight: 850, fontSize: 12, height: 36, borderRadius: 9 }}
+                >
+                  {transferringLeadId === selectedLead.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                  ) : (
+                    <UserCheck className="h-3.5 w-3.5 mr-2" />
+                  )}
+                  Transferir lead
+                </Button>
+              </div>
+            </section>
+          )}
 
           {/* TRANSFERÊNCIAS RECENTES */}
           <section style={{ ...cardStyle, overflow: 'hidden' }}>
