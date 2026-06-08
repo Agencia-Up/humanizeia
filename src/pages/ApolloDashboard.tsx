@@ -159,7 +159,7 @@ function CampaignCard({
   };
 
   return (
-    <div className={`rounded-lg border p-4 space-y-3 ${healthBg(s)}`}>
+    <div className={`rounded-xl border border-l-[5px] p-4 space-y-3 ${healthBg(s)} ${s >= 70 ? 'border-l-emerald-500' : s >= 45 ? 'border-l-amber-500' : 'border-l-red-500'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm truncate" title={campaign.name}>{campaign.name}</p>
@@ -186,15 +186,15 @@ function CampaignCard({
       {(() => {
         const m = mainMetricFor(campaign, currencySymbol);
         return (
-          <div className="rounded-md bg-primary/10 border border-primary/25 px-3 py-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] text-muted-foreground">{m.label}</span>
+          <div className="rounded-lg bg-primary/10 border border-primary/25 px-3 py-3 text-center">
+            <div className="flex items-center justify-center gap-1 mb-1">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{m.label}</span>
               <Tooltip>
                 <TooltipTrigger asChild><HelpCircle className="h-2.5 w-2.5 text-muted-foreground/50 cursor-help" /></TooltipTrigger>
                 <TooltipContent side="top" className="max-w-[220px]"><p className="text-xs">{m.tip}</p></TooltipContent>
               </Tooltip>
             </div>
-            <span className="text-lg font-bold text-primary whitespace-nowrap">{m.value}</span>
+            <span className="text-3xl font-extrabold text-primary leading-none">{m.value}</span>
           </div>
         );
       })()}
@@ -986,7 +986,7 @@ export default function ApolloDashboard() {
                       </div>
                       {filtered.length === 0
                         ? <Card><CardContent className="py-12 flex flex-col items-center gap-2"><AlertTriangle className="h-8 w-8 text-muted-foreground" /><p className="text-sm text-muted-foreground">Nenhuma campanha {statusFilter === 'active' ? 'ativa' : statusFilter === 'paused' ? 'pausada' : ''} no período.</p></CardContent></Card>
-                        : <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        : <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
                             {filtered.map((c: any) => (
                               <CampaignCard
                                 key={c.id} campaign={c} currencySymbol={currencySymbol}
