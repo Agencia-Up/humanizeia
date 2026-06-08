@@ -36,10 +36,8 @@ const PROVIDER_MAP: Record<string, ProviderCfg> = {
     fields: [
       { key: 'app_id', label: 'App ID (META_APP_ID)' },
       { key: 'app_secret', label: 'App Secret (META_APP_SECRET)', secret: true },
-      { key: 'extra.config_id', label: 'Configuration ID (Login for Business) — opcional' },
     ],
     redirect: 'https://logosiabrasil.com/settings?meta_callback=true',
-    note: 'Com o Configuration ID preenchido, o login usa o Facebook Login for Business (cada cliente conecta a conta dele).',
   },
   instagram_publisher: {
     provider: 'meta',

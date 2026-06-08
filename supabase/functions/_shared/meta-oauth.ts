@@ -106,27 +106,23 @@ async function verifyState(state: string): Promise<MetaState | null> {
   return payload;
 }
 
-async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string; configId: string }> {
+async function getMetaAppCreds(): Promise<{ appId: string; appSecret: string }> {
   let appId = "";
   let appSecret = "";
-  let configId = "";
   try {
     const { data } = await adminClient()
       .from("platform_app_credentials")
-      .select("app_id, app_secret, extra")
+      .select("app_id, app_secret")
       .eq("provider", "meta")
       .maybeSingle();
     appId = (data?.app_id || "").trim();
     appSecret = (data?.app_secret || "").trim();
-    // Configuration ID do Facebook Login for Business (guardado em extra.config_id pelo painel).
-    configId = (((data?.extra as any)?.config_id) || "").toString().trim();
   } catch (_e) {
     // Fallback to env below.
   }
   return {
     appId: appId || Deno.env.get("META_APP_ID") || "",
     appSecret: appSecret || Deno.env.get("META_APP_SECRET") || "",
-    configId: configId || Deno.env.get("META_CONFIG_ID") || "",
   };
 }
 
@@ -234,27 +230,20 @@ async function fetchFullAccountData(token: string) {
   };
 }
 
-function buildAuthUrl(appId: string, redirectUri: string, state?: string, configId?: string) {
+function buildAuthUrl(appId: string, redirectUri: string, state?: string) {
+  // Login do Facebook comum: permissões via scope (decisão de 08/06/2026 — sem
+  // Login for Business / config_id). Pedimos só o necessário pra ler anúncios,
+  // puxar leads e acessar os ativos do negócio do cliente.
+  const scopes = [
+    "ads_read",
+    "leads_retrieval",
+    "business_management",
+  ].join(",");
+
   const authUrl = new URL(META_DIALOG_URL);
   authUrl.searchParams.set("client_id", appId);
   authUrl.searchParams.set("redirect_uri", redirectUri);
-
-  if (configId) {
-    // Facebook Login for Business: as permissões já estão "embaladas" na
-    // Configuration criada no painel da Meta. NÃO se passa scope — só config_id.
-    authUrl.searchParams.set("config_id", configId);
-  } else {
-    // Fallback: login clássico por escopos (enquanto não há Config ID).
-    const scopes = [
-      "ads_management",
-      "ads_read",
-      "read_insights",
-      "business_management",
-      "pages_show_list",
-    ].join(",");
-    authUrl.searchParams.set("scope", scopes);
-  }
-
+  authUrl.searchParams.set("scope", scopes);
   authUrl.searchParams.set("response_type", "code");
   if (state) authUrl.searchParams.set("state", state);
   return authUrl.toString();
@@ -293,9 +282,9 @@ async function exchangeCodeForLongLivedToken(code: string, redirectUri: string) 
 }
 
 async function handleAuthorize(redirectUri: string, state?: string) {
-  const { appId, configId } = await getMetaAppCreds();
+  const { appId } = await getMetaAppCreds();
   if (!appId) return jsonResponse({ error: "META_APP_ID nao configurado" }, 500);
-  return jsonResponse({ url: buildAuthUrl(appId, redirectUri, state, configId), graph_version: META_GRAPH_VERSION });
+  return jsonResponse({ url: buildAuthUrl(appId, redirectUri, state), graph_version: META_GRAPH_VERSION });
 }
 
 async function handleGetLogin(req: Request, url: URL) {
@@ -308,7 +297,7 @@ async function handleGetLogin(req: Request, url: URL) {
     return redirectResponse(withQuery(returnTo, { meta_error: "missing_user" }));
   }
 
-  const { appId, configId } = await getMetaAppCreds();
+  const { appId } = await getMetaAppCreds();
   if (!appId) {
     return redirectResponse(withQuery(returnTo, { meta_error: "missing_meta_app" }));
   }
@@ -321,7 +310,7 @@ async function handleGetLogin(req: Request, url: URL) {
     exp: Date.now() + 10 * 60 * 1000,
   });
 
-  return redirectResponse(buildAuthUrl(appId, redirectUri, state, configId));
+  return redirectResponse(buildAuthUrl(appId, redirectUri, state));
 }
 
 async function handleGetCallback(req: Request, url: URL) {
