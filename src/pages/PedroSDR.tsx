@@ -1091,6 +1091,7 @@ type CrmMode = 'pedro' | 'marcos';
 export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | undefined; mode?: CrmMode }) {
   const { toast } = useToast();
   const isMarcosCrm = mode === 'marcos';
+  const [searchParams, setSearchParams] = useSearchParams();
   const [isSeller, setIsSeller] = useState(false);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberIds, setMemberIds] = useState<string[]>([]);
@@ -1672,6 +1673,22 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     setTransfers(transfersRes.data || []);
     setSellerMetaFeedback(sellerFeedbackRes.data?.feedback || '');
   };
+
+  useEffect(() => {
+    if (isMarcosCrm || loading) return;
+    const leadId = searchParams.get('leadId');
+    if (!leadId || selectedLead?.id === leadId) return;
+    const lead = leads.find(l => l.id === leadId);
+    if (!lead) return;
+
+    loadLeadDetail(lead);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', 'crm');
+      next.delete('leadId');
+      return next;
+    }, { replace: true });
+  }, [isMarcosCrm, loading, leads, searchParams, selectedLead?.id, setSearchParams]);
 
   const handleAddNote = async () => {
     if (!newNote.trim() || !selectedLead || !userId) return;

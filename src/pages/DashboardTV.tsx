@@ -22,11 +22,11 @@
 // ============================================================================
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
-import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram } from 'lucide-react';
+import { Calendar, Clock, DollarSign, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram } from 'lucide-react';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,14 @@ interface KPIsData {
   /** % de leads Pedro que foram transferidos pra vendedor humano */
   taxa_transferencia: number;
   taxa_transferencia_texto: string; // "32 de 44 leads"
+  total_spend: number;
+  custo_por_lead: number;
+}
+
+interface LeadNaoTransferido {
+  id: string;
+  nome: string;
+  telefone: string;
 }
 
 // ─── Cálculo de qualidade do lead (50% IA + 30% Feedback + 20% Notas) ────────
@@ -208,6 +216,24 @@ function toDateInput(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function formatBRL(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+    Number.isFinite(value) ? value : 0,
+  );
+}
+
+function formatPhone(raw?: string | null): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  const br = digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
+  if (br.length === 11) return `(${br.slice(0, 2)}) ${br.slice(2, 7)}-${br.slice(7)}`;
+  if (br.length === 10) return `(${br.slice(0, 2)}) ${br.slice(2, 6)}-${br.slice(6)}`;
+  return br || 'Sem telefone';
+}
+
+function isoToDateKey(iso: string): string {
+  return toDateInput(new Date(iso));
+}
+
 const RANK_COLORS: Record<number, string> = { 1: '#f59e0b', 2: '#94a3b8', 3: '#cd7f32' };
 function rankColor(rank: number): string {
   return RANK_COLORS[rank] || '#475569';
@@ -223,12 +249,14 @@ interface DashboardTVProps {
 export default function DashboardTV({ embedded = false }: DashboardTVProps = {}) {
   const { user } = useAuth();
   const { isSeller, seller, masterUserId, loading: profileLoading } = useSellerProfile(user?.id);
+  const navigate = useNavigate();
 
   const [now, setNow] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [vendedores, setVendedores] = useState<VendedorData[]>([]);
   const [kpis, setKpis] = useState<KPIsData | null>(null);
+  const [leadsNaoTransferidos, setLeadsNaoTransferidos] = useState<LeadNaoTransferido[]>([]);
   const [branding, setBranding] = useState<BrandingConfig>({
     logo_url: null,
     company_name: 'Painel Comercial',
@@ -330,7 +358,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         //    Pra "Taxa Transferência" precisamos contar TODOS leads Pedro (com e sem assigned_to_id).
         let pedroQuery = (supabase as any)
           .from('ai_crm_leads')
-          .select('id, assigned_to_id, status_crm, seller_notes_count')
+          .select('id, lead_name, remote_jid, assigned_to_id, status_crm, seller_notes_count')
           .eq('user_id', effectiveUserId)
           .gte('created_at', todayStart)
           .lte('created_at', todayEnd);
@@ -350,8 +378,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .lte('created_at', todayEnd);
         if (sellerMemberId) marcosQuery = marcosQuery.eq('assigned_to', sellerMemberId);
 
-        const [profileRes, sellersRes, pedroRes, marcosRes] = await Promise.all([
-          profilePromise, sellersQuery, pedroQuery, marcosQuery,
+        let costsQuery = (supabase as any)
+          .from('campaign_costs')
+          .select('entity_level, spend, date')
+          .eq('user_id', effectiveUserId)
+          .gte('date', isoToDateKey(todayStart))
+          .lte('date', isoToDateKey(todayEnd));
+
+        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes] = await Promise.all([
+          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery,
         ]);
 
         if (cancelled) return;
@@ -408,8 +443,21 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
         const pedroLeads = (pedroRes.data || []) as Array<{
-          id: string; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
+          id: string; lead_name: string | null; remote_jid: string | null; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
         }>;
+        const pedroLeadIds = pedroLeads.map(l => l.id);
+        const pendingOrConfirmedTransferIds = new Set<string>();
+        if (pedroLeadIds.length > 0) {
+          const { data: transferRows } = await (supabase as any)
+            .from('ai_lead_transfers')
+            .select('lead_id, transfer_status')
+            .in('lead_id', pedroLeadIds)
+            .neq('transfer_status', 'expired');
+          for (const row of (transferRows || []) as Array<{ lead_id: string | null }>) {
+            if (row.lead_id) pendingOrConfirmedTransferIds.add(row.lead_id);
+          }
+        }
+        const pedroNaoTransferidos: LeadNaoTransferido[] = [];
         let pedroTotal = 0;       // total leads Pedro no período (todos)
         let pedroAtribuidos = 0;  // leads Pedro com assigned_to_id != null
         let naoAtribuidos = 0;    // leads (Pedro+Marcos) que não foram pra vendedor — contam no total mas não no card de vendedor
@@ -427,10 +475,18 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
               agg[NAO_ATRIBUIDO_ID].total++;
               naoAtribuidos++;
             }
-          } else {
+          } else if (!pendingOrConfirmedTransferIds.has(l.id)) {
             // Lead Pedro novo, ainda sem transfer. Tecnicamente não conta como
             // "Tráfego Pago" (já que essa categoria precisa de assigned_to_id),
             // mas pra visibilidade aparece no total da row "Sem vendedor".
+            agg[NAO_ATRIBUIDO_ID].total++;
+            naoAtribuidos++;
+            pedroNaoTransferidos.push({
+              id: l.id,
+              nome: l.lead_name || formatPhone(l.remote_jid),
+              telefone: formatPhone(l.remote_jid),
+            });
+          } else {
             agg[NAO_ATRIBUIDO_ID].total++;
             naoAtribuidos++;
           }
@@ -578,6 +634,18 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         for (const k of Object.keys(porOrigem)) {
           percentuais[k] = Math.round((porOrigem[k] / baseParaPct) * 1000) / 10;
         }
+        const costRows = Array.isArray(costsRes.data) ? costsRes.data : [];
+        const costLevel = costRows.some((r: any) => r.entity_level === 'campaign')
+          ? 'campaign'
+          : costRows.some((r: any) => r.entity_level === 'adset')
+            ? 'adset'
+            : 'ad';
+        const totalSpend = costRows
+          .filter((r: any) => r.entity_level === costLevel)
+          .reduce((sum: number, r: any) => sum + (Number(r.spend) || 0), 0);
+        const custoPorLead = total > 0 ? totalSpend / total : 0;
+
+        setLeadsNaoTransferidos(pedroNaoTransferidos);
         setKpis({
           total_leads: total,
           nao_atribuidos: naoAtribuidos,
@@ -587,6 +655,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           qualidade_label: qualidadeLbl,
           taxa_transferencia: taxaTransf,
           taxa_transferencia_texto: taxaTransfTexto,
+          total_spend: totalSpend,
+          custo_por_lead: custoPorLead,
         });
       } catch (err) {
         console.error('[DashboardTV] erro ao carregar:', err);
@@ -620,6 +690,18 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         event: '*',
         schema: 'public',
         table: 'ai_crm_leads',
+        filter: `user_id=eq.${effectiveUserId}`,
+      }, debouncedReload)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'ai_lead_transfers',
+        filter: `user_id=eq.${effectiveUserId}`,
+      }, debouncedReload)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'campaign_costs',
         filter: `user_id=eq.${effectiveUserId}`,
       }, debouncedReload)
       .on('postgres_changes', {
@@ -775,7 +857,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </div>
 
       {/* ───── Bloco KPIs principais (3 cards lado a lado) ───── */}
-      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-3 portrait:grid-cols-1 gap-4">
+      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-4 portrait:grid-cols-1 gap-4">
         {/* KPI 1: Leads Gerais */}
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
@@ -794,6 +876,17 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
 
         {/* KPI 2: Qualidade Média (IA 50% + Feedback 30% + Notas 20%) */}
+        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
+          <DollarSign className="h-7 w-7 text-emerald-400 mb-2" />
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Custo por Lead</p>
+          <p className="text-[clamp(1.4rem,4.2vmin,2.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none text-emerald-400">
+            {formatBRL(kpis?.custo_por_lead ?? 0)}
+          </p>
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
+            {formatBRL(kpis?.total_spend ?? 0)} investidos
+          </p>
+        </div>
+
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           {(() => {
             const score = kpis?.qualidade_media ?? 0;
@@ -853,6 +946,37 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </section>
 
       {/* ───── PRODUÇÃO INDIVIDUAL DOS VENDEDORES ───── */}
+      <section className="shrink-0 px-8 pb-6">
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold">Leads Não Transferidos</h2>
+          <p className="text-[10px] text-slate-500 italic">{leadsNaoTransferidos.length} pendente(s) no período</p>
+        </div>
+
+        {leadsNaoTransferidos.length === 0 ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-900/45 px-4 py-5 text-center text-sm text-slate-500">
+            Nenhum lead pendente de transferência.
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 portrait:grid-cols-1 gap-3 max-h-44 overflow-y-auto pr-1">
+            {leadsNaoTransferidos.map(lead => (
+              <button
+                key={lead.id}
+                type="button"
+                onClick={() => navigate(`/pedro?tab=crm&leadId=${lead.id}`)}
+                className="group rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-left transition-colors hover:border-amber-400/60 hover:bg-amber-500/15"
+                title="Abrir detalhe no CRM Avançado"
+              >
+                <p className="truncate text-sm font-bold text-slate-100 group-hover:text-white">{lead.nome}</p>
+                <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-200/80">
+                  <Phone className="h-3 w-3" />
+                  {lead.telefone}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section className="flex-1 min-h-0 px-8 pb-20">
         <div className="flex items-baseline justify-between mb-3">
           <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 font-bold">Produção Individual dos Vendedores</h2>
