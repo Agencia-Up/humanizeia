@@ -1130,7 +1130,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
         }),
       });
     } else {
-      // ── Anthropic Claude 3.5 Sonnet (fallback) ──
+      // ── Anthropic Claude Sonnet 4 (IA principal do José) ──
       res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -1139,7 +1139,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-sonnet-4-20250514",
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: "user", content: userMessage }],

@@ -139,13 +139,19 @@ function mainMetricFor(campaign: ApolloEnrichedCampaign, sym: string): { label: 
 // ── CampaignCard ──────────────────────────────────────────────────────────────
 
 function CampaignCard({
-  campaign, currencySymbol, accountId, datePreset, onDrillDown, adsets, isLoadingAdsets,
+  campaign, currencySymbol, accountId, datePreset, onDrillDown, adsets, isLoadingAdsets, statusFilter,
 }: {
   campaign: ApolloEnrichedCampaign; currencySymbol: string; accountId?: string;
   datePreset: ApolloDatePreset; onDrillDown: () => void; adsets: any[] | null; isLoadingAdsets: boolean;
+  statusFilter: 'all' | 'active' | 'paused';
 }) {
   const [expanded, setExpanded] = useState(false);
   const s = campaign.health_score;
+  // Conjuntos visíveis respeitam o MESMO filtro de status das campanhas (Fase 2).
+  const rawAdsets = (adsets || campaign.adsets || []) as any[];
+  const visibleAdsets = rawAdsets.filter((as: any) =>
+    statusFilter === 'all' ? true : statusFilter === 'active' ? as.effective_status === 'ACTIVE' : as.effective_status !== 'ACTIVE'
+  );
 
   const handleExpand = () => {
     if (!expanded) onDrillDown();
@@ -270,8 +276,8 @@ function CampaignCard({
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
               <Loader2 className="h-3 w-3 animate-spin" /> Carregando Ad Sets...
             </div>
-          ) : (adsets || campaign.adsets)?.length ? (
-            (adsets || campaign.adsets)!.map((as: any) => (
+          ) : visibleAdsets.length ? (
+            visibleAdsets.map((as: any) => (
               <div key={as.id} className="rounded-md bg-background/50 border border-border/40 p-2.5 text-xs">
                 <div className="flex items-center justify-between gap-1 mb-1">
                   <p className="font-medium truncate flex-1" title={as.name}>{as.name}</p>
@@ -301,7 +307,7 @@ function CampaignCard({
               </div>
             ))
           ) : (
-            <p className="text-xs text-muted-foreground py-1">Nenhum ad set com dados no período.</p>
+            <p className="text-xs text-muted-foreground py-1">Nenhum ad set {statusFilter === 'active' ? 'ativo' : statusFilter === 'paused' ? 'pausado' : ''} com dados no período.</p>
           )}
         </div>
       )}
@@ -966,6 +972,7 @@ export default function ApolloDashboard() {
                                 onDrillDown={() => handleDrillDown(c.id)}
                                 adsets={adsetCache[c.id] || null}
                                 isLoadingAdsets={!!loadingAdsets[c.id]}
+                                statusFilter={statusFilter}
                               />
                             ))}
                           </div>
