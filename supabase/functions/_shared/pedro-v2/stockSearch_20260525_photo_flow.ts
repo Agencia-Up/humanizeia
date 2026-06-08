@@ -660,9 +660,10 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
   const vehicles = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
   // B3: motor de matching novo (vehicleMatch) atras de flag/override. Default = matcher LEGADO.
   // Liga em prod via secret PEDRO_FF_NEW_MATCH='on'; no dry-run via input.match_engine='v2' (sombra).
-  const useNewMatch =
-    (globalThis as any)?.Deno?.env?.get?.("PEDRO_FF_NEW_MATCH") === "on" ||
-    String((input as any).match_engine || "").toLowerCase() === "v2";
+  // B3 DESLIGADO em producao (regressao real: caso Onix mostrou 2017 laranja em vez do anuncio).
+  // O env PEDRO_FF_NEW_MATCH foi NEUTRALIZADO no codigo ate o motor ser corrigido. O motor novo
+  // so roda via override explicito de dry-run (match_engine='v2') para testes isolados.
+  const useNewMatch = String((input as any).match_engine || "").toLowerCase() === "v2";
   const rankedRaw = useNewMatch ? rankVehiclesV2(vehicles as any, filters) : rankVehicles(vehicles, filters);
   const ranked = (rankedRaw as Array<{ vehicle: any; score: number; matchedTokens: string[]; relaxed: boolean }>).sort((left, right) => {
     if (right.score !== left.score) return right.score - left.score;
