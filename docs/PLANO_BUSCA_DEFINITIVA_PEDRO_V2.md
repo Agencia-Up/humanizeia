@@ -138,7 +138,13 @@ E há uma boa notícia: nos casos B7 o agente **acerta** ("não temos" quando re
 1. **B1+B2** — qualquer turno de intenção-de-estoque **sem modelo** → mostrar estoque (filtrado por preço/tipo);
    se a faixa exata estiver vazia, **oferecer o mais próximo**. Nunca "qual modelo?"/"não temos nessa faixa" seco.
 2. **Motor único `vehicleMatch.ts` (B3)** — typos/formatos sujos por similaridade contra o estoque real.
-3. **Planner gpt-4o (B5)** — corrige intenção (troca/financiamento/small-talk roteados como busca).
+3. **Intenção (B5) — RESOLVIDO via LÓGICA, não troca de modelo (v71c).** Medido mini vs gpt-4o vs
+   DeepSeek (5 casos): EMPATAM em intenção (todos erravam "Lindo demais esse carro" → gap de
+   prompt/lógica, não de modelo). Custo: mini $0.0018 < DeepSeek $0.0034 (2x) < gpt-4o $0.0304 (17x)
+   → **mantido gpt-4o-mini**. Causa real: o resolver tratava "carro" (genérico) como sinal de veículo
+   e a rede de segurança forçava busca, sobrescrevendo o reply_only correto do LLM. Fix:
+   `isPureVehicleComment` (elogio/comentário sem pedido de info NÃO força busca). Infra DeepSeek/gpt-4o
+   fica ligável por env (PEDRO_PLANNER_PROVIDER/MODEL) + `_planner_meta` mede custo/latência.
 4. **ad_context (B4)** — quando o anúncio traz modelo, buscar esse modelo.
 
 ## 7. O que preciso de você

@@ -76,6 +76,19 @@ const GENERIC_STOCK_WORDS = new Set([
   "estoque", "novo", "novos", "usado", "usados", "seminovo", "seminovos",
 ]);
 
+// ELOGIO/COMENTARIO puro sobre carro ("lindo esse carro", "gostei dos carros") NAO e pedido de
+// busca — e conversa. Achado em log real: viravam busca a toa porque "carro" e tratado como
+// sinal de veiculo. Aqui detectamos elogio SEM pedido de info, p/ deixar o cerebro conversar.
+function isPureVehicleComment(message?: string | null) {
+  const n = normalizeText(message);
+  if (!n) return false;
+  const hasCompliment = /\b(lindo|linda|lindos|lindas|gostei|gostl|amei|adorei|maravilhoso|maravilhosa|perfeito|perfeita|top|show|massa|bonito|bonita|belo|bela|legal|otimo|otima|incrivel|sensacional|esp?etacular|que carro|que maquina)\b/.test(n);
+  if (!hasCompliment) return false;
+  // se junto houver QUALQUER pedido de info/compra/foto, NAO e so comentario -> segue o fluxo normal.
+  const hasRequest = /\b(tem|temos|quero|queria|gostaria|procuro|busco|preciso|mostra|mostrar|ver|quanto|preco|valor|km|ano|disponivel|financia|financiar|parcela|entrada|comprar|agendar|visita|foto|fotos|qual|quais|outro|outros|mais)\b/.test(n);
+  return !hasRequest;
+}
+
 function hasStockQuestionSignal(message?: string | null) {
   const normalized = normalizeText(message);
   if (!normalized) return false;
@@ -500,7 +513,7 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   const stockQuestion = hasStockQuestionSignal(input.message);
   const broadStockQuestion = asksBroadStock(input.message);
   const memoryVehicle = memoryVehicleQuery(input.memory);
-  if ((_vr?.has_current_vehicle_signal || hasLlmVehicle) && plan.intent !== "trade_in" && (plan.action === "reply_only" || plan.action === "clarify")) {
+  if ((_vr?.has_current_vehicle_signal || hasLlmVehicle) && plan.intent !== "trade_in" && !isPureVehicleComment(input.message) && (plan.action === "reply_only" || plan.action === "clarify")) {
     plan.action = "stock_search";
     plan.intent = plan.intent === "small_talk" ? "stock_lookup" : plan.intent;
     if (!plan.search_query) {
