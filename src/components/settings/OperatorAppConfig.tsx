@@ -105,6 +105,11 @@ export function OperatorAppConfig({ platformId }: { platformId: string }) {
 
   if (!cfg) return null;
 
+  const redirectUrl =
+    platformId === 'meta' && typeof window !== 'undefined'
+      ? `${window.location.origin}/api/meta/callback`
+      : cfg.redirect;
+
   const isSet = (f: FieldDef) => {
     if (f.key === 'app_id') return !!status?.app_id_set;
     if (f.key === 'app_secret') return !!status?.app_secret_set;
@@ -140,7 +145,7 @@ export function OperatorAppConfig({ platformId }: { platformId: string }) {
   };
 
   const copy = () => {
-    navigator.clipboard?.writeText(cfg.redirect);
+    navigator.clipboard?.writeText(redirectUrl);
     toast.success('URL copiada');
   };
 
@@ -189,7 +194,7 @@ export function OperatorAppConfig({ platformId }: { platformId: string }) {
             <div className="flex gap-1.5">
               <Input
                 readOnly
-                value={cfg.redirect}
+                value={redirectUrl}
                 className="h-8 text-[11px] font-mono"
                 onFocus={(e) => e.currentTarget.select()}
               />

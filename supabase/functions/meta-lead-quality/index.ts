@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v21.0";
+const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v25.0";
 const META_GRAPH_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 
 type DatePreset = "today" | "yesterday" | "last_7d" | "last_14d" | "last_30d";

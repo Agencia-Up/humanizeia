@@ -6,7 +6,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
+const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v25.0";
+const META_GRAPH_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {

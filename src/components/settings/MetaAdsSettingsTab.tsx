@@ -25,6 +25,7 @@ export function MetaAdsSettingsTab() {
     businesses,
     startOAuth,
     handleCallback,
+    consumeOAuthSession,
     selectAccount,
     disconnect,
     connectWithToken,
@@ -42,6 +43,23 @@ export function MetaAdsSettingsTab() {
   useEffect(() => {
     const code = searchParams.get('code');
     const isCallback = searchParams.get('meta_callback');
+    const oauthSession = searchParams.get('meta_oauth_session');
+    const oauthError = searchParams.get('meta_error');
+
+    if (oauthSession) {
+      consumeOAuthSession(oauthSession);
+      searchParams.delete('meta_oauth_session');
+      searchParams.delete('meta_accounts');
+      setSearchParams(searchParams, { replace: true });
+      return;
+    }
+
+    if (oauthError) {
+      searchParams.delete('meta_error');
+      setSearchParams(searchParams, { replace: true });
+      return;
+    }
+
     if (code && isCallback) {
       handleCallback(code);
       searchParams.delete('code');
@@ -160,7 +178,7 @@ export function MetaAdsSettingsTab() {
                 ) : (
                   <span className="mr-2 text-lg">f</span>
                 )}
-                Login com Facebook
+                Conectar Meta
               </Button>
 
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
