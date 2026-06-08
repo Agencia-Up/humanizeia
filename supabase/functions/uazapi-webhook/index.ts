@@ -313,7 +313,9 @@ Regras críticas:
 - "Cabine dupla, manual, 2018" como resposta a pergunta sobre carro → preencher carro_troca
 - Telefone (10-13 dígitos) → lead.telefone
 - Se a mensagem é claramente eco/repetição do que o agente acabou de dizer → eco_detectado=true E NÃO preencha lead.nome
-- Mensagens curtas tipo só "Sim", "Não", "Ok" sem contexto novo → retorne {}
+- "Ok", "Sim", "Não" SOZINHOS sem nenhuma palavra adicional → retorne {}
+- "Ok, flex", "Ok, pode ser automático", "Sim, qualquer cor" → TÊM dado novo após o Ok/Sim. EXTRAIA a nova preferência e SOBRESCREVA o campo correspondente (ex: "Ok, flex então" → interesse.combustivel="flex"; "Pode ser automático também" → interesse.cambio="automático")
+- Quando cliente responde a perguntas sobre seu carro de troca (ex: "o carro virtus" ou "virtus" após o agente perguntar sobre o carro de troca), preencher negociacao.carro_troca.modelo, NÃO interesse.modelo_desejado.
 
 Se nada de novo, retorne {}.`;
 
@@ -386,6 +388,26 @@ function isAgentSelfIntroduction(text: string): boolean {
     /\b(meu nome|chamo-me)\s+(é\s+)?\w+/i,                 // "Meu nome é Carvalho", "Chamo-me Carvalho"
   ];
   return patterns.some((p) => p.test(text));
+}
+
+function detectFarewellInAgentReply(text: string): boolean {
+  if (!text) return false;
+  const patterns = [
+    /\bboa\s?noite\b/i,
+    /\bboa\s?tarde\b/i,
+    /\bbom\s?fim\s?de\s?semana\b/i,
+    /\bat[eé]\s?amanh[aã]\b/i,
+    /\bamanh[aã]\s+(falamos|continuamos|retomo|te\s+chamo)\b/i,
+    /\bat[eé]\s?(logo|mais|breve)\b/i,
+    /\btchau\b/i,
+    /\bobrigado\s+(pelo|por)\s+(contato|papo|atendimento)\b/i,
+    /quando\s+(quiser|puder)[,.]?\s*([eé]\s+s[oó]\s+chamar|estou\s+aqui)\b/i,
+    /[eé]\s+s[oó]\s+chamar.*boa\s?(noite|tarde|semana)/i,
+    /\bme\s+chama\s+quando\b/i,
+    /\bfico\s+(a|à)\s+disposi[cç][aã]o\b/i,
+    /\bqualquer\s+coisa\s+s[oó]\s+chamar\b/i,
+  ];
+  return patterns.some(p => p.test(text));
 }
 
 // Camada 3 do Bug #2: guard programático. Remove auto-apresentação da resposta
@@ -2059,12 +2081,12 @@ async function consultarEstoqueBndv(supabase: any, userId: string, filters: any)
 
     let vehicles = applyBndvFiltering(originalVehicles, filters, SYNONYMS_ENABLED);
 
-    // ─── IT-2.3: fallback similares quando 0 itens (flag PEDRO_FF_BNDV_SIMILAR_VEHICLES) ─
+    // ─── IT-2.3: fallback similares quando 0 itens (sempre habilitado) ─
     // Resolve "Pedro nega estoque que existe" (benchmark Roberta).
-    // Se primeira busca falhou e flag on, tenta relaxar filtros progressivamente
+    // Se primeira busca falhou, tenta relaxar filtros progressivamente
     // até achar algo. Marca itens como is_fallback_suggestion + descricao.
     let fallbackInfo: { description: string; level: number; original_filters: any } | null = null;
-    if (vehicles.length === 0 && isPedroFeatureEnabled('BNDV_SIMILAR_VEHICLES')) {
+    if (vehicles.length === 0) {
       const attempts = relaxBndvFilters(filters);
       console.log(`[BNDV-FALLBACK] 0 itens com filtros originais — tentando ${attempts.length} relaxacoes`);
       for (const attempt of attempts) {
@@ -2152,6 +2174,8 @@ Você é Pedro, atendente de WhatsApp de uma revenda de carros. Suas caracterís
 - **Foco**: vender carro. Não opina sobre concorrentes, política, religião, vida pessoal. Desvia educadamente.
 - **Honestidade**: se não tem o veículo pedido, OFEREÇA alternativas similares. Nunca diga só "não temos" e fecha a porta.
 - **Handoff**: quando o cliente já tem decisão (modelo + forma de pagamento + nome), use a tool transferir_para_vendedor — não tente fechar você mesmo.
+- **Diferenciação de Veículos**: Identifique o carro de troca do lead (carro que ele já possui). NUNCA busque o carro de troca dele no estoque usando consultar_estoque_bndv (pois ele quer dá-lo de entrada, não comprá-lo). Mantenha o foco de busca no veículo que ele quer comprar da loja.
+- **Despedida e Encerramento**: Se o cliente se despedir de você, seja cordial e curto. Se ele demonstrou interesse real pendente, chame transferir_para_vendedor com urgencia="baixa" e motivo="Cliente se despediu após demonstrar interesse. Retomar amanhã." antes de responder. Se não demonstrou interesse claro, apenas despeça-se normalmente.
 `.trim();
 
 const PEDRO_FEW_SHOTS_INLINE: Array<{ label: string; customer: string; agent: string }> = [
@@ -2160,6 +2184,9 @@ const PEDRO_FEW_SHOTS_INLINE: Array<{ label: string; customer: string; agent: st
   { label: '3. Objeção "tô só olhando"', customer: 'Tô só olhando ainda', agent: 'Tranquilo! Quando quiser ver algum modelo ou bater um papo sobre opção, é só chamar 👍' },
   { label: '4. Fechamento → transfere', customer: 'Decidi, quero o Tracker 2023 financiado', agent: 'Excelente! Vou te conectar com nosso vendedor pra preparar a proposta e a entrega. Me passa seu nome e telefone?' },
   { label: '5. Despedida educada', customer: 'Cara, deixa pra outra hora', agent: 'Beleza! Quando quiser, é só chamar. Boa semana 👋' },
+  { label: '6. Lead envia foto de anúncio', customer: '[envia foto com HB20S 2025]', agent: 'Vi que você se interessou no HB20S! Deixa eu verificar aqui no estoque... [chama consultar_estoque_bndv automaticamente com modelo="HB20S" ano_min=2025]' },
+  { label: '7. Lead aceita alternativa de combustível', customer: 'Ok, pode ser flex então', agent: 'Ótimo! Deixa eu buscar os Uno Mille Flex disponíveis pra você. [chama consultar_estoque_bndv com modelo="Uno Mille" combustivel="flex"]' },
+  { label: '8. Lead se despede com interesse pendente', customer: 'Amanhã falamos ok, boa noite', agent: 'Combinado! Qualquer coisa é só me chamar. Tenha uma ótima noite! 😊 [chama transferir_para_vendedor com urgencia="baixa", motivo="Cliente se despediu após demonstrar interesse. Retomar amanhã."]' },
 ];
 
 function buildPersonaFewShotsBlock(): string {
@@ -2907,7 +2934,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
             marca: { type: "string", description: "Marca do veículo." },
             modelo: { type: "string", description: "Modelo do veículo." },
             versao: { type: "string", description: "Versão do veículo." },
-            combustivel: { type: "string", description: "Combustível desejado." },
+            combustivel: { type: "string", description: "Combustível desejado (ex: flex, gasolina, etanol, diesel, elétrico, híbrido). ATENÇÃO: '1.0', '1.4', '2.0' são motorizações, NÃO combustíveis — não preencha combustivel com motorização." },
             cambio: { type: "string", description: "Tipo de câmbio." },
             cor: { type: "string", description: "Cor desejada." },
             ano_min: { type: "number", description: "Ano mínimo." },
@@ -3250,6 +3277,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
       // 7b. Merge + UPSERT
       const newState = deepMerge(baseStateForMerge, safeDelta);
+      if (newState.conversa_encerrada) {
+        newState.conversa_encerrada = false;
+      }
       const score = getQualificationScore(newState); // IT-2.2: wrapper V1/V2
       conversationState = newState;
 
@@ -3396,7 +3426,15 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       .maybeSingle();
     if (bndvInteg) {
       hasBndvIntegration = true;
-      systemPrompt += `\n\nFERRAMENTA DE ESTOQUE BNDV:\nVocê tem acesso à ferramenta "consultar_estoque_bndv". USE quando o cliente perguntar sobre carros, preço, estoque, opções disponíveis. Nunca invente estoque sem consultar. Após consultar, as fotos dos veículos serão enviadas automaticamente.`;
+      systemPrompt += `\n\nFERRAMENTA DE ESTOQUE BNDV:\nVocê tem acesso à ferramenta "consultar_estoque_bndv".
+USE quando o cliente perguntar sobre carros disponíveis, preços, estoque ou opções na loja.
+REGRAS DE BUSCA DO ESTOQUE BNDV:
+1. Primeira busca: use apenas marca+modelo+ano. NÃO preencha versao, combustivel, ou cambio a menos que o cliente especificou isso explicitamente em PALAVRAS na conversa atual.
+2. Se "1.0", "1.4", "2.0" aparecer: é MOTORIZAÇÃO, não combustível. Ignore para o campo combustivel.
+3. Se a primeira busca retornar 0 resultados: o sistema tentará busca mais ampla (fallback) automaticamente.
+4. QUANDO CLIENTE ENVIAR FOTO DE ANÚNCIO: Identifique a marca+modelo+ano na imagem e IMEDIATAMENTE use consultar_estoque_bndv. NÃO pergunte qual carro é — ele já te mostrou na imagem.
+5. Se não encontrar exatamente o modelo desejado no estoque: ofereça os modelos similares e mais próximos disponíveis. NUNCA diga apenas "não temos" sem oferecer uma alternativa similar.
+6. ATENÇÃO: NUNCA consulte o estoque para o carro que o cliente possui e deseja dar como TROCA ou entrada (ex: "Virtus 2019" ou "o carro virtus"). O carro de troca é do cliente, não da concessionária! Mantenha a busca focada apenas no veículo de interesse que ele quer COMPRAR da loja (ex: a Ford Ranger).`;
     }
   } catch (bndvCheckErr) {
     console.error('[Webhook] Erro ao verificar integração BNDV:', bndvCheckErr);
@@ -4358,14 +4396,6 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     console.warn('[PedroState] erro nas auto-flags (não bloqueia):', flagErr);
   }
 
-  // ── CRITICAL: Atualiza last_agent_reply_at para regra de 5min/10min ──
-  // O cron-lead-followup usa este campo para saber quando o agente IA respondeu pela última vez
-  const agentReplyTs = new Date().toISOString();
-  await supabase.from('ai_crm_leads').update({
-    last_agent_reply_at: agentReplyTs,
-    last_interaction_at: agentReplyTs,
-  }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
-
   // Camada 3 do Bug #2: strip auto-apresentação se o agente já se apresentou
   // antes (consultor_apresentado=true no state). Defesa contra LLM ignorar a
   // regra do system prompt esporadicamente. Se a resposta inteira era só
@@ -4385,6 +4415,53 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         console.warn(`[Guardrails] BLOQUEADO (${ruleList}). Original: "${finalText.slice(0, 100)}". Violacoes:`, JSON.stringify(guardrailResult.violations));
       }
       finalText = guardrailResult.safeFallback;
+    }
+  }
+
+  // ── CRITICAL: Atualiza last_agent_reply_at para regra de 5min/10min ──
+  // O cron-lead-followup usa este campo para saber quando o agente IA respondeu pela última vez.
+  // Se for despedida, bloqueia o follow-up automático de 5min/8min/12min.
+  const agentReplyTs = new Date().toISOString();
+  const isFarewell = detectFarewellInAgentReply(finalText);
+  await supabase.from('ai_crm_leads').update({
+    last_agent_reply_at: agentReplyTs,
+    last_interaction_at: agentReplyTs,
+    followup_5min_sent: isFarewell ? true : false,
+  }).eq('agent_id', agent.id).eq('remote_jid', remoteJid);
+
+  if (isFarewell) {
+    console.log(`[Despedida] Agente se despediu. Bloqueando follow-up e marcando conversa_encerrada=true para ${remoteJid}`);
+    try {
+      const { data: leadRow } = await supabase
+        .from('ai_crm_leads')
+        .select('id')
+        .eq('agent_id', agent.id)
+        .eq('remote_jid', remoteJid)
+        .maybeSingle();
+
+      if (leadRow?.id) {
+        const { data: freshState } = await supabase
+          .from('pedro_conversation_state')
+          .select('state')
+          .eq('lead_id', leadRow.id)
+          .eq('agent_id', agent.id)
+          .maybeSingle();
+
+        const curState = freshState?.state || conversationState || {};
+        const updatedState = { ...curState, conversa_encerrada: true };
+
+        await supabase.from('pedro_conversation_state').upsert({
+          lead_id: leadRow.id,
+          agent_id: agent.id,
+          user_id: agent.user_id,
+          state: updatedState,
+          qualificacao_score: getQualificationScore(updatedState),
+          last_extracted_at: new Date().toISOString(),
+        }, { onConflict: 'lead_id,agent_id' });
+        conversationState = updatedState;
+      }
+    } catch (farewellErr) {
+      console.warn('[Despedida] erro ao salvar conversa_encerrada:', farewellErr);
     }
   }
 

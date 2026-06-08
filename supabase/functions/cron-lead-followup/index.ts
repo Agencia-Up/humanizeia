@@ -442,6 +442,10 @@ async function handleV2Followup(supabase: any, ctx: {
     .from("pedro_conversation_state").select("state")
     .eq("lead_id", lead.id).eq("agent_id", agentId).maybeSingle();
   const state = (stateRow?.state && typeof stateRow.state === "object") ? stateRow.state : {};
+  if (state.conversa_encerrada) {
+    console.log(`[CronFollowup] Conversa encerrada para o lead ${lead.id}. Ignorando follow-up.`);
+    return;
+  }
   const fu = (state.followup && typeof state.followup === "object") ? state.followup : {};
   const sameCycle = fu.anchor === lead.last_agent_reply_at;
   const stage = sameCycle ? Number(fu.stage || 0) : 0;
