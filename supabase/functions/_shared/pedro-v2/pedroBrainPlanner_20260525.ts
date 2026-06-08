@@ -687,14 +687,29 @@ export async function planPedroTurn(input: {
   ).toLowerCase();
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
   const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
+  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
   const useDeepseek = plannerProvider === "deepseek" && !!deepseekKey;
-  const llm = useDeepseek
+  const useAnthropic = (plannerProvider === "anthropic" || plannerProvider === "claude") && !!anthropicKey;
+  // Anthropic NAO e compativel com OpenAI: endpoint /v1/messages, header x-api-key + anthropic-version,
+  // 'system' top-level, saida em content[].text. Modelo default = haiku (planner e classificacao barata
+  // de alto volume; opus/sonnet ligaveis por env PEDRO_PLANNER_MODEL_ANTHROPIC ou override no dry-run).
+  const llm = useAnthropic
+    ? {
+        provider: "anthropic",
+        url: "https://api.anthropic.com/v1/messages",
+        key: anthropicKey as string,
+        model: Deno.env.get("PEDRO_PLANNER_MODEL_ANTHROPIC") || "claude-haiku-4-5",
+        supportsJsonSchema: false,
+        isAnthropic: true,
+      }
+    : useDeepseek
     ? {
         provider: "deepseek",
         url: "https://api.deepseek.com/v1/chat/completions",
         key: deepseekKey as string,
         model: Deno.env.get("PEDRO_PLANNER_MODEL_DEEPSEEK") || "deepseek-chat",
         supportsJsonSchema: false,
+        isAnthropic: false,
       }
     : {
         provider: "openai",
@@ -702,6 +717,7 @@ export async function planPedroTurn(input: {
         key: openaiKey || "",
         model: Deno.env.get("PEDRO_PLANNER_MODEL_OPENAI") || "gpt-4o-mini",
         supportsJsonSchema: true,
+        isAnthropic: false,
       };
   if (!llm.key) return fallback;
 
@@ -769,9 +785,10 @@ export async function planPedroTurn(input: {
   });
 
   // OTIMIZACAO DE CUSTO: o planner e DECISAO ESTRUTURADA (temp 0.1), nao a resposta ao
-  // cliente. Roda em gpt-4o-mini por padrao; pode rodar em DeepSeek (ainda mais barato).
+  // cliente. Roda em gpt-4o-mini por padrao; pode rodar em DeepSeek/Anthropic (override por env/dry-run).
+  const plannerModel = input.planner_model || llm.model;
   const baseBody: Record<string, any> = {
-    model: input.planner_model || llm.model,
+    model: plannerModel,
     temperature: 0.1,
     messages: [
       { role: "system", content: systemPrompt },
@@ -779,38 +796,68 @@ export async function planPedroTurn(input: {
     ],
   };
 
-  const callPlanner = async (responseFormat: any) =>
-    await fetch(llm.url, {
+  const callPlanner = async (responseFormat: any) => {
+    if (llm.isAnthropic) {
+      // Anthropic Messages API: system top-level, sem response_format/temperature (compat. opus 4.x).
+      return await fetch(llm.url, {
+        method: "POST",
+        headers: {
+          "x-api-key": llm.key,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: plannerModel,
+          max_tokens: 1024,
+          system: `${systemPrompt}\n\nResponda APENAS com o objeto JSON pedido, sem texto extra e sem cercas de codigo.`,
+          messages: [{ role: "user", content: userPayload }],
+        }),
+      });
+    }
+    return await fetch(llm.url, {
       method: "POST",
       headers: { Authorization: `Bearer ${llm.key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ ...baseBody, response_format: responseFormat }),
     });
+  };
 
   try {
     const _t0 = (globalThis as any)?.performance?.now?.() ?? 0;
     // 1) SAIDA ESTRUTURADA ESTRITA (so OpenAI): o schema garante action/intent/confidence validos.
     //    DeepSeek nao suporta json_schema -> ja vai direto p/ json_object (o prompt pede JSON).
-    let res = llm.supportsJsonSchema
+    let res = llm.isAnthropic
+      ? await callPlanner(null)
+      : llm.supportsJsonSchema
       ? await callPlanner({ type: "json_schema", json_schema: PLAN_JSON_SCHEMA })
       : await callPlanner({ type: "json_object" });
-    // 2) DEGRADACAO GRACIOSA: se rejeitar, cai p/ json_object e so depois p/ o fallback. Sem regressao.
-    if (!res.ok) {
-      console.warn(`[PedroV2] planner ${llm.provider}/${llm.model} status ${res.status}; degradando p/ json_object`);
+    // 2) DEGRADACAO GRACIOSA (OpenAI/DeepSeek): se rejeitar o schema, cai p/ json_object. Sem regressao.
+    if (!res.ok && !llm.isAnthropic) {
+      console.warn(`[PedroV2] planner ${llm.provider}/${plannerModel} status ${res.status}; degradando p/ json_object`);
       res = await callPlanner({ type: "json_object" });
     }
-    if (!res.ok) return fallback;
+    if (!res.ok) {
+      if (llm.isAnthropic) console.warn(`[PedroV2] planner anthropic/${plannerModel} status ${res.status}`);
+      return fallback;
+    }
     const data = await res.json();
-    if (input.usage_sink) input.usage_sink.tokens += sumOpenAiTokens(data);
-    const content = String(data?.choices?.[0]?.message?.content || "{}");
+    // SAIDA: OpenAI/DeepSeek -> choices[0].message.content ; Anthropic -> content[].text
+    const content = llm.isAnthropic
+      ? String((Array.isArray(data?.content) ? data.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
+      : String(data?.choices?.[0]?.message?.content || "{}");
+    if (input.usage_sink) {
+      input.usage_sink.tokens += llm.isAnthropic
+        ? Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0)
+        : sumOpenAiTokens(data);
+    }
     const parsed = JSON.parse(cleanJson(content));
     const plan = normalizePlan(parsed, fallback, input);
     // META p/ medir custo/latencia/provedor (aparece no dry-run e ajuda monitorar producao).
     const _t1 = (globalThis as any)?.performance?.now?.() ?? 0;
     (plan as any)._planner_meta = {
       provider: llm.provider,
-      model: input.planner_model || llm.model,
-      prompt_tokens: Number(data?.usage?.prompt_tokens || 0),
-      completion_tokens: Number(data?.usage?.completion_tokens || 0),
+      model: plannerModel,
+      prompt_tokens: llm.isAnthropic ? Number(data?.usage?.input_tokens || 0) : Number(data?.usage?.prompt_tokens || 0),
+      completion_tokens: llm.isAnthropic ? Number(data?.usage?.output_tokens || 0) : Number(data?.usage?.completion_tokens || 0),
       latency_ms: Math.round(_t1 - _t0),
     };
     return plan;
