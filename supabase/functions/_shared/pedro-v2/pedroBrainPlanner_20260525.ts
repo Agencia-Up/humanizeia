@@ -568,12 +568,15 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     );
     const hasTypeB1 = Boolean(f.tipo_veiculo) && typeWordInMsgB1;
     const hasMemoryModelB1 = Boolean(memoryVehicle); // "tem mais?" com carro na memoria: deixa o fluxo normal
-    if (onlyGenericB1 && !hasPriceB1 && !hasTypeB1 && !hasMemoryModelB1) {
+    // B1/B2: sem modelo real => busca AMPLA. Vale TAMBEM quando ha so faixa de preco (sem modelo):
+    // achado em log real que "carro de 60 a 70 mil" voltava 0 mesmo com 8 carros na faixa, porque
+    // sem modelo o fluxo caia em "qual modelo?" e DESCARTAVA o preco. Aqui mantemos o preco no
+    // broad (mostra o estoque dentro do orcamento). So o tipo ALUCINADO e limpo.
+    if (onlyGenericB1 && !hasTypeB1 && !hasMemoryModelB1) {
       plan.search_query = null;
-      // limpa tambem o tipo alucinado, senao a busca ampla sai filtrada por um tipo que o lead nao pediu.
       plan.search_filters = { ...f, stock_broad: true, modelo_desejado: null, tipo_veiculo: null };
       plan.use_memory_vehicle = false;
-      plan.reason = `enforced_broad_no_model:${plan.reason || ""}`;
+      plan.reason = `enforced_broad_no_model${hasPriceB1 ? "_price" : ""}:${plan.reason || ""}`;
     }
   }
 
