@@ -154,6 +154,15 @@ export function useApolloAgent() {
     }
   }, []);
 
+  // ── Hidrata a sessão a partir de um cache (localStorage) — INSTANTÂNEO e
+  //    SEM chamar a API do Meta. Usado pra restaurar o estado ao voltar pra tela.
+  const hydrateSession = useCallback((cached: ApolloSession | null) => {
+    if (!cached) return;
+    setSession(cached);
+    setPendingActions(cached.actions || []);
+    setExecutedActions(cached.execution_log || []);
+  }, []);
+
   // ── Main analysis ──
   const analyze = useCallback(async (opts: {
     targetAccountId?: string;
@@ -305,6 +314,7 @@ export function useApolloAgent() {
     executedActions,
     analyze,
     loadSavedSession,
+    hydrateSession,
     executeAction,
     getAdSets,
     dismissAction,

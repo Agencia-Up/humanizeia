@@ -502,11 +502,28 @@ function TrendSummary({ snapshots, currencySymbol }: { snapshots: any[]; currenc
   );
 }
 
+// ── Persistência local (Fase 1) ─────────────────────────────────────────────────
+// Cacheia a última sessão + estado da UI POR CONTA no localStorage, pra restaurar
+// instantâneo ao sair e voltar pra tela — SEM refazer chamadas à API do Meta.
+const APOLLO_CACHE_PREFIX = 'jose:apollo:v1:';
+interface ApolloUICache { session: unknown; datePreset: string; activeTab: string; savedAt: number; }
+function readApolloCache(accountId?: string): ApolloUICache | null {
+  if (!accountId || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(APOLLO_CACHE_PREFIX + accountId);
+    return raw ? (JSON.parse(raw) as ApolloUICache) : null;
+  } catch { return null; }
+}
+function writeApolloCache(accountId: string, data: ApolloUICache) {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(APOLLO_CACHE_PREFIX + accountId, JSON.stringify(data)); } catch { /* quota/serialize */ }
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function ApolloDashboard() {
   const { connectedAccount, connectedAccounts, selectConnectedAccount, isLoading: isLoadingAccount } = useMetaConnection();
-  const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, executeAction, getAdSets, dismissAction, testConnection } = useApolloAgent();
+  const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, hydrateSession, executeAction, getAdSets, dismissAction, testConnection } = useApolloAgent();
   const [diagResult, setDiagResult] = useState<string | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const { data: history, isLoading: isLoadingHistory } = useApolloHistory(connectedAccount?.account_id);
@@ -517,19 +534,39 @@ export default function ApolloDashboard() {
   const [adsetCache, setAdsetCache] = useState<Record<string, any[]>>({});
   const [loadingAdsets, setLoadingAdsets] = useState<Record<string, boolean>>({});
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null); // timestamp da última sincronização (Fase 1)
   const [aiLogEntries, setAiLogEntries] = useState<AILogEntry[]>([]);
   const [aiLogOpen, setAiLogOpen] = useState(true);
   const prevIsAnalyzing = useRef(false);
 
   const accountId = connectedAccount?.account_id;
 
-  // ── Load last saved session on mount ──
+  // ── Restaura o estado no mount: cache LOCAL primeiro (instantâneo, ZERO chamada
+  //    à Meta), senão a última sessão salva no BANCO. NUNCA dispara analyze. ──
   useEffect(() => {
     if (!sessionLoaded && !session && !isAnalyzing && accountId) {
       setSessionLoaded(true);
-      loadSavedSession(accountId);
+      const cached = readApolloCache(accountId);
+      if (cached?.session) {
+        hydrateSession(cached.session as any);
+        if (cached.datePreset) setDatePreset(cached.datePreset as ApolloDatePreset);
+        if (cached.activeTab) setActiveTab(cached.activeTab);
+        if (cached.savedAt) setLastUpdatedAt(cached.savedAt);
+      } else {
+        loadSavedSession(accountId).then((saved: any) => {
+          if (saved?.last_run_at) setLastUpdatedAt(new Date(saved.last_run_at).getTime());
+        });
+      }
     }
-  }, [sessionLoaded, session, isAnalyzing, accountId, loadSavedSession]);
+  }, [sessionLoaded, session, isAnalyzing, accountId, loadSavedSession, hydrateSession]);
+
+  // ── Persiste sessão + estado da UI no localStorage (por conta) sempre que muda.
+  //    Usa o lastUpdatedAt como carimbo — trocar de aba/período NÃO refaz a sync. ──
+  useEffect(() => {
+    if (accountId && session && lastUpdatedAt) {
+      writeApolloCache(accountId, { session, datePreset, activeTab, savedAt: lastUpdatedAt });
+    }
+  }, [accountId, session, datePreset, activeTab, lastUpdatedAt]);
   // ── AI Log: populate when analysis starts ──
   useEffect(() => {
     if (isAnalyzing && !prevIsAnalyzing.current) {
@@ -550,6 +587,7 @@ export default function ApolloDashboard() {
   // ── AI Log: add completion entries when session loads ──
   useEffect(() => {
     if (session && !isAnalyzing && aiLogEntries.length > 0) {
+      setLastUpdatedAt(Date.now()); // análise explícita completou → carimba a "última atualização"
       const now = new Date();
       const completionEntries: AILogEntry[] = [];
       const campaignCount = session.campaigns?.length || 0;
