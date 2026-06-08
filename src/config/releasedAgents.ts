@@ -17,7 +17,9 @@
 // ============================================================================
 
 /** Slugs (lowercase) dos agentes liberados pra produção. */
-export const RELEASED_AGENTS: ReadonlyArray<string> = ['pedro', 'marcos'];
+// José (Tráfego Pago) liberado em 08/06/2026 — dashboard avançado restaurado +
+// apollo-agent funcionando. 'jose' e 'josé' cobrem o match com/sem acento.
+export const RELEASED_AGENTS: ReadonlyArray<string> = ['pedro', 'marcos', 'jose', 'josé'];
 
 /**
  * Verifica se um agente está liberado pra uso. Case-insensitive, aceita
