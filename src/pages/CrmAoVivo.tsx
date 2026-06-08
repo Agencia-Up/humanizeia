@@ -92,6 +92,23 @@ const LIVE_COLUMNS = [
 ];
 
 /* ── helpers ──────────────────────────────────────────── */
+const CRM_STATUS_COLUMNS = [
+  { id: 'novo',                 title: 'Novo',                 main: C.cyan,   light: C.cyanL,   bg: C.cyanBg },
+  { id: 'inativo',              title: 'Lead Inativo',         main: C.red,    light: C.redL,    bg: C.redBg },
+  { id: 'carro_nao_disponivel', title: 'Carro nao disponivel', main: C.red,    light: C.redL,    bg: C.redBg },
+  { id: 'em_atendimento',       title: 'Agendamento',          main: C.purple, light: C.purpleL, bg: C.purpleBg },
+  { id: 'negociacao',           title: 'Negociacao',           main: C.orange, light: C.orangeL, bg: C.orangeBg },
+  { id: 'fechado',              title: 'Fechado',              main: C.green,  light: C.greenL,  bg: C.greenBg },
+  { id: 'perdido',              title: 'Perdido',              main: C.red,    light: C.redL,    bg: C.redBg },
+];
+
+const PEDRO_LIVE_COLUMNS = [
+  { id: 'nao_transferido', title: 'Nao transferido', main: C.amber, light: C.amberL, bg: C.amberBg, assignmentOnly: true },
+  ...CRM_STATUS_COLUMNS,
+];
+
+const CRM_STATUS_IDS = new Set(CRM_STATUS_COLUMNS.map(col => col.id));
+
 function formatRelative(d?: string | null) {
   if (!d) return '—';
   const m = Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 60000));
@@ -107,7 +124,7 @@ function getTransferLabel(t: any) {
 }
 
 /* ── COMPONENTE CARD (Memoizado para performance) ─────────── */
-const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer, pendingTransfer }: any) => {
+const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringLeadId, onTransfer, transfers, dragHandleProps, hideTransfer, pendingTransfer, onStatusChange, statusUpdatingLeadId }: any) => {
   const [msg, setMsg] = useState('');
   const [showHist, setShowHist] = useState(false);
   // Vendedor escolhido pelo master no select. Se vazio, usa nextSeller (round-robin).
@@ -124,10 +141,12 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
   }, [activeMembers, selectedSellerId]);
 
   const isTransferring = transferringLeadId === lead.id;
+  const isUpdatingStatus = statusUpdatingLeadId === lead.id;
   const targetSellerId = selectedSellerId || nextSeller?.id || null;
   const targetSellerName = selectedSellerId
     ? (activeMembers?.find((m: any) => m.id === selectedSellerId)?.name || 'selecionado')
     : (nextSeller?.name || 'vendedor');
+  const hasSellerOrPending = Boolean(lead.assigned_to_id || pendingTransfer);
 
   const leadTransfers = useMemo(() =>
     transfers.filter((t: any) => t.lead_id === lead.id),
@@ -218,6 +237,27 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
           </Button>
         </div>
 
+        <select
+          value={CRM_STATUS_IDS.has(lead.status_crm) ? lead.status_crm : 'novo'}
+          onChange={(e) => onStatusChange?.(lead.id, e.target.value)}
+          disabled={isUpdatingStatus}
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            fontSize: 11,
+            borderRadius: 8,
+            background: 'rgba(0,0,0,0.25)',
+            border: `1px solid ${col.main}`,
+            color: '#fff',
+            outline: 'none',
+          }}
+          title="Etapa do CRM Avancado"
+        >
+          {CRM_STATUS_COLUMNS.map((status) => (
+            <option key={status.id} value={status.id}>{status.title}</option>
+          ))}
+        </select>
+
         {!hideTransfer && (
           <>
             {/* Select de vendedor — vazio = round-robin (nextSeller). Master
@@ -248,14 +288,14 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
               size="sm"
               disabled={isTransferring || !targetSellerId}
               style={{
-                background: lead.status === 'transferido' ? 'transparent' : C.orange,
-                border: lead.status === 'transferido' ? `1px solid ${C.orange}` : 'none',
-                color: lead.status === 'transferido' ? C.orangeL : '#fff',
+                background: hasSellerOrPending ? 'transparent' : C.orange,
+                border: hasSellerOrPending ? `1px solid ${C.orange}` : 'none',
+                color: hasSellerOrPending ? C.orangeL : '#fff',
                 fontWeight: 800,
                 fontSize: 11,
                 height: 32,
                 borderRadius: 8,
-                boxShadow: lead.status === 'transferido' ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
+                boxShadow: hasSellerOrPending ? 'none' : '0 4px 12px rgba(230,81,0,0.2)'
               }}
               onClick={() => {
                 onTransfer(lead.id, msg, selectedSellerId || undefined);
@@ -268,7 +308,7 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
               ) : (
                 <RefreshCw className="h-3.5 w-3.5 mr-2" />
               )}
-              {lead.status === 'transferido' ? 'Re-transferir lead' : `Transferir para ${targetSellerName}`}
+              {hasSellerOrPending ? 'Re-transferir lead' : `Transferir para ${targetSellerName}`}
             </Button>
           </>
         )}
@@ -298,7 +338,7 @@ const LiveLeadCard = memo(({ lead, col, nextSeller, activeMembers, transferringL
   );
 });
 
-const TvLeadCard = memo(({ lead, col }: any) => {
+const TvLeadCard = memo(({ lead, col, pendingTransfer }: any) => {
   const phone = String(lead.remote_jid || '').replace('@s.whatsapp.net', '');
 
   return (
@@ -359,7 +399,7 @@ const TvLeadCard = memo(({ lead, col }: any) => {
           }}
           title={!lead.member && pendingTransfer ? `Aguardando ${pendingTransfer.member_name} confirmar (ate 15min)` : undefined}
         >
-          {lead.member?.name || pendingTransfer?.member_name || (lead.status === 'transferido' ? 'Aguardando' : 'Sem vendedor')}
+          {lead.member?.name || pendingTransfer?.member_name || 'Sem vendedor'}
         </span>
       </div>
     </div>
@@ -405,6 +445,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const prevCount = useRef<number | null>(null);
   const mutedRef = useRef(muted); // sempre atual para callbacks de subscription
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
+  const [statusUpdatingLeadId, setStatusUpdatingLeadId] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
   const [customStart, setCustomStart] = useState<string>('');
   const [customEnd, setCustomEnd] = useState<string>('');
@@ -456,12 +497,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       // Hidrata member + agent via lookup map (evita N+1 e JOIN PostgREST quebrado)
       const teamById = new Map(teamArr.map((t: any) => [t.id, { id: t.id, name: t.name, whatsapp_number: t.whatsapp_number }]));
       const agentsById = new Map(agentsArr.map((a: any) => [a.id, { name: a.name }]));
-      const transferredLeadIds = new Set((transfersRes.data || []).map((t: any) => t.lead_id).filter(Boolean));
       const leadsData = rawLeads.map((l: any) => ({
         ...l,
-        member: l.assigned_to_id && (['transferido', 'em_atendimento'].includes(l.status) || transferredLeadIds.has(l.id))
-          ? (teamById.get(l.assigned_to_id) ?? null)
-          : null,
+        member: l.assigned_to_id ? (teamById.get(l.assigned_to_id) ?? null) : null,
         agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
       }));
 
@@ -780,11 +818,19 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
-    LIVE_COLUMNS.forEach(col => {
-      res[col.id] = filteredLeads.filter(l => (l.status || 'novo') === col.id);
+    PEDRO_LIVE_COLUMNS.forEach(col => {
+      res[col.id] = [];
+    });
+    filteredLeads.forEach(lead => {
+      const hasSellerOrPending = Boolean(lead.assigned_to_id || pendingTransfersMap.get(lead.id));
+      const columnId = !hasSellerOrPending
+        ? 'nao_transferido'
+        : (CRM_STATUS_IDS.has(lead.status_crm) ? lead.status_crm : 'novo');
+      res[columnId] = res[columnId] || [];
+      res[columnId].push(lead);
     });
     return res;
-  }, [filteredLeads]);
+  }, [filteredLeads, pendingTransfersMap]);
 
   // ── Exportar/forçar sync de TODOS leads do filtro para Marcos ─────────────
   const handleExportToMarcos = useCallback(async () => {
@@ -857,17 +903,18 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const handleDragEnd = useCallback(async (result: DropResult) => {
     const { draggableId, destination, source } = result;
     if (!destination || destination.droppableId === source.droppableId) return;
+    if (destination.droppableId === 'nao_transferido') return;
 
     const newStatus = destination.droppableId;
     const leadId = draggableId;
 
     // Optimistic update — move card imediatamente na UI
-    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status_crm: newStatus } : l));
 
     // Persistir no banco
     const { error } = await (supabase as any)
       .from('ai_crm_leads')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .update({ status_crm: newStatus, updated_at: new Date().toISOString() })
       .eq('id', leadId);
 
     if (error) {
@@ -877,8 +924,27 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     }
   }, []);
 
-  const totalQualified = filteredLeads.filter(l => ['qualificado', 'medio_qualificado', 'pouco_qualificado', 'transferido'].includes(l.status)).length;
-  const attendedNow    = filteredLeads.filter(l => l.status === 'transferido').length;
+  const handleStatusChange = useCallback(async (leadId: string, statusCrm: string) => {
+    if (!CRM_STATUS_IDS.has(statusCrm)) return;
+    setStatusUpdatingLeadId(leadId);
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status_crm: statusCrm } : l));
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_crm_leads')
+        .update({ status_crm: statusCrm, updated_at: new Date().toISOString() })
+        .eq('id', leadId);
+      if (error) throw error;
+      toast.success('Etapa atualizada no CRM.');
+    } catch (error: any) {
+      toast.error('Erro ao atualizar etapa', { description: error?.message || 'Tente novamente.' });
+      fetchLiveDataRef.current();
+    } finally {
+      setStatusUpdatingLeadId(null);
+    }
+  }, []);
+
+  const totalQualified = filteredLeads.filter(l => ['em_atendimento', 'negociacao', 'fechado'].includes(l.status_crm)).length;
+  const attendedNow    = filteredLeads.filter(l => l.assigned_to_id || pendingTransfersMap.get(l.id)).length;
 
   const handleManualTransfer = useCallback(async (leadId: string, notes: string, sellerIdOverride?: string) => {
     // sellerIdOverride: master escolheu vendedor especifico no select do card.
@@ -1200,8 +1266,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           )}
 
           <main style={{ flexShrink: 0, minHeight: 0, display: 'grid' }}>
-            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : 'repeat(7, minmax(0, 1fr))', gap: 10, minHeight: 0, alignItems: 'stretch' }}>
-              {LIVE_COLUMNS.map(col => {
+            <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : `repeat(${PEDRO_LIVE_COLUMNS.length}, minmax(0, 1fr))`, gap: 10, minHeight: 0, alignItems: 'stretch' }}>
+              {PEDRO_LIVE_COLUMNS.map(col => {
                 const colLeads = leadsByColumn[col.id] || [];
                 return (
                   <div key={col.id} style={{ height: 'clamp(360px, 62vh, 760px)', borderRadius: 14, border: `1px solid ${col.main}`, background: 'rgba(15,23,42,0.72)', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden' }}>
@@ -1226,7 +1292,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                           Sem leads
                         </div>
                       ) : colLeads.map(lead => (
-                        <TvLeadCard key={lead.id} lead={lead} col={col} />
+                        <TvLeadCard key={lead.id} lead={lead} col={col} pendingTransfer={pendingTransfersMap.get(lead.id)} />
                       ))}
                     </div>
                   </div>
@@ -1452,7 +1518,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         {/* COLUNAS KANBAN — com Drag & Drop */}
         <DragDropContext onDragEnd={handleDragEnd}>
           <div style={{ flex: isPortrait ? 'none' : 3, display: 'flex', flexDirection: isPortrait ? 'column' : 'row', gap: 16 }}>
-            {LIVE_COLUMNS.map(col => {
+            {PEDRO_LIVE_COLUMNS.map(col => {
               const colLeads = leadsByColumn[col.id] || [];
               return (
                 <section key={col.id} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: isPortrait ? '100%' : 260 }}>
@@ -1464,7 +1530,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                   </div>
 
                   {/* Droppable — área de drop */}
-                  <Droppable droppableId={col.id}>
+                  <Droppable droppableId={col.id} isDropDisabled={Boolean((col as any).assignmentOnly)}>
                     {(provided, snapshot) => (
                       <div
                         ref={provided.innerRef}
@@ -1510,9 +1576,11 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
                                   transferringLeadId={transferringLeadId}
                                   onTransfer={handleManualTransfer}
                                   transfers={transfers}
-                                  dragHandleProps={isSeller ? null : prov.dragHandleProps}
+                                  dragHandleProps={isSeller || (col as any).assignmentOnly ? null : prov.dragHandleProps}
                                   hideTransfer={isSeller}
                                   pendingTransfer={pendingTransfersMap.get(lead.id)}
+                                  onStatusChange={handleStatusChange}
+                                  statusUpdatingLeadId={statusUpdatingLeadId}
                                 />
                               </div>
                             )}
