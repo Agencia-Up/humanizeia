@@ -67,6 +67,15 @@ function isPhotoText(message?: string | null) {
   return false;
 }
 
+// Palavras GENERICAS de estoque: se o "modelo" resolvido e composto SO por estas, nao e um
+// modelo de verdade (o lead so quer "ver o que tem"). Conjunto finito e estavel (NAO typos).
+const GENERIC_STOCK_WORDS = new Set([
+  "carro", "carros", "veiculo", "veiculos", "automovel", "automoveis", "auto", "autos",
+  "mais", "outro", "outros", "outra", "outras", "algum", "alguns", "alguma", "algumas",
+  "qualquer", "quaisquer", "opcao", "opcoes", "modelo", "modelos", "disponivel", "disponiveis",
+  "estoque", "novo", "novos", "usado", "usados", "seminovo", "seminovos",
+]);
+
 function hasStockQuestionSignal(message?: string | null) {
   const normalized = normalizeText(message);
   if (!normalized) return false;
@@ -522,6 +531,37 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
     plan.use_memory_vehicle = !effectiveBroad && Boolean(_vr?.used_memory || memoryVehicle || plan.use_memory_vehicle);
     plan.reason = `enforced_stock_question_search${effectiveBroad ? "_broad" : ""}:${plan.reason || ""}`;
+  }
+
+  // ── B1: "modelo" GENERICO (carros/veiculos/mais/outros) => BUSCA AMPLA, nunca busca vazia ──
+  // Achado em log REAL: "Vc tem mais carros" devolvia 0 ("qual modelo?") mesmo com 24 carros.
+  // O resolver as vezes extrai um "modelo" lixo ("carros") que nao casa com nada -> 0 result.
+  // Criterio SISTEMICO (conjunto finito e estavel, NAO lista de typo): se o termo resolvido
+  // e composto SO de palavras genericas de estoque, nao e modelo de verdade => mostrar estoque.
+  // Um modelo plausivel fora do estoque (ex.: "palio") NAO e generico => segue p/ "nao temos" (correto).
+  if (plan.action === "stock_search" && !plan.search_filters?.stock_broad) {
+    const f = plan.search_filters || {};
+    const resolvedModelB1 = String(plan.search_query || _vr?.query || f.modelo_desejado || "").trim();
+    const tokensB1 = normalizeText(resolvedModelB1).split(/\s+/).filter(Boolean);
+    const onlyGenericB1 = tokensB1.length === 0 || tokensB1.every((t) => GENERIC_STOCK_WORDS.has(t));
+    const hasPriceB1 = [f.preco_max, f.preco_min, f.orcamento, f.preco, f.budget].some(
+      (v) => v !== null && v !== undefined && v !== "",
+    );
+    // tipo_veiculo so conta se o lead REALMENTE citou o tipo na fala. O gpt-4o-mini as vezes
+    // ALUCINA tipo_veiculo:"suv" num "tem mais carros" generico -> isso travava o B1 e ainda
+    // filtrava a busca ampla so por SUV. Se nao ha palavra de tipo na mensagem, ignoramos o tipo.
+    const typeWordInMsgB1 = /\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch|utilitario|conversivel|cupe|coupe|perua|minivan|van|moto|motos|motocicleta)\b/.test(
+      normalizeText(input.message),
+    );
+    const hasTypeB1 = Boolean(f.tipo_veiculo) && typeWordInMsgB1;
+    const hasMemoryModelB1 = Boolean(memoryVehicle); // "tem mais?" com carro na memoria: deixa o fluxo normal
+    if (onlyGenericB1 && !hasPriceB1 && !hasTypeB1 && !hasMemoryModelB1) {
+      plan.search_query = null;
+      // limpa tambem o tipo alucinado, senao a busca ampla sai filtrada por um tipo que o lead nao pediu.
+      plan.search_filters = { ...f, stock_broad: true, modelo_desejado: null, tipo_veiculo: null };
+      plan.use_memory_vehicle = false;
+      plan.reason = `enforced_broad_no_model:${plan.reason || ""}`;
+    }
   }
 
   // ── REDE DE SEGURANÇA: ACEITE DE FOTO (restaurada — evidência real, caso Renê) ──
