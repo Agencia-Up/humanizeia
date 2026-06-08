@@ -36,8 +36,10 @@ const PROVIDER_MAP: Record<string, ProviderCfg> = {
     fields: [
       { key: 'app_id', label: 'App ID (META_APP_ID)' },
       { key: 'app_secret', label: 'App Secret (META_APP_SECRET)', secret: true },
+      { key: 'extra.config_id', label: 'Configuration ID (Login for Business) — opcional' },
     ],
-    redirect: 'https://humanizeia.lovable.app/settings?meta_callback=true',
+    redirect: 'https://logosiabrasil.com/settings?meta_callback=true',
+    note: 'Com o Configuration ID preenchido, o login usa o Facebook Login for Business (cada cliente conecta a conta dele).',
   },
   instagram_publisher: {
     provider: 'meta',
@@ -57,7 +59,7 @@ const PROVIDER_MAP: Record<string, ProviderCfg> = {
       { key: 'app_secret', label: 'Client Secret (GOOGLE_CLIENT_SECRET)', secret: true },
       { key: 'extra.developer_token', label: 'Developer Token (GOOGLE_ADS_DEVELOPER_TOKEN)', secret: true },
     ],
-    redirect: 'https://humanizeia.lovable.app/settings?google_callback=true',
+    redirect: 'https://logosiabrasil.com/settings?google_callback=true',
   },
   tiktok: {
     provider: 'tiktok',
@@ -66,7 +68,7 @@ const PROVIDER_MAP: Record<string, ProviderCfg> = {
       { key: 'app_id', label: 'App ID (TIKTOK_APP_ID)' },
       { key: 'app_secret', label: 'App Secret (TIKTOK_APP_SECRET)', secret: true },
     ],
-    redirect: 'https://humanizeia.lovable.app/connect-accounts?tiktok_callback=true',
+    redirect: 'https://logosiabrasil.com/connect-accounts?tiktok_callback=true',
   },
 };
 

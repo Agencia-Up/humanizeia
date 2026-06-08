@@ -219,7 +219,7 @@ export function useMetaConnection() {
   const handleCallback = async (code: string) => {
     setIsConnecting(true);
     try {
-      const productionOrigin = 'https://humanizeia.lovable.app';
+      const productionOrigin = 'https://logosiabrasil.com';
       const redirectUri = `${productionOrigin}/settings?meta_callback=true`;
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
