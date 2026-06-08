@@ -507,17 +507,21 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   }
 
   if (stockQuestion && plan.intent !== "trade_in" && (plan.action === "reply_only" || plan.action === "clarify")) {
+    const resolvedVehicle = plan.search_query || _vr?.query || plan.search_filters?.modelo_desejado || memoryVehicle || null;
+    // Pergunta de estoque SEM modelo definido (ex.: "qual o valor que voce tem?") => mostrar estoque
+    // como busca AMPLA. Nunca rodar busca vazia que devolve "nao temos nenhum veiculo".
+    const effectiveBroad = broadStockQuestion || !resolvedVehicle;
     plan.action = "stock_search";
     plan.intent = plan.intent === "small_talk" || plan.intent === "unknown" ? "stock_lookup" : plan.intent;
-    plan.search_query = broadStockQuestion ? null : (plan.search_query || _vr?.query || plan.search_filters?.modelo_desejado || memoryVehicle || null);
+    plan.search_query = effectiveBroad ? null : resolvedVehicle;
     plan.search_filters = {
       ...(plan.search_filters || {}),
-      ...(broadStockQuestion ? { stock_broad: true } : {}),
-      modelo_desejado: broadStockQuestion ? null : (plan.search_query || _vr?.query || memoryVehicle || null),
+      ...(effectiveBroad ? { stock_broad: true } : {}),
+      modelo_desejado: effectiveBroad ? null : resolvedVehicle,
       tipo_veiculo: plan.search_filters?.tipo_veiculo || _vr?.vehicle_type || null,
     };
-    plan.use_memory_vehicle = !broadStockQuestion && Boolean(_vr?.used_memory || memoryVehicle || plan.use_memory_vehicle);
-    plan.reason = `enforced_stock_question_search:${plan.reason || ""}`;
+    plan.use_memory_vehicle = !effectiveBroad && Boolean(_vr?.used_memory || memoryVehicle || plan.use_memory_vehicle);
+    plan.reason = `enforced_stock_question_search${effectiveBroad ? "_broad" : ""}:${plan.reason || ""}`;
   }
 
   // ── REDE DE SEGURANÇA: ACEITE DE FOTO (restaurada — evidência real, caso Renê) ──
