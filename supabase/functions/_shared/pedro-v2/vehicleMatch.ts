@@ -324,8 +324,15 @@ export function rankVehiclesV2(vehicles: MatchVehicle[], filters: MatchFilters):
 
   // BUSCA AMPLA / sem modelo: devolve tudo que passa tipo + numérico (preço/ano/km).
   if (!hasModelIntent) {
-    return typed
-      .filter((v) => passesNumeric(v, filters, false, allowPriceless))
+    let pool = typed.filter((v) => passesNumeric(v, filters, false, allowPriceless));
+    // Pedido de CATEGORIA sem modelo (ex.: "quero uma picape"/"um suv"): mostra SÓ os daquela
+    // carroceria (cai pra todos se não houver nenhum). Filtrar por carroceria só é seguro aqui,
+    // SEM modelo nomeado — não afeta "quero um polo" (que tem modelo e nem entra neste ramo).
+    if (type.body) {
+      const ofBody = pool.filter((v) => vehicleBody(v) === type.body);
+      if (ofBody.length > 0) pool = ofBody;
+    }
+    return pool
       .map((v) => ({ vehicle: v, score: 1, matchedTokens: [] as string[], relaxed: false }))
       .sort((a, b) => Number(a.vehicle.saleValue || 0) - Number(b.vehicle.saleValue || 0));
   }

@@ -1,3 +1,5 @@
+import { rankVehiclesV2 } from "./vehicleMatch.ts";
+
 const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
 const DEFAULT_LIMIT = 24;
 
@@ -656,7 +658,13 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
   }
 
   const vehicles = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
-  const ranked = rankVehicles(vehicles, filters).sort((left, right) => {
+  // B3: motor de matching novo (vehicleMatch) atras de flag/override. Default = matcher LEGADO.
+  // Liga em prod via secret PEDRO_FF_NEW_MATCH='on'; no dry-run via input.match_engine='v2' (sombra).
+  const useNewMatch =
+    (globalThis as any)?.Deno?.env?.get?.("PEDRO_FF_NEW_MATCH") === "on" ||
+    String((input as any).match_engine || "").toLowerCase() === "v2";
+  const rankedRaw = useNewMatch ? rankVehiclesV2(vehicles as any, filters) : rankVehicles(vehicles, filters);
+  const ranked = (rankedRaw as Array<{ vehicle: any; score: number; matchedTokens: string[]; relaxed: boolean }>).sort((left, right) => {
     if (right.score !== left.score) return right.score - left.score;
     // Carro sem preco (R$0/null) vai pro FIM do desempate (Infinity), nunca pro topo —
     // senao um carro de preco-a-confirmar apareceria "mais barato" que todos.
@@ -673,6 +681,7 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
     total: ranked.length,
     items,
     filters_used: filters,
+    match_engine_used: useNewMatch ? "v2" : "legacy",
     response_guidance: ranked.length > 0
       ? "Ha candidatos compativeis no estoque. Se nao for exato, apresente como opcao proxima e confirme o detalhe."
       : "Nenhum candidato compativel encontrado mesmo com busca ampla. Nao invente disponibilidade.",

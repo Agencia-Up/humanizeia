@@ -1585,7 +1585,9 @@ export async function processPedroV2Turn(
       query: stockFilters.query,
       filters: stockFilters,
       limit: 24,
-    });
+      // B3 sombra: override do motor SO no dry-run (prod usa o env PEDRO_FF_NEW_MATCH).
+      match_engine: dryRun ? ((input.payload as any)?.match_engine ?? null) : null,
+    } as any);
   } else if (stockFilters && isGenericQuery) {
     stockResult = {
       success: true,
