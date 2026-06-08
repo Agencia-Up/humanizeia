@@ -1477,6 +1477,10 @@ export async function processPedroV2Turn(
     recent_history: recentHistory,
     vehicle_resolution: vehicleResolution,
     usage_sink: usageSink,
+    // Override de provedor do cerebro SO em dry-run (testes A/B de DeepSeek vs OpenAI sem
+    // afetar trafego real). Em producao usa o env PEDRO_PLANNER_PROVIDER (default OpenAI).
+    planner_provider: dryRun ? (input.payload?.planner_provider ?? null) : null,
+    planner_model: dryRun ? (input.payload?.planner_model ?? null) : null,
   });
   if (adContext?.has_ad_context && adContext?.vehicle_query && brainPlan?.search_filters?.preco_max && !leadMessageHasExplicitPriceCeiling(text)) {
     brainPlan.search_filters.ad_price = brainPlan.search_filters.preco_max;

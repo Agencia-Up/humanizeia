@@ -659,10 +659,35 @@ export async function planPedroTurn(input: {
   recent_history?: any[];
   vehicle_resolution: PedroVehicleResolution;
   usage_sink?: UsageSink;
+  planner_provider?: string | null;
+  planner_model?: string | null;
 }): Promise<PedroBrainPlan> {
   const fallback = fallbackPlan(input);
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return fallback;
+  // ── PROVEDOR DO CEREBRO (planner): OpenAI (default) ou DeepSeek (mais barato p/ intencao) ──
+  // Precedencia: override por-request (SO dry-run, vem do orchestrator) > env PEDRO_PLANNER_PROVIDER > 'openai'.
+  // DeepSeek tem API compativel com OpenAI; nao suporta json_schema estrito -> usamos json_object (prompt ja pede JSON).
+  const plannerProvider = String(
+    input.planner_provider || Deno.env.get("PEDRO_PLANNER_PROVIDER") || "openai",
+  ).toLowerCase();
+  const openaiKey = Deno.env.get("OPENAI_API_KEY");
+  const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
+  const useDeepseek = plannerProvider === "deepseek" && !!deepseekKey;
+  const llm = useDeepseek
+    ? {
+        provider: "deepseek",
+        url: "https://api.deepseek.com/v1/chat/completions",
+        key: deepseekKey as string,
+        model: Deno.env.get("PEDRO_PLANNER_MODEL_DEEPSEEK") || "deepseek-chat",
+        supportsJsonSchema: false,
+      }
+    : {
+        provider: "openai",
+        url: "https://api.openai.com/v1/chat/completions",
+        key: openaiKey || "",
+        model: Deno.env.get("PEDRO_PLANNER_MODEL_OPENAI") || "gpt-4o-mini",
+        supportsJsonSchema: true,
+      };
+  if (!llm.key) return fallback;
 
   // SINAIS DETERMINISTICOS de contexto: o QUE o agente acabou de fazer (pending_question)
   // e o texto da ultima fala dele. Sem isso o LLM nao interpretava respostas curtas/emojis
@@ -728,9 +753,9 @@ export async function planPedroTurn(input: {
   });
 
   // OTIMIZACAO DE CUSTO: o planner e DECISAO ESTRUTURADA (temp 0.1), nao a resposta ao
-  // cliente — roda em gpt-4o-mini (~16x mais barato). O reply continua em gpt-4o.
+  // cliente. Roda em gpt-4o-mini por padrao; pode rodar em DeepSeek (ainda mais barato).
   const baseBody: Record<string, any> = {
-    model: "gpt-4o-mini",
+    model: input.planner_model || llm.model,
     temperature: 0.1,
     messages: [
       { role: "system", content: systemPrompt },
@@ -739,19 +764,22 @@ export async function planPedroTurn(input: {
   };
 
   const callPlanner = async (responseFormat: any) =>
-    await fetch("https://api.openai.com/v1/chat/completions", {
+    await fetch(llm.url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${llm.key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ ...baseBody, response_format: responseFormat }),
     });
 
   try {
-    // 1) SAIDA ESTRUTURADA ESTRITA: o schema garante action/intent/confidence sempre validos.
-    let res = await callPlanner({ type: "json_schema", json_schema: PLAN_JSON_SCHEMA });
-    // 2) DEGRADACAO GRACIOSA: se a API rejeitar o schema, cai p/ json_object (o prompt
-    //    melhorado segue valendo) e so depois p/ o fallback heuristico. Sem regressao.
+    const _t0 = (globalThis as any)?.performance?.now?.() ?? 0;
+    // 1) SAIDA ESTRUTURADA ESTRITA (so OpenAI): o schema garante action/intent/confidence validos.
+    //    DeepSeek nao suporta json_schema -> ja vai direto p/ json_object (o prompt pede JSON).
+    let res = llm.supportsJsonSchema
+      ? await callPlanner({ type: "json_schema", json_schema: PLAN_JSON_SCHEMA })
+      : await callPlanner({ type: "json_object" });
+    // 2) DEGRADACAO GRACIOSA: se rejeitar, cai p/ json_object e so depois p/ o fallback. Sem regressao.
     if (!res.ok) {
-      console.warn(`[PedroV2] planner json_schema rejeitado (${res.status}); degradando p/ json_object`);
+      console.warn(`[PedroV2] planner ${llm.provider}/${llm.model} status ${res.status}; degradando p/ json_object`);
       res = await callPlanner({ type: "json_object" });
     }
     if (!res.ok) return fallback;
@@ -759,7 +787,17 @@ export async function planPedroTurn(input: {
     if (input.usage_sink) input.usage_sink.tokens += sumOpenAiTokens(data);
     const content = String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
-    return normalizePlan(parsed, fallback, input);
+    const plan = normalizePlan(parsed, fallback, input);
+    // META p/ medir custo/latencia/provedor (aparece no dry-run e ajuda monitorar producao).
+    const _t1 = (globalThis as any)?.performance?.now?.() ?? 0;
+    (plan as any)._planner_meta = {
+      provider: llm.provider,
+      model: input.planner_model || llm.model,
+      prompt_tokens: Number(data?.usage?.prompt_tokens || 0),
+      completion_tokens: Number(data?.usage?.completion_tokens || 0),
+      latency_ms: Math.round(_t1 - _t0),
+    };
+    return plan;
   } catch (error) {
     console.warn("[PedroV2] brain planner fallback:", error);
     return fallback;
