@@ -95,6 +95,10 @@ function hasStockQuestionSignal(message?: string | null) {
   if (/\b(km|quilometragem|rodado|rodagem|ano|valor|preco|quanto|custa|disponivel|estoque|tem|venderam|vendeu|diesel|disel|automatico|manual)\b/.test(normalized)) return true;
   if (/\b(qual outro|outro|outra|opcao|opcoes|parecido|similar|semelhante|o que tiver|que tiver)\b/.test(normalized)) return true;
   if (/\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized)) return true;
+  // pedido de SUGESTAO / mostrar opcoes, ou carro por Nº DE PORTAS => tratar como pergunta de estoque
+  // (caso real: "pode sugerir" e "preciso de 4 portas" vinham reply_only -> agente dizia "nao temos").
+  if (/\b(sugere|sugira|sugerir|sugestao|sugestoes|recomenda|recomende|recomendar|indica|indique|me mostra|me indica|quais (carros|modelos|opcoes|tem)|me ajuda a escolher)\b/.test(normalized)) return true;
+  if (/\b(\d+|duas|dois|tres|quatro|cinco)\s*portas\b/.test(normalized)) return true;
   return false;
 }
 
@@ -102,7 +106,9 @@ function asksBroadStock(message?: string | null) {
   const normalized = normalizeText(message);
   if (!normalized) return false;
   return /\b(o que tiver|que tiver|qualquer um|qualquer carro|opcoes|opcao|outros modelos|qual outro|outro modelo|tem em estoque|tem ai|tem disponivel)\b/.test(normalized)
-    || /\b(quero|procuro|busco|preciso|tem|temos|gostaria)\b.{0,30}\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized);
+    || /\b(quero|procuro|busco|preciso|tem|temos|gostaria)\b.{0,30}\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized)
+    || /\b(sugere|sugira|sugerir|sugestao|sugestoes|recomenda|recomende|recomendar|indica|indique|me mostra|me indica|quais (carros|modelos|opcoes)|me ajuda a escolher)\b/.test(normalized)
+    || /\b(\d+|duas|dois|tres|quatro|cinco)\s*portas\b/.test(normalized);
 }
 
 function memoryVehicleQuery(memory?: PedroV2LeadMemory | null) {
