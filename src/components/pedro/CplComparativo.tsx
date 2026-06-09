@@ -61,8 +61,12 @@ export function CplComparativo({ userId }: { userId?: string | null }) {
           : rows.some(r => r.entity_level === 'adset') ? 'adset' : 'ad';
         const lvl = rows.filter(r => r.entity_level === level);
         const metaOf = (r: any) => {
-          const lm = Number(r.leads_meta) || 0;
-          return lm > 0 ? lm : (Number(r.conversations_started) || 0);
+          // "Falso" = CONVERSAS iniciadas (o que o usuário escolheu = clique).
+          // Prefere conversations_started; só cai pro leads_meta se NÃO houver
+          // conversa (campanha de formulário pura). Antes preferia leads_meta, que
+          // voltou não-zero nessas campanhas de engajamento e inflava (199 vs 155).
+          const conv = Number(r.conversations_started) || 0;
+          return conv > 0 ? conv : (Number(r.leads_meta) || 0);
         };
         const sum = (rs: any[]): Win => rs.reduce((a, r) => ({
           spend: a.spend + (Number(r.spend) || 0),
