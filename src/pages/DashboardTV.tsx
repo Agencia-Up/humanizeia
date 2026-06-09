@@ -67,6 +67,10 @@ interface KPIsData {
   taxa_transferencia_texto: string; // "32 de 44 leads"
   total_spend: number;
   custo_por_lead: number;
+  /** Resultado que o Meta MOSTRA no período (conversas/leads do anúncio). */
+  meta_total: number;
+  /** Custo por lead segundo o Painel do Meta = gasto ÷ meta_total. */
+  custo_por_lead_meta: number;
 }
 
 interface LeadNaoTransferido {
@@ -467,7 +471,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         let costsQuery = (supabase as any)
           .from('campaign_costs')
-          .select('entity_level, spend, date')
+          .select('entity_level, spend, leads_meta, conversations_started, date')
           .eq('user_id', effectiveUserId)
           .gte('date', isoToDateKey(todayStart))
           .lte('date', isoToDateKey(todayEnd));
@@ -750,6 +754,17 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // manuais + leads adicionados no Pedro). Não mistura porta/marketplace/etc.
         const custoPorLead = porOrigem.trafico_pago > 0 ? totalSpend / porOrigem.trafico_pago : 0;
 
+        // Painel do Meta: resultado que o Facebook MOSTRA (conversas iniciadas,
+        // senão leads do anúncio) e o custo por lead "de vitrine" do Meta.
+        const metaOf = (r: any) => {
+          const conv = Number(r.conversations_started) || 0;
+          return conv > 0 ? conv : (Number(r.leads_meta) || 0);
+        };
+        const metaTotal = costRows
+          .filter((r: any) => r.entity_level === costLevel)
+          .reduce((sum: number, r: any) => sum + metaOf(r), 0);
+        const custoPorLeadMeta = metaTotal > 0 ? totalSpend / metaTotal : 0;
+
         setLeadsNaoTransferidos(pedroNaoTransferidos);
         setKpis({
           total_leads: total,
@@ -762,6 +777,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           taxa_transferencia_texto: taxaTransfTexto,
           total_spend: totalSpend,
           custo_por_lead: custoPorLead,
+          meta_total: metaTotal,
+          custo_por_lead_meta: custoPorLeadMeta,
         });
         // Sincroniza os cards filhos (ex.: Real vs Falso) a cada reload —
         // mount, poll de 30s e realtime (lead novo) — sem re-assinar o canal.
@@ -1036,15 +1053,28 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           )}
         </div>
 
-        {/* KPI 2: Qualidade Média (IA 50% + Feedback 30% + Notas 20%) */}
+        {/* KPI 2: Custo por Lead · Tráfego Pago — Real (chegou no Pedro) vs Painel
+            do Meta, lado a lado. Segue o filtro de período do painel. */}
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
-          <DollarSign className="h-7 w-7 text-emerald-400 mb-2" />
+          <DollarSign className="h-7 w-7 text-emerald-400 mb-1.5" />
           <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Custo por Lead · Tráfego Pago</p>
-          <p className="text-[clamp(1.4rem,4.2vmin,2.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none text-emerald-400">
-            {formatBRL(kpis?.custo_por_lead ?? 0)}
-          </p>
+          <div className="flex items-stretch justify-center gap-[clamp(0.5rem,2vmin,1.5rem)] w-full">
+            <div className="flex-1 text-center">
+              <p className="text-[9px] uppercase tracking-wide font-bold text-emerald-400/80 mb-1">Real · Pedro</p>
+              <p className="text-[clamp(1.1rem,3.6vmin,2.4rem)] portrait:text-[clamp(2rem,7vw,4.5rem)] font-black tabular-nums leading-none text-emerald-400">
+                {formatBRL(kpis?.custo_por_lead ?? 0)}
+              </p>
+            </div>
+            <div className="w-px self-stretch bg-slate-700/60" />
+            <div className="flex-1 text-center">
+              <p className="text-[9px] uppercase tracking-wide font-bold text-orange-400/80 mb-1">Painel do Meta</p>
+              <p className="text-[clamp(1.1rem,3.6vmin,2.4rem)] portrait:text-[clamp(2rem,7vw,4.5rem)] font-black tabular-nums leading-none text-orange-300">
+                {formatBRL(kpis?.custo_por_lead_meta ?? 0)}
+              </p>
+            </div>
+          </div>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
-            {formatBRL(kpis?.total_spend ?? 0)} investidos · {kpis?.por_origem?.trafico_pago ?? 0} leads
+            {formatBRL(kpis?.total_spend ?? 0)} · {kpis?.por_origem?.trafico_pago ?? 0} no Pedro · {kpis?.meta_total ?? 0} no Meta
           </p>
         </div>
 
@@ -1082,16 +1112,21 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
       </section>
 
-      {/* ───── Custo por Lead — Real vs Falso (Meta), só master ───── */}
-      {!sellerMemberId && (
-        <CplComparativo
-          userId={effectiveUserId}
-          reloadKey={liveTick}
-          periodStart={dateRange.start}
-          periodEnd={dateRange.end}
-          periodLabel={dateRange.label}
-        />
-      )}
+      {/* ───── Custo por Lead — Real vs Meta dos ÚLTIMOS 7 DIAS (FIXO) ─────
+          Esta seção NÃO acompanha o filtro de período do painel: é sempre os
+          últimos 7 dias, pra ter uma referência estável de comparação. Só master. */}
+      {!sellerMemberId && (() => {
+        const fixed7d = resolveDateRange('7days', customRange);
+        return (
+          <CplComparativo
+            userId={effectiveUserId}
+            reloadKey={liveTick}
+            periodStart={fixed7d.start}
+            periodEnd={fixed7d.end}
+            periodLabel="Últimos 7 dias (fixo)"
+          />
+        );
+      })()}
 
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">
