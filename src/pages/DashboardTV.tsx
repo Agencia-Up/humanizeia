@@ -21,7 +21,7 @@
 // Layout inspirado em painel ICOM Motors — mas marca/cores customizáveis.
 // ============================================================================
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -312,6 +312,43 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       document.removeEventListener('fullscreenchange', onResize);
     };
   }, []);
+
+  // ZOOM estilo navegador (modo TV/tela cheia) — escala o painel inteiro pra
+  // CABER na tela. `auto` calcula o zoom ideal pela altura da tela; `manual` usa
+  // o que o usuário definiu no slider. Tudo salvo no localStorage, então o ajuste
+  // persiste quando a TV reinicia ou a página atualiza.
+  const [zoom, setZoom] = useState<number>(() => {
+    try {
+      const v = parseFloat(localStorage.getItem('dashtv_zoom') || '');
+      return v >= 0.5 && v <= 2 ? v : 1;
+    } catch { return 1; }
+  });
+  const [zoomMode, setZoomMode] = useState<'auto' | 'manual'>(() => {
+    try { return localStorage.getItem('dashtv_zoom_mode') === 'manual' ? 'manual' : 'auto'; }
+    catch { return 'auto'; }
+  });
+  useEffect(() => { try { localStorage.setItem('dashtv_zoom', String(zoom)); } catch { /* ignore */ } }, [zoom]);
+  useEffect(() => { try { localStorage.setItem('dashtv_zoom_mode', zoomMode); } catch { /* ignore */ } }, [zoomMode]);
+
+  // Auto-ajuste: mede a altura real do painel e calcula o zoom que faz tudo caber
+  // na altura da tela (a largura já é preenchida via width:100/zoom%). Converge em
+  // poucos quadros e para quando estabiliza (guard de 0.012). Só roda no modo auto.
+  useLayoutEffect(() => {
+    if (embedded || zoomMode !== 'auto') return;
+    const el = contentRef.current;
+    if (!el) return;
+    const fit = () => {
+      const h = el.scrollHeight;
+      if (!h) return;
+      const ideal = Math.max(0.5, Math.min(2, (viewport.h * 0.99) / h));
+      setZoom(prev => (Math.abs(prev - ideal) > 0.012 ? ideal : prev));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, zoomMode, viewport, profileLoading, loading, kpis, liveTick]);
 
 
   // Persiste período escolhido
@@ -1096,8 +1133,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         )}
       </section>
 
-      <section className="flex-1 min-h-0 px-8 pb-16 flex flex-col">
-        <div className="shrink-0 flex items-baseline justify-between mb-3">
+      <section className="shrink-0 px-8 pb-16">
+        <div className="flex items-baseline justify-between mb-3">
           <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 font-bold">Produção Individual dos Vendedores</h2>
           <p className="text-[10px] text-slate-500 italic">Total de Leads Trabalhados</p>
         </div>
@@ -1108,9 +1145,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           </div>
         ) : (
           // auto-fit: os cards esticam pra preencher a largura inteira (menos
-          // linhas em telas largas). flex-1 + overflow-y-auto: ocupam a altura
-          // que sobra e rolam só se houver vendedores demais.
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] portrait:grid-cols-2 gap-3 flex-1 min-h-0 overflow-y-auto content-start auto-rows-max">
+          // linhas em telas largas). Sem rolagem interna — o zoom da TV encaixa
+          // tudo na tela. auto-rows-fr deixa as linhas com a mesma altura.
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] portrait:grid-cols-2 gap-3 auto-rows-fr">
             {vendedores.slice(0, 12).map(v => (
               <VendedorCard key={v.id} v={v} secondary={branding.secondary_color} />
             ))}
@@ -1143,29 +1180,77 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     );
   }
 
-  // TV / TELA CHEIA: renderiza o painel num "canvas" com o MESMO formato da tela
-  // (largura-base 1920 deitado / 1080 em pé; altura = largura × proporção da tela)
-  // e ESCALA pra PREENCHER 100% — sem borda preta sobrando. Como o canvas tem o
-  // mesmo formato da tela, a escala uniforme cobre tudo. O conteúdo preenche o
-  // canvas via flex (a área de vendedores estica) e a folga de 3% protege contra
-  // overscan de TVs que cortam as bordas.
-  const portraitScreen = viewport.h > viewport.w;
-  const baseW = portraitScreen ? 1080 : 1920;
-  const baseH = Math.round((baseW * viewport.h) / Math.max(viewport.w, 1));
-  const margin = 0.985;
-  const fitScale = (viewport.w * margin) / baseW;
+  // TV / TELA CHEIA: ZOOM estilo navegador. O painel é escalado por `zoom` a partir
+  // do canto superior esquerdo; a largura é compensada (100/zoom%) pra PREENCHER a
+  // largura sem barra horizontal. O fundo cobre 100% da tela real. Sem barras de
+  // rolagem (overflow-hidden). O controle de zoom fica por cima, fora da escala.
   return (
     <div
       ref={containerRef}
-      className="relative h-[100dvh] w-[100dvw] overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center"
+      className="relative h-[100dvh] w-[100dvw] overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
     >
       <div
         ref={contentRef}
-        className="relative flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
-        style={{ width: `${baseW}px`, height: `${baseH}px`, transform: `scale(${fitScale})`, transformOrigin: 'center center' }}
+        className="relative flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
+        style={{ width: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: 'top left' }}
       >
         {panelContent}
       </div>
+      <ZoomControl
+        zoom={zoom}
+        mode={zoomMode}
+        onZoom={(z) => { setZoom(z); setZoomMode('manual'); }}
+        onAuto={() => setZoomMode('auto')}
+      />
+    </div>
+  );
+}
+
+// ─── Controle de Zoom (modo TV) — slider + botões + Auto ─────────────────────
+// Fica por cima do painel, FORA da área escalada. Discreto (some um pouco quando
+// não está com o mouse em cima). Ajusta o zoom estilo navegador.
+function ZoomControl({
+  zoom, mode, onZoom, onAuto,
+}: {
+  zoom: number;
+  mode: 'auto' | 'manual';
+  onZoom: (z: number) => void;
+  onAuto: () => void;
+}) {
+  const pct = Math.round(zoom * 100);
+  const step = (d: number) => onZoom(Math.max(0.5, Math.min(2, +(zoom + d).toFixed(2))));
+  return (
+    <div className="absolute top-2 right-2 z-50 flex items-center gap-2 rounded-full bg-slate-900/85 border border-slate-700 px-3 py-1.5 backdrop-blur shadow-xl opacity-35 hover:opacity-100 transition-opacity">
+      <button
+        onClick={() => step(-0.05)}
+        className="w-6 h-6 flex items-center justify-center rounded-full text-slate-200 hover:bg-slate-700 text-lg leading-none"
+        title="Diminuir zoom"
+      >−</button>
+      <input
+        type="range"
+        min={0.5}
+        max={2}
+        step={0.05}
+        value={zoom}
+        onChange={(e) => onZoom(parseFloat(e.target.value))}
+        className="w-32 accent-blue-500 cursor-pointer"
+        title="Ajustar zoom"
+      />
+      <button
+        onClick={() => step(0.05)}
+        className="w-6 h-6 flex items-center justify-center rounded-full text-slate-200 hover:bg-slate-700 text-lg leading-none"
+        title="Aumentar zoom"
+      >+</button>
+      <span className="text-[11px] tabular-nums text-slate-300 w-10 text-center">{pct}%</span>
+      <button
+        onClick={onAuto}
+        className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-colors ${
+          mode === 'auto'
+            ? 'bg-blue-500/30 border-blue-400 text-blue-200'
+            : 'border-slate-600 text-slate-300 hover:bg-slate-700'
+        }`}
+        title="Ajuste automático à tela"
+      >Auto</button>
     </div>
   );
 }
