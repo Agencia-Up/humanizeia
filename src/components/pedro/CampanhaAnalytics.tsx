@@ -56,6 +56,13 @@ interface RawLead {
   client_city: string | null;
   payment_method: string | null;
   created_at: string;
+  // Atribuição de tráfego gravada no PRÓPRIO lead (captura CTWA/anúncio do Pedro).
+  // Têm prioridade sobre o UTM do contato (wa_contacts) quando presentes.
+  campaign_name: string | null;
+  ad_name: string | null;
+  source_id: string | null;
+  meta_lead_id: string | null;
+  entry_channel: string | null;
 }
 interface UtmRecord {
   utm_source: string | null;
@@ -101,6 +108,34 @@ function origemLabel(origem: string | null, origemOutros: string | null): string
   if (origemOutros?.trim()) return origemOutros.trim();
   const o = (origem || '').toLowerCase();
   return ORIGEM_LABELS[o] || (o ? o.charAt(0).toUpperCase() + o.slice(1) : 'Sem origem');
+}
+
+// ─── Atribuição de tráfego (prioridade: lead → UTM → origem) ─────────────────
+// Prioriza a campanha gravada no PRÓPRIO lead (captura CTWA/anúncio do Pedro),
+// caindo pro UTM do contato e depois pra origem. Assim, quando a captura grava
+// campaign_name/source_id no lead, o painel já agrupa por campanha — sem
+// depender do wa_contacts. O source_id de anúncio do Meta é NUMÉRICO; UUIDs/IDs
+// internos são ignorados pra não rotular lead orgânico como tráfego pago.
+interface Attribution { kind: 'campanha' | 'utm' | 'origem'; key: string; label: string; sub: string; }
+function resolveAttribution(lead: RawLead, utm: UtmRecord | null): Attribution {
+  const camp = (lead.campaign_name || '').trim();
+  const adn = (lead.ad_name || '').trim();
+  const sid = (lead.source_id || '').trim();
+  const metaAdId = /^\d{5,}$/.test(sid) ? sid : '';
+  const hasLeadAd = !!(camp || adn || lead.meta_lead_id || metaAdId);
+  if (hasLeadAd) {
+    const label = camp || adn || (metaAdId ? `Anúncio ${metaAdId}` : 'Anúncio (Tráfego Pago)');
+    const keyBase = camp || adn || metaAdId || 'anuncio';
+    const sub = adn && adn !== label ? `Tráfego Pago · ${adn}` : 'Tráfego Pago';
+    return { kind: 'campanha', key: `ad|${String(keyBase).toLowerCase()}`, label, sub };
+  }
+  if (utm && (utm.utm_campaign || utm.utm_source)) {
+    const c = utm.utm_campaign || '(sem nome de campanha)';
+    const src = utm.utm_source || '—';
+    return { kind: 'utm', key: `utm|${src}|${c}`, label: c, sub: `UTM · ${src}` };
+  }
+  const o = origemLabel(lead.origem, lead.origem_outros);
+  return { kind: 'origem', key: `origem|${o}`, label: o, sub: 'Origem' };
 }
 
 // ─── Labels de pagamento ────────────────────────────────────────────────────
@@ -166,7 +201,7 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 interface GroupRow {
-  key: string; label: string; sub: string; isUtm: boolean;
+  key: string; label: string; sub: string; kind: 'campanha' | 'utm' | 'origem';
   total: number; qualificado: number; pouco_qualificado: number; inativo: number; outros: number;
 }
 
@@ -190,7 +225,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
         const [leadsRes, contactsRes] = await Promise.all([
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, remote_jid, origem, origem_outros, status_crm, status, vehicle_interest, client_city, payment_method, created_at')
+            .select('id, remote_jid, origem, origem_outros, status_crm, status, vehicle_interest, client_city, payment_method, created_at, campaign_name, ad_name, source_id, meta_lead_id, entry_channel')
             .eq('user_id', masterUserId)
             .order('created_at', { ascending: false })
             .limit(10000),
@@ -251,17 +286,10 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
       else totO++;
 
       const utm = utmFor(lead.remote_jid);
-      let key: string, label: string, sub: string, isUtm: boolean;
-      if (utm && (utm.utm_campaign || utm.utm_source)) {
-        const camp = utm.utm_campaign || '(sem nome de campanha)';
-        const src = utm.utm_source || '—';
-        key = `utm|${src}|${camp}`; label = camp; sub = `UTM · ${src}`; isUtm = true; comUtm++;
-      } else {
-        const o = origemLabel(lead.origem, lead.origem_outros);
-        key = `origem|${o}`; label = o; sub = 'Origem'; isUtm = false;
-      }
+      const { kind, key, label, sub } = resolveAttribution(lead, utm);
+      if (kind !== 'origem') comUtm++; // leads com atribuição de tráfego rastreável
       let row = campGroups.get(key);
-      if (!row) { row = { key, label, sub, isUtm, total: 0, qualificado: 0, pouco_qualificado: 0, inativo: 0, outros: 0 }; campGroups.set(key, row); }
+      if (!row) { row = { key, label, sub, kind, total: 0, qualificado: 0, pouco_qualificado: 0, inativo: 0, outros: 0 }; campGroups.set(key, row); }
       row.total++;
       row[b]++;
     }
@@ -393,7 +421,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
     for (const r of data.campRows) {
       const classif = r.qualificado + r.pouco_qualificado + r.inativo;
       const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
-      lines.push([r.label, r.isUtm ? 'UTM' : 'Origem', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct].map(cell).join(sep));
+      lines.push([r.label, r.kind === 'origem' ? 'Origem' : r.kind === 'utm' ? 'UTM' : 'Anúncio', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct].map(cell).join(sep));
     }
     lines.push('');
     lines.push(cell('Top Veículos de Interesse'));
@@ -427,7 +455,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
     const rows = data.campRows.map(r => {
       const classif = r.qualificado + r.pouco_qualificado + r.inativo;
       const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
-      return [r.label, r.isUtm ? 'UTM' : 'Origem', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct];
+      return [r.label, r.kind === 'origem' ? 'Origem' : r.kind === 'utm' ? 'UTM' : 'Anúncio', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct];
     });
     const totClassif = data.totQ + data.totP + data.totI;
     const totPct = totClassif > 0 ? `${Math.round((data.totQ / totClassif) * 100)}%` : '—';
@@ -730,8 +758,12 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
                       <tr key={r.key} className="border-b border-border/20 last:border-0 hover:bg-muted/20 group">
                         <td className="px-3 py-2.5">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <span className={`text-[8px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${r.isUtm ? 'bg-orange-500/15 text-orange-400' : 'bg-blue-500/15 text-blue-400'}`}>
-                              {r.isUtm ? 'UTM' : 'ORIGEM'}
+                            <span className={`text-[8px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                              r.kind === 'campanha' ? 'bg-emerald-500/15 text-emerald-400'
+                                : r.kind === 'utm' ? 'bg-orange-500/15 text-orange-400'
+                                : 'bg-blue-500/15 text-blue-400'
+                            }`}>
+                              {r.kind === 'campanha' ? 'ANÚNCIO' : r.kind === 'utm' ? 'UTM' : 'ORIGEM'}
                             </span>
                             <div className="min-w-0 flex-1">
                               <p className="text-foreground truncate font-medium">{r.label}</p>
