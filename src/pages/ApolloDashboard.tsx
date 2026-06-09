@@ -671,7 +671,7 @@ function CronSettings() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium">Relatório diário resumido</p>
-                  <p className="text-xs text-muted-foreground">Métricas de hoje em linguagem simples: investido, contatos, custo por contato, alcance e cliques</p>
+                  <p className="text-xs text-muted-foreground">Resultado do dia anterior (completo) + últimos 7 dias, com o custo do objetivo da campanha (conversa, lead ou compra)</p>
                 </div>
                 <Switch checked={sendDailyReport} onCheckedChange={setSendDailyReport} />
               </div>

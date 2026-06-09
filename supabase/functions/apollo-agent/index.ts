@@ -2150,7 +2150,8 @@ async function handleGetAds(admin: any, userId: string, targetAccountId: string,
 // ── Daily WhatsApp Report ─────────────────────────────────────────────────────
 
 // Relatório diário do José em linguagem simples (pra pessoa leiga). Auto-suficiente:
-// busca as métricas de HOJE direto da Meta, monta a mensagem e envia pela instância
+// busca as métricas do DIA ANTERIOR (completo) + últimos 7 dias direto da Meta, com a
+// métrica principal do OBJETIVO dominante (conversa/lead/compra), e envia pela instância
 // escolhida (com fallback). `force` ignora o toggle send_daily_report (usado no teste).
 async function sendDailyReport(admin: any, userId: string, force = false): Promise<{ sent: boolean; reason?: string }> {
  try {
@@ -2176,41 +2177,89 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
   if (!acc?.access_token_encrypted || !acc?.account_id) return { sent: false, reason: "sem_conta_meta" };
   const sym = acc.currency === "USD" ? "US$" : "R$";
 
-  // ── Métricas de HOJE (nível conta) ──
-  const insUrl = new URL(`${META_GRAPH_URL}/act_${String(acc.account_id).replace(/^act_/, "")}/insights`);
-  insUrl.searchParams.set("access_token", acc.access_token_encrypted);
-  insUrl.searchParams.set("date_preset", "today");
-  insUrl.searchParams.set("fields", "spend,reach,clicks,impressions,actions,cost_per_action_type");
-  const insRes = await fetch(insUrl.toString());
-  const insData = await insRes.json();
-  const row = (insData?.data && insData.data[0]) || {};
-  const spend = Number(row.spend || 0);
-  const reach = Number(row.reach || 0);
-  const clicks = Number(row.clicks || 0);
-  const actions: any[] = row.actions || [];
-  const costs: any[] = row.cost_per_action_type || [];
-  const MSG = "onsite_conversion.messaging_conversation_started_7d";
-  const conv = Number((actions.find((a) => a.action_type === MSG) || {}).value || 0);
-  const cprRaw = costs.find((a) => a.action_type === MSG);
-  const costPerConv = cprRaw ? Number(cprRaw.value) : (conv > 0 ? spend / conv : 0);
-  const cpc = clicks > 0 ? spend / clicks : 0;
-
+  const acct = `act_${String(acc.account_id).replace(/^act_/, "")}`;
   const money = (v: number) => `${sym} ${v.toFixed(2).replace(".", ",")}`;
   const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
-  const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
-  const resumo = conv > 0
-    ? `Hoje você investiu ${money(spend)} e trouxe ${conv} ${conv === 1 ? "contato novo" : "contatos novos"} pelo WhatsApp.`
-    : `Hoje você investiu ${money(spend)}. Ainda sem contato novo no WhatsApp (costuma entrar ao longo do dia).`;
+
+  // ── Objetivo dominante da conta → define a MÉTRICA PRINCIPAL ──
+  // (conversa iniciada / lead / compra / clique). Campanha ativa pesa mais.
+  const buckets: Record<string, number> = { msg: 0, lead: 0, sale: 0, traffic: 0, other: 0 };
+  try {
+    const cUrl = new URL(`${META_GRAPH_URL}/${acct}/campaigns`);
+    cUrl.searchParams.set("access_token", acc.access_token_encrypted);
+    cUrl.searchParams.set("fields", "objective,effective_status");
+    cUrl.searchParams.set("limit", "500");
+    const cRes = await fetch(cUrl.toString());
+    const cData = await cRes.json();
+    for (const c of (cData?.data || [])) {
+      const o = String(c.objective || "").toUpperCase();
+      const w = c.effective_status === "ACTIVE" ? 3 : 1;
+      if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION")) buckets.msg += w;
+      else if (o.includes("LEAD")) buckets.lead += w;
+      else if (o.includes("SALE") || o.includes("CONVERSION") || o.includes("PURCHASE") || o.includes("CATALOG")) buckets.sale += w;
+      else if (o.includes("TRAFFIC") || o.includes("LINK_CLICK")) buckets.traffic += w;
+      else buckets.other += w;
+    }
+  } catch { /* ignora — usa msg por padrão */ }
+  const dominant = (Object.keys(buckets)).reduce((a, b) => buckets[b] > buckets[a] ? b : a, "msg");
+
+  const RESULT_MAP: Record<string, { candidates: string[]; result: string; cost: string; noun: string }> = {
+    msg: { candidates: ["onsite_conversion.messaging_conversation_started_7d"], result: "Conversas iniciadas", cost: "Custo por conversa iniciada", noun: "conversas" },
+    lead: { candidates: ["onsite_conversion.lead_grouped", "lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead", "onsite_web_lead"], result: "Leads", cost: "Custo por lead", noun: "leads" },
+    sale: { candidates: ["offsite_conversion.fb_pixel_purchase", "purchase", "omni_purchase"], result: "Compras", cost: "Custo por compra", noun: "compras" },
+    traffic: { candidates: ["link_click"], result: "Cliques no link", cost: "Custo por clique", noun: "cliques" },
+    other: { candidates: [], result: "Resultados", cost: "Custo por resultado", noun: "resultados" },
+  };
+  const M = RESULT_MAP[dominant] || RESULT_MAP.msg;
+
+  const pickRes = (acts: any[], cprs: any[], spend: number) => {
+    for (const t of M.candidates) {
+      const a = (acts || []).find((x) => x.action_type === t);
+      if (a && Number(a.value) > 0) {
+        const results = Number(a.value);
+        const c = (cprs || []).find((x) => x.action_type === t);
+        return { results, cost: c ? Number(c.value) : (spend > 0 ? spend / results : 0) };
+      }
+    }
+    return { results: 0, cost: 0 };
+  };
+
+  const fetchInsights = async (preset: string) => {
+    const u = new URL(`${META_GRAPH_URL}/${acct}/insights`);
+    u.searchParams.set("access_token", acc.access_token_encrypted);
+    u.searchParams.set("date_preset", preset);
+    u.searchParams.set("fields", "spend,reach,clicks,impressions,actions,cost_per_action_type");
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    return (d?.data && d.data[0]) || {};
+  };
+
+  // Dia ANTERIOR (completo — hoje fica quebrado, o dia nao acabou) + ultimos 7 dias.
+  const [yRow, wRow] = await Promise.all([fetchInsights("yesterday"), fetchInsights("last_7d")]);
+  const ySpend = Number(yRow.spend || 0);
+  const yReach = Number(yRow.reach || 0);
+  const yClicks = Number(yRow.clicks || 0);
+  const yRes = pickRes(yRow.actions, yRow.cost_per_action_type, ySpend);
+  const yCpc = yClicks > 0 ? ySpend / yClicks : 0;
+  const wSpend = Number(wRow.spend || 0);
+  const wRes = pickRes(wRow.actions, wRow.cost_per_action_type, wSpend);
+
+  const ontem = new Date(Date.now() - 24 * 3600 * 1000).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const resumo = yRes.results > 0
+    ? `Ontem você investiu ${money(ySpend)} e trouxe ${int(yRes.results)} ${M.noun} a ${money(yRes.cost)} cada.`
+    : `Ontem você investiu ${money(ySpend)} e não registrou ${M.noun} (verifique se as campanhas estão ativas).`;
 
   const lines: string[] = [
-    `📊 *José — Relatório de hoje* (${hoje})`,
+    `📊 *José — Relatório de ontem* (${ontem})`,
     acc.account_name ? `🏢 ${acc.account_name}` : "",
     ``,
-    `💰 *Investido hoje:* ${money(spend)}`,
-    `💬 *Contatos no WhatsApp:* ${int(conv)}`,
-    `🎯 *Custo por contato:* ${conv > 0 ? money(costPerConv) : "—"}`,
-    `👁️ *Pessoas alcançadas:* ${int(reach)}`,
-    `🖱️ *Cliques no anúncio:* ${int(clicks)}${clicks > 0 ? ` (${money(cpc)} cada)` : ""}`,
+    `💰 *Investido ontem:* ${money(ySpend)}`,
+    `💬 *${M.result}:* ${int(yRes.results)}`,
+    `🎯 *${M.cost}:* ${yRes.results > 0 ? money(yRes.cost) : "—"}`,
+    `👁️ *Pessoas alcançadas:* ${int(yReach)}`,
+    `🖱️ *Cliques no anúncio:* ${int(yClicks)}${yClicks > 0 ? ` (${money(yCpc)} cada)` : ""}`,
+    ``,
+    `📅 *Últimos 7 dias:* ${int(wRes.results)} ${M.noun} · ${wRes.results > 0 ? `${money(wRes.cost)} cada` : "—"} · ${money(wSpend)} investidos`,
     ``,
     `✅ ${resumo}`,
     ``,
