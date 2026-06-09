@@ -27,6 +27,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
 import { Calendar, Clock, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram } from 'lucide-react';
+import { CplTrafegoPainel } from '@/components/pedro/CplTrafegoPainel';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -853,6 +854,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
         <p className="text-center text-[10px] text-slate-500 italic mt-2">Dados atualizados automaticamente em tempo real via CRM</p>
       </section>
+
+      {/* ───── Custo por Lead — Tráfego Pago + Real/Não Real (só master) ───── */}
+      {!sellerMemberId && <CplTrafegoPainel userId={effectiveUserId} />}
 
       {/* ───── PRODUÇÃO INDIVIDUAL DOS VENDEDORES ───── */}
       <section className="flex-1 min-h-0 px-8 pb-20">
