@@ -1083,7 +1083,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </section>
 
       {/* ───── Custo por Lead — Real vs Falso (Meta), só master ───── */}
-      {!sellerMemberId && <CplComparativo userId={effectiveUserId} reloadKey={liveTick} />}
+      {!sellerMemberId && (
+        <CplComparativo
+          userId={effectiveUserId}
+          reloadKey={liveTick}
+          periodStart={dateRange.start}
+          periodEnd={dateRange.end}
+          periodLabel={dateRange.label}
+        />
+      )}
 
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">
