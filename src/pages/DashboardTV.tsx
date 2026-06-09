@@ -21,13 +21,14 @@
 // Layout inspirado em painel ICOM Motors — mas marca/cores customizáveis.
 // ============================================================================
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
 import { Calendar, Clock, DollarSign, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram } from 'lucide-react';
 import { CplComparativo } from '@/components/pedro/CplComparativo';
+import { toast } from 'sonner';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,8 @@ interface LeadNaoTransferido {
   id: string;
   nome: string;
   telefone: string;
+  remote_jid: string | null;
+  agent_id: string | null;
 }
 
 // ─── Cálculo de qualidade do lead (50% IA + 30% Feedback + 20% Notas) ────────
@@ -285,6 +288,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Trigger pra refresh manual (incrementa = força reload)
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
+  // Vendedores ativos (com last_lead_received_at) pro rodízio do clique-pra-transferir.
+  const [queueSellers, setQueueSellers] = useState<any[]>([]);
+  const [transferringId, setTransferringId] = useState<string | null>(null);
+
   // Persiste período escolhido
   useEffect(() => {
     try { localStorage.setItem(PERIOD_STORAGE_KEY, period); } catch {}
@@ -359,7 +366,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         //    Pra "Taxa Transferência" precisamos contar TODOS leads Pedro (com e sem assigned_to_id).
         let pedroQuery = (supabase as any)
           .from('ai_crm_leads')
-          .select('id, lead_name, remote_jid, assigned_to_id, status_crm, seller_notes_count')
+          .select('id, lead_name, remote_jid, agent_id, assigned_to_id, status_crm, seller_notes_count')
           .eq('user_id', effectiveUserId)
           // Periodo pela DATA REAL DE CHEGADA: arrived_at quando o vendedor informou
           // (lead de porta/dia passado), senao created_at.
@@ -406,6 +413,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // 2. Carrega avatar_url do profile DE CADA VENDEDOR (prioridade > profile_picture do master)
         // Ativos NO SISTEMA (visibilidade no painel) — independe do status no agente de IA.
         const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
+        // Guarda os vendedores ativos (objetos completos, com last_lead_received_at)
+        // pro rodízio do clique-pra-transferir. Só no master (sem sellerMemberId).
+        if (!sellerMemberId) setQueueSellers(sellersList);
         const authIds = sellersList.map(s => s.auth_user_id).filter((x): x is string => !!x);
         const profileAvatarMap = new Map<string, string>();
         if (authIds.length > 0) {
@@ -445,7 +455,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
         const pedroLeads = (pedroRes.data || []) as Array<{
-          id: string; lead_name: string | null; remote_jid: string | null; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
+          id: string; lead_name: string | null; remote_jid: string | null; agent_id: string | null; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
         }>;
         const pedroLeadIds = pedroLeads.map(l => l.id);
         const pendingOrConfirmedTransferIds = new Set<string>();
@@ -487,6 +497,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
               id: l.id,
               nome: l.lead_name || formatPhone(l.remote_jid),
               telefone: formatPhone(l.remote_jid),
+              remote_jid: l.remote_jid,
+              agent_id: l.agent_id,
             });
           } else {
             agg[NAO_ATRIBUIDO_ID].total++;
@@ -732,6 +744,57 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     setTimeout(() => setRefreshing(false), 800);
   }, []);
 
+  // ── Próximo vendedor da fila (rodízio): quem nunca recebeu primeiro, senão o
+  // que recebeu há mais tempo. Espelha a lógica do CrmAoVivo/uazapi-webhook.
+  const nextSeller = useMemo(() => {
+    const list = (queueSellers || []) as any[];
+    if (!list.length) return null;
+    const never = list.filter(s => !s.last_lead_received_at);
+    if (never.length) return never[0];
+    return [...list].sort((a, b) =>
+      new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
+    )[0] || null;
+  }, [queueSellers]);
+
+  // Transfere o lead pro próximo da fila via manual-transfer (mesma função do
+  // CRM). Confirma antes (envia WhatsApp real pro vendedor). Dedup de 30s no back.
+  const handleTransferToNext = useCallback(async (lead: LeadNaoTransferido) => {
+    const seller = nextSeller;
+    if (!seller) { toast.warning('Nenhum vendedor ativo na fila pra receber.'); return; }
+    const ok = window.confirm(`Transferir "${lead.nome}" para ${seller.name} (próximo da fila)?`);
+    if (!ok) return;
+    setTransferringId(lead.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('manual-transfer', {
+        body: {
+          leadId: lead.id,
+          memberId: seller.id,
+          notes: '',
+          remoteJid: lead.remote_jid,
+          agentId: lead.agent_id,
+          leadName: lead.nome,
+          ownerUserId: effectiveUserId,
+        },
+      });
+      if (error) {
+        let message = error.message || 'Não foi possível transferir.';
+        const ctx = (error as any).context;
+        if (ctx && typeof ctx.json === 'function') { try { const b = await ctx.json(); message = b?.error || message; } catch { /* ignore */ } }
+        throw new Error(message);
+      }
+      if ((data as any)?.deduplicated) {
+        toast.info(`"${lead.nome}" já estava em transferência (clique recente).`);
+      } else {
+        toast.success(`"${lead.nome}" transferido para ${seller.name}.`, { description: 'Briefing enviado ao vendedor no WhatsApp.' });
+      }
+      setReloadTrigger(t => t + 1);
+    } catch (e: any) {
+      toast.error('Erro ao transferir', { description: e?.message || 'Verifique a instância do WhatsApp.' });
+    } finally {
+      setTransferringId(null);
+    }
+  }, [nextSeller, effectiveUserId]);
+
   // Vendedor sem master_id resolvido: redirect (RLS bloquearia tudo de qualquer jeito)
   if (!embedded && !profileLoading && isSeller && !masterUserId) {
     return <Navigate to="/dashboard" replace />;
@@ -967,19 +1030,35 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         ) : (
           <div className="grid grid-cols-3 portrait:grid-cols-1 gap-3 max-h-44 overflow-y-auto pr-1">
             {leadsNaoTransferidos.map(lead => (
-              <button
+              <div
                 key={lead.id}
-                type="button"
-                onClick={() => navigate(`/pedro?tab=crm&leadId=${lead.id}`)}
-                className="group rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-left transition-colors hover:border-amber-400/60 hover:bg-amber-500/15"
-                title="Abrir detalhe no CRM Avançado"
+                className="group rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 transition-colors hover:border-amber-400/60 hover:bg-amber-500/15"
               >
                 <p className="truncate text-sm font-bold text-slate-100 group-hover:text-white">{lead.nome}</p>
                 <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-200/80">
                   <Phone className="h-3 w-3" />
                   {lead.telefone}
                 </p>
-              </button>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={transferringId === lead.id || !nextSeller}
+                    onClick={() => handleTransferToNext(lead)}
+                    className="flex-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-2 py-1.5 text-[11px] font-bold text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title={nextSeller ? `Transferir para ${nextSeller.name} (próximo da fila)` : 'Sem vendedor ativo na fila'}
+                  >
+                    {transferringId === lead.id ? 'Transferindo…' : `→ Transferir${nextSeller ? ` (${nextSeller.name})` : ''}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/pedro?tab=crm&leadId=${lead.id}`)}
+                    className="rounded-lg bg-slate-700/40 border border-slate-600/40 px-2 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-700/60 transition-colors"
+                    title="Abrir no CRM Avançado"
+                  >
+                    CRM
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         )}
