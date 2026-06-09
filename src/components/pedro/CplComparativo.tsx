@@ -134,7 +134,7 @@ export function CplComparativo({ userId, reloadKey }: { userId?: string | null; 
           <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 p-3">
             <div className="flex items-center gap-1.5 mb-2">
               <AlertTriangle className="h-3.5 w-3.5 text-orange-400" />
-              <span className="text-[10px] font-bold uppercase tracking-wide text-orange-400">Falso (o que o Meta mostra)</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide text-orange-400">Painel do Meta Ads</span>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
