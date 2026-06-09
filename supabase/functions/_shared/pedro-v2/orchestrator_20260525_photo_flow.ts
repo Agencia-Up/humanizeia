@@ -1609,25 +1609,40 @@ export async function processPedroV2Turn(
     const _hadSpecificModel = Boolean((stockFilters as any).modelo_desejado || (stockFilters as any).modelo || (stockFilters as any).marca);
     const _broadType = (stockFilters as any).tipo_veiculo || null;
     const _broadPriceMax = Number((stockFilters as any).preco_max) || null;
-    if (_hadSpecificModel && (_broadType || _broadPriceMax)) {
-      const altResult = await searchPedroStock(supabase, {
-        user_id: input.agent.user_id,
-        query: "",
-        filters: { tipo_veiculo: _broadType, preco_max: _broadPriceMax },
-        limit: 6,
-      });
-      if (altResult?.success && Array.isArray(altResult.items) && altResult.items.length > 0) {
-        const _wanted = (stockFilters as any).query || (stockFilters as any).modelo_desejado || "o modelo que voce pediu";
-        const _alts = altResult.items.slice(0, 4);
-        stockResult = {
-          success: true,
-          total: _alts.length,
-          items: _alts,
-          is_alternatives: true,
-          response_guidance: `NAO temos no estoque o MODELO pedido (${_wanted}). Seja honesto e CURTO sobre isso e ofereca ESTES parecidos como ALTERNATIVA (mesma faixa de preco/categoria), perguntando se quer ver algum. NUNCA pule para qualificacao de pagamento sem antes oferecer estas opcoes.`,
-        };
-        log("info", "pedro_v2_search_and_retry", { wanted: String(_wanted).slice(0, 40), alternatives: _alts.length });
-      }
+    const _q = String((stockFilters as any).query || (stockFilters as any).modelo_desejado || (stockFilters as any).marca || "");
+    const _brandMatch = _q.match(/\b(fiat|volkswagen|vw|chevrolet|gm|ford|toyota|honda|hyundai|renault|nissan|peugeot|citroen|jeep|mitsubishi|kia|bmw|mercedes|audi|volvo|land\s*rover|mini|ram|dodge|chery|caoa|byd|gwm|suzuki|subaru)\b/i);
+    let _alt: any = null;
+    let _altIsBrand = false;
+    // ESTAGIO 1 — recuperacao por MARCA: a query especifica pode ter vindo contaminada (burst/nome,
+    // ex.: "Peugeot Erick" -> 0). Se ha uma marca conhecida, busca SO a marca e apresenta como RESPOSTA.
+    if (_hadSpecificModel && _brandMatch) {
+      const _br = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: _brandMatch[0], limit: 6 });
+      if (_br?.success && Array.isArray(_br.items) && _br.items.length > 0) { _alt = _br; _altIsBrand = true; }
+    }
+    // ESTAGIO 2 — parecidos por CATEGORIA/PRECO (comportamento original).
+    if (!_alt && _hadSpecificModel && (_broadType || _broadPriceMax)) {
+      const _by = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: { tipo_veiculo: _broadType, preco_max: _broadPriceMax }, limit: 6 });
+      if (_by?.success && Array.isArray(_by.items) && _by.items.length > 0) _alt = _by;
+    }
+    // ESTAGIO 3 — fallback GERAL: ainda 0 -> mostra alguns carros do estoque. A loja SEMPRE tem
+    // estoque; o agente nunca pode encerrar com "nao temos" sem oferecer alternativas reais.
+    if (!_alt && _hadSpecificModel) {
+      const _any = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: {}, limit: 6 });
+      if (_any?.success && Array.isArray(_any.items) && _any.items.length > 0) _alt = _any;
+    }
+    if (_alt?.success && Array.isArray(_alt.items) && _alt.items.length > 0) {
+      const _wanted = (stockFilters as any).query || (stockFilters as any).modelo_desejado || "o que voce pediu";
+      const _alts = _alt.items.slice(0, 4);
+      stockResult = _altIsBrand
+        ? {
+            success: true, total: _alts.length, items: _alts, is_alternatives: false,
+            response_guidance: `Estes sao os ${_brandMatch![0]} disponiveis no estoque. Apresente-os de forma CURTA e pergunte qual interessa. NUNCA diga que nao temos.`,
+          }
+        : {
+            success: true, total: _alts.length, items: _alts, is_alternatives: true,
+            response_guidance: `NAO temos exatamente "${_wanted}", mas ofereca ESTES como ALTERNATIVA de forma CURTA e pergunte se quer ver algum. NUNCA encerre dizendo apenas que nao temos.`,
+          };
+      log("info", "pedro_v2_search_recovery", { wanted: String(_wanted).slice(0, 40), brand: _altIsBrand, alternatives: _alts.length });
     }
   }
 
