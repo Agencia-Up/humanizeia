@@ -596,11 +596,13 @@ function buildAdSetInsightsMap(adSetInsights: any[]): Map<string, any[]> {
 // por conversa iniciada (~R$9,57). Ordem = prioridade.
 function resultActionCandidates(objective: string): string[] {
   const o = (objective || "").toUpperCase();
+  // Conversa por mensagem (WhatsApp/Direct) = SOMENTE messaging_conversation_started_7d
+  // — é o que o Meta mostra em "Resultados". NUNCA usar total_messaging_connection
+  // nem post_engagement como fallback: eles inflam a contagem (uma campanha sem
+  // conversa hoje, mas com curtidas no post, contava engajamento como "conversa").
   if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION"))
     return [
       "onsite_conversion.messaging_conversation_started_7d",
-      "onsite_conversion.total_messaging_connection",
-      "post_engagement",
     ];
   if (o.includes("LEAD"))
     return [
