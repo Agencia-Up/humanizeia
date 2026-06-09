@@ -12,6 +12,7 @@ import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
 import { searchPedroStock } from "./stockSearch_20260525_photo_flow.ts";
+import { setSdrLabelOnChat } from "./uazapiLabels.ts";
 import { resolvePedroInstance, sendPedroMedia, sendPedroText } from "./uazapiSender_20260524.ts";
 import { PedroV2TurnInput, PedroV2TurnResult } from "./types.ts";
 import { isPedroV2SendingEnabled } from "./server.ts";
@@ -2093,6 +2094,10 @@ export async function processPedroV2Turn(
           : `*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
         const sellerNotif = `${sellerHeader}\n\n${_recoveryTag}*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
+        // ETIQUETA SDR no WhatsApp Business (UAZAPI): marca o chat com a categoria do lead
+        // (🎯 Qualificado / 🧊 Pouco qualificado / 💤 Inativo) NO MOMENTO da transferencia.
+        // Nao bloqueante (try/catch interno) e gated por PEDRO_FF_WA_LABELS='on'.
+        await setSdrLabelOnChat(handoffInstance, leadPhone, _sdrCat);
 
         // Relatorio automatico ao(s) gerente(s) — ate 2 (mesma regra do portal).
         // Nao dispara em re-aviso de lead que retornou (evita relatorio repetido
