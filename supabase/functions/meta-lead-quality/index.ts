@@ -90,10 +90,13 @@ function metaLeadCount(actions: any[] | undefined) {
 }
 
 function conversationCount(actions: any[] | undefined) {
+  // SOMENTE "Conversas por mensagem iniciadas" — o resultado que o Facebook
+  // exibe na coluna "Resultados". O regex amplo antigo (/onsite_conversion.messaging/)
+  // somava TODAS as ações de messaging (primeira resposta, profundidade de
+  // conversa, etc.), inflando o número ~3,5x (ex.: 46 em vez de 13). Alinha com
+  // o apollo-agent (José), que usa só esta ação.
   return getActionValue(actions, [
-    /messaging.*conversation.*started/,
-    /onsite_conversion\.messaging/,
-    /whatsapp.*conversation/,
+    "onsite_conversion.messaging_conversation_started_7d",
   ]);
 }
 
