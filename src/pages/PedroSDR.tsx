@@ -2363,6 +2363,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [addLeadCity, setAddLeadCity] = useState<string>('');
   const [addLeadVehicle, setAddLeadVehicle] = useState<string>('');
   const [addLeadVisit, setAddLeadVisit] = useState<string>('');
+  const [addLeadArrived, setAddLeadArrived] = useState<string>(''); // data real que o lead chegou (porta/manual); vazio = hoje
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
@@ -2372,6 +2373,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [editCity, setEditCity] = useState('');
   const [editVehicle, setEditVehicle] = useState('');
   const [editVisitAt, setEditVisitAt] = useState(''); // Item 2: datetime-local ISO (vazio = sem visita marcada)
+  const [editArrived, setEditArrived] = useState(''); // data real que o lead chegou (YYYY-MM-DD; vazio = usa created_at)
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
@@ -2381,6 +2383,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
+  const [bulkArrived, setBulkArrived] = useState<string>(''); // data de chegada aplicada a TODOS os leads do lote (porta/manual)
   const bulkFileRef = useRef<HTMLInputElement>(null);
 
   const handleBulkFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -2540,6 +2543,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           assigned_to_id: memberId || null,
           // Prompt 1.1: usa origem da planilha se válida, senão 'outros' como default no bulk
           origem: l.origem || 'outros',
+          // Data real de chegada do lote (porta/manual). Vazio = null -> painel usa created_at.
+          arrived_at: bulkArrived ? new Date(bulkArrived + 'T12:00:00').toISOString() : null,
         }));
         const { error } = await (supabase as any).from('ai_crm_leads').insert(batch);
         if (error) {
@@ -2679,7 +2684,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         });
         setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros('');
         setAddLeadCustomOrigem(''); setAddLeadCustomOrigemCreateColumn(false);
-        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit(''); setAddLeadArrived('');
         setAddLeadOpen(false);
         await fetchData(true);
         return;
@@ -2723,13 +2728,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         vehicle_interest:   addLeadVehicle.trim() || null,
         visit_scheduled:    addLeadVisit ? new Date(addLeadVisit).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null,
         visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
+        // Data real que o lead chegou (porta/manual). Vazio = null -> painel usa created_at.
+        arrived_at:         addLeadArrived ? new Date(addLeadArrived + 'T12:00:00').toISOString() : null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
       setAddLeadName(''); setAddLeadPhone('');
       setAddLeadOrigem(''); setAddLeadOrigemOutros('');
       setAddLeadSourceId(null); setAddLeadSourceName('');
-      setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+      setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit(''); setAddLeadArrived('');
       setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
@@ -2756,6 +2763,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     } else {
       setEditVisitAt('');
     }
+    // Pre-popula a data real de chegada (arrived_at) no <input type="date"> (YYYY-MM-DD).
+    const arr = (selectedLead as any).arrived_at;
+    setEditArrived(arr ? String(arr).slice(0, 10) : '');
     setEditingLead(true);
   };
 
@@ -2785,6 +2795,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       if (visitChanged) {
         updateData.visit_scheduled    = newVisitText;
         updateData.visit_scheduled_at = newVisitIso;
+      }
+
+      // Data real que o lead chegou (porta/manual). editArrived = 'YYYY-MM-DD'.
+      // Compara so a parte da data; salva meio-dia pra nao virar de dia por fuso.
+      const oldArrivedDay = (selectedLead as any).arrived_at ? String((selectedLead as any).arrived_at).slice(0, 10) : '';
+      if ((editArrived || '') !== oldArrivedDay) {
+        updateData.arrived_at = editArrived ? new Date(editArrived + 'T12:00:00').toISOString() : null;
       }
 
       if (isMarcosCrm) {
@@ -3063,6 +3080,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     onChange={e => setEditVisitAt(e.target.value)}
                     title="📅 Data e hora da visita"
                     className="h-8 text-sm max-w-[200px]"
+                  />
+                  {/* Data real que o lead chegou (corrige lead de porta/dia passado) */}
+                  <Input
+                    type="date"
+                    value={editArrived}
+                    onChange={e => setEditArrived(e.target.value)}
+                    title="📆 Data que o lead chegou (ex: porta no domingo). Vazio = data de cadastro."
+                    className="h-8 text-sm max-w-[160px]"
                   />
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
@@ -4266,6 +4291,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 title="Quando o cliente vem na loja"
               />
             </div>
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">📆 Data que o lead chegou (opcional)</label>
+              <Input
+                type="date"
+                value={addLeadArrived}
+                onChange={e => setAddLeadArrived(e.target.value)}
+                className="h-8 text-xs"
+                title="Se o lead chegou em outro dia (ex: porta no domingo), marque aqui. Vazio = hoje."
+              />
+            </div>
           </div>
         </div>
       )}
@@ -5070,6 +5105,19 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </div>
           </div>
 
+          {/* Data de chegada do lote (porta/dia passado). Aplica a TODOS os leads. */}
+          <div className="flex flex-wrap items-center gap-2 pb-2">
+            <label className="text-xs text-muted-foreground font-medium">📆 Data que estes leads chegaram (opcional):</label>
+            <Input
+              type="date"
+              value={bulkArrived}
+              onChange={e => setBulkArrived(e.target.value)}
+              className="h-8 text-xs w-40"
+              title="Ex: leads de porta do domingo. Vazio = data de hoje (cadastro)."
+            />
+            <span className="text-[10px] text-muted-foreground">Vazio = hoje. Vale pra todos do lote.</span>
+          </div>
+
           {/* Table */}
           <div className="flex-1 overflow-y-auto border border-border/50 rounded-lg min-h-0">
             <table className="w-full text-xs">
@@ -5133,7 +5181,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             <Button
               variant="outline"
               size="sm"
-              onClick={() => { setBulkDialogOpen(false); setBulkLeads([]); setBulkResult(null); }}
+              onClick={() => { setBulkDialogOpen(false); setBulkLeads([]); setBulkResult(null); setBulkArrived(''); }}
               disabled={bulkSaving}
               className="text-xs"
             >

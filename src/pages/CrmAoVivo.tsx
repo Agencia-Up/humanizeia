@@ -807,7 +807,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       : null;
     if (!threshold && !endDate) return leads;
     return leads.filter(l => {
-      const d = new Date(l.created_at || l.last_interaction_at);
+      // arrived_at = data real de chegada informada pelo vendedor (lead de porta/
+      // manual). Quando vazia (leads automaticos), cai no created_at.
+      const d = new Date(l.arrived_at || l.created_at || l.last_interaction_at);
       if (threshold && d < threshold) return false;
       if (endDate && d > endDate) return false;
       return true;
@@ -824,7 +826,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const d = new Date(); d.setHours(0, 0, 0, 0); return d;
   }, []);
   const todayLeadsCount = useMemo(
-    () => leads.filter(l => new Date(l.created_at || l.last_interaction_at) >= todayStart).length,
+    () => leads.filter(l => new Date(l.arrived_at || l.created_at || l.last_interaction_at) >= todayStart).length,
     [leads, todayStart]
   );
 
