@@ -1350,6 +1350,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           })(),
           agent: null,
           created_at: lead.created_at,
+          arrived_at: lead.arrived_at || null, // data real de chegada (estava sendo perdida no mapeamento)
           source: lead.source || 'manual',
           custom_fields: lead.custom_fields || null,
           // Feature M1: campos enriched do Marcos (mesma estrutura do Pedro)
