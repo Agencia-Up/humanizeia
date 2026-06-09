@@ -7,6 +7,7 @@ import {
   parseJson,
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
+import { logCtwaDiag } from "./ctwaDiag.ts";
 
 const PEDRO_V2_BUILD = "2026-06-01-economico-nogreet-v27";
 
@@ -106,6 +107,11 @@ Deno.serve(async (req) => {
 
   const supabase = createServiceClient();
   const payload = await parseJson(req);
+
+  // FASE 0 CTWA (TEMPORÁRIO): loga o payload podado SOMENTE quando há marcador de
+  // anúncio/Click-to-WhatsApp, pra confirmar o caminho EXATO do referral que o
+  // uazapi entrega. Nunca lança, nunca altera o fluxo. Remover após a Fase 1.
+  logCtwaDiag(payload);
 
   // ── Connection/status events ──────────────────────────────────────────────
   // Must be handled BEFORE the message path: a brand-new instance is created
