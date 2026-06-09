@@ -30,6 +30,8 @@ export interface ApolloAdSet {
   reach: number;
   frequency: number;
   optimization_goal?: string;
+  results?: number;
+  cpa?: number;
 }
 
 export interface ApolloAd {
@@ -75,6 +77,9 @@ export interface ApolloEnrichedCampaign {
   cpa: number;
   roas: number;
   conversions: number;
+  results?: number;
+  result_label?: string;
+  budget_source?: 'campaign' | 'adset' | 'none';
   health_score: number;
   adsets?: ApolloAdSet[];
 }
@@ -314,9 +319,9 @@ export function useApolloAgent() {
 
   // ── Get ads (criativos) de um conjunto ──
   const getAds = useMutation({
-    mutationFn: async ({ adsetId, targetAccountId, datePreset }: { adsetId: string; targetAccountId?: string; datePreset?: string }): Promise<ApolloAd[]> => {
+    mutationFn: async ({ adsetId, targetAccountId, datePreset, objective }: { adsetId: string; targetAccountId?: string; datePreset?: string; objective?: string }): Promise<ApolloAd[]> => {
       const { data, error } = await supabase.functions.invoke('apollo-agent', {
-        body: { action: 'get_ads', adsetId, targetAccountId, datePreset: datePreset || 'last_30d' },
+        body: { action: 'get_ads', adsetId, targetAccountId, datePreset: datePreset || 'last_30d', objective: objective || '' },
       });
       if (error) throw error;
       return (data?.ads || []) as ApolloAd[];

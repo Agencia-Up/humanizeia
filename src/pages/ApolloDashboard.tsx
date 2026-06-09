@@ -222,6 +222,14 @@ function AdSetRow({ adset, currencySymbol, statusFilter, onLoadAds }: {
         <div><span className="text-muted-foreground">Freq: </span><span className={adset.frequency > 4 ? 'text-red-400 font-medium' : adset.frequency > 3 ? 'text-amber-400' : ''}>{fmt(adset.frequency)}</span></div>
         <div><span className="text-muted-foreground">Gasto: </span>{currencySymbol}{fmt(adset.spend)}</div>
       </div>
+      {typeof adset.results === 'number' && adset.results > 0 && (
+        <div className="text-[10px] mt-1">
+          <span className="text-muted-foreground">Resultados: </span>
+          <span className="font-medium text-emerald-400">{adset.results}</span>
+          <span className="text-muted-foreground"> · custo </span>
+          {currencySymbol}{fmt(adset.cpa || 0)}
+        </div>
+      )}
       {adset.creative_fatigue_score !== undefined && (
         <div className="mt-1.5 flex items-center gap-1">
           <div className="flex-1 bg-border/40 rounded-full h-1">
@@ -262,7 +270,7 @@ function CampaignCard({
   campaign: ApolloEnrichedCampaign; currencySymbol: string; accountId?: string;
   datePreset: ApolloDatePreset; onDrillDown: () => void; adsets: any[] | null; isLoadingAdsets: boolean;
   statusFilter: 'all' | 'active' | 'paused';
-  onLoadAds: (adsetId: string) => Promise<ApolloAd[]>;
+  onLoadAds: (adsetId: string, objective: string) => Promise<ApolloAd[]>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const s = campaign.health_score;
@@ -348,7 +356,14 @@ function CampaignCard({
               { label: 'ROAS', val: campaign.roas > 0 ? `${fmt(campaign.roas)}x` : '—', highlight: campaign.roas >= 3 ? 'text-emerald-400' : campaign.roas > 0 ? 'text-amber-400' : '' },
               { label: 'Conversões', val: String(campaign.conversions || 0) },
               { label: 'CPA', val: campaign.cpa > 0 ? `${currencySymbol} ${fmt(campaign.cpa)}` : '—' },
-              { label: 'Orçamento/dia', val: campaign.daily_budget ? `${currencySymbol} ${fmt(campaign.daily_budget)}` : 'N/A' },
+              {
+                label: campaign.budget_source === 'adset' ? 'Orçam./dia (conjuntos)' : 'Orçamento/dia',
+                val: campaign.daily_budget
+                  ? `${currencySymbol} ${fmt(campaign.daily_budget)}`
+                  : campaign.lifetime_budget
+                    ? `${currencySymbol} ${fmt(campaign.lifetime_budget)} total`
+                    : 'N/A',
+              },
             ].map(({ label, val, highlight }) => (
               <div key={label}>
                 <MetricLabel label={label} />
@@ -419,7 +434,8 @@ function CampaignCard({
             </div>
           ) : visibleAdsets.length ? (
             visibleAdsets.map((as: any) => (
-              <AdSetRow key={as.id} adset={as} currencySymbol={currencySymbol} statusFilter={statusFilter} onLoadAds={onLoadAds} />
+              <AdSetRow key={as.id} adset={as} currencySymbol={currencySymbol} statusFilter={statusFilter}
+                onLoadAds={(adsetId: string) => onLoadAds(adsetId, campaign.objective || '')} />
             ))
           ) : (
             <p className="text-xs text-muted-foreground py-1">Nenhum ad set {statusFilter === 'active' ? 'ativo' : statusFilter === 'paused' ? 'pausado' : ''} com dados no período.</p>
@@ -860,9 +876,9 @@ export default function ApolloDashboard() {
   // Carrega criativos de um conjunto sob demanda, com cache por adset (sobrevive
   // a re-render). A própria AdSetRow já evita refetch enquanto montada.
   const adsCacheRef = useRef<Record<string, ApolloAd[]>>({});
-  const handleLoadAds = useCallback(async (adsetId: string): Promise<ApolloAd[]> => {
+  const handleLoadAds = useCallback(async (adsetId: string, objective: string): Promise<ApolloAd[]> => {
     if (adsCacheRef.current[adsetId]) return adsCacheRef.current[adsetId];
-    const ads = await getAds.mutateAsync({ adsetId, targetAccountId: accountId, datePreset });
+    const ads = await getAds.mutateAsync({ adsetId, targetAccountId: accountId, datePreset, objective });
     adsCacheRef.current[adsetId] = ads;
     return ads;
   }, [getAds, accountId, datePreset]);

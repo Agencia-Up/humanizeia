@@ -73,6 +73,7 @@ Deno.serve(async (req) => {
       action: bodyAction,
       campaignId,
       adsetId,
+      objective: bodyObjective,
       actionType,
       actionParams,
     } = body;
@@ -209,7 +210,7 @@ Deno.serve(async (req) => {
 
     // ── Get ads (creatives) drill-down ──
     if (bodyAction === "get_ads") {
-      return await handleGetAds(admin, user.id, targetAccountId, adsetId, datePreset, corsHeaders);
+      return await handleGetAds(admin, user.id, targetAccountId, adsetId, datePreset, bodyObjective || "", corsHeaders);
     }
 
     // ── Smart asset selection (creatives + copies) ──
@@ -332,19 +333,20 @@ Deno.serve(async (req) => {
     } catch { /* segment optional — ignore errors */ }
 
     // ── Fetch all data in parallel ──
-    const [campaigns, insights, adSetInsights, historicalSnapshots, pastOutcomes] = await Promise.all([
+    const [campaigns, insights, adSetInsights, historicalSnapshots, pastOutcomes, adsetBudgets] = await Promise.all([
       fetchMetaCampaigns(accessToken, accountId),
       fetchMetaInsights(accessToken, accountId, datePreset),
       fetchAdSetInsights(accessToken, accountId, datePreset),
       loadHistoricalSnapshots(admin, user.id, adAccountDbId || ""),
       loadLearningOutcomes(admin, user.id),
+      fetchAdSetBudgets(accessToken, accountId),
     ]);
 
     const insightsMap = new Map(insights.map((i: any) => [i.campaign_id, i]));
     const adSetInsightsMap = buildAdSetInsightsMap(adSetInsights);
 
     // ── Enrich campaigns with insights + health score ──
-    const enriched = campaigns.map((c: any) => enrichCampaign(c, insightsMap, adSetInsightsMap, currency));
+    const enriched = campaigns.map((c: any) => enrichCampaign(c, insightsMap, adSetInsightsMap, currency, adsetBudgets));
 
     // ── Build historical context for Claude ──
     const trendContext = buildTrendContext(historicalSnapshots, enriched, currency, currencySymbol);
@@ -586,27 +588,110 @@ function buildAdSetInsightsMap(adSetInsights: any[]): Map<string, any[]> {
 
 // ── Campaign enrichment ───────────────────────────────────────────────────────
 
-function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap: Map<string, any[]>, currency: string) {
+// ── Mapeamento objetivo → RESULTADO real ──────────────────────────────────────
+// O Meta calcula "Resultados" e "Custo por resultado" com base no objetivo da
+// campanha. Cada objetivo tem um action_type diferente. Sem esse mapa, o painel
+// pegava uma ação qualquer (clique, engajamento de post) e o custo saía errado —
+// ex: campanha de WhatsApp mostrava R$0,95 (post_engagement) em vez do custo real
+// por conversa iniciada (~R$9,57). Ordem = prioridade.
+function resultActionCandidates(objective: string): string[] {
+  const o = (objective || "").toUpperCase();
+  if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION"))
+    return [
+      "onsite_conversion.messaging_conversation_started_7d",
+      "onsite_conversion.total_messaging_connection",
+      "post_engagement",
+    ];
+  if (o.includes("LEAD"))
+    return [
+      "onsite_conversion.lead_grouped",
+      "lead",
+      "offsite_conversion.fb_pixel_lead",
+      "onsite_conversion.lead",
+      "onsite_web_lead",
+    ];
+  if (o.includes("SALE") || o.includes("CONVERSION") || o.includes("PURCHASE") || o.includes("CATALOG"))
+    return ["offsite_conversion.fb_pixel_purchase", "purchase", "omni_purchase"];
+  if (o.includes("TRAFFIC") || o.includes("LINK_CLICK"))
+    return ["link_click", "landing_page_view", "omni_landing_page_view"];
+  if (o.includes("APP"))
+    return ["omni_app_install", "mobile_app_install"];
+  // Awareness/Reach/Video não têm "ação de resultado" — usam alcance/CPM.
+  return [];
+}
+
+function resultLabelFor(objective: string): string {
+  const o = (objective || "").toUpperCase();
+  if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION")) return "Conversas iniciadas";
+  if (o.includes("LEAD")) return "Leads";
+  if (o.includes("SALE") || o.includes("CONVERSION") || o.includes("PURCHASE") || o.includes("CATALOG")) return "Compras";
+  if (o.includes("TRAFFIC") || o.includes("LINK_CLICK")) return "Cliques no link";
+  if (o.includes("APP")) return "Instalações";
+  if (o.includes("AWARENESS") || o.includes("REACH")) return "Alcance";
+  if (o.includes("VIDEO")) return "Visualizações";
+  return "Resultados";
+}
+
+// A partir dos insights (actions + cost_per_action_type), retorna o resultado e o
+// custo por resultado do objetivo, na ordem de prioridade. Usa o custo que o
+// próprio Meta calcula; só cai pra spend/results se o Meta não trouxer o custo.
+function pickResult(m: any, objective: string): { results: number; costPerResult: number } {
+  const candidates = resultActionCandidates(objective);
+  const actions: any[] = m.actions || [];
+  const costs: any[] = m.cost_per_action_type || [];
+  const spend = Number(m.spend || 0);
+  for (const t of candidates) {
+    const a = actions.find((x: any) => x.action_type === t);
+    if (a && Number(a.value) > 0) {
+      const results = Number(a.value);
+      const cpt = costs.find((x: any) => x.action_type === t);
+      const costPerResult = cpt ? Number(cpt.value) : (spend > 0 ? spend / results : 0);
+      return { results, costPerResult };
+    }
+  }
+  return { results: 0, costPerResult: 0 };
+}
+
+// Soma o orçamento dos conjuntos por campanha. Necessário pra campanhas ABO
+// (orçamento no conjunto), onde a campanha em si vem com daily/lifetime vazios.
+async function fetchAdSetBudgets(accessToken: string, accountId: string): Promise<Map<string, { daily: number; lifetime: number }>> {
+  const map = new Map<string, { daily: number; lifetime: number }>();
+  try {
+    const url = new URL(`${META_GRAPH_URL}/act_${accountId}/adsets`);
+    url.searchParams.set("access_token", accessToken);
+    url.searchParams.set("fields", "campaign_id,daily_budget,lifetime_budget,effective_status");
+    url.searchParams.set("limit", "300");
+    const res = await fetch(url.toString());
+    const d = await res.json();
+    for (const as of (d.data || [])) {
+      const st = as.effective_status || "";
+      if (st === "DELETED" || st === "ARCHIVED") continue;
+      const cid = as.campaign_id;
+      if (!cid) continue;
+      const cur = map.get(cid) || { daily: 0, lifetime: 0 };
+      cur.daily += Number(as.daily_budget || 0);
+      cur.lifetime += Number(as.lifetime_budget || 0);
+      map.set(cid, cur);
+    }
+  } catch { /* orçamento de conjunto é opcional — não quebra a análise */ }
+  return map;
+}
+
+function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap: Map<string, any[]>, currency: string, adsetBudgets?: Map<string, { daily: number; lifetime: number }>) {
   const m: any = insightsMap.get(c.id) || {};
   const spend = Number(m.spend || 0);
-  let cpa = 0, roas = 0, conversions = 0;
+  const objective = c.objective || "";
+  let roas = 0;
 
-  if (m.cost_per_action_type?.length) {
-    const a = m.cost_per_action_type.find((x: any) =>
-      x.action_type.includes("purchase") || x.action_type.includes("lead")
-    ) || m.cost_per_action_type[0];
-    cpa = Number(a?.value || 0);
-  }
+  // Resultado + custo por resultado pelo OBJETIVO (conversa/lead/compra/clique).
+  const { results, costPerResult } = pickResult(m, objective);
+  const conversions = results;
+  const cpa = costPerResult;
+
+  // ROAS continua restrito a vendas (valor de compra / gasto).
   if (m.action_values?.length && spend > 0) {
     const av = m.action_values.find((x: any) => x.action_type.includes("purchase"));
     if (av) roas = Number(av.value) / spend;
-  }
-  if (m.actions?.length) {
-    const conv = m.actions.find((x: any) => x.action_type.includes("purchase") || x.action_type.includes("lead"));
-    conversions = Number(conv?.value || 0);
-  }
-  if (m.conversions?.length) {
-    conversions = m.conversions.reduce((s: number, x: any) => s + Number(x.value || 0), 0);
   }
 
   const ctr = Number(m.ctr || 0);
@@ -617,17 +702,22 @@ function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap:
   const impressions = Number(m.impressions || 0);
   const clicks = Number(m.clicks || 0);
 
-  // Ad Set summary
-  const adsets = (adSetInsightsMap.get(c.id) || []).map((as: any) => ({
-    id: as.adset_id,
-    name: as.adset_name,
-    spend: Number(as.spend || 0),
-    ctr: Number(as.ctr || 0),
-    cpc: Number(as.cpc || 0),
-    frequency: Number(as.frequency || 0),
-    impressions: Number(as.impressions || 0),
-    clicks: Number(as.clicks || 0),
-  }));
+  // Ad Set summary — resultado/custo por resultado herdam o objetivo da campanha.
+  const adsets = (adSetInsightsMap.get(c.id) || []).map((as: any) => {
+    const r = pickResult(as, objective);
+    return {
+      id: as.adset_id,
+      name: as.adset_name,
+      spend: Number(as.spend || 0),
+      ctr: Number(as.ctr || 0),
+      cpc: Number(as.cpc || 0),
+      frequency: Number(as.frequency || 0),
+      impressions: Number(as.impressions || 0),
+      clicks: Number(as.clicks || 0),
+      results: r.results,
+      cpa: r.costPerResult,
+    };
+  });
 
   // Health score (0-100)
   let score = 50;
@@ -649,14 +739,26 @@ function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap:
     score = 30;
   }
 
+  // Orçamento: CBO usa o da campanha; ABO (campanha sem orçamento) soma os
+  // conjuntos. Valores do Meta vêm em centavos, então dividimos por 100.
+  const campDaily = c.daily_budget ? Number(c.daily_budget) / 100 : 0;
+  const campLifetime = c.lifetime_budget ? Number(c.lifetime_budget) / 100 : 0;
+  const asB = adsetBudgets?.get(c.id) || { daily: 0, lifetime: 0 };
+  const dailyBudget = campDaily > 0 ? campDaily : (asB.daily > 0 ? asB.daily / 100 : null);
+  const lifetimeBudget = campLifetime > 0 ? campLifetime : (asB.lifetime > 0 ? asB.lifetime / 100 : null);
+  const budgetSource = (campDaily > 0 || campLifetime > 0) ? "campaign" : ((asB.daily > 0 || asB.lifetime > 0) ? "adset" : "none");
+
   return {
     id: c.id,
     name: c.name,
     status: c.status,
     effective_status: c.effective_status,
     objective: c.objective || "",
-    daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : null,
-    lifetime_budget: c.lifetime_budget ? Number(c.lifetime_budget) / 100 : null,
+    daily_budget: dailyBudget,
+    lifetime_budget: lifetimeBudget,
+    budget_source: budgetSource,
+    result_label: resultLabelFor(objective),
+    results,
     special_ad_categories: c.special_ad_categories || [],
     spend, impressions, clicks, ctr, cpc, cpm, reach, frequency, cpa, roas, conversions,
     health_score: score,
@@ -1965,7 +2067,7 @@ async function handleGetAdsets(admin: any, userId: string, targetAccountId: stri
 }
 
 // ── Get ads (criativos) de um conjunto, com preview + métricas por anúncio ──
-async function handleGetAds(admin: any, userId: string, targetAccountId: string, adsetId: string, datePreset: string, corsHeaders: any) {
+async function handleGetAds(admin: any, userId: string, targetAccountId: string, adsetId: string, datePreset: string, objective: string, corsHeaders: any) {
   if (!adsetId) {
     return new Response(JSON.stringify({ error: "adsetId é obrigatório" }), { status: 400, headers: corsHeaders });
   }
@@ -1987,7 +2089,7 @@ async function handleGetAds(admin: any, userId: string, targetAccountId: string,
     (async () => {
       const url = new URL(`${META_GRAPH_URL}/${adsetId}/insights`);
       url.searchParams.set("access_token", token);
-      url.searchParams.set("fields", "ad_id,ad_name,spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,action_values");
+      url.searchParams.set("fields", "ad_id,ad_name,spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,action_values,cost_per_action_type");
       url.searchParams.set("date_preset", datePreset);
       url.searchParams.set("level", "ad");
       const res = await fetch(url.toString());
@@ -2001,12 +2103,10 @@ async function handleGetAds(admin: any, userId: string, targetAccountId: string,
   const enrichedAds = ads.map((ad: any) => {
     const m: any = insMap.get(ad.id) || {};
     const cr = ad.creative || {};
-    // Conversões = mensagens iniciadas ou leads (o que houver), pra CPA por criativo.
-    const actions = Array.isArray(m.actions) ? m.actions : [];
-    const convAction = actions.find((a: any) =>
-      ["onsite_conversion.messaging_conversation_started_7d", "lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"].includes(a.action_type)
-    );
-    const conversions = convAction ? Number(convAction.value || 0) : 0;
+    // Resultado/custo por resultado pelo MESMO objetivo da campanha (conversa,
+    // lead, compra…), usando o custo que o próprio Meta calcula.
+    const { results, costPerResult } = pickResult(m, objective);
+    const conversions = results;
     const spend = Number(m.spend || 0);
     return {
       id: ad.id,
@@ -2029,7 +2129,7 @@ async function handleGetAds(admin: any, userId: string, targetAccountId: string,
       reach: Number(m.reach || 0),
       frequency: Number(m.frequency || 0),
       conversions,
-      cpa: conversions > 0 ? spend / conversions : 0,
+      cpa: costPerResult,
     };
   });
 
