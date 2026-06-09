@@ -30,6 +30,32 @@ export interface ApolloAdSet {
   reach: number;
   frequency: number;
   optimization_goal?: string;
+  results?: number;
+  cpa?: number;
+}
+
+export interface ApolloAd {
+  id: string;
+  name: string;
+  status: string;
+  effective_status: string;
+  creative_id: string | null;
+  creative_name: string | null;
+  title: string | null;
+  body: string | null;
+  image_url: string | null;
+  thumbnail_url: string | null;
+  media_type: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  reach: number;
+  frequency: number;
+  conversions: number;
+  cpa: number;
 }
 
 export interface ApolloEnrichedCampaign {
@@ -51,6 +77,9 @@ export interface ApolloEnrichedCampaign {
   cpa: number;
   roas: number;
   conversions: number;
+  results?: number;
+  result_label?: string;
+  budget_source?: 'campaign' | 'adset' | 'none';
   health_score: number;
   adsets?: ApolloAdSet[];
 }
@@ -98,6 +127,7 @@ export interface ApolloCronConfig {
   whatsapp_report_number: string | null;
   send_daily_report: boolean;
   active_segment_slug: string | null;
+  report_sender_instance_id?: string | null;
   last_run_at?: string | null;
   next_run_at?: string | null;
 }
@@ -152,6 +182,15 @@ export function useApolloAgent() {
     } finally {
       setIsLoadingSession(false);
     }
+  }, []);
+
+  // ── Hidrata a sessão a partir de um cache (localStorage) — INSTANTÂNEO e
+  //    SEM chamar a API do Meta. Usado pra restaurar o estado ao voltar pra tela.
+  const hydrateSession = useCallback((cached: ApolloSession | null) => {
+    if (!cached) return;
+    setSession(cached);
+    setPendingActions(cached.actions || []);
+    setExecutedActions(cached.execution_log || []);
   }, []);
 
   // ── Main analysis ──
@@ -279,6 +318,17 @@ export function useApolloAgent() {
     },
   });
 
+  // ── Get ads (criativos) de um conjunto ──
+  const getAds = useMutation({
+    mutationFn: async ({ adsetId, targetAccountId, datePreset, objective }: { adsetId: string; targetAccountId?: string; datePreset?: string; objective?: string }): Promise<ApolloAd[]> => {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
+        body: { action: 'get_ads', adsetId, targetAccountId, datePreset: datePreset || 'last_30d', objective: objective || '' },
+      });
+      if (error) throw error;
+      return (data?.ads || []) as ApolloAd[];
+    },
+  });
+
   const dismissAction = useCallback((action: ApolloAction) => {
     setPendingActions(prev => prev.filter(a =>
       !(a.campaign_id === action.campaign_id && a.action_type === action.action_type)
@@ -305,8 +355,10 @@ export function useApolloAgent() {
     executedActions,
     analyze,
     loadSavedSession,
+    hydrateSession,
     executeAction,
     getAdSets,
+    getAds,
     dismissAction,
     testConnection,
   };
@@ -364,5 +416,34 @@ export function useApolloCronConfig() {
     },
   });
 
-  return { config, isLoading, saveConfig };
+  // Envia o relatório AGORA (teste), ignorando o toggle diário.
+  const sendReportNow = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
+        body: { action: 'send_report_now' },
+      });
+      if (error) throw error;
+      return data as { sent: boolean; reason?: string };
+    },
+    onSuccess: (data) => {
+      const reasons: Record<string, string> = {
+        sem_numero_destino: 'Falta o número do WhatsApp que vai receber.',
+        numero_destino_invalido: 'O número que recebe está incompleto (DDD + 9 dígitos).',
+        sem_conta_meta: 'Nenhuma conta Meta Ads conectada/ativa.',
+        sem_instancia_envio: 'Nenhum número conectado para enviar. Selecione/conecte um número.',
+        falha_envio_whatsapp: 'O WhatsApp recusou o envio. Verifique se o número que envia está conectado.',
+        erro_inesperado: 'Erro inesperado ao montar o relatório.',
+      };
+      if (data?.sent) {
+        toast({ title: '✅ Relatório enviado!', description: 'Confira o WhatsApp do número que recebe.' });
+      } else {
+        toast({ title: 'Não enviou', description: reasons[data?.reason || ''] || data?.reason || 'Tente novamente.', variant: 'destructive' });
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro ao enviar relatório', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  return { config, isLoading, saveConfig, sendReportNow };
 }

@@ -72,6 +72,8 @@ Deno.serve(async (req) => {
       datePreset = "last_30d",
       action: bodyAction,
       campaignId,
+      adsetId,
+      objective: bodyObjective,
       actionType,
       actionParams,
     } = body;
@@ -201,9 +203,20 @@ Deno.serve(async (req) => {
       return await handleGetCronConfig(admin, user.id, corsHeaders);
     }
 
+    // ── Enviar relatório agora (teste) ──
+    if (bodyAction === "send_report_now") {
+      const result = await sendDailyReport(admin, user.id, true);
+      return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── Get ad set drill-down ──
     if (bodyAction === "get_adsets") {
       return await handleGetAdsets(admin, user.id, targetAccountId, campaignId, datePreset, corsHeaders);
+    }
+
+    // ── Get ads (creatives) drill-down ──
+    if (bodyAction === "get_ads") {
+      return await handleGetAds(admin, user.id, targetAccountId, adsetId, datePreset, bodyObjective || "", corsHeaders);
     }
 
     // ── Smart asset selection (creatives + copies) ──
@@ -326,19 +339,20 @@ Deno.serve(async (req) => {
     } catch { /* segment optional — ignore errors */ }
 
     // ── Fetch all data in parallel ──
-    const [campaigns, insights, adSetInsights, historicalSnapshots, pastOutcomes] = await Promise.all([
+    const [campaigns, insights, adSetInsights, historicalSnapshots, pastOutcomes, adsetBudgets] = await Promise.all([
       fetchMetaCampaigns(accessToken, accountId),
       fetchMetaInsights(accessToken, accountId, datePreset),
       fetchAdSetInsights(accessToken, accountId, datePreset),
       loadHistoricalSnapshots(admin, user.id, adAccountDbId || ""),
       loadLearningOutcomes(admin, user.id),
+      fetchAdSetBudgets(accessToken, accountId),
     ]);
 
     const insightsMap = new Map(insights.map((i: any) => [i.campaign_id, i]));
     const adSetInsightsMap = buildAdSetInsightsMap(adSetInsights);
 
     // ── Enrich campaigns with insights + health score ──
-    const enriched = campaigns.map((c: any) => enrichCampaign(c, insightsMap, adSetInsightsMap, currency));
+    const enriched = campaigns.map((c: any) => enrichCampaign(c, insightsMap, adSetInsightsMap, currency, adsetBudgets));
 
     // ── Build historical context for Claude ──
     const trendContext = buildTrendContext(historicalSnapshots, enriched, currency, currencySymbol);
@@ -366,20 +380,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── AI Analysis (OpenAI GPT-4o com fallback Anthropic) ──
-<<<<<<< Updated upstream
+    // ── AI Analysis: Claude (Anthropic) como IA PRINCIPAL do José ──
+    // Lê CLAUDE_API_KEY (com fallback ANTHROPIC_API_KEY). OpenAI fica só como
+    // fallback quando NÃO houver chave do Claude configurada.
+    const CLAUDE_KEY = Deno.env.get("CLAUDE_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
     const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
-    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
-=======
-    const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
-    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    const AI_KEY = OPENAI_KEY || ANTHROPIC_KEY;
->>>>>>> Stashed changes
+    const AI_KEY = CLAUDE_KEY || OPENAI_KEY;
+    const useOpenAI = !CLAUDE_KEY && !!OPENAI_KEY;
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(AI_KEY, !!OPENAI_KEY, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
+      aiResult = await runApolloAI(AI_KEY, useOpenAI, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
@@ -479,7 +490,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Daily WhatsApp report (resumo de campanhas + ações) ──
-    sendDailyReport(admin, user.id, aiResult, enriched, executionLog, currencySymbol).catch(() => { });
+    sendDailyReport(admin, user.id).catch(() => { });
 
     return new Response(JSON.stringify({
       status: "analyzed",
@@ -562,8 +573,10 @@ async function fetchCampaignAdSets(accessToken: string, campaignId: string) {
 async function fetchAdSetAds(accessToken: string, adsetId: string) {
   const url = new URL(`${META_GRAPH_URL}/${adsetId}/ads`);
   url.searchParams.set("access_token", accessToken);
-  url.searchParams.set("fields", "id,name,status,effective_status,creative{id,name,body,image_url}");
-  url.searchParams.set("limit", "20");
+  // image_url = imagem do criativo; thumbnail_url = poster de vídeo; object_type
+  // permite saber se é VIDEO/PHOTO/SHARE pra escolher o ícone/preview certo.
+  url.searchParams.set("fields", "id,name,status,effective_status,creative{id,name,title,body,image_url,thumbnail_url,object_type,video_id}");
+  url.searchParams.set("limit", "30");
   const res = await fetch(url.toString());
   const data = await res.json();
   return data.data || [];
@@ -581,27 +594,112 @@ function buildAdSetInsightsMap(adSetInsights: any[]): Map<string, any[]> {
 
 // ── Campaign enrichment ───────────────────────────────────────────────────────
 
-function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap: Map<string, any[]>, currency: string) {
+// ── Mapeamento objetivo → RESULTADO real ──────────────────────────────────────
+// O Meta calcula "Resultados" e "Custo por resultado" com base no objetivo da
+// campanha. Cada objetivo tem um action_type diferente. Sem esse mapa, o painel
+// pegava uma ação qualquer (clique, engajamento de post) e o custo saía errado —
+// ex: campanha de WhatsApp mostrava R$0,95 (post_engagement) em vez do custo real
+// por conversa iniciada (~R$9,57). Ordem = prioridade.
+function resultActionCandidates(objective: string): string[] {
+  const o = (objective || "").toUpperCase();
+  // Conversa por mensagem (WhatsApp/Direct) = SOMENTE messaging_conversation_started_7d
+  // — é o que o Meta mostra em "Resultados". NUNCA usar total_messaging_connection
+  // nem post_engagement como fallback: eles inflam a contagem (uma campanha sem
+  // conversa hoje, mas com curtidas no post, contava engajamento como "conversa").
+  if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION"))
+    return [
+      "onsite_conversion.messaging_conversation_started_7d",
+    ];
+  if (o.includes("LEAD"))
+    return [
+      "onsite_conversion.lead_grouped",
+      "lead",
+      "offsite_conversion.fb_pixel_lead",
+      "onsite_conversion.lead",
+      "onsite_web_lead",
+    ];
+  if (o.includes("SALE") || o.includes("CONVERSION") || o.includes("PURCHASE") || o.includes("CATALOG"))
+    return ["offsite_conversion.fb_pixel_purchase", "purchase", "omni_purchase"];
+  if (o.includes("TRAFFIC") || o.includes("LINK_CLICK"))
+    return ["link_click", "landing_page_view", "omni_landing_page_view"];
+  if (o.includes("APP"))
+    return ["omni_app_install", "mobile_app_install"];
+  // Awareness/Reach/Video não têm "ação de resultado" — usam alcance/CPM.
+  return [];
+}
+
+function resultLabelFor(objective: string): string {
+  const o = (objective || "").toUpperCase();
+  if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION")) return "Conversas iniciadas";
+  if (o.includes("LEAD")) return "Leads";
+  if (o.includes("SALE") || o.includes("CONVERSION") || o.includes("PURCHASE") || o.includes("CATALOG")) return "Compras";
+  if (o.includes("TRAFFIC") || o.includes("LINK_CLICK")) return "Cliques no link";
+  if (o.includes("APP")) return "Instalações";
+  if (o.includes("AWARENESS") || o.includes("REACH")) return "Alcance";
+  if (o.includes("VIDEO")) return "Visualizações";
+  return "Resultados";
+}
+
+// A partir dos insights (actions + cost_per_action_type), retorna o resultado e o
+// custo por resultado do objetivo, na ordem de prioridade. Usa o custo que o
+// próprio Meta calcula; só cai pra spend/results se o Meta não trouxer o custo.
+function pickResult(m: any, objective: string): { results: number; costPerResult: number } {
+  const candidates = resultActionCandidates(objective);
+  const actions: any[] = m.actions || [];
+  const costs: any[] = m.cost_per_action_type || [];
+  const spend = Number(m.spend || 0);
+  for (const t of candidates) {
+    const a = actions.find((x: any) => x.action_type === t);
+    if (a && Number(a.value) > 0) {
+      const results = Number(a.value);
+      const cpt = costs.find((x: any) => x.action_type === t);
+      const costPerResult = cpt ? Number(cpt.value) : (spend > 0 ? spend / results : 0);
+      return { results, costPerResult };
+    }
+  }
+  return { results: 0, costPerResult: 0 };
+}
+
+// Soma o orçamento dos conjuntos por campanha. Necessário pra campanhas ABO
+// (orçamento no conjunto), onde a campanha em si vem com daily/lifetime vazios.
+async function fetchAdSetBudgets(accessToken: string, accountId: string): Promise<Map<string, { daily: number; lifetime: number }>> {
+  const map = new Map<string, { daily: number; lifetime: number }>();
+  try {
+    const url = new URL(`${META_GRAPH_URL}/act_${accountId}/adsets`);
+    url.searchParams.set("access_token", accessToken);
+    url.searchParams.set("fields", "campaign_id,daily_budget,lifetime_budget,effective_status");
+    url.searchParams.set("limit", "300");
+    const res = await fetch(url.toString());
+    const d = await res.json();
+    for (const as of (d.data || [])) {
+      const st = as.effective_status || "";
+      if (st === "DELETED" || st === "ARCHIVED") continue;
+      const cid = as.campaign_id;
+      if (!cid) continue;
+      const cur = map.get(cid) || { daily: 0, lifetime: 0 };
+      cur.daily += Number(as.daily_budget || 0);
+      cur.lifetime += Number(as.lifetime_budget || 0);
+      map.set(cid, cur);
+    }
+  } catch { /* orçamento de conjunto é opcional — não quebra a análise */ }
+  return map;
+}
+
+function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap: Map<string, any[]>, currency: string, adsetBudgets?: Map<string, { daily: number; lifetime: number }>) {
   const m: any = insightsMap.get(c.id) || {};
   const spend = Number(m.spend || 0);
-  let cpa = 0, roas = 0, conversions = 0;
+  const objective = c.objective || "";
+  let roas = 0;
 
-  if (m.cost_per_action_type?.length) {
-    const a = m.cost_per_action_type.find((x: any) =>
-      x.action_type.includes("purchase") || x.action_type.includes("lead")
-    ) || m.cost_per_action_type[0];
-    cpa = Number(a?.value || 0);
-  }
+  // Resultado + custo por resultado pelo OBJETIVO (conversa/lead/compra/clique).
+  const { results, costPerResult } = pickResult(m, objective);
+  const conversions = results;
+  const cpa = costPerResult;
+
+  // ROAS continua restrito a vendas (valor de compra / gasto).
   if (m.action_values?.length && spend > 0) {
     const av = m.action_values.find((x: any) => x.action_type.includes("purchase"));
     if (av) roas = Number(av.value) / spend;
-  }
-  if (m.actions?.length) {
-    const conv = m.actions.find((x: any) => x.action_type.includes("purchase") || x.action_type.includes("lead"));
-    conversions = Number(conv?.value || 0);
-  }
-  if (m.conversions?.length) {
-    conversions = m.conversions.reduce((s: number, x: any) => s + Number(x.value || 0), 0);
   }
 
   const ctr = Number(m.ctr || 0);
@@ -612,17 +710,22 @@ function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap:
   const impressions = Number(m.impressions || 0);
   const clicks = Number(m.clicks || 0);
 
-  // Ad Set summary
-  const adsets = (adSetInsightsMap.get(c.id) || []).map((as: any) => ({
-    id: as.adset_id,
-    name: as.adset_name,
-    spend: Number(as.spend || 0),
-    ctr: Number(as.ctr || 0),
-    cpc: Number(as.cpc || 0),
-    frequency: Number(as.frequency || 0),
-    impressions: Number(as.impressions || 0),
-    clicks: Number(as.clicks || 0),
-  }));
+  // Ad Set summary — resultado/custo por resultado herdam o objetivo da campanha.
+  const adsets = (adSetInsightsMap.get(c.id) || []).map((as: any) => {
+    const r = pickResult(as, objective);
+    return {
+      id: as.adset_id,
+      name: as.adset_name,
+      spend: Number(as.spend || 0),
+      ctr: Number(as.ctr || 0),
+      cpc: Number(as.cpc || 0),
+      frequency: Number(as.frequency || 0),
+      impressions: Number(as.impressions || 0),
+      clicks: Number(as.clicks || 0),
+      results: r.results,
+      cpa: r.costPerResult,
+    };
+  });
 
   // Health score (0-100)
   let score = 50;
@@ -644,14 +747,26 @@ function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap:
     score = 30;
   }
 
+  // Orçamento: CBO usa o da campanha; ABO (campanha sem orçamento) soma os
+  // conjuntos. Valores do Meta vêm em centavos, então dividimos por 100.
+  const campDaily = c.daily_budget ? Number(c.daily_budget) / 100 : 0;
+  const campLifetime = c.lifetime_budget ? Number(c.lifetime_budget) / 100 : 0;
+  const asB = adsetBudgets?.get(c.id) || { daily: 0, lifetime: 0 };
+  const dailyBudget = campDaily > 0 ? campDaily : (asB.daily > 0 ? asB.daily / 100 : null);
+  const lifetimeBudget = campLifetime > 0 ? campLifetime : (asB.lifetime > 0 ? asB.lifetime / 100 : null);
+  const budgetSource = (campDaily > 0 || campLifetime > 0) ? "campaign" : ((asB.daily > 0 || asB.lifetime > 0) ? "adset" : "none");
+
   return {
     id: c.id,
     name: c.name,
     status: c.status,
     effective_status: c.effective_status,
     objective: c.objective || "",
-    daily_budget: c.daily_budget ? Number(c.daily_budget) / 100 : null,
-    lifetime_budget: c.lifetime_budget ? Number(c.lifetime_budget) / 100 : null,
+    daily_budget: dailyBudget,
+    lifetime_budget: lifetimeBudget,
+    budget_source: budgetSource,
+    result_label: resultLabelFor(objective),
+    results,
     special_ad_categories: c.special_ad_categories || [],
     spend, impressions, clicks, ctr, cpc, cpm, reach, frequency, cpa, roas, conversions,
     health_score: score,
@@ -885,6 +1000,26 @@ function detectPortfolioOpportunities(enriched: any[], currencySymbol: string): 
 
 // ── Segment Context Builder ───────────────────────────────────────────────────
 
+// Nicho-base do LOGOS: o produto atende concessionárias e revendas de veículos.
+// Quando o usuário NÃO configurou um perfil de segmento específico, o José ainda
+// precisa raciocinar dentro do contexto automotivo — caso contrário ele dá
+// recomendações genéricas de "marketing digital" que não servem pra loja de carro.
+const DEFAULT_NICHE_CONTEXT = `🏭 NICHO DE NEGÓCIO: CONCESSIONÁRIAS E REVENDAS DE VEÍCULOS
+Este anunciante vende carros/veículos. TODA recomendação deve assumir esse contexto — o objetivo final não é "engajamento", é gerar conversas no WhatsApp e leads qualificados que virem test drive, proposta de financiamento e venda na loja.
+
+BENCHMARKS DO SETOR AUTOMOTIVO (use no lugar dos genéricos quando o objetivo for mensagem/lead):
+  • Custo por conversa iniciada (WhatsApp): ótimo < R$15, bom R$15–35, atenção R$35–50, crítico > R$50
+  • Custo por lead (formulário): ótimo < R$25, bom R$25–50, crítico > R$80
+  • CTR de anúncio de veículo: fraco < 1%, bom > 1.8%, excelente > 3%
+  • A métrica que mais importa NÃO é CTR isolado — é o custo por conversa/lead e quantos viram test drive.
+
+REGRAS DO SETOR (aplicar nas recomendações):
+  ⚙️ Segmentação regional é decisiva: público deve ficar no raio de deslocamento da loja (geralmente 30–60 km). Público amplo demais queima verba.
+  ⚙️ Criativo campeão de concessionária mostra o VEÍCULO + preço/parcela + gancho ("entrada facilitada", "aceita seu usado na troca", "saída imediata").
+  ⚙️ Fim de mês concentra fechamento (metas de loja e montadora) — vale escalar campanhas saudáveis nos últimos dias.
+  ⚙️ Feirões e datas (Dia das Mães, Black Friday, fim de ano com 13º) puxam demanda — sugerir reforço de verba quando o ROAS/health permitir.
+  ⚙️ Lead de carro responde rápido mas esfria rápido: priorize objetivos de MENSAGEM/CONVERSA quando a loja atende bem no WhatsApp.`;
+
 function buildSegmentContext(segment: any): string {
   const lines: string[] = [
     `🏭 SEGMENTO DE NEGÓCIO ATIVO: ${segment.icon || ""} ${segment.name}`,
@@ -1054,7 +1189,12 @@ ${segmentContext ? `
 ${segmentContext}
 ══════════════════════════════════════════
 INSTRUÇÃO CRÍTICA: O segmento acima está ativo. Substitua os benchmarks genéricos pelos do segmento. Aplique TODAS as regras do segmento na análise e nas recomendações.
-` : ""}
+` : `
+══════════════════════════════════════════
+${DEFAULT_NICHE_CONTEXT}
+══════════════════════════════════════════
+INSTRUÇÃO CRÍTICA: Não há um perfil de segmento específico configurado, mas este anunciante É uma concessionária/revenda de veículos. Faça TODA a análise e as recomendações dentro desse contexto automotivo — fale em conversas no WhatsApp, leads, test drive, financiamento e troca, não em métricas abstratas.
+`}
 
 REGRAS DE DECISÃO AUTOMÁTICA (auto_safe=true):
 1. Pausar campanha: CTR < 0.5% E frequência > 4 (fadiga confirmada) E gasto > ${currencySymbol}${currency === "USD" ? "20" : "50"}
@@ -1133,7 +1273,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
         }),
       });
     } else {
-      // ── Anthropic Claude 3.5 Sonnet (fallback) ──
+      // ── Anthropic Claude Sonnet 4 (IA principal do José) ──
       res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -1142,7 +1282,7 @@ Responda EXCLUSIVAMENTE em JSON válido:
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "claude-3-5-sonnet-20241022",
+          model: "claude-sonnet-4-20250514",
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: "user", content: userMessage }],
@@ -1858,7 +1998,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
   const {
     run_hour, run_minute, timezone, date_preset, auto_execute,
     send_whatsapp_on_critical, send_daily_report, whatsapp_report_number,
-    is_enabled, active_segment_slug,
+    is_enabled, active_segment_slug, report_sender_instance_id,
   } = body;
 
   // Compute next_run_at
@@ -1880,6 +2020,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
       send_daily_report: send_daily_report ?? true,
       whatsapp_report_number: whatsapp_report_number || null,
       active_segment_slug: active_segment_slug || null,
+      report_sender_instance_id: report_sender_instance_id || null,
       next_run_at: nextRun.toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
@@ -1934,154 +2075,270 @@ async function handleGetAdsets(admin: any, userId: string, targetAccountId: stri
   });
 }
 
+// ── Get ads (criativos) de um conjunto, com preview + métricas por anúncio ──
+async function handleGetAds(admin: any, userId: string, targetAccountId: string, adsetId: string, datePreset: string, objective: string, corsHeaders: any) {
+  if (!adsetId) {
+    return new Response(JSON.stringify({ error: "adsetId é obrigatório" }), { status: 400, headers: corsHeaders });
+  }
+
+  let accountQuery = admin.from("ad_accounts").select("*")
+    .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+  if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+  const { data: adAccount } = await accountQuery.limit(1).single();
+
+  if (!adAccount?.access_token_encrypted) {
+    return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+  }
+
+  const token = adAccount.access_token_encrypted;
+
+  // Anúncios (criativo+preview) e métricas por anúncio (level=ad) em paralelo.
+  const [ads, adInsightsRaw] = await Promise.all([
+    fetchAdSetAds(token, adsetId),
+    (async () => {
+      const url = new URL(`${META_GRAPH_URL}/${adsetId}/insights`);
+      url.searchParams.set("access_token", token);
+      url.searchParams.set("fields", "ad_id,ad_name,spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,action_values,cost_per_action_type");
+      url.searchParams.set("date_preset", datePreset);
+      url.searchParams.set("level", "ad");
+      const res = await fetch(url.toString());
+      const d = await res.json();
+      return d.data || [];
+    })(),
+  ]);
+
+  const insMap = new Map(adInsightsRaw.map((i: any) => [i.ad_id, i]));
+
+  const enrichedAds = ads.map((ad: any) => {
+    const m: any = insMap.get(ad.id) || {};
+    const cr = ad.creative || {};
+    // Resultado/custo por resultado pelo MESMO objetivo da campanha (conversa,
+    // lead, compra…), usando o custo que o próprio Meta calcula.
+    const { results, costPerResult } = pickResult(m, objective);
+    const conversions = results;
+    const spend = Number(m.spend || 0);
+    return {
+      id: ad.id,
+      name: ad.name,
+      status: ad.status,
+      effective_status: ad.effective_status,
+      creative_id: cr.id || null,
+      creative_name: cr.name || null,
+      title: cr.title || null,
+      body: cr.body || null,
+      image_url: cr.image_url || cr.thumbnail_url || null,
+      thumbnail_url: cr.thumbnail_url || null,
+      media_type: cr.video_id ? "video" : (cr.object_type || "image"),
+      spend,
+      impressions: Number(m.impressions || 0),
+      clicks: Number(m.clicks || 0),
+      ctr: Number(m.ctr || 0),
+      cpc: Number(m.cpc || 0),
+      cpm: Number(m.cpm || 0),
+      reach: Number(m.reach || 0),
+      frequency: Number(m.frequency || 0),
+      conversions,
+      cpa: costPerResult,
+    };
+  });
+
+  return new Response(JSON.stringify({ ads: enrichedAds }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" }
+  });
+}
+
 // ── Daily WhatsApp Report ─────────────────────────────────────────────────────
 
-async function sendDailyReport(
-  admin: any, userId: string, aiResult: any, enriched: any[],
-  executionLog: any[], currencySymbol: string
-) {
-  // Check cron config for daily report settings
+// Relatório diário do José em linguagem simples (pra pessoa leiga). Auto-suficiente:
+// busca as métricas do DIA ANTERIOR (completo) + últimos 7 dias direto da Meta, com a
+// métrica principal do OBJETIVO dominante (conversa/lead/compra), e envia pela instância
+// escolhida (com fallback). `force` ignora o toggle send_daily_report (usado no teste).
+async function sendDailyReport(admin: any, userId: string, force = false): Promise<{ sent: boolean; reason?: string }> {
+ try {
   const { data: cronCfg } = await admin
     .from("apollo_cron_config")
-    .select("send_daily_report, whatsapp_report_number")
+    .select("send_daily_report, whatsapp_report_number, report_sender_instance_id, account_id")
     .eq("user_id", userId)
     .single();
 
-  if (!cronCfg?.send_daily_report || !cronCfg?.whatsapp_report_number) return;
+  if (!force && !cronCfg?.send_daily_report) return { sent: false, reason: "relatorio_desligado" };
+  if (!cronCfg?.whatsapp_report_number) return { sent: false, reason: "sem_numero_destino" };
 
-  const phone = cronCfg.whatsapp_report_number.replace(/\D/g, '');
-  if (phone.length < 10) return;
-
-  // Format phone to international (55 + DDD + number)
+  const phone = String(cronCfg.whatsapp_report_number).replace(/\D/g, '');
+  if (phone.length < 10) return { sent: false, reason: "numero_destino_invalido" };
   const intlPhone = phone.startsWith('55') ? phone : `55${phone}`;
 
-  // Busca instância WhatsApp ativa (wa_instances = UazAPI)
-  const { data: waCfg } = await admin
-    .from("wa_instances")
-    .select("api_url, instance_name, api_key_encrypted")
-    .eq("user_id", userId)
-    .eq("status", "connected")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+  // ── Conta Meta (token + nome) ──
+  let accQ = admin.from("ad_accounts")
+    .select("account_id, account_name, currency, access_token_encrypted")
+    .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+  if (cronCfg.account_id) accQ = accQ.eq("account_id", String(cronCfg.account_id).replace(/^act_/, ""));
+  const { data: acc } = await accQ.order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  if (!acc?.access_token_encrypted || !acc?.account_id) return { sent: false, reason: "sem_conta_meta" };
+  const sym = acc.currency === "USD" ? "US$" : "R$";
 
-  if (!waCfg?.api_url) return;
+  const acct = `act_${String(acc.account_id).replace(/^act_/, "")}`;
+  const money = (v: number) => `${sym} ${v.toFixed(2).replace(".", ",")}`;
+  const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
 
-  // Build report
-  const score = aiResult.health_score ?? '??';
-  const totalSpend = enriched.reduce((s: number, c: any) => s + c.spend, 0);
-  const totalConv = enriched.reduce((s: number, c: any) => s + c.conversions, 0);
-  const activeCamps = enriched.filter((c: any) => c.effective_status === 'ACTIVE');
-  const healthyCamps = activeCamps.filter((c: any) => c.health_score >= 70);
-  const criticalCamps = activeCamps.filter((c: any) => c.health_score < 45);
+  // ── Objetivo dominante da conta → define a MÉTRICA PRINCIPAL ──
+  // (conversa iniciada / lead / compra / clique). Campanha ativa pesa mais.
+  const buckets: Record<string, number> = { msg: 0, lead: 0, sale: 0, traffic: 0, other: 0 };
+  try {
+    const cUrl = new URL(`${META_GRAPH_URL}/${acct}/campaigns`);
+    cUrl.searchParams.set("access_token", acc.access_token_encrypted);
+    cUrl.searchParams.set("fields", "objective,effective_status");
+    cUrl.searchParams.set("limit", "500");
+    const cRes = await fetch(cUrl.toString());
+    const cData = await cRes.json();
+    for (const c of (cData?.data || [])) {
+      const o = String(c.objective || "").toUpperCase();
+      const w = c.effective_status === "ACTIVE" ? 3 : 1;
+      if (o.includes("ENGAGEMENT") || o.includes("MESSAGE") || o.includes("CONVERSATION")) buckets.msg += w;
+      else if (o.includes("LEAD")) buckets.lead += w;
+      else if (o.includes("SALE") || o.includes("CONVERSION") || o.includes("PURCHASE") || o.includes("CATALOG")) buckets.sale += w;
+      else if (o.includes("TRAFFIC") || o.includes("LINK_CLICK")) buckets.traffic += w;
+      else buckets.other += w;
+    }
+  } catch { /* ignora — usa msg por padrão */ }
+  const dominant = (Object.keys(buckets)).reduce((a, b) => buckets[b] > buckets[a] ? b : a, "msg");
 
-  const scoreEmoji = score >= 70 ? '🟢' : score >= 45 ? '🟡' : '🔴';
-  const actions = aiResult.actions || [];
-  const criticalActions = actions.filter((a: any) => a.priority === 'critical');
-  const highActions = actions.filter((a: any) => a.priority === 'high');
+  const RESULT_MAP: Record<string, { candidates: string[]; result: string; cost: string; noun: string }> = {
+    msg: { candidates: ["onsite_conversion.messaging_conversation_started_7d"], result: "Conversas iniciadas", cost: "Custo por conversa iniciada", noun: "conversas" },
+    lead: { candidates: ["onsite_conversion.lead_grouped", "lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead", "onsite_web_lead"], result: "Leads", cost: "Custo por lead", noun: "leads" },
+    sale: { candidates: ["offsite_conversion.fb_pixel_purchase", "purchase", "omni_purchase"], result: "Compras", cost: "Custo por compra", noun: "compras" },
+    traffic: { candidates: ["link_click"], result: "Cliques no link", cost: "Custo por clique", noun: "cliques" },
+    other: { candidates: [], result: "Resultados", cost: "Custo por resultado", noun: "resultados" },
+  };
+  const M = RESULT_MAP[dominant] || RESULT_MAP.msg;
+
+  const pickRes = (acts: any[], cprs: any[], spend: number) => {
+    for (const t of M.candidates) {
+      const a = (acts || []).find((x) => x.action_type === t);
+      if (a && Number(a.value) > 0) {
+        const results = Number(a.value);
+        const c = (cprs || []).find((x) => x.action_type === t);
+        return { results, cost: c ? Number(c.value) : (spend > 0 ? spend / results : 0) };
+      }
+    }
+    return { results: 0, cost: 0 };
+  };
+
+  const fetchInsights = async (preset: string) => {
+    const u = new URL(`${META_GRAPH_URL}/${acct}/insights`);
+    u.searchParams.set("access_token", acc.access_token_encrypted);
+    u.searchParams.set("date_preset", preset);
+    u.searchParams.set("fields", "spend,reach,clicks,impressions,actions,cost_per_action_type");
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    return (d?.data && d.data[0]) || {};
+  };
+
+  // Dia ANTERIOR (completo — hoje fica quebrado, o dia nao acabou) + ultimos 7 dias.
+  const [yRow, wRow] = await Promise.all([fetchInsights("yesterday"), fetchInsights("last_7d")]);
+  const ySpend = Number(yRow.spend || 0);
+  const yReach = Number(yRow.reach || 0);
+  const yClicks = Number(yRow.clicks || 0);
+  const yRes = pickRes(yRow.actions, yRow.cost_per_action_type, ySpend);
+  const yCpc = yClicks > 0 ? ySpend / yClicks : 0;
+  const wSpend = Number(wRow.spend || 0);
+  const wRes = pickRes(wRow.actions, wRow.cost_per_action_type, wSpend);
+
+  // ── Cruzamento: leads que REALMENTE chegaram no painel da Logos (ai_crm_leads) ──
+  const BRT_MS = 3 * 3600 * 1000; // America/Sao_Paulo = UTC-3 (sem horário de verão)
+  const brtMid = new Date(Date.now() - BRT_MS); brtMid.setUTCHours(0, 0, 0, 0);
+  const todayStartUtc = new Date(brtMid.getTime() + BRT_MS);
+  const yStartUtc = new Date(todayStartUtc.getTime() - 24 * 3600 * 1000);
+  const wStartUtc = new Date(todayStartUtc.getTime() - 7 * 24 * 3600 * 1000);
+  const countLeads = async (fromIso: string, toIso?: string) => {
+    try {
+      let q = admin.from("ai_crm_leads").select("id", { count: "exact", head: true })
+        .eq("user_id", userId).gte("created_at", fromIso);
+      if (toIso) q = q.lt("created_at", toIso);
+      const { count } = await q;
+      return Number(count || 0);
+    } catch { return 0; }
+  };
+  const yLogos = await countLeads(yStartUtc.toISOString(), todayStartUtc.toISOString());
+  const wLogos = await countLeads(wStartUtc.toISOString());
+  const yLogosCost = yLogos > 0 ? ySpend / yLogos : 0;
+  const wLogosCost = wLogos > 0 ? wSpend / wLogos : 0;
+
+  const ontem = new Date(Date.now() - 24 * 3600 * 1000).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const diffY = yLogos - yRes.results;
+  const diffNote = diffY === 0 || (yLogos === 0 && yRes.results === 0) ? ""
+    : diffY < 0 ? `↳ ${Math.abs(diffY)} do Meta não viraram lead no painel`
+    : `↳ ${diffY} lead(s) a mais no painel (manuais/diretos)`;
+  const resumo = yLogos > 0
+    ? `Ontem o Meta marcou ${int(yRes.results)} ${M.noun} e ${int(yLogos)} viraram lead no seu painel — custo real por lead: ${money(yLogosCost)}.`
+    : `Ontem você investiu ${money(ySpend)} e nenhum lead entrou no painel ainda.`;
 
   const lines: string[] = [
-    `📊 *JOSÉ — Relatório Diário*`,
-    `━━━━━━━━━━━━━━━━━━━━━`,
+    `📊 *José — Relatório de ontem* (${ontem})`,
+    acc.account_name ? `🏢 ${acc.account_name}` : "",
     ``,
-    `${scoreEmoji} *Health Score Geral: ${score}/100*`,
+    `💰 *Investido ontem:* ${money(ySpend)}`,
+    `👁️ *Pessoas alcançadas:* ${int(yReach)}`,
+    `🖱️ *Cliques no anúncio:* ${int(yClicks)}${yClicks > 0 ? ` (${money(yCpc)} cada)` : ""}`,
     ``,
-    `💰 *Investimento:* ${currencySymbol} ${totalSpend.toFixed(2)}`,
-    `🎯 *Conversões:* ${totalConv}`,
-    `📢 *Campanhas ativas:* ${activeCamps.length}`,
-    `✅ *Saudáveis:* ${healthyCamps.length} | ⚠️ *Críticas:* ${criticalCamps.length}`,
+    `📣 *No Meta (ontem):*`,
+    `   ${int(yRes.results)} ${M.noun} · ${yRes.results > 0 ? `${money(yRes.cost)} cada` : "—"}`,
     ``,
+    `✅ *No painel da Logos (ontem):*`,
+    `   ${int(yLogos)} leads que chegaram de verdade · ${yLogos > 0 ? `${money(yLogosCost)} cada` : "—"}`,
+    diffNote,
+    ``,
+    `📅 *Últimos 7 dias:*`,
+    `   Meta: ${int(wRes.results)} ${M.noun} · ${wRes.results > 0 ? `${money(wRes.cost)} cada` : "—"}`,
+    `   Painel: ${int(wLogos)} leads · ${wLogos > 0 ? `${money(wLogosCost)} cada` : "—"} · ${money(wSpend)} investidos`,
+    ``,
+    `💡 ${resumo}`,
+    ``,
+    `🤖 _Gerado automaticamente pelo José — LogosIA_`,
+  ].filter((l) => l !== "");
+
+  // ── Instância que ENVIA: a escolhida pelo usuário; senão a primeira conectada ──
+  let inst: any = null;
+  if (cronCfg.report_sender_instance_id) {
+    const { data } = await admin.from("wa_instances")
+      .select("api_url, instance_name, api_key_encrypted")
+      .eq("id", cronCfg.report_sender_instance_id).eq("user_id", userId).maybeSingle();
+    inst = data;
+  }
+  if (!inst?.api_url) {
+    const { data } = await admin.from("wa_instances")
+      .select("api_url, instance_name, api_key_encrypted")
+      .eq("user_id", userId).eq("status", "connected")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    inst = data;
+  }
+  if (!inst?.api_url || !inst?.instance_name) return { sent: false, reason: "sem_instancia_envio" };
+
+  const apiUrl = String(inst.api_url).replace(/\/+$/, "");
+  const headers = { "Content-Type": "application/json", token: inst.api_key_encrypted || "", apikey: inst.api_key_encrypted || "" };
+  const text = lines.join("\n");
+  // Uazapi (/send/text) com fallback Evolution (/message/sendText/{instance}).
+  const attempts = [
+    { url: `${apiUrl}/send/text`, body: { number: intlPhone, text } },
+    { url: `${apiUrl}/message/sendText/${inst.instance_name}`, body: { number: intlPhone, text } },
   ];
-
-  // Top 3 campanhas por score
-  const top3 = [...activeCamps].sort((a, b) => b.health_score - a.health_score).slice(0, 3);
-  if (top3.length > 0) {
-    lines.push(`📈 *Top Campanhas:*`);
-    top3.forEach((c: any, i: number) => {
-      const emoji = c.health_score >= 70 ? '🟢' : c.health_score >= 45 ? '🟡' : '🔴';
-      lines.push(`${i + 1}. ${emoji} ${c.name}`);
-      lines.push(`   Score: ${c.health_score} | ROAS: ${c.roas > 0 ? c.roas.toFixed(1) + 'x' : '-'} | CTR: ${c.ctr.toFixed(1)}%`);
-    });
-    lines.push(``);
-  }
-
-  // Actions summary
-  if (actions.length > 0) {
-    lines.push(`⚡ *Ações Recomendadas (${actions.length}):*`);
-    if (criticalActions.length > 0) {
-      lines.push(`🔴 ${criticalActions.length} crítica(s)`);
-      criticalActions.slice(0, 2).forEach((a: any) => {
-        lines.push(`   • ${a.campaign_name}: ${a.reason?.slice(0, 80)}`);
-      });
+  let lastErr = "";
+  for (const a of attempts) {
+    try {
+      const r = await fetch(a.url, { method: "POST", headers, body: JSON.stringify(a.body) });
+      if (r.ok) { console.log("[apollo-agent] relatorio enviado via", a.url); return { sent: true }; }
+      lastErr = `${r.status}: ${(await r.text()).slice(0, 160)}`;
+      console.warn("[apollo-agent] envio falhou", a.url, lastErr);
+    } catch (e) {
+      lastErr = String(e).slice(0, 160);
+      console.warn("[apollo-agent] envio erro", a.url, lastErr);
     }
-    if (highActions.length > 0) {
-      lines.push(`🟠 ${highActions.length} alta(s) prioridade`);
-    }
-    lines.push(``);
   }
-
-  // Executed actions
-  if (executionLog.length > 0) {
-    const actionLabels: Record<string, string> = {
-      pause: '⏸️ Pausou', activate: '▶️ Ativou',
-      increase_budget: '📈 Aumentou verba', decrease_budget: '📉 Reduziu verba',
-      pause_adset: '⏸️ Pausou Ad Set',
-    };
-    lines.push(`🤖 *Ações Executadas Automaticamente (${executionLog.length}):*`);
-    executionLog.slice(0, 3).forEach((e: any) => {
-      const label = actionLabels[e.action_type] || e.action_type;
-      lines.push(`   ${label}: ${e.campaign_name || e.campaign_id}`);
-    });
-    lines.push(``);
-  }
-
-  // Summary
-  if (aiResult.summary) {
-    lines.push(`💡 *Resumo IA:*`);
-    lines.push(aiResult.summary.slice(0, 200));
-    lines.push(``);
-  }
-
-  // PME Lead stats
-  try {
-    const now = new Date();
-    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    const { data: monthLeads } = await admin.from("leads").select("status, sale_value").eq("user_id", userId).gte("created_at", firstOfMonth);
-
-    if (monthLeads && monthLeads.length > 0) {
-      const sales = monthLeads.filter((l: any) => l.status === 'venda_realizada');
-      const staleCount = monthLeads.filter((l: any) => ['novo', 'em_atendimento'].includes(l.status)).length;
-      const totalSales = sales.reduce((s: number, l: any) => s + (Number(l.sale_value) || 0), 0);
-
-      lines.push(`👥 *Leads do Mês:*`);
-      lines.push(`   Total: ${monthLeads.length} | Vendas: ${sales.length} | Faturamento: R$ ${totalSales.toFixed(2)}`);
-      if (staleCount > 0) {
-        lines.push(`   ⚠️ ${staleCount} leads aguardando atendimento`);
-      }
-      lines.push(``);
-    }
-  } catch { /* table may not exist yet */ }
-
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🤖 _Gerado por JOSÉ Governador — LogosIA_`);
-
-  try {
-    const apiUrl = (waCfg.api_url as string).replace(/\/+$/, "");
-    await fetch(`${apiUrl}/message/sendText/${waCfg.instance_name}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": waCfg.api_key_encrypted || "",
-      },
-      body: JSON.stringify({
-        number: intlPhone,
-        options: { delay: 1200, presence: "composing" },
-        textMessage: { text: lines.join("\n") },
-      }),
-    });
-  } catch (err) {
-    console.error("[apollo-agent] WhatsApp daily report error:", err);
-  }
+  return { sent: false, reason: `falha_envio_whatsapp | ${lastErr}` };
+ } catch (err) {
+  console.error("[apollo-agent] sendDailyReport erro:", err);
+  return { sent: false, reason: "erro_inesperado" };
+ }
 }
 
 // ── PME Module: Lead Stats ────────────────────────────────────────────────────
