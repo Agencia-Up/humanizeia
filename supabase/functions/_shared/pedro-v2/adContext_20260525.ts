@@ -4,6 +4,13 @@ type PedroV2AdContext = {
   has_ad_context: boolean;
   source?: string | null;
   url?: string | null;
+  // ── Atribuicao nativa Click-to-WhatsApp (CTWA) ──
+  // Estes campos vinham do payload mas eram DESCARTADos. Agora sao estruturados
+  // pra alimentar a Conversions API for Business Messaging (ctwa_clid e o ad id).
+  ctwa_clid?: string | null;
+  source_id?: string | null;
+  source_type?: string | null;
+  headline?: string | null;
   title?: string | null;
   description?: string | null;
   raw_text?: string | null;
@@ -432,6 +439,9 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
   const extended = message?.extendedTextMessage || rootMessage?.extendedTextMessage || payload?.data?.message?.extendedTextMessage || {};
   const contextInfo = extended?.contextInfo || message?.contextInfo || rootMessage?.contextInfo || payload?.contextInfo || {};
   const adReply = contextInfo?.externalAdReply || rootMessage?.externalAdReply || payload?.externalAdReply || payload?.data?.externalAdReply || {};
+  // referral = formato canonico do WhatsApp Cloud API (source_id/source_type/
+  // ctwa_clid/headline). Uazapi/Baileys usa contextInfo/externalAdReply; lemos os dois.
+  const referral = contextInfo?.referral || message?.referral || rootMessage?.referral || payload?.referral || payload?.data?.message?.referral || {};
   const content = typeof rootMessage?.content === "object"
     ? rootMessage.content
     : typeof payload?.content === "object"
@@ -503,6 +513,27 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     }
   }
 
+  // ── IDs nativos do CTWA estruturados (failsafe: ausente => null) ──
+  const ctwaClid = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, referral }, [
+    ["referral", "ctwa_clid"], ["referral", "ctwaClid"],
+    ["adReply", "ctwaClid"], ["adReply", "ctwa_clid"],
+    ["contextInfo", "ctwaClid"], ["contextInfo", "ctwa_clid"],
+    ["extended", "contextInfo", "ctwaClid"], ["extended", "contextInfo", "ctwa_clid"],
+  ]) || null;
+  const sourceIdRaw = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, referral }, [
+    ["referral", "source_id"],
+    ["adReply", "sourceId"], ["adReply", "source_id"],
+    ["contextInfo", "sourceId"], ["extended", "contextInfo", "sourceId"],
+  ]) || null;
+  const sourceTypeRaw = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, referral }, [
+    ["referral", "source_type"],
+    ["adReply", "sourceType"], ["adReply", "source_type"],
+    ["contextInfo", "sourceType"], ["extended", "contextInfo", "sourceType"],
+  ]) || null;
+  const headlineRaw = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, referral }, [
+    ["referral", "headline"], ["adReply", "title"],
+  ]) || null;
+
   const hasExplicitAdPayload = Boolean(
     contextInfo?.externalAdReply ||
     rootMessage?.externalAdReply ||
@@ -511,7 +542,9 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     adReply?.title ||
     adReply?.body ||
     adReply?.sourceUrl ||
-    conversionFields.length > 0
+    conversionFields.length > 0 ||
+    ctwaClid ||
+    sourceIdRaw
   );
   const hasAdLink = Boolean(sourceUrl && AD_LINK_RE.test(sourceUrl));
   const hasAdTextMarker = AD_LINK_RE.test(messageText) ||
@@ -531,6 +564,10 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     has_ad_context: hasAdContext,
     source: source || (normalizedCombined.includes("instagram") ? "instagram" : normalizedCombined.includes("facebook") || normalizedCombined.includes("fb.me") ? "facebook" : null),
     url: sourceUrl,
+    ctwa_clid: hasAdContext ? ctwaClid : null,
+    source_id: hasAdContext ? sourceIdRaw : null,
+    source_type: hasAdContext ? sourceTypeRaw : null,
+    headline: hasAdContext ? (headlineRaw || title || null) : null,
     title: hasAdContext ? title : null,
     description: hasAdContext ? description : null,
     raw_text: hasAdContext ? rawText || messageText || null : null,

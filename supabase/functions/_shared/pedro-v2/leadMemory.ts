@@ -136,11 +136,19 @@ export async function persistPedroV2ContactUtm(
     const src = String(ad.source || "").toLowerCase();
     const isSocialAd = src.includes("facebook") || src.includes("fb.me") ||
       src.includes("instagram") || src.includes("meta");
+    // ── Atribuicao nativa CTWA (vem do payload do anuncio, nao da URL) ──
+    const ctwa_clid = (typeof ad.ctwa_clid === "string" && ad.ctwa_clid.trim()) ? ad.ctwa_clid.trim() : null;
+    const meta_source_url = (typeof ad.url === "string" && ad.url.trim()) ? ad.url.trim() : null;
+    const meta_headline = (typeof ad.headline === "string" && ad.headline.trim())
+      ? ad.headline.trim()
+      : (typeof ad.title === "string" && ad.title.trim() ? ad.title.trim() : null);
+    const sourceIdAd = (typeof ad.source_id === "string" && /^\d{5,30}$/.test(ad.source_id.trim()))
+      ? ad.source_id.trim() : null;
     const fbclid = fromUrl("fbclid");
-    const utm_source = fromUrl("utm_source") || (isSocialAd ? "meta_ads" : null);
+    const utm_source = fromUrl("utm_source") || (isSocialAd || ctwa_clid ? "meta_ads" : null);
 
-    // Sem fonte de anuncio confiavel? nao grava (mantem o painel limpo).
-    if (!utm_source && !fbclid) return;
+    // Sem NENHUM sinal de anuncio pago (utm, fbclid ou ctwa_clid)? nao grava.
+    if (!utm_source && !fbclid && !ctwa_clid) return;
 
     const utm_campaign = fromUrl("utm_campaign") || (ad.title || null);
     const utm_medium = fromUrl("utm_medium");
@@ -193,6 +201,10 @@ export async function persistPedroV2ContactUtm(
           utm_campaign,
           utm_content,
           fbclid,
+          ctwa_clid,
+          source_id: sourceIdAd,
+          source_type: (typeof ad.source_type === "string" ? ad.source_type : null),
+          headline: meta_headline,
         },
         updated_at: new Date().toISOString(),
       };
@@ -200,7 +212,12 @@ export async function persistPedroV2ContactUtm(
       if (utm_campaign) leadPatch.campaign_name = utm_campaign;
       if (adset_id) leadPatch.adset_id = adset_id;
       if (ad_id) leadPatch.ad_id = ad_id;
+      else if (sourceIdAd) leadPatch.ad_id = sourceIdAd; // CTWA: source_id == id do anuncio
       if (utm_content) leadPatch.ad_name = utm_content;
+      // Colunas CTWA dedicadas — so escreve quando ha valor (idempotente, nunca zera).
+      if (ctwa_clid) leadPatch.ctwa_clid = ctwa_clid;
+      if (meta_source_url) leadPatch.meta_source_url = meta_source_url;
+      if (meta_headline) leadPatch.meta_headline = meta_headline;
 
       await supabase
         .from("ai_crm_leads")
