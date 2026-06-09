@@ -472,9 +472,14 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // 2. Carrega avatar_url do profile DE CADA VENDEDOR (prioridade > profile_picture do master)
         // Ativos NO SISTEMA (visibilidade no painel) — independe do status no agente de IA.
         const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
-        // Guarda os vendedores ativos (objetos completos, com last_lead_received_at)
-        // pro rodízio do clique-pra-transferir. Só no master (sem sellerMemberId).
-        if (!sellerMemberId) setQueueSellers(sellersList);
+        // Fila do rodízio do botão "Transferir (próximo da fila)": SÓ vendedores
+        // ATIVOS NO AGENTE DE IA (is_active=true) — igual ao rodízio AUTOMÁTICO do
+        // Pedro (transferRouter / uazapi-webhook / bulk-transfer). Diferente dos
+        // CARDS, que mostram todos os ativos no sistema. Assim o botão nunca passa
+        // lead pra quem está pausado no agente. Só no master (sem sellerMemberId).
+        if (!sellerMemberId) {
+          setQueueSellers((sellersList as any[]).filter((s: any) => s.is_active === true));
+        }
         const authIds = sellersList.map(s => s.auth_user_id).filter((x): x is string => !!x);
         const profileAvatarMap = new Map<string, string>();
         if (authIds.length > 0) {
