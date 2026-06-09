@@ -244,7 +244,7 @@ async function saveSellerFeedback(admin: any, userId: string, sellerId: string |
   return { success: true, feedback: data };
 }
 
-async function fetchInsights(accessToken: string, accountId: string, level: Level, since: string, until: string) {
+async function fetchInsights(accessToken: string, accountId: string, level: Level, since: string, until: string, daily = true) {
   const fields = [
     "date_start",
     "date_stop",
@@ -267,7 +267,10 @@ async function fetchInsights(accessToken: string, accountId: string, level: Leve
   first.searchParams.set("fields", fields);
   first.searchParams.set("level", level);
   first.searchParams.set("time_range", JSON.stringify({ since, until }));
-  first.searchParams.set("time_increment", "1");
+  // daily=true: uma linha por dia (histórico). daily=false: AGREGADO do período
+  // inteiro numa linha por campanha = o número que o Facebook exibe (atribuição
+  // deduplicada). Somar as linhas diárias NÃO bate com o agregado do Meta.
+  if (daily) first.searchParams.set("time_increment", "1");
   first.searchParams.set("limit", "500");
   nextUrl = first.toString();
 
@@ -611,6 +614,33 @@ Dados: ${JSON.stringify(report)}`;
   return { success: true, report_id: reportRow.report_id, report, jose_recommendations: joseRecommendations };
 }
 
+// Total AGREGADO do período direto da Meta (sem somar os dias) = os números que
+// o Facebook exibe. Usado pelo Painel ao Vivo pra mostrar verba + conversas
+// REAIS por período (Hoje/Ontem/7d/30d/Personalizado), batendo com o Meta Ads.
+async function metaPeriodTotal(admin: any, userId: string, body: any) {
+  const { accessToken, accountId } = await getMetaAccount(admin, userId, body.targetAccountId);
+  const { since, until } = body.period_start && body.period_end
+    ? { since: body.period_start, until: body.period_end }
+    : parseDatePreset((body.date_preset || "last_7d") as DatePreset);
+  // daily=false => agregado do período inteiro (uma linha por campanha).
+  const rows = await fetchInsights(accessToken, accountId, "campaign", since, until, false);
+  let spend = 0, conversations = 0, leadsMeta = 0, impressions = 0, clicks = 0;
+  for (const r of rows) {
+    spend += Number(r.spend || 0);
+    impressions += Number(r.impressions || 0);
+    clicks += Number(r.clicks || 0);
+    conversations += conversationCount(r.actions);
+    leadsMeta += metaLeadCount(r.actions);
+  }
+  return {
+    since, until,
+    spend: Number(spend.toFixed(2)),
+    impressions, clicks,
+    conversations_started: conversations,
+    leads_meta: leadsMeta,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -623,6 +653,7 @@ Deno.serve(async (req) => {
     if (action === "capture_origin") return json(await captureOrigin(admin, userId, body));
     if (action === "seller_feedback") return json(await saveSellerFeedback(admin, userId, sellerId, body));
     if (action === "sync_costs") return json(await syncCosts(admin, userId, body));
+    if (action === "meta_period_total") return json(await metaPeriodTotal(admin, userId, body));
     if (action === "send_to_jose") return json(await sendToJose(admin, userId, body));
     if (action === "report") {
       const { report, reportRow } = await buildReport(admin, userId, body, body.persist !== false);
