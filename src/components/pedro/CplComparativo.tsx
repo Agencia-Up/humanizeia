@@ -46,11 +46,13 @@ export function CplComparativo({ userId }: { userId?: string | null }) {
             .select('entity_level, spend, leads_meta, conversations_started, date')
             .eq('user_id', userId)
             .gte('date', ymd(weekStart)),
+          // "Real" = TODOS os leads do Pedro (ai_crm_leads) no período: atendidos
+          // pela IA, adicionados manual OU transferidos. É a MESMA conta do CRM
+          // Avançado do Pedro (sem filtrar assigned_to_id), pra os dois baterem.
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, arrived_at, created_at, assigned_to_id')
+            .select('id, arrived_at, created_at')
             .eq('user_id', userId)
-            .not('assigned_to_id', 'is', null)
             .or(`arrived_at.gte.${weekISO},and(arrived_at.is.null,created_at.gte.${weekISO})`),
         ]);
 

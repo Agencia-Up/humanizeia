@@ -639,6 +639,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           porOrigem.indicacao    += v.indicacao;
           porOrigem.redes_sociais += v.redes_sociais; // MELHORIA 1 (29/05/2026)
         }
+        // "Tráfego Pago" = TODOS os leads do Pedro (ai_crm_leads) no período:
+        // atendidos pela IA + adicionados manual + transferidos. Inclui os ainda
+        // NÃO atribuídos a vendedor. Assim bate com a contagem do CRM Avançado do
+        // Pedro (que conta todos) e com o card "Real". Antes contava só atribuídos.
+        porOrigem.trafico_pago = pedroTotal;
         // total_leads = soma dos v.total de todas as rows (vendedores reais
         // + virtual "Sem vendedor"). Sem duplo-contar: cada lead vai pra
         // exatamente uma row e incrementa apenas o v.total dela.
