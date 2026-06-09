@@ -487,7 +487,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   const mutedRef = useRef(muted); // sempre atual para callbacks de subscription
   const [transferringLeadId, setTransferringLeadId] = useState<string | null>(null);
   const [statusUpdatingLeadId, setStatusUpdatingLeadId] = useState<string | null>(null);
-  const [dateFilter, setDateFilter] = useState<DateFilter>('today');
+  // Abre em "Tudo" (igual ao CRM avançado) pra a contagem de leads bater — lead
+  // transferido/adicionado manualmente entrou em outro dia, mas é lead de tráfego
+  // pago e tem que contar. O usuário ainda pode filtrar por "Hoje" quando quiser.
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [customStart, setCustomStart] = useState<string>('');
   const [customEnd, setCustomEnd] = useState<string>('');
   const [exportingMarcos, setExportingMarcos] = useState(false);
@@ -508,7 +511,8 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       let leadsQ = (supabase as any).from('ai_crm_leads')
         .select('*')
         .eq('user_id', effectiveUserId)
-        .order('last_interaction_at', { ascending: false });
+        .order('last_interaction_at', { ascending: false })
+        .limit(2000); // teto alto: sem isso o PostgREST corta em 1000 e a contagem não bateria com o CRM avançado
       if (isSeller && sellerMemberIds.length > 0) {
         leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
       }
