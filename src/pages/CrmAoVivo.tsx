@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge, type PendingTransfer } from '@/hooks/usePendingTransfers';
 import { Button } from '@/components/ui/button';
+import { CplTrafegoPago } from '@/components/crm/CplTrafegoPago';
 import {
   Activity,
   ArrowLeft,
@@ -976,7 +977,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     [filteredLeads, pendingTransfersMap],
   );
 
-  const costPerLead = filteredLeads.length > 0 ? totalAdSpend / filteredLeads.length : 0;
+  // CPL = gasto ÷ leads de TRÁFEGO PAGO (quem chegou pelo WhatsApp), sem misturar
+  // com leads manuais de porta/marketplace/indicação/OLX/site. Mantém o KPI
+  // coerente com a seção "Custo por Lead — Tráfego Pago".
+  const MANUAL_ORIGEM_KPI = new Set(['porta', 'marketplace', 'indicacao', 'indicação', 'olx', 'site', 'importacao', 'importação', 'loja', 'presencial', 'feirao', 'feirão']);
+  const paidFilteredCount = filteredLeads.filter(l => !MANUAL_ORIGEM_KPI.has((l.origem || '').trim().toLowerCase())).length;
+  const costPerLead = paidFilteredCount > 0 ? totalAdSpend / paidFilteredCount : 0;
   const selectedLead = useMemo(
     () => selectedLeadId ? (leads.find(lead => lead.id === selectedLeadId) || null) : null,
     [leads, selectedLeadId],
@@ -1424,6 +1430,12 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </section>
           )}
 
+          {!isSeller && (
+            <div style={{ flexShrink: 0 }}>
+              <CplTrafegoPago userId={effectiveUserId} leads={leads} />
+            </div>
+          )}
+
           <main style={{ flexShrink: 0, minHeight: 0, display: 'grid' }}>
             <section style={{ display: 'grid', gridTemplateColumns: isPortrait ? 'repeat(2, minmax(0, 1fr))' : `repeat(${PEDRO_LIVE_COLUMNS.length}, minmax(0, 1fr))`, gap: 10, minHeight: 0, alignItems: 'stretch' }}>
               {PEDRO_LIVE_COLUMNS.map(col => {
@@ -1671,6 +1683,13 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
           </div>
         ))}
       </div>
+
+      {/* ── CUSTO POR LEAD — TRÁFEGO PAGO + REAL/NÃO REAL (só master) ── */}
+      {!isSeller && (
+        <div style={{ padding: '0 24px 16px' }}>
+          <CplTrafegoPago userId={effectiveUserId} leads={leads} />
+        </div>
+      )}
 
       {/* ── KANBAN + SIDEBAR ──────────────────────── */}
       <div style={{ padding: '0 24px 40px', display: 'flex', flexDirection: isPortrait ? 'column' : 'row', gap: 24 }}>
