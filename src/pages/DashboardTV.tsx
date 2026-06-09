@@ -469,10 +469,16 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .or(`and(arrived_at.gte.${todayStart},arrived_at.lte.${todayEnd}),and(arrived_at.is.null,created_at.gte.${todayStart},created_at.lte.${todayEnd})`);
         if (sellerMemberId) marcosQuery = marcosQuery.eq('assigned_to', sellerMemberId);
 
+        // IMPORTANTE: busca SÓ o nível 'campaign'. Os três níveis (campaign/adset/ad)
+        // carregam o MESMO total do anúncio, mas 'ad' tem milhares de linhas e o
+        // Supabase corta em 1000 por padrão — então somar "todos os níveis" trazia
+        // valor INCOMPLETO em períodos longos (30 dias). Campaign tem poucas linhas
+        // e o total completo (gasto + conversas + leads do Meta).
         let costsQuery = (supabase as any)
           .from('campaign_costs')
           .select('entity_level, spend, leads_meta, conversations_started, date')
           .eq('user_id', effectiveUserId)
+          .eq('entity_level', 'campaign')
           .gte('date', isoToDateKey(todayStart))
           .lte('date', isoToDateKey(todayEnd));
 
@@ -1054,27 +1060,32 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </div>
 
         {/* KPI 2: Custo por Lead · Tráfego Pago — Real (chegou no Pedro) vs Painel
-            do Meta, lado a lado. Segue o filtro de período do painel. */}
-        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
-          <DollarSign className="h-7 w-7 text-emerald-400 mb-1.5" />
-          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Custo por Lead · Tráfego Pago</p>
-          <div className="flex items-stretch justify-center gap-[clamp(0.5rem,2vmin,1.5rem)] w-full">
-            <div className="flex-1 text-center">
-              <p className="text-[9px] uppercase tracking-wide font-bold text-emerald-400/80 mb-1">Real · Pedro</p>
-              <p className="text-[clamp(1.1rem,3.6vmin,2.4rem)] portrait:text-[clamp(2rem,7vw,4.5rem)] font-black tabular-nums leading-none text-emerald-400">
+            do Meta, em duas colunas alinhadas. Segue o filtro de período. */}
+        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col justify-center">
+          <div className="flex items-center justify-center gap-2 mb-[clamp(0.5rem,2vmin,1.25rem)]">
+            <DollarSign className="h-5 w-5 text-emerald-400 shrink-0" />
+            <p className="text-[10px] uppercase tracking-widest text-blue-300/70 font-semibold">Custo por Lead · Tráfego Pago</p>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-slate-700/50">
+            {/* REAL */}
+            <div className="flex flex-col items-center text-center px-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400/90">Real</span>
+              <p className="text-[clamp(1.3rem,4vmin,2.6rem)] portrait:text-[clamp(2rem,7vw,4.5rem)] font-black tabular-nums leading-none text-emerald-400 mt-1.5">
                 {formatBRL(kpis?.custo_por_lead ?? 0)}
               </p>
+              <span className="text-[10px] text-slate-400 mt-2">{kpis?.por_origem?.trafico_pago ?? 0} leads</span>
             </div>
-            <div className="w-px self-stretch bg-slate-700/60" />
-            <div className="flex-1 text-center">
-              <p className="text-[9px] uppercase tracking-wide font-bold text-orange-400/80 mb-1">Painel do Meta</p>
-              <p className="text-[clamp(1.1rem,3.6vmin,2.4rem)] portrait:text-[clamp(2rem,7vw,4.5rem)] font-black tabular-nums leading-none text-orange-300">
+            {/* META */}
+            <div className="flex flex-col items-center text-center px-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400/90">Painel do Meta</span>
+              <p className="text-[clamp(1.3rem,4vmin,2.6rem)] portrait:text-[clamp(2rem,7vw,4.5rem)] font-black tabular-nums leading-none text-orange-300 mt-1.5">
                 {formatBRL(kpis?.custo_por_lead_meta ?? 0)}
               </p>
+              <span className="text-[10px] text-slate-400 mt-2">{kpis?.meta_total ?? 0} no Meta</span>
             </div>
           </div>
-          <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
-            {formatBRL(kpis?.total_spend ?? 0)} · {kpis?.por_origem?.trafico_pago ?? 0} no Pedro · {kpis?.meta_total ?? 0} no Meta
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-[clamp(0.5rem,2vmin,1.25rem)] text-center">
+            {formatBRL(kpis?.total_spend ?? 0)} investidos
           </p>
         </div>
 

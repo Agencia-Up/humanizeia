@@ -52,10 +52,14 @@ export function CplComparativo({
         const endKey = ymd(new Date(periodEnd));
 
         const [costRes, leadsRes] = await Promise.all([
+          // Só nível 'campaign': carrega o total completo do anúncio com poucas
+          // linhas. Buscar todos os níveis estourava o limite de 1000 linhas do
+          // Supabase em períodos longos e trazia gasto/conversas incompletos.
           (supabase as any)
             .from('campaign_costs')
-            .select('entity_level, spend, leads_meta, conversations_started, date')
+            .select('spend, leads_meta, conversations_started, date')
             .eq('user_id', userId)
+            .eq('entity_level', 'campaign')
             .gte('date', startKey)
             .lte('date', endKey),
           // "Real" = TODOS os leads do Pedro (ai_crm_leads) no período: atendidos
@@ -69,19 +73,16 @@ export function CplComparativo({
             .or(`and(arrived_at.gte.${periodStart},arrived_at.lte.${periodEnd}),and(arrived_at.is.null,created_at.gte.${periodStart},created_at.lte.${periodEnd})`),
         ]);
 
+        // Já vem só o nível 'campaign' (total completo do anúncio), então soma direto.
         const rows: any[] = Array.isArray(costRes?.data) ? costRes.data : [];
-        // Escolhe o nível mais agregado disponível pra não somar duplicado.
-        const level = rows.some(r => r.entity_level === 'campaign') ? 'campaign'
-          : rows.some(r => r.entity_level === 'adset') ? 'adset' : 'ad';
-        const lvl = rows.filter(r => r.entity_level === level);
         const metaOf = (r: any) => {
           // META = CONVERSAS iniciadas (o que o usuário escolheu = clique). Prefere
           // conversations_started; só cai pro leads_meta se NÃO houver conversa.
           const conv = Number(r.conversations_started) || 0;
           return conv > 0 ? conv : (Number(r.leads_meta) || 0);
         };
-        const totalSpend = lvl.reduce((a, r) => a + (Number(r.spend) || 0), 0);
-        const totalMeta = lvl.reduce((a, r) => a + metaOf(r), 0);
+        const totalSpend = rows.reduce((a, r) => a + (Number(r.spend) || 0), 0);
+        const totalMeta = rows.reduce((a, r) => a + metaOf(r), 0);
 
         const ls: any[] = Array.isArray(leadsRes?.data) ? leadsRes.data : [];
 
