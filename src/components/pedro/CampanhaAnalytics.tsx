@@ -12,12 +12,16 @@
 //
 // Fonte de dados (busca própria, escopada no master):
 //   - ai_crm_leads (leads do Pedro): id, remote_jid, origem, origem_outros,
-//     status_crm, created_at
+//     status_crm, created_at + atribuição de tráfego gravada no próprio lead
+//     (campaign_name, ad_name, meta_headline, ctwa_clid, source_id, meta_lead_id)
 //   - wa_contacts: phone + utm_source/utm_campaign/utm_medium/utm_content
 //     (preenchido pelo wa-inbox-webhook em anúncios Click-to-WhatsApp)
 //   - Join lead↔UTM é feito pelo telefone (remote_jid ↔ phone), client-side.
 //
-// Leads sem UTM (orgânico/manual) caem no agrupamento por `origem`.
+// Prioridade de atribuição (resolveAttribution): campanha no lead (captura CTWA
+// do Pedro) → UTM do contato → origem cadastrada. Assim, quando a captura grava
+// a campanha no lead, o painel já agrupa por campanha sem depender do UTM.
+// Leads sem nenhum sinal de tráfego (orgânico/manual) caem no grupo por `origem`.
 // ============================================================================
 
 import { useEffect, useMemo, useState } from 'react';
@@ -37,6 +41,15 @@ interface RawLead {
   origem_outros: string | null;
   status_crm: string | null;
   created_at: string;
+  // Atribuição de tráfego gravada no PRÓPRIO lead (captura CTWA/anúncio do Pedro).
+  // Quando presentes, têm prioridade sobre o UTM do contato (wa_contacts).
+  campaign_name: string | null;
+  ad_name: string | null;
+  meta_headline: string | null;
+  ctwa_clid: string | null;
+  source_id: string | null;
+  meta_lead_id: string | null;
+  entry_channel: string | null;
 }
 interface UtmRecord {
   utm_source: string | null;
@@ -96,6 +109,40 @@ function origemLabel(origem: string | null, origemOutros: string | null): string
   return 'Sem origem';
 }
 
+// ─── Atribuição de tráfego (prioridade: lead → UTM → origem) ─────────────────
+// Decide a qual "bucket" o lead pertence, priorizando a campanha gravada no
+// PRÓPRIO lead (captura CTWA/anúncio do Pedro). Assim, no momento em que a
+// captura escreve campaign_name/ctwa_clid no lead, o painel já agrupa por
+// campanha — sem depender do UTM em wa_contacts. Cai pro UTM do contato e, por
+// fim, pra origem cadastrada (orgânico/manual).
+interface Attribution {
+  kind: 'campanha' | 'utm' | 'origem';
+  key: string;
+  label: string;
+  sub: string;
+}
+function resolveAttribution(lead: RawLead, utm: UtmRecord | null): Attribution {
+  // 1) Atribuição direto no lead (anúncio Click-to-WhatsApp capturado pelo Pedro)
+  const camp = (lead.campaign_name || '').trim();
+  const adn = (lead.ad_name || '').trim();
+  const headline = (lead.meta_headline || '').trim();
+  const hasLeadAd = !!(camp || adn || headline || lead.ctwa_clid || lead.source_id || lead.meta_lead_id);
+  if (hasLeadAd) {
+    const label = camp || headline || adn || 'Anúncio (sem nome de campanha)';
+    const sub = adn && adn !== label ? `Tráfego Pago · ${adn}` : 'Tráfego Pago';
+    return { kind: 'campanha', key: `ad|${label.toLowerCase()}`, label, sub };
+  }
+  // 2) UTM do contato (preenchido em anúncios Click-to-WhatsApp via wa_contacts)
+  if (utm && (utm.utm_campaign || utm.utm_source)) {
+    const c = utm.utm_campaign || '(sem nome de campanha)';
+    const src = utm.utm_source || '—';
+    return { kind: 'utm', key: `utm|${src}|${c}`, label: c, sub: `UTM · ${src}` };
+  }
+  // 3) Origem cadastrada (orgânico / manual / porta)
+  const o = origemLabel(lead.origem, lead.origem_outros);
+  return { kind: 'origem', key: `origem|${o}`, label: o, sub: 'Origem' };
+}
+
 // ─── Telefone (normalização + chaves de match) ──────────────────────────────
 function digits(s: string | null | undefined): string {
   return (s || '').replace(/\D/g, '');
@@ -128,7 +175,7 @@ interface GroupRow {
   key: string;
   label: string;
   sub: string;
-  isUtm: boolean;
+  kind: 'campanha' | 'utm' | 'origem';
   total: number;
   qualificado: number;
   pouco_qualificado: number;
@@ -155,7 +202,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
         const [leadsRes, contactsRes] = await Promise.all([
           (supabase as any)
             .from('ai_crm_leads')
-            .select('id, remote_jid, origem, origem_outros, status_crm, created_at')
+            .select('id, remote_jid, origem, origem_outros, status_crm, created_at, campaign_name, ad_name, meta_headline, ctwa_clid, source_id, meta_lead_id, entry_channel')
             .eq('user_id', masterUserId)
             .order('created_at', { ascending: false })
             .limit(5000),
@@ -232,26 +279,12 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
 
     for (const lead of filtered) {
       const utm = utmFor(lead.remote_jid);
-      let key: string, label: string, sub: string, isUtm: boolean;
-      if (utm && (utm.utm_campaign || utm.utm_source)) {
-        const camp = utm.utm_campaign || '(sem nome de campanha)';
-        const src = utm.utm_source || '—';
-        key = `utm|${src}|${camp}`;
-        label = camp;
-        sub = `UTM · ${src}`;
-        isUtm = true;
-        comUtm++;
-      } else {
-        const o = origemLabel(lead.origem, lead.origem_outros);
-        key = `origem|${o}`;
-        label = o;
-        sub = 'Origem';
-        isUtm = false;
-      }
+      const { kind, key, label, sub } = resolveAttribution(lead, utm);
+      if (kind !== 'origem') comUtm++; // leads com atribuição de tráfego rastreável
 
       let row = groups.get(key);
       if (!row) {
-        row = { key, label, sub, isUtm, total: 0, qualificado: 0, pouco_qualificado: 0, inativo: 0, outros: 0 };
+        row = { key, label, sub, kind, total: 0, qualificado: 0, pouco_qualificado: 0, inativo: 0, outros: 0 };
         groups.set(key, row);
       }
       row.total++;
@@ -308,7 +341,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
       const classif = r.qualificado + r.pouco_qualificado + r.inativo;
       const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
       lines.push(
-        [r.label, r.isUtm ? 'UTM' : 'Origem', r.sub, r.total, r.qualificado,
+        [r.label, r.kind === 'origem' ? 'Origem' : r.kind === 'utm' ? 'UTM' : 'Anúncio', r.sub, r.total, r.qualificado,
          r.pouco_qualificado, r.inativo, r.outros, pct].map(cell).join(sep),
       );
     }
@@ -337,7 +370,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
     const rows = data.rows.map(r => {
       const classif = r.qualificado + r.pouco_qualificado + r.inativo;
       const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
-      return [r.label, r.isUtm ? 'UTM' : 'Origem', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct];
+      return [r.label, r.kind === 'origem' ? 'Origem' : r.kind === 'utm' ? 'UTM' : 'Anúncio', r.sub, r.total, r.qualificado, r.pouco_qualificado, r.inativo, r.outros, pct];
     });
     const totClassif = data.totQ + data.totP + data.totI;
     const totPct = totClassif > 0 ? `${Math.round((data.totQ / totClassif) * 100)}%` : '—';
@@ -361,7 +394,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
       rows,
       totalRow: ['TOTAL', '', '', data.totalLeads, data.totQ, data.totP, data.totI, data.totO, totPct],
       note:
-        `${data.comUtm} de ${data.totalLeads} leads no período vieram com UTM rastreável (anúncios Click-to-WhatsApp); ` +
+        `${data.comUtm} de ${data.totalLeads} leads no período vieram de campanha de tráfego rastreável (anúncio Click-to-WhatsApp / UTM); ` +
         `os demais são agrupados pela origem cadastrada. A qualificação (Qualificado / Pouco qualificado / Inativo) ` +
         `é feita automaticamente pela IA. Leads "em andamento" (novo / negociação) não entram no % de qualificação.`,
     });
@@ -434,8 +467,8 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <KpiCard icon={Users} label="Leads no período" value={data.totalLeads} color="text-blue-400" />
+          <KpiCard icon={TrendingUp} label="Leads de tráfego pago" value={data.comUtm} color="text-orange-400" />
           <KpiCard icon={Award} label="% Qualificados" value={`${data.pctQualificado}%`} color="text-emerald-400" />
-          <KpiCard icon={TrendingUp} label="Inativos (não engajaram)" value={data.totI} color="text-slate-400" />
           <KpiCard icon={Target} label="Top campanha (qualificados)" value={data.topRow ? data.topRow.label : '—'} color="text-orange-400" small />
         </div>
 
@@ -514,9 +547,11 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <span className={`text-[8px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
-                                r.isUtm ? 'bg-orange-500/15 text-orange-400' : 'bg-blue-500/15 text-blue-400'
+                                r.kind === 'campanha' ? 'bg-emerald-500/15 text-emerald-400'
+                                  : r.kind === 'utm' ? 'bg-orange-500/15 text-orange-400'
+                                  : 'bg-blue-500/15 text-blue-400'
                               }`}>
-                                {r.isUtm ? 'UTM' : 'ORIGEM'}
+                                {r.kind === 'campanha' ? 'ANÚNCIO' : r.kind === 'utm' ? 'UTM' : 'ORIGEM'}
                               </span>
                               <div className="min-w-0">
                                 <p className="text-foreground truncate font-medium">{r.label}</p>
@@ -545,8 +580,8 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
             <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-muted/20 border border-border/30 rounded-lg px-3 py-2">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-400" />
               <span>
-                <strong>{data.comUtm}</strong> de {data.totalLeads} leads no período vieram com UTM rastreável
-                (anúncios Click-to-WhatsApp). Os demais são agrupados pela <strong>origem</strong> cadastrada.
+                <strong>{data.comUtm}</strong> de {data.totalLeads} leads no período vieram de <strong>campanha de tráfego rastreável</strong>
+                {' '}(anúncio Click-to-WhatsApp / UTM). Os demais são agrupados pela <strong>origem</strong> cadastrada.
                 {data.totO > 0 && <> {data.totO} lead(s) ainda em andamento (novo / negociação) não entram no % de qualificação.</>}
                 {' '}A qualificação (Qualificado / Pouco qualificado / Inativo) é feita automaticamente pela IA.
               </span>
