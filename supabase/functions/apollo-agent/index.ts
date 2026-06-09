@@ -203,6 +203,12 @@ Deno.serve(async (req) => {
       return await handleGetCronConfig(admin, user.id, corsHeaders);
     }
 
+    // ── Enviar relatório agora (teste) ──
+    if (bodyAction === "send_report_now") {
+      const result = await sendDailyReport(admin, user.id, true);
+      return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── Get ad set drill-down ──
     if (bodyAction === "get_adsets") {
       return await handleGetAdsets(admin, user.id, targetAccountId, campaignId, datePreset, corsHeaders);
@@ -484,7 +490,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Daily WhatsApp report (resumo de campanhas + ações) ──
-    sendDailyReport(admin, user.id, aiResult, enriched, executionLog, currencySymbol).catch(() => { });
+    sendDailyReport(admin, user.id).catch(() => { });
 
     return new Response(JSON.stringify({
       status: "analyzed",
@@ -1992,7 +1998,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
   const {
     run_hour, run_minute, timezone, date_preset, auto_execute,
     send_whatsapp_on_critical, send_daily_report, whatsapp_report_number,
-    is_enabled, active_segment_slug,
+    is_enabled, active_segment_slug, report_sender_instance_id,
   } = body;
 
   // Compute next_run_at
@@ -2014,6 +2020,7 @@ async function handleSaveCronConfig(admin: any, userId: string, body: any, corsH
       send_daily_report: send_daily_report ?? true,
       whatsapp_report_number: whatsapp_report_number || null,
       active_segment_slug: active_segment_slug || null,
+      report_sender_instance_id: report_sender_instance_id || null,
       next_run_at: nextRun.toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
@@ -2142,152 +2149,110 @@ async function handleGetAds(admin: any, userId: string, targetAccountId: string,
 
 // ── Daily WhatsApp Report ─────────────────────────────────────────────────────
 
-async function sendDailyReport(
-  admin: any, userId: string, aiResult: any, enriched: any[],
-  executionLog: any[], currencySymbol: string
-) {
-  // Check cron config for daily report settings
+// Relatório diário do José em linguagem simples (pra pessoa leiga). Auto-suficiente:
+// busca as métricas de HOJE direto da Meta, monta a mensagem e envia pela instância
+// escolhida (com fallback). `force` ignora o toggle send_daily_report (usado no teste).
+async function sendDailyReport(admin: any, userId: string, force = false): Promise<{ sent: boolean; reason?: string }> {
+ try {
   const { data: cronCfg } = await admin
     .from("apollo_cron_config")
-    .select("send_daily_report, whatsapp_report_number")
+    .select("send_daily_report, whatsapp_report_number, report_sender_instance_id, account_id")
     .eq("user_id", userId)
     .single();
 
-  if (!cronCfg?.send_daily_report || !cronCfg?.whatsapp_report_number) return;
+  if (!force && !cronCfg?.send_daily_report) return { sent: false, reason: "relatorio_desligado" };
+  if (!cronCfg?.whatsapp_report_number) return { sent: false, reason: "sem_numero_destino" };
 
-  const phone = cronCfg.whatsapp_report_number.replace(/\D/g, '');
-  if (phone.length < 10) return;
-
-  // Format phone to international (55 + DDD + number)
+  const phone = String(cronCfg.whatsapp_report_number).replace(/\D/g, '');
+  if (phone.length < 10) return { sent: false, reason: "numero_destino_invalido" };
   const intlPhone = phone.startsWith('55') ? phone : `55${phone}`;
 
-  // Busca instância WhatsApp ativa (wa_instances = UazAPI)
-  const { data: waCfg } = await admin
-    .from("wa_instances")
-    .select("api_url, instance_name, api_key_encrypted")
-    .eq("user_id", userId)
-    .eq("status", "connected")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+  // ── Conta Meta (token + nome) ──
+  let accQ = admin.from("ad_accounts")
+    .select("account_id, account_name, currency, access_token_encrypted")
+    .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+  if (cronCfg.account_id) accQ = accQ.eq("account_id", String(cronCfg.account_id).replace(/^act_/, ""));
+  const { data: acc } = await accQ.order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  if (!acc?.access_token_encrypted || !acc?.account_id) return { sent: false, reason: "sem_conta_meta" };
+  const sym = acc.currency === "USD" ? "US$" : "R$";
 
-  if (!waCfg?.api_url) return;
+  // ── Métricas de HOJE (nível conta) ──
+  const insUrl = new URL(`${META_GRAPH_URL}/act_${String(acc.account_id).replace(/^act_/, "")}/insights`);
+  insUrl.searchParams.set("access_token", acc.access_token_encrypted);
+  insUrl.searchParams.set("date_preset", "today");
+  insUrl.searchParams.set("fields", "spend,reach,clicks,impressions,actions,cost_per_action_type");
+  const insRes = await fetch(insUrl.toString());
+  const insData = await insRes.json();
+  const row = (insData?.data && insData.data[0]) || {};
+  const spend = Number(row.spend || 0);
+  const reach = Number(row.reach || 0);
+  const clicks = Number(row.clicks || 0);
+  const actions: any[] = row.actions || [];
+  const costs: any[] = row.cost_per_action_type || [];
+  const MSG = "onsite_conversion.messaging_conversation_started_7d";
+  const conv = Number((actions.find((a) => a.action_type === MSG) || {}).value || 0);
+  const cprRaw = costs.find((a) => a.action_type === MSG);
+  const costPerConv = cprRaw ? Number(cprRaw.value) : (conv > 0 ? spend / conv : 0);
+  const cpc = clicks > 0 ? spend / clicks : 0;
 
-  // Build report
-  const score = aiResult.health_score ?? '??';
-  const totalSpend = enriched.reduce((s: number, c: any) => s + c.spend, 0);
-  const totalConv = enriched.reduce((s: number, c: any) => s + c.conversions, 0);
-  const activeCamps = enriched.filter((c: any) => c.effective_status === 'ACTIVE');
-  const healthyCamps = activeCamps.filter((c: any) => c.health_score >= 70);
-  const criticalCamps = activeCamps.filter((c: any) => c.health_score < 45);
-
-  const scoreEmoji = score >= 70 ? '🟢' : score >= 45 ? '🟡' : '🔴';
-  const actions = aiResult.actions || [];
-  const criticalActions = actions.filter((a: any) => a.priority === 'critical');
-  const highActions = actions.filter((a: any) => a.priority === 'high');
+  const money = (v: number) => `${sym} ${v.toFixed(2).replace(".", ",")}`;
+  const int = (v: number) => Math.round(v).toLocaleString("pt-BR");
+  const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const resumo = conv > 0
+    ? `Hoje você investiu ${money(spend)} e trouxe ${conv} ${conv === 1 ? "contato novo" : "contatos novos"} pelo WhatsApp.`
+    : `Hoje você investiu ${money(spend)}. Ainda sem contato novo no WhatsApp (costuma entrar ao longo do dia).`;
 
   const lines: string[] = [
-    `📊 *JOSÉ — Relatório Diário*`,
-    `━━━━━━━━━━━━━━━━━━━━━`,
+    `📊 *José — Relatório de hoje* (${hoje})`,
+    acc.account_name ? `🏢 ${acc.account_name}` : "",
     ``,
-    `${scoreEmoji} *Health Score Geral: ${score}/100*`,
+    `💰 *Investido hoje:* ${money(spend)}`,
+    `💬 *Contatos no WhatsApp:* ${int(conv)}`,
+    `🎯 *Custo por contato:* ${conv > 0 ? money(costPerConv) : "—"}`,
+    `👁️ *Pessoas alcançadas:* ${int(reach)}`,
+    `🖱️ *Cliques no anúncio:* ${int(clicks)}${clicks > 0 ? ` (${money(cpc)} cada)` : ""}`,
     ``,
-    `💰 *Investimento:* ${currencySymbol} ${totalSpend.toFixed(2)}`,
-    `🎯 *Conversões:* ${totalConv}`,
-    `📢 *Campanhas ativas:* ${activeCamps.length}`,
-    `✅ *Saudáveis:* ${healthyCamps.length} | ⚠️ *Críticas:* ${criticalCamps.length}`,
+    `✅ ${resumo}`,
     ``,
+    `🤖 _Gerado automaticamente pelo José — LogosIA_`,
+  ].filter((l) => l !== "");
+
+  // ── Instância que ENVIA: a escolhida pelo usuário; senão a primeira conectada ──
+  let inst: any = null;
+  if (cronCfg.report_sender_instance_id) {
+    const { data } = await admin.from("wa_instances")
+      .select("api_url, instance_name, api_key_encrypted")
+      .eq("id", cronCfg.report_sender_instance_id).eq("user_id", userId).maybeSingle();
+    inst = data;
+  }
+  if (!inst?.api_url) {
+    const { data } = await admin.from("wa_instances")
+      .select("api_url, instance_name, api_key_encrypted")
+      .eq("user_id", userId).eq("status", "connected")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    inst = data;
+  }
+  if (!inst?.api_url || !inst?.instance_name) return { sent: false, reason: "sem_instancia_envio" };
+
+  const apiUrl = String(inst.api_url).replace(/\/+$/, "");
+  const headers = { "Content-Type": "application/json", token: inst.api_key_encrypted || "", apikey: inst.api_key_encrypted || "" };
+  const text = lines.join("\n");
+  // Uazapi (/send/text) com fallback Evolution (/message/sendText/{instance}).
+  const attempts = [
+    { url: `${apiUrl}/send/text`, body: { number: intlPhone, text } },
+    { url: `${apiUrl}/message/sendText/${inst.instance_name}`, body: { number: intlPhone, text } },
   ];
-
-  // Top 3 campanhas por score
-  const top3 = [...activeCamps].sort((a, b) => b.health_score - a.health_score).slice(0, 3);
-  if (top3.length > 0) {
-    lines.push(`📈 *Top Campanhas:*`);
-    top3.forEach((c: any, i: number) => {
-      const emoji = c.health_score >= 70 ? '🟢' : c.health_score >= 45 ? '🟡' : '🔴';
-      lines.push(`${i + 1}. ${emoji} ${c.name}`);
-      lines.push(`   Score: ${c.health_score} | ROAS: ${c.roas > 0 ? c.roas.toFixed(1) + 'x' : '-'} | CTR: ${c.ctr.toFixed(1)}%`);
-    });
-    lines.push(``);
+  for (const a of attempts) {
+    try {
+      const r = await fetch(a.url, { method: "POST", headers, body: JSON.stringify(a.body) });
+      if (r.ok) return { sent: true };
+    } catch { /* tenta o próximo endpoint */ }
   }
-
-  // Actions summary
-  if (actions.length > 0) {
-    lines.push(`⚡ *Ações Recomendadas (${actions.length}):*`);
-    if (criticalActions.length > 0) {
-      lines.push(`🔴 ${criticalActions.length} crítica(s)`);
-      criticalActions.slice(0, 2).forEach((a: any) => {
-        lines.push(`   • ${a.campaign_name}: ${a.reason?.slice(0, 80)}`);
-      });
-    }
-    if (highActions.length > 0) {
-      lines.push(`🟠 ${highActions.length} alta(s) prioridade`);
-    }
-    lines.push(``);
-  }
-
-  // Executed actions
-  if (executionLog.length > 0) {
-    const actionLabels: Record<string, string> = {
-      pause: '⏸️ Pausou', activate: '▶️ Ativou',
-      increase_budget: '📈 Aumentou verba', decrease_budget: '📉 Reduziu verba',
-      pause_adset: '⏸️ Pausou Ad Set',
-    };
-    lines.push(`🤖 *Ações Executadas Automaticamente (${executionLog.length}):*`);
-    executionLog.slice(0, 3).forEach((e: any) => {
-      const label = actionLabels[e.action_type] || e.action_type;
-      lines.push(`   ${label}: ${e.campaign_name || e.campaign_id}`);
-    });
-    lines.push(``);
-  }
-
-  // Summary
-  if (aiResult.summary) {
-    lines.push(`💡 *Resumo IA:*`);
-    lines.push(aiResult.summary.slice(0, 200));
-    lines.push(``);
-  }
-
-  // PME Lead stats
-  try {
-    const now = new Date();
-    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    const { data: monthLeads } = await admin.from("leads").select("status, sale_value").eq("user_id", userId).gte("created_at", firstOfMonth);
-
-    if (monthLeads && monthLeads.length > 0) {
-      const sales = monthLeads.filter((l: any) => l.status === 'venda_realizada');
-      const staleCount = monthLeads.filter((l: any) => ['novo', 'em_atendimento'].includes(l.status)).length;
-      const totalSales = sales.reduce((s: number, l: any) => s + (Number(l.sale_value) || 0), 0);
-
-      lines.push(`👥 *Leads do Mês:*`);
-      lines.push(`   Total: ${monthLeads.length} | Vendas: ${sales.length} | Faturamento: R$ ${totalSales.toFixed(2)}`);
-      if (staleCount > 0) {
-        lines.push(`   ⚠️ ${staleCount} leads aguardando atendimento`);
-      }
-      lines.push(``);
-    }
-  } catch { /* table may not exist yet */ }
-
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🤖 _Gerado por JOSÉ Governador — LogosIA_`);
-
-  try {
-    const apiUrl = (waCfg.api_url as string).replace(/\/+$/, "");
-    await fetch(`${apiUrl}/message/sendText/${waCfg.instance_name}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": waCfg.api_key_encrypted || "",
-      },
-      body: JSON.stringify({
-        number: intlPhone,
-        options: { delay: 1200, presence: "composing" },
-        textMessage: { text: lines.join("\n") },
-      }),
-    });
-  } catch (err) {
-    console.error("[apollo-agent] WhatsApp daily report error:", err);
-  }
+  return { sent: false, reason: "falha_envio_whatsapp" };
+ } catch (err) {
+  console.error("[apollo-agent] sendDailyReport erro:", err);
+  return { sent: false, reason: "erro_inesperado" };
+ }
 }
 
 // ── PME Module: Lead Stats ────────────────────────────────────────────────────

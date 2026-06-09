@@ -127,6 +127,7 @@ export interface ApolloCronConfig {
   whatsapp_report_number: string | null;
   send_daily_report: boolean;
   active_segment_slug: string | null;
+  report_sender_instance_id?: string | null;
   last_run_at?: string | null;
   next_run_at?: string | null;
 }
@@ -415,5 +416,34 @@ export function useApolloCronConfig() {
     },
   });
 
-  return { config, isLoading, saveConfig };
+  // Envia o relatório AGORA (teste), ignorando o toggle diário.
+  const sendReportNow = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
+        body: { action: 'send_report_now' },
+      });
+      if (error) throw error;
+      return data as { sent: boolean; reason?: string };
+    },
+    onSuccess: (data) => {
+      const reasons: Record<string, string> = {
+        sem_numero_destino: 'Falta o número do WhatsApp que vai receber.',
+        numero_destino_invalido: 'O número que recebe está incompleto (DDD + 9 dígitos).',
+        sem_conta_meta: 'Nenhuma conta Meta Ads conectada/ativa.',
+        sem_instancia_envio: 'Nenhum número conectado para enviar. Selecione/conecte um número.',
+        falha_envio_whatsapp: 'O WhatsApp recusou o envio. Verifique se o número que envia está conectado.',
+        erro_inesperado: 'Erro inesperado ao montar o relatório.',
+      };
+      if (data?.sent) {
+        toast({ title: '✅ Relatório enviado!', description: 'Confira o WhatsApp do número que recebe.' });
+      } else {
+        toast({ title: 'Não enviou', description: reasons[data?.reason || ''] || data?.reason || 'Tente novamente.', variant: 'destructive' });
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: 'Erro ao enviar relatório', description: err.message, variant: 'destructive' });
+    },
+  });
+
+  return { config, isLoading, saveConfig, sendReportNow };
 }

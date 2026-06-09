@@ -512,13 +512,46 @@ function ActionCard({ action, onExecute, onDismiss, isExecuting }: {
 // ── CronSettings ──────────────────────────────────────────────────────────────
 
 function CronSettings() {
-  const { config, isLoading, saveConfig } = useApolloCronConfig();
+  const { config, isLoading, saveConfig, sendReportNow } = useApolloCronConfig();
   const [hour, setHour] = useState(config?.run_hour ?? 8);
+  const [minute, setMinute] = useState(config?.run_minute ?? 0);
   const [autoExec, setAutoExec] = useState(config?.auto_execute ?? false);
   const [sendWa, setSendWa] = useState(config?.send_whatsapp_on_critical ?? true);
   const [sendDailyReport, setSendDailyReport] = useState(config?.send_daily_report ?? true);
   const [waNumber, setWaNumber] = useState(config?.whatsapp_report_number ?? '');
   const [enabled, setEnabled] = useState(config?.is_enabled ?? false);
+  const [senderInstanceId, setSenderInstanceId] = useState(config?.report_sender_instance_id ?? '');
+  const [instances, setInstances] = useState<{ id: string; label: string }[]>([]);
+
+  // Sincroniza os campos quando a config chega do servidor (carrega async).
+  useEffect(() => {
+    if (!config) return;
+    setHour(config.run_hour ?? 8);
+    setMinute(config.run_minute ?? 0);
+    setAutoExec(config.auto_execute ?? false);
+    setSendWa(config.send_whatsapp_on_critical ?? true);
+    setSendDailyReport(config.send_daily_report ?? true);
+    setWaNumber(config.whatsapp_report_number ?? '');
+    setEnabled(config.is_enabled ?? false);
+    setSenderInstanceId(config.report_sender_instance_id ?? '');
+  }, [config]);
+
+  // Lista os números conectados que podem ENVIAR o relatório.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('wa_instances')
+        .select('id, instance_name, friendly_name, phone_number, status')
+        .eq('status', 'connected');
+      if (cancelled) return;
+      setInstances((data || []).map((i: any) => ({
+        id: i.id,
+        label: i.friendly_name || i.phone_number || i.instance_name || 'Número conectado',
+      })));
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const formatPhone = (value: string) => {
     const digits = value.replace(/\D/g, '');
@@ -539,11 +572,12 @@ function CronSettings() {
     saveConfig.mutate({
       is_enabled: enabled,
       run_hour: hour,
-      run_minute: 0,
+      run_minute: minute,
       auto_execute: autoExec,
       send_whatsapp_on_critical: sendWa,
       send_daily_report: sendDailyReport,
       whatsapp_report_number: waNumber || null,
+      report_sender_instance_id: senderInstanceId || null,
     });
   };
 
@@ -566,15 +600,21 @@ function CronSettings() {
 
         {enabled && (
           <>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <Label className="text-sm w-24">Horário</Label>
               <Select value={String(hour)} onValueChange={(v) => setHour(Number(v))}>
-                <SelectTrigger className="w-32 h-8 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="w-20 h-8 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Array.from({ length: 24 }, (_, i) => (
-                    <SelectItem key={i} value={String(i)}>{String(i).padStart(2, '0')}:00</SelectItem>
+                    <SelectItem key={i} value={String(i)}>{String(i).padStart(2, '0')}h</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={String(minute)} onValueChange={(v) => setMinute(Number(v))}>
+                <SelectTrigger className="w-20 h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[0, 15, 30, 45].map((m) => (
+                    <SelectItem key={m} value={String(m)}>{String(m).padStart(2, '0')}min</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -612,13 +652,36 @@ function CronSettings() {
                 </p>
               </div>
 
+              {/* Número que ENVIA (instância conectada) */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Número que envia (sua instância conectada)</Label>
+                <Select value={senderInstanceId} onValueChange={setSenderInstanceId}>
+                  <SelectTrigger className="h-9 text-sm bg-background/50">
+                    <SelectValue placeholder={instances.length ? 'Selecione o número que envia' : 'Nenhum número conectado'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {instances.map((i) => (
+                      <SelectItem key={i.id} value={i.id}>{i.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">Se não escolher, o José usa o primeiro número conectado.</p>
+              </div>
+
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium">Relatório diário resumido</p>
-                  <p className="text-xs text-muted-foreground">Enviar resumo das campanhas, health score e ações tomadas</p>
+                  <p className="text-xs text-muted-foreground">Métricas de hoje em linguagem simples: investido, contatos, custo por contato, alcance e cliques</p>
                 </div>
                 <Switch checked={sendDailyReport} onCheckedChange={setSendDailyReport} />
               </div>
+
+              <Button variant="outline" size="sm" className="w-full gap-2"
+                onClick={() => sendReportNow.mutate()}
+                disabled={sendReportNow.isPending || waNumber.length < 10}>
+                {sendReportNow.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                Enviar agora (teste)
+              </Button>
 
               <div className="flex items-center justify-between">
                 <div>
