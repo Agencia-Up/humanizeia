@@ -1220,7 +1220,7 @@ function ZoomControl({
   const pct = Math.round(zoom * 100);
   const step = (d: number) => onZoom(Math.max(0.5, Math.min(2, +(zoom + d).toFixed(2))));
   return (
-    <div className="absolute top-2 right-2 z-50 flex items-center gap-2 rounded-full bg-slate-900/85 border border-slate-700 px-3 py-1.5 backdrop-blur shadow-xl opacity-35 hover:opacity-100 transition-opacity">
+    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 flex items-center gap-2 rounded-full bg-slate-900/85 border border-slate-700 px-3 py-1.5 backdrop-blur shadow-xl opacity-40 hover:opacity-100 transition-opacity">
       <button
         onClick={() => step(-0.05)}
         className="w-6 h-6 flex items-center justify-center rounded-full text-slate-200 hover:bg-slate-700 text-lg leading-none"
