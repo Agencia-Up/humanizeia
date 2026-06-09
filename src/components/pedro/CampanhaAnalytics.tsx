@@ -548,7 +548,7 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
                   <Bar dataKey="qualificado" name="Qualificado" stackId="a" fill="url(#gradQ)" />
                   <Bar dataKey="pouco_qualificado" name="Pouco qualificado" stackId="a" fill="url(#gradP)" />
                   <Bar dataKey="inativo" name="Inativo" stackId="a" fill="url(#gradI)" radius={[0, 6, 6, 0]}
-                    label={{ position: 'right', fontSize: 10, fill: 'hsl(var(--muted-foreground))', formatter: (_: any, __: any, { index }: any) => data.topVehicles[index]?.total }} />
+                    label={{ position: 'right', fontSize: 10, fill: 'hsl(var(--muted-foreground))', formatter: (_: any, __: any, ctx: any) => data.topVehicles[ctx?.index ?? -1]?.total }} />
                 </BarChart>
               </ResponsiveContainer>
               {/* Legenda qualificação */}
