@@ -826,6 +826,17 @@ export default function ApolloDashboard() {
     analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute });
   }, [analyze, accountId, datePreset, autoExecute]);
 
+  // Trocar o período é uma AÇÃO do usuário: além de mudar o filtro, re-analisa
+  // na hora (se já houver uma análise) pra os números baterem com o período
+  // escolhido — senão os cards continuariam mostrando o período anterior, que é
+  // justamente o que causava a impressão de "número errado" vs o Meta.
+  const handlePeriodChange = useCallback((v: ApolloDatePreset) => {
+    setDatePreset(v);
+    if (session && accountId) {
+      analyze({ targetAccountId: accountId, datePreset: v, auto_execute: false });
+    }
+  }, [session, accountId, analyze]);
+
   const handleDiagnose = useCallback(async () => {
     setIsDiagnosing(true);
     setDiagResult(null);
@@ -884,7 +895,7 @@ export default function ApolloDashboard() {
   }, [getAds, accountId, datePreset]);
 
   // Quando muda a conta ou o período, o cache de criativos fica obsoleto.
-  useEffect(() => { adsCacheRef.current = {}; }, [accountId, datePreset]);
+  useEffect(() => { adsCacheRef.current = {}; setAdsetCache({}); }, [accountId, datePreset]);
 
   const overallScore = session?.health_score ?? null;
   const overallHealthText = overallScore === null ? '' :
@@ -926,7 +937,7 @@ export default function ApolloDashboard() {
               </Select>
             )}
 
-            <Select value={datePreset} onValueChange={(v) => setDatePreset(v as ApolloDatePreset)}>
+            <Select value={datePreset} onValueChange={(v) => handlePeriodChange(v as ApolloDatePreset)}>
               <SelectTrigger className="w-40 h-9 text-sm">
                 <SelectValue />
               </SelectTrigger>
@@ -951,7 +962,8 @@ export default function ApolloDashboard() {
           </div>
           {session?.analyzed_at && (
             <p className="text-[11px] text-muted-foreground text-right">
-              Última análise: {new Date(session.analyzed_at).toLocaleString('pt-BR')}
+              Período dos números: <span className="font-semibold text-foreground">{DATE_PRESETS.find(p => p.value === (session.date_preset || datePreset))?.label || '—'}</span>
+              {' · '}Última análise: {new Date(session.analyzed_at).toLocaleString('pt-BR')}
             </p>
           )}
         </div>
