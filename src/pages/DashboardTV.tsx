@@ -27,6 +27,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
 import { Calendar, Clock, DollarSign, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram } from 'lucide-react';
+import { CplComparativo } from '@/components/pedro/CplComparativo';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -644,7 +645,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const totalSpend = costRows
           .filter((r: any) => r.entity_level === costLevel)
           .reduce((sum: number, r: any) => sum + (Number(r.spend) || 0), 0);
-        const custoPorLead = total > 0 ? totalSpend / total : 0;
+        // Custo por Lead = gasto ÷ leads de TRÁFEGO PAGO (não todos os leads do
+        // painel). Tráfego pago = leads do Pedro atribuídos (SDR + transferências
+        // manuais + leads adicionados no Pedro). Não mistura porta/marketplace/etc.
+        const custoPorLead = porOrigem.trafico_pago > 0 ? totalSpend / porOrigem.trafico_pago : 0;
 
         setLeadsNaoTransferidos(pedroNaoTransferidos);
         setKpis({
@@ -879,12 +883,12 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         {/* KPI 2: Qualidade Média (IA 50% + Feedback 30% + Notas 20%) */}
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <DollarSign className="h-7 w-7 text-emerald-400 mb-2" />
-          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Custo por Lead</p>
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Custo por Lead · Tráfego Pago</p>
           <p className="text-[clamp(1.4rem,4.2vmin,2.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none text-emerald-400">
             {formatBRL(kpis?.custo_por_lead ?? 0)}
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
-            {formatBRL(kpis?.total_spend ?? 0)} investidos
+            {formatBRL(kpis?.total_spend ?? 0)} investidos · {kpis?.por_origem?.trafico_pago ?? 0} leads
           </p>
         </div>
 
@@ -921,6 +925,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           </p>
         </div>
       </section>
+
+      {/* ───── Custo por Lead — Real vs Falso (Meta), só master ───── */}
+      {!sellerMemberId && <CplComparativo userId={effectiveUserId} />}
 
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">
