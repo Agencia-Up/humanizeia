@@ -119,6 +119,38 @@ export function useMetaConnection() {
     if (data?.token) setPendingToken(data.token);
   };
 
+  const consumeOAuthSession = async (sessionId: string) => {
+    setIsConnecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-oauth', {
+        body: {
+          action: 'consume_session',
+          session_id: sessionId,
+        },
+      });
+
+      if (error) throw error;
+      processResponse(data);
+
+      const count = (data?.ad_accounts || data?.accounts || []).length;
+      toast({
+        title: 'Autenticação concluída!',
+        description: `${count} conta(s), ${data?.pixels?.length || 0} pixel(s), ${data?.pages?.length || 0} página(s) encontrada(s).`,
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      toast({
+        title: 'Erro no OAuth da Meta',
+        description: err.message || 'Falha ao carregar as contas encontradas.',
+        variant: 'destructive',
+      });
+      return { success: false };
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const connectWithToken = async (accessToken: string, accountId?: string) => {
     setIsConnecting(true);
     try {
@@ -167,20 +199,18 @@ export function useMetaConnection() {
   const startOAuth = async () => {
     setIsConnecting(true);
     try {
-      const productionOrigin = 'https://humanizeia.lovable.app';
-      const redirectUri = `${productionOrigin}/settings?meta_callback=true`;
-      const { data, error } = await supabase.functions.invoke('meta-oauth', {
-        body: {
-          action: 'authorize',
-          redirect_uri: redirectUri,
-          state: crypto.randomUUID(),
-        },
-      });
+      if (!user?.id) throw new Error('Usuário não autenticado.');
 
-      if (error) throw error;
-      if (data?.url) {
-        window.location.href = data.url;
-      }
+      const origin = window.location.origin;
+      const loginUrl = new URL('/api/meta/login', origin);
+      loginUrl.searchParams.set('user_id', user.id);
+      // Volta pra MESMA página de onde o usuário clicou — é onde o
+      // MetaAdsSettingsTab está montado e consome a sessão OAuth (lê
+      // ?meta_oauth_session=). Antes ia fixo p/ /settings, onde esse
+      // componente não existe, então a sessão nunca era consumida e as
+      // contas não apareciam pra selecionar.
+      loginUrl.searchParams.set('return_to', `${origin}${window.location.pathname}`);
+      window.location.href = loginUrl.toString();
     } catch (err: any) {
       toast({
         title: 'Erro ao conectar',
@@ -194,7 +224,7 @@ export function useMetaConnection() {
   const handleCallback = async (code: string) => {
     setIsConnecting(true);
     try {
-      const productionOrigin = 'https://humanizeia.lovable.app';
+      const productionOrigin = 'https://logosiabrasil.com';
       const redirectUri = `${productionOrigin}/settings?meta_callback=true`;
       const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
@@ -297,6 +327,7 @@ export function useMetaConnection() {
     businesses,
     startOAuth,
     handleCallback,
+    consumeOAuthSession,
     selectAccount,
     selectConnectedAccount,
     disconnect,
