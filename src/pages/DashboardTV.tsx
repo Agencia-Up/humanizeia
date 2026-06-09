@@ -21,7 +21,7 @@
 // Layout inspirado em painel ICOM Motors — mas marca/cores customizáveis.
 // ============================================================================
 
-import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -284,10 +284,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  // Ref do "canvas" do painel (modo TV/tela cheia) — usado pra medir a altura
-  // real do conteúdo e calcular a escala que faz TUDO caber na tela.
+  // Ref do "canvas" do painel (modo TV/tela cheia).
   const contentRef = useRef<HTMLDivElement>(null);
-  const [contentH, setContentH] = useState(1080);
 
   // Trigger pra refresh manual (incrementa = força reload)
   const [reloadTrigger, setReloadTrigger] = useState(0);
@@ -315,20 +313,6 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     };
   }, []);
 
-  // Mede a altura REAL do conteúdo do painel (modo TV) sempre que algo muda —
-  // dados novos, vendedor a mais, mudança de tela. Com isso a escala se ajusta
-  // e o painel inteiro cabe na tela, sem corte, mesmo crescendo de tamanho.
-  useLayoutEffect(() => {
-    if (embedded) return;
-    const el = contentRef.current;
-    if (!el) return;
-    const measure = () => setContentH(el.scrollHeight || 1080);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, profileLoading, loading, kpis, liveTick]);
 
   // Persiste período escolhido
   useEffect(() => {
@@ -1112,8 +1096,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         )}
       </section>
 
-      <section className="flex-1 min-h-0 px-8 pb-20">
-        <div className="flex items-baseline justify-between mb-3">
+      <section className="flex-1 min-h-0 px-8 pb-16 flex flex-col">
+        <div className="shrink-0 flex items-baseline justify-between mb-3">
           <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 font-bold">Produção Individual dos Vendedores</h2>
           <p className="text-[10px] text-slate-500 italic">Total de Leads Trabalhados</p>
         </div>
@@ -1123,8 +1107,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             Nenhum vendedor ativo. Cadastre vendedores em Pedro SDR → Vendedores.
           </div>
         ) : (
-          <div className="grid grid-cols-5 portrait:grid-cols-2 gap-3">
-            {vendedores.slice(0, 10).map(v => (
+          // auto-fit: os cards esticam pra preencher a largura inteira (menos
+          // linhas em telas largas). flex-1 + overflow-y-auto: ocupam a altura
+          // que sobra e rolam só se houver vendedores demais.
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] portrait:grid-cols-2 gap-3 flex-1 min-h-0 overflow-y-auto content-start auto-rows-max">
+            {vendedores.slice(0, 12).map(v => (
               <VendedorCard key={v.id} v={v} secondary={branding.secondary_color} />
             ))}
           </div>
@@ -1156,22 +1143,17 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     );
   }
 
-  // TV / TELA CHEIA: renderiza o painel num "canvas" de largura fixa (1920 deitado
-  // / 1080 em pé, conforme a orientação da tela) e ESCALA pra caber 100% — largura
-  // E altura — centralizado. Mede a altura real do conteúdo (contentH), então
-  // NUNCA sobra nada pra fora: todo o painel aparece, em Full HD, 4K ou totem em pé.
-  // A folga de 3% protege contra overscan de TVs que cortam as bordas.
+  // TV / TELA CHEIA: renderiza o painel num "canvas" com o MESMO formato da tela
+  // (largura-base 1920 deitado / 1080 em pé; altura = largura × proporção da tela)
+  // e ESCALA pra PREENCHER 100% — sem borda preta sobrando. Como o canvas tem o
+  // mesmo formato da tela, a escala uniforme cobre tudo. O conteúdo preenche o
+  // canvas via flex (a área de vendedores estica) e a folga de 3% protege contra
+  // overscan de TVs que cortam as bordas.
   const portraitScreen = viewport.h > viewport.w;
   const baseW = portraitScreen ? 1080 : 1920;
-  const baseH = portraitScreen ? 1920 : 1080;
-  const margin = 0.97;
-  // Altura usada na escala = pelo menos a altura-base (pra preencher bem a tela
-  // via flex) e cresce se o conteúdo precisar de mais (aí escala pra baixo).
-  const effectiveH = Math.max(contentH, baseH);
-  const fitScale = Math.min(
-    (viewport.w * margin) / baseW,
-    (viewport.h * margin) / effectiveH,
-  );
+  const baseH = Math.round((baseW * viewport.h) / Math.max(viewport.w, 1));
+  const margin = 0.985;
+  const fitScale = (viewport.w * margin) / baseW;
   return (
     <div
       ref={containerRef}
@@ -1179,8 +1161,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     >
       <div
         ref={contentRef}
-        className="relative flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
-        style={{ width: `${baseW}px`, minHeight: `${baseH}px`, transform: `scale(${fitScale})`, transformOrigin: 'center center' }}
+        className="relative flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
+        style={{ width: `${baseW}px`, height: `${baseH}px`, transform: `scale(${fitScale})`, transformOrigin: 'center center' }}
       >
         {panelContent}
       </div>
@@ -1195,7 +1177,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
   const avatarColor = hashColor(v.id);
 
   return (
-    <div className="bg-slate-900/60 rounded-xl p-[clamp(0.4rem,1.5vmin,0.75rem)] border border-slate-800">
+    <div className="h-full flex flex-col bg-slate-900/60 rounded-xl p-[clamp(0.4rem,1.5vmin,0.75rem)] border border-slate-800">
       {/* Header: rank + nome */}
       <div className="flex items-center gap-2 mb-3">
         <span
@@ -1241,7 +1223,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
       </div>
 
       {/* Total */}
-      <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between">
+      <div className="mt-auto pt-2 border-t border-slate-800 flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Total</span>
         <span className="text-[clamp(1.1rem,2.6vmin,1.5rem)] font-black tabular-nums" style={{ color: secondary }}>{v.total}</span>
       </div>
