@@ -12,13 +12,29 @@ const corsHeaders = {
  * Finds users with is_enabled=true and next_run_at <= NOW(), then triggers apollo-agent for each.
  * Also triggers apollo-measure-outcomes daily at 06:00 UTC.
  */
+// Le a claim "role" de um JWT (service_role quando vem do pg_cron). Best-effort.
+function jwtRole(tok: string): string | null {
+  try {
+    const part = tok.split(".")[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "="));
+    return JSON.parse(json).role || null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  // Security: only allow service-role calls (from pg_cron or internal)
+  // Security: only allow service-role calls (from pg_cron or internal).
+  // Aceita tanto a env exata quanto qualquer JWT com role=service_role (o
+  // pg_cron usa o secret do vault, que pode diferir da env em formato).
   const authHeader = req.headers.get("Authorization") || "";
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const isServiceRole = authHeader.includes(serviceKey);
+  const token = authHeader.replace("Bearer ", "").trim();
+  const isServiceRole = (serviceKey && authHeader.includes(serviceKey)) || jwtRole(token) === "service_role";
 
   if (!isServiceRole) {
     return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
