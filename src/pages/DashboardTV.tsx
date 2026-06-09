@@ -350,6 +350,25 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedded, zoomMode, viewport, profileLoading, loading, kpis, liveTick]);
 
+  // Controle de zoom some sozinho: aparece quando o mouse mexe na tela e
+  // desaparece após 5s de mouse parado (pra não atrapalhar a visualização na TV).
+  const [controlsVisible, setControlsVisible] = useState(true);
+  useEffect(() => {
+    if (embedded) return;
+    let timer: number | undefined;
+    const show = () => {
+      setControlsVisible(true);
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setControlsVisible(false), 5000);
+    };
+    window.addEventListener('mousemove', show);
+    show(); // começa visível e já agenda o sumiço
+    return () => {
+      window.removeEventListener('mousemove', show);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [embedded]);
+
 
   // Persiste período escolhido
   useEffect(() => {
@@ -1204,6 +1223,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       <ZoomControl
         zoom={zoom}
         mode={zoomMode}
+        visible={controlsVisible}
         onZoom={(z) => { setZoom(z); setZoomMode('manual'); }}
         onAuto={() => setZoomMode('auto')}
       />
@@ -1215,17 +1235,22 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 // Fica por cima do painel, FORA da área escalada. Discreto (some um pouco quando
 // não está com o mouse em cima). Ajusta o zoom estilo navegador.
 function ZoomControl({
-  zoom, mode, onZoom, onAuto,
+  zoom, mode, onZoom, onAuto, visible,
 }: {
   zoom: number;
   mode: 'auto' | 'manual';
   onZoom: (z: number) => void;
   onAuto: () => void;
+  visible: boolean;
 }) {
   const pct = Math.round(zoom * 100);
   const step = (d: number) => onZoom(Math.max(0.5, Math.min(2, +(zoom + d).toFixed(2))));
   return (
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 flex items-center gap-2 rounded-full bg-slate-900/85 border border-slate-700 px-3 py-1.5 backdrop-blur shadow-xl opacity-40 hover:opacity-100 transition-opacity">
+    <div
+      className={`absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full bg-slate-900/85 border border-slate-700 px-3 py-1.5 backdrop-blur shadow-xl transition-opacity duration-300 ${
+        visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}
+    >
       <button
         onClick={() => step(-0.05)}
         className="w-6 h-6 flex items-center justify-center rounded-full text-slate-200 hover:bg-slate-700 text-lg leading-none"
