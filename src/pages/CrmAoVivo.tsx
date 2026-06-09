@@ -517,8 +517,20 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         leadsQ = leadsQ.in('assigned_to_id', sellerMemberIds);
       }
 
-      const [leadsRes, transfersRes, membersRes, agentsRes, brandingRes] = await Promise.all([
+      // Lista do Marcos (crm_leads) — juntada no painel pra mostrar TODOS os leads
+      // do cliente (Pedro + Marcos). Dedupe por telefone mais abaixo.
+      let crmLeadsQ = (supabase as any).from('crm_leads')
+        .select('id, name, phone, created_at, arrived_at, assigned_to, stage_id, origem')
+        .eq('user_id', effectiveUserId)
+        .order('created_at', { ascending: false })
+        .limit(2000);
+      if (isSeller && sellerMemberIds.length > 0) {
+        crmLeadsQ = crmLeadsQ.in('assigned_to', sellerMemberIds);
+      }
+
+      const [leadsRes, crmLeadsRes, transfersRes, membersRes, agentsRes, brandingRes] = await Promise.all([
         leadsQ,
+        crmLeadsQ,
         (supabase as any).from('ai_lead_transfers').select('*, member:ai_team_members!ai_lead_transfers_to_member_id_fkey(name), lead:ai_crm_leads(lead_name, remote_jid)')
           .eq('user_id', effectiveUserId).order('created_at', { ascending: false }).limit(500),
         (supabase as any).from('ai_team_members').select('*').eq('user_id', effectiveUserId)
@@ -548,7 +560,46 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         agent: l.agent_id ? (agentsById.get(l.agent_id) ?? null) : null,
       }));
 
-      setLeads(leadsData); setTransfers(transfersRes.data || []);
+      // ── Junta a lista do Marcos (crm_leads), SEM repetir (dedupe por telefone) ──
+      // Telefone normalizado: tira o "55" do Brasil pra bater Pedro (5511...) com
+      // Marcos (11...). Lead que ja esta na lista do Pedro nao entra de novo; se o
+      // do Marcos tiver data de chegada e o do Pedro nao, o do Pedro herda a data.
+      const normPhone = (raw: string): string => {
+        const d = (raw || '').replace(/\D/g, '');
+        return (d.startsWith('55') && (d.length === 12 || d.length === 13)) ? d.slice(2) : d;
+      };
+      const aiByPhone = new Map<string, any>();
+      for (const l of leadsData) {
+        const k = normPhone(l.remote_jid || '');
+        if (k) aiByPhone.set(k, l);
+      }
+      const marcosLeads: any[] = [];
+      for (const c of (((crmLeadsRes as any)?.data) || [])) {
+        const k = normPhone(c.phone || '');
+        const dupe = k ? aiByPhone.get(k) : null;
+        if (dupe) {
+          if (c.arrived_at && !dupe.arrived_at) dupe.arrived_at = c.arrived_at;
+          continue;
+        }
+        marcosLeads.push({
+          id: c.id,
+          lead_name: c.name,
+          remote_jid: c.phone,
+          created_at: c.created_at,
+          arrived_at: c.arrived_at || null,
+          last_interaction_at: c.created_at,
+          assigned_to_id: c.assigned_to || null,
+          agent_id: null,
+          status_crm: 'novo',
+          origem: c.origem || null,
+          _crm: 'marcos', // marca: lead da lista do Marcos (crm_leads), nao do Pedro
+          member: c.assigned_to ? (teamById.get(c.assigned_to) ?? null) : null,
+          agent: null,
+        });
+      }
+      const mergedLeads = [...leadsData, ...marcosLeads];
+
+      setLeads(mergedLeads); setTransfers(transfersRes.data || []);
       setTeamMembers(teamArr); setAgents(agentsArr);
       setLastUpdatedAt(new Date().toISOString());
     } finally { setLoading(false); }
@@ -807,7 +858,9 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       : null;
     if (!threshold && !endDate) return leads;
     return leads.filter(l => {
-      const d = new Date(l.created_at || l.last_interaction_at);
+      // arrived_at = data real de chegada informada pelo vendedor (lead de porta/
+      // manual). Quando vazia (leads automaticos), cai no created_at.
+      const d = new Date(l.arrived_at || l.created_at || l.last_interaction_at);
       if (threshold && d < threshold) return false;
       if (endDate && d > endDate) return false;
       return true;
@@ -824,7 +877,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const d = new Date(); d.setHours(0, 0, 0, 0); return d;
   }, []);
   const todayLeadsCount = useMemo(
-    () => leads.filter(l => new Date(l.created_at || l.last_interaction_at) >= todayStart).length,
+    () => leads.filter(l => new Date(l.arrived_at || l.created_at || l.last_interaction_at) >= todayStart).length,
     [leads, todayStart]
   );
 
@@ -942,12 +995,13 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
       // Limpa o cache de synced para forçar re-sync de todos do filtro
       filteredLeads.forEach(l => syncedToMarcosRef.current.delete(l.id));
 
-      // Envia leads transferidos para o CRM do Marcos (kanban FluxCRM)
-      const transferred = filteredLeads.filter(l => l.status === 'transferido');
+      // Envia leads transferidos para o CRM do Marcos (kanban FluxCRM).
+      // Leads que ja vieram da lista do Marcos (_crm) sao ignorados — ja estao la.
+      const transferred = filteredLeads.filter(l => l.status === 'transferido' && (l as any)._crm !== 'marcos');
       const { synced, errors } = await syncTransferredToMarcos(transferred);
 
       // Para leads não-transferidos (interessado/qualificado), envia só para wa_contacts
-      const nonTransferred = filteredLeads.filter(l => l.status !== 'transferido');
+      const nonTransferred = filteredLeads.filter(l => l.status !== 'transferido' && (l as any)._crm !== 'marcos');
       let contactsSynced = 0;
       if (nonTransferred.length > 0) {
         const { data: list } = await (supabase as any)

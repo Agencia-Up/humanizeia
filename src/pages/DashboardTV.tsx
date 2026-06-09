@@ -360,8 +360,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .from('ai_crm_leads')
           .select('id, lead_name, remote_jid, assigned_to_id, status_crm, seller_notes_count')
           .eq('user_id', effectiveUserId)
-          .gte('created_at', todayStart)
-          .lte('created_at', todayEnd);
+          // Periodo pela DATA REAL DE CHEGADA: arrived_at quando o vendedor informou
+          // (lead de porta/dia passado), senao created_at.
+          .or(`and(arrived_at.gte.${todayStart},arrived_at.lte.${todayEnd}),and(arrived_at.is.null,created_at.gte.${todayStart},created_at.lte.${todayEnd})`);
         if (sellerMemberId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerMemberId);
         // (sem filtro 'assigned_to_id not null' — preciso do total pra taxa)
 
@@ -372,10 +373,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // do Marcos desde sempre. Bug exposto pelo banner de debug.
         let marcosQuery = (supabase as any)
           .from('crm_leads')
-          .select('id, origem, assigned_to, stage_id, stage:crm_pipeline_stages(name)')
+          .select('id, origem, assigned_to, stage_id, arrived_at, created_at, stage:crm_pipeline_stages(name)')
           .eq('user_id', effectiveUserId)
-          .gte('created_at', todayStart)
-          .lte('created_at', todayEnd);
+          // Periodo pela DATA REAL DE CHEGADA (arrived_at) quando informada, senao created_at.
+          .or(`and(arrived_at.gte.${todayStart},arrived_at.lte.${todayEnd}),and(arrived_at.is.null,created_at.gte.${todayStart},created_at.lte.${todayEnd})`);
         if (sellerMemberId) marcosQuery = marcosQuery.eq('assigned_to', sellerMemberId);
 
         let costsQuery = (supabase as any)

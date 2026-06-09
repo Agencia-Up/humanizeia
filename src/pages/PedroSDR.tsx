@@ -1302,7 +1302,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .from('crm_leads')
           // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
           // Marcos Consignado (27/05/2026): 6 campos do veiculo do cliente (consignado_*)
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, consignado_modelo, consignado_ano, consignado_versao, consignado_km, consignado_cor, consignado_estado')
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, arrived_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, consignado_modelo, consignado_ano, consignado_versao, consignado_km, consignado_cor, consignado_estado')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -1355,6 +1355,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           })(),
           agent: null,
           created_at: lead.created_at,
+          arrived_at: lead.arrived_at || null, // data real de chegada (estava sendo perdida no mapeamento)
           source: lead.source || 'manual',
           custom_fields: lead.custom_fields || null,
           // Feature M1: campos enriched do Marcos (mesma estrutura do Pedro)
@@ -1418,7 +1419,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, entry_channel, entry_datetime')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, arrived_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, entry_channel, entry_datetime')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
@@ -2014,6 +2015,23 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
+  // Salva a data real de chegada direto da tela de detalhe (sem abrir o lapis).
+  // Salva na tabela certa (Marcos = crm_leads / Pedro = ai_crm_leads). Vazio = limpa (usa created_at).
+  const updateLeadArrived = async (dateStr: string) => {
+    if (!selectedLead) return;
+    const iso = dateStr ? new Date(dateStr + 'T12:00:00').toISOString() : null;
+    try {
+      const table = isMarcosCrm ? 'crm_leads' : 'ai_crm_leads';
+      const { error } = await (supabase as any).from(table).update({ arrived_at: iso }).eq('id', selectedLead.id);
+      if (error) throw error;
+      setSelectedLead({ ...selectedLead, arrived_at: iso } as any);
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, arrived_at: iso } : l));
+      toast({ title: '✅ Data de chegada atualizada!' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const reassignLead = async (leadId: string, newMemberId: string | null) => {
     setReassigning(leadId);
     try {
@@ -2371,6 +2389,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [addLeadCity, setAddLeadCity] = useState<string>('');
   const [addLeadVehicle, setAddLeadVehicle] = useState<string>('');
   const [addLeadVisit, setAddLeadVisit] = useState<string>('');
+  const [addLeadArrived, setAddLeadArrived] = useState<string>(''); // data real que o lead chegou (porta/manual); vazio = hoje
   const [addLeadSaving, setAddLeadSaving] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
   const [editingLead, setEditingLead] = useState(false);
@@ -2380,6 +2399,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [editCity, setEditCity] = useState('');
   const [editVehicle, setEditVehicle] = useState('');
   const [editVisitAt, setEditVisitAt] = useState(''); // Item 2: datetime-local ISO (vazio = sem visita marcada)
+  const [editArrived, setEditArrived] = useState(''); // data real que o lead chegou (YYYY-MM-DD; vazio = usa created_at)
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
@@ -2389,6 +2409,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
+  const [bulkArrived, setBulkArrived] = useState<string>(''); // data de chegada aplicada a TODOS os leads do lote (porta/manual)
   const bulkFileRef = useRef<HTMLInputElement>(null);
 
   const handleBulkFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -2503,6 +2524,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             position: nextPosition++,
             assigned_to: currentSeller?.id || null,
             custom_fields: { crm_owner: 'marcos', input_mode: 'import', ...sellerCustomFields },
+            // Data real de chegada do lote (porta/dia passado). Vazio = null -> usa created_at.
+            arrived_at: bulkArrived ? new Date(bulkArrived + 'T12:00:00').toISOString() : null,
           }));
           const { error } = await (supabase as any).from('crm_leads').insert(batch);
           if (error) failed += batch.length;
@@ -2548,6 +2571,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           assigned_to_id: memberId || null,
           // Prompt 1.1: usa origem da planilha se válida, senão 'outros' como default no bulk
           origem: l.origem || 'outros',
+          // Data real de chegada do lote (porta/manual). Vazio = null -> painel usa created_at.
+          arrived_at: bulkArrived ? new Date(bulkArrived + 'T12:00:00').toISOString() : null,
         }));
         const { error } = await (supabase as any).from('ai_crm_leads').insert(batch);
         if (error) {
@@ -2677,6 +2702,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           //   visit_scheduled_at: timestamp pra comparar com hoje (banner)
           visit_scheduled:    addLeadVisit ? new Date(addLeadVisit).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null,
           visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
+          // Data real que o lead chegou (porta/manual). Vazio = null -> usa created_at.
+          arrived_at:         addLeadArrived ? new Date(addLeadArrived + 'T12:00:00').toISOString() : null,
         });
         if (error) throw error;
         toast({
@@ -2687,7 +2714,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         });
         setAddLeadName(''); setAddLeadPhone(''); setAddLeadOrigem(''); setAddLeadOrigemOutros('');
         setAddLeadCustomOrigem(''); setAddLeadCustomOrigemCreateColumn(false);
-        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit(''); setAddLeadArrived('');
         setAddLeadOpen(false);
         await fetchData(true);
         return;
@@ -2731,13 +2758,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         vehicle_interest:   addLeadVehicle.trim() || null,
         visit_scheduled:    addLeadVisit ? new Date(addLeadVisit).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null,
         visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
+        // Data real que o lead chegou (porta/manual). Vazio = null -> usa created_at.
+        arrived_at:         addLeadArrived ? new Date(addLeadArrived + 'T12:00:00').toISOString() : null,
       });
       if (error) throw error;
       toast({ title: '✅ Lead adicionado ao CRM!' });
       setAddLeadName(''); setAddLeadPhone('');
       setAddLeadOrigem(''); setAddLeadOrigemOutros('');
       setAddLeadSourceId(null); setAddLeadSourceName('');
-      setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit('');
+      setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit(''); setAddLeadArrived('');
       setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
@@ -2764,6 +2793,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     } else {
       setEditVisitAt('');
     }
+    // Pre-popula a data real de chegada (arrived_at) no <input type="date"> (YYYY-MM-DD).
+    const arr = (selectedLead as any).arrived_at;
+    setEditArrived(arr ? String(arr).slice(0, 10) : '');
     setEditingLead(true);
   };
 
@@ -2795,6 +2827,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         updateData.visit_scheduled_at = newVisitIso;
       }
 
+      // Data real que o lead chegou. editArrived = 'YYYY-MM-DD'. Compara so a data.
+      const oldArrivedDay = (selectedLead as any).arrived_at ? String((selectedLead as any).arrived_at).slice(0, 10) : '';
+      if ((editArrived || '') !== oldArrivedDay) {
+        updateData.arrived_at = editArrived ? new Date(editArrived + 'T12:00:00').toISOString() : null;
+      }
+
       if (isMarcosCrm) {
         const crmUpdate: Record<string, string | null> = {};
         if (editName !== (selectedLead.lead_name || '')) crmUpdate.name = editName;
@@ -2806,6 +2844,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         if (visitChanged) {
           crmUpdate.visit_scheduled    = newVisitText;
           crmUpdate.visit_scheduled_at = newVisitIso;
+        }
+        // Data real de chegada tambem no Marcos.
+        if ((editArrived || '') !== oldArrivedDay) {
+          crmUpdate.arrived_at = editArrived ? new Date(editArrived + 'T12:00:00').toISOString() : null;
         }
         if (Object.keys(crmUpdate).length === 0) {
           setEditingLead(false);
@@ -3064,14 +3106,28 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     placeholder="🚗 Carro de interesse"
                     className="h-8 text-sm max-w-[200px]"
                   />
-                  {/* Item 2: datetime-local pra agendar visita */}
-                  <Input
-                    type="datetime-local"
-                    value={editVisitAt}
-                    onChange={e => setEditVisitAt(e.target.value)}
-                    title="📅 Data e hora da visita"
-                    className="h-8 text-sm max-w-[200px]"
-                  />
+                  {/* Item 2: datetime-local pra agendar visita — com legenda */}
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[9px] text-muted-foreground font-medium leading-none">📅 Agendamento (visita)</label>
+                    <Input
+                      type="datetime-local"
+                      value={editVisitAt}
+                      onChange={e => setEditVisitAt(e.target.value)}
+                      title="Data e hora da visita agendada do cliente"
+                      className="h-8 text-sm max-w-[200px]"
+                    />
+                  </div>
+                  {/* Data real que o lead chegou — com legenda */}
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[9px] text-muted-foreground font-medium leading-none">📆 Chegou (data do lead)</label>
+                    <Input
+                      type="date"
+                      value={editArrived}
+                      onChange={e => setEditArrived(e.target.value)}
+                      title="Data que o lead realmente chegou (ex: porta no domingo). Vazio = data de cadastro."
+                      className="h-8 text-sm max-w-[160px]"
+                    />
+                  </div>
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                   </Button>
@@ -3130,6 +3186,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 {statusOptions.find(opt => opt.value === selectedLead.status_crm)?.label || selectedLead.status_crm || 'Novo'}
               </Badge>
             )}
+            {/* Data real que o lead chegou — visivel direto no detalhe (porta/dia passado). */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-muted-foreground hidden sm:inline">Chegou:</span>
+              <input
+                type="date"
+                value={String((selectedLead as any).arrived_at || selectedLead.created_at || '').slice(0, 10)}
+                onChange={e => updateLeadArrived(e.target.value)}
+                className="h-8 text-xs rounded-md border border-input bg-background px-2 [&::-webkit-calendar-picker-indicator]:invert"
+                title="Data que o lead realmente chegou (ex: porta no domingo). Muda em que dia ele aparece no painel."
+              />
+            </div>
             {canReassignLeadSeller && (
               <Select
                 value={selectedLead.assigned_to_id || 'unassigned'}
@@ -4307,6 +4374,16 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 title="Quando o cliente vem na loja"
               />
             </div>
+            <div className="flex-1 min-w-[160px] space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">📆 Data que o lead chegou (opcional)</label>
+              <Input
+                type="date"
+                value={addLeadArrived}
+                onChange={e => setAddLeadArrived(e.target.value)}
+                className="h-8 text-xs"
+                title="Se o lead chegou em outro dia (ex: porta no domingo), marque aqui. Vazio = hoje."
+              />
+            </div>
           </div>
         </div>
       )}
@@ -5105,6 +5182,19 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </div>
           </div>
 
+          {/* Data de chegada do lote (porta/dia passado). Aplica a TODOS os leads. */}
+          <div className="flex flex-wrap items-center gap-2 pb-2">
+            <label className="text-xs text-muted-foreground font-medium">📆 Data que estes leads chegaram (opcional):</label>
+            <Input
+              type="date"
+              value={bulkArrived}
+              onChange={e => setBulkArrived(e.target.value)}
+              className="h-8 text-xs w-40"
+              title="Ex: leads de porta do domingo. Vazio = data de hoje (cadastro)."
+            />
+            <span className="text-[10px] text-muted-foreground">Vazio = hoje. Vale pra todos do lote.</span>
+          </div>
+
           {/* Table */}
           <div className="flex-1 overflow-y-auto border border-border/50 rounded-lg min-h-0">
             <table className="w-full text-xs">
@@ -5168,7 +5258,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             <Button
               variant="outline"
               size="sm"
-              onClick={() => { setBulkDialogOpen(false); setBulkLeads([]); setBulkResult(null); }}
+              onClick={() => { setBulkDialogOpen(false); setBulkLeads([]); setBulkResult(null); setBulkArrived(''); }}
               disabled={bulkSaving}
               className="text-xs"
             >
