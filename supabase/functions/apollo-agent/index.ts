@@ -2244,24 +2244,55 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
   const wSpend = Number(wRow.spend || 0);
   const wRes = pickRes(wRow.actions, wRow.cost_per_action_type, wSpend);
 
+  // ── Cruzamento: leads que REALMENTE chegaram no painel da Logos (ai_crm_leads) ──
+  const BRT_MS = 3 * 3600 * 1000; // America/Sao_Paulo = UTC-3 (sem horário de verão)
+  const brtMid = new Date(Date.now() - BRT_MS); brtMid.setUTCHours(0, 0, 0, 0);
+  const todayStartUtc = new Date(brtMid.getTime() + BRT_MS);
+  const yStartUtc = new Date(todayStartUtc.getTime() - 24 * 3600 * 1000);
+  const wStartUtc = new Date(todayStartUtc.getTime() - 7 * 24 * 3600 * 1000);
+  const countLeads = async (fromIso: string, toIso?: string) => {
+    try {
+      let q = admin.from("ai_crm_leads").select("id", { count: "exact", head: true })
+        .eq("user_id", userId).gte("created_at", fromIso);
+      if (toIso) q = q.lt("created_at", toIso);
+      const { count } = await q;
+      return Number(count || 0);
+    } catch { return 0; }
+  };
+  const yLogos = await countLeads(yStartUtc.toISOString(), todayStartUtc.toISOString());
+  const wLogos = await countLeads(wStartUtc.toISOString());
+  const yLogosCost = yLogos > 0 ? ySpend / yLogos : 0;
+  const wLogosCost = wLogos > 0 ? wSpend / wLogos : 0;
+
   const ontem = new Date(Date.now() - 24 * 3600 * 1000).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
-  const resumo = yRes.results > 0
-    ? `Ontem você investiu ${money(ySpend)} e trouxe ${int(yRes.results)} ${M.noun} a ${money(yRes.cost)} cada.`
-    : `Ontem você investiu ${money(ySpend)} e não registrou ${M.noun} (verifique se as campanhas estão ativas).`;
+  const diffY = yLogos - yRes.results;
+  const diffNote = diffY === 0 || (yLogos === 0 && yRes.results === 0) ? ""
+    : diffY < 0 ? `↳ ${Math.abs(diffY)} do Meta não viraram lead no painel`
+    : `↳ ${diffY} lead(s) a mais no painel (manuais/diretos)`;
+  const resumo = yLogos > 0
+    ? `Ontem o Meta marcou ${int(yRes.results)} ${M.noun} e ${int(yLogos)} viraram lead no seu painel — custo real por lead: ${money(yLogosCost)}.`
+    : `Ontem você investiu ${money(ySpend)} e nenhum lead entrou no painel ainda.`;
 
   const lines: string[] = [
     `📊 *José — Relatório de ontem* (${ontem})`,
     acc.account_name ? `🏢 ${acc.account_name}` : "",
     ``,
     `💰 *Investido ontem:* ${money(ySpend)}`,
-    `💬 *${M.result}:* ${int(yRes.results)}`,
-    `🎯 *${M.cost}:* ${yRes.results > 0 ? money(yRes.cost) : "—"}`,
     `👁️ *Pessoas alcançadas:* ${int(yReach)}`,
     `🖱️ *Cliques no anúncio:* ${int(yClicks)}${yClicks > 0 ? ` (${money(yCpc)} cada)` : ""}`,
     ``,
-    `📅 *Últimos 7 dias:* ${int(wRes.results)} ${M.noun} · ${wRes.results > 0 ? `${money(wRes.cost)} cada` : "—"} · ${money(wSpend)} investidos`,
+    `📣 *No Meta (ontem):*`,
+    `   ${int(yRes.results)} ${M.noun} · ${yRes.results > 0 ? `${money(yRes.cost)} cada` : "—"}`,
     ``,
-    `✅ ${resumo}`,
+    `✅ *No painel da Logos (ontem):*`,
+    `   ${int(yLogos)} leads que chegaram de verdade · ${yLogos > 0 ? `${money(yLogosCost)} cada` : "—"}`,
+    diffNote,
+    ``,
+    `📅 *Últimos 7 dias:*`,
+    `   Meta: ${int(wRes.results)} ${M.noun} · ${wRes.results > 0 ? `${money(wRes.cost)} cada` : "—"}`,
+    `   Painel: ${int(wLogos)} leads · ${wLogos > 0 ? `${money(wLogosCost)} cada` : "—"} · ${money(wSpend)} investidos`,
+    ``,
+    `💡 ${resumo}`,
     ``,
     `🤖 _Gerado automaticamente pelo José — LogosIA_`,
   ].filter((l) => l !== "");
