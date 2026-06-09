@@ -1297,7 +1297,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .from('crm_leads')
           // Feature M1: campos enriched (Marcos agora tem client_city, vehicle_interest, visit_scheduled)
           // Marcos Consignado (27/05/2026): 6 campos do veiculo do cliente (consignado_*)
-          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, consignado_modelo, consignado_ano, consignado_versao, consignado_km, consignado_cor, consignado_estado')
+          .select('id, name, phone, source, notes, stage_id, priority, assigned_to, custom_fields, created_at, arrived_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, consignado_modelo, consignado_ano, consignado_versao, consignado_km, consignado_cor, consignado_estado')
           .eq('user_id', effectiveUserId)
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
@@ -1413,7 +1413,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const leadsQuery = (supabase as any)
         .from('ai_crm_leads')
         // Fase 6: adiciona client_city, vehicle_interest, visit_scheduled (todos opcionais)
-        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at')
+        .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, arrived_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
       if (isSeller && memberIds.length > 0) {
