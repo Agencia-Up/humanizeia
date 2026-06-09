@@ -3099,22 +3099,28 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                     placeholder="🚗 Carro de interesse"
                     className="h-8 text-sm max-w-[200px]"
                   />
-                  {/* Item 2: datetime-local pra agendar visita */}
-                  <Input
-                    type="datetime-local"
-                    value={editVisitAt}
-                    onChange={e => setEditVisitAt(e.target.value)}
-                    title="📅 Data e hora da visita"
-                    className="h-8 text-sm max-w-[200px]"
-                  />
-                  {/* Data real que o lead chegou (corrige lead de porta/dia passado) */}
-                  <Input
-                    type="date"
-                    value={editArrived}
-                    onChange={e => setEditArrived(e.target.value)}
-                    title="📆 Data que o lead chegou (ex: porta no domingo). Vazio = data de cadastro."
-                    className="h-8 text-sm max-w-[160px]"
-                  />
+                  {/* Item 2: datetime-local pra agendar visita — com legenda */}
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[9px] text-muted-foreground font-medium leading-none">📅 Agendamento (visita)</label>
+                    <Input
+                      type="datetime-local"
+                      value={editVisitAt}
+                      onChange={e => setEditVisitAt(e.target.value)}
+                      title="Data e hora da visita agendada do cliente"
+                      className="h-8 text-sm max-w-[200px]"
+                    />
+                  </div>
+                  {/* Data real que o lead chegou (corrige lead de porta/dia passado) — com legenda */}
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[9px] text-muted-foreground font-medium leading-none">📆 Chegou (data do lead)</label>
+                    <Input
+                      type="date"
+                      value={editArrived}
+                      onChange={e => setEditArrived(e.target.value)}
+                      title="Data que o lead realmente chegou (ex: porta no domingo). Vazio = data de cadastro."
+                      className="h-8 text-sm max-w-[160px]"
+                    />
+                  </div>
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                   </Button>
