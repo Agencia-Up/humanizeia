@@ -21,7 +21,7 @@
 // Layout inspirado em painel ICOM Motors — mas marca/cores customizáveis.
 // ============================================================================
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
@@ -284,6 +284,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Ref do "canvas" do painel (modo TV/tela cheia) — usado pra medir a altura
+  // real do conteúdo e calcular a escala que faz TUDO caber na tela.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentH, setContentH] = useState(1080);
 
   // Trigger pra refresh manual (incrementa = força reload)
   const [reloadTrigger, setReloadTrigger] = useState(0);
@@ -294,6 +298,37 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Tick incrementado a cada evento realtime/poll — passado pros componentes
   // filhos (ex.: card Real vs Falso) re-buscarem junto, sem re-assinar o canal.
   const [liveTick, setLiveTick] = useState(0);
+
+  // Tamanho da tela — pra ESCALAR o painel inteiro e caber 100% em tela cheia,
+  // respeitando os formatos: 1920×1080 (deitado) / 1080×1920 (em pé/totem).
+  const [viewport, setViewport] = useState(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    h: typeof window !== 'undefined' ? window.innerHeight : 1080,
+  }));
+  useEffect(() => {
+    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    document.addEventListener('fullscreenchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('fullscreenchange', onResize);
+    };
+  }, []);
+
+  // Mede a altura REAL do conteúdo do painel (modo TV) sempre que algo muda —
+  // dados novos, vendedor a mais, mudança de tela. Com isso a escala se ajusta
+  // e o painel inteiro cabe na tela, sem corte, mesmo crescendo de tamanho.
+  useLayoutEffect(() => {
+    if (embedded) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => setContentH(el.scrollHeight || 1080);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, profileLoading, loading, kpis, liveTick]);
 
   // Persiste período escolhido
   useEffect(() => {
@@ -831,8 +866,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   const dateStr = now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-  return (
-    <div ref={containerRef} className={wrapperClass}>
+  // Conteúdo do painel — reusado no modo embedded (aba do Pedro) e no modo
+  // TV/tela cheia (renderizado num canvas escalado pra caber 100% na tela).
+  const panelContent = (
+    <>
       {/* ───── Header ───── */}
       <header className="shrink-0 border-b border-blue-900/50 px-8 py-4 flex items-center justify-between bg-slate-900/40 backdrop-blur">
         <div className="flex items-center gap-5">
@@ -1107,6 +1144,46 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           </div>
         );
       })()}
+    </>
+  );
+
+  // Embedded (aba do Pedro SDR): cresce com o conteúdo, sem escala.
+  if (embedded) {
+    return (
+      <div ref={containerRef} className={wrapperClass}>
+        {panelContent}
+      </div>
+    );
+  }
+
+  // TV / TELA CHEIA: renderiza o painel num "canvas" de largura fixa (1920 deitado
+  // / 1080 em pé, conforme a orientação da tela) e ESCALA pra caber 100% — largura
+  // E altura — centralizado. Mede a altura real do conteúdo (contentH), então
+  // NUNCA sobra nada pra fora: todo o painel aparece, em Full HD, 4K ou totem em pé.
+  // A folga de 3% protege contra overscan de TVs que cortam as bordas.
+  const portraitScreen = viewport.h > viewport.w;
+  const baseW = portraitScreen ? 1080 : 1920;
+  const baseH = portraitScreen ? 1920 : 1080;
+  const margin = 0.97;
+  // Altura usada na escala = pelo menos a altura-base (pra preencher bem a tela
+  // via flex) e cresce se o conteúdo precisar de mais (aí escala pra baixo).
+  const effectiveH = Math.max(contentH, baseH);
+  const fitScale = Math.min(
+    (viewport.w * margin) / baseW,
+    (viewport.h * margin) / effectiveH,
+  );
+  return (
+    <div
+      ref={containerRef}
+      className="relative h-[100dvh] w-[100dvw] overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center"
+    >
+      <div
+        ref={contentRef}
+        className="relative flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
+        style={{ width: `${baseW}px`, minHeight: `${baseH}px`, transform: `scale(${fitScale})`, transformOrigin: 'center center' }}
+      >
+        {panelContent}
+      </div>
     </div>
   );
 }
