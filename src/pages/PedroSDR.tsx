@@ -1974,6 +1974,23 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
+  // Salva a data real de chegada do lead direto da tela de detalhe (sem abrir o lapis).
+  // Salva na tabela certa (Marcos = crm_leads / Pedro = ai_crm_leads). Vazio = limpa (usa created_at).
+  const updateLeadArrived = async (dateStr: string) => {
+    if (!selectedLead) return;
+    const iso = dateStr ? new Date(dateStr + 'T12:00:00').toISOString() : null;
+    try {
+      const table = isMarcosCrm ? 'crm_leads' : 'ai_crm_leads';
+      const { error } = await (supabase as any).from(table).update({ arrived_at: iso }).eq('id', selectedLead.id);
+      if (error) throw error;
+      setSelectedLead({ ...selectedLead, arrived_at: iso } as any);
+      setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, arrived_at: iso } : l));
+      toast({ title: '✅ Data de chegada atualizada!' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const reassignLead = async (leadId: string, newMemberId: string | null) => {
     setReassigning(leadId);
     try {
@@ -2498,6 +2515,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             position: nextPosition++,
             assigned_to: currentSeller?.id || null,
             custom_fields: { crm_owner: 'marcos', input_mode: 'import', ...sellerCustomFields },
+            // Data real de chegada do lote (porta/dia passado). Vazio = null -> usa created_at.
+            arrived_at: bulkArrived ? new Date(bulkArrived + 'T12:00:00').toISOString() : null,
           }));
           const { error } = await (supabase as any).from('crm_leads').insert(batch);
           if (error) failed += batch.length;
@@ -2674,6 +2693,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           //   visit_scheduled_at: timestamp pra comparar com hoje (banner)
           visit_scheduled:    addLeadVisit ? new Date(addLeadVisit).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null,
           visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
+          // Data real que o lead chegou (porta/manual). Vazio = null -> usa created_at.
+          arrived_at:         addLeadArrived ? new Date(addLeadArrived + 'T12:00:00').toISOString() : null,
         });
         if (error) throw error;
         toast({
@@ -2815,6 +2836,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         if (visitChanged) {
           crmUpdate.visit_scheduled    = newVisitText;
           crmUpdate.visit_scheduled_at = newVisitIso;
+        }
+        // Data real de chegada (corrige lead de porta/dia passado) tambem no Marcos.
+        if ((editArrived || '') !== oldArrivedDay) {
+          crmUpdate.arrived_at = editArrived ? new Date(editArrived + 'T12:00:00').toISOString() : null;
         }
         if (Object.keys(crmUpdate).length === 0) {
           setEditingLead(false);
@@ -3147,6 +3172,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 {statusOptions.find(opt => opt.value === selectedLead.status_crm)?.label || selectedLead.status_crm || 'Novo'}
               </Badge>
             )}
+            {/* Data real que o lead chegou — visivel direto no detalhe (porta/dia passado). */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-muted-foreground hidden sm:inline">Chegou:</span>
+              <input
+                type="date"
+                value={String((selectedLead as any).arrived_at || selectedLead.created_at || '').slice(0, 10)}
+                onChange={e => updateLeadArrived(e.target.value)}
+                className="h-8 text-xs rounded-md border border-input bg-background px-2 [&::-webkit-calendar-picker-indicator]:invert"
+                title="Data que o lead realmente chegou (ex: porta no domingo). Muda em que dia ele aparece no painel."
+              />
+            </div>
             {canReassignLeadSeller && (
               <Select
                 value={selectedLead.assigned_to_id || 'unassigned'}
