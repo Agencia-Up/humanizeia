@@ -207,6 +207,9 @@ verify_jwt = false
 [functions.wa-capi-process-queue]
 verify_jwt = false
 
+[functions.wa-capi-ctwa-send]
+verify_jwt = false
+
 [functions.crm-capture]
 verify_jwt = false
 
