@@ -551,7 +551,9 @@ export async function generatePedroBrainReply(input: {
   // ── PROVEDOR DA RESPOSTA (conversa com o cliente): Claude principal (teste) / OpenAI / DeepSeek. ──
   // Env PEDRO_REPLY_PROVIDER (anthropic|openai|deepseek), default 'anthropic'. Claude NAO e compativel
   // com OpenAI: /v1/messages, x-api-key, 'system' top-level, sem response_format, saida content[].text.
-  const replyProvider = String(Deno.env.get("PEDRO_REPLY_PROVIDER") || "anthropic").toLowerCase();
+  // Default SEGURO = openai (gpt-4o afinado e confiavel p/ apresentar estoque). Claude (anthropic) fica
+  // ligavel por env, mas QUEBRA nos turnos de estoque ate o prompt/JSON ser adaptado p/ ele.
+  const replyProvider = String(Deno.env.get("PEDRO_REPLY_PROVIDER") || "openai").toLowerCase();
   const anthropicKeyR = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
   const deepseekKeyR = Deno.env.get("DEEPSEEK_API_KEY");
   const replyIsAnthropic = (replyProvider === "anthropic" || replyProvider === "claude") && !!anthropicKeyR;
@@ -570,7 +572,7 @@ export async function generatePedroBrainReply(input: {
       return await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "x-api-key": replyKey as string, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify({ model: replyModel, max_tokens: 1500, system: sys, messages: conv }),
+        body: JSON.stringify({ model: replyModel, max_tokens: 4096, system: sys, messages: conv }),
       });
     }
     const url = replyIsDeepseek ? "https://api.deepseek.com/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
