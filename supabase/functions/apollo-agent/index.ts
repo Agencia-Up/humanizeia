@@ -2291,13 +2291,19 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     { url: `${apiUrl}/send/text`, body: { number: intlPhone, text } },
     { url: `${apiUrl}/message/sendText/${inst.instance_name}`, body: { number: intlPhone, text } },
   ];
+  let lastErr = "";
   for (const a of attempts) {
     try {
       const r = await fetch(a.url, { method: "POST", headers, body: JSON.stringify(a.body) });
-      if (r.ok) return { sent: true };
-    } catch { /* tenta o próximo endpoint */ }
+      if (r.ok) { console.log("[apollo-agent] relatorio enviado via", a.url); return { sent: true }; }
+      lastErr = `${r.status}: ${(await r.text()).slice(0, 160)}`;
+      console.warn("[apollo-agent] envio falhou", a.url, lastErr);
+    } catch (e) {
+      lastErr = String(e).slice(0, 160);
+      console.warn("[apollo-agent] envio erro", a.url, lastErr);
+    }
   }
-  return { sent: false, reason: "falha_envio_whatsapp" };
+  return { sent: false, reason: `falha_envio_whatsapp | ${lastErr}` };
  } catch (err) {
   console.error("[apollo-agent] sendDailyReport erro:", err);
   return { sent: false, reason: "erro_inesperado" };
