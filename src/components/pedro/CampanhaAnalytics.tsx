@@ -141,6 +141,10 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<RawLead[]>([]);
   const [utmByPhone, setUtmByPhone] = useState<Map<string, UtmRecord>>(new Map());
+  // Loop de conversao Click-to-WhatsApp (CAPI) — so aparece quando ha lead CTWA.
+  const [capiStats, setCapiStats] = useState<{ leads: number; sent: number; pending: number; skipped: number; failed: number }>(
+    { leads: 0, sent: 0, pending: 0, skipped: 0, failed: 0 },
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +183,27 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
         }
         setUtmByPhone(map);
         setLeads((leadsRes.data || []) as RawLead[]);
+
+        // CTWA/CAPI — isolado: se a tabela ainda nao existir (prod ate a
+        // migracao), ignora sem afetar o painel principal.
+        try {
+          const capiRes = await (supabase as any)
+            .from('wa_ctwa_capi_events')
+            .select('lead_id, status')
+            .eq('user_id', masterUserId)
+            .limit(20000);
+          if (!cancelled && capiRes?.data) {
+            const rows = capiRes.data as { lead_id: string | null; status: string }[];
+            const leadSet = new Set(rows.map(r => r.lead_id).filter(Boolean));
+            setCapiStats({
+              leads: leadSet.size,
+              sent: rows.filter(r => r.status === 'sent').length,
+              pending: rows.filter(r => r.status === 'pending').length,
+              skipped: rows.filter(r => r.status === 'skipped').length,
+              failed: rows.filter(r => r.status === 'failed').length,
+            });
+          }
+        } catch { /* tabela ausente — ignora */ }
       } catch {
         if (!cancelled) { setLeads([]); setUtmByPhone(new Map()); }
       } finally {
@@ -413,6 +438,23 @@ export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
           <KpiCard icon={TrendingUp} label="Inativos (não engajaram)" value={data.totI} color="text-slate-400" />
           <KpiCard icon={Target} label="Top campanha (qualificados)" value={data.topRow ? data.topRow.label : '—'} color="text-orange-400" small />
         </div>
+
+        {/* Loop de conversao Click-to-WhatsApp (CAPI) — so quando ha lead via anuncio */}
+        {capiStats.leads > 0 && (
+          <div className="bg-background/30 border border-border/40 rounded-lg p-3">
+            <p className="text-xs font-medium text-foreground mb-2">Atribuição Click-to-WhatsApp (Conversions API)</p>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center">
+              <div><div className="text-lg font-bold text-blue-400">{capiStats.leads}</div><div className="text-[10px] text-muted-foreground">Leads via anúncio</div></div>
+              <div><div className="text-lg font-bold text-emerald-400">{capiStats.sent}</div><div className="text-[10px] text-muted-foreground">Conversões enviadas</div></div>
+              <div><div className="text-lg font-bold text-amber-400">{capiStats.pending}</div><div className="text-[10px] text-muted-foreground">Na fila</div></div>
+              <div><div className="text-lg font-bold text-slate-400">{capiStats.skipped}</div><div className="text-[10px] text-muted-foreground">Sem config</div></div>
+              <div><div className="text-lg font-bold text-red-400">{capiStats.failed}</div><div className="text-[10px] text-muted-foreground">Falhas</div></div>
+            </div>
+            {capiStats.skipped > 0 && capiStats.sent === 0 && (
+              <p className="text-[10px] text-amber-400/80 mt-2">Para enviar as conversões ao Meta, configure o Pixel/Dataset e o WABA ID da conta.</p>
+            )}
+          </div>
+        )}
 
         {data.totalLeads === 0 ? (
           <div className="text-center py-12 text-muted-foreground text-xs">
