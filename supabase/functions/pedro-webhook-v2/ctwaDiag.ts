@@ -6,11 +6,15 @@
 // entrega. Hoje o parser (adContext_20260525.ts) "adivinha" ~10 caminhos e
 // DESCARTA os IDs de máquina — precisamos confirmar a verdade antes da Fase 1.
 //
-// COMO FUNCIONA: imprime no console (prefixo [CTWA-DIAG]) o payload PODADO
-// (strings longas truncadas, blobs binários/thumbnails omitidos) SOMENTE quando
-// há marcador de anúncio/CTWA. Não toca em NENHUMA lógica do Pedro. Não lança.
+// COMO FUNCIONA: grava o payload PODADO (strings longas truncadas, blobs
+// binários/thumbnails omitidos) na tabela public.ctwa_diag_capture SOMENTE quando
+// há marcador de anúncio/CTWA. A API de logs do Supabase tem janela curta demais
+// e não surge o console do webhook de forma confiável — por isso persistimos no
+// banco, que dá pra reler na hora. Também imprime no console como reforço. Não
+// toca em NENHUMA lógica do Pedro. Não lança (envolto em try/catch).
 //
-// REMOVER após confirmar os campos (apagar este arquivo + a chamada no index.ts).
+// REMOVER após confirmar os campos (apagar este arquivo + a chamada no index.ts
+// + dropar a tabela ctwa_diag_capture).
 // =============================================================================
 
 // Chaves cujo valor é blob binário/base64 grande — omitidas pra não estourar o log.
@@ -20,11 +24,17 @@ const OMIT_KEYS = new Set([
   "streamingSidecar", "waveform", "buffer", "base64", "body64", "fileLength",
 ]);
 
-// Marcadores específicos de anúncio/CTWA. NÃO incluímos sourceId/sourceUrl soltos
-// (aparecem em preview de link comum) — só os que indicam clique em anúncio.
+// Marcadores de anúncio/CTWA. REDE AMPLA (Fase 0): cobre os formatos do Cloud API
+// (referral.*), do Baileys (externalAdReply.*) e do uazapi, incluindo variações
+// camelCase e snake_case. Incluímos sourceId/sourceUrl de propósito: durante o
+// teste controlado preferimos capturar a mais (e olhar os markers) do que perder
+// a etiqueta por causa de um nome de campo inesperado.
 const AD_MARKER_KEYS = [
-  "externalAdReply", "ctwaPayload", "ctwaClid", "conversionData",
-  "entryPointConversionSource", "convertedFrom",
+  "externalAdReply", "ctwaPayload", "ctwaClid", "ctwa_clid",
+  "conversionSource", "conversionData",
+  "entryPointConversionSource", "entryPointConversionApp", "entryPointConversionExternalSource",
+  "convertedFrom", "referral", "adReplyType",
+  "sourceUrl", "source_url", "sourceId", "source_id", "sourceType", "source_type",
 ];
 
 function truncate(value: string, max = 220): string {
@@ -67,15 +77,20 @@ function deepHasKey(value: unknown, keys: string[], depth = 0, seen = new WeakSe
   return false;
 }
 
-/** Loga o payload podado SOMENTE se houver marcador de anúncio/CTWA. Nunca lança. */
-export function logCtwaDiag(payload: unknown): void {
+/**
+ * Grava o payload podado na tabela ctwa_diag_capture SOMENTE quando há marcador
+ * de anúncio/CTWA. Nunca lança. Para mensagens normais (sem marcador) retorna
+ * instantaneamente após uma varredura síncrona barata — zero I/O. Só faz await
+ * de um insert quando realmente há sinal de anúncio (raro), garantindo que o
+ * registro seja persistido antes do webhook seguir.
+ */
+export async function logCtwaDiag(supabase: any, payload: unknown): Promise<void> {
   try {
     if (!deepHasKey(payload, AD_MARKER_KEYS)) return;
-    console.log("[CTWA-DIAG] " + JSON.stringify({
-      at: new Date().toISOString(),
-      markers: AD_MARKER_KEYS.filter((k) => deepHasKey(payload, [k])),
-      payload: prune(payload),
-    }));
+    const markers = AD_MARKER_KEYS.filter((k) => deepHasKey(payload, [k]));
+    const pruned = prune(payload);
+    console.log("[CTWA-DIAG] " + JSON.stringify({ markers, payload: pruned }));
+    await supabase.from("ctwa_diag_capture").insert({ markers, payload: pruned });
   } catch (_e) {
     // diagnóstico NUNCA pode quebrar o webhook
   }

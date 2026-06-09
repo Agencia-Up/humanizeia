@@ -108,10 +108,11 @@ Deno.serve(async (req) => {
   const supabase = createServiceClient();
   const payload = await parseJson(req);
 
-  // FASE 0 CTWA (TEMPORÁRIO): loga o payload podado SOMENTE quando há marcador de
-  // anúncio/Click-to-WhatsApp, pra confirmar o caminho EXATO do referral que o
-  // uazapi entrega. Nunca lança, nunca altera o fluxo. Remover após a Fase 1.
-  logCtwaDiag(payload);
+  // FASE 0 CTWA (TEMPORÁRIO): grava o payload podado na tabela ctwa_diag_capture
+  // SOMENTE quando há marcador de anúncio/Click-to-WhatsApp, pra confirmar o
+  // caminho EXATO do referral que o uazapi entrega. Nunca lança, nunca altera o
+  // fluxo (só faz I/O em mensagem de anúncio). Remover após a Fase 1.
+  await logCtwaDiag(supabase, payload);
 
   // ── Connection/status events ──────────────────────────────────────────────
   // Must be handled BEFORE the message path: a brand-new instance is created
