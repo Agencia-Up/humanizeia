@@ -72,6 +72,7 @@ Deno.serve(async (req) => {
       datePreset = "last_30d",
       action: bodyAction,
       campaignId,
+      adsetId,
       actionType,
       actionParams,
     } = body;
@@ -204,6 +205,11 @@ Deno.serve(async (req) => {
     // ── Get ad set drill-down ──
     if (bodyAction === "get_adsets") {
       return await handleGetAdsets(admin, user.id, targetAccountId, campaignId, datePreset, corsHeaders);
+    }
+
+    // ── Get ads (creatives) drill-down ──
+    if (bodyAction === "get_ads") {
+      return await handleGetAds(admin, user.id, targetAccountId, adsetId, datePreset, corsHeaders);
     }
 
     // ── Smart asset selection (creatives + copies) ──
@@ -559,8 +565,10 @@ async function fetchCampaignAdSets(accessToken: string, campaignId: string) {
 async function fetchAdSetAds(accessToken: string, adsetId: string) {
   const url = new URL(`${META_GRAPH_URL}/${adsetId}/ads`);
   url.searchParams.set("access_token", accessToken);
-  url.searchParams.set("fields", "id,name,status,effective_status,creative{id,name,body,image_url}");
-  url.searchParams.set("limit", "20");
+  // image_url = imagem do criativo; thumbnail_url = poster de vídeo; object_type
+  // permite saber se é VIDEO/PHOTO/SHARE pra escolher o ícone/preview certo.
+  url.searchParams.set("fields", "id,name,status,effective_status,creative{id,name,title,body,image_url,thumbnail_url,object_type,video_id}");
+  url.searchParams.set("limit", "30");
   const res = await fetch(url.toString());
   const data = await res.json();
   return data.data || [];
@@ -882,6 +890,26 @@ function detectPortfolioOpportunities(enriched: any[], currencySymbol: string): 
 
 // ── Segment Context Builder ───────────────────────────────────────────────────
 
+// Nicho-base do LOGOS: o produto atende concessionárias e revendas de veículos.
+// Quando o usuário NÃO configurou um perfil de segmento específico, o José ainda
+// precisa raciocinar dentro do contexto automotivo — caso contrário ele dá
+// recomendações genéricas de "marketing digital" que não servem pra loja de carro.
+const DEFAULT_NICHE_CONTEXT = `🏭 NICHO DE NEGÓCIO: CONCESSIONÁRIAS E REVENDAS DE VEÍCULOS
+Este anunciante vende carros/veículos. TODA recomendação deve assumir esse contexto — o objetivo final não é "engajamento", é gerar conversas no WhatsApp e leads qualificados que virem test drive, proposta de financiamento e venda na loja.
+
+BENCHMARKS DO SETOR AUTOMOTIVO (use no lugar dos genéricos quando o objetivo for mensagem/lead):
+  • Custo por conversa iniciada (WhatsApp): ótimo < R$15, bom R$15–35, atenção R$35–50, crítico > R$50
+  • Custo por lead (formulário): ótimo < R$25, bom R$25–50, crítico > R$80
+  • CTR de anúncio de veículo: fraco < 1%, bom > 1.8%, excelente > 3%
+  • A métrica que mais importa NÃO é CTR isolado — é o custo por conversa/lead e quantos viram test drive.
+
+REGRAS DO SETOR (aplicar nas recomendações):
+  ⚙️ Segmentação regional é decisiva: público deve ficar no raio de deslocamento da loja (geralmente 30–60 km). Público amplo demais queima verba.
+  ⚙️ Criativo campeão de concessionária mostra o VEÍCULO + preço/parcela + gancho ("entrada facilitada", "aceita seu usado na troca", "saída imediata").
+  ⚙️ Fim de mês concentra fechamento (metas de loja e montadora) — vale escalar campanhas saudáveis nos últimos dias.
+  ⚙️ Feirões e datas (Dia das Mães, Black Friday, fim de ano com 13º) puxam demanda — sugerir reforço de verba quando o ROAS/health permitir.
+  ⚙️ Lead de carro responde rápido mas esfria rápido: priorize objetivos de MENSAGEM/CONVERSA quando a loja atende bem no WhatsApp.`;
+
 function buildSegmentContext(segment: any): string {
   const lines: string[] = [
     `🏭 SEGMENTO DE NEGÓCIO ATIVO: ${segment.icon || ""} ${segment.name}`,
@@ -1051,7 +1079,12 @@ ${segmentContext ? `
 ${segmentContext}
 ══════════════════════════════════════════
 INSTRUÇÃO CRÍTICA: O segmento acima está ativo. Substitua os benchmarks genéricos pelos do segmento. Aplique TODAS as regras do segmento na análise e nas recomendações.
-` : ""}
+` : `
+══════════════════════════════════════════
+${DEFAULT_NICHE_CONTEXT}
+══════════════════════════════════════════
+INSTRUÇÃO CRÍTICA: Não há um perfil de segmento específico configurado, mas este anunciante É uma concessionária/revenda de veículos. Faça TODA a análise e as recomendações dentro desse contexto automotivo — fale em conversas no WhatsApp, leads, test drive, financiamento e troca, não em métricas abstratas.
+`}
 
 REGRAS DE DECISÃO AUTOMÁTICA (auto_safe=true):
 1. Pausar campanha: CTR < 0.5% E frequência > 4 (fadiga confirmada) E gasto > ${currencySymbol}${currency === "USD" ? "20" : "50"}
@@ -1927,6 +1960,80 @@ async function handleGetAdsets(admin: any, userId: string, targetAccountId: stri
   });
 
   return new Response(JSON.stringify({ adsets: enrichedAdsets }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" }
+  });
+}
+
+// ── Get ads (criativos) de um conjunto, com preview + métricas por anúncio ──
+async function handleGetAds(admin: any, userId: string, targetAccountId: string, adsetId: string, datePreset: string, corsHeaders: any) {
+  if (!adsetId) {
+    return new Response(JSON.stringify({ error: "adsetId é obrigatório" }), { status: 400, headers: corsHeaders });
+  }
+
+  let accountQuery = admin.from("ad_accounts").select("*")
+    .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+  if (targetAccountId) accountQuery = accountQuery.eq("account_id", targetAccountId);
+  const { data: adAccount } = await accountQuery.limit(1).single();
+
+  if (!adAccount?.access_token_encrypted) {
+    return new Response(JSON.stringify({ error: "Conta não encontrada" }), { status: 404, headers: corsHeaders });
+  }
+
+  const token = adAccount.access_token_encrypted;
+
+  // Anúncios (criativo+preview) e métricas por anúncio (level=ad) em paralelo.
+  const [ads, adInsightsRaw] = await Promise.all([
+    fetchAdSetAds(token, adsetId),
+    (async () => {
+      const url = new URL(`${META_GRAPH_URL}/${adsetId}/insights`);
+      url.searchParams.set("access_token", token);
+      url.searchParams.set("fields", "ad_id,ad_name,spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,actions,action_values");
+      url.searchParams.set("date_preset", datePreset);
+      url.searchParams.set("level", "ad");
+      const res = await fetch(url.toString());
+      const d = await res.json();
+      return d.data || [];
+    })(),
+  ]);
+
+  const insMap = new Map(adInsightsRaw.map((i: any) => [i.ad_id, i]));
+
+  const enrichedAds = ads.map((ad: any) => {
+    const m: any = insMap.get(ad.id) || {};
+    const cr = ad.creative || {};
+    // Conversões = mensagens iniciadas ou leads (o que houver), pra CPA por criativo.
+    const actions = Array.isArray(m.actions) ? m.actions : [];
+    const convAction = actions.find((a: any) =>
+      ["onsite_conversion.messaging_conversation_started_7d", "lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"].includes(a.action_type)
+    );
+    const conversions = convAction ? Number(convAction.value || 0) : 0;
+    const spend = Number(m.spend || 0);
+    return {
+      id: ad.id,
+      name: ad.name,
+      status: ad.status,
+      effective_status: ad.effective_status,
+      creative_id: cr.id || null,
+      creative_name: cr.name || null,
+      title: cr.title || null,
+      body: cr.body || null,
+      image_url: cr.image_url || cr.thumbnail_url || null,
+      thumbnail_url: cr.thumbnail_url || null,
+      media_type: cr.video_id ? "video" : (cr.object_type || "image"),
+      spend,
+      impressions: Number(m.impressions || 0),
+      clicks: Number(m.clicks || 0),
+      ctr: Number(m.ctr || 0),
+      cpc: Number(m.cpc || 0),
+      cpm: Number(m.cpm || 0),
+      reach: Number(m.reach || 0),
+      frequency: Number(m.frequency || 0),
+      conversions,
+      cpa: conversions > 0 ? spend / conversions : 0,
+    };
+  });
+
+  return new Response(JSON.stringify({ ads: enrichedAds }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" }
   });
 }

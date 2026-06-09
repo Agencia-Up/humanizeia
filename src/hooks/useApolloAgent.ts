@@ -32,6 +32,30 @@ export interface ApolloAdSet {
   optimization_goal?: string;
 }
 
+export interface ApolloAd {
+  id: string;
+  name: string;
+  status: string;
+  effective_status: string;
+  creative_id: string | null;
+  creative_name: string | null;
+  title: string | null;
+  body: string | null;
+  image_url: string | null;
+  thumbnail_url: string | null;
+  media_type: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  reach: number;
+  frequency: number;
+  conversions: number;
+  cpa: number;
+}
+
 export interface ApolloEnrichedCampaign {
   id: string;
   name: string;
@@ -288,6 +312,17 @@ export function useApolloAgent() {
     },
   });
 
+  // ── Get ads (criativos) de um conjunto ──
+  const getAds = useMutation({
+    mutationFn: async ({ adsetId, targetAccountId, datePreset }: { adsetId: string; targetAccountId?: string; datePreset?: string }): Promise<ApolloAd[]> => {
+      const { data, error } = await supabase.functions.invoke('apollo-agent', {
+        body: { action: 'get_ads', adsetId, targetAccountId, datePreset: datePreset || 'last_30d' },
+      });
+      if (error) throw error;
+      return (data?.ads || []) as ApolloAd[];
+    },
+  });
+
   const dismissAction = useCallback((action: ApolloAction) => {
     setPendingActions(prev => prev.filter(a =>
       !(a.campaign_id === action.campaign_id && a.action_type === action.action_type)
@@ -317,6 +352,7 @@ export function useApolloAgent() {
     hydrateSession,
     executeAction,
     getAdSets,
+    getAds,
     dismissAction,
     testConnection,
   };

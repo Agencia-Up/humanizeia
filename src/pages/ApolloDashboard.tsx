@@ -19,7 +19,7 @@ import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
-  ApolloAction, ApolloEnrichedCampaign, ApolloDatePreset,
+  ApolloAction, ApolloEnrichedCampaign, ApolloDatePreset, ApolloAd,
 } from '@/hooks/useApolloAgent';
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, Brain, CheckCircle,
@@ -27,6 +27,7 @@ import {
   Loader2, Minus, Pause, Play, Radar, Settings, Sparkles,
   ThumbsDown, TrendingDown, TrendingUp, Zap, Sun, BarChart3,
   Flame, Gauge, PieChart, RefreshCw, MessageCircle, Phone, Shield,
+  Image as ImageIcon, Film,
 } from 'lucide-react';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -138,12 +139,130 @@ function mainMetricFor(campaign: ApolloEnrichedCampaign, sym: string): { label: 
 
 // ── CampaignCard ──────────────────────────────────────────────────────────────
 
+// ── CreativeCard: um anúncio (criativo) com preview de imagem/vídeo + métricas ──
+function CreativeCard({ ad, currencySymbol }: { ad: ApolloAd; currencySymbol: string }) {
+  const active = ad.effective_status === 'ACTIVE';
+  const isVideo = ad.media_type === 'video' || ad.media_type === 'VIDEO';
+  return (
+    <div className="rounded-md bg-background/60 border border-border/40 p-2 flex gap-2.5">
+      {/* Preview do criativo */}
+      <div className="relative w-16 h-16 rounded bg-muted/40 border border-border/30 flex-shrink-0 overflow-hidden flex items-center justify-center">
+        {ad.image_url ? (
+          <img src={ad.image_url} alt={ad.name} className="w-full h-full object-cover" loading="lazy" />
+        ) : isVideo ? (
+          <Film className="h-5 w-5 text-muted-foreground" />
+        ) : (
+          <ImageIcon className="h-5 w-5 text-muted-foreground" />
+        )}
+        {isVideo && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <Play className="h-4 w-4 text-white fill-white" />
+          </div>
+        )}
+      </div>
+      {/* Nome + copy + métricas */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-1">
+          <p className="font-medium text-[11px] truncate flex-1" title={ad.name}>{ad.name}</p>
+          <Badge variant="outline" className={`text-[9px] px-1 ${active ? 'text-emerald-400 border-emerald-500/30' : 'text-muted-foreground'}`}>
+            {active ? 'Ativo' : 'Pausado'}
+          </Badge>
+        </div>
+        {ad.body && <p className="text-[10px] text-muted-foreground truncate" title={ad.body}>{ad.body}</p>}
+        <div className="grid grid-cols-4 gap-1 text-[10px] mt-1">
+          <div><span className="text-muted-foreground">Gasto </span>{currencySymbol}{fmt(ad.spend)}</div>
+          <div><span className="text-muted-foreground">CTR </span><span className={ad.ctr >= 1.5 ? 'text-emerald-400 font-medium' : ''}>{fmt(ad.ctr)}%</span></div>
+          <div><span className="text-muted-foreground">CPC </span>{currencySymbol}{fmt(ad.cpc)}</div>
+          <div>
+            <span className="text-muted-foreground">{ad.conversions > 0 ? 'CPA ' : 'Impr. '}</span>
+            {ad.conversions > 0 ? `${currencySymbol}${fmt(ad.cpa)}` : ad.impressions.toLocaleString('pt-BR')}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AdSetRow: um conjunto + drill-down de criativos (carrega ads sob demanda) ──
+function AdSetRow({ adset, currencySymbol, statusFilter, onLoadAds }: {
+  adset: any; currencySymbol: string; statusFilter: 'all' | 'active' | 'paused';
+  onLoadAds: (adsetId: string) => Promise<ApolloAd[]>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [ads, setAds] = useState<ApolloAd[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && ads === null) {
+      setLoading(true);
+      try { setAds(await onLoadAds(adset.id)); }
+      catch { setAds([]); }
+      finally { setLoading(false); }
+    }
+  };
+
+  // Criativos respeitam o MESMO filtro de status (Todas/Ativas/Pausadas).
+  const visibleAds = (ads || []).filter((ad) =>
+    statusFilter === 'all' ? true : statusFilter === 'active' ? ad.effective_status === 'ACTIVE' : ad.effective_status !== 'ACTIVE'
+  );
+
+  return (
+    <div className="rounded-md bg-background/50 border border-border/40 p-2.5 text-xs">
+      <div className="flex items-center justify-between gap-1 mb-1">
+        <p className="font-medium truncate flex-1" title={adset.name}>{adset.name}</p>
+        <Badge variant="outline" className={`text-[9px] px-1 ${adset.effective_status === 'ACTIVE' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+          {adset.effective_status || adset.status}
+        </Badge>
+      </div>
+      <div className="grid grid-cols-4 gap-1 text-[10px]">
+        <div><span className="text-muted-foreground">CTR: </span><span className={adset.ctr >= 1.5 ? 'text-emerald-400 font-medium' : ''}>{fmt(adset.ctr)}%</span></div>
+        <div><span className="text-muted-foreground">CPC: </span>{currencySymbol}{fmt(adset.cpc)}</div>
+        <div><span className="text-muted-foreground">Freq: </span><span className={adset.frequency > 4 ? 'text-red-400 font-medium' : adset.frequency > 3 ? 'text-amber-400' : ''}>{fmt(adset.frequency)}</span></div>
+        <div><span className="text-muted-foreground">Gasto: </span>{currencySymbol}{fmt(adset.spend)}</div>
+      </div>
+      {adset.creative_fatigue_score !== undefined && (
+        <div className="mt-1.5 flex items-center gap-1">
+          <div className="flex-1 bg-border/40 rounded-full h-1">
+            <div
+              className={`h-1 rounded-full transition-all ${adset.creative_fatigue_score >= 70 ? 'bg-red-500' : adset.creative_fatigue_score >= 40 ? 'bg-amber-500' : adset.creative_fatigue_score >= 20 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
+              style={{ width: `${adset.creative_fatigue_score}%` }}
+            />
+          </div>
+          <span className={`text-[9px] font-medium ${adset.creative_fatigue_score >= 70 ? 'text-red-400' : adset.creative_fatigue_score >= 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            Fadiga {adset.creative_fatigue_score}%
+          </span>
+        </div>
+      )}
+
+      {/* Drill-down: criativos do conjunto */}
+      <button onClick={toggle} className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors w-full">
+        {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {open ? 'Ocultar criativos' : 'Ver criativos'}
+      </button>
+      {open && (
+        <div className="space-y-1.5 mt-1.5 pt-1.5 border-t border-border/30">
+          {loading ? (
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground py-1"><Loader2 className="h-3 w-3 animate-spin" /> Carregando criativos...</div>
+          ) : visibleAds.length ? (
+            visibleAds.map((ad) => <CreativeCard key={ad.id} ad={ad} currencySymbol={currencySymbol} />)
+          ) : (
+            <p className="text-[10px] text-muted-foreground py-1">Nenhum criativo {statusFilter === 'active' ? 'ativo' : statusFilter === 'paused' ? 'pausado' : ''} neste conjunto.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CampaignCard({
-  campaign, currencySymbol, accountId, datePreset, onDrillDown, adsets, isLoadingAdsets, statusFilter,
+  campaign, currencySymbol, accountId, datePreset, onDrillDown, adsets, isLoadingAdsets, statusFilter, onLoadAds,
 }: {
   campaign: ApolloEnrichedCampaign; currencySymbol: string; accountId?: string;
   datePreset: ApolloDatePreset; onDrillDown: () => void; adsets: any[] | null; isLoadingAdsets: boolean;
   statusFilter: 'all' | 'active' | 'paused';
+  onLoadAds: (adsetId: string) => Promise<ApolloAd[]>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const s = campaign.health_score;
@@ -300,33 +419,7 @@ function CampaignCard({
             </div>
           ) : visibleAdsets.length ? (
             visibleAdsets.map((as: any) => (
-              <div key={as.id} className="rounded-md bg-background/50 border border-border/40 p-2.5 text-xs">
-                <div className="flex items-center justify-between gap-1 mb-1">
-                  <p className="font-medium truncate flex-1" title={as.name}>{as.name}</p>
-                  <Badge variant="outline" className={`text-[9px] px-1 ${as.effective_status === 'ACTIVE' ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                    {as.effective_status || as.status}
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-4 gap-1 text-[10px]">
-                  <div><span className="text-muted-foreground">CTR: </span><span className={as.ctr >= 1.5 ? 'text-emerald-400 font-medium' : ''}>{fmt(as.ctr)}%</span></div>
-                  <div><span className="text-muted-foreground">CPC: </span>{currencySymbol}{fmt(as.cpc)}</div>
-                  <div><span className="text-muted-foreground">Freq: </span><span className={as.frequency > 4 ? 'text-red-400 font-medium' : as.frequency > 3 ? 'text-amber-400' : ''}>{fmt(as.frequency)}</span></div>
-                  <div><span className="text-muted-foreground">Gasto: </span>{currencySymbol}{fmt(as.spend)}</div>
-                </div>
-                {as.creative_fatigue_score !== undefined && (
-                  <div className="mt-1.5 flex items-center gap-1">
-                    <div className="flex-1 bg-border/40 rounded-full h-1">
-                      <div
-                        className={`h-1 rounded-full transition-all ${as.creative_fatigue_score >= 70 ? 'bg-red-500' : as.creative_fatigue_score >= 40 ? 'bg-amber-500' : as.creative_fatigue_score >= 20 ? 'bg-yellow-500' : 'bg-emerald-500'}`}
-                        style={{ width: `${as.creative_fatigue_score}%` }}
-                      />
-                    </div>
-                    <span className={`text-[9px] font-medium ${as.creative_fatigue_score >= 70 ? 'text-red-400' : as.creative_fatigue_score >= 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                      Fadiga {as.creative_fatigue_score}%
-                    </span>
-                  </div>
-                )}
-              </div>
+              <AdSetRow key={as.id} adset={as} currencySymbol={currencySymbol} statusFilter={statusFilter} onLoadAds={onLoadAds} />
             ))
           ) : (
             <p className="text-xs text-muted-foreground py-1">Nenhum ad set {statusFilter === 'active' ? 'ativo' : statusFilter === 'paused' ? 'pausado' : ''} com dados no período.</p>
@@ -590,7 +683,7 @@ function writeApolloCache(accountId: string, data: ApolloUICache) {
 
 export default function ApolloDashboard() {
   const { connectedAccount, connectedAccounts, selectConnectedAccount, isLoading: isLoadingAccount } = useMetaConnection();
-  const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, hydrateSession, executeAction, getAdSets, dismissAction, testConnection } = useApolloAgent();
+  const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, hydrateSession, executeAction, getAdSets, getAds, dismissAction, testConnection } = useApolloAgent();
   const [diagResult, setDiagResult] = useState<string | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const { data: history, isLoading: isLoadingHistory } = useApolloHistory(connectedAccount?.account_id);
@@ -763,6 +856,19 @@ export default function ApolloDashboard() {
       setLoadingAdsets(prev => ({ ...prev, [campaignId]: false }));
     }
   }, [adsetCache, getAdSets, accountId, datePreset]);
+
+  // Carrega criativos de um conjunto sob demanda, com cache por adset (sobrevive
+  // a re-render). A própria AdSetRow já evita refetch enquanto montada.
+  const adsCacheRef = useRef<Record<string, ApolloAd[]>>({});
+  const handleLoadAds = useCallback(async (adsetId: string): Promise<ApolloAd[]> => {
+    if (adsCacheRef.current[adsetId]) return adsCacheRef.current[adsetId];
+    const ads = await getAds.mutateAsync({ adsetId, targetAccountId: accountId, datePreset });
+    adsCacheRef.current[adsetId] = ads;
+    return ads;
+  }, [getAds, accountId, datePreset]);
+
+  // Quando muda a conta ou o período, o cache de criativos fica obsoleto.
+  useEffect(() => { adsCacheRef.current = {}; }, [accountId, datePreset]);
 
   const overallScore = session?.health_score ?? null;
   const overallHealthText = overallScore === null ? '' :
@@ -995,6 +1101,7 @@ export default function ApolloDashboard() {
                                 adsets={adsetCache[c.id] || null}
                                 isLoadingAdsets={!!loadingAdsets[c.id]}
                                 statusFilter={statusFilter}
+                                onLoadAds={handleLoadAds}
                               />
                             ))}
                           </div>
