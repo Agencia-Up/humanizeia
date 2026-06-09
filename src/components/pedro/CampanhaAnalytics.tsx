@@ -126,11 +126,16 @@ function resolveAttribution(lead: RawLead, utm: UtmRecord | null): Attribution {
   const camp = (lead.campaign_name || '').trim();
   const adn = (lead.ad_name || '').trim();
   const headline = (lead.meta_headline || '').trim();
-  const hasLeadAd = !!(camp || adn || headline || lead.ctwa_clid || lead.source_id || lead.meta_lead_id);
+  const sid = (lead.source_id || '').trim();
+  // O source_id de anúncio do Meta (CTWA) é NUMÉRICO. Ignora UUIDs/IDs internos
+  // (dados de teste) pra não rotular lead orgânico como anúncio.
+  const metaAdId = /^\d{5,}$/.test(sid) ? sid : '';
+  const hasLeadAd = !!(camp || adn || headline || lead.ctwa_clid || lead.meta_lead_id || metaAdId);
   if (hasLeadAd) {
-    const label = camp || headline || adn || 'Anúncio (sem nome de campanha)';
+    const label = camp || headline || adn || (metaAdId ? `Anúncio ${metaAdId}` : 'Anúncio (Tráfego Pago)');
+    const keyBase = camp || headline || adn || metaAdId || lead.ctwa_clid || 'anuncio';
     const sub = adn && adn !== label ? `Tráfego Pago · ${adn}` : 'Tráfego Pago';
-    return { kind: 'campanha', key: `ad|${label.toLowerCase()}`, label, sub };
+    return { kind: 'campanha', key: `ad|${String(keyBase).toLowerCase()}`, label, sub };
   }
   // 2) UTM do contato (preenchido em anúncios Click-to-WhatsApp via wa_contacts)
   if (utm && (utm.utm_campaign || utm.utm_source)) {
