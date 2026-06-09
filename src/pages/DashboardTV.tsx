@@ -291,6 +291,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Vendedores ativos (com last_lead_received_at) pro rodízio do clique-pra-transferir.
   const [queueSellers, setQueueSellers] = useState<any[]>([]);
   const [transferringId, setTransferringId] = useState<string | null>(null);
+  // Tick incrementado a cada evento realtime/poll — passado pros componentes
+  // filhos (ex.: card Real vs Falso) re-buscarem junto, sem re-assinar o canal.
+  const [liveTick, setLiveTick] = useState(0);
 
   // Persiste período escolhido
   useEffect(() => {
@@ -680,6 +683,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           total_spend: totalSpend,
           custo_por_lead: custoPorLead,
         });
+        // Sincroniza os cards filhos (ex.: Real vs Falso) a cada reload —
+        // mount, poll de 30s e realtime (lead novo) — sem re-assinar o canal.
+        setLiveTick(t => t + 1);
       } catch (err) {
         console.error('[DashboardTV] erro ao carregar:', err);
       } finally {
@@ -995,7 +1001,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </section>
 
       {/* ───── Custo por Lead — Real vs Falso (Meta), só master ───── */}
-      {!sellerMemberId && <CplComparativo userId={effectiveUserId} />}
+      {!sellerMemberId && <CplComparativo userId={effectiveUserId} reloadKey={liveTick} />}
 
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">

@@ -25,7 +25,7 @@ function brl(n: number): string {
 interface Win { spend: number; meta: number; }
 const ZERO: Win = { spend: 0, meta: 0 };
 
-export function CplComparativo({ userId }: { userId?: string | null }) {
+export function CplComparativo({ userId, reloadKey }: { userId?: string | null; reloadKey?: number }) {
   const [cost, setCost] = useState<{ today: Win; week: Win }>({ today: ZERO, week: ZERO });
   const [leads, setLeads] = useState<{ today: number; week: number }>({ today: 0, week: 0 });
 
@@ -90,7 +90,7 @@ export function CplComparativo({ userId }: { userId?: string | null }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [userId]);
+  }, [userId, reloadKey]);
 
   const v = useMemo(() => {
     const cplReal = (w: Win, n: number) => (n > 0 ? w.spend / n : 0);
