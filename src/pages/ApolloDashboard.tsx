@@ -682,7 +682,13 @@ function TrendSummary({ snapshots, currencySymbol }: { snapshots: any[]; currenc
 // Cacheia a última sessão + estado da UI POR CONTA no localStorage, pra restaurar
 // instantâneo ao sair e voltar pra tela — SEM refazer chamadas à API do Meta.
 const APOLLO_CACHE_PREFIX = 'jose:apollo:v1:';
-interface ApolloUICache { session: unknown; datePreset: string; activeTab: string; statusFilter?: string; savedAt: number; }
+interface ApolloUICache { session: unknown; datePreset: string; activeTab: string; statusFilter?: string; topMetrics?: string[]; savedAt: number; }
+
+// Catálogo de métricas do topo (nível conta). O usuário escolhe quais aparecem.
+const ALL_TOP_METRICS = ['cost_per_result', 'results', 'spend', 'ctr', 'cpc', 'cpm', 'frequency', 'impressions', 'reach', 'clicks', 'roas', 'health', 'active'] as const;
+// Padrão pensado pra concessionária/WhatsApp (sem ROAS, que fica 0): custo por
+// conversa, conversas, gasto e CTR.
+const DEFAULT_TOP_METRICS = ['cost_per_result', 'results', 'spend', 'ctr'];
 function readApolloCache(accountId?: string): ApolloUICache | null {
   if (!accountId || typeof window === 'undefined') return null;
   try {
@@ -712,6 +718,11 @@ export default function ApolloDashboard() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null); // timestamp da última sincronização (Fase 1)
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all'); // filtro de status (Fase 2)
+  const [topMetrics, setTopMetrics] = useState<string[]>(DEFAULT_TOP_METRICS); // métricas escolhidas no topo
+  const [metricsPickerOpen, setMetricsPickerOpen] = useState(false);
+  const toggleTopMetric = useCallback((k: string) => {
+    setTopMetrics(prev => prev.includes(k) ? (prev.length > 1 ? prev.filter(x => x !== k) : prev) : [...prev, k]);
+  }, []);
   const [aiLogEntries, setAiLogEntries] = useState<AILogEntry[]>([]);
   const [aiLogOpen, setAiLogOpen] = useState(true);
   const prevIsAnalyzing = useRef(false);
@@ -729,6 +740,7 @@ export default function ApolloDashboard() {
         if (cached.datePreset) setDatePreset(cached.datePreset as ApolloDatePreset);
         if (cached.activeTab) setActiveTab(cached.activeTab);
         if (cached.statusFilter) setStatusFilter(cached.statusFilter as 'all' | 'active' | 'paused');
+        if (Array.isArray(cached.topMetrics) && cached.topMetrics.length) setTopMetrics(cached.topMetrics);
         if (cached.savedAt) setLastUpdatedAt(cached.savedAt);
       } else {
         loadSavedSession(accountId).then((saved: any) => {
@@ -742,9 +754,9 @@ export default function ApolloDashboard() {
   //    Usa o lastUpdatedAt como carimbo — trocar de aba/período NÃO refaz a sync. ──
   useEffect(() => {
     if (accountId && session && lastUpdatedAt) {
-      writeApolloCache(accountId, { session, datePreset, activeTab, statusFilter, savedAt: lastUpdatedAt });
+      writeApolloCache(accountId, { session, datePreset, activeTab, statusFilter, topMetrics, savedAt: lastUpdatedAt });
     }
-  }, [accountId, session, datePreset, activeTab, statusFilter, lastUpdatedAt]);
+  }, [accountId, session, datePreset, activeTab, statusFilter, topMetrics, lastUpdatedAt]);
   // ── AI Log: populate when analysis starts ──
   useEffect(() => {
     if (isAnalyzing && !prevIsAnalyzing.current) {
@@ -821,6 +833,49 @@ export default function ApolloDashboard() {
 
   const currency = session?.account?.currency || connectedAccount?.currency || 'BRL';
   const currencySymbol = currency === 'USD' ? 'US$' : 'R$';
+
+  // ── Métricas agregadas da conta (nível topo), no período da sessão. Rótulos
+  //    se adaptam ao objetivo dominante (conversa/lead/venda/resultado). ──
+  const topMetricCatalog = useMemo(() => {
+    const cs = (session?.campaigns || []) as any[];
+    let spend = 0, impr = 0, clicks = 0, results = 0, reach = 0, freqW = 0, roasSum = 0, roasN = 0, healthSum = 0, active = 0;
+    const objCount = { msg: 0, lead: 0, sale: 0, other: 0 };
+    for (const c of cs) {
+      spend += c.spend || 0; impr += c.impressions || 0; clicks += c.clicks || 0;
+      results += (c.results ?? c.conversions ?? 0); reach += c.reach || 0;
+      freqW += (c.frequency || 0) * (c.impressions || 0);
+      if ((c.roas || 0) > 0) { roasSum += c.roas; roasN++; }
+      healthSum += c.health_score || 0;
+      if (c.effective_status === 'ACTIVE') active++;
+      const o = String(c.objective || '').toUpperCase();
+      if (o.includes('ENGAGEMENT') || o.includes('MESSAGE') || o.includes('CONVERSATION')) objCount.msg++;
+      else if (o.includes('LEAD')) objCount.lead++;
+      else if (o.includes('SALE') || o.includes('CONVERSION') || o.includes('PURCHASE')) objCount.sale++;
+      else objCount.other++;
+    }
+    const n = cs.length || 1;
+    const dominant = (['msg', 'lead', 'sale', 'other'] as const).reduce((a, b) => objCount[b] > objCount[a] ? b : a, 'other' as 'msg' | 'lead' | 'sale' | 'other');
+    const resLabel = dominant === 'msg' ? 'Conversas iniciadas' : dominant === 'lead' ? 'Leads' : dominant === 'sale' ? 'Vendas' : 'Resultados';
+    const costLabel = dominant === 'msg' ? 'Custo por Conversa' : dominant === 'lead' ? 'Custo por Lead' : dominant === 'sale' ? 'Custo por Venda' : 'Custo por Resultado';
+    const money = (v: number) => `${currencySymbol} ${fmt(v)}`;
+    const freq = impr > 0 ? freqW / impr : 0;
+    const cat: Record<string, { label: string; value: string }> = {
+      cost_per_result: { label: costLabel, value: results > 0 ? money(spend / results) : '—' },
+      results: { label: resLabel, value: Math.round(results).toLocaleString('pt-BR') },
+      spend: { label: 'Gasto total', value: money(spend) },
+      ctr: { label: 'CTR médio', value: impr > 0 ? `${fmt((clicks / impr) * 100)}%` : '—' },
+      cpc: { label: 'CPC médio', value: clicks > 0 ? money(spend / clicks) : '—' },
+      cpm: { label: 'CPM médio', value: impr > 0 ? money((spend / impr) * 1000) : '—' },
+      frequency: { label: 'Frequência média', value: fmt(freq) },
+      impressions: { label: 'Impressões', value: Math.round(impr).toLocaleString('pt-BR') },
+      reach: { label: 'Alcance', value: Math.round(reach).toLocaleString('pt-BR') },
+      clicks: { label: 'Cliques', value: Math.round(clicks).toLocaleString('pt-BR') },
+      roas: { label: 'ROAS médio', value: roasN ? `${fmt(roasSum / roasN)}x` : '—' },
+      health: { label: 'Score médio', value: `${Math.round(healthSum / n)}/100` },
+      active: { label: 'Campanhas ativas', value: String(active) },
+    };
+    return cat;
+  }, [session, currencySymbol]);
 
   const handleAnalyze = useCallback(() => {
     analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute });
@@ -996,14 +1051,54 @@ export default function ApolloDashboard() {
           </Card>
         )}
 
-        {/* ── Historical WoW trend (always visible if data exists) ── */}
-        {snapshots.length > 0 && (
+        {/* ── Métricas principais (período da sessão, escolhidas pelo usuário) ── */}
+        {session && (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
-              <Activity className="h-3.5 w-3.5" /> Tendências Acumuladas ({snapshots.length} semanas de dados)
-            </p>
-            <TrendSummary snapshots={snapshots} currencySymbol={currencySymbol} />
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <BarChart3 className="h-3.5 w-3.5" /> Métricas principais · {DATE_PRESETS.find(p => p.value === datePreset)?.label}
+              </p>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setMetricsPickerOpen(v => !v)}>
+                <Settings className="h-3 w-3" /> Escolher métricas
+              </Button>
+            </div>
+            {metricsPickerOpen && (
+              <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-border/40 bg-background/30">
+                {ALL_TOP_METRICS.map(k => {
+                  const sel = topMetrics.includes(k);
+                  return (
+                    <button key={k} onClick={() => toggleTopMetric(k)}
+                      className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${sel ? 'bg-primary/15 border-primary/40 text-primary font-medium' : 'border-border/50 text-muted-foreground hover:border-border'}`}>
+                      {topMetricCatalog[k]?.label || k}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {topMetrics.map(k => topMetricCatalog[k] && (
+                <div key={k} className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+                  <p className="text-[11px] text-muted-foreground mb-1 truncate" title={topMetricCatalog[k].label}>{topMetricCatalog[k].label}</p>
+                  <p className="text-2xl font-extrabold text-primary leading-none">{topMetricCatalog[k].value}</p>
+                </div>
+              ))}
+            </div>
           </div>
+        )}
+
+        {/* ── Tendência WoW (recolhível, secundário — ROAS/semana a semana) ── */}
+        {snapshots.length > 0 && (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <button className="group flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+                <Activity className="h-3.5 w-3.5" /> Tendências semana a semana ({snapshots.length} semanas)
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <TrendSummary snapshots={snapshots} currencySymbol={currencySymbol} />
+            </CollapsibleContent>
+          </Collapsible>
         )}
 
         {/* ── After analysis: overview ── */}
