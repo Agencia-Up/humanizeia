@@ -4091,7 +4091,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               )}
             </>
           )}
-          {!isMarcosCrm && (
+          {/* Follow-up IA (reativação automática do agente Pedro): SÓ MASTER.
+              Vendedor não vê nem configura o follow-up automático do agente. */}
+          {!isMarcosCrm && !isSeller && (
             <Button
               variant="outline" size="sm"
               onClick={() => setFollowupIAModalOpen(true)}
@@ -4116,7 +4118,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
               REATIVACAO (pedro-auto-followup): dispara na coluna de inativos
               respeitando as regras do painel (horario, teto/dia, intervalo, pausa),
               gera a mensagem por IA e o cron continua o lote espacado. */}
-          {!isMarcosCrm && (
+          {!isMarcosCrm && !isSeller && (
             <FollowupIAConfigModal
               open={followupIAModalOpen}
               onOpenChange={(val) => {
