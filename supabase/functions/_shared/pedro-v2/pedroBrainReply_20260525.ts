@@ -345,19 +345,24 @@ function buildDeterministicStockReply(input: {
     return `Conferi no estoque real e nao achei ${requested} disponivel agora.\n\nSe fizer sentido, posso procurar algo parecido por faixa de valor ou cambio.`;
   }
 
-  const intro = `Temos sim. Encontrei ${items.length} opcao${items.length === 1 ? "" : "es"} de ${requested} no estoque:`;
-  const list = items.map((vehicle) => [
-    `${vehicle.index}. *${vehicle.label}*`,
-    vehicle.preco_formatado ? `Preco: ${vehicle.preco_formatado}` : null,
-    vehicle.km_formatado ? `KM: ${vehicle.km_formatado}` : null,
-    vehicle.cambio ? `Cambio: ${vehicle.cambio}` : null,
-    vehicle.cor ? `Cor: ${vehicle.cor}` : null,
-    vehicle.imagem ? `Foto: ${vehicle.imagem}` : null,
-  ].filter(Boolean).join("\n")).join("\n\n");
-  const more = Number(input.stock_result?.total || 0) > items.length
-    ? `\n\nTenho mais opcoes parecidas aqui tambem.`
+  // NUNCA despejar a lista inteira (polui a conversa) nem colar URL de foto (o WhatsApp nao
+  // renderiza — sai link cru, feio). Mostra ATE 5, formato limpo (1 linha por carro), insinua
+  // que ha mais e fecha com pergunta que desenrola (padrao SDR). Vale mesmo quando o LLM cai
+  // e este fallback assume.
+  const shown = items.slice(0, 5);
+  const list = shown.map((vehicle) => {
+    const det = [
+      vehicle.preco_formatado || null,
+      vehicle.km_formatado || null,
+      vehicle.cambio || null,
+      vehicle.cor || null,
+    ].filter(Boolean).join(" · ");
+    return `${vehicle.index}. *${vehicle.label}*${det ? ` — ${det}` : ""}`;
+  }).join("\n");
+  const more = items.length > shown.length
+    ? `\n\nEsses sao alguns dos nossos modelos — tenho mais opcoes tambem.`
     : "";
-  return `${intro}\n\n${list}${more}\n\nQual dessas faz mais sentido pra voce?`;
+  return `Temos sim! Olha algumas opcoes:\n\n${list}${more}\n\nQuer ver fotos de algum desses ou prefere que eu te mostre mais opcoes?`;
 }
 
 // Limpa MARKDOWN/URLs que o WhatsApp NAO renderiza (saiam crus pro cliente, feio):
