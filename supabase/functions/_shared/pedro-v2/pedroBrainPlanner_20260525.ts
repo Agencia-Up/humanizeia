@@ -114,6 +114,11 @@ function isSuggestVehicleRequest(normalized: string): boolean {
       && /\b(carro|carros|veiculo|veiculos|automovel|automoveis|modelo|modelos|suv|sedan|hatch|pickup|picape|caminhonete|moto|seminovo|seminovos|usado|usados|novo|novos|opcao|opcoes)\b/.test(normalized)) return true;
   // (d) carro por Nº de portas.
   if (/\b(\d+|duas|dois|tres|quatro|cinco)\s*portas\b/.test(normalized)) return true;
+  // (e) recomendacao/escolha + FAIXA DE PRECO: num bot de carro, "me indica algo ate 80 mil" /
+  //     "quero algo ate 50k" = pedido de veiculo por ORCAMENTO. O preco e o contexto que
+  //     desambigua (ninguem pede "uma cerveja ate 80 mil") -> e busca de estoque por orcamento.
+  if (/\b(sugere|sugira|sugerir|recomenda|recomende|indica|indique|me mostra|mostra|quero|queria|procuro|busco|tem)\b/.test(normalized)
+      && /(\bate\b|\bpor\b|r\$).{0,8}\d|\b\d+\s*mil\b/.test(normalized)) return true;
   return false;
 }
 

@@ -1591,6 +1591,24 @@ export async function processPedroV2Turn(
     else if (/\b(hatch|hatchback)\b/.test(_budgetText)) _bodyType = "hatch";
     else if (/\b(picape|pickup|caminhonete|camionete|cabine dupla)\b/.test(_budgetText)) _bodyType = "pickup";
     if (_bodyType) (stockFilters as any).body_type = _bodyType;
+
+    // ORCAMENTO/ATRIBUTO SEM MODELO (perde-lead grave): "carro ate 40 mil", "automatico ate 70k",
+    // "me indica algo ate 80 mil" — o lead chega so com FAIXA DE PRECO ou ATRIBUTO (cambio/tipo),
+    // sem citar modelo. NAO e generico: tem que MOSTRAR os carros na faixa, NAO pedir um modelo.
+    // Busca ampla ordenada por preco (mais em conta primeiro) com os filtros que ele deu.
+    const _hasBudgetOrAttr = Number((stockFilters as any).preco_max) > 0
+      || (stockFilters as any).cambio
+      || (stockFilters as any).body_type;
+    const _hasRealModel = Boolean(((stockFilters as any).modelo_desejado && !isWeak) || (stockFilters as any).marca);
+    if (isGenericQuery && _hasBudgetOrAttr && !_hasRealModel) {
+      isGenericQuery = false;
+      (stockFilters as any).query = "";
+      (stockFilters as any).modelo_desejado = null;
+      (stockFilters as any).budget_cheapest = true;
+      // cambio como FILTRO DURO zerava o estoque (ex.: "automatico ate 70k" -> 0). Vira
+      // preferencia do reply (ele apresenta os automaticos dos resultados), nao elimina.
+      (stockFilters as any).cambio = null;
+    }
   }
 
   if (stockFilters && !isGenericQuery) {
