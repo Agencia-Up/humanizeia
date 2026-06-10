@@ -276,7 +276,7 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
 
       setDayCount(msgs.length);
       setLeadsCount(jids.length);
-      setMonthCount(monthRes.count || 0);
+      setMonthCount(totalMonth);
       setHourly(buckets);
       setItems(list);
     } finally {

@@ -7,9 +7,10 @@ import {
   parseJson,
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
+import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-08-revert-bad-onconflict-v78";
+const PEDRO_V2_BUILD = "2026-06-10-financing-transfer-v80b";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||
@@ -309,6 +310,23 @@ Deno.serve(async (req) => {
 
   if (agentError || !agent) {
     return jsonResponse({ ok: false, error: "active_agent_not_found" }, 404);
+  }
+
+  // ── Roteamento por tipo de agente ──────────────────────────────────────────
+  // "SDR - Geral" (agent_type='sdr_geral') usa o cérebro da SOFIA (qualifica +
+  // agenda reunião, sem BNDV). Qualquer outro tipo segue no Pedro v2 (automóveis).
+  // Isolado em módulo próprio (_shared/sofia/) -> zero impacto no fluxo do Pedro.
+  if (agent?.agent_type === "sdr_geral") {
+    const sofiaResult = await processSofiaTurn(supabase, {
+      payload,
+      agent,
+      wa_instance: waInstance,
+      dry_run: payload?.dry_run === true || !isPedroV2MutationEnabled(),
+    });
+    return jsonResponse(
+      { ...sofiaResult, build: PEDRO_V2_BUILD, gate: { reason: gate.reason } },
+      sofiaResult.ok ? 200 : 400,
+    );
   }
 
   const result = await processPedroV2Turn(supabase, {

@@ -48,6 +48,24 @@ const INTEGRATIONS: IntegrationConfig[] = [
     ],
   },
   {
+    id: 'google_calendar',
+    name: 'Google Agenda',
+    icon: '📅',
+    description: 'Permite à Sofia (SDR) consultar horários livres e marcar reuniões na sua agenda',
+    fields: [
+      { key: 'calendar_id', label: 'ID da Agenda', placeholder: 'seuemail@gmail.com' },
+      { key: 'meeting_link', label: 'Link fixo da reunião (opcional)', placeholder: 'https://meet.google.com/xxx-xxxx-xxx' },
+    ],
+    helpText:
+      'A Sofia usa esta agenda para ver os horários livres e marcar as reuniões. O link da reunião é enviado ao lead pelo WhatsApp e o evento entra nesta agenda já com lembretes automáticos (24h e 2h antes).',
+    helpSteps: [
+      'No Google Agenda (no computador), passe o mouse sobre a agenda desejada na lista à esquerda → clique nos 3 pontinhos (⋮) → "Configurações e compartilhamento".',
+      'Em "Compartilhar com pessoas e grupos específicos", adicione o e-mail da conta de serviço da Logos e escolha a permissão "Fazer alterações nos eventos". (Não sabe qual e-mail? Cole o ID abaixo e clique em "Testar Conexão" — a mensagem mostra o e-mail certo para compartilhar.)',
+      'Ainda nas configurações da agenda, role até "Integrar agenda" e copie o campo "ID da agenda" (normalmente é o seu próprio e-mail).',
+      'Cole o ID da agenda no campo abaixo e clique em "Testar Conexão". Se passar, clique em "Conectar e Salvar".',
+    ],
+  },
+  {
     id: 'ga4',
     name: 'Google Analytics 4',
     icon: '📊',

@@ -1646,6 +1646,9 @@ export default function LandingPage() {
                       <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
                       <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
                     </div>
+                    <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
+                      Valor promocional nos 3 primeiros meses. Depois, R$ 997,90/mês.
+                    </p>
                     <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
                       + R$ 1.497 de implementação (pagamento único)
                     </p>

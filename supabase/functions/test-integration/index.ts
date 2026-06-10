@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { checkCalendarAccess } from "../_shared/google-calendar.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -116,6 +117,11 @@ async function testGoogleSheets(credentials: { api_key: string; sheet_id: string
   } catch {
     return { success: false, message: "Erro ao conectar ao Google Sheets." };
   }
+}
+
+async function testGoogleCalendar(credentials: { calendar_id: string }) {
+  const result = await checkCalendarAccess(credentials?.calendar_id);
+  return { success: result.ok, message: result.message };
 }
 
 async function testBndv(credentials: { api_token: string }) {
@@ -281,6 +287,9 @@ Deno.serve(async (req) => {
         break;
       case "bndv":
         result = await testBndv(credentials);
+        break;
+      case "google_calendar":
+        result = await testGoogleCalendar(credentials);
         break;
       default:
         result = { success: false, message: "Plataforma não suportada" };
