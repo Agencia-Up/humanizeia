@@ -713,13 +713,26 @@ function queryIsBroadOrGenericVehicle(value?: string | null) {
 
 function vehicleMatchesRequestedQuery(vehicle: any, query?: string | null) {
   if (!vehicle || queryIsBroadOrGenericVehicle(query)) return true;
+  const q = normalizePhotoText(query || "");
+  // Casa no nivel de MODELO: se a query menciona o NOME do modelo do veiculo selecionado
+  // (ex.: "compass"), as fotos SAO desse modelo -> OK. Ignora trim/versao/cambio/cilindrada
+  // (longitude, limited, flex, aut, 16v, 4x2...), que faziam a trava dar FALSO POSITIVO e
+  // BLOQUEAR foto legitima: o lead pede "compass", o estoque resolve "Compass LONGITUDE 2.0
+  // 4X2 FLEX 16V AUT" e tokens como "aut"/"16v" nao batiam -> o agente PROMETIA foto e nunca
+  // mandava (erro gravissimo). So bloqueamos em divergencia REAL de modelo.
+  const vehModelToken = normalizePhotoText(vehicle?.modelo || "")
+    .split(/\s+/)
+    .find((t) => t.length >= 3 && !MODEL_NOISE_TOKENS.has(t) && !/^\d/.test(t)) || "";
+  if (vehModelToken && new RegExp(`\\b${vehModelToken}\\b`).test(q)) return true;
+  // Fallback (quando a query nao cita o modelo do veiculo): exige que os tokens
+  // SIGNIFICATIVOS da query (sem ruido de trim/cambio/ano) estejam no veiculo.
   const vehicleText = normalizePhotoText([
     vehicle?.marca,
     vehicle?.modelo,
     vehicle?.versao,
     vehicle?.ano,
   ].filter(Boolean).join(" "));
-  const queryTokens = normalizePhotoText(query || "")
+  const queryTokens = q
     .split(/\s+/)
     .filter((token) => token.length >= 3)
     .filter((token) => !MODEL_NOISE_TOKENS.has(token))
@@ -1614,9 +1627,35 @@ export async function processPedroV2Turn(
     const _brandMatch = _q.match(/\b(fiat|volkswagen|vw|chevrolet|gm|ford|toyota|honda|hyundai|renault|nissan|peugeot|citroen|jeep|mitsubishi|kia|bmw|mercedes|audi|volvo|land\s*rover|mini|ram|dodge|chery|caoa|byd|gwm|suzuki|subaru)\b/i);
     let _alt: any = null;
     let _altIsBrand = false;
+    let _altMulti = false;
+    // ESTAGIO 0 — MULTI-MODELO ("A ou B"): o lead citou MAIS DE UM modelo e o planner so
+    // pegou UM (as vezes o que NAO existe), dizendo "nao temos" pro outro que TEM. Ex.:
+    // "Tcross ou compass" -> planner pega T-Cross (0) e perde o Compass (4 no estoque). Busca
+    // CADA modelo citado e junta os que existem. So em mensagem CURTA de escolha de modelo.
+    if (_hadSpecificModel
+        && normalizePhotoText(text).split(/\s+/).filter(Boolean).length <= 6
+        && /(?:\bou\b|\/|,|\be\b)/i.test(text)) {
+      const _parts = text.split(/\s+ou\s+|\s*\/\s*|\s*,\s*|\s+e\s+/i)
+        .map((s) => s.trim())
+        .filter((s) => s.length >= 3 && s.length <= 25);
+      if (_parts.length >= 2) {
+        const _combined: any[] = [];
+        for (const part of _parts.slice(0, 4)) {
+          const _r = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: part, limit: 6 });
+          if (_r?.success && Array.isArray(_r.items)) _combined.push(...(_r.items as any[]));
+        }
+        const _seen = new Set<string>();
+        const _uniq: any[] = [];
+        for (const v of _combined) {
+          const k = vehicleKey(v);
+          if (k && !_seen.has(k)) { _seen.add(k); _uniq.push(v); }
+        }
+        if (_uniq.length > 0) { _alt = { success: true, items: _uniq }; _altMulti = true; }
+      }
+    }
     // ESTAGIO 1 — recuperacao por MARCA: a query especifica pode ter vindo contaminada (burst/nome,
     // ex.: "Peugeot Erick" -> 0). Se ha uma marca conhecida, busca SO a marca e apresenta como RESPOSTA.
-    if (_hadSpecificModel && _brandMatch) {
+    if (!_alt && _hadSpecificModel && _brandMatch) {
       const _br = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: _brandMatch[0], limit: 6 });
       if (_br?.success && Array.isArray(_br.items) && _br.items.length > 0) { _alt = _br; _altIsBrand = true; }
     }
@@ -1634,7 +1673,12 @@ export async function processPedroV2Turn(
     if (_alt?.success && Array.isArray(_alt.items) && _alt.items.length > 0) {
       const _wanted = (stockFilters as any).query || (stockFilters as any).modelo_desejado || "o que voce pediu";
       const _alts = _alt.items.slice(0, 4);
-      stockResult = _altIsBrand
+      stockResult = _altMulti
+        ? {
+            success: true, total: _alts.length, items: _alts, is_alternatives: false,
+            response_guidance: `Dos modelos que o lead pediu, ESTES existem no estoque — apresente-os de forma CURTA e pergunte qual interessa. Se ALGUM dos pedidos nao apareceu aqui, diga so daquele especifico que nao temos. NUNCA diga que nao temos NENHUM quando ha estes aqui.`,
+          }
+        : _altIsBrand
         ? {
             success: true, total: _alts.length, items: _alts, is_alternatives: false,
             response_guidance: `Estes sao os ${_brandMatch![0]} disponiveis no estoque. Apresente-os de forma CURTA e pergunte qual interessa. NUNCA diga que nao temos.`,
