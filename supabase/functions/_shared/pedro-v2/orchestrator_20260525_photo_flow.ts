@@ -1613,6 +1613,40 @@ export async function processPedroV2Turn(
     };
   }
 
+  // MULTI-MODELO ("A ou B" / "A, B") — PROATIVO: o lead citou VARIOS modelos, mas o planner so
+  // poe UM no search_query. Sem isso, "compass ou onix" (os dois no estoque) mostra SO o Onix.
+  // Busca CADA modelo citado e JUNTA com o resultado primario -> apresenta TODOS que existem.
+  // So em mensagem CURTA de escolha de modelo (evita falso positivo em frase comum).
+  const _hadModelQuery = Boolean(stockFilters && ((stockFilters as any).modelo_desejado || (stockFilters as any).modelo || (stockFilters as any).marca));
+  if (stockFilters && !isGenericQuery && _hadModelQuery
+      && normalizePhotoText(text).split(/\s+/).filter(Boolean).length <= 6
+      && /(?:\bou\b|\/|,|\be\b)/i.test(text)) {
+    const _mmParts = text.split(/\s+ou\s+|\s*\/\s*|\s*,\s*|\s+e\s+/i)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 3 && s.length <= 25);
+    if (_mmParts.length >= 2) {
+      const _merged: any[] = Array.isArray(stockResult?.items) ? [...stockResult.items] : [];
+      const _seen = new Set<string>(_merged.map((v) => vehicleKey(v)).filter(Boolean) as string[]);
+      let _addedNew = false;
+      for (const part of _mmParts.slice(0, 4)) {
+        const _r = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: part, limit: 6 });
+        if (_r?.success && Array.isArray(_r.items)) {
+          for (const v of _r.items as any[]) {
+            const k = vehicleKey(v);
+            if (k && !_seen.has(k)) { _seen.add(k); _merged.push(v); _addedNew = true; }
+          }
+        }
+      }
+      if (_merged.length > 0 && (_addedNew || (stockResult?.items?.length || 0) === 0)) {
+        stockResult = {
+          success: true, total: _merged.length, items: _merged,
+          response_guidance: "O lead pediu MAIS DE UM modelo. ESTES sao os que temos no estoque — apresente os de CADA modelo de forma CURTA e pergunte qual interessa / se quer ver fotos. Se ALGUM modelo pedido NAO aparece aqui, diga so daquele que nao temos. NUNCA diga que nao temos NENHUM.",
+        };
+        log("info", "pedro_v2_multimodel_merge", { parts: _mmParts.slice(0, 4), total: _merged.length });
+      }
+    }
+  }
+
   // SEARCH-AND-RETRY (fix relatorio mestre / Falha 5 - Edison): a busca ESPECIFICA nao
   // achou nada -> NAO encerra de maos vazias. Faz uma 2a busca AMPLA (mesma categoria e/ou
   // teto de preco, SEM o modelo/marca) e oferece os parecidos como ALTERNATIVA, em vez de
