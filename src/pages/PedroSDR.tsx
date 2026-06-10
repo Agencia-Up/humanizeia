@@ -743,6 +743,17 @@ const STATUS_CRM_OPTIONS = [
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
+// Normaliza telefone BR -> JID do WhatsApp com DDI 55. SEM isso, um número
+// digitado/importado em formato local ("12 99999-9999") vira um lead SEPARADO
+// da conversa real (que chega do WhatsApp já com 55) -> lead DUPLICADO.
+// Espelha o normalizeDestination do backend (uazapiSender): 10-11 dígitos = local
+// (DDD+número, sem país) -> prefixa 55; 12-13 dígitos = já normalizado -> mantém.
+function phoneToBrJid(phone: string | null | undefined): string {
+  const d = String(phone || '').replace(/\D/g, '');
+  const e164 = (d.length === 10 || d.length === 11) ? `55${d}` : d;
+  return `${e164}@s.whatsapp.net`;
+}
+
 // ─── Origem do Lead (Prompt 1.1) ───────────────────────────────────────────
 // Bate com CHECK constraint da migration 20260516120000_lead_origem
 // Usado pelo PEDRO. Marcos tem lista propria abaixo (MARCOS_ORIGEM_OPTIONS).
@@ -1335,7 +1346,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         const mappedLeads: CrmLead[] = (leadsRes.data || []).map((lead: any) => ({
           id: lead.id,
           lead_name: lead.name || lead.phone || 'Lead',
-          remote_jid: `${lead.phone || ''}@s.whatsapp.net`,
+          remote_jid: phoneToBrJid(lead.phone),
           status: null,
           status_crm: lead.stage_id || fallbackStage,
           summary: lead.notes || null,
@@ -2557,7 +2568,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           user_id:     effectiveUserId,
           agent_id:    agentId,
           lead_name:   l.name,
-          remote_jid:  `${l.phone}@s.whatsapp.net`,
+          remote_jid:  phoneToBrJid(l.phone),
           status_crm:  'novo',
           status:      'novo',
           assigned_to_id: memberId || null,
@@ -2593,7 +2604,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     setAddLeadSaving(true);
     try {
       const cleanPhone = addLeadPhone.replace(/\D/g, '');
-      const remoteJid = `${cleanPhone}@s.whatsapp.net`;
+      const remoteJid = phoneToBrJid(cleanPhone);
       const effectiveUserId = isSeller
         ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
         : userId;
@@ -2796,7 +2807,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     setEditSaving(true);
     try {
       const cleanPhone = editPhone.replace(/\D/g, '');
-      const newJid = cleanPhone ? `${cleanPhone}@s.whatsapp.net` : selectedLead.remote_jid;
+      const newJid = cleanPhone ? phoneToBrJid(cleanPhone) : selectedLead.remote_jid;
       const updateData: Record<string, string | null> = {};
       if (editName !== (selectedLead.lead_name || '')) updateData.lead_name = editName;
       if (newJid !== selectedLead.remote_jid) updateData.remote_jid = newJid;
@@ -2854,7 +2865,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         const updatedLead = {
           ...selectedLead,
           lead_name: editName,
-          remote_jid: `${cleanPhone}@s.whatsapp.net`,
+          remote_jid: phoneToBrJid(cleanPhone),
           client_city: newCity || null,
           vehicle_interest: newVehicle || null,
           visit_scheduled: newVisitText,
