@@ -95,9 +95,24 @@ function hasStockQuestionSignal(message?: string | null) {
   if (/\b(km|quilometragem|rodado|rodagem|ano|valor|preco|quanto|custa|disponivel|estoque|tem|venderam|vendeu|diesel|disel|automatico|manual)\b/.test(normalized)) return true;
   if (/\b(qual outro|outro|outra|opcao|opcoes|parecido|similar|semelhante|o que tiver|que tiver)\b/.test(normalized)) return true;
   if (/\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized)) return true;
-  // pedido de SUGESTAO / mostrar opcoes, ou carro por Nº DE PORTAS => tratar como pergunta de estoque
-  // (caso real: "pode sugerir" e "preciso de 4 portas" vinham reply_only -> agente dizia "nao temos").
-  if (/\b(sugere|sugira|sugerir|sugestao|sugestoes|recomenda|recomende|recomendar|indica|indique|me mostra|me indica|quais (carros|modelos|opcoes|tem)|me ajuda a escolher)\b/.test(normalized)) return true;
+  // pedido de SUGESTAO de CARRO ou carro por Nº de portas => pergunta de estoque.
+  if (isSuggestVehicleRequest(normalized)) return true;
+  return false;
+}
+
+// Pedido de SUGESTAO/indicacao que e REALMENTE sobre veiculo. Evita o VAZAMENTO DE ESCOPO achado em
+// prod ("me indica uma cerveja" virava busca de estoque por causa de "indica"): bare ("pode sugerir")
+// ou com contexto de veiculo CONTA; recomendacao com objeto NAO-veicular (cerveja/pizza...) NAO conta.
+function isSuggestVehicleRequest(normalized: string): boolean {
+  if (!normalized) return false;
+  // (a) pedidos BARE — num bot de carro, sem objeto = sobre carro.
+  if (/\b(pode sugerir|me ajuda a escolher|o que (voce )?(tem|recomenda|sugere|indica|tiver))\b/.test(normalized)) return true;
+  // (b) mostrar / quais / quero ver + objeto de ESTOQUE.
+  if (/\b(me mostra|mostra|quais|quero ver|me passa)\b.{0,14}\b(opcoes|opcao|carros|veiculos|modelos|seminovos|usados|disponiveis)\b/.test(normalized)) return true;
+  // (c) sugerir/recomendar/indicar COM contexto de veiculo na mensagem.
+  if (/\b(sugere|sugira|sugerir|sugestao|sugestoes|recomenda|recomende|recomendar|indica|indique)\b/.test(normalized)
+      && /\b(carro|carros|veiculo|veiculos|automovel|automoveis|modelo|modelos|suv|sedan|hatch|pickup|picape|caminhonete|moto|seminovo|seminovos|usado|usados|novo|novos|opcao|opcoes)\b/.test(normalized)) return true;
+  // (d) carro por Nº de portas.
   if (/\b(\d+|duas|dois|tres|quatro|cinco)\s*portas\b/.test(normalized)) return true;
   return false;
 }
@@ -107,8 +122,7 @@ function asksBroadStock(message?: string | null) {
   if (!normalized) return false;
   return /\b(o que tiver|que tiver|qualquer um|qualquer carro|opcoes|opcao|outros modelos|qual outro|outro modelo|tem em estoque|tem ai|tem disponivel)\b/.test(normalized)
     || /\b(quero|procuro|busco|preciso|tem|temos|gostaria)\b.{0,30}\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(normalized)
-    || /\b(sugere|sugira|sugerir|sugestao|sugestoes|recomenda|recomende|recomendar|indica|indique|me mostra|me indica|quais (carros|modelos|opcoes)|me ajuda a escolher)\b/.test(normalized)
-    || /\b(\d+|duas|dois|tres|quatro|cinco)\s*portas\b/.test(normalized);
+    || isSuggestVehicleRequest(normalized);
 }
 
 function memoryVehicleQuery(memory?: PedroV2LeadMemory | null) {
