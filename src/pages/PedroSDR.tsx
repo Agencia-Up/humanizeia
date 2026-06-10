@@ -3758,8 +3758,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       if (ts < leadDateBounds[0] || ts > leadDateBounds[1]) return false;
     }
     if (searchTerm) {
-      const t = searchTerm.toLowerCase();
-      if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
+      const t = searchTerm.toLowerCase().trim();
+      // Busca por telefone ignora +, espaços e traço — o banco guarda só dígitos
+      // (ex.: "5512997812133@s.whatsapp.net"). Assim "+55 12 99781-2133",
+      // "99781-2133" ou "997812133" encontram o mesmo lead.
+      const tDigits = t.replace(/\D/g, '');
+      const jid = (l.remote_jid || '').toLowerCase();
+      const phoneMatch = tDigits.length >= 4 && jid.replace(/\D/g, '').includes(tDigits);
+      if (!(l.lead_name || '').toLowerCase().includes(t) && !jid.includes(t) && !phoneMatch) return false;
     }
     return true;
   });
@@ -3804,8 +3810,14 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       if (ts < leadDateBounds[0] || ts > leadDateBounds[1]) return false;
     }
     if (searchTerm) {
-      const t = searchTerm.toLowerCase();
-      if (!(l.lead_name || '').toLowerCase().includes(t) && !(l.remote_jid || '').toLowerCase().includes(t)) return false;
+      const t = searchTerm.toLowerCase().trim();
+      // Busca por telefone ignora +, espaços e traço — o banco guarda só dígitos
+      // (ex.: "5512997812133@s.whatsapp.net"). Assim "+55 12 99781-2133",
+      // "99781-2133" ou "997812133" encontram o mesmo lead.
+      const tDigits = t.replace(/\D/g, '');
+      const jid = (l.remote_jid || '').toLowerCase();
+      const phoneMatch = tDigits.length >= 4 && jid.replace(/\D/g, '').includes(tDigits);
+      if (!(l.lead_name || '').toLowerCase().includes(t) && !jid.includes(t) && !phoneMatch) return false;
     }
     if (diagClass !== 'all' && (l.status_crm || 'novo') !== diagClass) return false;
     if (diagAgent !== 'all' && (l as any).agent_id !== diagAgent) return false;
