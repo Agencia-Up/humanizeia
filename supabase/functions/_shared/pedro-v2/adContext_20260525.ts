@@ -671,59 +671,61 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return null;
 
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        // gpt-4o-mini: baseline que JA identificava o veiculo da imagem do anuncio.
-        // (gpt-4o foi testado mas retornou nulo no fluxo — mantido mini, que funciona.)
-        // O ano antes era ancorado por um EXEMPLO no prompt ("...2023"); o prompt
-        // abaixo foi de-ancorado para ler o ANO impresso na arte.
-        model: "gpt-4o-mini",
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "Extraia contexto de anuncio automotivo em JSON. Responda apenas com vehicle_query, vehicle_type, summary e confidence. Se nao houver veiculo legivel, use null e confidence baixo.",
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  "Leia o texto visivel e identifique o veiculo anunciado. vehicle_query deve ser algo pesquisavel no estoque, incluindo marca, modelo, versao e ANO. IMPORTANTE: use SEMPRE o ANO impresso na arte do anuncio (selo/etiqueta) — NUNCA o ano dos exemplos abaixo. Formato (NAO copie os anos; use o ano que estiver na imagem): 'Renault Duster Authentique 1.6 AAAA automatico'; 'Fiat Argo Drive 1.0 AAAA'. Inclua a cor do carro e o preco no summary quando aparecerem.",
-              },
-              { type: "image_url", image_url: { url: imageDataUrl } },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      console.warn("[PedroV2] ad image analysis failed:", res.status, await res.text().catch(() => ""));
+  // VISAO POR MODELO: gpt-4o le a IMAGEM do anuncio MUITO melhor que o mini pra distinguir
+  // modelos parecidos (ex.: VW Nivus x T-Cross — o erro do print). Tenta gpt-4o PRIMEIRO; se
+  // vier sem veiculo legivel (o "retornou nulo" relatado antes) OU erro, cai pro gpt-4o-mini que
+  // ja funcionava. Roda 1x por lead de anuncio (nao por turno) -> custo desprezivel, sem regressao.
+  const callVisionModel = async (model: string) => {
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                "Extraia contexto de anuncio automotivo em JSON. Responda apenas com vehicle_query, vehicle_type, summary e confidence. Se nao houver veiculo legivel, use null e confidence baixo.",
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Leia o texto visivel e identifique o veiculo anunciado. vehicle_query deve ser algo pesquisavel no estoque, incluindo marca, modelo, versao e ANO. IMPORTANTE: use SEMPRE o ANO impresso na arte do anuncio (selo/etiqueta) — NUNCA o ano dos exemplos abaixo. Formato (NAO copie os anos; use o ano que estiver na imagem): 'Renault Duster Authentique 1.6 AAAA automatico'; 'Fiat Argo Drive 1.0 AAAA'. Inclua a cor do carro e o preco no summary quando aparecerem.",
+                },
+                { type: "image_url", image_url: { url: imageDataUrl } },
+              ],
+            },
+          ],
+        }),
+      });
+      if (!res.ok) {
+        console.warn("[PedroV2] ad image analysis failed:", model, res.status, await res.text().catch(() => ""));
+        return null;
+      }
+      const data = await res.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
+      return {
+        vehicle_query: asText(parsed.vehicle_query),
+        vehicle_type: asText(parsed.vehicle_type),
+        summary: asText(parsed.summary),
+        confidence: Number(parsed.confidence || 0),
+      };
+    } catch (error) {
+      console.warn("[PedroV2] ad image analysis error:", model, error);
       return null;
     }
+  };
 
-    const data = await res.json();
-    const parsed = JSON.parse(data?.choices?.[0]?.message?.content || "{}");
-    return {
-      vehicle_query: asText(parsed.vehicle_query),
-      vehicle_type: asText(parsed.vehicle_type),
-      summary: asText(parsed.summary),
-      confidence: Number(parsed.confidence || 0),
-    };
-  } catch (error) {
-    console.warn("[PedroV2] ad image analysis error:", error);
-    return null;
-  }
+  const primary = await callVisionModel("gpt-4o");
+  if (primary?.vehicle_query) return primary;          // gpt-4o leu o veiculo -> usa (mais preciso)
+  const fallback = await callVisionModel("gpt-4o-mini"); // gpt-4o nulo/erro -> mini (comportamento antigo)
+  return fallback || primary;
 }
 
 async function inferVehicleFromAdText(text: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
