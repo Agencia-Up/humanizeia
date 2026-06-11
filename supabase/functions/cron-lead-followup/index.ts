@@ -4,6 +4,7 @@ import { managerPhones } from "../_shared/transfer/managers.ts";
 import { resolveLeadInterestVehicle } from "../_shared/transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText } from "../_shared/transfer/leadStatus.ts";
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, classifyLeadSdr } from "../_shared/transfer/leadSdrCategory.ts";
+import { setSdrLabelOnChat } from "../_shared/pedro-v2/uazapiLabels.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -569,6 +570,10 @@ async function handleV2Followup(supabase: any, ctx: {
           try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
         }
       }
+      // ETIQUETA SDR no WhatsApp Business: aplica a categoria do lead no chat NA TRANSFERENCIA
+      // por inatividade. A cron v2 NAO fazia isso -> a etiqueta nunca mudava nos contatos (so o
+      // brain-transfer do orquestrador etiquetava, mas a MAIORIA dos leads sai por inatividade aqui).
+      try { await setSdrLabelOnChat({ api_url: baseUrl, api_key_encrypted: instKey }, phoneNumber, _sdrCat); } catch (_e) { /* nao bloqueante */ }
     }
     } // fim do if (doTransfer)
     const bye = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
