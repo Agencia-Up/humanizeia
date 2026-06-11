@@ -221,16 +221,17 @@ function getVehicleSubcategory(vehicle: BndvVehicle): "hatch" | "sedan" | "suv" 
   const version = normalizeText(vehicle.versionName);
   const text = `${model} ${version}`;
 
-  if (/\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|picape|pickup|caminhonete|camionete)\b/i.test(text)) {
+  if (/\b(hilux|s10|ranger|amarok|toro|frontier|triton|l200|strada|saveiro|montana|oroch|maverick|ram|hoggar|courier|dakota|picape|pickup|caminhonete|camionete)\b/i.test(text)) {
     return "pickup";
   }
-  if (/\b(compass|renegade|creta|kicks|hrv|tracker|tcross|nivus|fastback|pulse|tiggo|sw4|ecosport|duster|asx|suv|utilitario)\b/i.test(text)) {
+  // SUV/crossover — "corolla cross" e "c4 cactus" ANTES do sedan/hatch pra nao cair como corolla/c3.
+  if (/\b(compass|renegade|creta|kicks|hrv|wrv|wr-v|cr-v|crv|tracker|tcross|t-cross|nivus|fastback|pulse|tiggo|sw4|ecosport|duster|asx|pajero|2008|3008|5008|corolla cross|aircross|c4 cactus|cactus|captur|territory|commander|taos|tiguan|rav4|kona|sportage|tucson|bronco|outlander|trailblazer|haval|song|forester|suv|utilitario)\b/i.test(text)) {
     return "suv";
   }
-  if (/\b(plus|sedan|sedã|virtus|voyage|prisma|cronos|grand siena|logan|corolla|civic|sentra|city sedan|yaris sedan)\b/i.test(text)) {
+  if (/\b(plus|sedan|sedã|virtus|voyage|prisma|cronos|grand siena|logan|corolla|civic|sentra|versa|jetta|cruze|cobalt|classic|fluence|accord|altima|city sedan|yaris sedan)\b/i.test(text)) {
     return "sedan";
   }
-  if (/\b(hatch|hatchback|polo|argo|mobi|kwid|c3|gol|fox|sandero|up|fit|peugeot 208|hb20|onix)\b/i.test(text)) {
+  if (/\b(hatch|hatchback|polo|argo|mobi|kwid|c3|gol|fox|sandero|up|fit|peugeot 208|208|207|mini|cooper|march|clio|celta|palio|uno|agile|punto|i30|golf|308|hb20|onix)\b/i.test(text)) {
     if (/\b(plus|sedan|sedã|hb20s)\b/i.test(text)) {
       return "sedan";
     }
