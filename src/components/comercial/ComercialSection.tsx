@@ -86,7 +86,10 @@ export function ComercialSection({
   const kpis = useMemo(() => {
     const vendasTotais = vendasPeriodo.length;
     const faturamento = vendasPeriodo.reduce((a, v) => a + v.valor, 0);
-    const ticket = vendasTotais > 0 ? faturamento / vendasTotais : 0;
+    // Ticket médio só sobre vendas COM valor — fechamentos derivados do CRM
+    // entram com valor 0 (contam na quantidade/meta, mas não puxam o ticket).
+    const comValor = vendasPeriodo.filter(v => v.valor > 0).length;
+    const ticket = comValor > 0 ? faturamento / comValor : 0;
     const pct = metaRef > 0 ? Math.round((vendasTotais / metaRef) * 100) : 0;
 
     // melhor canal (recorte)
