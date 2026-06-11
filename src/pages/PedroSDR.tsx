@@ -897,7 +897,10 @@ const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string
   agendamento: { emoji: '📅', border: 'border-cyan-500/30', bg: 'bg-cyan-500/10', dot: 'bg-cyan-400' },
   proposta: { emoji: '📋', border: 'border-blue-500/30', bg: 'bg-blue-500/10', dot: 'bg-blue-400' },
   negociacao: { emoji: '🤝', border: 'border-purple-500/30', bg: 'bg-purple-500/10', dot: 'bg-purple-400' },
+  // Etapa de venda — 'fechado' (legado) e 'venda concluida' (nome novo) usam o
+  // mesmo estilo verde. Sem a chave nova, a coluna renomeada caía no cinza padrão.
   fechado: { emoji: '✅', border: 'border-green-500/30', bg: 'bg-green-500/10', dot: 'bg-green-400' },
+  'venda concluida': { emoji: '✅', border: 'border-green-500/30', bg: 'bg-green-500/10', dot: 'bg-green-400' },
   perdido: { emoji: '❌', border: 'border-red-500/30', bg: 'bg-red-500/10', dot: 'bg-red-400' },
   'lead inativo': { emoji: '😴', border: 'border-gray-500/30', bg: 'bg-gray-500/10', dot: 'bg-gray-400' },
   'carro nao disponivel': { emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
@@ -4393,6 +4396,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             <div className="flex gap-3 min-w-max">
               {pipelineColumns.map(col => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
+                // Destaque da etapa de venda (Pedro: id 'fechado'; Marcos: etapa "Venda concluída").
+                const isWin = col.id === 'fechado' || normalizeStageName(col.title || '').startsWith('venda conclu');
                 return (
                   <div
                     key={col.id}
@@ -4402,7 +4407,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                       draggedColumnIdRef.current = null;
                       if (draggedId) handleColumnReorder(draggedId, col.id);
                     }}
-                    className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50`}
+                    className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50 ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
                   >
                     {/* Column header */}
                     <div
@@ -4414,13 +4419,18 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                       onDragEnd={() => {
                         draggedColumnIdRef.current = null;
                       }}
-                      className={`px-3 py-2.5 rounded-t-xl ${col.bg} flex items-center justify-between cursor-grab active:cursor-grabbing`}
+                      className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : col.bg} flex items-center justify-between cursor-grab active:cursor-grabbing`}
                       title="Arraste para reorganizar esta coluna"
                     >
                       <div className="flex items-center gap-2">
                         <GripVertical className="h-3.5 w-3.5 text-muted-foreground/60" />
                         <span className="text-sm">{col.emoji}</span>
-                        <span className="text-xs font-semibold text-foreground">{col.title}</span>
+                        <span className={`text-xs font-semibold ${isWin ? 'text-emerald-200' : 'text-foreground'}`}>{col.title}</span>
+                        {isWin && (
+                          <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-emerald-100">
+                            Venda
+                          </span>
+                        )}
                       </div>
                       <span className={`w-5 h-5 rounded-full ${col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}>
                         {colLeads.length}

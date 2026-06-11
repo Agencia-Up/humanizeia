@@ -102,7 +102,7 @@ const CRM_STATUS_COLUMNS = [
   { id: 'carro_nao_disponivel', title: 'Carro não disponível', main: C.red,    light: C.redL,    bg: C.redBg },
   { id: 'em_atendimento',       title: 'Agendamento',          main: C.purple, light: C.purpleL, bg: C.purpleBg },
   { id: 'negociacao',           title: 'Negociação',           main: C.orange, light: C.orangeL, bg: C.orangeBg },
-  { id: 'fechado',              title: 'Fechado',              main: C.green,  light: C.greenL,  bg: C.greenBg },
+  { id: 'fechado',              title: 'Venda concluída',      main: C.green,  light: C.greenL,  bg: C.greenBg },
   { id: 'perdido',              title: 'Perdido',              main: C.red,    light: C.redL,    bg: C.redBg },
 ];
 

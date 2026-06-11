@@ -303,6 +303,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Trigger pra refresh manual (incrementa = força reload)
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
+  // Edição da meta de vendas do mês (só master) direto no KPI "Vendas / Meta".
+  const [metaEditing, setMetaEditing] = useState(false);
+  const [metaDraft, setMetaDraft] = useState('');
+  const [savingMeta, setSavingMeta] = useState(false);
+
   // Vendedores ativos (com last_lead_received_at) pro rodízio do clique-pra-transferir.
   const [queueSellers, setQueueSellers] = useState<any[]>([]);
   const [transferringId, setTransferringId] = useState<string | null>(null);
@@ -925,6 +930,47 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     setTimeout(() => setRefreshing(false), 800);
   }, []);
 
+  // Salva a meta de vendas da LOJA do mês corrente (comercial_metas, tipo='loja').
+  // Só master (RLS exige auth.uid()=user_id). Faz upsert manual: atualiza se já
+  // existir a meta do mês, senão cria. Depois força reload pra refletir no KPI.
+  const saveMeta = useCallback(async () => {
+    const val = parseInt(metaDraft, 10);
+    if (!Number.isFinite(val) || val < 0) {
+      toast.error('Informe um número de vendas válido (ex.: 30).');
+      return;
+    }
+    setSavingMeta(true);
+    try {
+      const now = new Date();
+      const monthStartKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const { data: existing } = await (supabase as any)
+        .from('comercial_metas')
+        .select('id')
+        .eq('user_id', effectiveUserId)
+        .eq('tipo', 'loja')
+        .eq('mes_referencia', monthStartKey)
+        .maybeSingle();
+      if (existing?.id) {
+        const { error } = await (supabase as any)
+          .from('comercial_metas').update({ valor_meta: val }).eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await (supabase as any)
+          .from('comercial_metas')
+          .insert({ user_id: effectiveUserId, seller_id: null, tipo: 'loja', mes_referencia: monthStartKey, valor_meta: val });
+        if (error) throw error;
+      }
+      setMetaEditing(false);
+      setReloadTrigger(t => t + 1);
+      toast.success('Meta do mês atualizada.');
+    } catch (err) {
+      console.error('[DashboardTV] erro ao salvar meta:', err);
+      toast.error('Não consegui salvar a meta. Tente de novo.');
+    } finally {
+      setSavingMeta(false);
+    }
+  }, [metaDraft, effectiveUserId]);
+
   // ── Próximo vendedor da fila (rodízio): quem nunca recebeu primeiro, senão o
   // que recebeu há mais tempo. Espelha a lógica do CrmAoVivo/uazapi-webhook.
   const nextSeller = useMemo(() => {
@@ -1204,6 +1250,43 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
               return m > 0 ? `${Math.round((v / m) * 100)}% da meta` : 'Defina a meta do mês';
             })()}
           </p>
+          {/* Editar a meta do mês — só master (vendedor não tem permissão na meta). */}
+          {!sellerMemberId && (
+            metaEditing ? (
+              <div className="flex items-center justify-center gap-1.5 mt-2">
+                <input
+                  type="number"
+                  min={0}
+                  value={metaDraft}
+                  autoFocus
+                  onChange={e => setMetaDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveMeta(); if (e.key === 'Escape') setMetaEditing(false); }}
+                  className="w-16 bg-slate-800 border border-emerald-500/40 rounded px-2 py-1 text-center text-sm text-white tabular-nums focus:outline-none focus:border-emerald-400"
+                  placeholder="30"
+                />
+                <button
+                  onClick={saveMeta}
+                  disabled={savingMeta}
+                  className="text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-50"
+                >
+                  {savingMeta ? '...' : 'Salvar'}
+                </button>
+                <button
+                  onClick={() => setMetaEditing(false)}
+                  className="text-[10px] px-1.5 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-700"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => { setMetaDraft(String(kpis?.meta_mes || '')); setMetaEditing(true); }}
+                className="mt-2 text-[10px] uppercase tracking-wider font-semibold text-emerald-300/70 hover:text-emerald-200 underline decoration-dotted underline-offset-2"
+              >
+                {(kpis?.meta_mes ?? 0) > 0 ? 'Editar meta' : 'Definir meta do mês'}
+              </button>
+            )
+          )}
         </div>
       </section>
 
