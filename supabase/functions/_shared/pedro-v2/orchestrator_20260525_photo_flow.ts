@@ -1656,11 +1656,27 @@ export async function processPedroV2Turn(
         }
       }
       if (_merged.length > 0 && (_addedNew || (stockResult?.items?.length || 0) === 0)) {
+        // INTERCALA por modelo (round-robin): sem isso o _merged fica [modeloA x N, modeloB x M]
+        // e o reply, que mostra ~5, traz so o modeloA e SOTERRA o modeloB (lead pede "compass OU
+        // renegade" e ve so Renegade). Intercalado, os primeiros itens ja misturam os dois.
+        const _byModel = new Map<string, any[]>();
+        for (const v of _merged) {
+          const _mk = String((v as any).modelo || "").toLowerCase().trim().split(/\s+/)[0] || "outro";
+          if (!_byModel.has(_mk)) _byModel.set(_mk, []);
+          _byModel.get(_mk)!.push(v);
+        }
+        const _interleaved: any[] = [];
+        for (let _i = 0, _more = true; _more; _i++) {
+          _more = false;
+          for (const _arr of _byModel.values()) {
+            if (_i < _arr.length) { _interleaved.push(_arr[_i]); _more = true; }
+          }
+        }
         stockResult = {
-          success: true, total: _merged.length, items: _merged,
-          response_guidance: "O lead pediu MAIS DE UM modelo. ESTES sao os que temos no estoque — apresente os de CADA modelo de forma CURTA e pergunte qual interessa / se quer ver fotos. Se ALGUM modelo pedido NAO aparece aqui, diga so daquele que nao temos. NUNCA diga que nao temos NENHUM.",
+          success: true, total: _interleaved.length, items: _interleaved,
+          response_guidance: "O lead pediu MAIS DE UM modelo. ESTES sao os que temos no estoque (ja intercalados entre os modelos) — apresente os de CADA modelo de forma CURTA e pergunte qual interessa / se quer ver fotos. Se ALGUM modelo pedido NAO aparece aqui, diga so daquele que nao temos. NUNCA diga que nao temos NENHUM.",
         };
-        log("info", "pedro_v2_multimodel_merge", { parts: _mmParts.slice(0, 4), total: _merged.length });
+        log("info", "pedro_v2_multimodel_merge", { parts: _mmParts.slice(0, 4), total: _interleaved.length });
       }
     }
   }
@@ -1677,6 +1693,10 @@ export async function processPedroV2Turn(
     const _broadPriceMax = Number((stockFilters as any).preco_max) || null;
     const _q = String((stockFilters as any).query || (stockFilters as any).modelo_desejado || (stockFilters as any).marca || "");
     const _brandMatch = _q.match(/\b(fiat|volkswagen|vw|chevrolet|gm|ford|toyota|honda|hyundai|renault|nissan|peugeot|citroen|jeep|mitsubishi|kia|bmw|mercedes|audi|volvo|land\s*rover|mini|ram|dodge|chery|caoa|byd|gwm|suzuki|subaru)\b/i);
+    // Tipo REAL (sedan/suv/hatch/pickup) pedido pelo lead. Quando ha, a recuperacao por MESMO TIPO
+    // (estagio 2) e melhor que por MARCA (estagio 1): "corolla"(sedan) sem estoque deve oferecer outros
+    // SEDANS, nao qualquer Toyota (a marca trazia a Hilux/picape pra quem pediu um Corolla).
+    const _realType = ["sedan", "suv", "hatch", "pickup"].includes(String(_broadType || "").toLowerCase());
     let _alt: any = null;
     let _altIsBrand = false;
     let _altMulti = false;
@@ -1707,7 +1727,7 @@ export async function processPedroV2Turn(
     }
     // ESTAGIO 1 — recuperacao por MARCA: a query especifica pode ter vindo contaminada (burst/nome,
     // ex.: "Peugeot Erick" -> 0). Se ha uma marca conhecida, busca SO a marca e apresenta como RESPOSTA.
-    if (!_alt && _hadSpecificModel && _brandMatch) {
+    if (!_alt && _hadSpecificModel && _brandMatch && !_realType) {
       const _br = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: _brandMatch[0], limit: 6 });
       if (_br?.success && Array.isArray(_br.items) && _br.items.length > 0) { _alt = _br; _altIsBrand = true; }
     }

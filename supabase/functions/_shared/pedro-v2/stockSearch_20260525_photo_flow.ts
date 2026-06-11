@@ -324,8 +324,12 @@ function inferVehicleSubcategory(filters: Record<string, any>): "hatch" | "sedan
 }
 
 function isLikelyMotorcycle(vehicle: BndvVehicle) {
-  const indexed = buildIndexedText(vehicle);
-  return /\b(yamaha|kawasaki|shineray|harley|dafra|triumph|ducati|ktm|bajaj|haojue|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|scooter)\b/.test(indexed);
+  // SO marca + modelo. NUNCA a versao/trim: nomes de moto colidem com TRIMS de carro —
+  // ex.: Corolla Cross "XRE 2.0" batia com a moto Honda "XRE 300" e o Corolla virava "moto",
+  // sendo EXCLUIDO de buscas de carro (lead pedia "corolla" -> 0 -> recuperava errado).
+  // Uma moto de verdade traz o nome no modelName (Honda CG/Biz/XRE...), nao no trim do carro.
+  const text = normalizeText([vehicle.markName, vehicle.modelName].filter(Boolean).join(" "));
+  return /\b(yamaha|kawasaki|shineray|harley|dafra|triumph|ducati|ktm|bajaj|haojue|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|scooter)\b/.test(text);
 }
 
 function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string, any>, hasModelQuery = false) {
