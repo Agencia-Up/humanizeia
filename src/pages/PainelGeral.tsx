@@ -71,6 +71,8 @@ interface CombinedData {
     perdidos: number;
     vendas: number;          // vendas concluídas (comercial_vendas) no período
     conversao: number;       // % = vendas / atendidos (atribuídos)
+    /** Tempo médio (dias) entre a entrada do lead e a venda. 0 se sem dados. */
+    tempoMedioDias: number;
   };
   /** [{ dia, pedro, marcos, total }] últimos 7 dias */
   atividade: Array<{ dia: string; pedro: number; marcos: number; total: number }>;
@@ -87,8 +89,8 @@ interface CombinedData {
     conversao: number;       // % = vendas / atendidos
     qualidadeMedia: number;
   }>;
-  /** Rastreamento das vendas concluídas no período (auditoria: data + vendedor). */
-  vendasList: Array<{ id: string; data: string; sellerNome: string; origemLabel: string; valor: number }>;
+  /** Rastreamento das vendas concluídas no período (auditoria: data + vendedor + dias até a venda). */
+  vendasList: Array<{ id: string; data: string; sellerNome: string; origemLabel: string; valor: number; dias: number | null }>;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -183,6 +185,13 @@ function pedroEhQualificado(status: string | null | undefined): boolean {
 // MARCOS perdido = etapa cujo nome contém "perdid" (Perdido / Leads Perdidos).
 function marcosEhPerdido(stageName: string | null | undefined): boolean {
   return normStage(stageName).includes('perdid');
+}
+// Dias entre a entrada do lead e a venda (datas 'YYYY-MM-DD'). null se faltar dado.
+function diasEntre(criado?: string | null, venda?: string | null): number | null {
+  if (!criado || !venda) return null;
+  const ms = new Date(venda + 'T00:00:00').getTime() - new Date(criado + 'T00:00:00').getTime();
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.round(ms / 86400000));
 }
 
 // ─── MetricCard local (consistente com outros painéis) ─────────────────────
@@ -284,7 +293,7 @@ export default function PainelGeral() {
         const periodStartKey = toDateInput(new Date(dateRange.start));
         const periodEndKey = toDateInput(new Date(dateRange.end));
         let vendasQuery = (supabase as any).from('comercial_vendas')
-          .select('id, seller_id, data_venda, origem, valor')
+          .select('id, seller_id, data_venda, origem, valor, lead_criado_em')
           .eq('user_id', ownerId)
           .gte('data_venda', periodStartKey).lte('data_venda', periodEndKey);
         if (isSeller) vendasQuery = vendasQuery.in('seller_id', safeIds);
@@ -305,13 +314,20 @@ export default function PainelGeral() {
 
         // Vendas concluídas do período (comercial_vendas). Conta por vendedor e
         // monta a lista de rastreamento (data + vendedor + origem + valor).
-        const vendas = (vendasRes.data || []) as Array<{ id: string; seller_id: string | null; data_venda: string; origem: string | null; valor: number | string | null }>;
+        const vendas = (vendasRes.data || []) as Array<{ id: string; seller_id: string | null; data_venda: string; origem: string | null; valor: number | string | null; lead_criado_em: string | null }>;
         const sellerNameById = new Map(sellers.map(s => [s.id, s.name]));
         const vendasBySeller = new Map<string, number>();
         for (const v of vendas) {
           if (v.seller_id) vendasBySeller.set(v.seller_id, (vendasBySeller.get(v.seller_id) || 0) + 1);
         }
         const vendasTotal = vendas.length;
+        // Tempo médio até a venda (só vendas que têm a data de entrada do lead).
+        const temposVenda = vendas
+          .map(v => diasEntre(v.lead_criado_em, v.data_venda))
+          .filter((d): d is number => d !== null);
+        const tempoMedioDias = temposVenda.length > 0
+          ? Math.round(temposVenda.reduce((a, b) => a + b, 0) / temposVenda.length)
+          : 0;
         const vendasList = [...vendas]
           .sort((a, b) => (b.data_venda || '').localeCompare(a.data_venda || ''))
           .slice(0, 50)
@@ -321,6 +337,7 @@ export default function PainelGeral() {
             sellerNome: (v.seller_id && sellerNameById.get(v.seller_id)) || 'Vendedor',
             origemLabel: ORIGEM_VENDA_LABEL[v.origem || ''] || 'Particular',
             valor: Number(v.valor) || 0,
+            dias: diasEntre(v.lead_criado_em, v.data_venda),
           }));
 
         // Busca feedbacks (uma query só com IN nos 2 ID sets)
@@ -467,7 +484,7 @@ export default function PainelGeral() {
             totalLeads, leadsHoje, atribuidos, taxaAtribuicao: taxaAtrib,
             qualidadeMedia: qMedia, qualidadeLabel: qLabel,
             qualificados, pctQualificados: pctQual,
-            perdidos, vendas: vendasTotal, conversao,
+            perdidos, vendas: vendasTotal, conversao, tempoMedioDias,
           },
           atividade,
           vendedores: vendedoresRank,
@@ -608,12 +625,13 @@ export default function PainelGeral() {
           </div>
 
           {/* Resumo do funil (período) */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <MetricCard label="Atendidos" value={combined.atribuidos} sub="leads atribuídos a vendedor" icon={UserCheck} color="bg-blue-500/15 text-blue-400" />
             <MetricCard label="Qualificados" value={combined.qualificados} sub={`${combined.pctQualificados}% do total`} icon={CheckCircle2} color="bg-emerald-500/15 text-emerald-400" />
             <MetricCard label="Perdidos" value={combined.perdidos} sub="marcados como perdido" icon={AlertCircle} color="bg-red-500/15 text-red-400" />
             <MetricCard label="Vendas" value={combined.vendas} sub="vendas concluídas" icon={TrendingUp} color="bg-violet-500/15 text-violet-400" />
             <MetricCard label="Conversão média" value={`${combined.conversao}%`} sub="vendas / atendidos" icon={Target} color="bg-amber-500/15 text-amber-400" />
+            <MetricCard label="Tempo até vender" value={combined.tempoMedioDias > 0 ? `${combined.tempoMedioDias} d` : '—'} sub="média lead → venda" icon={Clock} color="bg-cyan-500/15 text-cyan-400" />
           </div>
 
           {/* Desempenho por vendedor — só master */}
@@ -680,6 +698,7 @@ export default function PainelGeral() {
                         <th className="py-2 pr-2">Data</th>
                         <th className="py-2 px-2">Vendedor</th>
                         <th className="py-2 px-2">Origem</th>
+                        <th className="py-2 px-2 text-center">Dias até vender</th>
                         <th className="py-2 pl-2 text-right">Valor</th>
                       </tr>
                     </thead>
@@ -689,6 +708,7 @@ export default function PainelGeral() {
                           <td className="py-2 pr-2 tabular-nums text-muted-foreground">{(v.data || '').split('-').reverse().join('/')}</td>
                           <td className="py-2 px-2 font-medium">{v.sellerNome}</td>
                           <td className="py-2 px-2 text-muted-foreground">{v.origemLabel}</td>
+                          <td className="py-2 px-2 text-center tabular-nums text-cyan-300">{v.dias !== null ? `${v.dias} d` : '—'}</td>
                           <td className="py-2 pl-2 text-right tabular-nums">{v.valor > 0 ? brlMoney(v.valor) : '—'}</td>
                         </tr>
                       ))}

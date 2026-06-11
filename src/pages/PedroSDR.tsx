@@ -1099,6 +1099,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
+  // Popup "Registrar venda" — aberto quando um lead entra em "Venda concluída".
+  // Grava carro + data (+ valor) na venda criada pelo gatilho (comercial_vendas).
+  const [vendaDialog, setVendaDialog] = useState<{ leadId: string; nome: string } | null>(null);
+  const [vendaCarro, setVendaCarro] = useState('');
+  const [vendaData, setVendaData] = useState('');
+  const [vendaValor, setVendaValor] = useState('');
+  const [vendaSaving, setVendaSaving] = useState(false);
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [instances, setInstances] = useState<any[]>([]);
@@ -1972,6 +1979,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         setSelectedLead({ ...selectedLead, status_crm: newStatus });
         setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status_crm: newStatus } : l));
         toast({ title: '✅ Status atualizado!' });
+        if (isWinStatus(newStatus)) openVendaDialogFor(selectedLead.id);
         return;
       }
       const { error } = await (supabase as any)
@@ -1982,6 +1990,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       setSelectedLead({ ...selectedLead, status_crm: newStatus });
       setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status_crm: newStatus } : l));
       toast({ title: '✅ Status atualizado!' });
+      if (isWinStatus(newStatus)) openVendaDialogFor(selectedLead.id);
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
@@ -2978,6 +2987,49 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     }
   };
 
+  // Detecta se o status/etapa de destino é "Venda concluída" (Pedro: id 'fechado';
+  // Marcos: etapa cujo nome começa com "venda conclu").
+  const isWinStatus = (newStatus: string): boolean => {
+    if (!isMarcosCrm) return newStatus === 'fechado';
+    const st = (manualStages.length ? manualStages : PIPELINE_COLUMNS).find(c => c.id === newStatus);
+    return st ? normalizeStageName(st.title || '').startsWith('venda conclu') : false;
+  };
+  // Abre o popup de venda já pré-preenchido (carro do lead + data de hoje).
+  const openVendaDialogFor = (leadId: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    setVendaCarro((lead as any)?.vehicle_interest || '');
+    setVendaData(today);
+    setVendaValor('');
+    setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead' });
+  };
+  // Salva carro + data (+ valor) na venda derivada do lead (criada pelo gatilho).
+  const saveVenda = async () => {
+    if (!vendaDialog) return;
+    setVendaSaving(true);
+    try {
+      const tipo = isMarcosCrm ? 'marcos' : 'pedro';
+      const valorNum = vendaValor ? Number(String(vendaValor).replace(/\./g, '').replace(',', '.')) : 0;
+      const { error } = await (supabase as any)
+        .from('comercial_vendas')
+        .update({
+          veiculo: vendaCarro.trim() || null,
+          data_venda: vendaData,
+          valor: Number.isFinite(valorNum) ? valorNum : 0,
+        })
+        .eq('origem_lead_tipo', tipo)
+        .eq('origem_lead_id', vendaDialog.leadId);
+      if (error) throw error;
+      toast({ title: '✅ Venda registrada!', description: 'Carro e data salvos — já aparece no Painel Geral.' });
+      setVendaDialog(null);
+    } catch (err: any) {
+      toast({ title: 'Erro ao salvar venda', description: err.message, variant: 'destructive' });
+    } finally {
+      setVendaSaving(false);
+    }
+  };
+
   const handleDragEnd = async (result: DropResult) => {
     const { draggableId, destination, source, type } = result;
     if (!destination) return;
@@ -3010,6 +3062,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .eq('id', draggableId);
         if (error) throw error;
         toast({ title: `✅ Lead movido para ${manualStages.find(c => c.id === newStatus)?.title || newStatus}` });
+        if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
         return;
       }
       const { error } = await (supabase as any)
@@ -3018,6 +3071,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         .eq('id', draggableId);
       if (error) throw error;
       toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : PIPELINE_COLUMNS).find(c => c.id === newStatus)?.title || newStatus}` });
+      if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
     } catch (err: any) {
       toast({ title: 'Erro ao mover lead', description: err.message, variant: 'destructive' });
       await fetchData(true); // Revert on failure
@@ -4588,6 +4642,63 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           </div>
         </DragDropContext>
       )}
+
+      {/* ── Popup: registrar venda (carro + data) ao concluir ──────────── */}
+      <Dialog open={!!vendaDialog} onOpenChange={(o) => { if (!o) setVendaDialog(null); }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span>✅</span> Registrar venda
+            </DialogTitle>
+            <DialogDescription>
+              {vendaDialog?.nome} — preencha o carro e a data da venda. Isso atualiza o Painel Geral.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Carro vendido</label>
+              <input
+                type="text"
+                value={vendaCarro}
+                onChange={(e) => setVendaCarro(e.target.value)}
+                placeholder="Ex.: Onix 2022 prata"
+                className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Data da venda</label>
+                <input
+                  type="date"
+                  value={vendaData}
+                  onChange={(e) => setVendaData(e.target.value)}
+                  className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Valor (opcional)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={vendaValor}
+                  onChange={(e) => setVendaValor(e.target.value)}
+                  placeholder="Ex.: 65000"
+                  className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setVendaDialog(null)} disabled={vendaSaving}>
+              Agora não
+            </Button>
+            <Button size="sm" onClick={saveVenda} disabled={vendaSaving || !vendaData}>
+              {vendaSaving ? 'Salvando...' : 'Salvar venda'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── LISTA de Leads ──────────────────────────────────────────── */}
       {view === 'leads' && (
