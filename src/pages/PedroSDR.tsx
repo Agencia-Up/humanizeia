@@ -2913,12 +2913,25 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       // Remove notas, followups, feedbacks e a MEMORIA da conversa associados
       // primeiro. Limpar pedro_conversation_state garante que o Pedro v2 recomeca
       // a conversa do zero (se reapresenta) ao apagar o lead do CRM.
-      await Promise.all([
+      // wa_chat_history e por remote_jid (NAO tem lead_id): sem apagar tambem o
+      // historico bruto, o Pedro recarrega a conversa antiga e "lembra" do lead
+      // mesmo apos excluir (tratava como lead existente em vez de novo). Busca o
+      // remote_jid/agent do lead antes de apagar p/ limpar o historico tambem.
+      const { data: _leadRow } = await (supabase as any)
+        .from('ai_crm_leads').select('remote_jid, agent_id').eq('id', leadId).maybeSingle();
+      const _cascades: any[] = [
         (supabase as any).from('pedro_crm_notes').delete().eq('lead_id', leadId),
         (supabase as any).from('pedro_followup_schedules').delete().eq('lead_id', leadId),
         (supabase as any).from('pedro_manager_feedback').delete().eq('lead_id', leadId),
         (supabase as any).from('pedro_conversation_state').delete().eq('lead_id', leadId),
-      ]);
+      ];
+      if (_leadRow?.remote_jid && _leadRow?.agent_id) {
+        _cascades.push(
+          (supabase as any).from('wa_chat_history').delete()
+            .eq('agent_id', _leadRow.agent_id).eq('remote_jid', _leadRow.remote_jid)
+        );
+      }
+      await Promise.all(_cascades);
       const { error } = await (supabase as any).from('ai_crm_leads').delete().eq('id', leadId);
       if (error) throw error;
       toast({ title: '🗑️ Lead excluído!' });
