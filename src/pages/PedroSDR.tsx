@@ -739,7 +739,7 @@ const STATUS_CRM_OPTIONS = [
   { value: 'carro_nao_disponivel', label: 'Carro não disponível', color: 'text-rose-400' },
   { value: 'em_atendimento',     label: 'Agendamento',       color: 'text-cyan-400'    },
   { value: 'negociacao',         label: 'Negociação',        color: 'text-purple-400'  },
-  { value: 'fechado',            label: 'Fechado',           color: 'text-green-400'   },
+  { value: 'fechado',            label: 'Venda concluída',   color: 'text-green-400'   },
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
 
@@ -935,7 +935,7 @@ const PIPELINE_COLUMNS = [
   { id: 'carro_nao_disponivel', title: 'Carro não disponível', emoji: '🚫', border: 'border-rose-500/30', bg: 'bg-rose-500/10', dot: 'bg-rose-400' },
   { id: 'em_atendimento',     title: 'Agendamento',        emoji: '📅', border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10',    dot: 'bg-cyan-400'   },
   { id: 'negociacao',         title: 'Negociação',         emoji: '🤝', border: 'border-purple-500/30',  bg: 'bg-purple-500/10',  dot: 'bg-purple-400'  },
-  { id: 'fechado',            title: 'Fechado',            emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
+  { id: 'fechado',            title: 'Venda concluída',    emoji: '✅', border: 'border-green-500/30',   bg: 'bg-green-500/10',   dot: 'bg-green-400'   },
   { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
 ];
 

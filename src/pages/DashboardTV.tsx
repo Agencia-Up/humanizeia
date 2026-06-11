@@ -48,6 +48,10 @@ interface VendedorData {
   consignado: number;
   indicacao: number;
   redes_sociais: number;
+  /** Vendas concluídas do vendedor no período (lead movido pra etapa
+   *  "Venda concluída" no CRM do Pedro/Marcos). NÃO entra no `total` de
+   *  leads — é um resultado, não uma origem. */
+  venda_concluida: number;
   total: number;
 }
 
@@ -71,6 +75,11 @@ interface KPIsData {
   meta_total: number;
   /** Custo por lead segundo o Painel do Meta = gasto ÷ meta_total. */
   custo_por_lead_meta: number;
+  /** Vendas concluídas no MÊS CORRENTE (não acompanha o filtro de período —
+   *  é sempre o mês atual, ex.: 3 de 30). */
+  vendas_mes: number;
+  /** Meta de vendas do mês corrente (loja, ou individual se vendedor logado). */
+  meta_mes: number;
 }
 
 interface LeadNaoTransferido {
@@ -424,7 +433,17 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       try {
         // Usa range do filtro atual (hoje/7d/30d/custom)
         const todayStart = dateRange.start;
+        // Mês corrente (KPI Vendas/Meta NÃO acompanha o filtro — é sempre o mês atual).
+        const nowD = new Date();
+        const monthStartKey = toDateInput(new Date(nowD.getFullYear(), nowD.getMonth(), 1));
+        const monthEndKey   = toDateInput(new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0));
         const todayEnd = dateRange.end;
+        // Chaves YYYY-MM-DD do período (pro "Venda concluída" por vendedor) e o
+        // range que cobre período + mês corrente (uma só query de vendas).
+        const periodStartKey = isoToDateKey(todayStart);
+        const periodEndKey   = isoToDateKey(todayEnd);
+        const vendasStartKey = periodStartKey < monthStartKey ? periodStartKey : monthStartKey;
+        const vendasEndKey   = periodEndKey   > monthEndKey   ? periodEndKey   : monthEndKey;
 
         // 1. Branding sempre do MASTER (mesmo pra vendedor logado vê branding do master dele)
         const profilePromise = (supabase as any)
@@ -482,8 +501,26 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .gte('date', isoToDateKey(todayStart))
           .lte('date', isoToDateKey(todayEnd));
 
-        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes] = await Promise.all([
-          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery,
+        // 6. Vendas concluídas (comercial_vendas) — cobre período + mês corrente.
+        //    Se vendedor logado, só as dele. (Cada lead "Venda concluída" no CRM
+        //    vira 1 linha aqui via gatilho; lançamentos manuais também entram.)
+        let vendasQuery = (supabase as any)
+          .from('comercial_vendas')
+          .select('seller_id, data_venda')
+          .eq('user_id', effectiveUserId)
+          .gte('data_venda', vendasStartKey)
+          .lte('data_venda', vendasEndKey);
+        if (sellerMemberId) vendasQuery = vendasQuery.eq('seller_id', sellerMemberId);
+
+        // 7. Metas do mês corrente (loja + individuais).
+        const metasQuery = (supabase as any)
+          .from('comercial_metas')
+          .select('seller_id, tipo, valor_meta')
+          .eq('user_id', effectiveUserId)
+          .eq('mes_referencia', monthStartKey);
+
+        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes] = await Promise.all([
+          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery,
         ]);
 
         if (cancelled) return;
@@ -530,7 +567,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             null;
           agg[s.id] = {
             id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
-            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, total: 0,
+            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, total: 0,
           };
         }
 
@@ -543,7 +580,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const NAO_ATRIBUIDO_ID = '__nao_atribuido__';
         agg[NAO_ATRIBUIDO_ID] = {
           id: NAO_ATRIBUIDO_ID, name: 'Sem vendedor atribuído', effective_avatar: null, rank: 0,
-          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, total: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, total: 0,
         };
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
@@ -702,6 +739,28 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const taxaTransf = pedroTotal > 0 ? Math.round((pedroAtribuidos / pedroTotal) * 1000) / 10 : 0;
         const taxaTransfTexto = `${pedroAtribuidos} de ${pedroTotal} leads do Pedro`;
 
+        // 8.5. Comercial — vendas concluídas por vendedor (no PERÍODO) +
+        //      "Vendas / Meta do mês" (sempre o MÊS CORRENTE, não segue o filtro).
+        const vendasRows = (vendasRes?.data || []) as Array<{ seller_id: string | null; data_venda: string }>;
+        let vendasMes = 0;
+        for (const vd of vendasRows) {
+          const dk = String(vd.data_venda).slice(0, 10);
+          if (dk >= monthStartKey && dk <= monthEndKey) vendasMes++;
+          if (dk >= periodStartKey && dk <= periodEndKey && vd.seller_id && agg[vd.seller_id]) {
+            agg[vd.seller_id].venda_concluida++;
+          }
+        }
+        const metasRows = (metasRes?.data || []) as Array<{ seller_id: string | null; tipo: string; valor_meta: number }>;
+        let metaMes = 0;
+        if (sellerMemberId) {
+          const indi = metasRows.find(m => m.tipo === 'individual' && m.seller_id === sellerMemberId);
+          metaMes = indi
+            ? Number(indi.valor_meta) || 0
+            : Number(metasRows.find(m => m.tipo === 'loja')?.valor_meta) || 0;
+        } else {
+          metaMes = Number(metasRows.find(m => m.tipo === 'loja' && !m.seller_id)?.valor_meta) || 0;
+        }
+
         // 9. Rank por total desc, tie-breaker alfabético.
         //    Spec usuario (30/05/2026): a row virtual "Sem vendedor atribuído"
         //    NUNCA aparece como card no ranking — nem quando tem leads. Leads sem
@@ -785,6 +844,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           custo_por_lead: custoPorLead,
           meta_total: metaTotal,
           custo_por_lead_meta: custoPorLeadMeta,
+          vendas_mes: vendasMes,
+          meta_mes: metaMes,
         });
         // Sincroniza os cards filhos (ex.: Real vs Falso) a cada reload —
         // mount, poll de 30s e realtime (lead novo) — sem re-assinar o canal.
@@ -839,6 +900,12 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         event: '*',
         schema: 'public',
         table: 'crm_leads',
+        filter: `user_id=eq.${effectiveUserId}`,
+      }, debouncedReload)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'comercial_vendas',
         filter: `user_id=eq.${effectiveUserId}`,
       }, debouncedReload)
       .subscribe();
@@ -1040,8 +1107,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         </span>
       </div>
 
-      {/* ───── Bloco KPIs principais (3 cards lado a lado) ───── */}
-      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-4 portrait:grid-cols-1 gap-4">
+      {/* ───── Bloco KPIs principais (5 cards lado a lado) ───── */}
+      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-5 portrait:grid-cols-1 gap-4">
         {/* KPI 1: Leads Gerais */}
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
@@ -1119,6 +1186,23 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           </p>
           <p className="text-[10px] uppercase tracking-widest text-blue-300/50 mt-3">
             {kpis?.taxa_transferencia_texto ?? '0 leads'}
+          </p>
+        </div>
+
+        {/* KPI 5: Vendas / Meta do mês — vendas concluídas no MÊS CORRENTE sobre a
+            meta da loja (ex.: 3/30). NÃO acompanha o filtro de período. */}
+        <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-emerald-900/40 flex flex-col items-center justify-center text-center">
+          <ShoppingBag className="h-7 w-7 text-emerald-400 mb-2" />
+          <p className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-2 font-semibold">Vendas / Meta do mês</p>
+          <p className="text-[clamp(2rem,6vmin,3.75rem)] portrait:text-[clamp(2.5rem,9vw,6rem)] font-black tabular-nums leading-none text-emerald-400">
+            {kpis?.vendas_mes ?? 0}<span className="text-slate-500">/{kpis?.meta_mes ?? 0}</span>
+          </p>
+          <p className="text-[10px] uppercase tracking-widest text-emerald-300/50 mt-3">
+            {(() => {
+              const m = kpis?.meta_mes ?? 0;
+              const v = kpis?.vendas_mes ?? 0;
+              return m > 0 ? `${Math.round((v / m) * 100)}% da meta` : 'Defina a meta do mês';
+            })()}
           </p>
         </div>
       </section>
@@ -1389,6 +1473,10 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         <BreakdownRow label="Consignado"   value={v.consignado}    color="#06b6d4" />
         <BreakdownRow label="Indicação"    value={v.indicacao}     color="#fb923c" />
         <BreakdownRow label="Redes Sociais" value={v.redes_sociais} color="#ec4899" />
+        {/* Resultado (não é origem): vendas concluídas do vendedor no período. */}
+        <div className="pt-1 mt-1 border-t border-slate-800/70">
+          <BreakdownRow label="Venda concluída" value={v.venda_concluida} color="#10b981" />
+        </div>
       </div>
 
       {/* Total */}
