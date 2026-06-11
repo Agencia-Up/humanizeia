@@ -1743,10 +1743,24 @@ export async function processPedroV2Turn(
       const _br = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: _brandMatch[0], limit: 6 });
       if (_br?.success && Array.isArray(_br.items) && _br.items.length > 0) { _alt = _br; _altIsBrand = true; }
     }
-    // ESTAGIO 2 — parecidos por CATEGORIA/PRECO (comportamento original).
+    // ESTAGIO 2 — parecidos por CATEGORIA, reordenados por RELEVANCIA (anti "Pajero 2013 pra
+    // T-Cross"): o searchPedroStock devolve do MAIS BARATO, e o 1o costuma ser um carro VELHO/
+    // fora do perfil do modelo pedido (que veio de anuncio = quase sempre recente). Ancora de
+    // preco = orcamento do lead OU preco do anuncio; COM ancora, prioriza os mais PROXIMOS dela;
+    // SEM ancora, prioriza os mais RECENTES (mais barato so como desempate).
     if (!_alt && _hadSpecificModel && (_broadType || _broadPriceMax)) {
-      const _by = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: { tipo_veiculo: _broadType, preco_max: _broadPriceMax }, limit: 6 });
-      if (_by?.success && Array.isArray(_by.items) && _by.items.length > 0) _alt = _by;
+      const _anchorPrice = Number(_broadPriceMax) || Number((stockFilters as any).ad_price) || 0;
+      const _capMax = _broadPriceMax || (_anchorPrice > 0 ? Math.round(_anchorPrice * 1.25) : null);
+      const _by = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: { tipo_veiculo: _broadType, preco_max: _capMax }, limit: 12 });
+      if (_by?.success && Array.isArray(_by.items) && _by.items.length > 0) {
+        const _its = [...(_by.items as any[])];
+        if (_anchorPrice > 0) {
+          _its.sort((a, b) => Math.abs((Number(a.preco) || _anchorPrice) - _anchorPrice) - Math.abs((Number(b.preco) || _anchorPrice) - _anchorPrice));
+        } else {
+          _its.sort((a, b) => (Number(b.ano) || 0) - (Number(a.ano) || 0) || (Number(a.preco) || 9e9) - (Number(b.preco) || 9e9));
+        }
+        _alt = { ..._by, items: _its.slice(0, 6) };
+      }
     }
     // ESTAGIO 3 — fallback GERAL: ainda 0 -> mostra alguns carros do estoque. A loja SEMPRE tem
     // estoque; o agente nunca pode encerrar com "nao temos" sem oferecer alternativas reais.
