@@ -122,7 +122,7 @@ const pedroStatusLabels: Record<string, { label: string; accent: string; descrip
   carro_nao_disponivel: { label: 'Carro nao disponivel', accent: 'bg-rose-400', description: 'Opcao fora de estoque' },
   em_atendimento: { label: 'Agendamento', accent: 'bg-cyan-400', description: 'Visita ou contato marcado' },
   negociacao: { label: 'Negociacao', accent: 'bg-purple-400', description: 'Vendedor em tratativa' },
-  fechado: { label: 'Fechado', accent: 'bg-emerald-400', description: 'Venda concluida' },
+  fechado: { label: 'Venda concluída', accent: 'bg-emerald-400', description: 'Venda concluida' },
 };
 
 const normalizeStatus = (status: string | null | undefined) => {
@@ -565,8 +565,10 @@ export default function CommercialDashboard() {
   const totalLeads = data.pedroTotal + data.marcosTotal;
   const paidShare = totalLeads > 0 ? Math.round((data.pedroTotal / totalLeads) * 100) : 0;
   const manualShare = totalLeads > 0 ? 100 - paidShare : 0;
-  const closedPedro = data.pedroFunnel.find(item => item.label === 'Fechado')?.value || 0;
-  const closedMarcos = data.marcosFunnel.find(item => item.label.toLowerCase().includes('fechado'))?.value || 0;
+  // Casa pelo nome novo ("Venda concluída") e pelo legado ("Fechado").
+  const isClosedLabel = (l: string) => { const n = (l || '').toLowerCase(); return n.includes('venda conclu') || n.includes('fechado'); };
+  const closedPedro = data.pedroFunnel.find(item => isClosedLabel(item.label))?.value || 0;
+  const closedMarcos = data.marcosFunnel.find(item => isClosedLabel(item.label))?.value || 0;
   const closedRate = totalLeads > 0 ? Math.round(((closedPedro + closedMarcos) / totalLeads) * 100) : 0;
   const maxWeekly = Math.max(1, ...data.weekly.map(item => Math.max(item.pedro, item.marcos)));
 

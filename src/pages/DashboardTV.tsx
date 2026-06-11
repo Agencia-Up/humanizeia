@@ -108,8 +108,8 @@ function scoreMarcosStage(stageName: string | null | undefined): number {
   if (!stageName) return 0;
   const n = stageName.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   const map: Record<string, number> = {
-    'fechado': 100, 'negociacao': 85, 'agendamento': 60, 'porta/loja': 30,
-    'marketing place': 20, 'leads inativos': 0, 'nao tem no estoque': 0,
+    'fechado': 100, 'venda concluida': 100, 'negociacao': 85, 'agendamento': 60, 'porta/loja': 30,
+    'marketing place': 20, 'leads inativos': 0, 'nao tem no estoque': 0, 'leads perdidos': 0,
     // legados (caso ainda exista em algum master)
     'novo lead': 20, 'proposta': 75, 'qualificado': 80, 'perdido': 0,
     'lead inativo': 0, 'carro nao disponivel': 0, 'porta': 30,

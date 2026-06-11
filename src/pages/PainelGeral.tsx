@@ -67,6 +67,10 @@ interface CombinedData {
     qualidadeLabel: 'Ótimo' | 'Bom' | 'Médio' | 'Baixo' | 'Sem dados';
     qualificados: number;
     pctQualificados: number;
+    /** Funil de vendas (Pedro + Marcos) — período selecionado. */
+    perdidos: number;
+    vendas: number;          // vendas concluídas (comercial_vendas) no período
+    conversao: number;       // % = vendas / atendidos (atribuídos)
   };
   /** [{ dia, pedro, marcos, total }] últimos 7 dias */
   atividade: Array<{ dia: string; pedro: number; marcos: number; total: number }>;
@@ -76,10 +80,15 @@ interface CombinedData {
     nome: string;
     pedroLeads: number;
     marcosLeads: number;
-    total: number;
+    total: number;           // atendidos (leads atribuídos ao vendedor)
     qualificados: number;
+    perdidos: number;
+    vendas: number;
+    conversao: number;       // % = vendas / atendidos
     qualidadeMedia: number;
   }>;
+  /** Rastreamento das vendas concluídas no período (auditoria: data + vendedor). */
+  vendasList: Array<{ id: string; data: string; sellerNome: string; origemLabel: string; valor: number }>;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -129,9 +138,9 @@ function scoreMarcosStage(n: string | null | undefined): number {
   if (!n) return 0;
   const k = n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   const map: Record<string, number> = {
-    'fechado': 100, 'negociacao': 85, 'agendamento': 60, 'porta/loja': 30,
+    'fechado': 100, 'venda concluida': 100, 'negociacao': 85, 'agendamento': 60, 'porta/loja': 30,
     'marketing place': 20, 'leads inativos': 0, 'nao tem no estoque': 0,
-    'novo lead': 20, 'proposta': 75, 'perdido': 0,
+    'novo lead': 20, 'proposta': 75, 'perdido': 0, 'leads perdidos': 0,
     'lead inativo': 0, 'carro nao disponivel': 0, 'porta': 30,
   };
   return map[k] ?? 20;
@@ -153,6 +162,27 @@ function qualLabel(score: number, has: boolean): CombinedData['combined']['quali
   if (score >= 60) return 'Bom';
   if (score >= 40) return 'Médio';
   return 'Baixo';
+}
+
+// ─── Funil de vendas (regras acordadas) ─────────────────────────────────────
+// Rótulo da origem comercial (comercial_vendas.origem) -> texto amigável.
+const ORIGEM_VENDA_LABEL: Record<string, string> = {
+  trafego: 'Tráfego', portais: 'Portais', porta: 'Porta', particular: 'Particular',
+};
+function brlMoney(n: number): string {
+  return (n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+function normStage(name: string | null | undefined): string {
+  return (name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+// PEDRO qualificado = "qualquer grau + em diante": tudo que saiu de novo/inativo/
+// perdido/carro indisponível (pouco/médio/qualificado, agendamento, negociação, venda).
+function pedroEhQualificado(status: string | null | undefined): boolean {
+  return !!status && !['novo', 'inativo', 'perdido', 'carro_nao_disponivel'].includes(status);
+}
+// MARCOS perdido = etapa cujo nome contém "perdid" (Perdido / Leads Perdidos).
+function marcosEhPerdido(stageName: string | null | undefined): boolean {
+  return normStage(stageName).includes('perdid');
 }
 
 // ─── MetricCard local (consistente com outros painéis) ─────────────────────
@@ -193,6 +223,8 @@ export default function PainelGeral() {
   });
   const [data, setData] = useState<CombinedData | null>(null);
   const [loading, setLoading] = useState(true);
+  // Realtime: incrementa pra forçar o load() a rodar de novo quando um lead/venda muda.
+  const [reloadTrigger, setReloadTrigger] = useState(0);
 
   const dateRange = resolveDateRange(period, customRange);
 
@@ -247,9 +279,19 @@ export default function PainelGeral() {
           ? Promise.resolve({ data: [] as any[] })
           : (supabase as any).from('ai_team_members').select('*').eq('user_id', ownerId);
 
-        // 3 queries paralelas
-        const [pedroRes, marcosRes, sellersRes] = await Promise.all([
-          pedroQuery, marcosQuery, sellersPromise,
+        // Vendas concluídas do período (comercial_vendas = cruza Pedro+Marcos+manual,
+        // com data e vendedor). Filtra por data_venda (YYYY-MM-DD).
+        const periodStartKey = toDateInput(new Date(dateRange.start));
+        const periodEndKey = toDateInput(new Date(dateRange.end));
+        let vendasQuery = (supabase as any).from('comercial_vendas')
+          .select('id, seller_id, data_venda, origem, valor')
+          .eq('user_id', ownerId)
+          .gte('data_venda', periodStartKey).lte('data_venda', periodEndKey);
+        if (isSeller) vendasQuery = vendasQuery.in('seller_id', safeIds);
+
+        // 4 queries paralelas
+        const [pedroRes, marcosRes, sellersRes, vendasRes] = await Promise.all([
+          pedroQuery, marcosQuery, sellersPromise, vendasQuery,
         ]);
         if (cancelled) return;
 
@@ -260,6 +302,26 @@ export default function PainelGeral() {
         const marcosLeads = (marcosRes.data || []) as MarcosLead[];
         // Vendedores ATIVOS NO SISTEMA (não filtra pelo status do agente de IA).
         const sellers = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string }>;
+
+        // Vendas concluídas do período (comercial_vendas). Conta por vendedor e
+        // monta a lista de rastreamento (data + vendedor + origem + valor).
+        const vendas = (vendasRes.data || []) as Array<{ id: string; seller_id: string | null; data_venda: string; origem: string | null; valor: number | string | null }>;
+        const sellerNameById = new Map(sellers.map(s => [s.id, s.name]));
+        const vendasBySeller = new Map<string, number>();
+        for (const v of vendas) {
+          if (v.seller_id) vendasBySeller.set(v.seller_id, (vendasBySeller.get(v.seller_id) || 0) + 1);
+        }
+        const vendasTotal = vendas.length;
+        const vendasList = [...vendas]
+          .sort((a, b) => (b.data_venda || '').localeCompare(a.data_venda || ''))
+          .slice(0, 50)
+          .map(v => ({
+            id: v.id,
+            data: v.data_venda,
+            sellerNome: (v.seller_id && sellerNameById.get(v.seller_id)) || 'Vendedor',
+            origemLabel: ORIGEM_VENDA_LABEL[v.origem || ''] || 'Particular',
+            valor: Number(v.valor) || 0,
+          }));
 
         // Busca feedbacks (uma query só com IN nos 2 ID sets)
         const fbByLead = new Map<string, string>();
@@ -303,7 +365,8 @@ export default function PainelGeral() {
 
         // Breakdown Pedro
         const pedroAtribuidos = pedroLeads.filter(l => l.assigned_to_id).length;
-        const pedroQualificados = pedroLeads.filter(l => l.status_crm === 'qualificado' || l.status_crm === 'transferido').length;
+        const pedroQualificados = pedroLeads.filter(l => pedroEhQualificado(l.status_crm)).length;
+        const pedroPerdidos = pedroLeads.filter(l => l.status_crm === 'perdido').length;
         const pedro: SourceBreakdown = {
           total: pedroLeads.length,
           hoje: pedroLeads.filter(l => new Date(l.created_at) >= hoje).length,
@@ -317,8 +380,9 @@ export default function PainelGeral() {
         const marcosAtribuidos = marcosLeads.filter(l => l.assigned_to).length;
         const marcosQualificados = marcosLeads.filter(l => {
           const score = scoreMarcosStage(l.stage?.name);
-          return score >= 60; // Agendamento/Negociação/Fechado
+          return score >= 60; // Agendamento / Negociação / Venda concluída
         }).length;
+        const marcosPerdidos = marcosLeads.filter(l => marcosEhPerdido(l.stage?.name)).length;
         const marcos: SourceBreakdown = {
           total: marcosLeads.length,
           hoje: marcosLeads.filter(l => new Date(l.created_at) >= hoje).length,
@@ -338,6 +402,10 @@ export default function PainelGeral() {
         const qLabel = qualLabel(qMedia, allScores.length > 0);
         const qualificados = pedro.qualificados + marcos.qualificados;
         const pctQual = totalLeads > 0 ? Math.round((qualificados / totalLeads) * 100) : 0;
+        // Funil de vendas: perdidos (Pedro+Marcos) e conversão = vendas ÷ atendidos
+        // (atendidos = leads atribuídos a vendedor). Trata divisão por zero.
+        const perdidos = pedroPerdidos + marcosPerdidos;
+        const conversao = atribuidos > 0 ? Math.round((vendasTotal / atribuidos) * 100) : 0;
 
         // Atividade dos últimos 7 dias (sobreposto)
         const dias = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
@@ -350,13 +418,13 @@ export default function PainelGeral() {
           return { dia: dias[d.getDay()], pedro: pedroDay, marcos: marcosDay, total: pedroDay + marcosDay };
         });
 
-        // Ranking unificado de vendedores
+        // Ranking unificado de vendedores (+ funil: qualificados/perdidos/vendas/conversão)
         const sellerMap = new Map<string, {
           id: string; nome: string; pedroLeads: number; marcosLeads: number;
-          scores: number[]; qualificados: number;
+          scores: number[]; qualificados: number; perdidos: number;
         }>();
         for (const s of sellers) {
-          sellerMap.set(s.id, { id: s.id, nome: s.name, pedroLeads: 0, marcosLeads: 0, scores: [], qualificados: 0 });
+          sellerMap.set(s.id, { id: s.id, nome: s.name, pedroLeads: 0, marcosLeads: 0, scores: [], qualificados: 0, perdidos: 0 });
         }
         pedroLeads.forEach((l, idx) => {
           if (!l.assigned_to_id) return;
@@ -364,7 +432,8 @@ export default function PainelGeral() {
           if (!sObj) return;
           sObj.pedroLeads++;
           sObj.scores.push(pedroScores[idx]);
-          if (l.status_crm === 'qualificado' || l.status_crm === 'transferido') sObj.qualificados++;
+          if (pedroEhQualificado(l.status_crm)) sObj.qualificados++;
+          if (l.status_crm === 'perdido') sObj.perdidos++;
         });
         marcosLeads.forEach((l, idx) => {
           if (!l.assigned_to) return;
@@ -373,15 +442,23 @@ export default function PainelGeral() {
           sObj.marcosLeads++;
           sObj.scores.push(marcosScores[idx]);
           if (scoreMarcosStage(l.stage?.name) >= 60) sObj.qualificados++;
+          if (marcosEhPerdido(l.stage?.name)) sObj.perdidos++;
         });
         const vendedoresRank = Array.from(sellerMap.values())
-          .map(s => ({
-            id: s.id, nome: s.nome,
-            pedroLeads: s.pedroLeads, marcosLeads: s.marcosLeads,
-            total: s.pedroLeads + s.marcosLeads,
-            qualificados: s.qualificados,
-            qualidadeMedia: avg(s.scores),
-          }))
+          .map(s => {
+            const atend = s.pedroLeads + s.marcosLeads;
+            const vendasSeller = vendasBySeller.get(s.id) || 0;
+            return {
+              id: s.id, nome: s.nome,
+              pedroLeads: s.pedroLeads, marcosLeads: s.marcosLeads,
+              total: atend,
+              qualificados: s.qualificados,
+              perdidos: s.perdidos,
+              vendas: vendasSeller,
+              conversao: atend > 0 ? Math.round((vendasSeller / atend) * 100) : 0,
+              qualidadeMedia: avg(s.scores),
+            };
+          })
           .sort((a, b) => b.total - a.total);
 
         setData({
@@ -390,9 +467,11 @@ export default function PainelGeral() {
             totalLeads, leadsHoje, atribuidos, taxaAtribuicao: taxaAtrib,
             qualidadeMedia: qMedia, qualidadeLabel: qLabel,
             qualificados, pctQualificados: pctQual,
+            perdidos, vendas: vendasTotal, conversao,
           },
           atividade,
           vendedores: vendedoresRank,
+          vendasList,
         });
       } catch (err) {
         console.error('[PainelGeral] erro:', err);
@@ -403,7 +482,23 @@ export default function PainelGeral() {
 
     load();
     return () => { cancelled = true; };
-  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end]);
+  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end, reloadTrigger]);
+
+  // ── Realtime: atualiza o painel quando muda lead (Pedro/Marcos) ou venda.
+  // Recarrega via reloadTrigger (debounce 1s pra agrupar bursts). Escopo = loja.
+  useEffect(() => {
+    if (!user?.id || profileLoading) return;
+    const ownerId = isSeller ? (masterUserId || user.id) : user.id;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => setReloadTrigger(t => t + 1), 1000); };
+    const channel = supabase
+      .channel(`painel-geral-${ownerId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_crm_leads', filter: `user_id=eq.${ownerId}` }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'crm_leads', filter: `user_id=eq.${ownerId}` }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comercial_vendas', filter: `user_id=eq.${ownerId}` }, bump)
+      .subscribe();
+    return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel); };
+  }, [user?.id, profileLoading, isSeller, masterUserId]);
 
   if (loading || !data) {
     return (
@@ -415,7 +510,7 @@ export default function PainelGeral() {
     );
   }
 
-  const { pedro, marcos, combined, atividade, vendedores } = data;
+  const { pedro, marcos, combined, atividade, vendedores, vendasList } = data;
   const qColor =
     combined.qualidadeMedia >= 80 ? 'bg-emerald-500/15 text-emerald-400' :
     combined.qualidadeMedia >= 60 ? 'bg-blue-500/15 text-blue-400' :
@@ -426,8 +521,10 @@ export default function PainelGeral() {
   const dTotal = dashData.pedroTotal + dashData.marcosTotal;
   const paidShare = dTotal > 0 ? Math.round((dashData.pedroTotal / dTotal) * 100) : 0;
   const manualShare = dTotal > 0 ? 100 - paidShare : 0;
-  const closedPedro = dashData.pedroFunnel.find(i => i.label === 'Fechado')?.value || 0;
-  const closedMarcos = dashData.marcosFunnel.find(i => i.label.toLowerCase().includes('fechado'))?.value || 0;
+  // Casa pelo nome novo ("Venda concluída") e pelo legado ("Fechado").
+  const isClosedLabel = (l: string) => { const n = (l || '').toLowerCase(); return n.includes('venda conclu') || n.includes('fechado'); };
+  const closedPedro = dashData.pedroFunnel.find(i => isClosedLabel(i.label))?.value || 0;
+  const closedMarcos = dashData.marcosFunnel.find(i => isClosedLabel(i.label))?.value || 0;
   const closedRate = dTotal > 0 ? Math.round(((closedPedro + closedMarcos) / dTotal) * 100) : 0;
   const originCards = [
     { label: 'IA / Pago', value: `${paidShare}%`, sub: `${dashData.pedroTotal} leads do Pedro`, color: 'bg-blue-500/15 text-blue-300' },
@@ -501,6 +598,107 @@ export default function PainelGeral() {
             currentSellerId={isSeller ? (memberIds[0] || null) : null}
           />
         )}
+
+        {/* ── Funil de vendas por vendedor (Pedro + Marcos) ────────────────── */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Target className="h-5 w-5 text-emerald-400" />
+            <h2 className="text-lg font-bold">Funil de vendas por vendedor</h2>
+            <span className="text-xs text-muted-foreground">Pedro + Marcos · {dateRange.label}</span>
+          </div>
+
+          {/* Resumo do funil (período) */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <MetricCard label="Atendidos" value={combined.atribuidos} sub="leads atribuídos a vendedor" icon={UserCheck} color="bg-blue-500/15 text-blue-400" />
+            <MetricCard label="Qualificados" value={combined.qualificados} sub={`${combined.pctQualificados}% do total`} icon={CheckCircle2} color="bg-emerald-500/15 text-emerald-400" />
+            <MetricCard label="Perdidos" value={combined.perdidos} sub="marcados como perdido" icon={AlertCircle} color="bg-red-500/15 text-red-400" />
+            <MetricCard label="Vendas" value={combined.vendas} sub="vendas concluídas" icon={TrendingUp} color="bg-violet-500/15 text-violet-400" />
+            <MetricCard label="Conversão média" value={`${combined.conversao}%`} sub="vendas / atendidos" icon={Target} color="bg-amber-500/15 text-amber-400" />
+          </div>
+
+          {/* Desempenho por vendedor — só master */}
+          {!isSeller && (
+            <Card className="bg-card border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Users className="h-4 w-4 text-blue-400" /> Desempenho por vendedor
+                  <span className="text-[11px] text-muted-foreground font-normal">· ordenado por conversão</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border/50">
+                      <th className="py-2 pr-2">Vendedor</th>
+                      <th className="py-2 px-2 text-center">Atendidos</th>
+                      <th className="py-2 px-2 text-center">Qualif.</th>
+                      <th className="py-2 px-2 text-center">Perdidos</th>
+                      <th className="py-2 px-2 text-center">Vendas</th>
+                      <th className="py-2 pl-2 text-center">Conversão</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vendedores.length === 0 && (
+                      <tr><td colSpan={6} className="py-6 text-center text-muted-foreground text-xs">Nenhum vendedor com leads no período.</td></tr>
+                    )}
+                    {[...vendedores].sort((a, b) => (b.conversao - a.conversao) || (b.vendas - a.vendas)).map(v => (
+                      <tr key={v.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
+                        <td className="py-2 pr-2 font-medium truncate max-w-[200px]">{v.nome}</td>
+                        <td className="py-2 px-2 text-center tabular-nums">{v.total}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-emerald-400">{v.qualificados}</td>
+                        <td className="py-2 px-2 text-center tabular-nums text-red-400">{v.perdidos}</td>
+                        <td className="py-2 px-2 text-center tabular-nums font-semibold text-violet-300">{v.vendas}</td>
+                        <td className="py-2 pl-2 text-center">
+                          <span className={`tabular-nums font-bold ${v.conversao >= 20 ? 'text-emerald-400' : v.conversao >= 10 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                            {v.total > 0 ? `${v.conversao}%` : '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Rastreamento de vendas concluídas (auditoria: data + vendedor) */}
+          <Card className="bg-card border-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Vendas concluídas no período
+                <span className="text-[11px] text-muted-foreground font-normal">· {vendasList.length} no período</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {vendasList.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">Nenhuma venda concluída no período.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border/50">
+                        <th className="py-2 pr-2">Data</th>
+                        <th className="py-2 px-2">Vendedor</th>
+                        <th className="py-2 px-2">Origem</th>
+                        <th className="py-2 pl-2 text-right">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vendasList.map(v => (
+                        <tr key={v.id} className="border-b border-border/30">
+                          <td className="py-2 pr-2 tabular-nums text-muted-foreground">{(v.data || '').split('-').reverse().join('/')}</td>
+                          <td className="py-2 px-2 font-medium">{v.sellerNome}</td>
+                          <td className="py-2 px-2 text-muted-foreground">{v.origemLabel}</td>
+                          <td className="py-2 pl-2 text-right tabular-nums">{v.valor > 0 ? brlMoney(v.valor) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* ── 6 KPIs combinados ────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
