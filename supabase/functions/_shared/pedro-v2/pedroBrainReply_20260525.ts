@@ -477,6 +477,24 @@ function cleanJson(text: string) {
   return text.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
 }
 
+// Resolve o provedor+modelo do REPLY a partir do agent.model ("provider/model" do dropdown do
+// painel). Default (vazio/desconhecido/legado) = Claude Haiku 4.5 — medido igual/melhor que o
+// gpt-4o nos turnos de estoque/conversa e ~2,4x mais barato. So suportamos OpenAI (gpt-4o/mini),
+// Claude Haiku 4.5 e DeepSeek no reply; Gemini ainda nao e suportado (cai no default).
+function resolveReplyTarget(agentModel?: string | null): { provider: "openai" | "anthropic" | "deepseek"; model: string } {
+  const raw = String(agentModel || "").toLowerCase().trim();
+  if (raw.startsWith("anthropic/") || raw.includes("claude") || raw.includes("haiku") || raw.includes("sonnet")) {
+    return { provider: "anthropic", model: "claude-haiku-4-5" };
+  }
+  if (raw.startsWith("deepseek")) {
+    return { provider: "deepseek", model: "deepseek-chat" };
+  }
+  if (raw.startsWith("openai/") || raw.startsWith("gpt")) {
+    return { provider: "openai", model: raw.includes("mini") ? "gpt-4o-mini" : "gpt-4o" };
+  }
+  return { provider: "anthropic", model: "claude-haiku-4-5" };
+}
+
 export async function generatePedroBrainReply(input: {
   agent?: any;
   agent_system_prompt?: string | null;
@@ -492,6 +510,8 @@ export async function generatePedroBrainReply(input: {
   recent_history?: any[];
   tool_result?: any;
   usage_sink?: UsageSink;
+  reply_provider_override?: string | null;
+  reply_model_override?: string | null;
 }) {
   const hasPresented = checkAgentHasPresented(input.recent_history, input.memory?.recent_turns);
   const agentName = sanitizeAgentName(input.agent?.name);
@@ -558,18 +578,28 @@ export async function generatePedroBrainReply(input: {
   // com OpenAI: /v1/messages, x-api-key, 'system' top-level, sem response_format, saida content[].text.
   // Default SEGURO = openai (gpt-4o afinado e confiavel p/ apresentar estoque). Claude (anthropic) fica
   // ligavel por env, mas QUEBRA nos turnos de estoque ate o prompt/JSON ser adaptado p/ ele.
-  const replyProvider = String(Deno.env.get("PEDRO_REPLY_PROVIDER") || "openai").toLowerCase();
+  // ── PROVEDOR/MODELO DO REPLY — agora POR AGENTE (agent.model = "provider/model" do dropdown). ──
+  // Default = Claude Haiku 4.5. Ordem de precedencia: override de dry-run (A/B) > FORCE global de
+  // emergencia (env PEDRO_REPLY_FORCE_PROVIDER, normalmente VAZIO) > escolha do agente > Haiku.
+  // (O antigo PEDRO_REPLY_PROVIDER deixou de mandar: a escolha agora e por agente.)
+  const agentTarget = resolveReplyTarget(input.agent?.model);
+  const envForceProvider = String(Deno.env.get("PEDRO_REPLY_FORCE_PROVIDER") || "").toLowerCase();
+  const replyProvider = String(input.reply_provider_override || envForceProvider || agentTarget.provider).toLowerCase();
   const anthropicKeyR = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
   const deepseekKeyR = Deno.env.get("DEEPSEEK_API_KEY");
   const replyIsAnthropic = (replyProvider === "anthropic" || replyProvider === "claude") && !!anthropicKeyR;
   const replyIsDeepseek = replyProvider === "deepseek" && !!deepseekKeyR;
   const replyKey = replyIsAnthropic ? anthropicKeyR : replyIsDeepseek ? deepseekKeyR : apiKey;
   if (!replyKey) return fallback;
-  const replyModel = replyIsAnthropic
-    ? (Deno.env.get("PEDRO_REPLY_MODEL_ANTHROPIC") || "claude-sonnet-4-6")
+  // Modelo coerente com o provedor EFETIVO: se Claude foi pedido mas falta ANTHROPIC_API_KEY,
+  // o provedor cai p/ OpenAI e o modelo TEM que ser um gpt valido (nunca um nome de Claude).
+  const replyModel = input.reply_model_override
+    ? input.reply_model_override
+    : replyIsAnthropic
+    ? (agentTarget.provider === "anthropic" && !envForceProvider ? agentTarget.model : (Deno.env.get("PEDRO_REPLY_MODEL_ANTHROPIC") || "claude-haiku-4-5"))
     : replyIsDeepseek
     ? (Deno.env.get("PEDRO_REPLY_MODEL_DEEPSEEK") || "deepseek-chat")
-    : sanitizeModel(input.agent?.model);
+    : (agentTarget.provider === "openai" ? agentTarget.model : (sanitizeModel(input.agent?.model) || "gpt-4o"));
   const callReply = async (msgs: any[]) => {
     if (replyIsAnthropic) {
       const sys = `${String(msgs[0]?.content ?? "")}\n\nResponda APENAS com o objeto JSON pedido, sem texto fora do JSON e sem cercas de codigo.`;
@@ -787,6 +817,8 @@ export async function generatePedroBrainReply(input: {
       pronto_para_transferir,
       transferir_silencioso,
       temperatura,
+      _reply_model: replyModel,
+      _reply_provider: replyProvider,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);

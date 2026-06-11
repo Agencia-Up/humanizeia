@@ -1850,6 +1850,8 @@ export async function processPedroV2Turn(
         media_context: sanitizePedroMediaContext(mediaContext),
         recent_history: recentHistory,
         usage_sink: usageSink,
+        reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
+        reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
       });
 
   if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
@@ -1918,6 +1920,8 @@ export async function processPedroV2Turn(
       media_context: sanitizePedroMediaContext(mediaContext),
       recent_history: recentHistory,
       usage_sink: usageSink,
+      reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
+      reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
       tool_result: {
         type: "vehicle_photos",
         selected_vehicle_label: reply.selected_vehicle_label || null,

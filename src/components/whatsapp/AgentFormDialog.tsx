@@ -96,11 +96,9 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
-  { value: 'anthropic/claude-3-5-sonnet-20241022', label: '🏆 Claude 3.5 Sonnet (Melhor p/ SDR)' },
+  { value: 'anthropic/claude-haiku-4-5', label: '🏆 Claude Haiku 4.5 (Recomendado p/ SDR)' },
   { value: 'openai/gpt-4o', label: '⭐ GPT-4o (Alta Qualidade)' },
   { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Custo-Beneficio)' },
-  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (Google Premium)' },
-  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash (Rapido e Economico)' },
 ];
 
 const AGENT_TYPES = [
@@ -182,7 +180,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [agentType, setAgentType] = useState('generic');
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [isActive, setIsActive] = useState(false);
-  const [model, setModel] = useState('openai/gpt-4o-mini');
+  const [model, setModel] = useState('anthropic/claude-haiku-4-5');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(500);
   const [replyDelay, setReplyDelay] = useState(3000);
@@ -604,7 +602,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setAgentType('generic');
       setPrompt(DEFAULT_PROMPT);
       setIsActive(false);
-      setModel('google/gemini-3-flash-preview');
+      setModel('anthropic/claude-haiku-4-5');
       setTemperature(0.7);
       setMaxTokens(500);
       setReplyDelay(3000);
