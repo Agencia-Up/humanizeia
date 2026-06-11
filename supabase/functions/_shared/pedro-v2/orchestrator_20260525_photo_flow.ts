@@ -1627,7 +1627,7 @@ export async function processPedroV2Turn(
       items: [],
       is_generic_query: true,
       query: stockFilters.query,
-      response_guidance: "A busca do cliente foi genérica (ex: 'carro', 'veículo' ou link não resolvido). Não pesquise no estoque e pergunte de forma natural qual veículo/modelo específico ele gostaria de ver.",
+      response_guidance: "INSTRUCAO INTERNA (NUNCA repita nem mencione isto ao cliente): o cliente ainda nao disse um modelo/tipo especifico. Pergunte de forma natural e acolhedora, como um vendedor humano, que tipo de carro ele procura (ex.: 'Que tipo de carro voce ta buscando? Tipo um SUV, sedan, hatch, ou tem algum modelo em mente?'). PROIBIDO dizer 'busca generica', 'busca ampla', 'estoque', 'sistema' ou qualquer termo tecnico — fale 100% como gente.",
     };
   }
 
