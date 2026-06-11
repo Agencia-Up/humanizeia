@@ -24,6 +24,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { ComercialSection } from '@/components/comercial/ComercialSection';
 import { supabase } from '@/integrations/supabase/client';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -183,7 +184,7 @@ function MetricCard({
 
 export default function PainelGeral() {
   const { user } = useAuth();
-  const { isSeller, masterUserId, loading: profileLoading } = useSellerProfile(user?.id);
+  const { isSeller, masterUserId, memberIds, loading: profileLoading } = useSellerProfile(user?.id);
 
   const [period, setPeriod] = useState<PeriodPreset>('30days');
   const [customRange, setCustomRange] = useState<CustomRange>(() => {
@@ -488,6 +489,18 @@ export default function PainelGeral() {
             )}
           </div>
         </div>
+
+        {/* ── Gestão Comercial (vendas/metas) — bloco integrado ────────────── */}
+        {!profileLoading && (isSeller ? masterUserId : user?.id) && (
+          <ComercialSection
+            periodStart={dateRange.start}
+            periodEnd={dateRange.end}
+            periodLabel={dateRange.label}
+            isSeller={isSeller}
+            ownerUserId={(isSeller ? masterUserId : user?.id) as string}
+            currentSellerId={isSeller ? (memberIds[0] || null) : null}
+          />
+        )}
 
         {/* ── 6 KPIs combinados ────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
