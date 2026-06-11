@@ -1646,16 +1646,25 @@ export async function processPedroV2Turn(
       const _merged: any[] = Array.isArray(stockResult?.items) ? [...stockResult.items] : [];
       const _seen = new Set<string>(_merged.map((v) => vehicleKey(v)).filter(Boolean) as string[]);
       let _addedNew = false;
+      const _absentParts: string[] = [];
       for (const part of _mmParts.slice(0, 4)) {
         const _r = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: part, limit: 6 });
-        if (_r?.success && Array.isArray(_r.items)) {
-          for (const v of _r.items as any[]) {
+        const _items = (_r?.success && Array.isArray(_r.items)) ? (_r.items as any[]) : [];
+        // Modelo pedido que NAO existe no estoque (busca estrita = 0). Precisa ir EXPLICITO pro
+        // reply, senao ele assume que "temos os dois" so porque o lead citou (bug Tcross+Compass).
+        if (_items.length === 0) {
+          _absentParts.push(part);
+        } else {
+          for (const v of _items) {
             const k = vehicleKey(v);
             if (k && !_seen.has(k)) { _seen.add(k); _merged.push(v); _addedNew = true; }
           }
         }
       }
-      if (_merged.length > 0 && (_addedNew || (stockResult?.items?.length || 0) === 0)) {
+      // Sobrescreve tambem quando ALGUM modelo pedido esta AUSENTE (mesmo sem adicionar novo):
+      // e o caso "Tcross ou Compass" em que so Compass existe e o reply precisa dizer que NAO
+      // temos o T-Cross em vez de alucinar "temos os dois".
+      if (_merged.length > 0 && (_addedNew || (stockResult?.items?.length || 0) === 0 || _absentParts.length > 0)) {
         // INTERCALA por modelo (round-robin): sem isso o _merged fica [modeloA x N, modeloB x M]
         // e o reply, que mostra ~5, traz so o modeloA e SOTERRA o modeloB (lead pede "compass OU
         // renegade" e ve so Renegade). Intercalado, os primeiros itens ja misturam os dois.
@@ -1672,11 +1681,14 @@ export async function processPedroV2Turn(
             if (_i < _arr.length) { _interleaved.push(_arr[_i]); _more = true; }
           }
         }
+        const _absentTxt = _absentParts.length > 0
+          ? ` ATENCAO: NAO temos em estoque: ${_absentParts.join(", ")}. Diga CLARAMENTE que esse(s) NAO temos no momento — NUNCA afirme que temos — e ofereca os que existem aqui como alternativa.`
+          : " Se ALGUM modelo pedido NAO aparece aqui, diga so daquele que nao temos.";
         stockResult = {
           success: true, total: _interleaved.length, items: _interleaved,
-          response_guidance: "O lead pediu MAIS DE UM modelo. ESTES sao os que temos no estoque (ja intercalados entre os modelos) — apresente os de CADA modelo de forma CURTA e pergunte qual interessa / se quer ver fotos. Se ALGUM modelo pedido NAO aparece aqui, diga so daquele que nao temos. NUNCA diga que nao temos NENHUM.",
+          response_guidance: `O lead pediu MAIS DE UM modelo. ESTES sao os que temos no estoque (ja intercalados entre os modelos) — apresente os de CADA modelo de forma CURTA e pergunte qual interessa / se quer ver fotos.${_absentTxt} NUNCA diga que nao temos NENHUM.`,
         };
-        log("info", "pedro_v2_multimodel_merge", { parts: _mmParts.slice(0, 4), total: _interleaved.length });
+        log("info", "pedro_v2_multimodel_merge", { parts: _mmParts.slice(0, 4), total: _interleaved.length, absent: _absentParts });
       }
     }
   }
@@ -1863,7 +1875,22 @@ export async function processPedroV2Turn(
         selected_vehicle_label: (reply as any).selected_vehicle_label || cleanVehicleLabel((reply as any).vehicle || {}),
         selected_vehicle_key: (reply as any).selected_vehicle_key || null,
       });
-      reply = buildBlockedWrongVehiclePhotoReply(requestedPhotoQuery);
+      // O modelo pedido pra foto EXISTE no estoque? Se NAO (busca estrita = 0), nao adianta
+      // "vou confirmar certinho" (beco sem saida: nada a confirmar, o lead pediu T-Cross que
+      // a loja nao tem). Responde HONESTO ("nao temos") e oferece parecidos, em vez de sumir.
+      let _reqExists = true;
+      try {
+        const _reqStock = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: requestedPhotoQuery, limit: 3 });
+        _reqExists = Boolean(_reqStock?.success && Array.isArray(_reqStock.items) && _reqStock.items.length > 0);
+      } catch { _reqExists = true; }
+      reply = _reqExists
+        ? buildBlockedWrongVehiclePhotoReply(requestedPhotoQuery)
+        : {
+            ok: true,
+            text: `Na real, o ${requestedPhotoQuery} a gente nao tem no estoque agora. Quer que eu te mostre alguma opcao parecida que eu tenho aqui?`,
+            source: "vehicle_photos_absent_vehicle",
+            media: [],
+          };
     }
   }
 
