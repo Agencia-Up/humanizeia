@@ -1820,13 +1820,27 @@ export async function processPedroV2Turn(
     && photoVehiclesPool.length > 1
     && !poolModelsHomogeneous
     && photoRequestIsAttributeOnly(text, photoVehiclesPool);
+  // FOTO POR AFIRMACAO CURTA: o agente acabou de OFERECER fotos ("Quer ver as fotos?") e o lead
+  // respondeu so "quero/sim/pode/manda" -> e SIM pra foto (do que foi oferecido), nao um reply
+  // generico. Sem isso o planner nao marcava photo_request e o LLM so PROMETIA ("vou separar as
+  // fotos...") sem enviar (bug do print: "Quer ver as fotos?" -> "Quero" -> promessa, sem foto).
+  const _lastAgentText = Array.isArray(recentHistory)
+    ? String([...recentHistory].reverse().find((h: any) => h?.role === "agent")?.text || "")
+    : "";
+  const _agentOfferedPhotos = /(ver as fotos|quer ver.*foto|ver fotos|fotos de algum|mando as fotos|te mostr\w*.*foto|enviar.*foto)/i.test(_lastAgentText);
+  const _normAffirm = normalizePhotoText(text).trim();
+  const _userShortAffirm = /^(sim|quero|pode|manda|pode ser|isso|claro|bora|vamos|aceito|por favor|ver|mostra)\b/i.test(_normAffirm)
+    && _normAffirm.split(/\s+/).filter(Boolean).length <= 4;
+  const _affirmedPhotoOffer = _agentOfferedPhotos && _userShortAffirm;
+
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
   // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
   // heterogeneo + pedido so por cor): pedir esclarecimento e mais seguro que chutar
   // um modelo errado.
   const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous
     && (brainPlan.action === "photo_request"
-    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0));
+    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0)
+    || (_affirmedPhotoOffer && photoVehiclesPool.length > 0));
 
   // Quando o topico esta ambiguo, instrui o cerebro a perguntar QUAL carro o lead quer
   // em vez de mandar foto. NAO reaproveita um modelo aleatorio da lista velha.
@@ -1846,8 +1860,32 @@ export async function processPedroV2Turn(
     });
   }
 
+  // FOTO DE MODELO NOMEADO SEM POOL: pedido de foto de um modelo (ex.: "fotos do compass")
+  // quando NAO houve busca de estoque neste turno e a memoria esta vazia -> o pool ficava
+  // vazio e o agente PEDIA referencia ("qual carro?") em vez de mandar a foto do carro que
+  // TEMOS. Busca o modelo nomeado no estoque e usa como pool pra enviar a foto na hora.
+  let _photoPool = photoVehiclesPool;
+  if (shouldSendVehiclePhotos && _photoPool.length === 0 && !topicIsAmbiguous) {
+    const _photoModelQuery = String(
+      (brainPlan as any)?.search_query
+      || (stockFilters as any)?.modelo_desejado
+      || (vehicleResolution as any)?.query
+      || "",
+    ).trim();
+    if (_photoModelQuery) {
+      try {
+        const _ph = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: _photoModelQuery, limit: 6 });
+        if (_ph?.success && Array.isArray(_ph.items) && _ph.items.length > 0) {
+          _photoPool = _ph.items;
+          if (!topicAnchorVehicle) topicAnchorVehicle = _ph.items[0];
+          log("info", "pedro_v2_photo_stock_lookup", { query: _photoModelQuery, found: _ph.items.length });
+        }
+      } catch (_e) { /* nao bloqueia: cai no need_reference padrao */ }
+    }
+  }
+
   let reply = shouldSendVehiclePhotos
-    ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: photoVehiclesPool }, text, topicAnchorVehicle)
+    ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: _photoPool }, text, topicAnchorVehicle)
     : await generatePedroBrainReply({
         agent: input.agent,
         agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
