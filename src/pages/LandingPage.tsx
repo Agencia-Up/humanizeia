@@ -2316,7 +2316,8 @@ export default function LandingPage() {
               {/* Identidade da empresa + CNPJ — visivel pra conformidade legal/Meta */}
               <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
                 <span className="font-semibold" style={{ color: 'var(--brand-cream)' }}>Agencia Up Business LTDA</span>
-                <span className="opacity-75">&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
+                <span className="opacity-75">&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP&nbsp;·&nbsp;</span>
+                <a href="tel:+5534999080815" className="opacity-75 hover:opacity-100 transition-opacity">+55 (34) 99908-0815</a>
               </p>
 
               {/* Copyright + links legais + selo — mesma secao/fonte */}
