@@ -168,13 +168,14 @@ export function ComercialSection({
         <div className="h-40 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-emerald-400" /></div>
       ) : (
         <>
-          {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* KPIs — Faturamento e Ticket médio removidos (sem valor de venda ainda).
+              "Meta do mês" puxa de comercial_metas (loja), a MESMA do Painel ao Vivo. */}
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3">
             <Kpi label="Vendas" value={String(kpis.vendasTotais)} icon={TrendingUp} accent="bg-emerald-500/15 text-emerald-300" sub={`no período`} />
-            <Kpi label="Faturamento" value={brl(kpis.faturamento)} icon={DollarSign} accent="bg-blue-500/15 text-blue-300" />
-            <Kpi label="Ticket médio" value={brl(kpis.ticket)} icon={Ticket} accent="bg-violet-500/15 text-violet-300" />
-            <Kpi label={`% Meta (${activeSellerId ? 'vendedor' : 'loja'})`} value={metaRef > 0 ? `${kpis.pct}%` : '—'} icon={Target}
-                 accent="bg-amber-500/15 text-amber-300" sub={metaRef > 0 ? `${kpis.vendasTotais}/${metaRef} vendas` : 'sem meta'} />
+            <Kpi label={`Meta do mês (${activeSellerId ? 'vendedor' : 'loja'})`}
+                 value={metaRef > 0 ? `${kpis.vendasTotais}/${metaRef}` : '—'} icon={Target}
+                 accent="bg-amber-500/15 text-amber-300"
+                 sub={metaRef > 0 ? `${kpis.pct}% da meta` : 'defina no Painel ao Vivo'} />
             <Kpi label={activeSellerId ? 'Vendedor' : 'Melhor vendedor'}
                  value={activeSellerId ? (nomeAtivo || '—') : (melhorVendedor?.nome || '—')}
                  icon={Trophy} accent="bg-yellow-500/15 text-yellow-300"
