@@ -362,7 +362,7 @@ Deno.serve(async (req) => {
     // 1. Acha leads ORFAOS: status='transferido' e sem vendedor (assigned_to_id null)
     let leadQ = supabase
       .from('ai_crm_leads')
-      .select('id,user_id,agent_id,lead_name,summary,remote_jid,status,assigned_to_id,created_at,vehicle_interest')
+      .select('id,user_id,agent_id,lead_name,summary,remote_jid,status,status_crm,assigned_to_id,created_at,vehicle_interest')
       .eq('status', 'transferido')
       .is('assigned_to_id', null)
       .order('created_at', { ascending: true })
@@ -477,13 +477,13 @@ Deno.serve(async (req) => {
         || (String(lead.summary || '').match(/ve[íi]culo de interesse:?\*?\s*([^\n*]{2,80})/i)?.[1]?.trim())
         || 'nao informado';
       const sellerMsg =
-        `🚨 *LEAD AGUARDANDO REPASSE — VOCE E O PROXIMO DA FILA*\n\n` +
+        `🚨 *LEAD REPASSADO PRA VOCE — JA ESTA NO SEU CRM*\n\n` +
         `👤 *Nome:* ${lead.lead_name || 'Nao informado'}\n` +
         (phone ? `📱 *Telefone:* wa.me/${phone}\n` : '') +
         `🚗 *Carro de interesse:* ${carro}\n` +
         `\n📝 *Conversa / contexto:*\n${briefing}\n` +
         (phone ? `\n👉 *Atender agora:* https://wa.me/${phone}` : '') +
-        `\n\n⏰ *Responda em ate 15 minutos pra confirmar. Se nao responder, passa pro proximo da fila.*`;
+        `\n\n⚡ *Este lead estava parado e foi repassado pra voce. Ja esta no seu CRM — atenda o quanto antes!*`;
 
       const sent = await sendWAMessage(instance, nextSeller.whatsapp_number, sellerMsg);
       if (!sent) {
@@ -498,17 +498,25 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Envio OK -> cria o transfer pending (+15min). NAO seta assigned_to_id
-      // (atribuicao firme so no "Ok" do vendedor, igual opcao A do manual-transfer).
-      const newTimeout = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      // Envio OK -> ATRIBUI o lead firme ao vendedor e joga numa coluna ATIVA do
+      // CRM ("Novo") pra ele ver e trabalhar na hora. Sao leads que ja ficaram
+      // parados, nao dependem mais do "Ok". A transferencia entra como CONFIRMADA
+      // pra o timeout-checker nao tirar o lead do vendedor depois.
+      const novaColuna = ['inativo', 'perdido', 'transferido', ''].includes(String(lead.status_crm || '').toLowerCase())
+        ? 'novo' : lead.status_crm;
       await supabase.from('ai_lead_transfers').insert({
         user_id: lead.user_id, lead_id: lead.id,
         from_member_id: lastSellerId || null, to_member_id: nextSeller.id,
         transfer_reason: 'orphan_rescue',
-        notes: 'Reencaminhado pelo resgate de leads orfaos (transferido sem vendedor).',
-        transfer_status: 'pending', is_confirmed: false, confirmation_timeout_at: newTimeout,
+        notes: 'Reencaminhado pelo resgate de leads orfaos (atribuido direto ao vendedor).',
+        transfer_status: 'confirmed', is_confirmed: true,
       });
-      await supabase.from('ai_crm_leads').update({ last_interaction_at: new Date().toISOString() }).eq('id', lead.id);
+      await supabase.from('ai_crm_leads').update({
+        assigned_to_id: nextSeller.id,
+        status: 'em_atendimento',
+        status_crm: novaColuna,
+        last_interaction_at: new Date().toISOString(),
+      }).eq('id', lead.id);
       await supabase.from('ai_team_members').update({ last_lead_received_at: new Date().toISOString() }).eq('id', nextSeller.id);
       await resolveTransferFailures({ user_id: lead.user_id, lead_id: lead.id, resolved_by: 'orphan-rescue' });
 
