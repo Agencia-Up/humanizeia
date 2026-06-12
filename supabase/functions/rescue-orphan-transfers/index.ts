@@ -37,6 +37,7 @@
 // ============================================================================
 
 import { logTransferFailure, resolveTransferFailures } from '../_shared/pedro-v2/logTransferFailure.ts';
+import { buildConversationBriefing } from '../_shared/transfer/buildBriefing.ts';
 
 // ─── Inline PostgREST client (sem imports externos) ─────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -314,6 +315,10 @@ Deno.serve(async (req) => {
   const requestedUserId: string | null = body?.user_id ?? null;
   const force: boolean = body?.force === true;
   const maxLeads: number = Math.min(Number(body?.limit) || 50, 200);
+  // Selecao manual (gerente escolhe quem resgatar). Se vier, so processa esses ids.
+  // A previa (dry_run) costuma vir SEM lead_ids -> mostra todos pra escolher.
+  const selectedLeadIds: string[] | null =
+    Array.isArray(body?.lead_ids) && body.lead_ids.length ? body.lead_ids.map((x: any) => String(x)) : null;
 
   const supabase = createSupabaseClient(supabaseUrl, serviceKey);
 
@@ -357,12 +362,13 @@ Deno.serve(async (req) => {
     // 1. Acha leads ORFAOS: status='transferido' e sem vendedor (assigned_to_id null)
     let leadQ = supabase
       .from('ai_crm_leads')
-      .select('id,user_id,agent_id,lead_name,summary,remote_jid,status,assigned_to_id,created_at')
+      .select('id,user_id,agent_id,lead_name,summary,remote_jid,status,assigned_to_id,created_at,vehicle_interest')
       .eq('status', 'transferido')
       .is('assigned_to_id', null)
       .order('created_at', { ascending: true })
       .limit(maxLeads);
     if (scopeUserId) leadQ = leadQ.eq('user_id', scopeUserId);
+    if (selectedLeadIds) leadQ = leadQ.in('id', selectedLeadIds); // so os escolhidos pelo gerente
     const { data: orphanLeads, error: leadErr } = await leadQ;
     if (leadErr) throw leadErr;
 
@@ -460,10 +466,24 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const sellerMsg = `🚨 *LEAD AGUARDANDO REPASSE — VOCE E O PROXIMO DA FILA*\n\n` +
+      // Mensagem RICA: telefone + carro de interesse SEMPRE; + a conversa real
+      // (resumo do CRM + ultimas mensagens do WhatsApp via buildConversationBriefing,
+      // que ja tem fallback se nao houver historico).
+      const phone = String(lead.remote_jid || '').replace(/\D/g, '');
+      const briefing = await buildConversationBriefing(supabase, lead);
+      // Carro: usa o campo estruturado; se vazio, tenta extrair do resumo
+      // (formato "*VEICULO DE INTERESSE:* <modelo>"). Senao, "nao informado".
+      const carro = lead.vehicle_interest
+        || (String(lead.summary || '').match(/ve[íi]culo de interesse:?\*?\s*([^\n*]{2,80})/i)?.[1]?.trim())
+        || 'nao informado';
+      const sellerMsg =
+        `🚨 *LEAD AGUARDANDO REPASSE — VOCE E O PROXIMO DA FILA*\n\n` +
         `👤 *Nome:* ${lead.lead_name || 'Nao informado'}\n` +
-        (lead.summary ? `\n📝 *Resumo:*\n${String(lead.summary).substring(0, 500)}\n` : '') +
-        `\n⏰ *Responda em ate 15 minutos pra confirmar. Se nao responder, passa pro proximo da fila.*`;
+        (phone ? `📱 *Telefone:* wa.me/${phone}\n` : '') +
+        `🚗 *Carro de interesse:* ${carro}\n` +
+        `\n📝 *Conversa / contexto:*\n${briefing}\n` +
+        (phone ? `\n👉 *Atender agora:* https://wa.me/${phone}` : '') +
+        `\n\n⏰ *Responda em ate 15 minutos pra confirmar. Se nao responder, passa pro proximo da fila.*`;
 
       const sent = await sendWAMessage(instance, nextSeller.whatsapp_number, sellerMsg);
       if (!sent) {
