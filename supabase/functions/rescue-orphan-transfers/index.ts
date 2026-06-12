@@ -511,13 +511,13 @@ Deno.serve(async (req) => {
         notes: 'Reencaminhado pelo resgate de leads orfaos (atribuido direto ao vendedor).',
         transfer_status: 'confirmed', is_confirmed: true,
       });
+      // NAO mexe em arrived_at: o lead resgatado e uma RE-ATRIBUICAO de lead
+      // antigo, nao um lead novo do trafego pago. Mexer no arrived_at jogaria ele
+      // na contagem de trafego pago do dia e bagunçaria o custo por lead real.
       await supabase.from('ai_crm_leads').update({
         assigned_to_id: nextSeller.id,
         status: 'em_atendimento',
         status_crm: novaColuna,
-        // arrived_at = agora: conta como lead NOVO do vendedor HOJE no Painel ao
-        // Vivo e mostra a data de hoje no CRM dele.
-        arrived_at: new Date().toISOString(),
         last_interaction_at: new Date().toISOString(),
       }).eq('id', lead.id);
       await supabase.from('ai_team_members').update({ last_lead_received_at: new Date().toISOString() }).eq('id', nextSeller.id);
