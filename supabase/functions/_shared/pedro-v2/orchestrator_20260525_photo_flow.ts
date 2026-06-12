@@ -1778,9 +1778,13 @@ export async function processPedroV2Turn(
       if (_by?.success && Array.isArray(_by.items) && _by.items.length > 0) {
         const _its = [...(_by.items as any[])];
         if (_anchorPrice > 0) {
+          // Com orcamento/preco do anuncio: respeita o budget — mais PROXIMOS do preco-ancora.
           _its.sort((a, b) => Math.abs((Number(a.preco) || _anchorPrice) - _anchorPrice) - Math.abs((Number(b.preco) || _anchorPrice) - _anchorPrice));
         } else {
-          _its.sort((a, b) => (Number(b.ano) || 0) - (Number(a.ano) || 0) || (Number(a.preco) || 9e9) - (Number(b.preco) || 9e9));
+          // SEM orcamento -> ESPIRITO VENDEDOR: lidera com os similares MAIS CAROS/premium (upsell),
+          // ja que o lead pediu um modelo especifico (ex.: Cruze LTZ) e nao limitou preco. Assim
+          // oferece o Virtus antes do Onix Sedan basico. Recencia desempata; carro sem preco vai pro fim.
+          _its.sort((a, b) => (Number(b.preco) || 0) - (Number(a.preco) || 0) || (Number(b.ano) || 0) - (Number(a.ano) || 0));
         }
         _alt = { ..._by, items: _its.slice(0, 6) };
       }
