@@ -2287,6 +2287,7 @@ export default function LandingPage() {
                 Empresa
               </h4>
               <ul className="space-y-2.5 text-sm">
+                <li><a href="/sobre.html" className="opacity-80 hover:opacity-100 transition-opacity">Sobre a empresa</a></li>
                 <li><a href="#como-funciona" className="opacity-80 hover:opacity-100 transition-opacity">Como funciona</a></li>
                 <li><a href="#faq" className="opacity-80 hover:opacity-100 transition-opacity">FAQ</a></li>
                 <li><a href="mailto:suporte@logosiabrasil.com" className="opacity-80 hover:opacity-100 transition-opacity">Contato</a></li>
