@@ -1286,18 +1286,41 @@ export async function processPedroV2Turn(
   // So em conversa real (nao dry_run) e v2 (este orquestrador). Mensagem unica = mesmo
   // comportamento + a espera.
   if (!dryRun && lead?.id && text && myUserMsgId) {
-    await sleepMs(debounceWindowMs(text));
-    const { data: latestUserMsg } = await supabase
-      .from("wa_chat_history")
-      .select("id")
-      .eq("agent_id", input.agent.id)
-      .eq("remote_jid", remoteJid)
-      .eq("role", "user")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latestUserMsg?.id && latestUserMsg.id !== myUserMsgId) {
-      // Chegou mensagem mais nova -> a invocacao dela responde o bloco completo.
+    // DEBOUNCE PRESENCE-AWARE: alem de agrupar rajadas, ESPERA enquanto o lead esta DIGITANDO ou
+    // GRAVANDO AUDIO (wa_lead_presence, alimentada pelo webhook via evento 'presence' do uazapi).
+    // So responde quando ele PARA (sem msg nova + sem composing/recording) por >= a janela. Isso
+    // resolve o caso do lead que grava audio 30-60s: o agente nao responde no meio.
+    const _quietWindow = debounceWindowMs(text);
+    const _instName = (input.wa_instance as any)?.instance_name || null;
+    const _maxWaitMs = 45000;     // teto (evita segurar a function/webhook demais)
+    const _pollMs = 3000;
+    const _startTs = Date.now();
+    let _quietSinceTs = Date.now();  // ultima atividade do lead; estende com presence ativo
+    let _superseded = false;
+    while (Date.now() - _startTs < _maxWaitMs) {
+      await sleepMs(_pollMs);
+      // 1) chegou mensagem MAIS NOVA do lead? -> esta invocacao silencia (a da nova responde o bloco)
+      const { data: _latest } = await supabase
+        .from("wa_chat_history").select("id")
+        .eq("agent_id", input.agent.id).eq("remote_jid", remoteJid).eq("role", "user")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (_latest?.id && _latest.id !== myUserMsgId) { _superseded = true; break; }
+      // 2) lead DIGITANDO/GRAVANDO agora? -> reseta o silencio (espera ele terminar)
+      if (_instName) {
+        try {
+          const { data: _pres } = await supabase
+            .from("wa_lead_presence").select("state, updated_at")
+            .eq("instance_name", _instName).eq("remote_jid", remoteJid).maybeSingle();
+          if (_pres && (String(_pres.state) === "composing" || String(_pres.state) === "recording")
+              && (Date.now() - new Date(_pres.updated_at).getTime()) < 15000) {
+            _quietSinceTs = Date.now();
+          }
+        } catch (_e) { /* sem tabela/erro -> ignora presence, segue no tempo fixo */ }
+      }
+      // 3) quieto (sem msg nova + sem digitar/gravar) por >= a janela -> responde
+      if (Date.now() - _quietSinceTs >= _quietWindow) break;
+    }
+    if (_superseded) {
       return {
         ok: true,
         dry_run: dryRun,

@@ -10,7 +10,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-11-presence-diag-v101";
+const PEDRO_V2_BUILD = "2026-06-11-presence-debounce-v102";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||
@@ -115,20 +115,25 @@ Deno.serve(async (req) => {
   // fluxo (só faz I/O em mensagem de anúncio). Remover após a Fase 1.
   await logCtwaDiag(supabase, payload);
 
-  // ── DIAG PRESENCE (FASE 1, TEMPORARIO): confirma se o uazapi entrega 'digitando/gravando'
-  // depois de assinar o evento 'presence' no webhook. So CAPTURA (em ctwa_diag_capture) eventos
-  // que NAO sao mensagem normal nem conexao; nunca altera o fluxo. Remover apos confirmar o formato. ──
-  try {
-    const _et = getEventType(payload);
-    const _raw = JSON.stringify(payload || {});
-    const _looksPresence = /"presence"\s*:\s*"(composing|recording|paused|available|unavailable|typing)"|chatpresence|presenceupdate/i.test(_raw);
-    if ((_et && _et !== "messages" && !isConnectionEvent(payload)) || _looksPresence) {
-      await supabase.from("ctwa_diag_capture").insert({
-        markers: ["presence_diag", _et || "no_event"],
-        payload: { EventType: _et, snippet: _raw.slice(0, 1500) },
-      });
-    }
-  } catch (_e) { /* nunca bloqueia o fluxo */ }
+  // ── PRESENCE (digitando/gravando): alimenta wa_lead_presence pro debounce do Pedro v2 ESPERAR
+  // o lead terminar antes de responder (uazapi manda EventType="presence" com event.State =
+  // composing|recording|paused|available). So edge functions leem/escrevem. Early-return — NAO e
+  // mensagem. try/catch: se a tabela ainda nao existe, ignora (debounce cai no fixo). ──
+  if (getEventType(payload) === "presence") {
+    try {
+      const ev = (payload?.event && typeof payload.event === "object") ? payload.event : {};
+      const jid = String(ev?.sender_pn || ev?.Chat || ev?.chatid || ev?.Sender || "").trim();
+      const state = String(ev?.State || "").toLowerCase().trim();
+      const instName = String(payload?.instanceName || payload?.instance_name || payload?.instance || "").trim();
+      if (jid && state && instName && ev?.IsFromMe !== true && !jid.endsWith("@g.us")) {
+        await supabase.from("wa_lead_presence").upsert(
+          { instance_name: instName, remote_jid: jid, state, updated_at: new Date().toISOString() },
+          { onConflict: "instance_name,remote_jid" },
+        );
+      }
+    } catch (_e) { /* tabela pode nao existir ainda; nunca bloqueia */ }
+    return jsonResponse({ ok: true, event: "presence" });
+  }
 
   // ── Connection/status events ──────────────────────────────────────────────
   // Must be handled BEFORE the message path: a brand-new instance is created
