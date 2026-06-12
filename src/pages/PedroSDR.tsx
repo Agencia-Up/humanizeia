@@ -1142,6 +1142,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [rescueLoading, setRescueLoading] = useState(false);   // dry-run (prévia) em andamento
   const [rescueRunning, setRescueRunning] = useState(false);   // execução real em andamento
   const [rescuePreview, setRescuePreview] = useState<any | null>(null);  // resultado do dry-run
+  const [rescueSelected, setRescueSelected] = useState<Set<string>>(new Set()); // lead_ids marcados pra resgatar
 
   // form states
   const [newNote, setNewNote]             = useState('');
@@ -2240,6 +2241,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
       setRescuePreview(data);
+      // Por padrão, marca TODOS os que dá pra reencaminhar (o gerente desmarca quem não quer).
+      const ids = ((data as any)?.detalhe || [])
+        .filter((d: any) => d.acao === 'reencaminharia' && d.lead_id)
+        .map((d: any) => d.lead_id as string);
+      setRescueSelected(new Set(ids));
     } catch (err: any) {
       setRescueOpen(false);
       toast({ title: 'Erro ao pré-visualizar', description: err.message, variant: 'destructive' });
@@ -2250,10 +2256,15 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   const handleRescueConfirm = async () => {
     if (!ownerIdForRescue) return;
+    const leadIds = Array.from(rescueSelected);
+    if (leadIds.length === 0) {
+      toast({ title: 'Selecione ao menos um lead', description: 'Marque quem você quer resgatar.' });
+      return;
+    }
     setRescueRunning(true);
     try {
       const { data, error } = await supabase.functions.invoke('rescue-orphan-transfers', {
-        body: { dry_run: false, user_id: ownerIdForRescue },
+        body: { dry_run: false, user_id: ownerIdForRescue, lead_ids: leadIds },
       });
       if (error) throw error;
       const d = data as any;
@@ -4873,17 +4884,46 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 </div>
 
                 {reencaminhar.length > 0 && (
-                  <div className="rounded-lg border border-border/60 bg-muted/20 divide-y divide-border/40">
-                    {reencaminhar.map((d, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-                        <span className="font-medium truncate">{d.lead_name || 'Sem nome'}</span>
-                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-                          <ArrowRightLeft className="h-3 w-3" />
-                          <span className="text-emerald-400 font-medium">{d.vendedor}</span>
-                        </span>
+                  <>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">{rescueSelected.size} de {reencaminhar.length} selecionados</span>
+                      <div className="flex gap-2">
+                        <button type="button" className="text-emerald-400 hover:underline"
+                          onClick={() => setRescueSelected(new Set(reencaminhar.map((x: any) => x.lead_id).filter(Boolean)))}>
+                          Selecionar todos
+                        </button>
+                        <span className="text-muted-foreground/40">·</span>
+                        <button type="button" className="text-muted-foreground hover:underline"
+                          onClick={() => setRescueSelected(new Set())}>
+                          Limpar
+                        </button>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-muted/20 divide-y divide-border/40">
+                      {reencaminhar.map((d, i) => {
+                        const checked = rescueSelected.has(d.lead_id);
+                        return (
+                          <label key={i} className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-opacity ${checked ? '' : 'opacity-45'}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setRescueSelected(prev => {
+                                const n = new Set(prev);
+                                if (n.has(d.lead_id)) n.delete(d.lead_id); else n.add(d.lead_id);
+                                return n;
+                              })}
+                              className="h-3.5 w-3.5 rounded border-emerald-500/50 accent-emerald-500 cursor-pointer shrink-0"
+                            />
+                            <span className="font-medium truncate flex-1">{d.lead_name || 'Sem nome'}</span>
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+                              <ArrowRightLeft className="h-3 w-3" />
+                              <span className="text-emerald-400 font-medium">{d.vendedor}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
 
                 {semVendedor.length > 0 && (
@@ -4914,11 +4954,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </Button>
             <Button
               onClick={handleRescueConfirm}
-              disabled={rescueRunning || rescueLoading || !rescuePreview || (rescuePreview?.reencaminhados ?? 0) === 0 || !rescuePreview?.dentro_do_horario}
+              disabled={rescueRunning || rescueLoading || !rescuePreview || rescueSelected.size === 0 || !rescuePreview?.dentro_do_horario}
               className="bg-red-500 hover:bg-red-600 text-white gap-1.5"
             >
               {rescueRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-              Confirmar e resgatar {rescuePreview ? (rescuePreview.reencaminhados ?? 0) : ''}
+              Confirmar e resgatar {rescueSelected.size || ''}
             </Button>
           </DialogFooter>
         </DialogContent>
