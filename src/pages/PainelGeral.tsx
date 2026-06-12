@@ -275,8 +275,10 @@ export default function PainelGeral() {
           .select('id, status_crm, assigned_to_id, seller_notes_count, created_at')
           .eq('user_id', ownerId)
           .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
+        // NOTA: crm_leads NÃO tem seller_notes_count (só ai_crm_leads do Pedro).
+        // Pedir essa coluna fazia a query inteira falhar em silêncio -> Marcos 0.
         let marcosQuery = (supabase as any).from('crm_leads')
-          .select('id, stage_id, assigned_to, seller_notes_count, created_at, stage:crm_pipeline_stages(name)')
+          .select('id, stage_id, assigned_to, created_at, stage:crm_pipeline_stages(name)')
           .eq('user_id', ownerId)
           .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
         if (isSeller) {
