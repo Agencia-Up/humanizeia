@@ -1371,6 +1371,21 @@ export async function processPedroV2Turn(
     const _st = String(lastTransfer?.transfer_status || "").toLowerCase();
     const transferUsable = !["expired", "failed", "rejected", "canceled", "cancelled"].includes(_st);
     if (transferUsable && transferAtMs && (Date.now() - transferAtMs) < 24 * 60 * 60 * 1000) {
+      // SILENCIO DE 30min APOS A TRANSFERENCIA (decisao do dono 2026-06-11): nos primeiros 30min
+      // o agente NAO fala NADA com o lead nem re-notifica o vendedor — o lead se despedindo
+      // ("valeu", "beleza", "obrigado") NAO recebe resposta (antes o agente repetia "voce esta com
+      // um consultor" e soava robotico). So DEPOIS de 30min, se o lead mandar mensagem, o agente
+      // avisa o lead 1x + notifica o vendedor 1x (bloco abaixo). Passadas 24h, fluxo normal.
+      if ((Date.now() - transferAtMs) < 30 * 60 * 1000) {
+        return {
+          ok: true,
+          dry_run: dryRun,
+          correlation_id: correlationId,
+          identity,
+          lead_id: lead.id,
+          next_action: "post_transfer_silence_30min",
+        };
+      }
       const _at = ((currentMemory as any)?.atendimento) || {};
       // Avisa o LEAD uma unica vez por transferencia (throttle via transfer_notice_at).
       const noticeAtMs = _at.transfer_notice_at ? Date.parse(_at.transfer_notice_at) : 0;
