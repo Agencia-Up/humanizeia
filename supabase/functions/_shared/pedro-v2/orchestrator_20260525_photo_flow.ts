@@ -1834,27 +1834,26 @@ export async function processPedroV2Turn(
     && photoVehiclesPool.length > 1
     && !poolModelsHomogeneous
     && photoRequestIsAttributeOnly(text, photoVehiclesPool);
-  // FOTO POR AFIRMACAO CURTA: o agente acabou de OFERECER fotos ("Quer ver as fotos?") e o lead
-  // respondeu so "quero/sim/pode/manda" -> e SIM pra foto (do que foi oferecido), nao um reply
-  // generico. Sem isso o planner nao marcava photo_request e o LLM so PROMETIA ("vou separar as
-  // fotos...") sem enviar (bug do print: "Quer ver as fotos?" -> "Quero" -> promessa, sem foto).
-  const _lastAgentText = Array.isArray(recentHistory)
-    ? String([...recentHistory].reverse().find((h: any) => h?.role === "agent")?.text || "")
-    : "";
-  const _agentOfferedPhotos = /(ver as fotos|quer ver.*foto|ver fotos|fotos de algum|mando as fotos|te mostr\w*.*foto|enviar.*foto)/i.test(_lastAgentText);
-  const _normAffirm = normalizePhotoText(text).trim();
-  const _userShortAffirm = /^(sim|quero|pode|manda|pode ser|isso|claro|bora|vamos|aceito|por favor|ver|mostra)\b/i.test(_normAffirm)
-    && _normAffirm.split(/\s+/).filter(Boolean).length <= 4;
-  const _affirmedPhotoOffer = _agentOfferedPhotos && _userShortAffirm;
+  // GUARD ANTI-FOTO-FORA-DE-CONTEXTO (regressao reportada: "disparando imagens sem contexto"):
+  // o planner as vezes marca "Sim, mas tem outra?" / "Sim, mas e muito longe" como photo_request
+  // (so viu o "Sim" da oferta) e REENVIA foto do carro errado/repetido, ignorando o resto do burst.
+  // Se a msg do lead sinaliza que quer OUTRO carro, recusa, ou levanta OUTRA preocupacao
+  // (localizacao/preco/ja recebeu), NAO manda foto — deixa o cerebro responder a intencao REAL.
+  // So bloqueia quando NAO for pedido EXPLICITO de foto.
+  const _msgNorm = normalizePhotoText(text);
+  const _wantsOtherVehicle = /\b(tem|tinha|quero|queria|ver|mostra|busca|procuro)\s+(outr[oa]|mais)\b/.test(_msgNorm)
+    || /\boutr[oa]s?\s+(carr|veicul|opc|model|suv|seda|hatch|picape|marca|ano)/.test(_msgNorm)
+    || /\b(mais\s+opc|outra\s+opc|tem\s+outr[oa])\b/.test(_msgNorm);
+  const _offTopicConcern = /\b(muito\s+longe|fica\s+longe|ta\s+longe|distante|outra\s+cidade|sao\s+paulo|frete|entrega|caro\s+demais|muito\s+caro|nao\s+quero|nao\s+precisa|nao\s+e\s+esse|ja\s+(mandou|enviou|vi|recebi|mostrou))\b/.test(_msgNorm);
+  const _blockPhotoOffTopic = (_wantsOtherVehicle || _offTopicConcern) && !messageAsksForPhotos(text);
 
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
   // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
   // heterogeneo + pedido so por cor): pedir esclarecimento e mais seguro que chutar
-  // um modelo errado.
-  const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous
+  // um modelo errado. E NUNCA quando o lead claramente quer OUTRA coisa (_blockPhotoOffTopic).
+  const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous && !_blockPhotoOffTopic
     && (brainPlan.action === "photo_request"
-    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0)
-    || (_affirmedPhotoOffer && photoVehiclesPool.length > 0));
+    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0));
 
   // Quando o topico esta ambiguo, instrui o cerebro a perguntar QUAL carro o lead quer
   // em vez de mandar foto. NAO reaproveita um modelo aleatorio da lista velha.
@@ -1865,6 +1864,14 @@ export async function processPedroV2Turn(
         use_memory_vehicle: false,
         response_guidance: "O lead pediu fotos por COR/atributo, mas nao da pra saber com seguranca a QUAL carro ele se refere (a conversa tem modelos diferentes em contexto). NAO envie fotos nem cite um modelo especifico: pergunte de forma curta e natural QUAL carro (qual modelo) ele quer ver as fotos.",
         reason: `ambiguous_photo_topic_clarify:${brainPlan.reason || ""}`,
+      }
+    : (_blockPhotoOffTopic && brainPlan.action === "photo_request")
+    ? {
+        ...brainPlan,
+        action: "reply_only" as const,
+        use_memory_vehicle: false,
+        response_guidance: "O lead NAO esta pedindo fotos: ele quer OUTRO carro/opcao OU levantou outra questao (distancia/localizacao, preco, ou ja recebeu as fotos). NAO envie fotos NEM prometa fotos. Responda a intencao REAL, curto e natural: se quer outro modelo/opcao, pergunte o perfil (tipo/faixa de preco) ou ofereca alternativas; se e distancia, tranquilize (proposta a distancia / detalhes por aqui); se ja recebeu, nao reenvie.",
+        reason: `block_photo_offtopic:${brainPlan.reason || ""}`,
       }
     : brainPlan;
   if (topicIsAmbiguous) {
