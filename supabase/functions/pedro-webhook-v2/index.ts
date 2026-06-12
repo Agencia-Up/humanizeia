@@ -10,7 +10,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-11-photo-offtopic-guard-v100";
+const PEDRO_V2_BUILD = "2026-06-11-presence-diag-v101";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||
@@ -114,6 +114,21 @@ Deno.serve(async (req) => {
   // caminho EXATO do referral que o uazapi entrega. Nunca lança, nunca altera o
   // fluxo (só faz I/O em mensagem de anúncio). Remover após a Fase 1.
   await logCtwaDiag(supabase, payload);
+
+  // ── DIAG PRESENCE (FASE 1, TEMPORARIO): confirma se o uazapi entrega 'digitando/gravando'
+  // depois de assinar o evento 'presence' no webhook. So CAPTURA (em ctwa_diag_capture) eventos
+  // que NAO sao mensagem normal nem conexao; nunca altera o fluxo. Remover apos confirmar o formato. ──
+  try {
+    const _et = getEventType(payload);
+    const _raw = JSON.stringify(payload || {});
+    const _looksPresence = /"presence"\s*:\s*"(composing|recording|paused|available|unavailable|typing)"|chatpresence|presenceupdate/i.test(_raw);
+    if ((_et && _et !== "messages" && !isConnectionEvent(payload)) || _looksPresence) {
+      await supabase.from("ctwa_diag_capture").insert({
+        markers: ["presence_diag", _et || "no_event"],
+        payload: { EventType: _et, snippet: _raw.slice(0, 1500) },
+      });
+    }
+  } catch (_e) { /* nunca bloqueia o fluxo */ }
 
   // ── Connection/status events ──────────────────────────────────────────────
   // Must be handled BEFORE the message path: a brand-new instance is created
