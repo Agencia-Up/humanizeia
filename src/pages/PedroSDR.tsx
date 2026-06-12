@@ -942,7 +942,7 @@ const PIPELINE_COLUMNS = [
   { id: 'perdido',            title: 'Perdido',            emoji: '❌', border: 'border-red-500/30',     bg: 'bg-red-500/10',     dot: 'bg-red-400'     },
 ];
 
-type PipelineColumn = typeof PIPELINE_COLUMNS[number];
+type PipelineColumn = (typeof PIPELINE_COLUMNS)[number] & { color?: string | null };
 
 function reorderItems<T>(items: T[], from: number, to: number) {
   const next = [...items];
@@ -1098,7 +1098,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [effectiveUserIdState, setEffectiveUserIdState] = useState<string | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
-  const [manualStages, setManualStages] = useState<typeof PIPELINE_COLUMNS>([]);
+  const [manualStages, setManualStages] = useState<PipelineColumn[]>([]);
   // Popup "Registrar venda" — aberto quando um lead entra em "Venda concluída".
   // Grava carro + data (+ valor) na venda criada pelo gatilho (comercial_vendas).
   const [vendaDialog, setVendaDialog] = useState<{ leadId: string; nome: string } | null>(null);
@@ -1299,6 +1299,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 id: s.id,
                 title: s.name,
                 ...stageStyle,
+                color: s.color || null, // hex configurado nas Configurações do Kanban (crm_pipeline_stages)
               };
             })
           : PIPELINE_COLUMNS;
@@ -4464,6 +4465,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
                 // Destaque da etapa de venda (Pedro: id 'fechado'; Marcos: etapa "Venda concluída").
                 const isWin = col.id === 'fechado' || normalizeStageName(col.title || '').startsWith('venda conclu');
+                // Cor configurada (hex) tem prioridade sobre o estilo fixo por nome.
+                // Aplicada via style inline porque o Tailwind não gera classe de cor
+                // arbitrária em runtime. isWin mantém o destaque verde próprio.
+                const hex = col.color || null;
+                const useHex = !!hex && !isWin;
                 return (
                   <div
                     key={col.id}
@@ -4473,7 +4479,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                       draggedColumnIdRef.current = null;
                       if (draggedId) handleColumnReorder(draggedId, col.id);
                     }}
-                    className={`w-[260px] shrink-0 rounded-xl border ${col.border} bg-card/50 ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
+                    className={`w-[260px] shrink-0 rounded-xl border ${useHex ? '' : col.border} bg-card/50 ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
+                    style={useHex ? { borderColor: `${hex}4d` } : undefined}
                   >
                     {/* Column header */}
                     <div
@@ -4485,7 +4492,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                       onDragEnd={() => {
                         draggedColumnIdRef.current = null;
                       }}
-                      className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : col.bg} flex items-center justify-between cursor-grab active:cursor-grabbing`}
+                      className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between cursor-grab active:cursor-grabbing`}
+                      style={useHex ? { backgroundColor: `${hex}1a` } : undefined}
                       title="Arraste para reorganizar esta coluna"
                     >
                       <div className="flex items-center gap-2">
@@ -4498,7 +4506,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                           </span>
                         )}
                       </div>
-                      <span className={`w-5 h-5 rounded-full ${col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}>
+                      <span className={`w-5 h-5 rounded-full ${useHex ? '' : col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}
+                        style={useHex ? { backgroundColor: `${hex}26` } : undefined}>
                         {colLeads.length}
                       </span>
                     </div>
