@@ -515,6 +515,9 @@ Deno.serve(async (req) => {
         assigned_to_id: nextSeller.id,
         status: 'em_atendimento',
         status_crm: novaColuna,
+        // arrived_at = agora: conta como lead NOVO do vendedor HOJE no Painel ao
+        // Vivo e mostra a data de hoje no CRM dele.
+        arrived_at: new Date().toISOString(),
         last_interaction_at: new Date().toISOString(),
       }).eq('id', lead.id);
       await supabase.from('ai_team_members').update({ last_lead_received_at: new Date().toISOString() }).eq('id', nextSeller.id);
