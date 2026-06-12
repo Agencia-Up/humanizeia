@@ -35,6 +35,9 @@ interface Props {
   ownerUserId: string;     // effectiveUserId (gestor = próprio; vendedor = master)
   currentSellerId: string | null;
   currentSellerName?: string;
+  /** Filtro de vendedor CONTROLADO pelo pai (filtro global do Painel Geral).
+   *  undefined = bloco usa seu próprio dropdown; null/id = controlado (esconde o dropdown). */
+  externalSellerId?: string | null;
 }
 
 function Kpi({ label, value, sub, icon: Icon, accent }: {
@@ -55,15 +58,20 @@ function Kpi({ label, value, sub, icon: Icon, accent }: {
 }
 
 export function ComercialSection({
-  periodStart, periodEnd, periodLabel, isSeller, ownerUserId, currentSellerId, currentSellerName,
+  periodStart, periodEnd, periodLabel, isSeller, ownerUserId, currentSellerId, currentSellerName, externalSellerId,
 }: Props) {
   const refDate = useMemo(() => new Date(periodEnd), [periodEnd]);
   const { vendasAno, metas, sellers, loading, refresh } = useComercialData({ ownerUserId, refDate, isSeller });
 
   const [addOpen, setAddOpen] = useState(false);
   // Drill-down: vendedor selecionado (gestor). Vendedor logado fica fixo nele mesmo.
+  // Se o pai mandar externalSellerId (filtro global do Painel Geral), ele manda —
+  // e o dropdown próprio some, pra não ter dois filtros brigando.
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
-  const activeSellerId = isSeller ? (currentSellerId || null) : selectedSellerId;
+  const controlledByParent = !isSeller && externalSellerId !== undefined;
+  const activeSellerId = isSeller
+    ? (currentSellerId || null)
+    : (controlledByParent ? (externalSellerId ?? null) : selectedSellerId);
 
   const startKey = useMemo(() => ymd(new Date(periodStart)), [periodStart]);
   const endKey = useMemo(() => ymd(new Date(periodEnd)), [periodEnd]);
@@ -144,12 +152,12 @@ export function ComercialSection({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {!isSeller && activeSellerId && (
+          {!isSeller && !controlledByParent && activeSellerId && (
             <Button variant="outline" size="sm" onClick={() => setSelectedSellerId(null)} className="gap-1.5">
               <ArrowLeft className="h-3.5 w-3.5" /> Ver geral
             </Button>
           )}
-          {!isSeller && (
+          {!isSeller && !controlledByParent && (
             <Select value={activeSellerId || '__all__'} onValueChange={(v) => setSelectedSellerId(v === '__all__' ? null : v)}>
               <SelectTrigger className="h-9 w-[200px]"><SelectValue placeholder="Vendedor" /></SelectTrigger>
               <SelectContent>

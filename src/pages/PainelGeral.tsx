@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { ComercialSection } from '@/components/comercial/ComercialSection';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -234,13 +235,16 @@ export default function PainelGeral() {
   const [loading, setLoading] = useState(true);
   // Realtime: incrementa pra forçar o load() a rodar de novo quando um lead/venda muda.
   const [reloadTrigger, setReloadTrigger] = useState(0);
+  // Filtro GLOBAL de vendedor (só master): re-escopa o painel inteiro pra um vendedor.
+  // null = todos (loja). Vendedor logado não usa (já vê só os próprios dados).
+  const [globalSellerId, setGlobalSellerId] = useState<string | null>(null);
 
   const dateRange = resolveDateRange(period, customRange);
 
   // [Unificado] Dados extras do antigo Dashboard (funis, alertas, origem,
   // transferencias, retomadas), no MESMO periodo selecionado aqui.
   const navigate = useNavigate();
-  const { data: dashData } = useCommercialDashboardData(user?.id, dateRange);
+  const { data: dashData } = useCommercialDashboardData(user?.id, dateRange, isSeller ? null : globalSellerId);
 
   useEffect(() => {
     if (!user?.id || profileLoading) return;
@@ -284,6 +288,10 @@ export default function PainelGeral() {
         if (isSeller) {
           pedroQuery = pedroQuery.in('assigned_to_id', safeIds);
           marcosQuery = marcosQuery.in('assigned_to', safeIds);
+        } else if (globalSellerId) {
+          // Master com filtro global de vendedor: re-escopa tudo pra ele.
+          pedroQuery = pedroQuery.eq('assigned_to_id', globalSellerId);
+          marcosQuery = marcosQuery.eq('assigned_to', globalSellerId);
         }
         // Ranking de vendedores só pro master — vendedor não enxerga colegas.
         const sellersPromise = isSeller
@@ -299,6 +307,7 @@ export default function PainelGeral() {
           .eq('user_id', ownerId)
           .gte('data_venda', periodStartKey).lte('data_venda', periodEndKey);
         if (isSeller) vendasQuery = vendasQuery.in('seller_id', safeIds);
+        else if (globalSellerId) vendasQuery = vendasQuery.eq('seller_id', globalSellerId);
 
         // 4 queries paralelas
         const [pedroRes, marcosRes, sellersRes, vendasRes] = await Promise.all([
@@ -501,7 +510,7 @@ export default function PainelGeral() {
 
     load();
     return () => { cancelled = true; };
-  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end, reloadTrigger]);
+  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end, reloadTrigger, globalSellerId]);
 
   // ── Realtime: atualiza o painel quando muda lead (Pedro/Marcos) ou venda.
   // Recarrega via reloadTrigger (debounce 1s pra agrupar bursts). Escopo = loja.
@@ -603,6 +612,19 @@ export default function PainelGeral() {
                   className="bg-card/60 border border-border/50 rounded px-2 py-1" />
               </div>
             )}
+            {/* Filtro GLOBAL de vendedor — re-escopa o painel inteiro (só master). */}
+            {!isSeller && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Vendedor</span>
+                <Select value={globalSellerId || '__all__'} onValueChange={(v) => setGlobalSellerId(v === '__all__' ? null : v)}>
+                  <SelectTrigger className="h-9 w-[190px]"><SelectValue placeholder="Vendedor" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todos os vendedores</SelectItem>
+                    {vendedores.map(v => <SelectItem key={v.id} value={v.id}>{v.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </div>
 
@@ -615,6 +637,7 @@ export default function PainelGeral() {
             isSeller={isSeller}
             ownerUserId={(isSeller ? masterUserId : user?.id) as string}
             currentSellerId={isSeller ? (memberIds[0] || null) : null}
+            externalSellerId={isSeller ? undefined : globalSellerId}
           />
         )}
 
@@ -661,7 +684,7 @@ export default function PainelGeral() {
                     {vendedores.length === 0 && (
                       <tr><td colSpan={6} className="py-6 text-center text-muted-foreground text-xs">Nenhum vendedor com leads no período.</td></tr>
                     )}
-                    {[...vendedores].sort((a, b) => (b.conversao - a.conversao) || (b.vendas - a.vendas)).map(v => (
+                    {[...vendedores].filter(v => !globalSellerId || v.id === globalSellerId).sort((a, b) => (b.conversao - a.conversao) || (b.vendas - a.vendas)).map(v => (
                       <tr key={v.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                         <td className="py-2 pr-2 font-medium truncate max-w-[200px]">{v.nome}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{v.total}</td>
@@ -937,7 +960,7 @@ export default function PainelGeral() {
                     </tr>
                   </thead>
                   <tbody>
-                    {vendedores.map((v, idx) => (
+                    {vendedores.filter(v => !globalSellerId || v.id === globalSellerId).map((v, idx) => (
                       <tr key={v.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                         <td className="py-2 px-2 text-xs font-bold text-muted-foreground tabular-nums">{idx + 1}º</td>
                         <td className="py-2 px-2 text-sm font-medium truncate max-w-[200px]">{v.nome}</td>

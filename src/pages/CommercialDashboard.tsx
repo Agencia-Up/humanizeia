@@ -220,7 +220,7 @@ export function FunnelPanel({
   );
 }
 
-export function useCommercialDashboardData(userId: string | undefined, dateRange: DateRange) {
+export function useCommercialDashboardData(userId: string | undefined, dateRange: DateRange, filterSellerId?: string | null) {
   const { isSeller, seller, masterUserId, loading: sellerLoading } = useSellerProfile(userId);
   const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(true);
@@ -236,7 +236,8 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
       setLoading(true);
       try {
         const today = startOfDay();
-        const sellerId = isSeller ? seller?.id : null;
+        // Vendedor logado: sempre só ele. Master: usa o filtro global se houver.
+        const sellerId = isSeller ? seller?.id : (filterSellerId || null);
 
         // Filtros DATA aplicados em todas as queries de leads/campanhas/followups
         // (spec: filtro global afeta TUDO menos o Ranking, que tem hook próprio).
@@ -362,7 +363,7 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
 
     load();
     return () => { cancelled = true; };
-  }, [effectiveUserId, isSeller, seller?.id, sellerLoading, refreshKey, dateRange.start, dateRange.end]);
+  }, [effectiveUserId, isSeller, seller?.id, sellerLoading, refreshKey, dateRange.start, dateRange.end, filterSellerId]);
 
   return { data, loading, refresh: () => setRefreshKey(key => key + 1) };
 }
