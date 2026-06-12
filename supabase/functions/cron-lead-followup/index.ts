@@ -390,7 +390,7 @@ async function generateFollowupText(opts: {
     .map((t: any) => `${t.role === "agent" ? opts.agentName : (opts.leadName || "Cliente")}: ${String(t.text || "").slice(0, 300)}`)
     .join("\n");
   const goal: Record<string, string> = {
-    reengage: "O cliente parou de responder ha ~5 min. Escreva UMA mensagem curta e natural retomando o ULTIMO assunto da conversa (o veiculo/fotos/valores que estavam vendo), convidando a continuar. Sem pressionar.",
+    reengage: "O cliente parou de responder ha ~5 min. Escreva UMA mensagem curta e natural so retomando o INTERESSE dele de forma leve (ex.: 'e ai, o que achou?' / 'conseguiu dar uma olhada?'), convidando a continuar. Sem pressionar. NAO prometa enviar nem REENVIAR nada e NAO re-cite/re-anuncie fotos que ja foram mandadas.",
     check_help: "SEGUNDA tentativa (~8 min sem resposta). A 1a mensagem JA retomou o veiculo/assunto — NAO repita isso. Aqui escreva algo bem CURTO so checando presenca, no estilo 'Ainda esta por ai?' ou 'Ainda posso te ajudar?'. NAO mencione veiculo, fotos, valores nem 'outras opcoes'. Apenas 1 frase curta.",
     farewell: "O cliente nao respondeu (~12 min). Escreva UMA mensagem curta e amigavel avisando que um consultor de vendas vai ENTRAR EM CONTATO com ele em breve e agradecendo o contato. IMPORTANTE: NAO diga que o atendimento continua 'por aqui'/'neste numero'/'aqui mesmo' — o vendedor fala de OUTRO numero. Use 'vai entrar em contato', nunca prometa que ele responde por este WhatsApp.",
   };
@@ -406,6 +406,7 @@ async function generateFollowupText(opts: {
             `Voce e ${opts.agentName}, consultor de vendas da ${opts.companyName || "loja"} no WhatsApp.`,
             opts.persona ? `Personalidade/estilo (siga o tom):\n${opts.persona.slice(0, 1200)}` : "",
             "Escreva SOMENTE a mensagem para o cliente (sem aspas, sem rotulos). Curta (1-2 frases), humana, em PT-BR.",
+            "PROIBIDO prometer ou anunciar QUALQUER envio agora: NUNCA diga 'vou enviar', 'vou mandar', 'aqui estao as fotos', 'confira a seguir', 'segue as imagens', nem prometa fotos/imagens/videos/detalhes. Voce NAO esta enviando nada neste momento — e so um toque curto ou uma despedida. Se ja mandou fotos antes, NAO reenvie nem re-anuncie.",
             opts.leadName ? `Nome do cliente (apenas para contexto): ${opts.leadName}. NAO comece a mensagem com o nome e NAO repita o nome — soa robotico. Prefira nao usar o nome.` : "",
             goal[opts.kind],
           ].filter(Boolean).join("\n") },
