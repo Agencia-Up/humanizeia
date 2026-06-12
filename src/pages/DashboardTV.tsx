@@ -52,6 +52,10 @@ interface VendedorData {
    *  "Venda concluída" no CRM do Pedro/Marcos). NÃO entra no `total` de
    *  leads — é um resultado, não uma origem. */
   venda_concluida: number;
+  /** Leads que o vendedor ASSUMIU no período via transferência/resgate
+   *  (ai_lead_transfers). São re-atribuições — NÃO contam como tráfego pago
+   *  novo nem entram no `total`. Indicador informativo separado. */
+  repassados: number;
   total: number;
 }
 
@@ -524,8 +528,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .eq('user_id', effectiveUserId)
           .eq('mes_referencia', monthStartKey);
 
-        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes] = await Promise.all([
-          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery,
+        // 8. Repassados no período: leads que o vendedor ASSUMIU via transferência/
+        //    resgate (ai_lead_transfers) no período. NÃO é tráfego pago novo — é
+        //    re-atribuição. Indicador informativo, separado da contagem de origem.
+        let transfersQuery = (supabase as any)
+          .from('ai_lead_transfers')
+          .select('to_member_id, lead_id, created_at')
+          .eq('user_id', effectiveUserId)
+          .gte('created_at', todayStart)
+          .lte('created_at', todayEnd);
+        if (sellerMemberId) transfersQuery = transfersQuery.eq('to_member_id', sellerMemberId);
+
+        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes] = await Promise.all([
+          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery,
         ]);
 
         if (cancelled) return;
@@ -572,7 +587,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             null;
           agg[s.id] = {
             id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
-            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, total: 0,
+            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, repassados: 0, total: 0,
           };
         }
 
@@ -585,7 +600,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const NAO_ATRIBUIDO_ID = '__nao_atribuido__';
         agg[NAO_ATRIBUIDO_ID] = {
           id: NAO_ATRIBUIDO_ID, name: 'Sem vendedor atribuído', effective_avatar: null, rank: 0,
-          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, total: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, repassados: 0, total: 0,
         };
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
@@ -764,6 +779,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             : Number(metasRows.find(m => m.tipo === 'loja')?.valor_meta) || 0;
         } else {
           metaMes = Number(metasRows.find(m => m.tipo === 'loja' && !m.seller_id)?.valor_meta) || 0;
+        }
+
+        // 8.6. Repassados no período: leads DISTINTOS que cada vendedor assumiu via
+        //      transferência/resgate (ai_lead_transfers). Re-atribuição, não tráfego pago.
+        const transfersRows = (transfersRes?.data || []) as Array<{ to_member_id: string | null; lead_id: string | null }>;
+        const repassadosPorVendedor = new Map<string, Set<string>>();
+        for (const tr of transfersRows) {
+          if (!tr.to_member_id || !tr.lead_id) continue;
+          if (!repassadosPorVendedor.has(tr.to_member_id)) repassadosPorVendedor.set(tr.to_member_id, new Set());
+          repassadosPorVendedor.get(tr.to_member_id)!.add(tr.lead_id);
+        }
+        for (const [sid, leadSet] of repassadosPorVendedor) {
+          if (agg[sid]) agg[sid].repassados = leadSet.size;
         }
 
         // 9. Rank por total desc, tie-breaker alfabético.
@@ -1559,6 +1587,11 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         {/* Resultado (não é origem): vendas concluídas do vendedor no período. */}
         <div className="pt-1 mt-1 border-t border-slate-800/70">
           <BreakdownRow label="Venda concluída" value={v.venda_concluida} color="#10b981" />
+          {/* Leads que o vendedor ASSUMIU no período (transferência/resgate).
+              Não é tráfego pago novo — re-atribuição. Só aparece quando há. */}
+          {v.repassados > 0 && (
+            <BreakdownRow label="Repassados" value={v.repassados} color="#22d3ee" />
+          )}
         </div>
       </div>
 
