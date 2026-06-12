@@ -528,13 +528,17 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .eq('user_id', effectiveUserId)
           .eq('mes_referencia', monthStartKey);
 
-        // 8. Repassados no período: leads que o vendedor ASSUMIU via transferência/
-        //    resgate (ai_lead_transfers) no período. NÃO é tráfego pago novo — é
-        //    re-atribuição. Indicador informativo, separado da contagem de origem.
+        // 8. Repasses recebidos no período: leads que o vendedor ASSUMIU via
+        //    REPASSE (saída de outro vendedor / resgate de lead preso) e que foram
+        //    CONFIRMADOS. NÃO é tráfego pago novo nem transferência comum do rodízio
+        //    — é re-atribuição. Indicador informativo, separado da contagem de origem.
+        const REPASSE_REASONS = ['repasse_pedro', 'repasse_marcos', 'repasse_tf', 'repasse_nao_confirmado', 'orphan_rescue'];
         let transfersQuery = (supabase as any)
           .from('ai_lead_transfers')
           .select('to_member_id, lead_id, created_at')
           .eq('user_id', effectiveUserId)
+          .eq('is_confirmed', true)
+          .in('transfer_reason', REPASSE_REASONS)
           .gte('created_at', todayStart)
           .lte('created_at', todayEnd);
         if (sellerMemberId) transfersQuery = transfersQuery.eq('to_member_id', sellerMemberId);
@@ -1590,7 +1594,7 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
           {/* Leads que o vendedor ASSUMIU no período (transferência/resgate).
               Não é tráfego pago novo — re-atribuição. Só aparece quando há. */}
           {v.repassados > 0 && (
-            <BreakdownRow label="Repassados" value={v.repassados} color="#22d3ee" />
+            <BreakdownRow label="Repasses recebidos" value={v.repassados} color="#22d3ee" />
           )}
         </div>
       </div>

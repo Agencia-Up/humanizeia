@@ -25,6 +25,22 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 
+/** Lê o corpo de erro de uma edge function. O cliente Supabase encapsula o erro
+ *  como Response cru em `error.context`; devolve a mensagem real do servidor
+ *  ({ error: "..." }) ou '' se não conseguir ler. */
+async function readFnError(error: any): Promise<string> {
+  try {
+    const ctxResp = (error as any)?.context;
+    const respObj = ctxResp && typeof ctxResp.text === 'function' ? ctxResp : ctxResp?.response;
+    if (respObj && typeof respObj.text === 'function') {
+      const body = await respObj.text();
+      try { const parsed = JSON.parse(body); return parsed.error || parsed.message || body; }
+      catch { return body; }
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
 interface SellerManagerTabProps {
   userId: string;
 }
@@ -217,6 +233,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const [viewNotesFor, setViewNotesFor] = useState<string | null>(null);
   const [sellerNotes, setSellerNotes] = useState<any[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
+
+  // Repasse (redistribuir leads de um vendedor que saiu) state
+  const [redistFor, setRedistFor] = useState<SellerMember | null>(null);
+  const [redistLoading, setRedistLoading] = useState(false);   // calculando a prévia (dry-run)
+  const [redistPreview, setRedistPreview] = useState<any | null>(null);
+  const [redistRunning, setRedistRunning] = useState(false);   // executando de verdade
 
   // Feature config dialog state
   const [configSellerId, setConfigSellerId] = useState<string | null>(null);
@@ -558,6 +580,53 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     }
   };
 
+  // ── Repasse: abre a prévia (dry-run) dos leads ATIVOS deste vendedor ──
+  // Mostra quem iria pra quem ANTES de mexer em qualquer coisa. Nada é enviado
+  // nem movido até o gestor confirmar.
+  const handleOpenRedistribute = async (seller: SellerMember) => {
+    setRedistFor(seller);
+    setRedistPreview(null);
+    setRedistLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('redistribute-seller-leads', {
+        body: { from_member_id: seller.id, dry_run: true },
+      });
+      if (error) throw new Error((await readFnError(error)) || error.message);
+      setRedistPreview(data);
+    } catch (err: any) {
+      toast({ title: 'Erro ao calcular o repasse', description: err.message, variant: 'destructive' });
+      setRedistFor(null);
+    } finally {
+      setRedistLoading(false);
+    }
+  };
+
+  // ── Repasse: executa de verdade (envia WhatsApp + atribui aos outros) ──
+  const handleConfirmRedistribute = async () => {
+    if (!redistFor) return;
+    setRedistRunning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('redistribute-seller-leads', {
+        body: { from_member_id: redistFor.id, dry_run: false, force: true },
+      });
+      if (error) throw new Error((await readFnError(error)) || error.message);
+      const n = data?.repassados ?? 0;
+      toast({
+        title: n > 0 ? `✅ ${n} lead(s) repassado(s)` : 'Nada para repassar',
+        description: n > 0
+          ? 'Os leads já estão no CRM dos outros vendedores, com a conversa junto.'
+          : 'Esse vendedor não tinha leads ativos para repassar.',
+      });
+      setRedistFor(null);
+      setRedistPreview(null);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: 'Erro ao repassar', description: err.message, variant: 'destructive' });
+    } finally {
+      setRedistRunning(false);
+    }
+  };
+
   const handleStartEdit = (s: SellerMember) => {
     setEditingId(s.id); setEditName(s.name); setEditPhone(s.whatsapp_number);
   };
@@ -778,6 +847,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                             <StickyNote className="h-3.5 w-3.5" />
                           </Button>
                           <Button variant="ghost" size="sm"
+                            className="h-7 w-7 p-0 text-cyan-400 hover:text-cyan-300"
+                            onClick={() => handleOpenRedistribute(s)}
+                            title="Repassar os leads ativos deste vendedor para os outros (folga, saída, demissão)">
+                            <Send className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm"
                             className="h-7 w-7 p-0 text-blue-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"
                             onClick={() => handleStartEdit(s)} title="Editar">
                             <Pencil className="h-3.5 w-3.5" />
@@ -877,6 +952,66 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
           })
         )}
       </div>
+
+      {/* ── Dialog: Repassar leads de um vendedor (folga/saída/demissão) ── */}
+      <Dialog open={!!redistFor} onOpenChange={open => { if (!open) { setRedistFor(null); setRedistPreview(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-4 w-4 text-cyan-400" /> Repassar leads de {redistFor?.name}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Os leads que <b>{redistFor?.name}</b> está atendendo vão para os outros vendedores ativos,
+              levando a conversa junto. Use quando ele sair (folga, saída antecipada ou demissão).
+            </DialogDescription>
+          </DialogHeader>
+
+          {redistLoading ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
+              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Calculando o repasse...
+            </div>
+          ) : redistPreview ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm">
+                <p><b className="text-cyan-400">{redistPreview.repassados || 0}</b> lead(s) ativo(s) serão repassados para os outros vendedores.</p>
+                {redistPreview.sem_vendedor > 0 && (
+                  <p className="text-amber-400 text-xs mt-1">
+                    ⚠ {redistPreview.sem_vendedor} sem outro vendedor disponível — vão continuar parados.
+                  </p>
+                )}
+                {(redistPreview.ativos_encontrados || 0) === 0 && (
+                  <p className="text-muted-foreground text-xs mt-1">Esse vendedor não tem leads ativos no momento.</p>
+                )}
+              </div>
+
+              {Array.isArray(redistPreview.detalhe) && redistPreview.detalhe.length > 0 && (
+                <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                  {redistPreview.detalhe.map((d: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between text-xs border-b border-border/30 py-1">
+                      <span className="truncate text-foreground">{d.lead_name || 'Lead'}</span>
+                      <span className={`shrink-0 ml-2 ${d.vendedor ? 'text-cyan-400' : 'text-amber-400'}`}>
+                        {d.vendedor ? `→ ${d.vendedor}` : 'sem vendedor'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2 justify-end pt-1">
+                <Button variant="ghost" size="sm" onClick={() => { setRedistFor(null); setRedistPreview(null); }}>
+                  Cancelar
+                </Button>
+                <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white"
+                  disabled={redistRunning || (redistPreview.repassados || 0) === 0}
+                  onClick={handleConfirmRedistribute}>
+                  {redistRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                  Confirmar e repassar
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Dialog: Configurar Permissões do Vendedor ── */}
       <Dialog open={!!configSellerId} onOpenChange={open => !open && setConfigSellerId(null)}>
