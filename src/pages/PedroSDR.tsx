@@ -2264,7 +2264,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     setRescueRunning(true);
     try {
       const { data, error } = await supabase.functions.invoke('rescue-orphan-transfers', {
-        body: { dry_run: false, user_id: ownerIdForRescue, lead_ids: leadIds },
+        // force: o gerente clicou confirmar -> envia agora mesmo fora do horário.
+        body: { dry_run: false, user_id: ownerIdForRescue, lead_ids: leadIds, force: true },
       });
       if (error) throw error;
       const d = data as any;
@@ -4940,8 +4941,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
                 {!rescuePreview.dentro_do_horario && (
                   <p className="text-[11px] text-amber-300 bg-amber-500/5 border border-amber-500/20 rounded-lg p-2">
-                    ⏰ Agora está fora do horário de repasse ({rescuePreview.janela}). A prévia funciona, mas o envio
-                    de verdade só roda dentro do horário comercial.
+                    ⏰ Agora está fora do horário de repasse ({rescuePreview.janela}). Se você confirmar mesmo assim,
+                    o envio é <strong>forçado</strong> e os vendedores recebem as mensagens agora.
                   </p>
                 )}
               </div>
@@ -4954,7 +4955,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             </Button>
             <Button
               onClick={handleRescueConfirm}
-              disabled={rescueRunning || rescueLoading || !rescuePreview || rescueSelected.size === 0 || !rescuePreview?.dentro_do_horario}
+              disabled={rescueRunning || rescueLoading || !rescuePreview || rescueSelected.size === 0}
               className="bg-red-500 hover:bg-red-600 text-white gap-1.5"
             >
               {rescueRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
