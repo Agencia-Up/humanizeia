@@ -36,14 +36,15 @@
     fbq('init', '1307104394971045');
     fbq('track', 'PageView');
     </script>
-    <noscript><img height="1" width="1" style="display:none"
-    src="https://www.facebook.com/tr?id=1307104394971045&ev=PageView&noscript=1"
-    /></noscript>
     <!-- End Meta Pixel Code -->
   </head>
 
   <body>
     <div id="root"></div>
+
+    <!-- Meta Pixel (noscript fallback) — fica no body; img dentro de noscript no head quebra o build -->
+    <noscript><img height="1" width="1" style="display:none"
+      src="https://www.facebook.com/tr?id=1307104394971045&ev=PageView&noscript=1" /></noscript>
 
     <!--
       Static legal links for crawlers / verification tools that don't execute JavaScript.
