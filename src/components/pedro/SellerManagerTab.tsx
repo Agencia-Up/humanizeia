@@ -55,6 +55,9 @@ interface SellerMember {
   auth_user_id: string | null;
   agent_id: string | null;
   total_leads_received: number;
+  /** Contagem REAL de leads atribuídos (calculada no fetch — a coluna
+   *  total_leads_received não é mantida e fica sempre 0). */
+  lead_count?: number;
   last_lead_received_at: string | null;
   created_at: string;
   visible_features: VisibleFeatures | null;
@@ -341,16 +344,38 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
           .eq('user_id', userId),
       ]);
 
-      // Deduplicate by whatsapp_number — prefer record ativo no sistema
+      // Deduplicate by whatsapp_number — prefer record ativo no sistema.
+      // Guarda TODOS os member ids do mesmo número: um vendedor pode ter 1 row
+      // por agente, e os leads apontam pra rows diferentes (assigned_to_id).
       const deduped = new Map<string, SellerMember>();
+      const memberIdsByKey = new Map<string, string[]>();
       for (const s of (sellersRes.data || [])) {
         const key = s.whatsapp_number || s.id;
+        memberIdsByKey.set(key, [...(memberIdsByKey.get(key) || []), s.id]);
         const existing = deduped.get(key);
         if (!existing || ((existing.active_in_system === false) && (s.active_in_system !== false))) {
           deduped.set(key, s);
         }
       }
-      setSellers(Array.from(deduped.values()));
+      const sellersList = Array.from(deduped.values());
+
+      // Contagem REAL de leads por vendedor. A coluna total_leads_received não é
+      // mantida (fica 0), então contamos direto: Pedro = ai_crm_leads.assigned_to_id,
+      // Marcos = crm_leads.assigned_to. count exato (head: true) — não depende de
+      // limite de linhas — somando todos os member ids do mesmo whatsapp.
+      const withCounts = await Promise.all(sellersList.map(async (s) => {
+        const key = s.whatsapp_number || s.id;
+        const ids = memberIdsByKey.get(key) || [s.id];
+        const [aiC, crmC] = await Promise.all([
+          (supabase as any).from('ai_crm_leads')
+            .select('id', { count: 'exact', head: true }).eq('user_id', userId).in('assigned_to_id', ids),
+          (supabase as any).from('crm_leads')
+            .select('id', { count: 'exact', head: true }).eq('user_id', userId).in('assigned_to', ids),
+        ]);
+        return { ...s, lead_count: (aiC?.count || 0) + (crmC?.count || 0) } as SellerMember;
+      }));
+
+      setSellers(withCounts);
       setAgents(agentsRes.data || []);
     } finally {
       setLoading(false);
@@ -824,7 +849,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
                           <div className="text-right hidden sm:block">
-                            <p className="text-sm font-bold text-foreground leading-none">{s.total_leads_received}</p>
+                            <p className="text-sm font-bold text-foreground leading-none">{s.lead_count ?? 0}</p>
                             <p className="text-[10px] text-muted-foreground">leads</p>
                           </div>
                           <div className="flex items-center gap-1.5">
