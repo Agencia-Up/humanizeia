@@ -636,11 +636,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       });
       if (error) throw new Error((await readFnError(error)) || error.message);
       const n = data?.repassados ?? 0;
+      const b = data?.bolsao ?? 0;
       toast({
-        title: n > 0 ? `✅ ${n} lead(s) repassado(s)` : 'Nada para repassar',
-        description: n > 0
-          ? 'Os leads já estão no CRM dos outros vendedores, com a conversa junto.'
-          : 'Esse vendedor não tinha leads ativos para repassar.',
+        title: (n + b) > 0 ? `✅ ${n} repassado(s)${b > 0 ? ` + ${b} no bolsão` : ''}` : 'Nada para repassar',
+        description: (n + b) > 0
+          ? 'Ativos já estão no CRM dos outros vendedores (com a conversa). Os parados foram pro bolsão — atribua no Painel ao Vivo.'
+          : 'Esse vendedor não tinha leads para repassar.',
       });
       setRedistFor(null);
       setRedistPreview(null);
@@ -999,13 +1000,18 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
             <div className="space-y-3">
               <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm">
                 <p><b className="text-cyan-400">{redistPreview.repassados || 0}</b> lead(s) ativo(s) serão repassados para os outros vendedores.</p>
+                {(redistPreview.bolsao || 0) > 0 && (
+                  <p className="text-amber-300 text-xs mt-1">
+                    + <b>{redistPreview.bolsao}</b> lead(s) parado(s) vão pro <b>bolsão</b> (sem dono) — você atribui depois no Painel ao Vivo.
+                  </p>
+                )}
                 {redistPreview.sem_vendedor > 0 && (
                   <p className="text-amber-400 text-xs mt-1">
                     ⚠ {redistPreview.sem_vendedor} sem outro vendedor disponível — vão continuar parados.
                   </p>
                 )}
-                {(redistPreview.ativos_encontrados || 0) === 0 && (
-                  <p className="text-muted-foreground text-xs mt-1">Esse vendedor não tem leads ativos no momento.</p>
+                {(redistPreview.ativos_encontrados || 0) === 0 && (redistPreview.bolsao || 0) === 0 && (
+                  <p className="text-muted-foreground text-xs mt-1">Esse vendedor não tem leads pra repassar no momento.</p>
                 )}
               </div>
 
@@ -1014,8 +1020,8 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                   {redistPreview.detalhe.map((d: any, i: number) => (
                     <div key={i} className="flex items-center justify-between text-xs border-b border-border/30 py-1">
                       <span className="truncate text-foreground">{d.lead_name || 'Lead'}</span>
-                      <span className={`shrink-0 ml-2 ${d.vendedor ? 'text-cyan-400' : 'text-amber-400'}`}>
-                        {d.vendedor ? `→ ${d.vendedor}` : 'sem vendedor'}
+                      <span className={`shrink-0 ml-2 ${d.vendedor ? 'text-cyan-400' : 'text-amber-300'}`}>
+                        {d.acao === 'bolsao' ? '→ bolsão' : (d.vendedor ? `→ ${d.vendedor}` : 'sem vendedor')}
                       </span>
                     </div>
                   ))}
@@ -1027,7 +1033,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                   Cancelar
                 </Button>
                 <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white"
-                  disabled={redistRunning || (redistPreview.repassados || 0) === 0}
+                  disabled={redistRunning || ((redistPreview.repassados || 0) === 0 && (redistPreview.bolsao || 0) === 0)}
                   onClick={handleConfirmRedistribute}>
                   {redistRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
                   Confirmar e repassar

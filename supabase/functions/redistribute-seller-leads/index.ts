@@ -276,6 +276,9 @@ async function resolveInstance(supabase: any, lead: any): Promise<any | null> {
 // Parado/frio (inativo, pouco_qualificado) fica de fora -> bolsao (Fase 2).
 // fechado/perdido/transferido nunca sao tocados.
 const ACTIVE_STATUS = ['novo', 'em_atendimento', 'negociacao', 'agendamento', 'qualificado'];
+// Parados/frios -> BOLSAO (sem dono, pro gestor atribuir no painel). Nao inclui
+// perdido/fechado/transferido (esses nao sao tocados pelo repasse).
+const POOL_STATUS = ['inativo', 'pouco_qualificado'];
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
@@ -471,6 +474,36 @@ Deno.serve(async (req) => {
       moved++;
     }
 
+    // ── Leads PARADOS -> BOLSAO (sem dono, pro gestor atribuir no painel) ──
+    // Nao empurra pra ninguem nem manda WhatsApp: so marca disponivel_repasse e
+    // tira o dono. O gestor ve no Painel ao Vivo e atribui (assign-pool-lead).
+    let pooled = 0;
+    let poolQ = supabase
+      .from('ai_crm_leads')
+      .select('id,lead_name,status_crm')
+      .eq('user_id', effectiveOwner)
+      .eq('assigned_to_id', fromMemberId)
+      .in('status_crm', POOL_STATUS)
+      .limit(maxLeads);
+    if (selectedLeadIds) poolQ = poolQ.in('id', selectedLeadIds);
+    const { data: parkedLeads } = await poolQ;
+    for (const lead of (parkedLeads || [])) {
+      if (dryRun) {
+        report.push({ lead_id: lead.id, lead_name: lead.lead_name, acao: 'bolsao', vendedor: null });
+        pooled++;
+        continue;
+      }
+      const upd = await supabase.from('ai_crm_leads').update({
+        disponivel_repasse: true,
+        repasse_motivo: 'repasse_parado',
+        assigned_to_id: null,
+      }).eq('id', lead.id);
+      if (!upd.error) {
+        report.push({ lead_id: lead.id, lead_name: lead.lead_name, acao: 'bolsao', vendedor: null });
+        pooled++;
+      }
+    }
+
     return json({
       ok: true,
       dry_run: dryRun,
@@ -482,6 +515,7 @@ Deno.serve(async (req) => {
       escopo_user_id: effectiveOwner,
       ativos_encontrados: (activeLeads || []).length,
       repassados: moved,
+      bolsao: pooled,
       pulados_com_pending: skippedPending,
       sem_vendedor: noSeller,
       sem_instancia: noInstance,
