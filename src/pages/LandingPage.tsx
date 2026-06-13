@@ -1641,13 +1641,13 @@ export default function LandingPage() {
                         className="text-6xl font-black leading-none"
                         style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}
                       >
-                        497
+                        597
                       </span>
                       <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
                       <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
                     </div>
                     <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                      Preço de fundador (10 primeiros). Depois, R$ 797,90/mês.
+                      Promoção fundador (10 primeiros), nos 3 primeiros meses. Depois, R$ 797,90/mês.
                     </p>
                     <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
                       Implementação: <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>R$ 1.997,90</span> por R$ 1.497,90 (única)
@@ -1754,7 +1754,7 @@ export default function LandingPage() {
                       <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
                     </div>
                     <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                      Preço de fundador (10 primeiros). Depois, R$ 1.297,90/mês.
+                      Promoção fundador (10 primeiros), nos 3 primeiros meses. Depois, R$ 1.297,90/mês.
                     </p>
                     <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
                       Implementação: <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>R$ 1.997,90</span> por R$ 1.497,90 (única)
@@ -1856,16 +1856,16 @@ export default function LandingPage() {
                       + R$ 1.497 de implementação (pagamento único)
                     </p>
 
-                    {/* Highlight 150 conversas */}
+                    {/* Highlight conversas ilimitadas (chave própria de IA) */}
                     <div
                       className="mt-5 mb-5 rounded-xl p-3 text-center"
                       style={{ background: 'rgba(250, 248, 242, 0.06)', border: '1px solid rgba(250, 248, 242, 0.14)' }}
                     >
                       <span className="text-lg font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
-                        150 conversas/mês
+                        Conversas ilimitadas
                       </span>
                       <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                        incluídas no atendimento com IA
+                        com a sua própria chave de IA
                       </span>
                     </div>
 
