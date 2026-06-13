@@ -15,7 +15,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { PLANS, FOUNDERS_LIMIT, quote } from '../_shared/checkout-plans.ts';
+import { PLANS, FOUNDERS_LIMIT, FOUNDERS_LIMIT_ENTERPRISE, quote } from '../_shared/checkout-plans.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,28 +32,40 @@ serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    // Conta quantos PRO ja foram efetivamente pagos (define a faixa fundador/normal)
-    const { count } = await supabase
-      .from('checkout_pending')
-      .select('id', { count: 'exact', head: true })
-      .eq('plan_type', 'pro')
-      .eq('status', 'paid');
+    // Conta quantos PRO e PRO MAX ja foram pagos (cada um tem sua faixa fundador/normal)
+    const [{ count: countPro }, { count: countEnt }] = await Promise.all([
+      supabase.from('checkout_pending').select('id', { count: 'exact', head: true })
+        .eq('plan_type', 'pro').eq('status', 'paid'),
+      supabase.from('checkout_pending').select('id', { count: 'exact', head: true })
+        .eq('plan_type', 'enterprise').eq('status', 'paid'),
+    ]);
 
-    const paidPro = count || 0;
-    const foundersLeft = Math.max(0, FOUNDERS_LIMIT - paidPro);
+    const paidPro = countPro || 0;
+    const paidEnt = countEnt || 0;
+    const foundersLeftPro = Math.max(0, FOUNDERS_LIMIT - paidPro);
+    const foundersLeftEnt = Math.max(0, FOUNDERS_LIMIT_ENTERPRISE - paidEnt);
 
     const proMensal = quote('pro', 'mensal', paidPro);
     const proAnual = quote('pro', 'anual', paidPro);
-    const basMensal = quote('basico', 'mensal', paidPro);
-    const basAnual = quote('basico', 'anual', paidPro);
+    const entMensal = quote('enterprise', 'mensal', paidEnt);
+    const entAnual = quote('enterprise', 'anual', paidEnt);
+    const basMensal = quote('basico', 'mensal', 0);
+    const basAnual = quote('basico', 'anual', 0);
 
     const body = {
       pro: {
         tier: proMensal.tier,
-        foundersLeft,
+        foundersLeft: foundersLeftPro,
         atendimentos: PLANS.pro.atendimentos,
         mensal: { setup: proMensal.setup, recurrence: proMensal.recurrence },
         anual: { setup: proAnual.setup, recurrence: proAnual.recurrence },
+      },
+      enterprise: {
+        tier: entMensal.tier,
+        foundersLeft: foundersLeftEnt,
+        atendimentos: PLANS.enterprise.atendimentos,
+        mensal: { setup: entMensal.setup, recurrence: entMensal.recurrence },
+        anual: { setup: entAnual.setup, recurrence: entAnual.recurrence },
       },
       basico: {
         atendimentos: PLANS.basico.atendimentos,

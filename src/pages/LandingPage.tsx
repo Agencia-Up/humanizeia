@@ -1798,9 +1798,9 @@ export default function LandingPage() {
                         border: '2px solid var(--brand-gold-hover)',
                       }}
                     >
-                      <a href="https://wa.me/5534999080815?text=Quero%20o%20plano%20Pro%20Max" target="_blank" rel="noopener noreferrer">
+                      <Link to="/checkout?plano=enterprise&ciclo=mensal">
                         Quero o Pro Max <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </a>
+                      </Link>
                     </Button>
                   </div>
                 </div>

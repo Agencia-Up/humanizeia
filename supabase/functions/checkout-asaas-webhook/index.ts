@@ -50,6 +50,7 @@ const WEBHOOK_TOKEN =
 // (compatibilidade). NAO mexe no gating de agentes por plano (frente separada).
 function resolveEntitlement(planType: string | null | undefined): { planId: string; atendimentos: number } {
   if (planType === 'pro') return { planId: 'pro', atendimentos: PLANS.pro.atendimentos };
+  if (planType === 'enterprise') return { planId: 'enterprise', atendimentos: PLANS.enterprise.atendimentos };
   return { planId: 'basico', atendimentos: PLANS.basico.atendimentos };
 }
 

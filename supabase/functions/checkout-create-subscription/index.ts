@@ -104,7 +104,7 @@ serve(async (req: Request) => {
       planType = 'pro';
       ciclo = planoRaw;
     } else {
-      if (!planoRaw || !['pro', 'basico'].includes(planoRaw)) throw new Error('plano inválido (use pro|basico)');
+      if (!planoRaw || !['pro', 'enterprise', 'basico'].includes(planoRaw)) throw new Error('plano inválido (use pro|enterprise|basico)');
       planType = planoRaw as PlanType;
       ciclo = cicloRaw === 'anual' ? 'anual' : 'mensal';
     }
@@ -118,17 +118,18 @@ serve(async (req: Request) => {
     if (!paymentMethod || !['pix', 'cartao', 'boleto'].includes(paymentMethod)) throw new Error('paymentMethod inválido');
     if (paymentMethod === 'cartao' && !cardData) throw new Error('cardData obrigatório quando paymentMethod=cartao');
 
-    // ── Resolve a faixa fundador/normal do Pro pelo nº de Pro já PAGOS ───────
-    let paidPro = 0;
-    if (planType === 'pro') {
+    // ── Resolve a faixa fundador/normal pelo nº de pagos DESSE plano ─────────
+    //    (Pro e Pro Max tem contagens de fundador separadas; basico nao tem.)
+    let paidCount = 0;
+    if (planType === 'pro' || planType === 'enterprise') {
       const { count } = await supabase
         .from('checkout_pending')
         .select('id', { count: 'exact', head: true })
-        .eq('plan_type', 'pro')
+        .eq('plan_type', planType)
         .eq('status', 'paid');
-      paidPro = count || 0;
+      paidCount = count || 0;
     }
-    const q = quote(planType, ciclo, paidPro);
+    const q = quote(planType, ciclo, paidCount);
 
     // ── 1. Registrar tentativa pendente (lookup do webhook depende disso) ──
     const { data: pending, error: pendingErr } = await supabase
@@ -197,7 +198,7 @@ serve(async (req: Request) => {
       billingType: billingTypeMap[paymentMethod],
       value: q.setup,
       dueDate,
-      description: `LOGOS|IA — Taxa de implementação (${planType === 'pro' ? 'PRO' : 'Básico'})`,
+      description: `LOGOS|IA — Taxa de implementação (${planType === 'pro' ? 'PRO' : planType === 'enterprise' ? 'PRO MAX' : 'Básico'})`,
       externalReference: `setup_${pendingId}`,
     };
 
@@ -237,7 +238,7 @@ serve(async (req: Request) => {
       value: q.recurrence,
       nextDueDate: nextDue.toISOString().slice(0, 10),
       cycle: q.cycleAsaas,
-      description: `LOGOS|IA — Plano ${planType === 'pro' ? 'PRO' : 'Básico'} ${ciclo === 'anual' ? 'Anual' : 'Mensal'}`,
+      description: `LOGOS|IA — Plano ${planType === 'pro' ? 'PRO' : planType === 'enterprise' ? 'PRO MAX' : 'Básico'} ${ciclo === 'anual' ? 'Anual' : 'Mensal'}`,
       externalReference: `sub_${pendingId}`,
     };
 

@@ -37,7 +37,7 @@ import {
 /* ── Tipos ─────────────────────────────────────────────────────────────── */
 type Step = 1 | 2 | 3;
 type Ciclo = 'mensal' | 'anual';
-type PlanType = 'pro' | 'basico';
+type PlanType = 'pro' | 'enterprise' | 'basico';
 type PaymentMethod = 'pix' | 'cartao' | 'boleto';
 type PersonType = 'pf' | 'pj';
 
@@ -115,7 +115,8 @@ export default function Checkout() {
   const navigate = useNavigate();
   // ?plano=pro|basico (links separados por plano). Compat: plano=mensal|anual → Pro.
   const planoRaw = searchParams.get('plano') || 'pro';
-  const planType: PlanType = planoRaw === 'basico' ? 'basico' : 'pro';
+  const planType: PlanType =
+    planoRaw === 'basico' ? 'basico' : planoRaw === 'enterprise' ? 'enterprise' : 'pro';
   const cicloFromPlano: Ciclo | null =
     planoRaw === 'anual' ? 'anual' : planoRaw === 'mensal' ? 'mensal' : null;
   const cicloParam = searchParams.get('ciclo');
@@ -173,16 +174,16 @@ export default function Checkout() {
   const canSubmit = canGoToStep3 && agreedTerms && !submitting;
 
   // ── Valores do plano (do checkout-pricing; mostra "—" enquanto carrega) ──
-  const planLabel = planType === 'pro' ? 'PRO' : 'Básico';
+  const planLabel = planType === 'pro' ? 'PRO' : planType === 'enterprise' ? 'PRO MAX' : 'Básico';
   const planPricing: any = pricing ? pricing[planType] : null;
   const cyclePricing: any = planPricing ? planPricing[ciclo] : null;
   const setupValue: number | null = cyclePricing?.setup ?? null;
   const recurrenceValue: number | null = cyclePricing?.recurrence ?? null;
   const totalTodayValue: number | null =
     setupValue != null && recurrenceValue != null ? setupValue + recurrenceValue : null;
-  const atendimentos: number | null = planPricing?.atendimentos ?? null;
-  const isFundador: boolean = planType === 'pro' && planPricing?.tier === 'fundador';
-  const foundersLeft: number | null = planType === 'pro' ? (planPricing?.foundersLeft ?? null) : null;
+  const hasTier = planType === 'pro' || planType === 'enterprise';
+  const isFundador: boolean = hasTier && planPricing?.tier === 'fundador';
+  const foundersLeft: number | null = hasTier ? (planPricing?.foundersLeft ?? null) : null;
 
   const recurrenceDisplay =
     recurrenceValue != null ? `${brl(recurrenceValue)}${ciclo === 'anual' ? '/ano' : '/mês'}` : '—';
@@ -197,9 +198,19 @@ export default function Checkout() {
       ? planPricing.mensal.recurrence * 12 - planPricing.anual.recurrence
       : 0;
 
-  const benefits = planType === 'pro'
+  const benefits = planType === 'enterprise'
     ? [
-        `${atendimentos ?? 300} atendimentos por ciclo`,
+        'Conversas ilimitadas · sua chave de IA',
+        'Tudo do Pro incluso',
+        'Todos os agentes liberados',
+        'Conexões de WhatsApp ilimitadas',
+        'Todas as integrações',
+        'Acompanhe as conversas dos vendedores',
+        'Suporte VIP prioritário',
+      ]
+    : planType === 'pro'
+    ? [
+        'Conversas ilimitadas · sua chave de IA',
         'Pedro 24/7 no WhatsApp',
         'Marcos · CRM ao vivo + disparo',
         'Importação ilimitada',
@@ -207,7 +218,7 @@ export default function Checkout() {
         'Suporte humano via WhatsApp',
       ]
     : [
-        `${atendimentos ?? 150} atendimentos por ciclo`,
+        'Conversas ilimitadas · sua chave de IA',
         'Pedro 24/7 no WhatsApp',
         'CRM com seus leads',
         'Suporte humano via WhatsApp',
