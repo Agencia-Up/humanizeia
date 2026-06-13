@@ -1887,7 +1887,19 @@ export async function processPedroV2Turn(
     || /\boutr[oa]s?\s+(carr|veicul|opc|model|suv|seda|hatch|picape|marca|ano)/.test(_msgNorm)
     || /\b(mais\s+opc|outra\s+opc|tem\s+outr[oa])\b/.test(_msgNorm);
   const _offTopicConcern = /\b(muito\s+longe|fica\s+longe|ta\s+longe|distante|outra\s+cidade|sao\s+paulo|frete|entrega|caro\s+demais|muito\s+caro|nao\s+quero|nao\s+precisa|nao\s+e\s+esse|ja\s+(mandou|enviou|vi|recebi|mostrou))\b/.test(_msgNorm);
-  const _blockPhotoOffTopic = (_wantsOtherVehicle || _offTopicConcern) && !messageAsksForPhotos(text);
+  // AGRADECIMENTO por fotos JA recebidas != pedido de MAIS fotos (caso real lead
+  // 5511974994767: "Bacana obrigado pela fotos / posso passar amanha?" -> o agente
+  // REDESPEJOU +5 fotos so porque a msg tinha a palavra "fotos"). A palavra "fotos"
+  // aqui e GRATIDAO, nao requisicao. Exige uma palavra de elogio/agradecimento perto
+  // de "foto(s)" E que NAO haja pedido explicito de mais ("manda/mais/quero ... foto").
+  // Bloqueia ATE quando messageAsksForPhotos casa (justamente porque "fotos" no
+  // agradecimento engana esse detector) — por isso fica FORA do `!messageAsksForPhotos`.
+  const _thanksForPhotos = /\bfotos?\b/.test(_msgNorm)
+    && /\b(obrigad|agradec|valeu|brigad|vlw|gostei|adorei|amei|curti|show|bacana|massa|otim|perfeit|maravilh|sensacional|muito\s+bo[am]|top|legal|ficaram?\s+(boa|otim|linda|show|top))/.test(_msgNorm)
+    && !/\b(mais|outra|outras|manda|mandar|envia|enviar|quero|queria|pode|tem|ver)\b[^.!?\n]{0,18}\bfotos?\b/.test(_msgNorm)
+    && !/\bfotos?\b[^.!?\n]{0,16}\b(traseir|frente|dianteir|lateral|lado|interior|dentro|motor|painel|roda|banco|porta[- ]?mala|outr)/.test(_msgNorm);
+  const _blockPhotoOffTopic = _thanksForPhotos
+    || ((_wantsOtherVehicle || _offTopicConcern) && !messageAsksForPhotos(text));
 
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
   // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
@@ -1912,7 +1924,7 @@ export async function processPedroV2Turn(
         ...brainPlan,
         action: "reply_only" as const,
         use_memory_vehicle: false,
-        response_guidance: "O lead NAO esta pedindo fotos: ele quer OUTRO carro/opcao OU levantou outra questao (distancia/localizacao, preco, ou ja recebeu as fotos). NAO envie fotos NEM prometa fotos. Responda a intencao REAL, curto e natural: se quer outro modelo/opcao, pergunte o perfil (tipo/faixa de preco) ou ofereca alternativas; se e distancia, tranquilize (proposta a distancia / detalhes por aqui); se ja recebeu, nao reenvie.",
+        response_guidance: "O lead NAO esta pedindo fotos: ele AGRADECEU/elogiou as fotos que ja recebeu, OU quer OUTRO carro/opcao, OU levantou outra questao (distancia/localizacao, preco). NAO envie fotos NEM prometa fotos NEM reenvie as mesmas. Responda a intencao REAL, curto e natural: se ele agradeceu/gostou, reconheca de forma breve e AVANCE (proponha agendar a visita / test drive / falar de condicoes); se quer outro modelo/opcao, pergunte o perfil (tipo/faixa de preco) ou ofereca alternativas; se e distancia, tranquilize (proposta a distancia / detalhes por aqui).",
         reason: `block_photo_offtopic:${brainPlan.reason || ""}`,
       }
     : brainPlan;
