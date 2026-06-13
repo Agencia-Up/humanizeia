@@ -347,7 +347,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   const [zoom, setZoom] = useState<number>(() => {
     try {
       const v = parseFloat(localStorage.getItem('dashtv_zoom') || '');
-      return v >= 0.5 && v <= 2 ? v : 1;
+      return v >= 0.4 && v <= 2.5 ? v : 1;
     } catch { return 1; }
   });
   const [zoomMode, setZoomMode] = useState<'auto' | 'manual'>(() => {
@@ -356,6 +356,14 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   });
   useEffect(() => { try { localStorage.setItem('dashtv_zoom', String(zoom)); } catch { /* ignore */ } }, [zoom]);
   useEffect(() => { try { localStorage.setItem('dashtv_zoom_mode', zoomMode); } catch { /* ignore */ } }, [zoomMode]);
+
+  // Zoom do modo EMBUTIDO (aba do Pedro). Separado do TV pra um não atropelar o
+  // outro (o TV tem auto-fit; o embutido é manual). Default 100% = sem mudança.
+  const [zoomEmbed, setZoomEmbed] = useState<number>(() => {
+    try { const v = parseFloat(localStorage.getItem('dashtv_zoom_embed') || ''); return v >= 0.4 && v <= 2.5 ? v : 1; }
+    catch { return 1; }
+  });
+  useEffect(() => { try { localStorage.setItem('dashtv_zoom_embed', String(zoomEmbed)); } catch { /* ignore */ } }, [zoomEmbed]);
 
   // Auto-ajuste: mede a altura real do painel e calcula o zoom que faz tudo caber
   // na altura da tela (a largura já é preenchida via width:100/zoom%). Converge em
@@ -367,7 +375,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     const fit = () => {
       const h = el.scrollHeight;
       if (!h) return;
-      const ideal = Math.max(0.5, Math.min(2, (viewport.h * 0.99) / h));
+      const ideal = Math.max(0.4, Math.min(2.5, (viewport.h * 0.99) / h));
       setZoom(prev => (Math.abs(prev - ideal) > 0.012 ? ideal : prev));
     };
     fit();
@@ -1541,11 +1549,20 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     </>
   );
 
-  // Embedded (aba do Pedro SDR): cresce com o conteúdo, sem escala.
+  // Embedded (aba do Pedro SDR): agora escala como o modo TV — zoom próprio (CSS
+  // `zoom`, que reflui o layout, sem buraco) + o MESMO controle de zoom. Default
+  // 100% (igual ao de antes); o usuário ajusta pra caber no painel dele.
   if (embedded) {
     return (
-      <div ref={containerRef} className={wrapperClass}>
-        {panelContent}
+      <div ref={containerRef} className={`relative ${wrapperClass}`}>
+        <div style={{ zoom: zoomEmbed }}>{panelContent}</div>
+        <ZoomControl
+          zoom={zoomEmbed}
+          mode="manual"
+          visible={true}
+          onZoom={(z) => setZoomEmbed(z)}
+          onAuto={() => setZoomEmbed(1)}
+        />
       </div>
     );
   }
@@ -1590,7 +1607,7 @@ function ZoomControl({
   visible: boolean;
 }) {
   const pct = Math.round(zoom * 100);
-  const step = (d: number) => onZoom(Math.max(0.5, Math.min(2, +(zoom + d).toFixed(2))));
+  const step = (d: number) => onZoom(Math.max(0.4, Math.min(2.5, +(zoom + d).toFixed(2))));
   return (
     <div
       className={`absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full bg-slate-900/85 border border-slate-700 px-3 py-1.5 backdrop-blur shadow-xl transition-opacity duration-300 ${
@@ -1598,22 +1615,22 @@ function ZoomControl({
       }`}
     >
       <button
-        onClick={() => step(-0.05)}
+        onClick={() => step(-0.02)}
         className="w-6 h-6 flex items-center justify-center rounded-full text-slate-200 hover:bg-slate-700 text-lg leading-none"
         title="Diminuir zoom"
       >−</button>
       <input
         type="range"
-        min={0.5}
-        max={2}
-        step={0.05}
+        min={0.4}
+        max={2.5}
+        step={0.02}
         value={zoom}
         onChange={(e) => onZoom(parseFloat(e.target.value))}
         className="w-32 accent-blue-500 cursor-pointer"
         title="Ajustar zoom"
       />
       <button
-        onClick={() => step(0.05)}
+        onClick={() => step(0.02)}
         className="w-6 h-6 flex items-center justify-center rounded-full text-slate-200 hover:bg-slate-700 text-lg leading-none"
         title="Aumentar zoom"
       >+</button>
