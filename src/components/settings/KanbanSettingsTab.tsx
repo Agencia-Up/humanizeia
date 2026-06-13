@@ -21,6 +21,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -61,6 +62,11 @@ let tempCounter = 0;
 
 export function KanbanSettingsTab() {
   const { user } = useAuth();
+  // Dono efetivo das ETAPAS (são do master e compartilhadas): master usa o próprio
+  // uid; vendedor usa o uid do MASTER. Sem isso, a coluna criada por um vendedor
+  // caía sob o uid dele e não aparecia no CRM (que lê as etapas do master).
+  const { isSeller, masterUserId, loading: sellerLoading } = useSellerProfile(user?.id);
+  const ownerId = sellerLoading ? null : (isSeller ? masterUserId : (user?.id || null));
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -76,7 +82,7 @@ export function KanbanSettingsTab() {
   );
 
   const load = async () => {
-    if (!user?.id) return;
+    if (!ownerId) return;
     setLoading(true);
     try {
       // 1. stages do master (TODAS — inclui inativas, que somem do board mas
@@ -84,7 +90,7 @@ export function KanbanSettingsTab() {
       const { data: stagesRaw, error: stErr } = await (supabase as any)
         .from('crm_pipeline_stages')
         .select('id, name, color, position, tipo, ativo, responsavel_padrao_id, is_default')
-        .eq('user_id', user.id)
+        .eq('user_id', ownerId)
         .order('position', { ascending: true });
       if (stErr) throw stErr;
       const list = (stagesRaw || []) as any[];
@@ -96,7 +102,7 @@ export function KanbanSettingsTab() {
         const counts = await Promise.all(ids.map(id =>
           (supabase as any).from('crm_leads')
             .select('id', { count: 'exact', head: true })
-            .eq('user_id', user.id).eq('stage_id', id)
+            .eq('user_id', ownerId).eq('stage_id', id)
             .then((r: any) => ({ id, count: r.count || 0 }))
         ));
         for (const c of counts) countsMap.set(c.id, c.count);
@@ -107,7 +113,7 @@ export function KanbanSettingsTab() {
       const { data: sellersRaw } = await (supabase as any)
         .from('ai_team_members')
         .select('id, name, whatsapp_number, active_in_system')
-        .eq('user_id', user.id)
+        .eq('user_id', ownerId)
         .eq('active_in_system', true);
       const seenWa = new Map<string, SellerOpt>();
       for (const s of (sellersRaw || [])) {
@@ -135,7 +141,7 @@ export function KanbanSettingsTab() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.id]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [ownerId]);
 
   // ── edicao LOCAL (nao persiste ate "Salvar configuracoes") ────────────────
   const patch = (id: string, p: Partial<Row>) =>
@@ -186,7 +192,7 @@ export function KanbanSettingsTab() {
 
   // ── persistencia em LOTE (atomica) ────────────────────────────────────────
   const saveAll = async () => {
-    if (!user?.id) return;
+    if (!ownerId) return;
     const trimmed = rows.map(r => ({ ...r, name: r.name.trim() }));
     if (trimmed.some(r => !r.name)) {
       toast({ title: 'Toda coluna precisa de um nome', variant: 'destructive' });
@@ -204,7 +210,7 @@ export function KanbanSettingsTab() {
       // 1. excluir colunas removidas (a UI ja garante 0 leads)
       if (deletedIds.length) {
         const del = await (supabase as any).from('crm_pipeline_stages')
-          .delete().eq('user_id', user.id).in('id', deletedIds).select('id');
+          .delete().eq('user_id', ownerId).in('id', deletedIds).select('id');
         if (del.error) throw new Error('Falha ao excluir coluna(s): ' + del.error.message);
       }
 
@@ -214,7 +220,7 @@ export function KanbanSettingsTab() {
       const nowIso = new Date().toISOString();
       const payload = trimmed.map((r, i) => ({
         id: r._isNew ? crypto.randomUUID() : r.id,
-        user_id: user.id,
+        user_id: ownerId,
         name: r.name,
         color: r.color,
         position: i,
