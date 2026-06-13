@@ -103,6 +103,7 @@ function mediaTypeFromMime(mime: string): 'image' | 'audio' | 'video' | 'documen
    o CRM, que filtra so por user_id). Sem isso, o inbox filtrava por agent_id e a
    lista vinha vazia quando o lead estava sob outro agente (ou agent_id null). */
 const ALL_AGENTS = '__all__';
+const ALL_SELLERS = '__all_sellers__'; // filtro "todos" do dropdown de vendedor (só master)
 
 /* ── Componente Principal ──────────────────────────────────────────── */
 export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }: AgentInboxTabProps) {
@@ -111,6 +112,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
   // Agents
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  // Filtro por vendedor (só master): acompanhar os leads/conversas de um vendedor.
+  const [sellers, setSellers] = useState<{ key: string; name: string; memberIds: string[] }[]>([]);
+  const [sellerFilter, setSellerFilter] = useState<string>(ALL_SELLERS);
   const [loadingAgents, setLoadingAgents] = useState(true);
 
   // Leads (conversations)
@@ -174,6 +178,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
     load();
   }, [userId]);
 
+  /* ── Vendedores do master (filtro de acompanhamento) ──────────── */
+  useEffect(() => {
+    if (isSeller || !userId) { setSellers([]); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('ai_team_members')
+        .select('id, name, whatsapp_number, active_in_system')
+        .eq('user_id', userId)
+        .neq('active_in_system', false);
+      if (cancelled) return;
+      // Agrupa por whatsapp: 1 vendedor pode ter 1 row por agente (member ids vários).
+      const byKey = new Map<string, { key: string; name: string; memberIds: string[] }>();
+      for (const s of ((data || []) as any[])) {
+        const key = s.whatsapp_number || s.id;
+        if (!byKey.has(key)) byKey.set(key, { key, name: s.name || 'Vendedor', memberIds: [] });
+        byKey.get(key)!.memberIds.push(s.id);
+      }
+      setSellers([...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)));
+    })();
+    return () => { cancelled = true; };
+  }, [isSeller, userId]);
+
   /* ── Fetch leads for selected agent ──────────────────────────── */
   const fetchLeads = useCallback(async () => {
     if (!selectedAgentId) return;
@@ -196,10 +223,18 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
         ? query.in('assigned_to_id', sellerMemberIds)
         : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
     }
+    // Master filtrando por um vendedor: escopa aos member ids dele (todos os rows
+    // do mesmo whatsapp). Sem vendedor selecionado = todos os leads (atual).
+    if (!isSeller && sellerFilter !== ALL_SELLERS) {
+      const ids = sellers.find(s => s.key === sellerFilter)?.memberIds || [];
+      query = ids.length > 0
+        ? query.in('assigned_to_id', ids)
+        : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
+    }
     const { data } = await query.order('last_interaction_at', { ascending: false });
     setLeads(data || []);
     setLoadingLeads(false);
-  }, [selectedAgentId, userId, isSeller, sellerMemberIds]);
+  }, [selectedAgentId, userId, isSeller, sellerMemberIds, sellerFilter, sellers]);
 
   useEffect(() => {
     fetchLeads();
@@ -731,6 +766,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
             </SelectContent>
           </Select>
         </div>
+        {!isSeller && sellers.length > 0 && (
+          <Select value={sellerFilter} onValueChange={v => { setSellerFilter(v); setSelectedLead(null); }}>
+            <SelectTrigger className="h-8 text-xs w-[180px] shrink-0" title="Acompanhar as conversas de um vendedor">
+              <SelectValue placeholder="Vendedor" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_SELLERS} className="text-xs">
+                <span className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                  Todos os vendedores
+                </span>
+              </SelectItem>
+              {sellers.map(s => (
+                <SelectItem key={s.key} value={s.key} className="text-xs">
+                  <span className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                    {s.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] shrink-0">
           {leads.length} conversa{leads.length !== 1 ? 's' : ''}
         </Badge>
