@@ -553,11 +553,18 @@ export default function PainelGeral() {
   const isClosedLabel = (l: string) => { const n = (l || '').toLowerCase(); return n.includes('venda conclu') || n.includes('fechado'); };
   const closedPedro = dashData.pedroFunnel.find(i => isClosedLabel(i.label))?.value || 0;
   const closedMarcos = dashData.marcosFunnel.find(i => isClosedLabel(i.label))?.value || 0;
-  const closedRate = dTotal > 0 ? Math.round(((closedPedro + closedMarcos) / dTotal) * 100) : 0;
+  const closedCount = closedPedro + closedMarcos;
+  // "Fechados" é CONVERSÃO (vendas / total de leads), não divisão de origem.
+  // Quando é < 1% (mas > 0), mostra 1 casa decimal pra não arredondar pra "0%"
+  // enganoso (ex.: 3 de 1.112 = 0,27% -> "0,3%").
+  const closedPct = dTotal > 0 ? (closedCount / dTotal) * 100 : 0;
+  const closedRateLabel = closedPct > 0 && closedPct < 1
+    ? `${closedPct.toFixed(1).replace('.', ',')}%`
+    : `${Math.round(closedPct)}%`;
   const originCards = [
     { label: 'IA / Pago', value: `${paidShare}%`, sub: `${dashData.pedroTotal} leads do Pedro`, color: 'bg-blue-500/15 text-blue-300' },
     { label: 'Manual', value: `${manualShare}%`, sub: `${dashData.marcosTotal} leads do Marcos`, color: 'bg-purple-500/15 text-purple-300' },
-    { label: 'Fechados', value: `${closedRate}%`, sub: `${closedPedro + closedMarcos} oportunidades`, color: 'bg-emerald-500/15 text-emerald-300' },
+    { label: 'Vendas fechadas', value: `${closedCount}`, sub: `${closedRateLabel} de conversão · de ${dTotal.toLocaleString('pt-BR')} leads`, color: 'bg-emerald-500/15 text-emerald-300' },
   ];
 
   return (
