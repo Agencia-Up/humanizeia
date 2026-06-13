@@ -1590,7 +1590,7 @@ export default function LandingPage() {
           <div className="relative mx-auto">
 
             {/* ── DOIS CARDS: PRO FUNDADOR + BASICO (lado a lado) ── */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 max-w-4xl mx-auto items-stretch">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-7 max-w-6xl mx-auto items-stretch">
 
               {/* ===== CARD PRO FUNDADOR (destaque dourado) ===== */}
               <div className="relative">
@@ -1647,22 +1647,22 @@ export default function LandingPage() {
                       <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
                     </div>
                     <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                      Valor promocional nos 3 primeiros meses. Depois, R$ 997,90/mês.
+                      Preço de fundador (10 primeiros). Depois, R$ 797,90/mês.
                     </p>
                     <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      + R$ 1.497 de implementação (pagamento único)
+                      Implementação: <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>R$ 1.997,90</span> por R$ 1.497,90 (única)
                     </p>
 
-                    {/* Highlight 300 conversas */}
+                    {/* Highlight conversas ilimitadas (chave própria de IA) */}
                     <div
                       className="mt-5 mb-5 rounded-xl p-3 text-center"
                       style={{ background: 'rgba(212, 160, 23, 0.12)', border: '1px solid rgba(212, 160, 23, 0.30)' }}
                     >
                       <span className="text-lg font-extrabold" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
-                        300 conversas/mês
+                        Conversas ilimitadas
                       </span>
                       <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
-                        incluídas no atendimento com IA
+                        com a sua própria chave de IA
                       </span>
                     </div>
 
@@ -1704,6 +1704,103 @@ export default function LandingPage() {
                       <Link to="/checkout?plano=pro&ciclo=mensal">
                         Quero o Pro Fundador <ArrowRight className="h-5 w-5" strokeWidth={3} />
                       </Link>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ===== CARD PRO MAX (premium) ===== */}
+              <div className="relative">
+                <div
+                  className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
+                  style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
+                />
+                <div
+                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
+                  style={{
+                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
+                    border: '2px solid var(--brand-gold)',
+                    boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)',
+                  }}
+                >
+                  <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
+
+                  <div className="px-6 md:px-8 pt-6">
+                    <div
+                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                      style={{ background: 'rgba(212, 160, 23, 0.15)', border: '1px solid rgba(212, 160, 23, 0.40)' }}
+                    >
+                      <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
+                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'var(--brand-gold)' }}>
+                        Pro Max · Fundador · 10 primeiros
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
+                    <h3 className="text-3xl font-black uppercase tracking-wide" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}>
+                      Pro Max
+                    </h3>
+                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                      Tudo do Pro, com todos os agentes liberados.
+                    </p>
+
+                    <div className="flex items-end gap-1 leading-none">
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
+                      <span className="text-6xl font-black leading-none" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}>
+                        797
+                      </span>
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
+                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
+                    </div>
+                    <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
+                      Preço de fundador (10 primeiros). Depois, R$ 1.297,90/mês.
+                    </p>
+                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                      Implementação: <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>R$ 1.997,90</span> por R$ 1.497,90 (única)
+                    </p>
+
+                    <div className="mt-5 mb-5 rounded-xl p-3 text-center" style={{ background: 'rgba(212, 160, 23, 0.12)', border: '1px solid rgba(212, 160, 23, 0.30)' }}>
+                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
+                        Conversas ilimitadas
+                      </span>
+                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
+                        com a sua própria chave de IA
+                      </span>
+                    </div>
+
+                    <ul className="space-y-2.5 text-sm flex-1">
+                      {[
+                        'Tudo do plano Pro',
+                        'Todos os agentes de IA liberados',
+                        'Conexões de WhatsApp ilimitadas',
+                        'Todas as integrações liberadas',
+                        'Acompanhamento das conversas da equipe',
+                        'Onboarding e suporte VIP',
+                      ].map((f) => (
+                        <li key={f} className="flex items-start gap-2.5">
+                          <span className="mt-0.5 shrink-0 rounded-full flex items-center justify-center" style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}>
+                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
+                          </span>
+                          <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <Button
+                      asChild
+                      size="lg"
+                      className="mt-7 w-full text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
+                      style={{
+                        background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
+                        color: 'var(--brand-navy)',
+                        boxShadow: '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)',
+                        border: '2px solid var(--brand-gold-hover)',
+                      }}
+                    >
+                      <a href="https://wa.me/5534999080815?text=Quero%20o%20plano%20Pro%20Max" target="_blank" rel="noopener noreferrer">
+                        Quero o Pro Max <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                      </a>
                     </Button>
                   </div>
                 </div>
