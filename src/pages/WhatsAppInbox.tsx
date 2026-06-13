@@ -67,6 +67,7 @@ interface WaInstance {
   phone_number: string | null;
   status: string;
   is_active: boolean;
+  seller_member_id: string | null;
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
@@ -179,10 +180,10 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .order('instance_name');
     if (isSeller && seller?.id) {
       query = query.eq('seller_member_id', seller.id);
-    } else {
-      // Master: só inbox das próprias instâncias (não dos vendedores)
-      query = query.is('seller_member_id', null);
     }
+    // Master: vê TODAS as instâncias da conta (próprias + as dos vendedores), pra
+    // acompanhar as conversas de WhatsApp de cada vendedor. As abas por número
+    // (incluindo o de cada vendedor) deixam escolher de qual ver as conversas.
     const { data } = await query;
     const all = (data || []) as unknown as WaInstance[];
     setAllInstances(all);
@@ -716,7 +717,11 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                     ? <Wifi className="h-3 w-3 text-emerald-500" />
                     : <WifiOff className="h-3 w-3 text-red-400" />
                   }
-                  <span className="max-w-[120px] truncate">{inst.friendly_name || inst.instance_name}</span>
+                  <span className="max-w-[120px] truncate">{
+                    inst.seller_member_id
+                      ? (teamMembers.find((m: any) => m.id === inst.seller_member_id)?.name || inst.friendly_name || inst.instance_name)
+                      : (inst.friendly_name || inst.instance_name)
+                  }</span>
                   {inst.phone_number && (
                     <span className="text-[10px] text-muted-foreground/60">
                       {inst.phone_number.replace(/\D/g, '').slice(-4)}
