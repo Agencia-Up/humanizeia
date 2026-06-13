@@ -24,6 +24,7 @@ function createSupabaseClient(url: string, key: string) {
     let _select: string | null = null;
     let _filters: { col: string; op: string; val: string }[] = [];
     let _limit: number | null = null;
+    let _orders: { column: string; ascending: boolean; nullsFirst: boolean }[] = [];
     let _maybeSingle = false;
     let _body: any = null;
     let _method: 'GET' | 'POST' | 'PATCH' = 'GET';
@@ -37,6 +38,9 @@ function createSupabaseClient(url: string, key: string) {
       is(col: string, val: any) { _filters.push({ col, op: 'is', val: String(val) }); return builder; },
       in(col: string, vals: any[]) { _filters.push({ col, op: 'in', val: `(${vals.map(v => `"${v}"`).join(',')})` }); return builder; },
       limit(n: number) { _limit = n; return builder; },
+      order(column: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
+        _orders.push({ column, ascending: opts?.ascending ?? true, nullsFirst: opts?.nullsFirst ?? false }); return builder;
+      },
       maybeSingle() { _maybeSingle = true; return builder._execute(); },
       update(data: any) { _method = 'PATCH'; _body = data; return builder; },
       insert(data: any) { _method = 'POST'; _body = data; return builder._execute(); },
@@ -46,6 +50,7 @@ function createSupabaseClient(url: string, key: string) {
         const selectVal = _method === 'PATCH' ? (_returnSelect || undefined) : (_select || '*');
         if (selectVal) params.set('select', selectVal);
         for (const f of _filters) params.append(f.col, `${f.op}.${f.val}`);
+        for (const o of _orders) params.append('order', o.column + (o.ascending ? '.asc' : '.desc') + (o.nullsFirst ? '.nullsfirst' : '.nullslast'));
         if (_limit !== null) params.set('limit', String(_limit));
         const qs = params.toString();
         const headers: Record<string, string> = { ...baseHeaders };
