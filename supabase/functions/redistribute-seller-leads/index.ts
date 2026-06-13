@@ -497,6 +497,9 @@ Deno.serve(async (req) => {
         disponivel_repasse: true,
         repasse_motivo: 'repasse_parado',
         assigned_to_id: null,
+        // status 'inativo' tira o lead do alcance do resgate (que so pega
+        // 'transferido'); fica so no bolsao ate o gestor atribuir.
+        status: 'inativo',
       }).eq('id', lead.id);
       if (!upd.error) {
         report.push({ lead_id: lead.id, lead_name: lead.lead_name, acao: 'bolsao', vendedor: null });

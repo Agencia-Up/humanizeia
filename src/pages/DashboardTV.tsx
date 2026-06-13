@@ -286,7 +286,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   });
 
   // Bolsão (Fase 2): leads sem dono que o gestor atribui no painel.
-  const [poolLeads, setPoolLeads] = useState<Array<{ id: string; lead_name: string | null; remote_jid: string | null; status_crm: string | null; vehicle_interest: string | null; created_at: string }>>([]);
+  const [poolLeads, setPoolLeads] = useState<Array<{ id: string; lead_name: string | null; remote_jid: string | null; status_crm: string | null; vehicle_interest: string | null; created_at: string; repasse_motivo: string | null }>>([]);
   const [poolPick, setPoolPick] = useState<Record<string, string>>({}); // lead_id -> vendedor escolhido
   const [assigningPoolId, setAssigningPoolId] = useState<string | null>(null);
 
@@ -552,7 +552,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // No modo vendedor a RLS devolve vazio (a seção só aparece pro master).
         const poolQuery = (supabase as any)
           .from('ai_crm_leads')
-          .select('id, lead_name, remote_jid, status_crm, vehicle_interest, created_at')
+          .select('id, lead_name, remote_jid, status_crm, vehicle_interest, created_at, repasse_motivo')
           .eq('user_id', effectiveUserId)
           .eq('disponivel_repasse', true)
           .order('created_at', { ascending: false })
@@ -1491,7 +1491,13 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
               return (
                 <div key={lead.id} className="flex items-center gap-2 bg-slate-900/40 border border-slate-800 rounded-lg px-3 py-2">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-slate-100 truncate">{lead.lead_name || 'Lead sem nome'}</p>
+                    <p className="text-sm font-semibold text-slate-100 truncate flex items-center gap-1.5">
+                      <span className="truncate">{lead.lead_name || 'Lead sem nome'}</span>
+                      {lead.repasse_motivo === 'loop_watchdog' && (
+                        <span className="shrink-0 text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300"
+                          title="Ficou rodando entre vendedores sem ninguém assumir — atenda ou atribua">⚠ rodou sem dono</span>
+                      )}
+                    </p>
                     <p className="text-[11px] text-slate-400 truncate">{lead.vehicle_interest || '—'}</p>
                   </div>
                   <select
