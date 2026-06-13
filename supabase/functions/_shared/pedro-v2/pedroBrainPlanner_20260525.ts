@@ -173,6 +173,46 @@ function isAffirmativeText(message?: string | null) {
   return false;
 }
 
+// Lead quer um veiculo MAIS BARATO que o em foco (ex.: viu Polo R$110k e respondeu
+// "queria um mais barato"). NAO e aceite de foto NEM do veiculo em foco — e um pedido
+// para mostrar opcoes mais em conta. (caso real 5512974108975.)
+function wantsCheaperVehicle(message?: string | null) {
+  const n = normalizeText(message);
+  if (!n) return false;
+  return /\b(mais barat[oa]s?|mais em conta|baratinh[oa]|mais economic[oa]s?|mais acessivel|preco menor|menor preco|mais baix[oa] de preco|abaixo dele|abaixo desse|gastar menos|mais conta)\b/.test(n);
+}
+
+// Lead pede explicitamente OUTRO veiculo / nao gostou do em foco. Tambem invalida o
+// aceite de foto (a palavra "queria/quero" no inicio nao pode disparar foto do carro
+// que ele esta justamente recusando).
+function wantsOtherVehicle(message?: string | null) {
+  const n = normalizeText(message);
+  if (!n) return false;
+  return /\b(outro carro|outra opcao|outras opcoes|outro modelo|outros modelos|tem outro|tem outra|outro veiculo|prefiro outro|prefiro outra|queria outro|queria outra|quero outro|quero outra|um diferente|nao quero esse|nao gostei desse|nao gostei dele|nao curti esse)\b/.test(n);
+}
+
+// Aceite de foto/veiculo em foco NAO vale quando o lead, na mesma fala, redireciona
+// para OUTRO veiculo ou para um MAIS BARATO. (Bug: "queria um mais barato" comecava
+// com "queria" -> isAffirmativeText=true -> forcava foto do carro recusado.)
+function expressesOtherVehicleWish(message?: string | null) {
+  return wantsCheaperVehicle(message) || wantsOtherVehicle(message);
+}
+
+// Lead esta OFERECENDO o carro DELE na troca (nao quer comprar o carro que citou).
+// "Seria trocar com minha Strada 2022", "tenho um Onix pra trocar", "aceita na troca?".
+// Distinto de "trocar meu Gol POR um Civic" (= interesse num carro NOVO -> buscar).
+function isTradeInOffer(message?: string | null, heuristicIntent?: string | null) {
+  const n = normalizeText(message);
+  if (!n) return false;
+  const mentionsTrade = heuristicIntent === "trade_in" || /\b(troc\w+|na troca)\b/.test(n);
+  if (!mentionsTrade) return false;
+  // Se aponta um carro NOVO de interesse (trocar POR / interesse no/na), NAO bloquear a busca.
+  const wantsNew = /\b(por|pel[oa])\s+(um|uma|uns|umas|outro|outra|outros|outras|o|a|esse|essa|este|esta)\b/.test(n)
+    || /\b(troc\w+|interesse)\s+(por|pel[oa]|no|na)\b/.test(n)
+    || /\b(quero|queria|gostaria de|prefiro|me interessa|fiquei de olho n[oa])\s+(um|uma|o|a|outro|outra)\b/.test(n);
+  return !wantsNew;
+}
+
 // Resposta CURTA que SELECIONA qual veiculo o lead quer ver, em reacao a uma oferta
 // de fotos ("qual voce quer ver, o 2024 ou o 2020?"). O lead responde so "2024",
 // "o primeiro", "o preto" — e isso significa "manda as fotos DESSE". Sem isso, o
@@ -304,7 +344,7 @@ function fallbackPlan(input: {
   const vehicle = input.vehicle_resolution;
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
   const photo = isPhotoText(input.message);
-  const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input);
+  const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input) && !expressesOtherVehicleWish(input.message);
 
   if (isSocialQuestion(input.message)) {
     return {
@@ -522,6 +562,49 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     };
   }
 
+  const _heurIntent = String(input.heuristic_intent?.intent || "");
+  // ── TROCA: lead OFERECE o carro dele (nao quer comprar o que citou) — caso 5512997468490 ──
+  // "Seria trocar com outra estrada 2022" virava busca de "strada 2022" -> "nao temos no estoque".
+  // E uma TROCA: o carro citado e o usado DELE, nao um novo interesse. Forca trade_in/reply_only.
+  if (isTradeInOffer(input.message, _heurIntent)) {
+    plan.action = "reply_only";
+    plan.intent = "trade_in";
+    plan.search_query = null;
+    plan.use_memory_vehicle = true;
+    plan.search_filters = {};
+    plan.photo_target = null;
+    plan.reason = `enforced_trade_in_offer:${plan.reason || ""}`;
+    plan.response_guidance = "O lead esta OFERECENDO o carro DELE na TROCA (nao quer COMPRAR o carro que ele citou). NUNCA diga que 'nao temos' o carro que ele mencionou e NAO busque ele no estoque. Reconheca a troca de forma positiva (avaliamos o usado dele na troca), mantenha o foco no veiculo do anuncio/interesse, e siga: pergunte detalhes do usado (modelo/ano/km/versao) OU encaminhe pra avaliacao. Nao invente valor de avaliacao.";
+  }
+  // ── MAIS BARATO: lead achou o carro em foco caro e quer opcoes mais em conta — caso 5512974108975 ──
+  // "Queria um mais barato" comecava com "queria" -> isAffirmativeText -> forcava FOTO do carro caro,
+  // e nunca buscava alternativas. Agora vira busca AMPLA capada pelo preco do foco / orcamento conhecido.
+  else if (wantsCheaperVehicle(input.message)) {
+    const presented = Array.isArray(input.memory?.veiculos_apresentados) ? input.memory.veiculos_apresentados : [];
+    const focus = presented[presented.length - 1] || presented[0] || null;
+    const focusPrice = Number((focus as any)?.preco) || null;
+    const budget = Number((input.memory?.interesse as any)?.preco_max) || null;
+    const caps = [focusPrice, budget].filter((v) => v && v > 0) as number[];
+    const precoMax = caps.length ? Math.min(...caps) : null;
+    const tipo = (input.memory?.interesse as any)?.tipo_veiculo || plan.search_filters?.tipo_veiculo || null;
+    plan.action = "stock_search";
+    plan.intent = "stock_lookup";
+    plan.search_query = null;
+    plan.use_memory_vehicle = false;
+    plan.photo_target = null;
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      // flag lida pelo orquestrador: faz busca LIMPA por tipo+preco (sem poluicao de
+      // ad_context/interesse velho, que zerava a busca ampla em leads existentes).
+      cheaper_followup: true,
+      modelo_desejado: null,
+      tipo_veiculo: tipo,
+      ...(precoMax ? { preco_max: precoMax } : {}),
+    };
+    plan.reason = `enforced_cheaper_followup:${plan.reason || ""}`;
+    plan.response_guidance = "O lead achou o veiculo em foco CARO e quer um MAIS BARATO. NAO reapresente o caro nem mande fotos dele. Mostre 2-4 opcoes REAIS do estoque MAIS BARATAS (priorize as de MENOR preco), do mesmo tipo quando fizer sentido, e pergunte se alguma agrada. NAO pergunte 'qual marca/ano' sem antes MOSTRAR opcoes.";
+  }
+
   // ── REDE DE SEGURANÇA: BUSCA DE VEÍCULO (restaurada — evidência real, caso Patricia) ──
   // O agente disse "não temos Jeep Compass" SEM TER BUSCADO — e há 3 Compass no estoque.
   // ── REDE DE SEGURANÇA: BUSCA DE VEÍCULO (restaurada — evidência real, caso Patricia) ──
@@ -624,7 +707,7 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // hasRecentPhotoOffer exige que a ULTIMA fala do agente tenha oferecido fotos — nunca
   // dispara foto "do nada". (Demais enforcements do normalizePlan ficam a cargo do LLM.)
   const hasPresentedVehicles = Array.isArray(input.memory?.veiculos_apresentados) && input.memory.veiculos_apresentados.length > 0;
-  const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input);
+  const acceptedPhotoOffer = (isAffirmativeText(input.message) || isPhotoSelectorReply(input.message)) && hasRecentPhotoOffer(input) && !expressesOtherVehicleWish(input.message);
 
   if (acceptedPhotoOffer && hasPresentedVehicles && !input.vehicle_resolution?.possible_new_topic) {
     plan.action = "photo_request";

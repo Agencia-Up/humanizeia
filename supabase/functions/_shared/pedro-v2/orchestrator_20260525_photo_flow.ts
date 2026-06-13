@@ -1649,6 +1649,28 @@ export async function processPedroV2Turn(
     }
   }
 
+  // MAIS BARATO (cheaper_followup do planner): o lead achou o carro em foco caro e quer
+  // opcoes mais em conta. A busca AMPLA normal ZERA nesses leads porque buildStockFilters
+  // mistura ad_context (blob do anuncio/conversa) + interesse velho no query -> vira filtro
+  // estrito de modelo. Aqui LIMPAMOS tudo e fazemos busca limpa por TIPO+PRECO (mesmo caminho
+  // comprovado da recuperacao por tipo+preco). caso real 5512974108975 (Polo 110k, budget 70k).
+  if (stockFilters && (brainPlan?.search_filters as any)?.cheaper_followup) {
+    const _t = String((brainPlan.search_filters as any).tipo_veiculo || "").toLowerCase();
+    const _tipo = ["hatch", "sedan", "suv", "pickup"].includes(_t) ? _t : null;
+    const _pmax = Number((brainPlan.search_filters as any).preco_max) || null;
+    const sf = stockFilters as any;
+    sf.query = "";
+    sf.modelo_desejado = null; sf.modelo = null; sf.marca = null; sf.versao = null;
+    sf.ano = null; sf.ano_min = null; sf.ano_max = null;
+    sf.cor = null; sf.cambio = null; sf.combustivel = null;
+    sf.ad_context = ""; sf.contexto_anuncio = ""; sf.stock_broad = false;
+    sf.tipo_veiculo = _tipo;
+    if (_tipo) sf.body_type = _tipo;
+    sf.budget_cheapest = true;
+    if (_pmax) sf.preco_max = _pmax; else delete sf.preco_max;
+    isGenericQuery = false;
+  }
+
   if (stockFilters && !isGenericQuery) {
     stockResult = await searchPedroStock(supabase, {
       user_id: input.agent.user_id,
