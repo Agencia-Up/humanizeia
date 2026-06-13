@@ -2,7 +2,6 @@ import { ReactNode, useLayoutEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
-import { AIAssistantButton } from '@/components/ai/AIAssistantButton';
 import { ProductTour } from '@/components/onboarding/ProductTour';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
@@ -108,7 +107,6 @@ export function MainLayout({ children }: MainLayoutProps) {
           </div>
         </SidebarInset>
       </div>
-      <AIAssistantButton />
       <ProductTour />
     </SidebarProvider>
   );
