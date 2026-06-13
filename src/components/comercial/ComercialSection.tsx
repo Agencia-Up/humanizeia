@@ -12,9 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  TrendingUp, DollarSign, Target, Trophy, Users, Plus, ArrowLeft, Loader2, Radio, Ticket,
+  TrendingUp, DollarSign, Target, Trophy, Users, Plus, ArrowLeft, Loader2, Radio, Ticket, Pencil, Check, X,
 } from 'lucide-react';
 import { useComercialData } from '@/hooks/useComercialData';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import { LancarVendaDialog } from './LancarVendaDialog';
 import { ComercialCharts } from './ComercialCharts';
 import {
@@ -61,9 +63,13 @@ export function ComercialSection({
   periodStart, periodEnd, periodLabel, isSeller, ownerUserId, currentSellerId, currentSellerName, externalSellerId,
 }: Props) {
   const refDate = useMemo(() => new Date(periodEnd), [periodEnd]);
-  const { vendasAno, metas, sellers, loading, refresh } = useComercialData({ ownerUserId, refDate, isSeller });
+  const { vendasAno, metas, sellers, loading, refresh, monthRef } = useComercialData({ ownerUserId, refDate, isSeller });
 
   const [addOpen, setAddOpen] = useState(false);
+  // Edição da meta individual: vendedor na própria visão; gestor na tabela/drill-down.
+  const [editMetaFor, setEditMetaFor] = useState<string | null>(null);
+  const [metaInput, setMetaInput] = useState('');
+  const [savingMeta, setSavingMeta] = useState(false);
   // Drill-down: vendedor selecionado (gestor). Vendedor logado fica fixo nele mesmo.
   // Se o pai mandar externalSellerId (filtro global do Painel Geral), ele manda —
   // e o dropdown próprio some, pra não ter dois filtros brigando.
@@ -137,6 +143,31 @@ export function ComercialSection({
     ? (sellers.find(s => s.id === activeSellerId)?.nome || currentSellerName || 'Vendedor')
     : null;
 
+  // Salva a meta individual (upsert manual: update se já existe a do mês, senão insert).
+  const saveMeta = async (sellerId: string, n: number) => {
+    if (!sellerId || isNaN(n) || n < 0) { setEditMetaFor(null); return; }
+    setSavingMeta(true);
+    try {
+      const existing = metas.find(m => m.tipo === 'individual' && m.seller_id === sellerId);
+      if (existing?.id) {
+        const { error } = await (supabase as any).from('comercial_metas')
+          .update({ valor_meta: n, updated_at: new Date().toISOString() }).eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await (supabase as any).from('comercial_metas')
+          .insert({ user_id: ownerUserId, seller_id: sellerId, tipo: 'individual', mes_referencia: monthRef, valor_meta: n });
+        if (error) throw error;
+      }
+      setEditMetaFor(null);
+      toast.success('Meta salva.');
+      refresh();
+    } catch (e: any) {
+      toast.error('Não foi possível salvar a meta', { description: e?.message });
+    } finally {
+      setSavingMeta(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header do bloco comercial */}
@@ -192,6 +223,34 @@ export function ComercialSection({
                  accent="bg-cyan-500/15 text-cyan-300" sub={kpis.melhorCanal ? `${kpis.melhorCanal.n} vendas` : undefined} />
           </div>
 
+          {/* Definir/editar a meta individual — vendedor na visão dele; gestor no drill-down */}
+          {activeSellerId && (
+            <div className="flex items-center gap-2 text-sm flex-wrap">
+              <Target className="h-4 w-4 text-amber-400 shrink-0" />
+              <span className="text-muted-foreground">{isSeller ? 'Sua meta do mês:' : `Meta de ${nomeAtivo}:`}</span>
+              {editMetaFor === activeSellerId ? (
+                <span className="inline-flex items-center gap-1">
+                  <input type="number" min={0} value={metaInput} autoFocus
+                    onChange={e => setMetaInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveMeta(activeSellerId, parseInt(metaInput, 10) || 0); if (e.key === 'Escape') setEditMetaFor(null); }}
+                    className="h-7 w-20 rounded-md border border-border/50 bg-background px-2 text-sm" />
+                  <span className="text-xs text-muted-foreground">vendas</span>
+                  <Button size="sm" className="h-7 px-2 bg-emerald-600 hover:bg-emerald-700" disabled={savingMeta}
+                    onClick={() => saveMeta(activeSellerId, parseInt(metaInput, 10) || 0)}>
+                    {savingMeta ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditMetaFor(null)}><X className="h-3.5 w-3.5" /></Button>
+                </span>
+              ) : (
+                <button onClick={() => { setMetaInput(String(metaRef || '')); setEditMetaFor(activeSellerId); }}
+                  className="inline-flex items-center gap-1.5 font-semibold text-foreground hover:text-amber-300 transition-colors">
+                  {metaRef > 0 ? `${metaRef} vendas` : 'definir'}
+                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Tabela de desempenho (só geral + gestor) */}
           {!isSeller && !activeSellerId && (
             <Card className="bg-card border-border/50">
@@ -223,7 +282,23 @@ export function ComercialSection({
                       <tr key={r.sellerId} onClick={() => setSelectedSellerId(r.sellerId)}
                           className="border-b border-border/30 hover:bg-muted/40 cursor-pointer transition-colors">
                         <td className="py-2 pr-2 font-medium">{r.nome}</td>
-                        <td className="py-2 px-2 text-center tabular-nums">{r.meta || '—'}</td>
+                        <td className="py-2 px-2 text-center tabular-nums" onClick={(e) => e.stopPropagation()}>
+                          {editMetaFor === r.sellerId ? (
+                            <span className="inline-flex items-center gap-1">
+                              <input type="number" min={0} value={metaInput} autoFocus
+                                onChange={e => setMetaInput(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') saveMeta(r.sellerId, parseInt(metaInput, 10) || 0); if (e.key === 'Escape') setEditMetaFor(null); }}
+                                className="h-7 w-16 rounded border border-border/50 bg-background px-1 text-center text-sm" />
+                              <button disabled={savingMeta} onClick={() => saveMeta(r.sellerId, parseInt(metaInput, 10) || 0)} className="text-emerald-400" title="Salvar"><Check className="h-3.5 w-3.5" /></button>
+                              <button onClick={() => setEditMetaFor(null)} className="text-muted-foreground" title="Cancelar"><X className="h-3.5 w-3.5" /></button>
+                            </span>
+                          ) : (
+                            <button onClick={() => { setMetaInput(String(r.meta || '')); setEditMetaFor(r.sellerId); }}
+                              className="inline-flex items-center gap-1 hover:text-amber-300 transition-colors" title="Definir a meta deste vendedor">
+                              {r.meta || '—'} <Pencil className="h-3 w-3 text-muted-foreground/60" />
+                            </button>
+                          )}
+                        </td>
                         <td className="py-2 px-2 text-center tabular-nums font-semibold">{r.vendas}</td>
                         <td className="py-2 px-2 text-center">
                           {r.meta > 0 ? (
