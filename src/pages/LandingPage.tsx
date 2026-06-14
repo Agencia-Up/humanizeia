@@ -1358,10 +1358,10 @@ export default function LandingPage() {
                 ))}
               </div>
               <div className="border-t border-green-500/20 pt-4">
-                <p className="text-xs text-muted-foreground mb-1">Taxa de implementação: R$ 10.000 (uma vez)</p>
+                <p className="text-xs text-muted-foreground mb-1">Taxa de implementação: R$ 1.497,90 (uma vez)</p>
                 <div className="flex justify-between items-center">
                   <span className="font-bold text-sm">MENSALIDADE</span>
-                  <span className="text-2xl font-bold text-green-400">R$ 2.497/mês</span>
+                  <span className="text-2xl font-bold text-green-400">R$ 1.297,90/mês</span>
                 </div>
               </div>
             </div>
@@ -1377,7 +1377,7 @@ export default function LandingPage() {
               </div>
               <div className="text-2xl font-bold text-muted-foreground">vs</div>
               <div className="text-center">
-                <p className="text-3xl md:text-5xl font-black text-green-400">R$ 2.497</p>
+                <p className="text-3xl md:text-5xl font-black text-green-400">R$ 1.297,90</p>
                 <p className="text-xs text-muted-foreground mt-1">Logos IA / mês</p>
               </div>
             </div>
@@ -1401,20 +1401,20 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center justify-center py-2 sm:py-0">
                 <div className="text-center">
-                  <p className="text-3xl font-black text-green-400">R$ 140.036</p>
+                  <p className="text-3xl font-black text-green-400">R$ 162.927</p>
                   <p className="text-sm text-green-400 font-semibold mt-1">de economia no 1º ano</p>
                 </div>
               </div>
               <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-5">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Logos IA</p>
-                <p className="text-3xl font-black text-green-400">R$ 39.964</p>
+                <p className="text-3xl font-black text-green-400">R$ 17.073</p>
                 <p className="text-xs text-muted-foreground mt-1">por ano</p>
               </div>
             </div>
             <div className="mt-6 text-center">
               <p className="text-sm text-muted-foreground mb-3">Com essa economia, você pode:</p>
               <div className="flex flex-wrap gap-3 justify-center">
-                {['Contratar mais vendedores', 'Investir em estoque', 'Expandir para novos mercados', 'R$ 644k a mais no caixa'].map(item => (
+                {['Contratar mais vendedores', 'Investir em estoque', 'Expandir para novos mercados', 'R$ 162k/ano a mais no caixa'].map(item => (
                   <span key={item} className="text-xs bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 px-3 py-1.5 rounded-full">
                     ✓ {item}
                   </span>
@@ -1631,7 +1631,7 @@ export default function LandingPage() {
                       Pro
                     </h3>
                     <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Pague o preço do Básico e leve o Pro completo.
+                      Pedro vende e Marcos organiza — no automático, 24/7.
                     </p>
 
                     {/* Preço mensal */}
@@ -1916,7 +1916,7 @@ export default function LandingPage() {
             {/* Nota do fundador + microcopy de segurança */}
             <div className="mt-8 text-center">
               <p className="text-sm font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                Oferta Pro Fundador: os 10 primeiros assinam o Pro pagando o preço do Básico.
+                Oferta Fundador: os 10 primeiros garantem o Pro por R$ 597,90/mês e o Pro Max por R$ 797,90/mês nos 3 primeiros meses.
               </p>
               <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <Lock className="h-3 w-3" />
