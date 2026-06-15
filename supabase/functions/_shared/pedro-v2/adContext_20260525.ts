@@ -458,7 +458,19 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
   const rootMessage = pickIncomingMessage(payload);
   const message = rootMessage?.message || rootMessage;
   const extended = message?.extendedTextMessage || rootMessage?.extendedTextMessage || payload?.data?.message?.extendedTextMessage || {};
-  const contextInfo = extended?.contextInfo || message?.contextInfo || rootMessage?.contextInfo || payload?.contextInfo || {};
+  // ctxObj(): le `.contextInfo` de um objeto so se for objeto (evita ler de string/null).
+  const ctxOf = (o: any) => (o && typeof o === "object" && o.contextInfo && typeof o.contextInfo === "object") ? o.contextInfo : null;
+  // O CTWA real entrega o externalAdReply em `message.content.contextInfo` (caso real
+  // leads Ranger/Creta). O lookup antigo nao olhava `content.contextInfo` -> perdia o anuncio.
+  const contextInfo = extended?.contextInfo
+    || message?.contextInfo
+    || rootMessage?.contextInfo
+    || ctxOf(rootMessage?.content)
+    || ctxOf(message?.content)
+    || ctxOf(payload?.message?.content)
+    || ctxOf(payload?.data?.message?.content)
+    || payload?.contextInfo
+    || {};
   const adReply = contextInfo?.externalAdReply || rootMessage?.externalAdReply || payload?.externalAdReply || payload?.data?.externalAdReply || {};
   const content = typeof rootMessage?.content === "object"
     ? rootMessage.content
@@ -492,6 +504,19 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     ["payload", "data", "description"],
     ["message", "description"],
   ]);
+  // SAUDACAO AUTOMATICA do CTWA: o `greetingMessageBody` traz o VEICULO EXATO do anuncio
+  // ("Ola! Quer saber mais sobre a Ranger XLT TD 3.2 2016?"). O title/body do externalAdReply
+  // sao GENERICOS ("Fale com nossos consultores", "Veiculos revisados") — sem veiculo. Por isso
+  // a resolucao caia na VISAO da imagem (que erra: Ranger -> EcoSport/SUV). Esta e a fonte
+  // AUTORITATIVA do veiculo. (caso real leads 5512991988187, 5511934168705.)
+  const greetingBody = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, content }, [
+    ["adReply", "greetingMessageBody"],
+    ["adReply", "greetingMessage"],
+    ["adReply", "greeting"],
+    ["contextInfo", "greetingMessageBody"],
+    ["extended", "contextInfo", "greetingMessageBody"],
+    ["content", "greetingMessageBody"],
+  ]) || "";
   const payloadText = compact(collectPayloadStrings(payload).slice(0, 80));
   const sourceUrl = pickByPaths({ payload, rootMessage, message, extended, contextInfo, adReply, content }, [
     ["adReply", "sourceUrl"],
@@ -548,7 +573,7 @@ function extractTextualAdContext(payload: any, messageText: string): PedroV2AdCo
     AD_TEXT_MARKER_RE.test(payloadText) ||
     AD_TEXT_MARKER_RE.test(compact([title, description, ...conversionFields]));
   const hasAdContext = hasExplicitAdPayload || hasAdLink || hasAdTextMarker;
-  const combinedText = compact([title, description, payloadText, ...conversionFields, messageText]);
+  const combinedText = compact([greetingBody, title, description, payloadText, ...conversionFields, messageText]);
   const normalizedCombined = normalizeText(combinedText);
   const source = hasAdContext
     ? hostname(sourceUrl) || (normalizeText(compact([title, description, messageText])).includes("facebook") ? "facebook" : null)
@@ -592,6 +617,24 @@ function inferVehicleFromText(text: string): Pick<PedroV2AdContext, "vehicle_que
         : "carro";
 
   return { vehicle_query: model, vehicle_type: type, confidence: 0.78 };
+}
+
+// Extrai o veiculo da SAUDACAO AUTOMATICA do CTWA ("Ola! Quer saber mais sobre a Ranger XLT
+// TD 3.2 2016?"). Essa string e a fonte AUTORITATIVA (vem do anuncio real), entao captura o
+// veiculo COMPLETO (marca/modelo/versao/ANO) com confianca alta — vence a visao da imagem,
+// que erra (Ranger -> EcoSport/SUV). Captura ate o 1o "?" (a saudacao costuma vir num blob).
+function inferVehicleFromGreeting(text?: string | null): Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null {
+  const raw = decodeHtmlEntities(String(text || "")).replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+  const m = raw.match(/(?:saber\s+mais\s+sobre|interesse\s+(?:n[oa]|em)|gostaria\s+de\s+saber\s+sobre|sobre\s+(?:o|a|os|as))\s+(?:o\s|a\s|os\s|as\s|um\s|uma\s)?([^?\n]{2,60}?)\s*\?/i);
+  let veh = m ? m[1].trim() : "";
+  if (!veh) return null;
+  veh = veh.replace(/\s{2,}/g, " ").trim();
+  // So aceita se parecer um veiculo (ano OU modelo conhecido) — evita "nossas ofertas", etc.
+  const norm = normalizeText(veh);
+  const typed = inferVehicleFromText(norm);
+  if (!/\b(19|20)\d{2}\b/.test(veh) && !typed.vehicle_query) return null;
+  return { vehicle_query: veh, vehicle_type: typed.vehicle_type || null, summary: null, confidence: 0.95 };
 }
 
 function stripAdBoilerplate(value: string): string {
@@ -838,6 +881,9 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     }
   }
 
+  // SAUDACAO AUTOMATICA do CTWA = fonte AUTORITATIVA do veiculo (vence copy generica E visao).
+  const greetingInference = inferVehicleFromGreeting(textual.raw_text || messageText);
+
   const embeddedImage = findFirstBase64Image(payload) || findFirstBase64Image(pageMetadata?.image);
   // Imagem do ANUNCIO em si: anuncios de Instagram/Facebook trazem a foto como uma
   // URL do FB Ads CDN (https://www.facebook.com/ads/image/?d=...) ou scontent/fbcdn/
@@ -863,7 +909,8 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
   const imageDataUrl = embeddedImage && !/^https?:\/\//i.test(embeddedImage)
     ? embeddedImage
     : fetchedImage.dataUrl || embeddedImage || imageUrlCandidate || null;
-  const imageInference = imageDataUrl ? await inferVehicleFromImage(imageDataUrl) : null;
+  // Se a SAUDACAO ja deu o veiculo, NAO chama a visao (autoritativa + economiza a chamada).
+  const imageInference = (!greetingInference?.vehicle_query && imageDataUrl) ? await inferVehicleFromImage(imageDataUrl) : null;
   const explicitTextIsStrong = Boolean(explicitAdInference.vehicle_query && Number(explicitAdInference.confidence || 0) >= 0.75);
   // O TEXTO do anuncio (copy do anunciante, ex.: "Compass Longitude T270 2023") e
   // AUTORITATIVO para o ANO/spec — a VISAO (OCR da imagem) erra digito (leu "2022" no
@@ -876,7 +923,10 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
   const textHasYear = Boolean(textCandidate?.vehicle_query
     && /\b(19|20)\d{2}\b/.test(String(textCandidate.vehicle_query))
     && Number(textCandidate.confidence || 0) >= 0.55);
-  const best = (explicitTextIsStrong || textHasYear) && textCandidate
+  // PRIORIDADE: saudacao do CTWA (autoritativa) > texto do anuncio com ano > visao > texto.
+  const best = greetingInference?.vehicle_query
+    ? greetingInference
+    : (explicitTextIsStrong || textHasYear) && textCandidate
     ? textCandidate
     : imageInference && Number(imageInference.confidence || 0) >= Math.max(0.45, Number(textInference.confidence || 0))
       ? imageInference
