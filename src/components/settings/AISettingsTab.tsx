@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Image } from 'lucide-react';
+import { ClientAiKeysCard } from './ClientAiKeysCard';
 
 const STORAGE_KEY = 'logosia-ai-settings';
 
@@ -56,6 +57,9 @@ export function AISettingsTab() {
 
   return (
     <div className="space-y-6">
+      {/* BYOK — traga sua chave de IA (conversas ilimitadas por conta do cliente) */}
+      <ClientAiKeysCard />
+
       <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
         <CardHeader>
           <div className="flex items-center gap-2">
