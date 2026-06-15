@@ -52,7 +52,12 @@ export function useAuth() {
   };
 
   useEffect(() => {
+    // Guarda QUEM está logado pra distinguir "mesma sessão, só renovou o token
+    // (acontece quando a aba volta a ter foco)" de "mudou o usuário (login/logout)".
+    let currentUid: string | null = null;
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      currentUid = session?.user?.id ?? null;
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -62,7 +67,21 @@ export function useAuth() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
+        const newUid = session?.user?.id ?? null;
+
+        // ── FIX (tela reseta ao trocar de aba) ─────────────────────────────
+        // Ao voltar o foco da aba, o Supabase dispara TOKEN_REFRESHED com o
+        // MESMO usuário. Se mexermos em user/loading aqui, a árvore inteira
+        // remonta e o cliente perde o que estava preenchendo. Então, quando é
+        // o mesmo usuário, só atualizamos o token da sessão em silêncio.
+        if (event === 'TOKEN_REFRESHED' || (newUid !== null && newUid === currentUid)) {
+          setSession(session);
+          return;
+        }
+
+        // Mudou de verdade (login ou logout): atualiza tudo.
+        currentUid = newUid;
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
