@@ -148,6 +148,24 @@ function pickByPaths(source: any, paths: string[][]): string | null {
   return null;
 }
 
+// Tamanho minimo (bytes decodificados) para uma imagem base64 ser tratada como FOTO DE
+// ANUNCIO digna de leitura por visao. O `jpegThumbnail` que o WhatsApp embute na metadata
+// (~50x50) e a FOTO DE PERFIL do contato sao MINUSCULOS (1-6KB); uma foto real de anuncio
+// tem dezenas de KB. Bug real (lead 5511934168705, anuncio da Ranger): a visao leu o thumb
+// 50x50 (perfil da lead) como se fosse o carro e ALUCINOU "Ford EcoSport 2018" + ofereceu
+// um Peugeot 2008. Abaixo do limiar -> NAO e imagem de anuncio (ignora, agente pergunta o
+// modelo em vez de inventar). O caminho da URL do anuncio (fbcdn/ads/image) nao e afetado.
+const MIN_AD_IMAGE_BYTES = 12000;
+function base64ImageBytes(dataUrlOrB64: string): number {
+  const b64 = String(dataUrlOrB64 || "").replace(/^data:image\/[^;]+;base64,/, "").replace(/[\r\n\s]/g, "");
+  if (!b64) return 0;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+function isBigEnoughAdImage(dataUrl: string): boolean {
+  return base64ImageBytes(dataUrl) >= MIN_AD_IMAGE_BYTES;
+}
+
 function findFirstBase64Image(value: unknown, depth = 0): string | null {
   if (!value || depth > 8) return null;
 
@@ -157,18 +175,24 @@ function findFirstBase64Image(value: unknown, depth = 0): string | null {
     for (let i = 0; i < bytes.length; i += 8192) {
       binary += String.fromCharCode(...bytes.slice(i, i + 8192));
     }
-    return `data:image/jpeg;base64,${btoa(binary)}`;
+    const dataUrl = `data:image/jpeg;base64,${btoa(binary)}`;
+    return isBigEnoughAdImage(dataUrl) ? dataUrl : null;
   }
 
   if (typeof value === "string") {
     const text = value.trim();
-    if (text.startsWith("data:image/")) return text;
+    if (text.startsWith("data:image/")) return isBigEnoughAdImage(text) ? text : null;
     if (/^https?:\/\//i.test(text) && (
       /\.(png|jpe?g|webp)(\?.*)?$/i.test(text) ||
       /(?:fbcdn|scontent|image|thumbnail|media)/i.test(text)
-    )) return text;
+    )) {
+      // foto de perfil do contato (pps.whatsapp.net) NUNCA e o carro do anuncio.
+      if (/pps\.whatsapp\.net|profile[-_]?pic|profilepic|\/avatar|\/pp\//i.test(text)) return null;
+      return text;
+    }
     if (text.length > 500 && /^[A-Za-z0-9+/=\r\n]+$/.test(text)) {
-      return `data:image/jpeg;base64,${text}`;
+      const dataUrl = `data:image/jpeg;base64,${text}`;
+      return isBigEnoughAdImage(dataUrl) ? dataUrl : null;
     }
     return null;
   }

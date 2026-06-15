@@ -188,22 +188,43 @@ function bytesToDataUrl(bytes: number[], mime = "image/jpeg"): string | null {
   return `data:${mime};base64,${btoa(binary)}`;
 }
 
+// Tamanho minimo (bytes) p/ um base64 ser tratado como FOTO real (nao thumbnail/foto de
+// perfil). O `jpegThumbnail` embutido no payload (~50x50) e a foto de perfil do contato
+// sao MINUSCULOS — rodar visao neles ALUCINA veiculo (lead 5511934168705: thumb da Ranger
+// virou "Ford EcoSport"). Vale como FALLBACK; quando o download da midia real funciona, a
+// imagem baixada (grande) e usada e nao passa por aqui.
+const MIN_REAL_IMAGE_BYTES = 12000;
+function base64ImageBytes(dataUrlOrB64: string): number {
+  const b64 = String(dataUrlOrB64 || "").replace(/^data:image\/[^;]+;base64,/, "").replace(/[\r\n\s]/g, "");
+  if (!b64) return 0;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+function isBigEnoughRealImage(dataUrl: string | null): boolean {
+  return Boolean(dataUrl) && base64ImageBytes(dataUrl as string) >= MIN_REAL_IMAGE_BYTES;
+}
+
 function findFirstImageCandidate(value: unknown, depth = 0): string | null {
   if (!value || depth > 9) return null;
 
   if (Array.isArray(value) && value.length > 20 && value.every((item) => Number.isInteger(item) && Number(item) >= 0 && Number(item) <= 255)) {
-    return bytesToDataUrl(value as number[]);
+    const dataUrl = bytesToDataUrl(value as number[]);
+    return isBigEnoughRealImage(dataUrl) ? dataUrl : null;
   }
 
   if (typeof value === "string") {
     const text = value.trim();
-    if (text.startsWith("data:image/")) return text;
+    if (text.startsWith("data:image/")) return isBigEnoughRealImage(text) ? text : null;
     if (/^https?:\/\//i.test(text) && (
       /\.(png|jpe?g|webp)(\?.*)?$/i.test(text) ||
       /(?:fbcdn|scontent|image|thumbnail|media|blob\.core)/i.test(text)
-    )) return text;
+    )) {
+      if (/pps\.whatsapp\.net|profile[-_]?pic|profilepic|\/avatar|\/pp\//i.test(text)) return null;
+      return text;
+    }
     if (text.length > 80 && /^[A-Za-z0-9+/=\r\n]+$/.test(text)) {
-      return `data:image/jpeg;base64,${text}`;
+      const dataUrl = `data:image/jpeg;base64,${text}`;
+      return isBigEnoughRealImage(dataUrl) ? dataUrl : null;
     }
     return null;
   }
@@ -220,7 +241,8 @@ function findFirstImageCandidate(value: unknown, depth = 0): string | null {
     const record = value as Record<string, unknown>;
     const mime = asText(record.mimetype || record.mimeType) || "image/jpeg";
     if (Array.isArray(record.data) && String(record.type || "").toLowerCase() === "buffer") {
-      return bytesToDataUrl(record.data as number[], IMAGE_MIME_RE.test(mime) ? mime : "image/jpeg");
+      const dataUrl = bytesToDataUrl(record.data as number[], IMAGE_MIME_RE.test(mime) ? mime : "image/jpeg");
+      return isBigEnoughRealImage(dataUrl) ? dataUrl : null;
     }
 
     const priority = [
