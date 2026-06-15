@@ -71,8 +71,11 @@ export type PedroV2LeadMemory = {
     objecoes?: string[];
     ultimo_proximo_passo?: string | null;
     vendedor_anterior_id?: string | null;
+    sabe_localizacao?: boolean | null;
+    dia_agendamento?: string | null;
   };
   veiculos_apresentados?: any[];
+  veiculos_apresentados_at?: string | null;
   recent_turns?: Array<{
     role: "lead" | "agent";
     text: string;

@@ -105,6 +105,16 @@ export function routePedroIntent(input: {
     }
   }
 
+  // MEM-5: captura HEURISTICA de forma de pagamento + ja-visitou (backup do gpt-4o, que as vezes
+  // nao extrai). Sem isso o agente RE-PERGUNTA "a vista ou financiar?" que o lead ja respondeu.
+  const _pay = /\b(a vista|avista|pago a vista|dinheiro|pix)\b/.test(text) ? "a_vista"
+    : /\b(financ|financiar|financiado|financiamento|parcel|parcelado|a prazo|prestacao)\b/.test(text) ? "financiamento"
+    : /\b(consorcio|consórcio)\b/.test(text) ? "consorcio" : null;
+  if (_pay) extracted.negociacao = { ...(extracted.negociacao || {}), forma_pagamento: _pay };
+  if (/\b(ja fui|ja estive|ja visitei|fui (a|na|ate a|ate na) loja|estive ai|conheco a loja|fui ai)\b/.test(text)) {
+    extracted.atendimento = { ...(extracted.atendimento || {}), sabe_localizacao: true };
+  }
+
   if (isPhotoRequest(text)) {
     return {
       intent: "photo_request",

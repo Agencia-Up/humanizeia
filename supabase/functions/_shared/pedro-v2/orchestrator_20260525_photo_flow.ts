@@ -661,9 +661,12 @@ function pickReferencedVehicle(message: string, memory: any, vehicles: any[], to
     }
   }
 
-  const rememberedIndex = Number.isFinite(Number(memory?.ultima_foto?.veiculo_index))
+  // MEM-6: indice de foto lembrado NAO vale entre POOLS diferentes (servia carro errado). A key
+  // robusta (acima) e a fonte de verdade; o indice so e usado em estado LEGADO sem key. Se ha
+  // key salva mas ela nao esta no pool atual, o pool mudou -> NAO chutar por indice; cai no default.
+  const rememberedIndex = (!lastKey && Number.isFinite(Number(memory?.ultima_foto?.veiculo_index)))
     ? Number(memory.ultima_foto.veiculo_index)
-    : Number.isFinite(Number(memory?.referencia?.ultimo_veiculo_index))
+    : (!lastKey && Number.isFinite(Number(memory?.referencia?.ultimo_veiculo_index)))
       ? Number(memory.referencia.ultimo_veiculo_index)
       : null;
 
@@ -1006,6 +1009,7 @@ async function savePresentedVehicles(supabase: any, input: {
   const nextState = {
     ...(input.current || {}),
     veiculos_apresentados: input.vehicles.slice(0, 30),
+    veiculos_apresentados_at: new Date().toISOString(), // MEM-3: carimbo p/ TTL (nao servir pool velho)
     ultima_foto: null, // Limpa referencia de fotos antigas quando novos carros sao apresentados em texto
     atendimento: {
       ...(input.current?.atendimento || {}),
@@ -1928,7 +1932,12 @@ export async function processPedroV2Turn(
   // como "novo topico" ou veiculos ainda nao salvos na memoria), o agente PROMETE
   // fotos e manda so texto (bug: "vou separar as fotos do Renegade" e nada chega).
   const leadAskedPhotosExplicitly = messageAsksForPhotos(text);
-  const memoryPhotoVehicles = Array.isArray(nextMemory?.veiculos_apresentados) ? nextMemory.veiculos_apresentados : [];
+  // MEM-3 (TTL): veiculos apresentados ha MUITO tempo (lead voltou dias depois) nao podem servir
+  // de pool de foto/referencia — o estoque muda e o interesse pode ter mudado. Acima de 7 dias,
+  // ignora o pool velho (forca uma busca fresca em vez de mandar foto de carro de outra conversa).
+  const _vaAt = (nextMemory as any)?.veiculos_apresentados_at;
+  const _vaFresh = !_vaAt || (Date.now() - new Date(_vaAt).getTime()) < 7 * 24 * 60 * 60 * 1000;
+  const memoryPhotoVehicles = (_vaFresh && Array.isArray(nextMemory?.veiculos_apresentados)) ? nextMemory.veiculos_apresentados : [];
   const freshSpecificStock = (!isGenericQuery && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0)
     ? stockResult.items
     : [];
