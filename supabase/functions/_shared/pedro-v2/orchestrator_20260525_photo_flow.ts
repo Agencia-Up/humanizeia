@@ -1640,7 +1640,13 @@ export async function processPedroV2Turn(
     // ampla (o stockSearch ja ordena por PRECO CRESCENTE -> mais baratos primeiro)
     // em vez de devolver "pergunte qual modelo". Antes, "carro mais economico"
     // virava query "carro" -> generico -> 0 resultados -> "nao temos".
-    const _budgetText = `${text || ""} ${enrichedText || ""}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    // RAIZ de "lidera com o carro errado em lead de anuncio": o _budgetText usava enrichedText
+    // (mensagem + CORPO DO ANUNCIO). O corpo do anuncio costuma dizer "otimo custo-beneficio",
+    // "precos acessiveis" etc. -> casava budgetIntent (/custo|acessiv|barat/) e ativava o modo
+    // "mais barato" (budget_cheapest), que ordena por preco CRESCENTE e desliga o "liderar com o
+    // ano do anuncio" -> o agente abria com a unidade mais VELHA/barata em vez da do anuncio.
+    // O "quero o mais barato" e do LEAD, nunca do texto promocional do anuncio -> usa SO `text`.
+    const _budgetText = String(text || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     const budgetIntent = /\b(economic|barat|popular|basic|baratinh|acessiv|custo)/.test(_budgetText) || /\bem\s+conta\b/.test(_budgetText);
     if (budgetIntent) {
       isGenericQuery = false;

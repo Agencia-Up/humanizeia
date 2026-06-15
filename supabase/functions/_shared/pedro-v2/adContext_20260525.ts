@@ -626,10 +626,16 @@ function inferVehicleFromText(text: string): Pick<PedroV2AdContext, "vehicle_que
 function inferVehicleFromGreeting(text?: string | null): Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null {
   const raw = decodeHtmlEntities(String(text || "")).replace(/\s+/g, " ").trim();
   if (!raw) return null;
-  const m = raw.match(/(?:saber\s+mais\s+sobre|interesse\s+(?:n[oa]|em)|gostaria\s+de\s+saber\s+sobre|sobre\s+(?:o|a|os|as))\s+(?:o\s|a\s|os\s|as\s|um\s|uma\s)?([^?\n]{2,60}?)\s*\?/i);
+  const m = raw.match(/(?:saber\s+mais\s+sobre|interesse\s+(?:n[oa]|em)|gostaria\s+de\s+saber\s+sobre|sobre\s+(?:o|a|os|as))\s+(?:o\s|a\s|os\s|as\s|um\s|uma\s)?([^?\n]{2,80}?)\s*\?/i);
   let veh = m ? m[1].trim() : "";
   if (!veh) return null;
-  veh = veh.replace(/\s{2,}/g, " ").trim();
+  // Remove o RABO comercial do greeting ("... disponivel por R$66.990", "por apenas R$X",
+  // "a partir de", "- R$X"). Sem isso o PRECO do anuncio vazava no vehicle_query e era lido
+  // como ORCAMENTO/"quero o mais barato" do lead -> o agente liderava com a unidade mais
+  // velha/barata em vez da do anuncio. O veiculo fica so "<marca> <modelo> <ano>".
+  veh = veh.split(/\s+(?:dispon[ií]ve|por\s+apenas|por\s+r\$|a\s+partir|\-\s*r\$|,\s*r\$|\sr\$)/i)[0];
+  veh = veh.replace(/\s{2,}/g, " ").replace(/[.,;:]+$/, "").trim();
+  if (veh.length < 2) return null;
   // So aceita se parecer um veiculo (ano OU modelo conhecido) — evita "nossas ofertas", etc.
   const norm = normalizeText(veh);
   const typed = inferVehicleFromText(norm);
