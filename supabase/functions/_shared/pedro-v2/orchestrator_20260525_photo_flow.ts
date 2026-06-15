@@ -1853,6 +1853,36 @@ export async function processPedroV2Turn(
     }
   }
 
+  // LIDERAR COM O ANO DO ANUNCIO / MAIS NOVO (decisao do dono 2026-06-13). Caso real Creta
+  // (5512997147533): anuncio era 2025, mas o agente abriu com a unidade 2019 (mais barata).
+  // Quando o modelo pedido tem 2+ unidades E o lead veio de ANUNCIO E NAO deu orcamento, lidera
+  // com a unidade do ANO DO ANUNCIO (se existir) senao com a MAIS NOVA (espirito vendedor).
+  // NAO mexe em: alternativas (recuperacao tem ordem propria), multi-modelo ("A ou B"), ou
+  // quando o lead deu faixa de preco (ai preco manda). Falha-segura (try/catch).
+  try {
+    const _multiModelText = /(?:\bou\b|\/|,)/i.test(text) && normalizePhotoText(text).split(/\s+/).filter(Boolean).length <= 6;
+    const _leadHasBudget = leadMessageHasExplicitPriceCeiling(text) || Number((stockFilters as any)?.preco_max) > 0;
+    const _isSpecificModel = Boolean(stockFilters && ((stockFilters as any).modelo_desejado || (stockFilters as any).query)
+      && !(stockFilters as any).stock_broad && !(stockFilters as any).budget_cheapest
+      && !(brainPlan?.search_filters as any)?.cheaper_followup);
+    const _fromAd = Boolean(adContext?.has_ad_context || memory?.referencia?.origem_anuncio || memory?.referencia?.veiculo_citado);
+    if (_isSpecificModel && _fromAd && !_leadHasBudget && !_multiModelText
+        && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length >= 2
+        && !(stockResult as any).is_alternatives) {
+      const _adStr = String(adContext?.vehicle_query || memory?.referencia?.veiculo_citado || "");
+      const _adYearM = _adStr.match(/\b(19|20)\d{2}\b/);
+      const _adYear = _adYearM ? Number(_adYearM[0]) : null;
+      const _ordered = [...stockResult.items].sort((a, b) => {
+        const am = _adYear && Number((a as any).ano) === _adYear ? 1 : 0;
+        const bm = _adYear && Number((b as any).ano) === _adYear ? 1 : 0;
+        if (am !== bm) return bm - am;                                            // ano do anuncio primeiro
+        return (Number((b as any).ano) || 0) - (Number((a as any).ano) || 0)      // senao, MAIS NOVO primeiro
+          || (Number((a as any).preco) || Infinity) - (Number((b as any).preco) || Infinity);
+      });
+      stockResult = { ...stockResult, items: _ordered };
+    }
+  } catch (_e) { /* reordenacao e best-effort: nunca bloqueia o turno */ }
+
   // FOTO GARANTIDA (rede de seguranca): se o lead pediu fotos EXPLICITAMENTE e
   // temos veiculos para mostrar — da memoria (ja apresentados) OU de uma busca
   // ESPECIFICA recem-feita NESTE turno — enviamos as imagens de verdade. Sem isso,
