@@ -34,10 +34,18 @@ function isChunkLoadError(err?: unknown): boolean {
 // sessionStorage pra evitar loop de reload caso o problema nao seja chunk velho.
 function reloadForStaleChunk(): boolean {
   try {
-    const KEY = '__chunk_reload_ts';
-    const last = Number(sessionStorage.getItem(KEY) || '0');
+    const TS_KEY = '__chunk_reload_ts';
+    const N_KEY = '__chunk_reload_n';
+    const last = Number(sessionStorage.getItem(TS_KEY) || '0');
+    const count = Number(sessionStorage.getItem(N_KEY) || '0');
+    // Recarrega no MAXIMO 2x por sessao (e no max 1x a cada 12s). Se depois de
+    // 2 reloads o chunk ainda falha, PARA de recarregar — evita o "loop de
+    // recarga sozinha". Ai o ErrorBoundary mostra a tela de erro com o botao
+    // "Tentar novamente" em vez de ficar recarregando pra sempre.
+    if (count >= 2) return false;
     if (Date.now() - last > 12000) {
-      sessionStorage.setItem(KEY, String(Date.now()));
+      sessionStorage.setItem(TS_KEY, String(Date.now()));
+      sessionStorage.setItem(N_KEY, String(count + 1));
       window.location.reload();
       return true;
     }

@@ -246,14 +246,14 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
         const { data: briefingData } = await supabase
           .from('client_briefings' as any)
-          .select('business_name, product_service')
+          .select('business_name, offering_details')
           .eq('user_id', effectiveUserId)
           .maybeSingle();
 
         setNicheData({
           niche: (quizData as any)?.nicho_identificado || 'Seu Nicho',
           business: (briefingData as any)?.business_name || 'Sua Empresa',
-          product: (briefingData as any)?.product_service || 'Nossos Serviços',
+          product: (briefingData as any)?.offering_details || 'Nossos Serviços',
         });
       } catch (e) {
         console.error('Erro ao buscar dados do quiz:', e);
