@@ -88,6 +88,13 @@ if (typeof window !== 'undefined') {
   window.addEventListener('vite:preloadError', (e: any) => {
     e?.preventDefault?.();
   });
+  // DIAGNOSTICO: marca quando a pagina REALMENTE descarrega (reload/F5 de
+  // verdade). Se isto aparecer no console no momento do "reset", foi um reload
+  // de verdade (e como o app nao recarrega mais sozinho, veio de FORA — navegador
+  // /conexao). Se NAO aparecer, foi so a tela remontando (problema no app).
+  window.addEventListener('beforeunload', () => {
+    try { console.error('[PAGINA-RECARREGOU-DE-VERDADE] a aba vai descarregar agora'); } catch { /* noop */ }
+  });
 }
 
 class ErrorBoundary extends React.Component<
@@ -109,16 +116,14 @@ class ErrorBoundary extends React.Component<
     console.error('[ErrorBoundary] Page render error:', err);
     console.error('[ErrorBoundary] Component stack:', info.componentStack);
 
-    // Chunk velho apos novo deploy: o import dinamico falha porque o hash do
-    // bundle mudou. Retentar NAO resolve (o arquivo nao existe mais) — recarrega
-    // a pagina 1x pra buscar o index.html + chunks novos (evita o "Algo deu
-    // errado" que so saia com CTRL+F5).
-    // So recarrega por "chunk velho" se estivermos ONLINE. Quando a rede pisca
-    // (ERR_NETWORK_CHANGED / ERR_INTERNET_DISCONNECTED ao voltar o foco da aba),
-    // um import() de rota falha com "Failed to fetch dynamically imported
-    // module" — que NAO e bundle velho, e sim a rede. Recarregar a pagina nesse
-    // caso so apagava o trabalho. Offline -> cai no auto-retry suave abaixo.
-    if (isChunkLoadError(err) && navigator.onLine && reloadForStaleChunk()) return;
+    // ── NUNCA recarregar a pagina automaticamente ──────────────────────────
+    // Este era o UNICO window.location.reload() do app inteiro, e era ele que
+    // "recarregava a pagina sozinha e apagava o trabalho" quando a conexao do
+    // navegador piscava (a falha de um import de rota era confundida com
+    // 'versao velha'). REMOVIDO. Em vez de recarregar, o auto-retry suave abaixo
+    // tenta remontar; se for chunk realmente velho, o usuario ve a tela de erro
+    // com o botao "Atualizar a pagina" e decide ele mesmo (NUNCA automatico).
+    void isChunkLoadError; void reloadForStaleChunk;
 
     // Tenta retentar automaticamente erros transientes (race conditions
     // típicas em primeiras renderizações: lazy load + hooks + queries).
@@ -159,16 +164,24 @@ class ErrorBoundary extends React.Component<
           <p className="text-sm text-muted-foreground">
             Algo deu errado ao carregar esta página.
           </p>
-          <button
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-            onClick={() => this.setState(prev => ({
-              hasError: false,
-              autoRetries: 0,
-              renderKey: prev.renderKey + 1,
-            }))}
-          >
-            Tentar novamente
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              onClick={() => this.setState(prev => ({
+                hasError: false,
+                autoRetries: 0,
+                renderKey: prev.renderKey + 1,
+              }))}
+            >
+              Tentar novamente
+            </button>
+            <button
+              className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground"
+              onClick={() => window.location.reload()}
+            >
+              Atualizar a página
+            </button>
+          </div>
         </div>
       );
     }
