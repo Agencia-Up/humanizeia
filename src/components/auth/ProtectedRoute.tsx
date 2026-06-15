@@ -38,6 +38,16 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
   const [profileState, setProfileState] = useState<'loading' | ProfileState>('loading');
   // Track in-flight request so we never update state on an unmounted component
   const abortRef = useRef<AbortController | null>(null);
+  // ── FIX (tela "recarrega"/perde o que estava preenchido ao trocar de aba) ──
+  // O spinner de tela cheia DESMONTA os filhos (a pagina + qualquer modal aberto,
+  // ex.: "Novo Agente" com prompt/QR digitados). Se uma piscada transitoria de
+  // loading (token renovando ao voltar o foco, recheck de profile) reativasse o
+  // spinner, a pagina inteira remontava e o usuario perdia tudo. Uma vez que ja
+  // mostramos o conteudo pra um usuario AUTENTICADO, NUNCA mais voltamos pro
+  // spinner de tela cheia — mantemos os filhos montados durante qualquer recheck.
+  // (Logout real continua tratado abaixo via !user -> redireciona; e os redirects
+  // de org/quiz/pagamento seguem valendo.)
+  const renderedAuthedRef = useRef(false);
 
   const isOrgExempt  = ORG_EXEMPT_PATHS.some(p  => location.pathname.startsWith(p));
   const isQuizExempt = skipQuizCheck || QUIZ_EXEMPT_PATHS.some(p => location.pathname.startsWith(p));
@@ -150,7 +160,10 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
     };
   }, [user?.id, location.pathname]);
 
-  if (loading || (user && profileState === 'loading')) {
+  // So mostra o spinner de tela cheia na PRIMEIRA carga (antes de termos exibido o
+  // conteudo a um usuario autenticado). Depois disso, recheck transitorio NUNCA
+  // desmonta a pagina/modal — evita o "reload" que apagava o que o usuario digitou.
+  if ((loading || (user && profileState === 'loading')) && !renderedAuthedRef.current) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -179,5 +192,8 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
     return <Navigate to="/checkout?plano=pro&ciclo=mensal" replace />;
   }
 
+  // Chegamos aqui com usuario autenticado e sem redirect: marca que ja exibimos o
+  // conteudo, pra que rechecks futuros nunca voltem ao spinner que desmonta a pagina.
+  if (user) renderedAuthedRef.current = true;
   return <>{children}</>;
 }
