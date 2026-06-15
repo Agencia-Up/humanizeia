@@ -13,6 +13,14 @@ const pendingFetches = new Map<string, Promise<any>>();
 type ProfileListener = (userId: string, profile: any) => void;
 const profileListeners = new Set<ProfileListener>();
 
+// UID conhecido COMPARTILHADO entre TODAS as instancias do useAuth. Critico pro fix do
+// "site recarrega ao trocar de aba": ao focar a aba o Supabase dispara SIGNED_IN/INITIAL_SESSION
+// (nao TOKEN_REFRESHED). O guard antigo usava um currentUid POR-INSTANCIA que fica null numa
+// instancia recem-montada (getSession ainda pendente) -> o evento escapava o guard e mexia em
+// user/loading -> remontava a arvore -> perdia o que o usuario preenchia. Com um uid GLOBAL,
+// qualquer instancia reconhece "e o mesmo usuario que ja conheciamos" e NAO remonta nada.
+let lastKnownUidGlobal: string | null = null;
+
 async function fetchProfileShared(userId: string): Promise<any> {
   // Hit do cache
   if (profileCache.has(userId)) return profileCache.get(userId);
@@ -52,12 +60,14 @@ export function useAuth() {
   };
 
   useEffect(() => {
-    // Guarda QUEM está logado pra distinguir "mesma sessão, só renovou o token
-    // (acontece quando a aba volta a ter foco)" de "mudou o usuário (login/logout)".
-    let currentUid: string | null = null;
+    // currentUid por-instancia, SEMEADO pelo uid GLOBAL pra ja nascer sabendo quem
+    // esta logado (mesmo antes do getSession resolver) — assim uma instancia recem
+    // montada nao trata um SIGNED_IN do mesmo usuario como "login novo".
+    let currentUid: string | null = lastKnownUidGlobal;
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       currentUid = session?.user?.id ?? null;
+      lastKnownUidGlobal = currentUid;
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -69,31 +79,30 @@ export function useAuth() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         const newUid = session?.user?.id ?? null;
-        // Instrumentacao temporaria pra diagnosticar "tela reseta ao trocar de
-        // aba". Mostra QUAL evento o Supabase dispara ao voltar o foco e se tem
-        // sessao/internet. (Remover depois que estabilizar.)
-        try { console.warn('[auth-evt]', event, 'sessao?', !!session?.user, 'online?', navigator.onLine); } catch { /* noop */ }
 
-        // ── FIX (tela reseta ao trocar de aba) ─────────────────────────────
-        // Ao voltar o foco da aba, o Supabase dispara TOKEN_REFRESHED com o
-        // MESMO usuário. Se mexermos em user/loading aqui, a árvore inteira
-        // remonta e o cliente perde o que estava preenchendo. Então, quando é
-        // o mesmo usuário, só atualizamos o token da sessão em silêncio.
-        if (event === 'TOKEN_REFRESHED' || (newUid !== null && newUid === currentUid)) {
+        // ── MESMO usuario que JA conheciamos ───────────────────────────────
+        // Ao focar a aba / abrir outra guia, o Supabase dispara SIGNED_IN e
+        // INITIAL_SESSION (NAO so TOKEN_REFRESHED) com o MESMO usuario. Mexer em
+        // user/loading aqui REMONTA a arvore inteira e o cliente PERDE o que
+        // estava preenchendo (QR/prompt/campos). Reconhece pelo uid GLOBAL (o
+        // currentUid por-instancia fica null numa instancia recem-montada e
+        // deixava o evento escapar) e so atualiza a sessao em silencio.
+        if (newUid !== null && (newUid === currentUid || newUid === lastKnownUidGlobal)) {
+          currentUid = newUid;
+          lastKnownUidGlobal = newUid;
+          setSession(session);
+          return;
+        }
+        // Eventos que NUNCA sao login de um NOVO usuario: havendo sessao, so atualiza.
+        if ((event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED') && session?.user) {
+          currentUid = newUid;
+          lastKnownUidGlobal = newUid;
           setSession(session);
           return;
         }
 
-        // ── FIX (tela reseta por piscada de rede ao voltar o foco) ─────────
-        // Chegou um evento SEM sessao (newUid null) mas a gente TINHA usuario
-        // logado. Isso costuma ser a renovacao do token falhando porque a rede
-        // piscou ao reativar a aba (ERR_NETWORK_CHANGED) — NAO um logout real.
-        // Zerar user aqui jogava a tela pra /auth e apagava o trabalho. Entao:
-        // se offline, ignora (mantem a sessao). Se online, reconfirma com
-        // getSession(): se a sessao ainda existe no storage, foi so a rede —
-        // mantem; so derruba se a sessao sumiu de fato. O logout pelo botao ja
-        // navega pra /auth sozinho, entao nao dependemos deste evento pra isso.
-        if (newUid === null && currentUid !== null) {
+        // ── Evento SEM sessao mas TINHAMOS usuario (piscada de rede ao focar) ──
+        if (newUid === null && (currentUid !== null || lastKnownUidGlobal !== null)) {
           if (typeof navigator !== 'undefined' && navigator.onLine === false) {
             return; // offline: piscada de rede, mantem o usuario na tela
           }
@@ -104,6 +113,7 @@ export function useAuth() {
             }
             // Sessao sumiu de verdade (expirou/deslogou): derruba a UI.
             currentUid = null;
+            lastKnownUidGlobal = null;
             setSession(null);
             setUser(null);
             setProfile(null);
@@ -113,8 +123,9 @@ export function useAuth() {
           return;
         }
 
-        // Mudou de verdade (login com novo usuário): atualiza tudo.
+        // Login real de um NOVO usuario: atualiza tudo.
         currentUid = newUid;
+        lastKnownUidGlobal = newUid;
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
