@@ -3,6 +3,7 @@ import { PedroBrainPlan } from "./pedroBrainPlanner_20260525.ts";
 import { PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
+import { keyFromCtx, AiKeyCtx } from "../aiKeys.ts";
 
 function sanitizeAgentName(name?: string | null) {
   const clean = String(name || "").trim();
@@ -512,6 +513,7 @@ export async function generatePedroBrainReply(input: {
   usage_sink?: UsageSink;
   reply_provider_override?: string | null;
   reply_model_override?: string | null;
+  ai_key_ctx?: AiKeyCtx | null;
 }) {
   const hasPresented = checkAgentHasPresented(input.recent_history, input.memory?.recent_turns);
   const agentName = sanitizeAgentName(input.agent?.name);
@@ -519,7 +521,9 @@ export async function generatePedroBrainReply(input: {
   // do vendedor — nao requalifica, nao manda foto, roteia tudo para ele.
   const assignedSellerName = (input.assigned_seller_name || "").trim() || null;
   const fallback = fallbackReply({ ...input, recent_history: input.recent_history });
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  // BYOK: chave de OpenAI da conta (cliente > nossa-se-grandfathered). keyFromCtx ja recebe a
+  // openai_key resolvida no gate do orchestrator (sem RPC extra). Sem ctx (legado) -> env.
+  const apiKey = await keyFromCtx(input.ai_key_ctx, "openai");
 
   const allFacts = stockFacts(input.stock_result);
   const adVehicleConsultation = isCurrentTurnAdVehicleConsultation(input);
@@ -588,8 +592,9 @@ export async function generatePedroBrainReply(input: {
   const agentTarget = resolveReplyTarget(input.agent?.model);
   const envForceProvider = String(Deno.env.get("PEDRO_REPLY_FORCE_PROVIDER") || "").toLowerCase();
   const replyProvider = String(input.reply_provider_override || envForceProvider || agentTarget.provider).toLowerCase();
-  const anthropicKeyR = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
-  const deepseekKeyR = Deno.env.get("DEEPSEEK_API_KEY");
+  // BYOK: chaves dos provedores tambem resolvem por conta (cliente > nossa-se-grandfathered).
+  const anthropicKeyR = await keyFromCtx(input.ai_key_ctx, "anthropic");
+  const deepseekKeyR = await keyFromCtx(input.ai_key_ctx, "deepseek");
   const replyIsAnthropic = (replyProvider === "anthropic" || replyProvider === "claude") && !!anthropicKeyR;
   const replyIsDeepseek = replyProvider === "deepseek" && !!deepseekKeyR;
   const replyKey = replyIsAnthropic ? anthropicKeyR : replyIsDeepseek ? deepseekKeyR : apiKey;

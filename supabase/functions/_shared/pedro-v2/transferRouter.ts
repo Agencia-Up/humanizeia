@@ -1,6 +1,7 @@
 import { phonesMatch } from "./phone.ts";
 import { resolveTransferFailures } from "./logTransferFailure.ts";
 import { resolveLeadInterestVehicle } from "../transfer/interestVehicle.ts";
+import { resolveAiKey } from "../aiKeys.ts";
 
 export async function findPreviousSellerForLead(
   supabase: any,
@@ -169,6 +170,7 @@ async function buildHandoffBriefing(
     qualificacao?: Record<string, any> | null;
     veiculo_interesse?: string | null;
   },
+  openaiKey?: string,
 ): Promise<string> {
   let briefing = "Lead avancou na negociacao com o Pedro v2 (qualificado / agendou visita / quer fechar). Retome o atendimento.";
   // Veiculo de interesse CONHECIDO (do anuncio do Facebook ou dos carros ja
@@ -180,7 +182,8 @@ async function buildHandoffBriefing(
     input.veiculo_interesse || (await resolveLeadInterestVehicle(supabase, input.lead_id, input.agent_id)) || "",
   ).trim();
   try {
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
+    // BYOK: usa a chave da conta (cliente > nossa-se-grandfathered). Resolvida no callsite.
+    const briefKey = openaiKey || Deno.env.get("OPENAI_API_KEY");
     const { data: chat } = await supabase
       .from("wa_chat_history")
       .select("role, content, created_at")
@@ -188,13 +191,13 @@ async function buildHandoffBriefing(
       .eq("remote_jid", input.remote_jid)
       .order("created_at", { ascending: false })
       .limit(20);
-    if (openaiKey && Array.isArray(chat) && chat.length > 0) {
+    if (briefKey && Array.isArray(chat) && chat.length > 0) {
       const transcript = chat.reverse().map((m: any) =>
         `${m.role === "user" ? `Cliente (${input.lead_name || "Desconhecido"})` : "Agente IA"}: ${String(m.content || "").substring(0, 400)}`
       ).join("\n");
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${briefKey}` },
         body: JSON.stringify({
           model: "gpt-4o-mini",
           temperature: 0.3,
@@ -265,6 +268,9 @@ export async function executePedroV2Handoff(
 ): Promise<{ ok: boolean; seller: any; briefing: string; reason: string }> {
   const nowIso = new Date().toISOString();
   const responseMin = Number(input.seller_response_min) > 0 ? Number(input.seller_response_min) : 10;
+  // BYOK: chave de IA da conta pro briefing do handoff (cliente paga a propria; grandfathered usa a nossa).
+  // So chegamos aqui se a conta tem chave usavel (o gate barra source='none' antes do turno).
+  const _briefKey = (await resolveAiKey(supabase, input.user_id, "openai")).key;
   // Throttle do re-aviso ao vendedor de um lead que voltou (evita spammar a cada
   // mensagem). 45min e um bom proxy de "voltou depois de um tempo".
   const RENOTIFY_THROTTLE_MS = 45 * 60000;
@@ -306,7 +312,7 @@ export async function executePedroV2Handoff(
         lead_name: input.lead_name,
         qualificacao: input.qualificacao,
         veiculo_interesse: input.veiculo_interesse,
-      });
+      }, _briefKey);
       // Registra o aviso como transferencia CONFIRMADA (o lead JA e deste vendedor)
       // — serve de historico e de marco de throttle para a proxima mensagem.
       await supabase.from("ai_lead_transfers").insert({
@@ -408,7 +414,7 @@ export async function executePedroV2Handoff(
     lead_name: input.lead_name,
     qualificacao: input.qualificacao,
     veiculo_interesse: input.veiculo_interesse,
-  });
+  }, _briefKey);
   if (inserted?.id) await supabase.from("ai_lead_transfers").update({ notes: briefing }).eq("id", inserted.id);
   await supabase.from("ai_crm_leads").update({ summary: briefing }).eq("id", input.lead_id);
   await supabase.from("ai_team_members").update({ last_lead_received_at: nowIso }).eq("id", choice.seller.id);

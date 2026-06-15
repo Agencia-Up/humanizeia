@@ -402,8 +402,8 @@ function inferVehicleFromText(text: string): Pick<PedroV2MediaContext, "vehicle_
   return { vehicle_query: model, vehicle_type: type, confidence: 0.76 };
 }
 
-async function inferMediaWithVision(imageDataUrl: string, caption?: string | null): Promise<Pick<PedroV2MediaContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+async function inferMediaWithVision(imageDataUrl: string, caption?: string | null, openaiKey?: string): Promise<Pick<PedroV2MediaContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
+  const apiKey = openaiKey || Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return null;
 
   try {
@@ -467,8 +467,8 @@ function dataUrlToBlob(dataUrl: string) {
   return new Blob([bytes], { type: mime });
 }
 
-async function transcribeAudioMedia(audioData?: string | null): Promise<string | null> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+async function transcribeAudioMedia(audioData?: string | null, openaiKey?: string): Promise<string | null> {
+  const apiKey = openaiKey || Deno.env.get("OPENAI_API_KEY");
   if (!apiKey || !audioData) return null;
 
   try {
@@ -504,7 +504,7 @@ async function transcribeAudioMedia(audioData?: string | null): Promise<string |
   }
 }
 
-export async function resolvePedroMediaContext(payload: any, instance?: any): Promise<PedroV2MediaContext> {
+export async function resolvePedroMediaContext(payload: any, instance?: any, openaiKey?: string): Promise<PedroV2MediaContext> {
   const caption = pickCaption(payload);
   const kind = pickKind(payload);
   const messageId = pickMessageId(payload);
@@ -520,7 +520,7 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
   const audioData = effectiveKind === "audio"
     ? downloaded.dataUrl || downloaded.url || null
     : null;
-  const audioTranscript = effectiveKind === "audio" ? await transcribeAudioMedia(audioData) : null;
+  const audioTranscript = effectiveKind === "audio" ? await transcribeAudioMedia(audioData, openaiKey) : null;
   const usedDownloadedImage = Boolean(downloaded.ok && (downloaded.dataUrl || downloaded.url));
   const hasMediaPayload = Boolean(effectiveKind || imageData || downloaded.ok);
 
@@ -550,7 +550,7 @@ export async function resolvePedroMediaContext(payload: any, instance?: any): Pr
 
   const visibleText = compact([caption, downloaded.text, audioTranscript]);
   const textInference = inferVehicleFromText(visibleText);
-  const visionInference = effectiveKind === "image" && imageData ? await inferMediaWithVision(imageData, visibleText) : null;
+  const visionInference = effectiveKind === "image" && imageData ? await inferMediaWithVision(imageData, visibleText, openaiKey) : null;
   const best = visionInference && Number(visionInference.confidence || 0) >= Number(textInference.confidence || 0)
     ? visionInference
     : textInference;

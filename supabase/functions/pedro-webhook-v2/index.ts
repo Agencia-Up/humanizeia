@@ -10,7 +10,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-15-hard-budget-ceiling-v113";
+const PEDRO_V2_BUILD = "2026-06-15-byok-per-account-v114";
 
 function agentUsesInstance(agent: any, instanceId: string): boolean {
   return agent?.instance_id === instanceId ||

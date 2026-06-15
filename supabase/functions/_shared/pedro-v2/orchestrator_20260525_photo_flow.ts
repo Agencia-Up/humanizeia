@@ -20,6 +20,7 @@ import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } f
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
 import { resolvePedroVehicleTurn } from "./vehicleResolver_20260525_brain.ts";
 import { buildTokenAlertText, consumeUserTokens, normalizeAlertPhone } from "./tokenMeter.ts";
+import { resolveAiKey, isAccountGrandfathered } from "../aiKeys.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {
@@ -27,6 +28,26 @@ async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   } catch (error) {
     console.warn("[PedroV2] Failed to record turn log", error);
   }
+}
+
+// BYOK: alerta o dono (1x a cada 6h) quando uma conta NOVA recebe lead mas NAO tem chave de IA
+// propria configurada -> o agente nao responde (nao usa a nossa chave). Throttle em memoria.
+const _noKeyAlertCache = new Map<string, number>();
+async function alertOwnerNoAiKey(supabase: any, input: any, log: any) {
+  const userId = input?.agent?.user_id;
+  if (!userId) return;
+  const now = Date.now();
+  if (now - (_noKeyAlertCache.get(userId) || 0) < 6 * 60 * 60 * 1000) return;
+  _noKeyAlertCache.set(userId, now);
+  const phone = normalizeAlertPhone(input?.agent?.gerente_phone);
+  if (!phone || !input?.wa_instance) return;
+  try {
+    await sendPedroText(input.wa_instance, {
+      to: phone,
+      text: "⚠️ *Seu agente de IA está sem chave configurada.*\n\nChegou um lead, mas o agente NÃO respondeu porque a chave de IA da sua conta ainda não foi cadastrada. Configure em *Administração → IA → Sua chave de IA* para ativar o atendimento automático. (Sua conta usa a sua própria chave de IA — o consumo é cobrado na sua conta do provedor.)",
+    }, { humanize: false });
+    log?.("info", "pedro_v2_no_ai_key_alert_sent", { user_id: userId });
+  } catch (_e) { /* nao bloqueia o turno */ }
 }
 
 function pickRemoteJid(payload: any): string {
@@ -1267,7 +1288,28 @@ export async function processPedroV2Turn(
     lead_created_at: lead?.created_at || null,
   });
 
-  const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance);
+  // ── BYOK GATE ──────────────────────────────────────────────────────────────
+  // A conta pode usar IA? Resolve a chave de OpenAI (cliente > nossa-se-grandfathered > nenhuma).
+  // Conta NOVA sem chave propria (source='none') NUNCA usa a nossa: nao roda NENHUMA chamada de
+  // IA (visao/audio/planner/reply), alerta o dono 1x e encerra. Contas atuais (grandfathered) e
+  // contas com chave propria seguem normal. O `_openaiKey`/`_aiKeyCtx` sao passados aos cerebros.
+  const _allowPlatformAi = await isAccountGrandfathered(supabase, input.agent.user_id);
+  const _openaiResolved = await resolveAiKey(supabase, input.agent.user_id, "openai", { allowPlatformFallback: _allowPlatformAi });
+  if (_openaiResolved.source === "none") {
+    if (!dryRun) { await alertOwnerNoAiKey(supabase, input, log); }
+    log("info", "pedro_v2_no_ai_key_blocked", { user_id: input.agent.user_id });
+    return {
+      ok: true,
+      dry_run: dryRun,
+      correlation_id: correlationId,
+      next_action: "no_ai_key_configured",
+      ai_key_source: "none",
+    };
+  }
+  const _openaiKey = _openaiResolved.key;
+  const _aiKeyCtx = { supabase, user_id: input.agent.user_id, allow_platform: _allowPlatformAi, openai_key: _openaiKey };
+
+  const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance, _openaiKey);
   let text = mediaContext.kind === "audio" && mediaContext.text
     ? mediaContext.text
     : rawText;
@@ -1517,7 +1559,7 @@ export async function processPedroV2Turn(
   }
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
-  const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text), mediaContext);
+  const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text, _openaiKey), mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
   const adMemory = adContextToMemory(adContext);
   const adNeedsVehicleConfirmation = adContext.has_ad_context && !adContext.vehicle_query;
@@ -1565,6 +1607,7 @@ export async function processPedroV2Turn(
     recent_history: recentHistory,
     vehicle_resolution: vehicleResolution,
     usage_sink: usageSink,
+    ai_key_ctx: _aiKeyCtx,
     // Override de provedor do cerebro SO em dry-run (testes A/B de DeepSeek vs OpenAI sem
     // afetar trafego real). Em producao usa o env PEDRO_PLANNER_PROVIDER (default OpenAI).
     planner_provider: dryRun ? (input.payload?.planner_provider ?? null) : null,
@@ -2094,6 +2137,7 @@ export async function processPedroV2Turn(
         media_context: sanitizePedroMediaContext(mediaContext),
         recent_history: recentHistory,
         usage_sink: usageSink,
+        ai_key_ctx: _aiKeyCtx,
         reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
         reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
       });
@@ -2179,6 +2223,7 @@ export async function processPedroV2Turn(
       media_context: sanitizePedroMediaContext(mediaContext),
       recent_history: recentHistory,
       usage_sink: usageSink,
+      ai_key_ctx: _aiKeyCtx,
       reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
       reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
       tool_result: {

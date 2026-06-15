@@ -740,8 +740,8 @@ function inferVehicleFromAdCopy(text: string): Pick<PedroV2AdContext, "vehicle_q
   };
 }
 
-async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+async function inferVehicleFromImage(imageDataUrl: string, openaiKey?: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
+  const apiKey = openaiKey || Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return null;
 
   // VISAO POR MODELO: gpt-4o le a IMAGEM do anuncio MUITO melhor que o mini pra distinguir
@@ -801,8 +801,8 @@ async function inferVehicleFromImage(imageDataUrl: string): Promise<Pick<PedroV2
   return fallback || primary;
 }
 
-async function inferVehicleFromAdText(text: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+async function inferVehicleFromAdText(text: string, openaiKey?: string): Promise<Pick<PedroV2AdContext, "vehicle_query" | "vehicle_type" | "summary" | "confidence"> | null> {
+  const apiKey = openaiKey || Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return null;
 
   try {
@@ -849,7 +849,7 @@ async function inferVehicleFromAdText(text: string): Promise<Pick<PedroV2AdConte
   }
 }
 
-export async function resolvePedroAdContext(payload: any, messageText: string): Promise<PedroV2AdContext> {
+export async function resolvePedroAdContext(payload: any, messageText: string, openaiKey?: string): Promise<PedroV2AdContext> {
   const textual = extractTextualAdContext(payload, messageText);
   if (!textual.has_ad_context) {
     return {
@@ -881,7 +881,7 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     : inferVehicleFromText(metadataText || textual.raw_text || messageText);
 
   if (textual.has_ad_context && (!textInference.vehicle_query || Number(textInference.confidence || 0) < 0.6)) {
-    const adTextInference = await inferVehicleFromAdText(metadataText || textual.raw_text || messageText);
+    const adTextInference = await inferVehicleFromAdText(metadataText || textual.raw_text || messageText, openaiKey);
     if (adTextInference && adTextInference.vehicle_query && Number(adTextInference.confidence || 0) >= 0.6) {
       textInference = adTextInference;
     }
@@ -916,7 +916,7 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
     ? embeddedImage
     : fetchedImage.dataUrl || embeddedImage || imageUrlCandidate || null;
   // Se a SAUDACAO ja deu o veiculo, NAO chama a visao (autoritativa + economiza a chamada).
-  const imageInference = (!greetingInference?.vehicle_query && imageDataUrl) ? await inferVehicleFromImage(imageDataUrl) : null;
+  const imageInference = (!greetingInference?.vehicle_query && imageDataUrl) ? await inferVehicleFromImage(imageDataUrl, openaiKey) : null;
   const explicitTextIsStrong = Boolean(explicitAdInference.vehicle_query && Number(explicitAdInference.confidence || 0) >= 0.75);
   // O TEXTO do anuncio (copy do anunciante, ex.: "Compass Longitude T270 2023") e
   // AUTORITATIVO para o ANO/spec — a VISAO (OCR da imagem) erra digito (leu "2022" no

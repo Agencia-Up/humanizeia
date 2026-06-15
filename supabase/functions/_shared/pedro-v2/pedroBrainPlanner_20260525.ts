@@ -1,6 +1,7 @@
 import { PedroV2Intent, PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
+import { keyFromCtx, AiKeyCtx } from "../aiKeys.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -804,6 +805,7 @@ export async function planPedroTurn(input: {
   usage_sink?: UsageSink;
   planner_provider?: string | null;
   planner_model?: string | null;
+  ai_key_ctx?: AiKeyCtx | null;
 }): Promise<PedroBrainPlan> {
   const fallback = fallbackPlan(input);
   // ── PROVEDOR DO CEREBRO (planner): OpenAI (default) ou DeepSeek (mais barato p/ intencao) ──
@@ -812,9 +814,10 @@ export async function planPedroTurn(input: {
   const plannerProvider = String(
     input.planner_provider || Deno.env.get("PEDRO_PLANNER_PROVIDER") || "openai",
   ).toLowerCase();
-  const openaiKey = Deno.env.get("OPENAI_API_KEY");
-  const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
-  const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("CLAUDE_API_KEY");
+  // BYOK: chaves resolvem por conta (cliente > nossa-se-grandfathered). ai_key_ctx vem do gate.
+  const openaiKey = await keyFromCtx(input.ai_key_ctx, "openai");
+  const deepseekKey = await keyFromCtx(input.ai_key_ctx, "deepseek");
+  const anthropicKey = await keyFromCtx(input.ai_key_ctx, "anthropic");
   const useDeepseek = plannerProvider === "deepseek" && !!deepseekKey;
   const useAnthropic = (plannerProvider === "anthropic" || plannerProvider === "claude") && !!anthropicKey;
   // Anthropic NAO e compativel com OpenAI: endpoint /v1/messages, header x-api-key + anthropic-version,
