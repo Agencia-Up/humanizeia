@@ -375,9 +375,21 @@ export default function WhatsAppAIAgent({ embedded }: { embedded?: boolean } = {
     if (!error) fetchData();
   };
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto p-4 md:p-6">{children}</div> : MainLayout;
+  // CRITICO: o Wrapper PRECISA ser uma referencia ESTAVEL. Antes era uma arrow function
+  // recriada a CADA render (quando embedded=true, ex.: dentro do Pedro SDR) — o React via um
+  // "tipo de componente novo" toda vez e REMONTAVA a subarvore inteira (incluindo o
+  // AgentFormDialog aberto) em qualquer re-render, zerando o QR/prompt/campos ao trocar de aba.
+  // useMemo([embedded]) garante a mesma referencia entre renders.
+  const Wrapper = useMemo(
+    () => (embedded
+      ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto p-4 md:p-6">{children}</div>
+      : MainLayout),
+    [embedded],
+  );
 
-  if (loading) {
+  // So mostra o spinner de pagina inteira quando NAO ha modal aberto — senao um flicker de
+  // loading desmontaria o AgentFormDialog (perdendo o que o usuario preencheu).
+  if (loading && !dialogOpen) {
     return (
       <Wrapper>
         <div className="flex items-center justify-center py-20">

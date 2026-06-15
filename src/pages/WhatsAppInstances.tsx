@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -353,7 +353,14 @@ export default function WhatsAppInstances({ embedded }: { embedded?: boolean } =
     ? Math.round(instances.reduce((s, i) => s + (i.health_score ?? 0), 0) / instances.length)
     : 0;
 
-  const Wrapper = embedded ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto">{children}</div> : MainLayout;
+  // Wrapper ESTAVEL (useMemo): arrow function recriada a cada render fazia o React remontar a
+  // subarvore inteira em qualquer re-render (mesmo bug do AgentFormDialog que perdia QR/campos).
+  const Wrapper = useMemo(
+    () => (embedded
+      ? ({ children }: { children: React.ReactNode }) => <div className="h-full overflow-y-auto">{children}</div>
+      : MainLayout),
+    [embedded],
+  );
 
   // Bloqueia vendedor sem permissão marcos_instancias (acesso direto via URL)
   if (blockSellerAccess) {
