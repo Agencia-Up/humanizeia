@@ -122,6 +122,10 @@ const ATTRIBUTE_NOISE_TOKENS = new Set([
 // Token de atributo/ruido OU ano (AAAA). O ano e tratado nos filtros numericos, nao
 // deve penalizar o modelo no scoring textual.
 function isAttributeOrNoiseToken(token: string): boolean {
+  // "2008" e MODELO da Peugeot, NAO ano — nunca tratar como ruido, senao "Peugeot 2008" perde
+  // o termo de modelo e a busca casa QUALQUER Peugeot (bug ANU-1). Demais modelos numericos
+  // (208/308/3008/5008/500) nao casam o regex de ano abaixo.
+  if (token === "2008") return false;
   return ATTRIBUTE_NOISE_TOKENS.has(token) || /^(?:19|20)\d{2}$/.test(token);
 }
 
@@ -511,6 +515,10 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
     (!filters?.ano_max || year <= Number(filters.ano_max)) &&
     // teto de preco NAO se aplica a carro sem preco (nao da pra comparar valor inexistente).
     (!filters?.preco_max || price <= 0 || price <= Number(filters.preco_max)) &&
+    // PISO de preco (faixa "de 60 a 80 mil"): o lead disse o MINIMO. Sem isso o motor mostrava
+    // carros ABAIXO do piso (ex.: Kwid R$55.990 quando o lead pediu a partir de 60 mil) =
+    // constrangedor. Mesma regra do preco_max: nao se aplica a carro sem preco.
+    (!filters?.preco_min || price <= 0 || price >= Number(filters.preco_min)) &&
     (!filters?.km_max || mileage <= Number(filters.km_max))
   );
 }

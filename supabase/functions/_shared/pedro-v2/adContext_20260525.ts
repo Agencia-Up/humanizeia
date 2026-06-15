@@ -955,14 +955,32 @@ export async function resolvePedroAdContext(payload: any, messageText: string): 
   };
 }
 
+// Remove o ANO do texto MAS preserva o modelo numerico "2008" da Peugeot (unico modelo cujo
+// nome casa o regex de ano — 208/308/3008/5008/500 nao casam). "Peugeot 2008 2020" -> mantem
+// o 1o "2008" (modelo) e remove o "2020" (ano). Sem isso o agente perdia o modelo e negava o
+// carro / oferecia outro Peugeot (bug ANU-1). Exportado para reuso no reply.
+export function stripYearKeepNumericModel(s?: string | null): string {
+  const str = String(s || "");
+  const matches = str.match(/\b(?:19|20)\d{2}\b/g) || [];
+  if (matches.length === 0) return str.replace(/\s+/g, " ").trim();
+  const keepPeugeot2008 = /peugeot/i.test(str) && matches.includes("2008");
+  let kept = false;
+  return str
+    .replace(/\b(?:19|20)\d{2}\b/g, (m) => {
+      if (keepPeugeot2008 && m === "2008" && !kept) { kept = true; return m; }
+      return " ";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function adContextToMemory(adContext: PedroV2AdContext): PedroV2LeadMemory {
   if (!adContext.has_ad_context) return {};
   // O ANO do anuncio (metadado/arte do Facebook) e IMPRECISO e NAO pode entrar no
   // modelo_desejado (campo que alimenta busca/match). "Mini Cooper 2023" colado fazia o
   // match com o estoque "Mini Cooper 2019" falhar -> agente dizia "nao temos". Gravamos o
   // MODELO LIMPO aqui; o texto cru do anuncio fica preservado em veiculo_citado (auditoria).
-  const stripYear = (s?: string | null) =>
-    String(s || "").replace(/\b(?:19|20)\d{2}\b/g, "").replace(/\s+/g, " ").trim();
+  const stripYear = (s?: string | null) => stripYearKeepNumericModel(s);
   return {
     interesse: {
       modelo_desejado: stripYear(adContext.vehicle_query) || null,

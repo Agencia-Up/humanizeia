@@ -604,6 +604,16 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = `enforced_cheaper_followup:${plan.reason || ""}`;
     plan.response_guidance = "O lead achou o veiculo em foco CARO e quer um MAIS BARATO. NAO reapresente o caro nem mande fotos dele. Mostre 2-4 opcoes REAIS do estoque MAIS BARATAS (priorize as de MENOR preco), do mesmo tipo quando fizer sentido, e pergunte se alguma agrada. NAO pergunte 'qual marca/ano' sem antes MOSTRAR opcoes.";
   }
+  // ── CALLBACK: lead pediu pra LIGAR ("me liga") — NAO transfere lead cru; qualifica antes ──
+  else if (_heurIntent === "callback_request" || /\b(me liga|me ligar|pode (me )?ligar|liga pra mim|me chama|prefiro ligacao|liga(r)? mais tarde)\b/.test(normalizeText(input.message))) {
+    plan.action = "reply_only";
+    plan.intent = "human_request";
+    plan.use_memory_vehicle = false;
+    plan.search_query = null;
+    plan.photo_target = null;
+    plan.reason = `enforced_callback_qualify:${plan.reason || ""}`;
+    plan.response_guidance = "O lead pediu pra um consultor LIGAR. Confirme de forma calorosa que SIM, um consultor pode ligar — MAS antes pegue o que falta pra passar um bom atendimento: o NOME e o que ele procura (modelo/tipo ou faixa de preco). NAO transfira agora nem prometa horario exato; deixe claro que o consultor entra em contato. Uma pergunta curta de cada vez.";
+  }
 
   // ── REDE DE SEGURANÇA: BUSCA DE VEÍCULO (restaurada — evidência real, caso Patricia) ──
   // O agente disse "não temos Jeep Compass" SEM TER BUSCADO — e há 3 Compass no estoque.

@@ -118,8 +118,18 @@ function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: a
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
   const broadStock = Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
+  // MEM-1: NAO herdar filtros VELHOS do interesse (preco/tipo/cambio/cor/modelo) quando o turno
+  // ATUAL nomeia um MODELO novo. Sem isso, um interesse de uma busca ANTERIOR (ex.: suv ate 80k)
+  // contaminava a busca nova (ex.: "tem hilux?" herdava preco_max:80000) e filtrava/zerava errado.
+  const _currentHasNewModel = Boolean(brainPlan?.search_query || vehicleResolution?.query || intent?.extracted?.interesse?.modelo_desejado);
+  const _staleInteresse: Record<string, any> = { ...(memory?.interesse || {}) };
+  if (_currentHasNewModel) {
+    for (const k of ["preco_max", "preco_min", "orcamento", "budget", "cambio", "cor", "tipo_veiculo", "modelo_desejado", "ano", "ano_min", "ano_max"]) {
+      delete _staleInteresse[k];
+    }
+  }
   const filters: Record<string, any> = {
-    ...(memory?.interesse || {}),
+    ..._staleInteresse,
     ...(intent?.extracted?.interesse || {}),
     ...(brainPlan?.search_filters || {}),
     query:
@@ -147,6 +157,13 @@ function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: a
   if (adHasVehicle && filters.preco_max && !explicitBudget) {
     filters.ad_price = filters.preco_max;
     delete filters.preco_max;
+  }
+
+  // MEM-1 (reforco): turno nomeia um MODELO novo SEM o lead dizer preco agora -> remove QUALQUER
+  // teto/piso herdado (de memoria OU eco do planner). Sem isso o orcamento de uma busca anterior
+  // (ex.: 80k de "suv ate 80k") filtrava "tem hilux?" e podia esconder a unidade real.
+  if (_currentHasNewModel && !explicitBudget) {
+    for (const k of ["preco_max", "preco_min", "orcamento", "budget", "preco"]) delete filters[k];
   }
 
   return filters;
@@ -1164,11 +1181,19 @@ export async function processPedroV2Turn(
   });
 
   if (identity.kind === "seller") {
+    // TRF-1: o vendedor so ASSUME o lead se a mensagem for um ACEITE de verdade ("Ok",
+    // "assumo", "pode deixar", 👍...). Antes, QUALQUER mensagem do telefone do vendedor
+    // (ate "quem e esse cliente?") confirmava a transferencia e atribuia o lead. Uma
+    // duvida/pergunta do vendedor NAO pode atribuir o lead.
+    const _sellerMsg = String(rawText || "").toLowerCase().trim();
+    const _isSellerAck = /[👍✅🤝🙏]/.test(rawText || "")
+      || /^\s*(ok+|okay|k|blz|beleza|sim|isso|fechado|fechou|show|bora|certo|combinado|positivo|confirmo|confirmado)\b/.test(_sellerMsg)
+      || /\b(assumo|assumir|vou assumir|assumido|pode deixar|deixa comigo|deixa cmg|peguei|pego esse|pego ele|to indo|to nessa|vou atender|ja atendo|atendo ele|atendo esse|vou cuidar|cuido dele|consigo atender)\b/.test(_sellerMsg);
     const ack = await confirmSellerAck(supabase, {
       user_id: input.agent.user_id,
       agent_id: input.agent.id,
       seller_phone: identity.phone,
-      commit: !dryRun,
+      commit: !dryRun && _isSellerAck,
     });
     log("info", "pedro_v2_seller_message", { seller_id: identity.seller?.id, ack });
     // Paridade com o v1: avisa o vendedor que o "OK" foi registrado (sem isso ele
@@ -1671,7 +1696,20 @@ export async function processPedroV2Turn(
     isGenericQuery = false;
   }
 
-  if (stockFilters && !isGenericQuery) {
+  // EST-3: pedido de MOTO. A loja (Icom) trabalha SO com carros. "moto" caia na busca generica
+  // e o reply chegava a dizer "Trabalhamos sim!" (confirmando falsamente que vende moto). Detecta
+  // o pedido de moto e responde com clareza que e so carro, sem cair no "que tipo de carro?".
+  const _motoText = `${String(stockFilters?.query || "")} ${String(text || "")}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const _isMotoRequest = /\b(moto|motos|motoca|motocicleta|motocicletas|scooter|lambreta)\b/.test(_motoText);
+  if (stockFilters && _isMotoRequest) {
+    stockResult = {
+      success: true,
+      total: 0,
+      items: [],
+      is_moto_request: true,
+      response_guidance: "INSTRUCAO INTERNA (NUNCA cite jargao tecnico): o lead perguntou sobre MOTO, mas a loja trabalha SOMENTE com CARROS. Responda com clareza e simpatia que aqui e so carro (nao temos motos) e, se ele quiser, voce ajuda a achar um carro. NUNCA confirme que vendemos moto nem pergunte 'que tipo de carro' como se ele tivesse pedido um carro.",
+    };
+  } else if (stockFilters && !isGenericQuery) {
     stockResult = await searchPedroStock(supabase, {
       user_id: input.agent.user_id,
       query: stockFilters.query,
@@ -1950,7 +1988,14 @@ export async function processPedroV2Turn(
     && /\b(obrigad|agradec|valeu|brigad|vlw|gostei|adorei|amei|curti|show|bacana|massa|otim|perfeit|maravilh|sensacional|muito\s+bo[am]|top|legal|ficaram?\s+(boa|otim|linda|show|top))/.test(_msgNorm)
     && !/\b(mais|outra|outras|manda|mandar|envia|enviar|quero|queria|pode|tem|ver)\b[^.!?\n]{0,18}\bfotos?\b/.test(_msgNorm)
     && !/\bfotos?\b[^.!?\n]{0,16}\b(traseir|frente|dianteir|lateral|lado|interior|dentro|motor|painel|roda|banco|porta[- ]?mala|outr)/.test(_msgNorm);
-  const _blockPhotoOffTopic = _thanksForPhotos
+  // ATEND-1: PERGUNTA DE SPEC/MEDIDA ("qual o tamanho do porta-malas?", "quantos litros?",
+  // "qual o consumo/motor?", "quantos lugares?") NAO e pedido de foto — e pra RESPONDER o dado.
+  // Antes, a palavra "porta-malas"/"banco"/"motor" disparava 3 fotos junto (excesso reclamado).
+  // So bloqueia quando NAO ha "foto/mostra/ver" explicito (ai sim ele quer VER a parte).
+  const _isSpecQuestion = /\b(qual|quanto|quantos|quantas|cabe|tem)\b/.test(_msgNorm)
+    && /\b(tamanho|cabe|cabem|litros?|capacidade|consumo|km\s*\/?\s*l|km\s+por\s+litro|cavalos|potencia|lugares|assentos|cilindrada|tanque|porta[- ]?malas?|porta[- ]?mala)\b/.test(_msgNorm)
+    && !/\b(foto|fotos|imagem|imagens|mostra|me\s+mostra|ver|manda|envia)\b/.test(_msgNorm);
+  const _blockPhotoOffTopic = _thanksForPhotos || _isSpecQuestion
     || ((_wantsOtherVehicle || _offTopicConcern) && !messageAsksForPhotos(text));
 
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead

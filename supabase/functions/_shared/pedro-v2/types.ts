@@ -50,6 +50,7 @@ export type PedroV2LeadMemory = {
     ano_min?: number | null;
     ano_max?: number | null;
     preco_max?: number | null;
+    preco_min?: number | null;
     km_max?: number | null;
   };
   negociacao?: {
@@ -57,7 +58,7 @@ export type PedroV2LeadMemory = {
     valor_entrada?: string | null;
     parcela_desejada?: string | null;
     tem_troca?: boolean | null;
-    carro_troca?: Record<string, any> | null;
+    carro_troca?: string | Record<string, any> | null;
   };
   referencia?: {
     texto_referencia?: string | null;

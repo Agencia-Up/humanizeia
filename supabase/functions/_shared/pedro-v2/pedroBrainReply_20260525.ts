@@ -529,7 +529,10 @@ export async function generatePedroBrainReply(input: {
   // pelo MODELO (o que o estoque TEM) e usamos o ano so como DESEMPATE, nunca eliminatorio.
   const _adQuery = String(input.ad_context?.vehicle_query || "");
   const _adYear = (_adQuery.match(/\b(?:19|20)\d{2}\b/) || [])[0] || null;
-  const _adModelo = normalizeText(_adQuery.replace(/\b(?:19|20)\d{2}\b/g, ""));
+  // Preserva o modelo numerico "2008" da Peugeot ao remover o ano (bug ANU-1: "Peugeot 2008"
+  // virava "peugeot" e casava QUALQUER Peugeot). Demais modelos numericos nao casam o regex de ano.
+  const _adModelo = normalizeText(_adQuery.replace(/\b(?:19|20)\d{2}\b/g, (m) =>
+    (/peugeot/i.test(_adQuery) && m === "2008") ? m : " "));
   const _adModelFacts = _adModelo
     ? allFacts.filter((f: any) => {
         const m = normalizeText(f?.modelo || "");

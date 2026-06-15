@@ -19,6 +19,25 @@ function extractPriceCeiling(text: string): number | null {
   return raw < 1000 ? raw * 1000 : raw;
 }
 
+// FAIXA de preco com PISO e TETO ("de 60 a 80 mil", "entre 60 e 80 mil", "60mil a 80mil").
+// Exige o marcador "mil" (ou r$) pra NAO confundir com faixa de ANO ("de 2019 a 2021").
+// Sem isso o piso era ignorado e o agente mostrava carro ABAIXO do orcamento minimo (EST-1).
+function extractPriceRange(text: string): { min: number; max: number } | null {
+  const compact = text.replace(/\./g, "").replace(/,/g, ".");
+  const m = compact.match(/(?:de\s+|entre\s+)?(?:r\$\s*)?(\d{2,4})\s*(?:mil)?\s*(?:a|ate|e|-)\s*(?:r\$\s*)?(\d{2,4})\s*mil/i)
+    || compact.match(/(?:de\s+|entre\s+)?(?:r\$\s*)?(\d{2,4})\s*mil\s*(?:a|ate|e|-)\s*(?:r\$\s*)?(\d{2,4})\s*(?:mil)?/i);
+  if (!m) return null;
+  let a = Number(m[1]);
+  let b = Number(m[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  if (a < 1000) a *= 1000;
+  if (b < 1000) b *= 1000;
+  const min = Math.min(a, b);
+  const max = Math.max(a, b);
+  if (min < 1000 || max < 1000 || min === max) return null;
+  return { min, max };
+}
+
 function extractVehicleType(text: string): string | null {
   if (/\b(moto|motos|motocicleta|scooter|biz|cg|fan|titan|bros|xre|pcx)\b/.test(text)) return "moto";
   if (/\b(picape|pickup|caminhonete|camionete|strada|toro|saveiro|montana|oroch|hilux|ranger|s10|amarok)\b/.test(text)) return "pickup";
@@ -53,18 +72,37 @@ export function routePedroIntent(input: {
 }): PedroV2IntentResult {
   const text = normalizeText(input.message);
   const extracted: PedroV2LeadMemory = {};
-  const priceCeiling = extractPriceCeiling(text);
+  const priceRange = extractPriceRange(text);
+  const priceCeiling = priceRange?.max ?? extractPriceCeiling(text);
+  const priceFloor = priceRange?.min ?? null;
   const vehicleType = extractVehicleType(text);
   const model = extractLikelyModel(text);
 
-  if (priceCeiling || vehicleType || model) {
+  if (priceCeiling || priceFloor || vehicleType || model) {
     extracted.interesse = {
       preco_max: priceCeiling,
+      preco_min: priceFloor,
       tipo_veiculo: vehicleType,
       modelo_desejado: model,
       cambio: /\b(automatico|aut\.?|automatica)\b/.test(text) ? "automatico" : /\b(manual|mecanico)\b/.test(text) ? "manual" : null,
       combustivel: /\b(flex|gasolina|diesel|alcool|etanol)\b/.test(text) ? text.match(/\b(flex|gasolina|diesel|alcool|etanol)\b/)?.[1] || null : null,
     };
+  }
+
+  // MEM-2: carro citado em contexto de TROCA NAO e interesse de COMPRA. "tenho uma Strada pra
+  // dar na troca, queria um SUV" -> Strada e o usado do lead (carro_troca), nao o que ele quer
+  // comprar. Sem isso o modelo da troca virava interesse.modelo_desejado e a busca ia atras do
+  // carro errado. Desvia o modelo pra negociacao.carro_troca quando ele aparece JUNTO de termos
+  // de troca E nao foi introduzido por "por/quero/queria" (= carro DESEJADO via troca).
+  if (model && /\b(troca|trocar|na troca|de entrada|dar de entrada|usado na troca)\b/.test(text)) {
+    const idx = text.indexOf(model);
+    const before = text.slice(Math.max(0, idx - 14), idx);
+    const desiredViaPor = /\b(por|pelo|pela|quero|queria|interesse|gostaria)\b[^.!?]{0,8}$/.test(before);
+    const tradeNearModel = /\b(troca|tenho|meu|minha|dar|dou|de entrada|usado)\b/.test(text.slice(Math.max(0, idx - 30), idx + model.length + 12));
+    if (!desiredViaPor && tradeNearModel) {
+      extracted.negociacao = { ...(extracted.negociacao || {}), carro_troca: model, tem_troca: true };
+      if (extracted.interesse) extracted.interesse.modelo_desejado = null;
+    }
   }
 
   if (isPhotoRequest(text)) {
@@ -112,7 +150,11 @@ export function routePedroIntent(input: {
     };
   }
 
-  if (/\b(vendedor|humano|consultor|atendente|liga|ligar|me chama)\b/.test(text)) {
+  // TRF-2: pedido EXPLICITO de humano (vendedor/consultor/atendente) => transfere. Mas pedido
+  // de LIGACAO ("me liga", "pode me ligar?", "me chama") NAO transfere lead cru — vira callback:
+  // o agente qualifica (pega nome + interesse) e avisa que um consultor liga. So cai aqui o
+  // pedido explicito de pessoa, nao o de telefonema.
+  if (/\b(vendedor|humano|consultor|atendente|quero falar com|falar com (uma pessoa|alguem|atendente|vendedor|consultor))\b/.test(text)) {
     return {
       intent: "human_request",
       confidence: 0.78,
@@ -120,6 +162,18 @@ export function routePedroIntent(input: {
       needs_handoff: true,
       extracted,
       reason: "lead_requested_human_contact",
+    };
+  }
+
+  // Pedido de LIGACAO/callback: nao transfere; sinaliza pra qualificar + prometer o retorno.
+  if (/\b(me liga|me ligar|pode (me )?ligar|liga pra mim|me chama|pode (me )?chamar|prefiro ligacao|por telefone|liga(r)? mais tarde)\b/.test(text)) {
+    return {
+      intent: "callback_request",
+      confidence: 0.7,
+      needs_stock_search: false,
+      needs_handoff: false,
+      extracted,
+      reason: "lead_requested_callback",
     };
   }
 
