@@ -166,6 +166,13 @@ function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: a
     for (const k of ["preco_max", "preco_min", "orcamento", "budget", "preco"]) delete filters[k];
   }
 
+  // Teto EXPLICITO do lead ("ate 30 mil") e HARD: mesmo p/ modelo nomeado, NAO mostra unidade
+  // acima do orcamento (antes "onix ate 30 mil" relaxava e mostrava Onix de R$64-76k). O
+  // stockSearch usa esse flag p/ aplicar o teto ate no modo relaxed.
+  if (explicitBudget && Number(filters.preco_max) > 0) {
+    filters.hard_price_ceiling = true;
+  }
+
   return filters;
 }
 
