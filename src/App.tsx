@@ -45,10 +45,16 @@ function reloadForStaleChunk(): boolean {
   return false;
 }
 
-// Vite dispara este evento quando o preload de um modulo dinamico falha.
+// Vite dispara este evento quando o PRELOAD (de fundo) de um modulo dinamico
+// falha — ex.: o bundle ficou velho apos um deploy. ANTES isso recarregava a
+// pagina inteira aqui, o que apagava o que o usuario estava fazendo "sozinho",
+// sem ele nem trocar de tela. Agora so SUPRIME o erro (preventDefault): a
+// recuperacao de chunk velho de verdade acontece quando o usuario NAVEGA pra
+// rota afetada (tratada no ErrorBoundary.componentDidCatch, que ai sim recarrega
+// 1x). Nao recarregar em preload de fundo.
 if (typeof window !== 'undefined') {
   window.addEventListener('vite:preloadError', (e: any) => {
-    if (reloadForStaleChunk()) e?.preventDefault?.();
+    e?.preventDefault?.();
   });
 }
 
