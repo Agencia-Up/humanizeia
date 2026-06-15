@@ -201,9 +201,30 @@ serve(async (req: Request) => {
     switch (eventName) {
       case 'PAYMENT_RECEIVED':
       case 'PAYMENT_CONFIRMED': {
-        // Idempotência
+        // ── RENOVAÇÃO / REATIVAÇÃO ─────────────────────────────────────────
+        // Se o pending JÁ está pago (1a compra processada) e chega um NOVO
+        // pagamento, distinguir:
+        //  (a) RENOVAÇÃO/REATIVAÇÃO = pagamento recorrente da assinatura
+        //      (externalReference `sub_`, ou payment.id != o do setup original).
+        //      O cliente pagou o mês seguinte OU regularizou após atraso →
+        //      reativa (status=active) e estende a validade (renewal_date).
+        //  (b) DUPLICATA = o MESMO pagamento do setup re-entregue → ignora.
+        // ANTES isto dava `break` em qualquer caso: a renovação nunca era
+        // registrada e quem atrasava+pagava ficava bloqueado pra sempre.
         if (pending.status === 'paid' && pending.user_id) {
-          console.log(`[checkout-asaas-webhook] pending=${pending.id} já estava pago, ignorando re-processamento`);
+          const isRenewal = (typeof extRef === 'string' && extRef.startsWith('sub_')) ||
+            (!!payment?.id && !!pending.asaas_setup_payment_id && payment.id !== pending.asaas_setup_payment_id);
+          if (isRenewal) {
+            const renewalISO = computeRenewalISO(pending.plano);
+            const { error: renErr } = await supabase
+              .from('user_subscriptions')
+              .update({ status: 'active', renewal_date: renewalISO, updated_at: new Date().toISOString() })
+              .eq('user_id', pending.user_id);
+            if (renErr) console.error(`[checkout-asaas-webhook] erro ao renovar/reativar: ${renErr.message}`);
+            else console.log(`[checkout-asaas-webhook] RENOVACAO/REATIVACAO — user=${pending.user_id} renewal=${renewalISO}`);
+          } else {
+            console.log(`[checkout-asaas-webhook] pending=${pending.id} já pago (mesmo pagamento) — ignorando duplicata`);
+          }
           break;
         }
 
