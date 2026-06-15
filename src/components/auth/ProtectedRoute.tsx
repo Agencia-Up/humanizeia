@@ -86,6 +86,17 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
 
         let next: ProfileState;
         if (error || !data) {
+          // FIX: erro de REDE (ex.: Failed to fetch ao voltar o foco da aba)
+          // NAO deve expulsar um usuario logado pra /onboarding. So trata como
+          // "sem org" se a query realmente respondeu sem dados. Em falha de
+          // rede, mantem a tela (fail-open) e recheca na proxima navegacao.
+          const emsg = String((error as any)?.message || '');
+          const isNetworkErr = (typeof navigator !== 'undefined' && navigator.onLine === false)
+            || /failed to fetch|networkerror|load failed|err_/i.test(emsg);
+          if (isNetworkErr) {
+            if (!ac.signal.aborted) setProfileState('ok');
+            return;
+          }
           next = 'no_org';
         } else if (isSeller) {
           next = 'ok';
@@ -109,13 +120,15 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
         const createdMs = user.created_at ? Date.parse(user.created_at) : NaN;
         const isNewAccount = Number.isFinite(createdMs) && createdMs >= LOCK_CUTOFF;
         if (next === 'ok' && !isSeller && isNewAccount) {
-          const { data: sub } = await supabase
+          const { data: sub, error: subErr } = await supabase
             .from('user_subscriptions')
             .select('status')
             .eq('user_id', user.id)
             .maybeSingle();
           if (ac.signal.aborted) return;
-          if ((sub as any)?.status !== 'active') {
+          // FIX: so manda pro checkout se a query VOLTOU certo e nao ha
+          // assinatura ativa. Erro de rede NAO trava o usuario no /checkout.
+          if (!subErr && (sub as any)?.status !== 'active') {
             next = 'no_payment';
           }
         }
@@ -123,8 +136,11 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
         profileCache.set(cacheKey, next);
         setProfileState(next);
       } catch {
+        // FIX: excecao (tipicamente rede ao voltar o foco) NAO deve expulsar o
+        // usuario logado pra /onboarding. Mantem a tela; recheca na proxima
+        // navegacao (nao cacheia este resultado).
         if (!ac.signal.aborted) {
-          setProfileState('no_org');
+          setProfileState('ok');
         }
       }
     })();

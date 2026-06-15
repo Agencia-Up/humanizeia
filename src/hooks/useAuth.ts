@@ -69,6 +69,10 @@ export function useAuth() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         const newUid = session?.user?.id ?? null;
+        // Instrumentacao temporaria pra diagnosticar "tela reseta ao trocar de
+        // aba". Mostra QUAL evento o Supabase dispara ao voltar o foco e se tem
+        // sessao/internet. (Remover depois que estabilizar.)
+        try { console.warn('[auth-evt]', event, 'sessao?', !!session?.user, 'online?', navigator.onLine); } catch { /* noop */ }
 
         // ── FIX (tela reseta ao trocar de aba) ─────────────────────────────
         // Ao voltar o foco da aba, o Supabase dispara TOKEN_REFRESHED com o
@@ -80,7 +84,36 @@ export function useAuth() {
           return;
         }
 
-        // Mudou de verdade (login ou logout): atualiza tudo.
+        // ── FIX (tela reseta por piscada de rede ao voltar o foco) ─────────
+        // Chegou um evento SEM sessao (newUid null) mas a gente TINHA usuario
+        // logado. Isso costuma ser a renovacao do token falhando porque a rede
+        // piscou ao reativar a aba (ERR_NETWORK_CHANGED) — NAO um logout real.
+        // Zerar user aqui jogava a tela pra /auth e apagava o trabalho. Entao:
+        // se offline, ignora (mantem a sessao). Se online, reconfirma com
+        // getSession(): se a sessao ainda existe no storage, foi so a rede —
+        // mantem; so derruba se a sessao sumiu de fato. O logout pelo botao ja
+        // navega pra /auth sozinho, entao nao dependemos deste evento pra isso.
+        if (newUid === null && currentUid !== null) {
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            return; // offline: piscada de rede, mantem o usuario na tela
+          }
+          supabase.auth.getSession().then(({ data: { session: live } }) => {
+            if (live?.user) {
+              setSession(live); // sessao ainda valida: foi so a rede
+              return;
+            }
+            // Sessao sumiu de verdade (expirou/deslogou): derruba a UI.
+            currentUid = null;
+            setSession(null);
+            setUser(null);
+            setProfile(null);
+            invalidateProfileCache();
+            setLoading(false);
+          }).catch(() => { /* nao derruba a sessao por erro de getSession */ });
+          return;
+        }
+
+        // Mudou de verdade (login com novo usuário): atualiza tudo.
         currentUid = newUid;
         setSession(session);
         setUser(session?.user ?? null);

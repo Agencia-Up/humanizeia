@@ -89,7 +89,12 @@ class ErrorBoundary extends React.Component<
     // bundle mudou. Retentar NAO resolve (o arquivo nao existe mais) — recarrega
     // a pagina 1x pra buscar o index.html + chunks novos (evita o "Algo deu
     // errado" que so saia com CTRL+F5).
-    if (isChunkLoadError(err) && reloadForStaleChunk()) return;
+    // So recarrega por "chunk velho" se estivermos ONLINE. Quando a rede pisca
+    // (ERR_NETWORK_CHANGED / ERR_INTERNET_DISCONNECTED ao voltar o foco da aba),
+    // um import() de rota falha com "Failed to fetch dynamically imported
+    // module" — que NAO e bundle velho, e sim a rede. Recarregar a pagina nesse
+    // caso so apagava o trabalho. Offline -> cai no auto-retry suave abaixo.
+    if (isChunkLoadError(err) && navigator.onLine && reloadForStaleChunk()) return;
 
     // Tenta retentar automaticamente erros transientes (race conditions
     // típicas em primeiras renderizações: lazy load + hooks + queries).
@@ -246,7 +251,21 @@ const Treinamento = lazy(() => import("./pages/Treinamento"));
 const Profile = lazy(() => import("./pages/Profile"));
 
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Voltar o foco da aba NAO deve refazer todas as queries: era isso que
+      // enchia o console de "Failed to fetch" quando a rede piscava ao reativar
+      // a aba, e ainda competia banda com a renovacao do token (piorando o
+      // reset). refetchOnReconnect tambem desligado pelo mesmo motivo. Quem
+      // precisar religar faz por query (ex.: useMetaCachedQuery).
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: 1,
+      staleTime: 30_000,
+    },
+  },
+});
 
 const PageLoader = () => (
   <div className="flex min-h-screen items-center justify-center bg-background">
