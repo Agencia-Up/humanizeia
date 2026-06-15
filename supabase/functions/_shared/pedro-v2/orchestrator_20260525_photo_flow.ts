@@ -20,7 +20,7 @@ import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } f
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
 import { resolvePedroVehicleTurn } from "./vehicleResolver_20260525_brain.ts";
 import { buildTokenAlertText, consumeUserTokens, normalizeAlertPhone } from "./tokenMeter.ts";
-import { resolveAiKey, isAccountGrandfathered } from "../aiKeys.ts";
+import { resolveAiKey, isAccountGrandfathered, AiKeyCtx, ProviderError } from "../aiKeys.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   try {
@@ -47,6 +47,54 @@ async function alertOwnerNoAiKey(supabase: any, input: any, log: any) {
       text: "⚠️ *Seu agente de IA está sem chave configurada.*\n\nChegou um lead, mas o agente NÃO respondeu porque a chave de IA da sua conta ainda não foi cadastrada. Configure em *Administração → IA → Sua chave de IA* para ativar o atendimento automático. (Sua conta usa a sua própria chave de IA — o consumo é cobrado na sua conta do provedor.)",
     }, { humanize: false });
     log?.("info", "pedro_v2_no_ai_key_alert_sent", { user_id: userId });
+  } catch (_e) { /* nao bloqueia o turno */ }
+}
+
+// FALHA DE IA NO TURNO: o provedor recusou a chamada (sem credito / chave invalida) e o agente
+// caiu pro fallback "burro". Alerta quem pode AGIR e loga sempre. Throttle 6h por (user+kind).
+//  - source='client': a chave e do CLIENTE -> alerta o gerente da conta (ele recarrega/corrige).
+//  - source='platform': e a NOSSA chave (conta grandfathered) -> NAO incomoda o lojista; loga em
+//    alta visibilidade e, se PEDRO_PLATFORM_ALERT_PHONE estiver setado, avisa o dono da plataforma.
+const _llmFailAlertCache = new Map<string, number>();
+async function alertOwnerLlmFailure(supabase: any, input: any, errors: ProviderError[], source: string | undefined, log: any) {
+  // So alerta no que e ACIONAVEL: sem credito (quota) ou chave invalida (auth). rate/other = transitorio.
+  const actionable = (errors || []).filter((e) => e.kind === "quota" || e.kind === "auth");
+  if (actionable.length === 0) return;
+  // quota tem prioridade (caso mais comum: "acabaram os creditos").
+  const kind = actionable.some((e) => e.kind === "quota") ? "quota" : "auth";
+  const provider = (actionable.find((e) => e.kind === kind)?.provider) || "openai";
+  const userId = input?.agent?.user_id || "unknown";
+
+  // Log SEMPRE (independe de ter telefone): nossa observabilidade pega.
+  log?.("error", source === "platform" ? "pedro_v2_platform_llm_failure" : "pedro_v2_client_llm_failure",
+    { user_id: userId, source, kind, provider, errors: actionable.slice(0, 4) });
+
+  const cacheKey = `${userId}:${kind}`;
+  const now = Date.now();
+  if (now - (_llmFailAlertCache.get(cacheKey) || 0) < 6 * 60 * 60 * 1000) return;
+
+  // Destinatario: cliente -> gerente da conta; plataforma -> numero do dono via env (opcional).
+  const rawPhone = source === "platform"
+    ? (Deno.env.get("PEDRO_PLATFORM_ALERT_PHONE") || "")
+    : input?.agent?.gerente_phone;
+  const phone = normalizeAlertPhone(rawPhone);
+  if (!phone || !input?.wa_instance) { _llmFailAlertCache.set(cacheKey, now); return; }
+  _llmFailAlertCache.set(cacheKey, now);
+
+  const provName = provider === "anthropic" ? "Anthropic (Claude)" : provider === "deepseek" ? "DeepSeek" : "OpenAI";
+  let textMsg: string;
+  if (source === "platform") {
+    textMsg = kind === "quota"
+      ? `🚨 *IA da PLATAFORMA sem crédito (${provName}).* O agente de uma conta atual (grandfathered) caiu pro modo limitado por falta de saldo na NOSSA chave. Recarregue o ${provName} para normalizar o atendimento de TODAS as contas atuais.`
+      : `🚨 *Chave de IA da PLATAFORMA inválida (${provName}).* O agente caiu pro modo limitado. Verifique a chave ${provName} configurada no servidor.`;
+  } else {
+    textMsg = kind === "quota"
+      ? `⚠️ *Sua chave de IA está sem crédito (${provName}).* Chegou um lead e o agente não conseguiu responder direito. Recarregue créditos na sua conta ${provName} para reativar o atendimento automático.`
+      : `⚠️ *Sua chave de IA parece inválida (${provName}).* O agente não conseguiu responder. Revise a chave em *Administração → IA → Sua chave de IA*.`;
+  }
+  try {
+    await sendPedroText(input.wa_instance, { to: phone, text: textMsg }, { humanize: false });
+    log?.("info", "pedro_v2_llm_failure_alert_sent", { user_id: userId, source, kind, to: phone });
   } catch (_e) { /* nao bloqueia o turno */ }
 }
 
@@ -1307,7 +1355,8 @@ export async function processPedroV2Turn(
     };
   }
   const _openaiKey = _openaiResolved.key;
-  const _aiKeyCtx = { supabase, user_id: input.agent.user_id, allow_platform: _allowPlatformAi, openai_key: _openaiKey };
+  // provider_errors: acumulador MUTAVEL do turno (reply/planner empurram falhas de IA aqui).
+  const _aiKeyCtx: AiKeyCtx = { supabase, user_id: input.agent.user_id, allow_platform: _allowPlatformAi, openai_key: _openaiKey, source: _openaiResolved.source, provider_errors: [] };
 
   const mediaContext = await resolvePedroMediaContext(input.payload, input.wa_instance, _openaiKey);
   let text = mediaContext.kind === "audio" && mediaContext.text
@@ -2307,6 +2356,12 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ALERTA DE FALHA DE IA: se o planner/reply caíram por falta de crédito (quota) ou chave
+  // inválida (auth), o agente respondeu em modo "burro" (fallback). Avisa quem pode agir.
+  if (!dryRun && _aiKeyCtx.provider_errors && _aiKeyCtx.provider_errors.length > 0) {
+    await alertOwnerLlmFailure(supabase, input, _aiKeyCtx.provider_errors, _aiKeyCtx.source, log);
+  }
+
   let sendResult: any = null;
   if (!dryRun && reply.ok && isPedroV2SendingEnabled()) {
     const instance = input.wa_instance || await resolvePedroInstance(supabase, {
@@ -2704,6 +2759,8 @@ export async function processPedroV2Turn(
     stock_result: stockResult,
     reply,
     send_result: sendResult,
+    ai_key_source: _aiKeyCtx.source,
+    ai_provider_errors: _aiKeyCtx.provider_errors,
     next_action: sendResult?.ok ? "reply_sent" : dryRun ? "dry_run_reply_planned" : "reply_generated",
   };
 }

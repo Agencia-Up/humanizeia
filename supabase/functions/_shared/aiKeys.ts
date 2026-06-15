@@ -81,13 +81,56 @@ export async function resolveAiKey(
   return { key: '', source: 'none' };
 }
 
+// Falha de provedor de IA capturada no turno (credito esgotado / chave invalida / etc).
+export type ProviderErrorKind = 'quota' | 'auth' | 'rate' | 'other';
+export interface ProviderError {
+  provider: string;
+  stage: string; // 'reply' | 'planner' | 'vision' | ...
+  status: number;
+  code: string;
+  kind: ProviderErrorKind;
+}
+
 // Contexto BYOK passado aos cerebros (reply/planner) e helpers (visao/audio). Resolve a chave
 // do provedor escolhido na hora. `openai_key` ja vem resolvida do gate (evita RPC repetida).
+// `provider_errors` e um acumulador MUTAVEL do turno: reply/planner empurram falhas (429/401/...)
+// e o orchestrator decide se alerta o dono. `source` diz de quem e a chave (client vs platform).
 export interface AiKeyCtx {
   supabase: any;
   user_id: string | null;
   allow_platform: boolean;
   openai_key?: string;
+  source?: ResolvedAiKey['source'];
+  provider_errors?: ProviderError[];
+}
+
+// Classifica o erro HTTP de um provedor de IA. O que importa pro alerta: 'quota' (sem credito,
+// ACAO = recarregar) e 'auth' (chave invalida, ACAO = corrigir a chave). 'rate'/'other' = transitorio.
+export function classifyProviderHttpError(status: number, bodyText: string): { code: string; kind: ProviderErrorKind } {
+  let code = '';
+  try {
+    const j = JSON.parse(bodyText);
+    code = String(j?.error?.code || j?.error?.type || j?.type || '');
+  } catch (_e) { /* corpo nao-JSON */ }
+  const c = code.toLowerCase();
+  const body = String(bodyText || '').toLowerCase();
+  if (status === 401 || status === 403 || c.includes('invalid_api_key') || c.includes('authentication') || body.includes('invalid api key')) {
+    return { code: code || `http_${status}`, kind: 'auth' };
+  }
+  if (c.includes('insufficient_quota') || c.includes('billing') || body.includes('insufficient_quota') || body.includes('exceeded your current quota') || body.includes('credit balance is too low')) {
+    return { code: code || 'insufficient_quota', kind: 'quota' };
+  }
+  if (status === 429) return { code: code || 'rate_limit', kind: 'rate' };
+  return { code: code || `http_${status}`, kind: 'other' };
+}
+
+// Best-effort: le o corpo do erro e registra no ctx. NUNCA lanca (caminho de falha ja degradado).
+export async function recordProviderError(ctx: AiKeyCtx | null | undefined, provider: string, stage: string, res: Response): Promise<void> {
+  if (!ctx) return;
+  let bodyText = '';
+  try { bodyText = await res.text(); } catch (_e) { /* ignora */ }
+  const { code, kind } = classifyProviderHttpError(res.status, bodyText);
+  (ctx.provider_errors ||= []).push({ provider, stage, status: res.status, code, kind });
 }
 export async function keyFromCtx(ctx: AiKeyCtx | null | undefined, provider: AiProvider): Promise<string> {
   if (ctx) {

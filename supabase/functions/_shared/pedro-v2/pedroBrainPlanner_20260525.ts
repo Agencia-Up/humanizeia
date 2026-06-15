@@ -1,7 +1,7 @@
 import { PedroV2Intent, PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
-import { keyFromCtx, AiKeyCtx } from "../aiKeys.ts";
+import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -968,6 +968,8 @@ export async function planPedroTurn(input: {
     }
     if (!res.ok) {
       if (llm.isAnthropic) console.warn(`[PedroV2] planner anthropic/${plannerModel} status ${res.status}`);
+      // Registra a falha (sem credito / chave invalida / etc) pro orchestrator decidir alertar o dono.
+      await recordProviderError(input.ai_key_ctx, llm.provider, "planner", res);
       return fallback;
     }
     const data = await res.json();

@@ -3,7 +3,7 @@ import { PedroBrainPlan } from "./pedroBrainPlanner_20260525.ts";
 import { PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
-import { keyFromCtx, AiKeyCtx } from "../aiKeys.ts";
+import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 
 function sanitizeAgentName(name?: string | null) {
   const clean = String(name || "").trim();
@@ -753,7 +753,12 @@ export async function generatePedroBrainReply(input: {
     ];
     const res = await callReply(replyMessages);
 
-    if (!res.ok) return fallback;
+    if (!res.ok) {
+      // Registra a falha (sem credito / chave invalida / etc) pro orchestrator decidir alertar o dono.
+      const failedProvider = replyIsAnthropic ? "anthropic" : replyIsDeepseek ? "deepseek" : "openai";
+      await recordProviderError(input.ai_key_ctx, failedProvider, "reply", res);
+      return fallback;
+    }
     const data = await res.json();
     // SAIDA: OpenAI/DeepSeek -> choices[0].message.content ; Anthropic -> content[].text
     if (input.usage_sink) {
