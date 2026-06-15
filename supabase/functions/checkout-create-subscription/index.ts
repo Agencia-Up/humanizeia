@@ -193,12 +193,17 @@ serve(async (req: Request) => {
       boleto: 'BOLETO',
     };
 
+    // 1a cobranca = IMPLEMENTACAO + 1a MENSALIDADE/ANUIDADE juntas (decisao do
+    // Wander 15/06): o cliente paga tudo no ato. A recorrencia (subscription)
+    // comeca no periodo SEGUINTE, pra nao cobrar 2x o 1o periodo.
+    const planLabelAsaas = planType === 'pro' ? 'PRO' : planType === 'enterprise' ? 'PRO MAX' : 'Básico';
+    const firstChargeValue = q.setup + q.recurrence;
     const setupPaymentBody: any = {
       customer: customerId,
       billingType: billingTypeMap[paymentMethod],
-      value: q.setup,
+      value: firstChargeValue,
       dueDate,
-      description: `LOGOS|IA — Taxa de implementação (${planType === 'pro' ? 'PRO' : planType === 'enterprise' ? 'PRO MAX' : 'Básico'})`,
+      description: `LOGOS|IA — Implementação + 1ª ${ciclo === 'anual' ? 'anuidade' : 'mensalidade'} (${planLabelAsaas})`,
       externalReference: `setup_${pendingId}`,
     };
 
@@ -228,9 +233,11 @@ serve(async (req: Request) => {
     console.log(`[checkout] setup payment criado: ${setupPayment.id} status=${setupPayment.status}`);
 
     // ── 4. Criar SUBSCRIPTION (recorrência mensal/anual) ──
-    // Próxima cobrança 30 dias após a setup (pra não cobrar 2x no mesmo dia)
+    // A 1a mensalidade/anuidade JA foi cobrada hoje (junto da implementacao).
+    // Entao a recorrencia comeca no PROXIMO periodo: +30 dias (mensal) ou +365
+    // (anual). Assim nao cobra 2x o 1o periodo.
     const nextDue = new Date(today);
-    nextDue.setDate(nextDue.getDate() + 30);
+    nextDue.setDate(nextDue.getDate() + (ciclo === 'anual' ? 365 : 30));
 
     const subscriptionBody: any = {
       customer: customerId,
