@@ -1089,6 +1089,54 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── JOSÉ · GESTOR DE TRÁFEGO (já disponível no Pro) ───────────── */}
+      <section className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden bg-card/30">
+        <div className="relative max-w-6xl mx-auto">
+          <div className="text-center mb-10 md:mb-12 animate-fade-in">
+            <Badge
+              variant="outline"
+              className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider border-orange-500/40 text-orange-400 bg-orange-500/10"
+            >
+              <Target className="inline-block h-3 w-3 mr-1.5" />
+              Novo · já disponível no Pro
+            </Badge>
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              José, seu <span style={{ color: 'var(--brand-gold)' }}>gestor de tráfego</span> que não dorme
+            </h2>
+            <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+              Ele cuida das suas campanhas no Meta e no Google Ads o dia inteiro: cria, otimiza,
+              pausa o que não dá retorno e te mostra exatamente onde está o seu lucro — sem você
+              depender de agência.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5 mb-10">
+            {[
+              { icon: '🎯', title: 'Meta + Google Ads', desc: 'Gerencia suas campanhas nas duas maiores plataformas, num lugar só.' },
+              { icon: '⚙️', title: 'Otimização automática', desc: 'Cria, ajusta orçamento, pausa o que gasta sem vender e escala o que funciona.' },
+              { icon: '📊', title: 'Painel de resultados', desc: 'ROAS, CPA, CTR e CPM ao vivo — você vê o retorno de cada real investido.' },
+              { icon: '🧠', title: 'Recomendações com IA', desc: 'Aponta o que melhorar com base em dados e benchmarks do seu setor.' },
+            ].map((item) => (
+              <div
+                key={item.title}
+                className="rounded-xl border border-border/40 bg-card/60 p-5 hover:border-primary/30 transition-colors"
+              >
+                <p className="text-2xl mb-2">{item.icon}</p>
+                <p className="font-bold text-sm mb-1 text-foreground">{item.title}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-center text-sm text-muted-foreground">
+            <strong className="text-foreground">Já incluído no plano Pro</strong> — junto com o Pedro (WhatsApp) e o Marcos (CRM).
+          </p>
+        </div>
+      </section>
+
       {/* ── EM BREVE (Prompt 7 — redesign 16/05) ─────────────────────── */}
       <section
         id="em-breve"
@@ -1126,13 +1174,6 @@ export default function LandingPage() {
           {/* ── GRID 4x2 DESKTOP / 2x4 TABLET / 1 MOBILE ──────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
             {[
-              {
-                name: 'José',
-                desc: 'Gestão inteligente de tráfego pago no Meta e Google Ads',
-                Icon: Target,
-                color: '#E65100',
-                bg: 'rgba(230, 81, 0, 0.08)',
-              },
               {
                 name: 'Paulo',
                 desc: 'Copywriter IA com termômetro de estilo e tom configurável',
@@ -1641,9 +1682,9 @@ export default function LandingPage() {
                         className="text-6xl font-black leading-none"
                         style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}
                       >
-                        597
+                        497
                       </span>
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
+                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,00</span>
                       <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
                     </div>
                     <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
@@ -1670,6 +1711,7 @@ export default function LandingPage() {
                     <ul className="space-y-2.5 text-sm flex-1">
                       {[
                         'CRM completo de leads',
+                        'José · gestão de tráfego pago (Meta + Google Ads)',
                         'Até 10 conexões de WhatsApp',
                         'Disparo em massa segmentado',
                         'Follow-up automático 24/7',
@@ -1742,7 +1784,7 @@ export default function LandingPage() {
                       Pro Max
                     </h3>
                     <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Tudo do Pro, com todos os agentes liberados.
+                      Tudo do Pro, dimensionado para empresas com mais clientes.
                     </p>
 
                     <div className="flex items-end gap-1 leading-none">
@@ -1773,7 +1815,8 @@ export default function LandingPage() {
                       {[
                         'Tudo do plano Pro',
                         'Todos os agentes de IA liberados',
-                        'Conexões de WhatsApp ilimitadas',
+                        'Até 15 números de WhatsApp',
+                        'Maior capacidade de atendimento (alto volume de clientes)',
                         'Todas as integrações liberadas',
                         'Acompanhamento das conversas da equipe',
                         'Onboarding e suporte VIP',
@@ -1916,7 +1959,7 @@ export default function LandingPage() {
             {/* Nota do fundador + microcopy de segurança */}
             <div className="mt-8 text-center">
               <p className="text-sm font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                Oferta Fundador: os 10 primeiros garantem o Pro por R$ 597,90/mês e o Pro Max por R$ 797,90/mês nos 3 primeiros meses.
+                Oferta Fundador: os 10 primeiros garantem o Pro por R$ 497,00/mês e o Pro Max por R$ 797,90/mês nos 3 primeiros meses.
               </p>
               <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <Lock className="h-3 w-3" />

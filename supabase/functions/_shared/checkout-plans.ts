@@ -11,7 +11,7 @@
  *   Todos usam a CHAVE DE IA DO PROPRIO CLIENTE -> conversas ILIMITADAS
  *   (nao cobramos por conversa; por isso a cota e um teto alto simbolico).
  *
- *   PRO fundador (1o-10o pago): setup 1497,90 | mensal 597,90  (promo de 3 meses)
+ *   PRO fundador (1o-10o pago): setup 1497,90 | mensal 497,00  (promo de 3 meses)
  *   PRO normal   (11o+):        setup 1997,90 | mensal 797,90
  *   PRO MAX fundador (1o-10o):  setup 1497,90 | mensal 797,90  (promo de 3 meses)
  *   PRO MAX normal   (11o+):    setup 1997,90 | mensal 1297,90
@@ -42,7 +42,7 @@ export const UNLIMITED_ATEND = 999999;
 export const PLANS = {
   pro: {
     atendimentos: UNLIMITED_ATEND,
-    fundador: { setup: 1497.90, mensal: 597.90, anual: 8617.32 },
+    fundador: { setup: 1497.90, mensal: 497.00, anual: 8617.32 },
     normal:   { setup: 1997.90, mensal: 797.90, anual: 8617.32 },
   },
   enterprise: {
