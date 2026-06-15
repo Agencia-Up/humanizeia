@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from "react";
+import React, { lazy as reactLazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,6 +10,30 @@ import { FEATURES } from "@/config/features";
 import { Loader2 } from "lucide-react";
 import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
 import { AgentChatProvider } from "@/contexts/AgentChatContext";
+
+// ── lazy com re-tentativa (resiliência a piscada de rede) ───────────────────────
+// O carregamento de uma tela (import dinâmico) pode falhar SÓ porque a rede
+// piscou ao voltar o foco da aba (ERR_CONNECTION_CLOSED / ERR_NETWORK_CHANGED) —
+// e nesses casos o navigator.onLine MENTE (continua true). Sem isto, a falha caía
+// no ErrorBoundary e RECARREGAVA a página inteira, apagando o trabalho do
+// cliente. Aqui a gente re-tenta o import sozinho algumas vezes com espera
+// crescente: a conexão volta em 1-3s e a tela carrega normal, SEM reload. Só
+// depois de ~4s de tentativas falharem (= versão realmente velha) o erro sobe
+// pro ErrorBoundary. TODAS as telas (lazy(...)) abaixo passam por aqui.
+function lazy<T extends React.ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+  return reactLazy(async () => {
+    let lastErr: unknown;
+    for (let i = 0; i < 4; i++) {
+      try {
+        return await factory();
+      } catch (err) {
+        lastErr = err;
+        if (i < 3) await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+      }
+    }
+    throw lastErr;
+  });
+}
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
 // Catches render errors so a broken page never crashes the entire app.
