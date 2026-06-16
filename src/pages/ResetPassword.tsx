@@ -6,11 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Lock, Loader2, Sparkles } from 'lucide-react';
+import { Lock, Loader2 } from 'lucide-react';
+import { LogosIALogo } from '@/components/brand/LogosIALogo';
+import { useAppStore } from '@/store/appStore';
 
 export default function ResetPassword() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { isDarkMode } = useAppStore();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -52,12 +55,14 @@ export default function ResetPassword() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md space-y-6">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
-            <Sparkles className="h-6 w-6 text-primary-foreground" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">Redefinir Senha</h1>
-          <p className="text-sm text-muted-foreground">Digite sua nova senha abaixo</p>
+        <div className="flex flex-col items-center gap-3 text-center mb-2">
+          <LogosIALogo size="xl" variant={isDarkMode ? 'dark' : 'light'} />
+          <h1 className="text-2xl md:text-3xl font-extrabold text-foreground mt-1" style={{ fontFamily: 'var(--font-display)' }}>
+            Redefinir Senha
+          </h1>
+          <p className="text-sm text-muted-foreground max-w-xs">
+            Crie sua nova senha pra acessar a <span className="font-semibold" style={{ color: 'var(--brand-gold)' }}>Logos</span>
+          </p>
         </div>
 
         <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
