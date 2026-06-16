@@ -776,6 +776,39 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     }
   }
 
+  // USAR INTERESSE CONHECIDO em pergunta GENERICA de preco/disponibilidade: o lead pergunta sobre
+  // preco/o-que-anunciaram/disponibilidade SEM nomear modelo, e o plano caiu em "carro"/generico,
+  // MAS a memoria tem um interesse de TIPO (picape/suv/...) ou modelo. Busca por ESSE interesse —
+  // senao o agente negava "nao temos picape Fiat" buscando "carro" generico (caso real Jose Anisio:
+  // a loja tinha Fiat Toro 2024 + Strada 2025). So dispara em pergunta de preco/disponibilidade, p/
+  // nao estreitar um "o que voces tem?" amplo de verdade.
+  {
+    const _msgN = normalizeText(input.message);
+    const _priceOrAvailQ = /\b(preco|valor|quanto|anunci|anuncio|real|disponivel|disponiveis|ainda tem|esse carro|esse veiculo|essa picape|esse preco)\b/.test(_msgN);
+    const _genericTok = /^(carro|carros|veiculo|veiculos)$/i;
+    const _planQ = String(plan.search_query || "").trim();
+    const _planModelo = String(plan.search_filters?.modelo_desejado || "").trim();
+    const _planIsGeneric = (!_planQ || _genericTok.test(_planQ)) && (!_planModelo || _genericTok.test(_planModelo));
+    const _memTipo = String((input.memory?.interesse as any)?.tipo_veiculo || "").toLowerCase();
+    const _memModelo = memoryVehicleQuery(input.memory);
+    const _memTypeSpecific = ["suv", "pickup", "hatch", "sedan", "moto"].includes(_memTipo);
+    const _memModelSpecific = Boolean(_memModelo) && !_genericTok.test(String(_memModelo))
+      && !["pickup", "suv", "hatch", "sedan", "moto", "carro"].includes(String(_memModelo).toLowerCase());
+    if (plan.action === "stock_search" && _planIsGeneric && _priceOrAvailQ && (_memTypeSpecific || _memModelSpecific)
+        && !wantsOtherVehicle(input.message) && !wantsCheaperVehicle(input.message)) {
+      if (_memModelSpecific) {
+        plan.search_query = String(_memModelo);
+        plan.search_filters = { ...(plan.search_filters || {}), modelo_desejado: String(_memModelo), ...(_memTypeSpecific ? { tipo_veiculo: _memTipo } : {}) } as any;
+      } else {
+        plan.search_query = null;
+        plan.search_filters = { ...(plan.search_filters || {}), stock_broad: true, modelo_desejado: null, tipo_veiculo: _memTipo } as any;
+      }
+      plan.use_memory_vehicle = true;
+      plan.reason = `used_memory_interest_for_generic_q:${plan.reason || ""}`;
+      plan.response_guidance = `O lead perguntou de forma generica (preco/disponibilidade/anuncio) sobre o que ele JA procura (${_memModelSpecific ? _memModelo : _memTipo}). APRESENTE de forma CURTA as opcoes REAIS desse tipo no estoque (stock.facts). NUNCA diga 'nao temos' esse tipo havendo unidades no estoque.`;
+    }
+  }
+
   // ACEITE DE OFERTA DE OPCOES: o agente ofereceu MOSTRAR opcoes/carros ("posso te mostrar outras
   // opcoes de hatch?") e o lead AFIRMOU ("Ok"/"sim"/"pode"). O LLM as vezes le esse "ok" como
   // desinteresse e SE DESPEDE (caso real lead Jefferson). FORCA stock_search pra APRESENTAR.
