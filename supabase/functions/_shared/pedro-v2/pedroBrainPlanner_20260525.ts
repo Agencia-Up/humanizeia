@@ -274,6 +274,24 @@ function getLastAgentText(input: {
   return String(last?.text || last?.content || last?.message || "");
 }
 
+// O agente ofereceu MOSTRAR opcoes/carros/modelos (NAO fotos, NAO qualificacao) na ULTIMA fala?
+// Ex.: "Posso te mostrar outras opcoes de hatch?", "Quer ver os modelos que temos?". Usado pra
+// interpretar um "Ok"/"sim" do lead como ACEITE -> APRESENTAR o estoque (e nao se despedir).
+// Caso real lead Jefferson: agente ofereceu "outras opcoes de hatch", lead respondeu "Ok" e o
+// agente se DESPEDIU ("nao vou tomar seu tempo") = lead quente perdido.
+function hasRecentOptionsOffer(input: {
+  memory?: PedroV2LeadMemory | null;
+  recent_history?: any[];
+}) {
+  const t = normalizeText(getLastAgentText(input));
+  if (!t) return false;
+  if (/\b(troca|entrada|pagamento|financ|cpf|nascimento|visita|test ?drive|parcela)\b/.test(t)) return false;
+  if (/\b(foto|fotos|imagem|imagens|video|videos)\b/.test(t)) return false;
+  const offers = /\b(posso te mostrar|posso mostrar|quer ver|gostaria de ver|te mostro|vou te mostrar|posso te apresentar|quer que eu (te )?mostre|posso sugerir|posso te indicar|posso te oferecer)\b/.test(t);
+  const things = /\b(opcao|opcoes|alternativa|alternativas|carro|carros|modelo|modelos|hatch|sedan|suv|picape|veiculo|veiculos|o que temos|nosso estoque|estoque|disponiveis)\b/.test(t);
+  return offers && things;
+}
+
 // Classifica o TIPO da ultima pergunta/oferta do agente, para o planner interpretar
 // respostas curtas/emojis EM CONTEXTO (regra #1 do prompt do planner).
 function classifyPendingQuestion(input: {
@@ -285,6 +303,8 @@ function classifyPendingQuestion(input: {
   if (!t) return "nenhum";
   // Oferta/promessa de fotos tem prioridade (reaproveita a mesma deteccao do enforcement).
   if (hasRecentPhotoOffer(input)) return "ofereceu_fotos";
+  // Oferta de MOSTRAR opcoes/carros: um "ok"/"sim" depois disso = ACEITE (apresentar), nao despedida.
+  if (hasRecentOptionsOffer(input)) return "ofereceu_opcoes";
   if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t) && /\b(pretende|vai|forma|paga|pagar|prefere|quer)\b/.test(t)) return "perguntou_pagamento";
   if (/\b(troca|usado na troca|carro na troca|tem (um )?carro)\b/.test(t)) return "perguntou_troca";
   if (/\b(nome|cpf|nascimento|telefone|e mail|email|whatsapp)\b/.test(t)) return "perguntou_dados";
@@ -753,6 +773,38 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
       plan.photo_target = null;
       plan.reason = `blocked_unrequested_photo:${plan.reason || ""}`;
     plan.response_guidance = "O lead não pediu fotos de forma explícita. Não envie imagens. Apenas responda conversando de forma humana e continue a qualificação ou tire dúvidas.";
+    }
+  }
+
+  // ACEITE DE OFERTA DE OPCOES: o agente ofereceu MOSTRAR opcoes/carros ("posso te mostrar outras
+  // opcoes de hatch?") e o lead AFIRMOU ("Ok"/"sim"/"pode"). O LLM as vezes le esse "ok" como
+  // desinteresse e SE DESPEDE (caso real lead Jefferson). FORCA stock_search pra APRESENTAR.
+  // Narrow: so quando a ULTIMA fala do agente foi oferta de opcoes (nao foto/qualificacao) e o
+  // lead so afirmou (sem pedir outro carro/foto).
+  const _okText = normalizeText(input.message);
+  const _isDeclineOrBye = /\b(obrigad|tchau|valeu|flw|falou|depois|mais tarde|outra hora|vou pensar|pensar|nao quero|nao precisa|nao obrigado|deixa|to so olhando|so olhando|agradeco)\b/.test(_okText);
+  if (hasRecentOptionsOffer(input) && isAffirmativeText(input.message) && !_isDeclineOrBye
+      && !expressesOtherVehicleWish(input.message) && !isPhotoText(input.message)
+      && (plan.action === "reply_only" || plan.action === "clarify")) {
+    const _prevType = (plan.search_filters as any)?.tipo_veiculo || null;
+    plan.action = "stock_search";
+    plan.intent = "stock_lookup";
+    plan.use_memory_vehicle = false;
+    plan.search_query = null;
+    plan.search_filters = { ...(plan.search_filters || {}), stock_broad: true, modelo_desejado: null, tipo_veiculo: _prevType } as any;
+    plan.reason = `accepted_options_offer_to_stock:${plan.reason || ""}`;
+    plan.response_guidance = "O lead ACEITOU sua oferta de ver opcoes (respondeu 'ok'/'sim'). APRESENTE de forma CURTA as opcoes REAIS do estoque (stock.facts) e pergunte qual interessa ou se quer ver fotos. NUNCA se despeca nem trate como desinteresse — ele QUER ver os carros.";
+  }
+
+  // FAIXA DE ANO: o planner emite search_filters.ano como STRING ("2013-2018", "2013 a 2018"). O
+  // motor filtra por ano_min/ano_max -> sem converter, a FAIXA era IGNORADA (mostrava carro fora do
+  // ano; caso real "hatch de 2013 a 2018" trazia 2011/2024). Converte SO faixas (2+ anos) p/ nao
+  // mexer no comportamento de ano unico (que ja e tratado pelo cerebro/recuperacao).
+  if (plan.search_filters && (plan.search_filters as any).ano != null) {
+    const _yrs = (String((plan.search_filters as any).ano).match(/(?:19|20)\d{2}/g) || []).map(Number);
+    if (_yrs.length >= 2) {
+      (plan.search_filters as any).ano_min = Math.min(..._yrs);
+      (plan.search_filters as any).ano_max = Math.max(..._yrs);
     }
   }
 
