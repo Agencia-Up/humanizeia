@@ -5,6 +5,49 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 
+// Remove perguntas-isca / fillers de cortesia PROIBIDOS pelo prompt quando aparecem no FIM da
+// mensagem ("Posso ajudar com mais alguma coisa?", "Voce gostaria de saber mais sobre X?",
+// "Tem alguma duvida?", "Fico a disposicao"...). O LLM as vezes desobedece a regra de FORMA; este
+// strip deterministico garante. So mexe no FIM e em fillers GENERICOS — NUNCA em pergunta de venda
+// (ex.: "Quer ver fotos?", "Quer agendar uma visita?", "Consigo te receber sexta?").
+function stripFillerClosers(text: string): string {
+  const original = String(text || "").trim();
+  // Padroes de FILLER de cortesia (testados como substring na ultima frase/clausula).
+  const fillerTest = [
+    /posso (te |lhe )?ajudar (com|em|a)?\s*(mais )?(alguma coisa|algo|mais alguma)/i,
+    /gostaria de saber mais/i,
+    /tem (mais )?alguma (d[uú]vida|pergunta)/i,
+    /(estou|fico|estarei|sigo|seguimos)\s+(à |a )?(sua )?disposi[cç][aã]o/i,
+    /(estou|fico)\s+(aqui|por aqui)( (se|caso) precisar)?/i,
+    /se precisar (de (mais )?(informa[cç][oõ]es|ajuda|algo)|de qualquer coisa)/i,
+    /qualquer (d[uú]vida|coisa)[, ]/i,
+    /\bo que (voc[eê] )?ach(a|ou)\b/i,
+  ];
+  // Hooks de VENDA legitimos: NUNCA remover uma frase/clausula que tenha isso (pergunta que avanca).
+  const salesHook = /\b(foto|fotos|v[ií]deo|visita|test ?drive|agendar|agend|valor|pre[cç]o|parcel|financ|simul|ver o carro|te mostrar|mostrar|op[cç][oõ]es|receber|amanh[aã]|hoje|sexta|s[aá]bado|segunda|cor|km|ano)\b/i;
+  const isFiller = (s: string) => fillerTest.some((re) => re.test(s)) && !salesHook.test(s);
+  // Tira CLAUSULAS-filler do fim de uma frase (separadas por virgula), em loop.
+  const stripClauses = (s: string) => {
+    const cs = s.split(/,\s*/);
+    while (cs.length > 1 && isFiller(cs[cs.length - 1])) cs.pop();
+    return cs.join(", ").replace(/[\s,]+$/, "").trim();
+  };
+
+  const parts = original.split(/(?<=[.!?…])\s+/);
+  // Da ULTIMA frase pra tras: limpa as clausulas-filler; se a frase ficar vazia OU virar pura
+  // filler, remove a frase inteira e repete. Senao, mantem a versao limpa e para. Assim nao
+  // perde conteudo real que vinha colado ao filler (ex.: "Pode pesquisar no Google, se precisar
+  // de mais informacoes, estou a disposicao" -> "Pode pesquisar no Google.").
+  while (parts.length > 0) {
+    const i = parts.length - 1;
+    const stripped = stripClauses(parts[i]);
+    if (parts.length > 1 && (!stripped || isFiller(stripped))) { parts.pop(); continue; }
+    if (stripped && stripped !== parts[i]) parts[i] = /[.!?…]$/.test(stripped) ? stripped : stripped + ".";
+    break;
+  }
+  return parts.join(" ").trim() || original; // nunca devolve vazio (mensagem so-filler fica como veio)
+}
+
 function sanitizeAgentName(name?: string | null) {
   const clean = String(name || "").trim();
   if (!clean || /^(agente ia|agenteia|ia agente|robo|bot)$/i.test(clean)) {
@@ -733,6 +776,7 @@ export async function generatePedroBrainReply(input: {
                 "Siga a sua personalidade principal do System Prompt do Portal.",
                 "ÁUDIO NÃO ENTENDIDO: se media_context.kind for 'audio' e media_context.audio_transcribed for false (ou o texto da vez for só '[áudio recebido]'), você NÃO conseguiu ouvir o áudio. NUNCA prometa 'vou escutar o áudio e já respondo' nem finja ter ouvido — você não tem como voltar depois. Peça com gentileza pro cliente mandar por TEXTO (ou um áudio curtinho de novo) o que ele precisa.",
                 "VÍDEO: você só envia FOTOS, não vídeos. Se o cliente pedir vídeo, NÃO mande fotos fingindo que é vídeo: diga que por aqui você consegue mandar FOTOS na hora e que vídeo você pede pro consultor — e ofereça as fotos.",
+                "SPEC TÉCNICA: NÃO invente números exatos que NÃO estejam em stock.facts — litros do porta-malas, consumo (km/l), potência (cv), nº de lugares, tamanho do tanque, etc. Se não tiver o dado certo, NÃO chute: diga que confirma certinho com o time e já retorna, OU responda de forma geral sem cravar número. Errar uma ficha técnica destrói a confiança do cliente.",
                 "Se houver estoque (stock.facts), cite os dados reais dele. Não invente carros ou especificações.",
                 "Se o cliente mudou o carro de interesse, priorize o modelo atual em relação à memória.",
                 "VEICULO EM FOCO: perguntas de ATRIBUTO (preço, km, cor, ano, câmbio, versão, combustível) e referências ('dele', 'desse', 'esse carro') são SEMPRE sobre o 'veiculo_em_foco' (ou stock.facts) — NUNCA sobre o carro de TROCA do cliente. Se 'veiculo_em_foco' tiver o dado, responda direto com ele; NUNCA diga que não tem a informação de um carro que está em 'veiculo_em_foco'.",
@@ -821,9 +865,12 @@ export async function generatePedroBrainReply(input: {
     // Anti-repeticao de nome: se o agente ja usou o primeiro nome do lead nas ultimas
     // mensagens, remove o vocativo desta resposta (o nome nao aparece em sequencia).
     const _firstName = leadFirstName(input.memory);
-    const finalText = agentUsedNameRecently(input.recent_history, _firstName)
+    const _nameClean = agentUsedNameRecently(input.recent_history, _firstName)
       ? stripLeadNameVocatives(text, _firstName)
       : text;
+    // Remove pergunta-isca/filler de cortesia proibido no fim (o LLM as vezes desobedece a regra).
+    const _deFiller = stripFillerClosers(_nameClean || text);
+    const finalText = _deFiller || _nameClean || text;
     return {
       ok: true,
       text: finalText || text,

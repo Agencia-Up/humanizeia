@@ -922,7 +922,21 @@ function selectVehiclePhotos(vehicle: any, message: string, alreadySent: number[
   const target = detectPhotoTarget(message);
   if (total === 0) return { target, photos: [] as string[], sent_indexes: [] as number[] };
   if (total <= 5) {
-    const idx = Array.from({ length: total }, (_, i) => i);
+    // Overview/interior (pedido amplo): manda o conjunto (visao geral / varias do interior).
+    if (target === "overview" || target === "interior") {
+      const idx = Array.from({ length: total }, (_, i) => i);
+      return { target, photos: idx.map((i) => photos[i]), sent_indexes: idx };
+    }
+    // Alvo ESPECIFICO (roda/traseira/painel/lateral...) com POUCAS fotos: NAO despeja o album
+    // (bug real: "foto da roda" num carro com <=5 fotos vinha o album inteiro). Manda ate 3,
+    // priorizando os indices tipicos do alvo, SEMPRE dentro do range valido.
+    const prefSmall: Record<string, number[]> = {
+      front: [0, 1, 2], side: [2, 1, 3], rear: [total - 1, total - 2, 3],
+      wheel: [3, 2, 4, 1], dashboard: [total - 1, total - 2, 2], seats: [total - 1, total - 2, 2],
+      trunk: [total - 1, total - 2, 3],
+    };
+    const want = (prefSmall[target] || [0, 1, 2]).filter((i) => i >= 0 && i < total);
+    const idx = [...new Set([...want, ...Array.from({ length: total }, (_, i) => i)])].slice(0, Math.min(total, 3));
     return { target, photos: idx.map((i) => photos[i]), sent_indexes: idx };
   }
 
@@ -2569,6 +2583,14 @@ export async function processPedroV2Turn(
     reply.media = [];
     reply.source = "finance_transfer_enforced";
     log("info", "pedro_v2_finance_transfer_enforced", { lead_id: lead?.id || null });
+  }
+
+  // TEMPERATURA em ACUSACAO DE GOLPE/HOSTILIDADE: o LLM as vezes deixa temperatura=null nesses
+  // casos e o lead fica sem classificacao no CRM. Marca 'desqualificado' deterministicamente em
+  // sinais INEQUIVOCOS (golpe/fraude/picaretagem). Nao toca deboche leve (pode ser "kkk" positivo).
+  if (reply && (!reply.temperatura || reply.temperatura === "morno")
+      && /\b(golpe|fraude|picaret|171|estelionat|vigaris|larap|ladr[aã]o|enganaç|enganando|roubando|me roubar|trapac)\b/.test(String(text || "").toLowerCase())) {
+    reply.temperatura = "desqualificado";
   }
 
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
