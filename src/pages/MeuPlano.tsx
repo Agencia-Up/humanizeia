@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -166,6 +167,36 @@ export default function MeuPlano() {
     })();
     return () => { alive = false; };
   }, [user]);
+
+  // Saldo da chave OpenAI (BYOK): o cliente informa o saldo (US$); calculamos
+  // conversas restantes (~R$0,50/conversa), descontando o gasto real.
+  const [saldo, setSaldo] = useState<any>(null);
+  const [balInput, setBalInput] = useState('');
+  const [savingBal, setSavingBal] = useState(false);
+  const fetchSaldo = async () => {
+    try {
+      const { data } = await (supabase as any).rpc('cliente_saldo_ia');
+      setSaldo(data || null);
+    } catch { setSaldo(null); }
+  };
+  useEffect(() => { if (user) fetchSaldo(); /* eslint-disable-next-line */ }, [user]);
+  const handleSaveBalance = async () => {
+    const usd = parseFloat(String(balInput).replace(',', '.'));
+    if (!Number.isFinite(usd) || usd < 0) {
+      toast({ title: 'Valor inválido', description: 'Informe o saldo em dólar (ex: 20).', variant: 'destructive' });
+      return;
+    }
+    setSavingBal(true);
+    try {
+      const { error } = await (supabase as any).rpc('set_my_openai_balance', { p_usd: usd });
+      if (error) throw error;
+      setBalInput('');
+      await fetchSaldo();
+      toast({ title: 'Saldo atualizado!', description: 'Calculamos as conversas com base no seu saldo da OpenAI.' });
+    } catch (e: any) {
+      toast({ title: 'Erro', description: e?.message, variant: 'destructive' });
+    } finally { setSavingBal(false); }
+  };
 
   if (loading || sellerLoading) {
     return (
@@ -372,6 +403,63 @@ export default function MeuPlano() {
       {/* ── Overview tab ───────────────────────────────────────────── */}
       {tab === 'overview' && (
         <div className="space-y-5">
+          {/* Saldo da sua chave OpenAI -> conversas restantes (BYOK) */}
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+            <h3 className="font-semibold mb-1 flex items-center gap-2">
+              <Coins className="h-4 w-4 text-emerald-400" /> Saldo da sua chave OpenAI
+            </h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              A OpenAI não mostra o saldo por fora, então informe aqui quanto você tem de crédito (em dólar). A gente converte para real e calcula quantas conversas dá — descontando o que já gastou.
+            </p>
+
+            {saldo?.tem_saldo ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="rounded-lg bg-background/40 border border-border/40 p-3">
+                    <p className="text-[11px] text-muted-foreground">Saldo informado</p>
+                    <p className="text-lg font-bold">US$ {Number(saldo.balance_usd).toFixed(2)}</p>
+                    <p className="text-[11px] text-muted-foreground">{fmtR(Number(saldo.saldo_brl))}</p>
+                  </div>
+                  <div className="rounded-lg bg-background/40 border border-border/40 p-3">
+                    <p className="text-[11px] text-muted-foreground">Já gastou</p>
+                    <p className="text-lg font-bold">{fmtR(Number(saldo.gasto_brl))}</p>
+                    <p className="text-[11px] text-muted-foreground">{fmt(Number(saldo.conversas_usadas))} conversas</p>
+                  </div>
+                  <div className="rounded-lg bg-background/40 border border-border/40 p-3">
+                    <p className="text-[11px] text-muted-foreground">Resta</p>
+                    <p className="text-lg font-bold text-emerald-400">{fmtR(Number(saldo.restante_brl))}</p>
+                  </div>
+                  <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3">
+                    <p className="text-[11px] text-emerald-300/80">Conversas restantes</p>
+                    <p className="text-2xl font-extrabold text-emerald-400 leading-tight">≈ {fmt(Number(saldo.conversas_restantes))}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="text-xs text-muted-foreground">Atualizar saldo (US$)</label>
+                    <Input value={balInput} onChange={(e) => setBalInput(e.target.value)} placeholder="Ex: 20" inputMode="decimal" className="h-9 mt-1" />
+                  </div>
+                  <Button onClick={handleSaveBalance} disabled={savingBal} className="h-9">
+                    {savingBal ? <RefreshCcw className="h-4 w-4 animate-spin" /> : 'Atualizar'}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Conta ~{fmtR(Number(saldo.custo_conversa))} por conversa. Atualize sempre que adicionar crédito na OpenAI.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[180px]">
+                  <label className="text-xs text-muted-foreground">Quanto você tem de saldo na OpenAI? (US$)</label>
+                  <Input value={balInput} onChange={(e) => setBalInput(e.target.value)} placeholder="Ex: 20" inputMode="decimal" className="h-9 mt-1" />
+                </div>
+                <Button onClick={handleSaveBalance} disabled={savingBal} className="h-9 gradient-primary text-white">
+                  {savingBal ? <RefreshCcw className="h-4 w-4 animate-spin" /> : 'Calcular conversas'}
+                </Button>
+              </div>
+            )}
+          </div>
+
           {/* Custo das suas conversas (IA) */}
           <div className="rounded-xl border border-border/50 bg-card/50 p-5">
             <h3 className="font-semibold mb-1 flex items-center gap-2">
