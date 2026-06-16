@@ -33,6 +33,8 @@ export function TokenAlertBanner() {
   // Aviso de plano e so da conta master (ver TokenWidget). Vendedor nunca ve.
   if (sellerLoading || isSeller) return null;
   if (loading || !subscription || tokensTotal <= 0) return null;
+  // Cota ilimitada (BYOK / 999999): cliente paga a propria chave de IA — nunca alerta de "esgotou".
+  if ((subscription.tokens_included ?? 0) >= 999999) return null;
 
   const depleted = tokensAvailable <= 0;
   const low = !depleted && tokensAvailable <= tokensTotal * 0.1;

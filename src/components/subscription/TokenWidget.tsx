@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Zap, AlertTriangle, TrendingUp } from 'lucide-react';
+import { Zap, AlertTriangle, TrendingUp, Infinity as InfinityIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -10,6 +10,11 @@ import { useSellerProfile } from '@/hooks/useSellerProfile';
 function fmt(n: number) {
   return n.toLocaleString('pt-BR');
 }
+
+// Cota ILIMITADA (BYOK / ponte 999999): o cliente usa a propria chave de IA e
+// paga o provedor, entao a "cota de atendimentos" nao se aplica — mostra
+// "Ilimitado" em vez de numero/percentual (que ficava negativo).
+const UNLIMITED_AT = 999999;
 
 export function TokenWidget() {
   const navigate = useNavigate();
@@ -23,9 +28,11 @@ export function TokenWidget() {
   if (sellerLoading || isSeller) return null;
   if (loading || !subscription) return null;
 
-  const remaining = 100 - usagePercent;
-  const isLow = remaining <= 20;
-  const isCritical = remaining <= 10;
+  const isUnlimited = (subscription.tokens_included ?? 0) >= UNLIMITED_AT;
+  const safeAvailable = Math.max(0, tokensAvailable);
+  const remaining = isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
+  const isLow = !isUnlimited && remaining <= 20;
+  const isCritical = !isUnlimited && remaining <= 10;
 
   const barColor = isCritical
     ? 'bg-red-500'
@@ -44,7 +51,9 @@ export function TokenWidget() {
         >
           {/* Icon */}
           <div className="flex items-center gap-1">
-            {isCritical ? (
+            {isUnlimited ? (
+              <InfinityIcon className="h-3.5 w-3.5 text-emerald-400" />
+            ) : isCritical ? (
               <AlertTriangle className="h-3.5 w-3.5 text-red-400 animate-pulse" />
             ) : isLow ? (
               <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />
@@ -56,15 +65,19 @@ export function TokenWidget() {
           {/* Bar + numbers */}
           <div className="flex flex-col gap-0.5 min-w-[90px]">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] text-muted-foreground">{fmt(tokensAvailable)} restantes</span>
-              <span className={`text-[10px] font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
-                {remaining}%
+              <span className="text-[10px] text-muted-foreground">
+                {isUnlimited ? 'Conversas ilimitadas' : `${fmt(safeAvailable)} restantes`}
               </span>
+              {!isUnlimited && (
+                <span className={`text-[10px] font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
+                  {remaining}%
+                </span>
+              )}
             </div>
             {/* Custom progress with colored bar */}
             <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${barColor}`}
+                className={`h-full rounded-full transition-all ${isUnlimited ? 'bg-emerald-400' : barColor}`}
                 style={{ width: `${Math.max(2, remaining)}%` }}
               />
             </div>
@@ -80,14 +93,20 @@ export function TokenWidget() {
         <div className="space-y-1.5 text-xs">
           <div className="flex justify-between font-semibold">
             <span>Plano {planInfo.name}</span>
-            <span className={isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'}>
-              {isCritical ? 'Crítico' : isLow ? 'Baixo' : 'OK'}
+            <span className={isUnlimited ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'}>
+              {isUnlimited ? 'Ilimitado' : isCritical ? 'Crítico' : isLow ? 'Baixo' : 'OK'}
             </span>
           </div>
           <div className="text-muted-foreground">
-            <div>{subscription.tokens_used.toLocaleString('pt-BR')} atendimentos usados</div>
-            <div>{tokensAvailable.toLocaleString('pt-BR')} restantes</div>
-            <div>{tokensTotal.toLocaleString('pt-BR')} no total</div>
+            {isUnlimited ? (
+              <div>Conversas ilimitadas — você usa sua própria chave de IA. Veja o saldo em Meu Plano.</div>
+            ) : (
+              <>
+                <div>{subscription.tokens_used.toLocaleString('pt-BR')} atendimentos usados</div>
+                <div>{safeAvailable.toLocaleString('pt-BR')} restantes</div>
+                <div>{tokensTotal.toLocaleString('pt-BR')} no total</div>
+              </>
+            )}
           </div>
           <div className="pt-1 border-t border-border/50 text-muted-foreground">
             Renova em {renewDate}
@@ -107,7 +126,7 @@ export function TokenWidget() {
 /* ── Mobile compact version for sidebar footer ── */
 export function TokenWidgetCompact() {
   const navigate = useNavigate();
-  const { tokensAvailable, usagePercent, planInfo, loading } = useSubscription();
+  const { subscription, tokensAvailable, usagePercent, planInfo, loading } = useSubscription();
   const { user } = useAuth();
   const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
 
@@ -115,9 +134,11 @@ export function TokenWidgetCompact() {
   if (sellerLoading || isSeller) return null;
   if (loading) return null;
 
-  const remaining = 100 - usagePercent;
-  const isCritical = remaining <= 10;
-  const isLow = remaining <= 20;
+  const isUnlimited = (subscription?.tokens_included ?? 0) >= UNLIMITED_AT;
+  const safeAvailable = Math.max(0, tokensAvailable);
+  const remaining = isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
+  const isCritical = !isUnlimited && remaining <= 10;
+  const isLow = !isUnlimited && remaining <= 20;
 
   return (
     <button
@@ -126,20 +147,22 @@ export function TokenWidgetCompact() {
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          {isCritical ? (
+          {isUnlimited ? (
+            <InfinityIcon className="h-3 w-3 text-emerald-400" />
+          ) : isCritical ? (
             <AlertTriangle className="h-3 w-3 text-red-400 animate-pulse" />
           ) : (
             <Zap className="h-3 w-3 text-primary" />
           )}
           <span className="text-[10px] font-medium">{planInfo.name}</span>
         </div>
-        <span className={`text-[10px] font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
-          {fmt(tokensAvailable)} restantes
+        <span className={`text-[10px] font-semibold ${isUnlimited ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
+          {isUnlimited ? 'Ilimitado' : `${fmt(safeAvailable)} restantes`}
         </span>
       </div>
       <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
         <div
-          className={`h-full rounded-full ${isCritical ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-primary'}`}
+          className={`h-full rounded-full ${isUnlimited ? 'bg-emerald-400' : isCritical ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-primary'}`}
           style={{ width: `${Math.max(2, remaining)}%` }}
         />
       </div>
