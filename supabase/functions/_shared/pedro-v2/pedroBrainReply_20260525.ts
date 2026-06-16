@@ -4,6 +4,7 @@ import { PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
+import { validateGrounding, buildGroundingCorrection, groundedFallback } from "./grounding.ts";
 
 // Remove perguntas-isca / fillers de cortesia PROIBIDOS pelo prompt quando aparecem no FIM da
 // mensagem ("Posso ajudar com mais alguma coisa?", "Voce gostaria de saber mais sobre X?",
@@ -844,42 +845,58 @@ export async function generatePedroBrainReply(input: {
       presented_vehicle_indices = [1];
     }
 
-    if (input.tool_result?.type !== "vehicle_photos" && looksLikePhotoPromise(guardedRawText)) {
-      guardedRawText = buildPhotoPromiseGuardReply({
-        memory: input.memory,
-        vehicle_resolution: input.vehicle_resolution,
-        ad_context: input.ad_context,
-      });
+    // Finaliza um texto BRUTO do LLM: guarda anti-promessa-de-foto -> formatacao de estoque ->
+    // anti-nome-repetido -> anti-filler. Reusado na geracao normal E na regeneracao do grounding.
+    const _firstName = leadFirstName(input.memory);
+    const finalizeFrom = (g0: string): string => {
+      let g = g0;
+      if (input.tool_result?.type !== "vehicle_photos" && looksLikePhotoPromise(g)) {
+        g = buildPhotoPromiseGuardReply({ memory: input.memory, vehicle_resolution: input.vehicle_resolution, ad_context: input.ad_context });
+      }
+      const t = ensureStockReplyFormatting({ text: g, facts, memory: input.memory, plan: input.plan, intent: input.intent, stock_result: input.stock_result, ad_vehicle_consultation: adVehicleConsultation });
+      if (!t) return "";
+      const nc = agentUsedNameRecently(input.recent_history, _firstName) ? stripLeadNameVocatives(t, _firstName) : t;
+      return stripFillerClosers(nc || t) || nc || t;
+    };
+
+    let finalText = finalizeFrom(guardedRawText);
+    if (!finalText) return fallback;
+
+    // ── GROUNDING (Pilar A, anti-alucinacao): a resposta NAO pode contradizer o estoque real. ──
+    // Valida (determinístico): se afirmou "nao temos X" havendo X nos fatos, ou inventou um modelo,
+    // REGERA 1x com correcao; se ainda violar, cai num fallback DETERMINISTICO montado dos fatos.
+    let grounding_corrected = false;
+    if (Array.isArray(facts) && facts.length > 0) {
+      const gv = validateGrounding(finalText, facts);
+      if (!gv.ok) {
+        grounding_corrected = true;
+        console.warn("[PedroV2] grounding_violation", JSON.stringify({ violations: gv.violations }));
+        let fixed = "";
+        try {
+          const res2 = await callReply([...replyMessages, { role: "system", content: buildGroundingCorrection(gv.violations, facts) }]);
+          if (res2.ok) {
+            const data2 = await res2.json();
+            if (input.usage_sink) input.usage_sink.tokens += replyIsAnthropic ? Number(data2?.usage?.input_tokens || 0) + Number(data2?.usage?.output_tokens || 0) : sumOpenAiTokens(data2);
+            const content2 = replyIsAnthropic
+              ? String((Array.isArray(data2?.content) ? data2.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
+              : String(data2?.choices?.[0]?.message?.content || "{}");
+            fixed = finalizeFrom(String(JSON.parse(cleanJson(content2))?.text || "").trim());
+          }
+        } catch (e) { console.warn("[PedroV2] grounding regen failed:", e); }
+        finalText = (fixed && validateGrounding(fixed, facts).ok) ? fixed : groundedFallback(facts);
+      }
     }
 
-    const text = ensureStockReplyFormatting({
-      text: guardedRawText,
-      facts,
-      memory: input.memory,
-      plan: input.plan,
-      intent: input.intent,
-      stock_result: input.stock_result,
-      ad_vehicle_consultation: adVehicleConsultation,
-    });
-    if (!text) return fallback;
-    // Anti-repeticao de nome: se o agente ja usou o primeiro nome do lead nas ultimas
-    // mensagens, remove o vocativo desta resposta (o nome nao aparece em sequencia).
-    const _firstName = leadFirstName(input.memory);
-    const _nameClean = agentUsedNameRecently(input.recent_history, _firstName)
-      ? stripLeadNameVocatives(text, _firstName)
-      : text;
-    // Remove pergunta-isca/filler de cortesia proibido no fim (o LLM as vezes desobedece a regra).
-    const _deFiller = stripFillerClosers(_nameClean || text);
-    const finalText = _deFiller || _nameClean || text;
     return {
       ok: true,
-      text: finalText || text,
+      text: finalText,
       source: adVehicleConsultation ? "brain_ad_vehicle_reply" : (facts.length > 0 ? "brain_stock_reply" : "brain_reply"),
       presented_vehicle_indices,
       qualificacao_coletada,
       pronto_para_transferir,
       transferir_silencioso,
       temperatura,
+      grounding_corrected,
       _reply_model: replyModel,
       _reply_provider: replyProvider,
     };
