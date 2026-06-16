@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -33,6 +33,21 @@ export default function SettingsPage() {
   );
 
   const isSuperAdmin = profile?.is_superadmin === true;
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  // Atalho do checklist: rota -> navega; aba -> seleciona E rola ate o formulario.
+  // (Sem o scroll, clicar em "Dados da empresa" — que ja e a aba padrao — nao
+  // movia a tela e parecia que "nao funcionava".)
+  const handleStepClick = (step: { tab: string | null; route?: string }) => {
+    if (step.route) {
+      navigate(step.route);
+      return;
+    }
+    if (step.tab) setActiveTab(step.tab);
+    requestAnimationFrame(() => {
+      tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   // Atualiza tab quando URL muda (ex: clicar em "Perfil" no Topbar)
   useEffect(() => {
@@ -76,7 +91,7 @@ export default function SettingsPage() {
               return (
                 <button
                   key={i}
-                  onClick={() => step.route ? navigate(step.route) : setActiveTab(step.tab!)}
+                  onClick={() => handleStepClick(step)}
                   className="group w-full flex items-center gap-4 rounded-lg border border-border/40 bg-background/50 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
                 >
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold text-muted-foreground">
@@ -97,6 +112,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Tabs ── */}
+        <div ref={tabsRef} className="scroll-mt-20">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="flex-wrap bg-muted/50">
             <TabsTrigger value="company" className="gap-2">
@@ -136,6 +152,7 @@ export default function SettingsPage() {
             <TabsContent value="admin"><AdminSettingsTab /></TabsContent>
           )}
         </Tabs>
+        </div>
       </div>
     </MainLayout>
   );
