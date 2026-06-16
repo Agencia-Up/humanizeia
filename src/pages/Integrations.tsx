@@ -2,12 +2,13 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { ConnectionsTab } from '@/components/settings/ConnectionsTab';
 import { IntegrationsTab } from '@/components/settings/IntegrationsTab';
 import { LeadCaptureTab } from '@/components/settings/LeadCaptureTab';
+import { ClientAiKeysCard } from '@/components/settings/ClientAiKeysCard';
 import { useIntegrationAccess } from '@/components/settings/integrationAccess';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Plug, Wrench, Terminal, Crown, Smartphone, Loader2 } from 'lucide-react';
+import { Plug, Wrench, Terminal, Crown, Smartphone, Loader2, KeyRound } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 
@@ -108,6 +109,12 @@ export default function Integrations() {
                 Captura de Leads
               </TabsTrigger>
             )}
+            {!isSeller && (
+              <TabsTrigger value="ai-key" className="gap-2">
+                <KeyRound className="h-4 w-4" />
+                Chave API IA
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {!isSeller && (
@@ -155,6 +162,18 @@ export default function Integrations() {
                 </p>
               </div>
               <LeadCaptureTab />
+            </TabsContent>
+          )}
+
+          {!isSeller && (
+            <TabsContent value="ai-key" className="space-y-4">
+              <div className="rounded-lg border border-border/40 bg-card/40 p-4 flex gap-3">
+                <span className="text-lg shrink-0">🔑</span>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-foreground">Chave API IA</strong> — Conecte a sua própria chave de IA (OpenAI / Claude / DeepSeek) e tenha conversas ilimitadas, pagas na sua conta do provedor. A chave fica cifrada no cofre (Vault) e nunca é exibida de volta.
+                </p>
+              </div>
+              <ClientAiKeysCard />
             </TabsContent>
           )}
         </Tabs>

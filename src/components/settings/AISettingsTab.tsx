@@ -5,7 +5,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Save, Image } from 'lucide-react';
-import { ClientAiKeysCard } from './ClientAiKeysCard';
 import { PlatformAlertPhoneCard } from './PlatformAlertPhoneCard';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 
@@ -60,8 +59,7 @@ export function AISettingsTab() {
 
   return (
     <div className="space-y-6">
-      {/* BYOK — traga sua chave de IA (conversas ilimitadas por conta do cliente) */}
-      <ClientAiKeysCard />
+      {/* A "Chave API IA" (BYOK) foi movida para Integrações > Chave API IA. */}
 
       {/* Alerta da plataforma (só admin): WhatsApp do dono p/ falha da NOSSA chave de IA */}
       {isAdmin && <PlatformAlertPhoneCard />}
