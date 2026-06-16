@@ -6,6 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Save, Image } from 'lucide-react';
 import { ClientAiKeysCard } from './ClientAiKeysCard';
+import { PlatformAlertPhoneCard } from './PlatformAlertPhoneCard';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 
 const STORAGE_KEY = 'logosia-ai-settings';
 
@@ -28,6 +30,7 @@ const ALLOWED_IMAGE_PROVIDERS = imageProviders.map((p) => p.value);
 
 export function AISettingsTab() {
   const { toast } = useToast();
+  const { isAdmin } = useIsAdmin();
   const [settings, setSettings] = useState<AISettings>(defaultSettings);
 
   useEffect(() => {
@@ -59,6 +62,9 @@ export function AISettingsTab() {
     <div className="space-y-6">
       {/* BYOK — traga sua chave de IA (conversas ilimitadas por conta do cliente) */}
       <ClientAiKeysCard />
+
+      {/* Alerta da plataforma (só admin): WhatsApp do dono p/ falha da NOSSA chave de IA */}
+      {isAdmin && <PlatformAlertPhoneCard />}
 
       <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
         <CardHeader>

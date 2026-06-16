@@ -54,8 +54,25 @@ async function alertOwnerNoAiKey(supabase: any, input: any, log: any) {
 // caiu pro fallback "burro". Alerta quem pode AGIR e loga sempre. Throttle 6h por (user+kind).
 //  - source='client': a chave e do CLIENTE -> alerta o gerente da conta (ele recarrega/corrige).
 //  - source='platform': e a NOSSA chave (conta grandfathered) -> NAO incomoda o lojista; loga em
-//    alta visibilidade e, se PEDRO_PLATFORM_ALERT_PHONE estiver setado, avisa o dono da plataforma.
+//    alta visibilidade e avisa o dono da plataforma (numero cadastrado no portal -> platform_settings).
 const _llmFailAlertCache = new Map<string, number>();
+
+// Numero do dono da plataforma p/ alerta de falha da NOSSA chave. Prioriza o env (override de
+// emergencia); senao le de platform_settings (gerenciado pelo superadmin no portal). Cache 10min.
+let _platformPhoneCache: { value: string; at: number } | null = null;
+async function getPlatformAlertPhone(supabase: any): Promise<string> {
+  const env = (Deno.env.get("PEDRO_PLATFORM_ALERT_PHONE") || "").trim();
+  if (env) return env;
+  const now = Date.now();
+  if (_platformPhoneCache && now - _platformPhoneCache.at < 10 * 60 * 1000) return _platformPhoneCache.value;
+  let value = "";
+  try {
+    const { data } = await supabase.from("platform_settings").select("alert_phone").eq("id", "global").maybeSingle();
+    value = String(data?.alert_phone || "");
+  } catch (_e) { /* fail-safe: sem telefone */ }
+  _platformPhoneCache = { value, at: now };
+  return value;
+}
 async function alertOwnerLlmFailure(supabase: any, input: any, errors: ProviderError[], source: string | undefined, log: any) {
   // So alerta no que e ACIONAVEL: sem credito (quota) ou chave invalida (auth). rate/other = transitorio.
   const actionable = (errors || []).filter((e) => e.kind === "quota" || e.kind === "auth");
@@ -73,9 +90,10 @@ async function alertOwnerLlmFailure(supabase: any, input: any, errors: ProviderE
   const now = Date.now();
   if (now - (_llmFailAlertCache.get(cacheKey) || 0) < 6 * 60 * 60 * 1000) return;
 
-  // Destinatario: cliente -> gerente da conta; plataforma -> numero do dono via env (opcional).
+  // Destinatario: cliente -> gerente da conta; plataforma -> numero do dono (portal: platform_settings,
+  // gerenciavel pelo superadmin; env PEDRO_PLATFORM_ALERT_PHONE so como override de emergencia).
   const rawPhone = source === "platform"
-    ? (Deno.env.get("PEDRO_PLATFORM_ALERT_PHONE") || "")
+    ? await getPlatformAlertPhone(supabase)
     : input?.agent?.gerente_phone;
   const phone = normalizeAlertPhone(rawPhone);
   if (!phone || !input?.wa_instance) { _llmFailAlertCache.set(cacheKey, now); return; }
