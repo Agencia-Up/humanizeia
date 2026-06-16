@@ -356,12 +356,6 @@ export default function MeuPlano() {
             </div>
           </div>
 
-          {/* Quick actions */}
-          <div className="flex gap-2 mt-4 flex-wrap">
-            <Button size="sm" className="bg-primary text-primary-foreground gap-1.5" onClick={() => setTab('recharge')}>
-              <Zap className="h-3.5 w-3.5" /> Recarregar Atendimentos
-            </Button>
-          </div>
         </div>
 
         {/* Stats */}
@@ -388,7 +382,6 @@ export default function MeuPlano() {
       <div className="flex gap-1 rounded-lg bg-muted/50 p-1 w-fit">
         {([
           { key: 'overview', label: 'Histórico' },
-          { key: 'recharge', label: 'Recarregar Atendimentos' },
         ] as const).map((t) => (
           <button
             key={t.key}
