@@ -12,6 +12,25 @@ interface AgentCrmEquipeTabProps {
   userId: string;
 }
 
+// Telefone só com dígitos (chave de deduplicação do vendedor na conta).
+const normPhone = (p: string) => (p || '').replace(/\D/g, '');
+
+// A equipe é ÚNICA DA CONTA (compartilhada entre todos os agentes). Como ainda
+// podem existir registros antigos amarrados a um agente (agent_id), deduplicamos
+// por telefone na exibição: mantém o "melhor" registro (ativo > com conta
+// vinculada > mais antigo). O Pedro distribui o lead usando o fallback por
+// user_id que já existe no webhook, então um time sem agent_id vale pra todo agente.
+function dedupeByPhone(rows: any[]): any[] {
+  const byPhone = new Map<string, any>();
+  const score = (x: any) => (x.is_active ? 2 : 0) + (x.auth_user_id ? 1 : 0);
+  for (const r of rows) {
+    const k = normPhone(r.whatsapp_number);
+    const cur = byPhone.get(k);
+    if (!cur || score(r) > score(cur)) byPhone.set(k, r);
+  }
+  return Array.from(byPhone.values());
+}
+
 export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -40,20 +59,28 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const [savingEdit, setSavingEdit] = useState(false);
 
   const fetchData = useCallback(async () => {
-    if (!agentId || !userId) {
+    if (!userId) {
       setLoading(false);
       return;
     }
-    
+
     setLoading(true);
     try {
-      const [{ data: teamData, error: teamErr }, { data: agentData }] = await Promise.all([
-        (supabase as any).from('ai_team_members').select('*').eq('agent_id', agentId).order('created_at', { ascending: true }),
-        (supabase as any).from('wa_ai_agents').select('gerente_phone, gerente_phone_2').eq('id', agentId).single(),
-      ]);
+      // EQUIPE = NÍVEL DA CONTA: carrega por user_id (não por agente) e deduplica
+      // por telefone. Assim o mesmo time aparece e vale para TODOS os agentes.
+      const teamQ = (supabase as any)
+        .from('ai_team_members').select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+      // Gerente continua POR AGENTE (config do agente, não do time). Só busca se já houver agente salvo.
+      const agentQ = agentId
+        ? (supabase as any).from('wa_ai_agents').select('gerente_phone, gerente_phone_2').eq('id', agentId).single()
+        : Promise.resolve({ data: null });
+
+      const [{ data: teamData, error: teamErr }, { data: agentData }] = await Promise.all([teamQ, agentQ]);
 
       if (teamErr) throw teamErr;
-      setTeamMembers(teamData || []);
+      setTeamMembers(dedupeByPhone(teamData || []));
       setGerentePhone(agentData?.gerente_phone || '');
       setGerentePhone2(agentData?.gerente_phone_2 || '');
       setShowGerente2(!!(agentData?.gerente_phone_2));
@@ -70,18 +97,24 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   }, [fetchData]);
 
   const handleAddSeller = async () => {
-    if (!agentId) return;
+    if (!userId) return;
     if (!newSellerName.trim() || !newSellerPhone.trim()) {
       toast({ title: 'Aviso', description: 'Preencha nome e WhatsApp do vendedor.' });
       return;
     }
 
+    const cleanPhone = newSellerPhone.replace(/\D/g, ''); // Apenas números
+    // Time é ÚNICO da conta: se o telefone já existe, não duplica — reaproveita.
+    if (teamMembers.some(m => normPhone(m.whatsapp_number) === cleanPhone)) {
+      toast({ title: 'Esse vendedor já está na sua equipe', description: 'O time é único da conta — ele já vale para todos os seus agentes.' });
+      return;
+    }
+
     setSavingSeller(true);
     try {
-      const cleanPhone = newSellerPhone.replace(/\D/g, ''); // Apenas números
       const { error } = await (supabase as any).from('ai_team_members').insert({
         user_id: userId,
-        agent_id: agentId,
+        agent_id: null, // NÍVEL DA CONTA: vale para todos os agentes, sem duplicar
         name: newSellerName.trim(),
         whatsapp_number: cleanPhone,
         email: newSellerEmail.trim() || null,
@@ -89,13 +122,19 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
 
       if (error) throw error;
 
-      toast({ title: 'Vendedor adicionado!' });
+      toast({ title: 'Vendedor adicionado!', description: 'Já disponível em todos os seus agentes.' });
       setNewSellerName('');
       setNewSellerPhone('');
       setNewSellerEmail('');
       fetchData();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      // Backstop do índice único (telefone repetido na mesma conta).
+      const dup = /duplicate key|unique|23505/i.test(err?.message || '');
+      toast({
+        title: dup ? 'Vendedor já existe na conta' : 'Erro',
+        description: dup ? 'Esse número já está na sua equipe.' : err.message,
+        variant: 'destructive',
+      });
     } finally {
       setSavingSeller(false);
     }
@@ -200,14 +239,11 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     }
   };
 
-  if (!agentId) {
+  if (!userId) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center bg-muted/20 border border-dashed rounded-xl">
         <Users className="h-8 w-8 text-muted-foreground mb-3 opacity-50" />
-        <h3 className="text-sm font-semibold mb-1">Salve o agente primeiro</h3>
-        <p className="text-xs text-muted-foreground max-w-[250px]">
-          Você precisa criar o agente antes de cadastrar a equipe de transbordo.
-        </p>
+        <h3 className="text-sm font-semibold mb-1">Carregando sua conta…</h3>
       </div>
     );
   }
@@ -221,11 +257,12 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
       <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300">
         <PhoneForwarded className="h-4 w-4 shrink-0 mt-0.5" />
         <div className="leading-relaxed">
-          <strong>Inteligência Comercial:</strong> Quando o Pedro identificar clientes quentes e qualificá-los no CRM, ele automaticamente encaminhará o resumo da conversa via WhatsApp para os seus vendedores configurados nesta lista.
+          <strong>Equipe única da conta:</strong> estes vendedores valem para <strong>todos os seus agentes</strong> — cadastre uma vez e qualquer agente (atual ou novo) já usa o mesmo time, sem duplicar. Quando o Pedro qualificar um lead, ele encaminha o resumo da conversa para um destes vendedores.
         </div>
       </div>
 
-      {/* ── GERENTE — Relatório automático ──────────────── */}
+      {/* ── GERENTE — Relatório automático (config POR AGENTE) ──────────── */}
+      {agentId ? (
       <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
         <div className="flex items-center gap-2">
           <Crown className="h-4 w-4 text-amber-400" />
@@ -291,6 +328,11 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
           </p>
         )}
       </div>
+      ) : (
+        <div className="p-3 rounded-lg bg-muted/20 border border-dashed text-[11px] text-muted-foreground">
+          Salve o agente para configurar o WhatsApp do gerente deste agente. A <strong>equipe de vendedores</strong> abaixo já é da conta e vale para todos.
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="bg-muted/30 p-3 rounded-xl border border-border flex flex-wrap items-end gap-2">
