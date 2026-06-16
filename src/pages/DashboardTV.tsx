@@ -829,8 +829,23 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         //    desvincula) nao podem virar um card fantasma "Sem vendedor". Eles
         //    seguem contabilizados nos KPIs (Total + Origem) e no subtexto
         //    "(N sem vendedor atribuído)" — so nao ganham card proprio.
-        const sorted = Object.values(agg)
-          .filter(v => v.id !== NAO_ATRIBUIDO_ID)
+        // MATRIZ: o vendedor tem 1 linha por agente em ai_team_members → o agregador
+        // teria 1 card por linha (vendedor EM DOBRO no ranking). Mescla por telefone,
+        // somando os números (as linhas-fantasma vêm zeradas), e mantém 1 card por vendedor.
+        const _pk = (n: any) => { const d = String(n || '').replace(/\D/g, ''); const l = d.slice(-10); return l.length === 10 ? l : l.slice(1); };
+        const _phoneOf = new Map<string, string>();
+        for (const s of sellersList) _phoneOf.set(s.id, _pk((s as any).whatsapp_number) || s.id);
+        const _NUM: Array<keyof VendedorData> = ['trafico_pago','porta','marketplace','consignado','indicacao','redes_sociais','venda_concluida','repassados','total'];
+        const _merged = new Map<string, VendedorData>();
+        for (const v of Object.values(agg)) {
+          if (v.id === NAO_ATRIBUIDO_ID) continue;
+          const k = _phoneOf.get(v.id) || v.id;
+          const cur = _merged.get(k);
+          if (!cur) { _merged.set(k, { ...v }); continue; }
+          for (const f of _NUM) (cur as any)[f] = ((cur as any)[f] || 0) + ((v as any)[f] || 0);
+          if ((v.total || 0) > (cur.total || 0)) { cur.id = v.id; cur.name = v.name; cur.effective_avatar = v.effective_avatar; }
+        }
+        const sorted = Array.from(_merged.values())
           .sort((a, b) => (b.total - a.total) || a.name.localeCompare(b.name))
           .map((v, i) => ({ ...v, rank: i + 1 }));
         setVendedores(sorted);

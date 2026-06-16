@@ -144,8 +144,20 @@ export function GlobalLeadsCrm() {
     startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    return teamMembers.map(member => {
-      const memberTransfers = transfers.filter(t => t.to_member_id === member.id);
+    // MATRIZ: o vendedor tem 1 linha por agente (mesmo telefone, ids diferentes).
+    // Deduplica por telefone (1 card por vendedor) e soma os atendimentos de TODAS
+    // as linhas dele — senão aparece em dobro nas estatísticas.
+    const pk = (n: any) => { const d = String(n || '').replace(/\D/g, ''); const l = d.slice(-10); return l.length === 10 ? l : l.slice(1); };
+    const idsByPhone = new Map<string, Set<string>>();
+    for (const m of teamMembers) { const k = pk(m.whatsapp_number) || m.id; if (!idsByPhone.has(k)) idsByPhone.set(k, new Set()); idsByPhone.get(k)!.add(m.id); }
+    const seen = new Set<string>();
+    const uniqMembers = [...teamMembers]
+      .sort((a, b) => (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0)) // mantém a linha ATIVA (tem histórico)
+      .filter(m => { const k = pk(m.whatsapp_number) || m.id; if (seen.has(k)) return false; seen.add(k); return true; });
+
+    return uniqMembers.map(member => {
+      const myIds = idsByPhone.get(pk(member.whatsapp_number) || member.id) || new Set([member.id]);
+      const memberTransfers = transfers.filter(t => myIds.has(t.to_member_id));
       return {
         memberId: member.id,
         memberName: member.name,
