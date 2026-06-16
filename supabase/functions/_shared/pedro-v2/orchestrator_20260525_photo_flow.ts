@@ -520,6 +520,11 @@ type PhotoTarget = "overview" | "front" | "side" | "rear" | "interior" | "dashbo
 
 function normalizePhotoText(value: string) {
   return String(value || "")
+    // Remove placeholders do SISTEMA ("[imagem recebida]", "[audio recebido]", "[midia recebida]"...).
+    // Eles NAO sao fala do lead: a palavra "imagem" dentro deles fazia messageAsksForPhotos achar
+    // que o lead "pediu fotos" sempre que mandava uma imagem (clique de anuncio quase sempre traz
+    // imagem) -> o agente disparava album do nada. Tira o colchete inteiro ANTES de casar palavras.
+    .replace(/\[[^\]]*\]/g, " ")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -2130,13 +2135,21 @@ export async function processPedroV2Turn(
   const _blockPhotoOffTopic = _thanksForPhotos || _isSpecQuestion
     || ((_wantsOtherVehicle || _offTopicConcern) && !messageAsksForPhotos(text));
 
+  // GUARD ANTI-OVERVIEW-GENERICO (bug real "fotos sem necessidade", lead Domingos): quando o
+  // pedido de foto vem SO da deteccao de texto (leadAskedPhotosExplicitly) e a busca/contexto e
+  // GENERICA (sem modelo: "carro"/tipo/faixa de preco), NAO despeja o album do carro mais barato
+  // que sobrou no pool — o cerebro pergunta QUAL carro. NAO afeta action==="photo_request" (oferta
+  // de fotos ACEITA "👍"/seletor ja tem carro especifico em memoria) pra nao regredir esse fluxo.
+  const _genericPhotoBlast = queryIsBroadOrGenericVehicle(
+    requestedVehicleQueryForMediaGuard(brainPlan, vehicleResolution, stockFilters),
+  );
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
   // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
   // heterogeneo + pedido so por cor): pedir esclarecimento e mais seguro que chutar
   // um modelo errado. E NUNCA quando o lead claramente quer OUTRA coisa (_blockPhotoOffTopic).
   const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous && !_blockPhotoOffTopic
     && (brainPlan.action === "photo_request"
-    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0));
+    || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0 && !_genericPhotoBlast));
 
   // Quando o topico esta ambiguo, instrui o cerebro a perguntar QUAL carro o lead quer
   // em vez de mandar foto. NAO reaproveita um modelo aleatorio da lista velha.

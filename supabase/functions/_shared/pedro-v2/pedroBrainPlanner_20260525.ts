@@ -60,7 +60,9 @@ function isSocialQuestion(message?: string | null) {
 }
 
 function isPhotoText(message?: string | null) {
-  const normalized = normalizeText(message);
+  // Tira placeholders do sistema ("[imagem recebida]" etc.) antes de detectar: "imagem" dentro
+  // deles NAO e pedido de foto do lead (ver normalizePhotoText no orchestrator).
+  const normalized = normalizeText(String(message || "").replace(/\[[^\]]*\]/g, " "));
   if (/\b(foto|fotos|fotinha|fotinhas|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|traseira|frente|lateral|video|videos|catalog|catalogo|catalogos|album|albuns|albun)\b/.test(normalized)) return true;
   if (/\b(me mostra|me mostre|mostra (a|o|ele|ela|esse|essa|mais|umas|uma|foto|as))\b/.test(normalized) || /\bmostrar\b/.test(normalized)) return true;
   if (/\b(quero ver|queria ver|gostaria de ver|posso ver|da pra ver|deixa eu ver|consigo ver|tem como ver)\b/.test(normalized)) return true;
@@ -219,7 +221,7 @@ function isTradeInOffer(message?: string | null, heuristicIntent?: string | null
 // "o primeiro", "o preto" — e isso significa "manda as fotos DESSE". Sem isso, o
 // agente nao reconhecia "2024" como pedido de foto e o lead saia sem as imagens.
 function isPhotoSelectorReply(message?: string | null) {
-  const n = normalizeText(message);
+  const n = normalizeText(String(message || "").replace(/\[[^\]]*\]/g, " "));
   if (!n) return false;
   if (n.split(/\s+/).filter(Boolean).length > 4) return false; // so respostas curtas
   return /\b(19|20)\d{2}\b/.test(n) // ano: 2024, 2020...
