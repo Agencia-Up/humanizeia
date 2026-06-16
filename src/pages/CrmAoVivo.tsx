@@ -113,6 +113,15 @@ const PEDRO_LIVE_COLUMNS = [
 
 const CRM_STATUS_IDS = new Set(CRM_STATUS_COLUMNS.map(col => col.id));
 
+// Telefone normalizado p/ deduplicar vendedor: no modelo MATRIZ a mesma pessoa tem
+// 1 linha por agente (mesmo telefone, ids diferentes). Últimos 10 dígitos (sem DDI
+// 55, sem 9 inicial de celular). Espelha o uniqueSellersByPhone do backend.
+const sellerPhoneKey = (num: string | null | undefined): string => {
+  const digits = String(num || '').replace(/\D/g, '');
+  const last10 = digits.slice(-10);
+  return last10.length === 10 ? last10 : last10.slice(1);
+};
+
 function formatRelative(d?: string | null) {
   if (!d) return '—';
   const m = Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 60000));
@@ -844,7 +853,20 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   // Vendedores VISÍVEIS no CRM/painel = ativos NO SISTEMA (fonte de verdade do
   // painel "Vendedores"). Independe do status no agente de IA — um vendedor
   // "Ausente" no agente (não recebe lead automático) CONTINUA aparecendo aqui.
-  const visibleMembers = useMemo(() => teamMembers.filter(m => m.active_in_system !== false), [teamMembers]);
+  const visibleMembers = useMemo(() => {
+    // MATRIZ: cada vendedor tem 1 linha por agente (mesmo telefone, ids diferentes).
+    // O painel é da CONTA (não de um agente), então deduplica por telefone — senão o
+    // vendedor aparece em dobro na "Fila de vendedores", nos dropdowns e nos KPIs.
+    // Mantém a linha ATIVA (que carrega o histórico); cai pra qualquer uma se nenhuma ativa.
+    const base = teamMembers.filter(m => m.active_in_system !== false);
+    const byPhone = new Map<string, any>();
+    for (const m of base) {
+      const k = sellerPhoneKey(m.whatsapp_number) || m.id;
+      const cur = byPhone.get(k);
+      if (!cur || (m.is_active && !cur.is_active)) byPhone.set(k, m);
+    }
+    return Array.from(byPhone.values());
+  }, [teamMembers]);
   // Vendedores elegíveis ao RODÍZIO automático = espelha o backend (uazapi-webhook
   // só distribui pra quem tem is_active=true). Usado só na prévia "próximo vendedor".
   const distributionMembers = useMemo(() => teamMembers.filter(m => m.is_active), [teamMembers]);
@@ -917,6 +939,18 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     )[0] || null;
   }, [distributionMembers]);
 
+  // MATRIZ: ids de TODAS as linhas do mesmo vendedor (por telefone) — pra somar os
+  // atendimentos mesmo que transfers tenham caído em rows de agentes diferentes.
+  const memberIdsByPhone = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const m of teamMembers) {
+      const k = sellerPhoneKey(m.whatsapp_number) || m.id;
+      if (!map.has(k)) map.set(k, new Set());
+      map.get(k)!.add(m.id);
+    }
+    return map;
+  }, [teamMembers]);
+
   const memberStats = useMemo(() => {
     // ── Usa ai_lead_transfers para contar atendimentos por vendedor ──────────
     // Mais confiável do que o join FK de leads.member (que depende do assigned_to_id
@@ -926,9 +960,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     const todayDate = new Date(); todayDate.setHours(0, 0, 0, 0);
 
     return activeMembers.map(m => {
-      // Transfers deste vendedor que não expiraram (pending ou confirmed)
+      // Transfers do vendedor (somando todas as linhas dele, por telefone) que não expiraram.
+      const myIds = memberIdsByPhone.get(sellerPhoneKey(m.whatsapp_number) || m.id) || new Set([m.id]);
       const myTransfers = transfers.filter(t =>
-        t.to_member_id === m.id && t.transfer_status !== 'expired'
+        myIds.has(t.to_member_id) && t.transfer_status !== 'expired'
       );
 
       // Leads únicos no período — usa lead_id quando disponível, senão usa id do transfer
@@ -954,7 +989,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
         totalCount:  new Set(myTransfers.map(t => t.lead_id || t.id)).size,
       };
     }).sort((a, b) => b.periodCount - a.periodCount || b.todayCount - a.todayCount);
-  }, [activeMembers, transfers, dateFilter, customStart, customEnd]);
+  }, [activeMembers, transfers, dateFilter, customStart, customEnd, memberIdsByPhone]);
 
   const leadsByColumn = useMemo(() => {
     const res: Record<string, any[]> = {};
