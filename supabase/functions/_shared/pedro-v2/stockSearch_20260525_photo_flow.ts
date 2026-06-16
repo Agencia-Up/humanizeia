@@ -1,4 +1,5 @@
 import { rankVehiclesV2 } from "./vehicleMatch.ts";
+import { fetchRevendaMaisVehicles } from "./revendaMaisStock.ts";
 
 const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
 const DEFAULT_LIMIT = 24;
@@ -18,6 +19,9 @@ type BndvVehicle = {
   transmissionName?: string | null;
   versionName?: string | null;
   pictureJs?: string | null;
+  // Categoria crua da fonte (AUTOMOVEL/MOTO/...). Quando presente (ex.: feed RevendaMais),
+  // e sinal AUTORITATIVO de moto. BNDV nao manda -> cai no detector por texto (conservador).
+  category?: string | null;
 };
 
 export type PedroStockSearchInput = {
@@ -25,6 +29,12 @@ export type PedroStockSearchInput = {
   query?: string;
   filters?: Record<string, any>;
   limit?: number;
+  // Override de dry-run: forca a fonte RevendaMais com esta URL de feed (teste isolado,
+  // sem precisar da integracao gravada). Em prod a fonte vem de platform_integrations.
+  stock_feed_url?: string | null;
+  // Loja vende motos? (capacidade por agente, wa_ai_agents.sells_motorcycles). Default
+  // (false/undefined) = car-only -> motos sao removidas do pool ANTES do rank.
+  sells_motorcycles?: boolean;
 };
 
 function parseCredentials(raw: string | null): BndvCredentials {
@@ -328,10 +338,14 @@ function inferVehicleSubcategory(filters: Record<string, any>): "hatch" | "sedan
 }
 
 function isLikelyMotorcycle(vehicle: BndvVehicle) {
-  // SO marca + modelo. NUNCA a versao/trim: nomes de moto colidem com TRIMS de carro —
-  // ex.: Corolla Cross "XRE 2.0" batia com a moto Honda "XRE 300" e o Corolla virava "moto",
-  // sendo EXCLUIDO de buscas de carro (lead pedia "corolla" -> 0 -> recuperava errado).
-  // Uma moto de verdade traz o nome no modelName (Honda CG/Biz/XRE...), nao no trim do carro.
+  // 1) Sinal AUTORITATIVO: categoria da fonte (feed RevendaMais traz "MOTO"). Pega ex.: Honda
+  //    CB 500F sem precisar arriscar o regex de texto (CB colide com nada de carro, mas o
+  //    detector por texto e proposital-conservador).
+  if (vehicle.category && /\bmoto/i.test(String(vehicle.category))) return true;
+  // 2) Fallback por texto (fontes sem categoria, ex.: BNDV). SO marca + modelo. NUNCA a
+  //    versao/trim: nomes de moto colidem com TRIMS de carro — ex.: Corolla Cross "XRE 2.0"
+  //    batia com a moto Honda "XRE 300" e o Corolla virava "moto", sendo EXCLUIDO de buscas
+  //    de carro. Uma moto de verdade traz o nome no modelName (Honda CG/Biz/XRE...).
   const text = normalizeText([vehicle.markName, vehicle.modelName].filter(Boolean).join(" "));
   return /\b(yamaha|kawasaki|shineray|harley|dafra|triumph|ducati|ktm|bajaj|haojue|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|scooter)\b/.test(text);
 }
@@ -617,7 +631,83 @@ function toPedroVehicle(vehicle: BndvVehicle, rank: { score: number; matchedToke
   };
 }
 
+// Rank + sort + map compartilhado por TODAS as fontes de estoque (BNDV, RevendaMais...).
+// Recebe veiculos JA no shape BndvVehicle e devolve o resultado padrao do searchPedroStock,
+// para que grounding/preco/fotos/scoring funcionem IDENTICOS independente da fonte.
+function rankSortMapStock(vehicles: BndvVehicle[], filters: Record<string, any>, input: PedroStockSearchInput) {
+  // Capacidade por agente: loja car-only (default) NUNCA mostra moto, nem em busca ampla.
+  // Loja que vende moto (sells_motorcycles=true) mantem as motos; a relevancia por tipo
+  // ("tem moto?" vs "tem suv?") ja e tratada em passesRequestedVehicleType.
+  const pool = input.sells_motorcycles === true
+    ? vehicles
+    : vehicles.filter((v) => !isLikelyMotorcycle(v));
+  // B3 sombra: motor de matching novo so via override de dry-run (match_engine='v2'); prod = legado.
+  const useNewMatch = String((input as any).match_engine || "").toLowerCase() === "v2";
+  const rankedRaw = useNewMatch ? rankVehiclesV2(pool as any, filters) : rankVehicles(pool, filters);
+  const ranked = (rankedRaw as Array<{ vehicle: any; score: number; matchedTokens: string[]; relaxed: boolean }>).sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    // Carro sem preco (R$0/null) vai pro FIM do desempate (Infinity), nunca pro topo.
+    const leftPrice = Number(left.vehicle.saleValue) > 0 ? Number(left.vehicle.saleValue) : Number.POSITIVE_INFINITY;
+    const rightPrice = Number(right.vehicle.saleValue) > 0 ? Number(right.vehicle.saleValue) : Number.POSITIVE_INFINITY;
+    if (leftPrice !== rightPrice) return leftPrice - rightPrice;
+    return Number(right.vehicle.year || 0) - Number(left.vehicle.year || 0);
+  });
+  const limit = Math.max(1, Math.min(Number(input.limit || DEFAULT_LIMIT), 30));
+  const items = ranked.slice(0, limit).map((rank) => toPedroVehicle(rank.vehicle, rank));
+  return {
+    success: true,
+    total: ranked.length,
+    items,
+    filters_used: filters,
+    match_engine_used: useNewMatch ? "v2" : "legacy",
+    response_guidance: ranked.length > 0
+      ? "Ha candidatos compativeis no estoque. Se nao for exato, apresente como opcao proxima e confirme o detalhe."
+      : "Nenhum candidato compativel encontrado mesmo com busca ampla. Nao invente disponibilidade.",
+  };
+}
+
+// Filtros normalizados (query + limpeza de palavras fracas). Compartilhado entre fontes.
+function buildStockSearchFilters(input: PedroStockSearchInput): Record<string, any> {
+  const filters: Record<string, any> = {
+    ...(input.filters || {}),
+    query: input.query || input.filters?.query || input.filters?.modelo || "",
+  };
+  if (filters.modelo && WEAK_WORDS.has(normalizeText(filters.modelo))) filters.modelo = undefined;
+  if (filters.marca && WEAK_WORDS.has(normalizeText(filters.marca))) filters.marca = undefined;
+  return filters;
+}
+
 export async function searchPedroStock(supabase: any, input: PedroStockSearchInput) {
+  const filters = buildStockSearchFilters(input);
+
+  // ── FONTE DE ESTOQUE POR CLIENTE ───────────────────────────────────────────
+  // RevendaMais (feed JSON da loja) quando configurada p/ o cliente OU via override de
+  // dry-run (input.stock_feed_url). Senao, BNDV (GraphQL, default). Em prod a fonte vem
+  // de platform_integrations (platform='revendamais', feed_url nas credenciais).
+  let revendaFeedUrl: string | null = (input.stock_feed_url || "").toString().trim() || null;
+  if (!revendaFeedUrl) {
+    const { data: rm } = await supabase
+      .from("platform_integrations")
+      .select("api_key_encrypted, is_active")
+      .eq("user_id", input.user_id)
+      .eq("platform", "revendamais")
+      .maybeSingle();
+    if (rm?.is_active) {
+      const cred = parseCredentials(rm.api_key_encrypted) as Record<string, any>;
+      revendaFeedUrl = String(cred.feed_url || cred.url || cred.api_token || "").trim() || null;
+    }
+  }
+  if (revendaFeedUrl) {
+    let vehicles: BndvVehicle[];
+    try {
+      vehicles = await fetchRevendaMaisVehicles(revendaFeedUrl) as unknown as BndvVehicle[];
+    } catch (err) {
+      return { success: false, total: 0, items: [], error: `RevendaMais: ${String((err as any)?.message || err)}` };
+    }
+    return rankSortMapStock(vehicles, filters, input);
+  }
+
+  // ── BNDV (default) ──────────────────────────────────────────────────────────
   const { data: integration, error: integrationError } = await supabase
     .from("platform_integrations")
     .select("api_key_encrypted, is_active")
@@ -632,18 +722,6 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
 
   const token = parseCredentials(integration.api_key_encrypted).api_token?.trim();
   if (!token) return { success: false, total: 0, items: [], error: "Bearer Token do BNDV nao encontrado." };
-
-  const filters = {
-    ...(input.filters || {}),
-    query: input.query || input.filters?.query || input.filters?.modelo || "",
-  };
-
-  if (filters.modelo && WEAK_WORDS.has(normalizeText(filters.modelo))) {
-    filters.modelo = undefined;
-  }
-  if (filters.marca && WEAK_WORDS.has(normalizeText(filters.marca))) {
-    filters.marca = undefined;
-  }
 
   const graphqlResponse = await fetch(BNDV_API_URL, {
     method: "POST",
@@ -682,33 +760,5 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
   }
 
   const vehicles = Array.isArray(payload?.data?.vehiclesBy) ? payload.data.vehiclesBy : [];
-  // B3: motor de matching novo (vehicleMatch) atras de flag/override. Default = matcher LEGADO.
-  // Liga em prod via secret PEDRO_FF_NEW_MATCH='on'; no dry-run via input.match_engine='v2' (sombra).
-  // B3 DESLIGADO em producao (regressao real: caso Onix mostrou 2017 laranja em vez do anuncio).
-  // O env PEDRO_FF_NEW_MATCH foi NEUTRALIZADO no codigo ate o motor ser corrigido. O motor novo
-  // so roda via override explicito de dry-run (match_engine='v2') para testes isolados.
-  const useNewMatch = String((input as any).match_engine || "").toLowerCase() === "v2";
-  const rankedRaw = useNewMatch ? rankVehiclesV2(vehicles as any, filters) : rankVehicles(vehicles, filters);
-  const ranked = (rankedRaw as Array<{ vehicle: any; score: number; matchedTokens: string[]; relaxed: boolean }>).sort((left, right) => {
-    if (right.score !== left.score) return right.score - left.score;
-    // Carro sem preco (R$0/null) vai pro FIM do desempate (Infinity), nunca pro topo —
-    // senao um carro de preco-a-confirmar apareceria "mais barato" que todos.
-    const leftPrice = Number(left.vehicle.saleValue) > 0 ? Number(left.vehicle.saleValue) : Number.POSITIVE_INFINITY;
-    const rightPrice = Number(right.vehicle.saleValue) > 0 ? Number(right.vehicle.saleValue) : Number.POSITIVE_INFINITY;
-    if (leftPrice !== rightPrice) return leftPrice - rightPrice;
-    return Number(right.vehicle.year || 0) - Number(left.vehicle.year || 0);
-  });
-
-  const limit = Math.max(1, Math.min(Number(input.limit || DEFAULT_LIMIT), 30));
-  const items = ranked.slice(0, limit).map((rank) => toPedroVehicle(rank.vehicle, rank));
-  return {
-    success: true,
-    total: ranked.length,
-    items,
-    filters_used: filters,
-    match_engine_used: useNewMatch ? "v2" : "legacy",
-    response_guidance: ranked.length > 0
-      ? "Ha candidatos compativeis no estoque. Se nao for exato, apresente como opcao proxima e confirme o detalhe."
-      : "Nenhum candidato compativel encontrado mesmo com busca ampla. Nao invente disponibilidade.",
-  };
+  return rankSortMapStock(vehicles, filters, input);
 }

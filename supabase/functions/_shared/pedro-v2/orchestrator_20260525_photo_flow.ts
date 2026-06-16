@@ -1919,7 +1919,13 @@ export async function processPedroV2Turn(
   // o pedido de moto e responde com clareza que e so carro, sem cair no "que tipo de carro?".
   const _motoText = `${String(stockFilters?.query || "")} ${String(text || "")}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const _isMotoRequest = /\b(moto|motos|motoca|motocicleta|motocicletas|scooter|lambreta)\b/.test(_motoText);
-  if (stockFilters && _isMotoRequest) {
+  // Capacidade POR AGENTE: a loja vende motos? (wa_ai_agents.sells_motorcycles, default false).
+  // Override de dry-run (payload.sells_motorcycles) p/ testar sem o agente do cliente configurado.
+  const _sellsMotos = (input.agent as any)?.sells_motorcycles === true
+    || (dryRun && (input.payload as any)?.sells_motorcycles === true);
+  const _stockFeedOverride = dryRun ? ((input.payload as any)?.stock_feed_url ?? null) : null;
+  if (stockFilters && _isMotoRequest && !_sellsMotos) {
+    // Loja CAR-ONLY: recusa moto com clareza (sem cair no "que tipo de carro?").
     stockResult = {
       success: true,
       total: 0,
@@ -1927,14 +1933,36 @@ export async function processPedroV2Turn(
       is_moto_request: true,
       response_guidance: "INSTRUCAO INTERNA (NUNCA cite jargao tecnico): o lead perguntou sobre MOTO, mas a loja trabalha SOMENTE com CARROS. Responda com clareza e simpatia que aqui e so carro (nao temos motos) e, se ele quiser, voce ajuda a achar um carro. NUNCA confirme que vendemos moto nem pergunte 'que tipo de carro' como se ele tivesse pedido um carro.",
     };
+  } else if (stockFilters && _isMotoRequest && _sellsMotos) {
+    // Loja que VENDE moto: busca REAL de motos (tipo_veiculo='moto' -> so motos). REMOVE a
+    // palavra-TIPO "moto" da query/modelo (senao vira termo de MODELO e o strict-match
+    // descarta a moto, que nao tem "moto" no nome -> 0 resultados). Modelo especifico
+    // ("biz", "cb 500") permanece e busca a moto certa; "tem moto?" generico -> todas as motos.
+    const _motoModel = String(stockFilters.query || stockFilters.modelo_desejado || stockFilters.modelo || "")
+      .replace(/\b(moto|motos|motoca|motocicleta|motocicletas|scooter|lambreta)\b/gi, "")
+      .replace(/\s+/g, " ").trim();
+    stockResult = await searchPedroStock(supabase, {
+      user_id: input.agent.user_id,
+      query: _motoModel,
+      filters: { ...stockFilters, tipo_veiculo: "moto", query: _motoModel, modelo: _motoModel || undefined, modelo_desejado: _motoModel || undefined },
+      limit: 24,
+      sells_motorcycles: true,
+      match_engine: dryRun ? ((input.payload as any)?.match_engine ?? null) : null,
+      stock_feed_url: _stockFeedOverride,
+    } as any);
   } else if (stockFilters && !isGenericQuery) {
     stockResult = await searchPedroStock(supabase, {
       user_id: input.agent.user_id,
       query: stockFilters.query,
       filters: stockFilters,
       limit: 24,
+      // Loja que vende moto mantem motos no pool; car-only filtra (default).
+      sells_motorcycles: _sellsMotos,
       // B3 sombra: override do motor SO no dry-run (prod usa o env PEDRO_FF_NEW_MATCH).
       match_engine: dryRun ? ((input.payload as any)?.match_engine ?? null) : null,
+      // Override de fonte de estoque SO no dry-run: testa RevendaMais (feed JSON) sem precisar
+      // da integracao gravada nem do agente do cliente novo. Em prod a fonte vem da integracao.
+      stock_feed_url: _stockFeedOverride,
     } as any);
   } else if (stockFilters && isGenericQuery) {
     stockResult = {

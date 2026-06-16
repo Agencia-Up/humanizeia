@@ -66,20 +66,24 @@ function baseTemplate(content: string): string {
               border-radius:20px;
               overflow:hidden;
             ">
-              <!-- BARRA GRADIENTE TOPO -->
-              <tr>
-                <td style="
-                  height:4px;
-                  background: linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary}, ${COLORS.primary});
-                "></td>
-              </tr>
+              <!-- tabela interna OBRIGATORIA: <tr> nao pode ser filho direto de <td>.
+                   Sem ela, o Gmail descarta/embaralha o conteudo (botao + link somem). -->
+              <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;">
+                <!-- BARRA GRADIENTE TOPO -->
+                <tr>
+                  <td style="
+                    height:4px; font-size:0; line-height:0;
+                    background: linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary}, ${COLORS.primary});
+                  ">&nbsp;</td>
+                </tr>
 
-              <!-- CONTEÚDO -->
-              <tr>
-                <td style="padding:48px 40px;">
-                  ${content}
-                </td>
-              </tr>
+                <!-- CONTEÚDO -->
+                <tr>
+                  <td style="padding:48px 40px;">
+                    ${content}
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
 
@@ -356,6 +360,9 @@ Deno.serve(async (req) => {
 
     let subject = '';
     let html = '';
+    // Dominio canonico do app = site_url do Auth (logosiabrasil.com). PRECISA bater com a
+    // uri_allow_list, senao o Supabase descarta o redirect_to e joga pra raiz do site ->
+    // cliente clica no link e cai na home, nao na tela de redefinir senha.
     const appUrl = redirectTo?.includes('localhost')
       ? 'http://localhost:8080'
       : 'https://logosiabrasil.com';

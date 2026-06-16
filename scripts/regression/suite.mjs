@@ -26,9 +26,17 @@ const onlyGroup = (process.argv[2] || "").toLowerCase();
 let _seq = 0;
 const freshChat = () => `5599${(Date.now() % 1e7).toString().padStart(7, "0")}${_seq++}@s.whatsapp.net`;
 
+// Override opt-in de provedor (mitigação/teste multi-LLM). Ex.: FORCE_PROVIDER=deepseek node suite.mjs
+const FORCE_PROVIDER = (process.env.FORCE_PROVIDER || "").trim().toLowerCase();
+function applyProviderOverride(body) {
+  if (FORCE_PROVIDER) { body.planner_provider = FORCE_PROVIDER; body.reply_provider = FORCE_PROVIDER; }
+  return body;
+}
+
 async function dryRun({ text, externalAdReply, chatid } = {}) {
   const body = { instanceName: INSTANCE, chatid: chatid || freshChat(), senderName: "RegTest", text: text ?? "", dry_run: true };
   if (externalAdReply) body.externalAdReply = externalAdReply;
+  applyProviderOverride(body);
   const r = await fetch(`${URL}/functions/v1/pedro-webhook-v2`, {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, apikey: KEY },
     body: JSON.stringify(body),
@@ -155,6 +163,7 @@ async function replayCtwa(limit = 12) {
     let s = JSON.stringify(row.payload);
     for (const id of [deepFind(row.payload, "sender_pn"), deepFind(row.payload, "sender")]) { if (id) { const dig = String(id).replace(/\D/g, ""); if (dig) s = s.split(dig).join(FRESH); } }
     const p = JSON.parse(s); p.dry_run = true; p.chatid = FRESH + "@s.whatsapp.net"; p.instanceName = p.instanceName || INSTANCE;
+    applyProviderOverride(p);
     const r = await fetch(`${URL}/functions/v1/pedro-webhook-v2`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}`, apikey: KEY }, body: JSON.stringify(p) });
     const j = await r.json().catch(() => ({}));
     if (j.next_action && /transfer|silence|hold|paused/.test(j.next_action)) continue;
