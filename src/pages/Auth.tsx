@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, Link, useSearchParams } from 'react-router-dom';
+import { Navigate, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ const passwordSchema = z.string().min(6, 'Senha deve ter no mínimo 6 caracteres
 
 export default function Auth() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { signIn, user } = useAuth();
   const { toast } = useToast();
   const { isDarkMode, toggleDarkMode } = useAppStore();
@@ -72,6 +73,13 @@ export default function Auth() {
         if (error.message.includes('Invalid login credentials')) msg = 'Email ou senha incorretos.';
         else if (error.message.includes('Email not confirmed')) msg = 'Confirme seu email antes de fazer login.';
         toast({ title: 'Erro no login', description: error.message || msg, variant: 'destructive' });
+      } else {
+        // Login OK: navega NA HORA, sem depender do estado reativo `user`.
+        // Havia uma corrida no onAuthStateChange (o guard "mesmo usuario" da
+        // linha ~90 do useAuth as vezes engolia o setUser desta instancia, e a
+        // tela so entrava no F5). Navegar aqui torna a entrada deterministica;
+        // o ProtectedRoute de destino le a sessao via getSession no mount.
+        navigate(redirectTo, { replace: true });
       }
     } catch (err: any) {
       console.error("Erro crítico no Login:", err);
