@@ -1535,8 +1535,51 @@ export async function processPedroV2Turn(
     if (batched) text = batched;
   }
 
+  // === REATIVACAO (Follow-up IA) — DETECCAO ANTECIPADA (antes dos bloqueios) ===
+  // Decisao do dono: lead "cutucado" pelo motor de reativacao que VOLTOU a responder deve ser
+  // RE-QUALIFICADO pela IA (nao pode ficar mudo) e, ao transferir de novo, vai pro MESMO vendedor
+  // da 1a vez com selo "recuperado pelo follow-up" (ver linhas de handoff/briefing abaixo). Por
+  // isso a deteccao roda AQUI, antes do ai_paused e do hold 24h — senao o turno morria muda.
+  let reactivationRecovery = false;
+  let reactivationSellerId: string | null = null;
+  if (lead?.id && identity.kind !== "seller") {
+    try {
+      const { data: _react } = await supabase
+        .from("pedro_followup_reactivation")
+        .select("id, status")
+        .eq("lead_id", lead.id)
+        .maybeSingle();
+      if (_react && (_react.status === "sent" || _react.status === "responded")) {
+        reactivationRecovery = true;
+        if (!dryRun && _react.status === "sent") {
+          await supabase.from("pedro_followup_reactivation")
+            .update({ status: "responded", responded_at: new Date().toISOString() })
+            .eq("id", _react.id);
+        }
+        const { data: _lastT } = await supabase
+          .from("ai_lead_transfers")
+          .select("to_member_id")
+          .eq("lead_id", lead.id)
+          .not("to_member_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        reactivationSellerId = _lastT?.to_member_id || null;
+      }
+    } catch (_e) { /* deteccao de reativacao nao pode derrubar o turno */ }
+  }
+  // Lead RECUPERADO que estava pausado: a IA reassume pra re-qualificar -> DESPAUSA no banco (vale
+  // pro turno inteiro/conversa, nao so este). So quando ha reativacao ativa (sinal explicito).
+  if (reactivationRecovery && lead?.ai_paused) {
+    if (!dryRun) {
+      try { await supabase.from("ai_crm_leads").update({ ai_paused: false }).eq("id", lead.id); } catch (_e) { /* nao bloqueia */ }
+    }
+    (lead as any).ai_paused = false;
+    log("info", "pedro_v2_reactivation_unpaused", { lead_id: lead.id });
+  }
+
   // === CHECK AI_PAUSED CONTROL ===
-  if (lead?.ai_paused) {
+  if (lead?.ai_paused && !reactivationRecovery) {
     console.log(`[PedroV2] IA pausada para ${remoteJid}. Mensagem gravada no historico, ignorando resposta automatica.`);
     return {
       ok: true,
@@ -1559,7 +1602,8 @@ export async function processPedroV2Turn(
   // desativado por decisao do dono) — mantidos so para compat das referencias abaixo.
   const ownedLeadAssistantMode = false;
   const assistantSellerName: string | null = null;
-  if (lead?.id && identity.kind !== "seller") {
+  // Reativacao (lead recuperado pelo follow-up) PULA o hold 24h: a IA precisa re-qualificar agora.
+  if (lead?.id && identity.kind !== "seller" && !reactivationRecovery) {
     const { data: lastTransfer } = await supabase
       .from("ai_lead_transfers")
       .select("created_at, transfer_status, to_member_id")
@@ -1644,42 +1688,10 @@ export async function processPedroV2Turn(
   }
 
   // === FASE C — REATIVACAO (Follow-up IA) ===
-  // Se este lead estava na fila de reativacao (coluna "Lead Inativo", recebeu um
-  // "cutucao" do motor pedro-auto-followup) e VOLTOU a responder agora:
-  //  1) marca 'responded' (para de cutucar — sai do rodizio de envio).
-  //  2) guarda que e uma RECUPERACAO + o vendedor do 1o atendimento, pra na hora de
-  //     transferir mandar pro MESMO vendedor com o selo "recuperado pelo follow-up".
-  // O resto do turno segue NORMAL: o cerebro requalifica o lead (coleta dados de novo).
-  let reactivationRecovery = false;
-  let reactivationSellerId: string | null = null;
-  if (lead?.id && identity.kind !== "seller") {
-    try {
-      const { data: _react } = await supabase
-        .from("pedro_followup_reactivation")
-        .select("id, status")
-        .eq("lead_id", lead.id)
-        .maybeSingle();
-      if (_react && (_react.status === "sent" || _react.status === "responded")) {
-        reactivationRecovery = true;
-        if (!dryRun && _react.status === "sent") {
-          await supabase.from("pedro_followup_reactivation")
-            .update({ status: "responded", responded_at: new Date().toISOString() })
-            .eq("id", _react.id);
-        }
-        // Vendedor do 1o atendimento = to_member_id da ultima transferencia (mesmo que
-        // tenha ficado pendente). Usado pra rotear a recuperacao de volta pra ele.
-        const { data: _lastT } = await supabase
-          .from("ai_lead_transfers")
-          .select("to_member_id")
-          .eq("lead_id", lead.id)
-          .not("to_member_id", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        reactivationSellerId = _lastT?.to_member_id || null;
-      }
-    } catch (_e) { /* deteccao de reativacao nao pode derrubar o turno */ }
-  }
+  // A DETECCAO (reactivationRecovery + reactivationSellerId + marcar 'responded') foi movida pra
+  // ANTES dos bloqueios ai_paused/hold-24h (ver acima), pra o lead recuperado nao morrer mudo.
+  // Aqui o turno segue NORMAL: o cerebro requalifica; ao transferir, vai pro MESMO vendedor com o
+  // selo "recuperado pelo follow-up" (preferred_seller_id/_recoveryTag mais abaixo).
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
   // CTWA em RAJADA: se o payload da vez NAO traz o anuncio (rajada respondida na ultima msg, sem
