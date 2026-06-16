@@ -939,6 +939,23 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
     )[0] || null;
   }, [distributionMembers]);
 
+  // Próximo da fila POR AGENTE: cada agente (cada loja/número) tem sua própria fila
+  // entre os vendedores LIGADOS daquele agente. Mesma lógica do nextSeller, mas
+  // separada por agent_id. 1 agente → 1 próximo; 2 agentes → o próximo de cada.
+  const nextSellerByAgent = useMemo(() => {
+    const pickNext = (pool: any[]) => {
+      if (!pool.length) return null;
+      const never = pool.filter(m => !m.last_lead_received_at);
+      if (never.length) return never[0];
+      return [...pool].sort((a, b) =>
+        new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
+      )[0] || null;
+    };
+    return (agents || [])
+      .filter((a: any) => a.is_active !== false)
+      .map((ag: any) => ({ agent: ag, seller: pickNext(distributionMembers.filter(m => m.agent_id === ag.id)) }));
+  }, [agents, distributionMembers]);
+
   // MATRIZ: ids de TODAS as linhas do mesmo vendedor (por telefone) — pra somar os
   // atendimentos mesmo que transfers tenham caído em rows de agentes diferentes.
   const memberIdsByPhone = useMemo(() => {
@@ -1876,6 +1893,24 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
             </div>
 
             <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 330, overflowY: 'auto' }}>
+              {/* Próximo da fila por agente: 1 agente → 1; vários → o próximo de cada */}
+              {nextSellerByAgent.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 4, paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.15em', color: C.orangeL, fontWeight: 700, opacity: 0.8 }}>
+                    Próximo da fila{nextSellerByAgent.length > 1 ? ' por agente' : ''}
+                  </p>
+                  {nextSellerByAgent.map(({ agent, seller }) => (
+                    <div key={agent.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', padding: '7px 10px' }}>
+                      {nextSellerByAgent.length > 1 && (
+                        <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '48%' }}>{agent.name}</span>
+                      )}
+                      <span style={{ fontSize: 13, fontWeight: 800, color: seller ? '#F8FAFC' : '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', flex: 1 }}>
+                        {seller ? seller.name : 'Nenhum ativo'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {untransferredLeads.length === 0 ? (
                 <div style={{ borderRadius: 10, border: '1.5px dashed rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)', padding: '22px 14px', textAlign: 'center', color: '#64748B', fontSize: 12 }}>
                   Nenhum lead sem vendedor no período.
