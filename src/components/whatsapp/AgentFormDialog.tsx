@@ -17,7 +17,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
-import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen } from 'lucide-react';
+import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen, MessageSquare } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
@@ -106,6 +106,61 @@ const AGENT_TYPES = [
   { value: 'sdr', label: '🚗 SDR - Automóveis' },
   { value: 'sdr_geral', label: '🎯 SDR - Geral' },
 ];
+
+// Etiquetas disponiveis nos modelos de mensagem (mostradas na ajuda da tela).
+const MSG_TAGS: { tag: string; desc: string }[] = [
+  { tag: '{nome}', desc: 'nome do lead' },
+  { tag: '{telefone}', desc: 'telefone do lead' },
+  { tag: '{link}', desc: 'link pra abrir a conversa (wa.me)' },
+  { tag: '{cidade}', desc: 'cidade do lead' },
+  { tag: '{temperatura}', desc: 'quente / morno / frio' },
+  { tag: '{interesse}', desc: 'modelo/carro de interesse' },
+  { tag: '{veiculo}', desc: 'veículo apresentado' },
+  { tag: '{pagamento}', desc: 'forma de pagamento' },
+  { tag: '{entrada}', desc: 'valor de entrada' },
+  { tag: '{troca}', desc: 'carro na troca' },
+  { tag: '{resumo}', desc: 'resumo da conversa' },
+  { tag: '{vendedor}', desc: 'nome do vendedor' },
+  { tag: '{telefone_vendedor}', desc: 'WhatsApp do vendedor' },
+  { tag: '{agente}', desc: 'nome do agente (Pedro)' },
+  { tag: '{classificacao}', desc: 'classificação do lead' },
+  { tag: '{horario}', desc: 'horário da transferência' },
+];
+
+// Modelo pronto da mensagem do VENDEDOR (ponto de partida pra editar). Linhas
+// com etiqueta vazia somem sozinhas no envio.
+const DEFAULT_MSG_VENDEDOR = `🚗 *Novo lead pra você, {vendedor}!*
+
+*Nome:* {nome}
+*Telefone:* {telefone}
+*Cidade:* {cidade}
+*Temperatura:* {temperatura}
+*Interesse:* {interesse}
+*Forma de pagamento:* {pagamento}
+*Entrada:* {entrada}
+*Troca:* {troca}
+*Resumo:* {resumo}
+
+👉 *Atender agora:* {link}
+⏰ Responda em até 15 minutos pra confirmar o recebimento.`;
+
+// Modelo pronto do RELATÓRIO do GERENTE.
+const DEFAULT_MSG_GERENTE = `📊 *Relatório de lead — {agente}*
+
+🕐 {horario}
+👤 *Lead:* {nome}
+📱 *Telefone:* {link}
+🏙️ *Cidade:* {cidade}
+🌡️ *Temperatura:* {temperatura}
+📊 *Classificação:* {classificacao}
+🚗 *Interesse:* {interesse}
+💰 *Pagamento:* {pagamento}
+💵 *Entrada:* {entrada}
+🔄 *Troca:* {troca}
+📝 *Resumo:* {resumo}
+
+🎯 *Enviado para:* {vendedor}
+📲 *WhatsApp vendedor:* {telefone_vendedor}`;
 
 const PROMPT_TEMPLATES: Record<string, string> = {
   generic: DEFAULT_PROMPT,
@@ -198,6 +253,13 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [n8nWebhookUrl, setN8nWebhookUrl] = useState('');
   const [sdrGoal, setSdrGoal] = useState('');
   const [qualificationStr, setQualificationStr] = useState('');
+
+  // Mensagens personalizadas (vendedor / gerente). Toggle off = mensagem
+  // automatica de sempre (salva null). Toggle on = usa o texto com etiquetas.
+  const [customVendedorMsg, setCustomVendedorMsg] = useState(false);
+  const [templateVendedorMsg, setTemplateVendedorMsg] = useState(DEFAULT_MSG_VENDEDOR);
+  const [customGerenteMsg, setCustomGerenteMsg] = useState(false);
+  const [templateGerenteMsg, setTemplateGerenteMsg] = useState(DEFAULT_MSG_GERENTE);
 
   // ── Regras de automacao (Pedro v2): follow-up + transferencia ──
   // NULL no banco = comportamento legado (5/8/12, transfere, 10min, janela fixa).
@@ -583,6 +645,14 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setN8nWebhookUrl(agent.n8n_webhook_url || '');
       setSdrGoal(agent.sdr_goal || '');
       setQualificationStr((agent.qualification_questions || []).join('\n'));
+      // Mensagens personalizadas: se ja houver template salvo, liga o toggle e
+      // carrega o texto; senao, fica desligado com o modelo pronto pra editar.
+      const tplV = (agent as any).briefing_template_vendedor || '';
+      setCustomVendedorMsg(!!tplV.trim());
+      setTemplateVendedorMsg(tplV.trim() ? tplV : DEFAULT_MSG_VENDEDOR);
+      const tplG = (agent as any).briefing_template_gerente || '';
+      setCustomGerenteMsg(!!tplG.trim());
+      setTemplateGerenteMsg(tplG.trim() ? tplG : DEFAULT_MSG_GERENTE);
       // Regras de automacao (default = comportamento legado se nao houver nada salvo)
       const ar: any = (agent as any).automation_rules || {};
       const arF: any = ar.followup || {}; const arT: any = ar.transfer || {};
@@ -618,6 +688,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setN8nWebhookUrl('');
       setSdrGoal('');
       setQualificationStr('');
+      setCustomVendedorMsg(false); setTemplateVendedorMsg(DEFAULT_MSG_VENDEDOR);
+      setCustomGerenteMsg(false); setTemplateGerenteMsg(DEFAULT_MSG_GERENTE);
       setRuFollowupEnabled(true); setRuT1(5); setRuT2(8); setRuT3(12); setRuT3Transfers(true);
       setRuTransferEnabled(true); setRuSellerRespMin(10);
       setRuWindowCustom(false); setRuWindowStart('10:11'); setRuWindowEnd('19:29');
@@ -661,6 +733,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     n8n_webhook_url: n8nWebhookUrl,
     sdr_goal: sdrGoal,
     qualification_questions: qualificationStr.split('\n').map(q => q.trim()).filter(Boolean),
+    briefing_template_vendedor: customVendedorMsg ? (templateVendedorMsg.trim() || null) : null,
+    briefing_template_gerente: customGerenteMsg ? (templateGerenteMsg.trim() || null) : null,
     automation_rules: (() => {
       const t1 = Math.max(1, Math.round(Number(ruT1)) || 5);
       const t2 = Math.max(t1 + 1, Math.round(Number(ruT2)) || 8);
@@ -804,6 +878,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   { v: 'knowledge',    label: 'Base',        Icon: BookOpen,    activeCls: 'bg-purple-500/10 text-purple-500 border-purple-500/20' },
                   { v: 'equipe',       label: 'Vendedores',  Icon: UserCheck,   activeCls: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
                   { v: 'rules',        label: 'Regras',      Icon: Clock,       activeCls: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
+                  { v: 'mensagens',    label: 'Mensagens',   Icon: MessageSquare, activeCls: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
                 ].map(({ v, label, Icon, activeCls }) => {
                   const isActive = activeTab === v;
                   return (
@@ -886,6 +961,81 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                     <div><Label className="text-xs">Fim</Label><Input type="time" value={ruWindowEnd} onChange={e => setRuWindowEnd(e.target.value)} /></div>
                   </div> : <p className="text-[11px] text-muted-foreground">Usando o horário padrão do sistema. Ative para definir um horário próprio (dentro do horário comercial).</p>}
                 </div> : <p className="text-[11px] text-muted-foreground">Com a transferência desligada, o agente atende sozinho: não repassa por qualificação, nem por inatividade, nem faz rodízio. A transferência manual no portal continua disponível.</p>}
+              </div>
+            </div>}
+
+            {/* ── Tab: Mensagens (templates vendedor / gerente) ── */}
+            {activeTab === 'mensagens' && <div className="space-y-6 mt-0">
+              <p className="text-xs text-muted-foreground">
+                Personalize o texto que o Pedro envia ao <b>vendedor</b> (na transferência do lead) e ao <b>gerente</b> (relatório). Deixe desligado para usar a mensagem automática do sistema.
+              </p>
+
+              {/* Ajuda: etiquetas */}
+              <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-3">
+                <p className="text-xs font-semibold mb-2 flex items-center gap-1.5"><MessageSquare className="h-3.5 w-3.5 text-orange-500" /> Etiquetas que você pode usar</p>
+                <p className="text-[11px] text-muted-foreground mb-2">Escreva a mensagem do seu jeito e use estas etiquetas onde quiser que entrem os dados do lead. O sistema troca cada uma pelo valor real. Se um dado não existir, a linha some sozinha.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                  {MSG_TAGS.map(t => (
+                    <div key={t.tag} className="flex items-baseline gap-2 text-[11px]">
+                      <code className="font-mono text-orange-600 dark:text-orange-400 shrink-0">{t.tag}</code>
+                      <span className="text-muted-foreground truncate">{t.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mensagem do vendedor */}
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold flex items-center gap-2"><UserCheck className="h-4 w-4" /> Mensagem para o vendedor</h3>
+                    <p className="text-xs text-muted-foreground">O que o vendedor recebe quando o lead é transferido pra ele.</p>
+                  </div>
+                  <Switch checked={customVendedorMsg} onCheckedChange={setCustomVendedorMsg} />
+                </div>
+                {customVendedorMsg ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      value={templateVendedorMsg}
+                      onChange={e => setTemplateVendedorMsg(e.target.value)}
+                      placeholder="Escreva a mensagem do vendedor usando as etiquetas acima..."
+                      className="min-h-[220px] font-mono text-xs"
+                    />
+                    <button type="button" onClick={() => setTemplateVendedorMsg(DEFAULT_MSG_VENDEDOR)}
+                      className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline">
+                      Restaurar modelo padrão
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">Desligado: usando a mensagem automática do sistema. Ligue para escrever a sua.</p>
+                )}
+              </div>
+
+              {/* Mensagem do gerente */}
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold flex items-center gap-2"><Shield className="h-4 w-4" /> Relatório para o gerente</h3>
+                    <p className="text-xs text-muted-foreground">O resumo que o gerente recebe a cada lead transferido.</p>
+                  </div>
+                  <Switch checked={customGerenteMsg} onCheckedChange={setCustomGerenteMsg} />
+                </div>
+                {customGerenteMsg ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      value={templateGerenteMsg}
+                      onChange={e => setTemplateGerenteMsg(e.target.value)}
+                      placeholder="Escreva o relatório do gerente usando as etiquetas acima..."
+                      className="min-h-[220px] font-mono text-xs"
+                    />
+                    <button type="button" onClick={() => setTemplateGerenteMsg(DEFAULT_MSG_GERENTE)}
+                      className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline">
+                      Restaurar modelo padrão
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">Desligado: usando o relatório automático do sistema. Ligue para escrever o seu.</p>
+                )}
               </div>
             </div>}
 

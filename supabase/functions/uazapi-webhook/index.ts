@@ -1645,6 +1645,114 @@ function buildGerenteReport(opts: {
   return lines.join('\n');
 }
 
+// ─── Templates personalizados de mensagem (vendedor / gerente) ──────────────
+// O dono pode escrever a mensagem do jeito dele usando "etiquetas" como {nome}
+// ou {interesse}; o sistema troca cada etiqueta pelo dado real do lead. Se o
+// agente NAO tem template salvo (null/vazio), cai no builder automatico de
+// sempre — entao quem nao mexer nao muda nada.
+
+// Monta o mapa de etiquetas -> valor a partir do estado da conversa + dados da
+// transferencia. Valores ausentes ficam '' (a renderizacao remove a linha).
+function buildEtiquetas(opts: {
+  state: any;
+  agentName: string;
+  leadName: string;
+  leadPhone: string;
+  sellerName?: string | null;
+  sellerPhone?: string | null;
+  resumo?: string | null;
+  classificacao?: string | null;
+  horario?: string | null;
+  motivo?: string | null;
+  urgencia?: string | null;
+  score?: string | null;
+}): Record<string, string> {
+  const s = opts.state || {};
+  const digits = String(opts.leadPhone || s?.lead?.telefone || '').replace(/\D/g, '');
+
+  let interesse = '';
+  if (s?.interesse?.modelo_desejado) {
+    const conf = [s.interesse.ano_desejado, s.interesse.configuracao, s.interesse.combustivel, s.interesse.cambio]
+      .filter(Boolean).join(', ');
+    interesse = `${s.interesse.modelo_desejado}${conf ? ` (${conf})` : ''}`;
+  }
+
+  let veiculo = '';
+  if (s?.veiculo_apresentado?.ja_apresentado) {
+    const vp = s.veiculo_apresentado;
+    veiculo = `${[vp.modelo, vp.ano].filter(Boolean).join(' ')}${vp.preco ? ` — R$ ${vp.preco}` : ''}`.trim();
+  }
+
+  let troca = '';
+  if (s?.negociacao?.tem_troca && s?.negociacao?.carro_troca) {
+    const ct = s.negociacao.carro_troca;
+    const parts = [ct.modelo, ct.ano, ct.configuracao, ct.cambio].filter(Boolean).join(' ');
+    troca = `${parts || 'sim'}${ct.status ? ` (${ct.status})` : ''}`;
+  }
+
+  const objecoes = (s?.atendimento?.objecoes && s.atendimento.objecoes.length > 0)
+    ? s.atendimento.objecoes.join(', ') : '';
+
+  const nome = s?.lead?.nome_completo || s?.lead?.nome
+    || (opts.leadName && opts.leadName !== 'Lead' ? opts.leadName : '')
+    || (digits ? `Lead (final ${digits.slice(-4)})` : 'Lead');
+
+  return {
+    agente: opts.agentName || 'Pedro SDR',
+    nome,
+    telefone: opts.leadPhone || s?.lead?.telefone || digits,
+    link: digits ? `https://wa.me/${digits}` : '',
+    cidade: s?.lead?.cidade || '',
+    temperatura: temperaturaLabel(s),
+    interesse,
+    veiculo,
+    pagamento: s?.negociacao?.forma_pagamento || '',
+    entrada: s?.negociacao?.valor_entrada || '',
+    troca,
+    objecoes,
+    decisao: s?.lead?.acompanhante_decisao || '',
+    resumo: opts.resumo ? String(opts.resumo).substring(0, 300) : '',
+    vendedor: opts.sellerName || '',
+    telefone_vendedor: opts.sellerPhone || '',
+    classificacao: opts.classificacao || '',
+    horario: opts.horario || '',
+    motivo: opts.motivo || '',
+    urgencia: opts.urgencia || '',
+    score: opts.score || '',
+  };
+}
+
+// Troca {etiquetas} pelo valor. Regra esperta: se uma LINHA tem etiqueta(s) e
+// TODAS ficaram vazias, a linha some inteira (evita "Cidade:" pendurado).
+function renderTemplate(tpl: string, vars: Record<string, string>): string {
+  const out: string[] = [];
+  for (const rawLine of String(tpl).split('\n')) {
+    const placeholders = rawLine.match(/\{[a-zA-Z_]+\}/g) || [];
+    if (placeholders.length === 0) { out.push(rawLine); continue; }
+    let anyFilled = false;
+    let line = rawLine;
+    for (const ph of placeholders) {
+      const key = ph.slice(1, -1).toLowerCase();
+      const val = (vars[key] ?? '').toString().trim();
+      if (val) anyFilled = true;
+      line = line.split(ph).join(val);
+    }
+    if (!anyFilled) continue; // linha so de etiquetas vazias -> remove
+    out.push(line);
+  }
+  return out.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Se o agente tem template salvo, usa ele (com etiquetas); senao, o texto padrao.
+function composeSellerMsg(agent: any, vars: Record<string, string>, fallback: string): string {
+  const tpl = String(agent?.briefing_template_vendedor || '').trim();
+  return tpl ? renderTemplate(tpl, vars) : fallback;
+}
+function composeGerenteMsg(agent: any, vars: Record<string, string>, fallback: string): string {
+  const tpl = String(agent?.briefing_template_gerente || '').trim();
+  return tpl ? renderTemplate(tpl, vars) : fallback;
+}
+
 // ─── BNDV Synonym classes (Lote 2 Fase 2) ──────────────────────────────────
 // Resolve ERR_01/04 do benchmark Roberta: cliente diz "cabine dupla flex manual"
 // e BNDV grava "Strada Freedom CD MT Flex". Sem sinônimos, .includes() falha.
@@ -3856,6 +3964,20 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                 );
               }
 
+              // Se o agente tem mensagem do vendedor personalizada, ela manda.
+              briefing = composeSellerMsg(agent, buildEtiquetas({
+                state: conversationState,
+                agentName: agent.name || 'Pedro SDR',
+                leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                leadPhone: phoneNumber,
+                sellerName: chosenSeller.name,
+                sellerPhone: chosenSeller.whatsapp_number,
+                resumo: transferArgs.resumo_breve,
+                classificacao: crmStage,
+                motivo: transferArgs.motivo,
+                urgencia: transferArgs.urgencia,
+              }), briefing);
+
               let sellerNum = String(chosenSeller.whatsapp_number || '').replace(/\D/g, '');
               if (sellerNum.length === 10 || sellerNum.length === 11) sellerNum = `55${sellerNum}`;
 
@@ -3882,7 +4004,19 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                     let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                     if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                    const gerenteMsg = buildGerenteReport({
+                    const gerenteMsg = composeGerenteMsg(agent, buildEtiquetas({
+                      state: conversationState,
+                      agentName: agent.name || 'Pedro SDR',
+                      leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                      leadPhone: phoneNumber,
+                      sellerName: chosenSeller.name,
+                      sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
+                      resumo: transferArgs.resumo_breve,
+                      classificacao: crmStage,
+                      horario: transferredAt,
+                      motivo: transferArgs.motivo,
+                      urgencia: transferArgs.urgencia,
+                    }), buildGerenteReport({
                       state: conversationState,
                       agentName: agent.name || 'Pedro SDR',
                       leadName: pushName || conversationState?.lead?.nome || 'Lead',
@@ -3893,7 +4027,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                       sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
                       transferredAt,
                       kind: 'novo',
-                    });
+                    }));
 
                     const gerenteRes = await fetch(`${baseUrl}/send/text`, {
                       method: 'POST',
@@ -4133,10 +4267,21 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                   `👉 *Atender:* https://wa.me/${phoneNumber}\n\n` +
                   `⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
 
+                const returnSellerMsg = composeSellerMsg(agent, buildEtiquetas({
+                  state: conversationState,
+                  agentName: agent.name || 'Pedro SDR',
+                  leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                  leadPhone: phoneNumber,
+                  sellerName: returnSeller.name,
+                  sellerPhone: returnSeller.whatsapp_number,
+                  resumo: args.resumo,
+                  classificacao: nextCrmStatus,
+                }), returnMsg);
+
                 const sendRes = await fetch(`${baseUrl}/send/text`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', 'token': instKey },
-                  body: JSON.stringify({ number: sellerNum, text: returnMsg }),
+                  body: JSON.stringify({ number: sellerNum, text: returnSellerMsg }),
                 });
                 console.log(`[Transfer] 🔄 Retorno → ${returnSeller.name} (HTTP ${sendRes.status})`);
 
@@ -4147,7 +4292,17 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                     let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                     if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                    const gerenteMsg = buildGerenteReport({
+                    const gerenteMsg = composeGerenteMsg(agent, buildEtiquetas({
+                      state: conversationState,
+                      agentName: agent.name || 'Pedro SDR',
+                      leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                      leadPhone: phoneNumber,
+                      sellerName: returnSeller.name,
+                      sellerPhone: returnSeller.whatsapp_number,
+                      resumo: args.resumo,
+                      classificacao: nextCrmStatus,
+                      horario: transferredAt,
+                    }), buildGerenteReport({
                       state: conversationState,
                       agentName: agent.name || 'Pedro SDR',
                       leadName: pushName || conversationState?.lead?.nome || 'Lead',
@@ -4158,7 +4313,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                       sellerPhone: returnSeller.whatsapp_number,
                       transferredAt,
                       kind: 'retorno',
-                    });
+                    }));
 
                     await fetch(`${baseUrl}/send/text`, {
                       method: 'POST',
@@ -4240,10 +4395,21 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                     `👉 *Atender:* https://wa.me/${phoneNumber}\n\n` +
                     `⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo da fila.*`;
 
+                  const sellerMsgFinal = composeSellerMsg(agent, buildEtiquetas({
+                    state: conversationState,
+                    agentName: agent.name || 'Pedro SDR',
+                    leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                    leadPhone: phoneNumber,
+                    sellerName: nextSeller.name,
+                    sellerPhone: nextSeller.whatsapp_number,
+                    resumo: args.resumo,
+                    classificacao: nextCrmStatus,
+                  }), sellerMsg);
+
                   const sendRes = await fetch(`${baseUrl}/send/text`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'token': instKey },
-                    body: JSON.stringify({ number: sellerNum, text: sellerMsg }),
+                    body: JSON.stringify({ number: sellerNum, text: sellerMsgFinal }),
                   });
                   console.log(`[Transfer] ✅ ${nextSeller.name} → HTTP ${sendRes.status}`);
 
@@ -4254,7 +4420,17 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                       let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                       if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                      const gerenteMsg = buildGerenteReport({
+                      const gerenteMsg = composeGerenteMsg(agent, buildEtiquetas({
+                        state: conversationState,
+                        agentName: agent.name || 'Pedro SDR',
+                        leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                        leadPhone: phoneNumber,
+                        sellerName: nextSeller.name,
+                        sellerPhone: nextSeller.whatsapp_number,
+                        resumo: args.resumo,
+                        classificacao: nextCrmStatus,
+                        horario: transferredAt,
+                      }), buildGerenteReport({
                         state: conversationState,
                         agentName: agent.name || 'Pedro SDR',
                         leadName: pushName || conversationState?.lead?.nome || 'Lead',
@@ -4265,7 +4441,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                         sellerPhone: nextSeller.whatsapp_number,
                         transferredAt,
                         kind: 'novo',
-                      });
+                      }));
 
                       const gerenteRes = await fetch(`${baseUrl}/send/text`, {
                         method: 'POST',
