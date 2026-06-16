@@ -2873,6 +2873,7 @@ export async function processPedroV2Turn(
         needs_handoff: contextualIntent.needs_handoff,
         stock_result_count: stockResult?.total || 0,
         reply_source: reply.source,
+        grounding_corrected: (reply as any)?.grounding_corrected === true,
         media_count: Array.isArray(reply.media) ? reply.media.length : 0,
         selected_vehicle_index: reply.selected_index ?? null,
         selected_vehicle_key: reply.selected_vehicle_key || null,

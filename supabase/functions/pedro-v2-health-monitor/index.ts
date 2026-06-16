@@ -42,7 +42,7 @@ serve(async (req: Request) => {
     .order("created_at", { ascending: false }).limit(3000);
   if (error) return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500, headers: { ...cors, "Content-Type": "application/json" } });
 
-  const flags: Record<string, any[]> = { unsolicited_photos: [], ctwa_ad_lost: [], ad_vehicle_unresolved: [], byok_block: [], provider_error: [] };
+  const flags: Record<string, any[]> = { unsolicited_photos: [], ctwa_ad_lost: [], ad_vehicle_unresolved: [], byok_block: [], provider_error: [], grounding_corrected: [] };
   let total = 0;
   for (const r of data || []) {
     total++;
@@ -57,12 +57,16 @@ serve(async (req: Request) => {
     if (res.ai_key_source === "none" || r.next_action === "no_ai_key_configured") flags.byok_block.push(samp({}));
     const perr = Array.isArray(res.ai_provider_errors) ? res.ai_provider_errors : [];
     if (perr.some((e: any) => e?.kind === "quota" || e?.kind === "auth")) flags.provider_error.push(samp({ errs: perr.map((e: any) => e.kind) }));
+    // grounding_corrected = o validador PEGOU uma alucinacao e corrigiu (metrica de saude, nao erro):
+    // taxa alta = o LLM tenta alucinar muito, mas foi barrado. Bom pra medir confianca.
+    if (res.grounding_corrected === true) flags.grounding_corrected.push(samp({ src: res.reply_source }));
   }
   const counts: Record<string, number> = {};
   for (const [k, arr] of Object.entries(flags)) counts[k] = arr.length;
   const samples: Record<string, any[]> = {};
   for (const [k, arr] of Object.entries(flags)) samples[k] = arr.slice(0, 10);
-  const hasFindings = Object.values(counts).some((n) => n > 0);
+  // grounding_corrected NAO conta como "problema" (e a rede de seguranca funcionando, nao um erro).
+  const hasFindings = Object.entries(counts).some(([k, n]) => k !== "grounding_corrected" && n > 0);
 
   const report = { window_hours: hours, total_turns: total, since: sinceIso, counts, samples, has_findings: hasFindings };
   if (!dryRun) {
