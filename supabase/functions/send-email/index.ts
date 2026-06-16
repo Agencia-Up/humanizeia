@@ -23,6 +23,8 @@ function baseTemplate(content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
   <title>LogosIA</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -109,7 +111,8 @@ function ctaButton(label: string, url: string): string {
   return `
     <table cellpadding="0" cellspacing="0" style="margin:32px auto;">
       <tr>
-        <td align="center" style="
+        <td align="center" bgcolor="${COLORS.primary}" style="
+          background-color: ${COLORS.primary};
           background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
           border-radius:12px;
         ">
@@ -117,6 +120,8 @@ function ctaButton(label: string, url: string): string {
             display:inline-block;
             padding:16px 40px;
             color:#ffffff;
+            background-color: ${COLORS.primary};
+            border-radius:12px;
             font-weight:700;
             font-size:16px;
             text-decoration:none;
