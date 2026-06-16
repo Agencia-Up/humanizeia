@@ -592,6 +592,9 @@ export function sanitizePedroMediaContext(context: PedroV2MediaContext): Record<
     vehicle_type: context.vehicle_type || null,
     summary: context.summary || null,
     confidence: context.confidence || 0,
+    // Audio que NAO transcreveu (Whisper falhou / sem chave): o cerebro precisa saber p/ NAO
+    // prometer "vou escutar e respondo" (nao ha 2o passe) — pede pro lead reenviar por texto.
+    audio_transcribed: (context as any).audio_transcribed ?? null,
     diagnostics: context.diagnostics || {},
   };
 }

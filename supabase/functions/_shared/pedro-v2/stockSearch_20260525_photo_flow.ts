@@ -507,6 +507,10 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
   // isso — caso real Cruze 2014 saleValue=0: o agente negava um carro que EXISTE = perda
   // de venda. Em busca por CATEGORIA (sem modelo) o R$0 segue escondido (ruido de cadastro).
   if (price <= 0 && !allowPriceless) return false;
+  // Com TETO EXPLICITO e DURO, carro SEM preco tambem sai: nao da pra garantir que cabe no
+  // orcamento e quase sempre esta MUITO acima (caso real "onix ate 30 mil" -> Onix 2020 "a
+  // confirmar", valor real ~R$60k, aparecendo como unica opcao). So vale com hard_price_ceiling.
+  if (price <= 0 && filters?.hard_price_ceiling && Number(filters?.preco_max) > 0) return false;
   // TETO DE PRECO EXPLICITO do lead ("ate 30 mil") e HARD: vale ATE no modo relaxed e ATE
   // p/ modelo nomeado. Sem isso, "tem onix ate 30 mil?" relaxava e mostrava Onix de R$64-76k
   // (mais que o dobro do orcamento) — constrangedor. Carro sem preco (R$0) nao da pra comparar,

@@ -798,7 +798,7 @@ function messageAsksForPhotos(message: string): boolean {
   const normalized = normalizePhotoText(message);
   // 1) termos visuais diretos (foto/imagem/detalhes do carro) + sinonimos de
   //    "catalogo"/"album" que o lead usa para pedir as imagens.
-  if (/\b(foto|fotos|fotinha|fotinhas|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta-malas|traseira|frente|lateral|video|videos|catalog|catalogo|catalogos|album|albuns|albun)\b/.test(normalized)) return true;
+  if (/\b(foto|fotos|fotinha|fotinhas|imagem|imagens|painel|interior|banco|bancos|roda|rodas|porta malas|porta-malas|traseira|frente|lateral|catalog|catalogo|catalogos|album|albuns|albun)\b/.test(normalized)) return true;
   // 2) pedidos por sinonimo: "me mostra", "mostra ele", "mostrar"
   if (/\b(me mostra|me mostre|mostra (a|o|ele|ela|esse|essa|mais|umas|uma|foto|as))\b/.test(normalized) || /\bmostrar\b/.test(normalized)) return true;
   // 3) "quero/queria/gostaria/posso ver" + "ver o carro / ver ele / ver esse"
@@ -1942,6 +1942,7 @@ export async function processPedroV2Turn(
     let _alt: any = null;
     let _altIsBrand = false;
     let _altMulti = false;
+    let _altOverBudget = false; // alternativas ACIMA da faixa pedida (so quando nada cabe no teto)
     // ESTAGIO 0 — MULTI-MODELO ("A ou B"): o lead citou MAIS DE UM modelo e o planner so
     // pegou UM (as vezes o que NAO existe), dizendo "nao temos" pro outro que TEM. Ex.:
     // "Tcross ou compass" -> planner pega T-Cross (0) e perde o Compass (4 no estoque). Busca
@@ -1981,7 +1982,7 @@ export async function processPedroV2Turn(
     if (!_alt && _hadSpecificModel && (_broadType || _broadPriceMax)) {
       const _anchorPrice = Number(_broadPriceMax) || Number((stockFilters as any).ad_price) || 0;
       const _capMax = _broadPriceMax || (_anchorPrice > 0 ? Math.round(_anchorPrice * 1.25) : null);
-      const _by = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: { tipo_veiculo: _broadType, preco_max: _capMax }, limit: 12 });
+      const _by = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: { tipo_veiculo: _broadType, preco_max: _capMax, ...(_broadPriceMax ? { hard_price_ceiling: true } : {}) }, limit: 12 });
       if (_by?.success && Array.isArray(_by.items) && _by.items.length > 0) {
         const _its = [...(_by.items as any[])];
         if (_anchorPrice > 0) {
@@ -1998,9 +1999,18 @@ export async function processPedroV2Turn(
     }
     // ESTAGIO 3 — fallback GERAL: ainda 0 -> mostra alguns carros do estoque. A loja SEMPRE tem
     // estoque; o agente nunca pode encerrar com "nao temos" sem oferecer alternativas reais.
+    // COM orcamento explicito, RESPEITA o teto (hard_price_ceiling): nada de oferecer carro 40%
+    // acima do que o lead pediu (bug real "corolla ate 50 mil" -> Pajero 60990). So se NAO houver
+    // NADA na faixa cai p/ o estoque geral, e ai marca _altOverBudget p/ a guidance ser honesta.
     if (!_alt && _hadSpecificModel) {
-      const _any = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: {}, limit: 6 });
-      if (_any?.success && Array.isArray(_any.items) && _any.items.length > 0) _alt = _any;
+      if (_broadPriceMax) {
+        const _inBudget = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: { preco_max: _broadPriceMax, hard_price_ceiling: true }, limit: 6 });
+        if (_inBudget?.success && Array.isArray(_inBudget.items) && _inBudget.items.length > 0) _alt = _inBudget;
+      }
+      if (!_alt) {
+        const _any = await searchPedroStock(supabase, { user_id: input.agent.user_id, query: "", filters: {}, limit: 6 });
+        if (_any?.success && Array.isArray(_any.items) && _any.items.length > 0) { _alt = _any; if (_broadPriceMax) _altOverBudget = true; }
+      }
     }
     if (_alt?.success && Array.isArray(_alt.items) && _alt.items.length > 0) {
       const _wanted = (stockFilters as any).query || (stockFilters as any).modelo_desejado || "o que voce pediu";
@@ -2014,6 +2024,11 @@ export async function processPedroV2Turn(
         ? {
             success: true, total: _alts.length, items: _alts, is_alternatives: false,
             response_guidance: `Estes sao os ${_brandMatch![0]} disponiveis no estoque. Apresente-os de forma CURTA e pergunte qual interessa. NUNCA diga que nao temos.`,
+          }
+        : _altOverBudget
+        ? {
+            success: true, total: _alts.length, items: _alts, is_alternatives: true,
+            response_guidance: `NAO temos "${_wanted}" dentro da faixa de ate R$${Number(_broadPriceMax)} que o lead pediu. Estes estao um pouco ACIMA dessa faixa — apresente-os com HONESTIDADE, deixando claro que estao acima do valor que ele falou, e pergunte se ele consegue esticar um pouco o orcamento OU se prefere algo mais em conta. NUNCA finja que cabem no valor pedido nem esconda que estao acima.`,
           }
         : {
             success: true, total: _alts.length, items: _alts, is_alternatives: true,
@@ -2530,6 +2545,32 @@ export async function processPedroV2Turn(
     || _q.tem_troca === true || _q.tem_troca === false || Boolean(_q.valor_entrada) || Boolean(_q.forma_pagamento)
     || Boolean(effectiveMemory?.interesse?.modelo_desejado)
     || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
+  // FINANCIAMENTO/SIMULACAO = TRANSFERIR JA (o SDR NAO simula). Lead que QUER simular/financiar e
+  // ja tem nome + interesse vai pro especialista na hora. Enforcement DETERMINISTICO: o LLM as vezes
+  // ignora a regra do prompt e fica pedindo "tem entrada?" (caso real, queima o lead quente). Guarda
+  // contra pergunta SO informativa ("voces financiam?") e exige acao clara (quero/simular/como ficam).
+  const _txtFin = String(text || "").toLowerCase();
+  const _wantsFinanceAction =
+    (/\bquero\s+(financiar|parcelar|simular|fechar)\b/.test(_txtFin)
+      || /\b(podemos|pode|consigo|tem\s+como|da\s+pra|gostaria\s+de|queria|quero|me)\s+\w*\s*simul/.test(_txtFin)
+      || /\b(como|quanto)\s+(fica|ficam|seria|seriam|sai|sairia)\b[^?]*\b(parcel|presta|financ)/.test(_txtFin)
+      || /\b(faz|fazer)\s+(uma\s+)?simula/.test(_txtFin))
+    && !/\b(voces?|vcs?|a\s+loja|aqui)\s+financia/.test(_txtFin)
+    && !/\b(tem|aceita|trabalha[m]?\s+com|fazem?)\s+financiamento\b/.test(_txtFin);
+  const _hasInterestFin = Boolean(_q.interesse) || Boolean(effectiveMemory?.interesse?.modelo_desejado)
+    || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
+  // SEMPRE aplica a mensagem LIMPA de transferencia (nao so quando o LLM falha): mesmo quando o
+  // LLM marca pronto sozinho, o texto dele as vezes sai contraditorio ("nao temos o Onix" + transfere).
+  // So nao mexe se for transferencia SILENCIOSA (lead desqualificado -> outra mensagem/fluxo).
+  if (!ownedLeadAssistantMode && _wantsFinanceAction && _hasNome && _hasInterestFin
+      && reply?.transferir_silencioso !== true) {
+    reply.pronto_para_transferir = true;
+    reply.text = "Perfeito! Já vou passar seu atendimento pro nosso especialista de financiamento, ele já entra em contato com você com as melhores condições 😊";
+    reply.media = [];
+    reply.source = "finance_transfer_enforced";
+    log("info", "pedro_v2_finance_transfer_enforced", { lead_id: lead?.id || null });
+  }
+
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
   // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
