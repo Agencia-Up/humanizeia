@@ -282,6 +282,38 @@ function mergeAdAndMediaContext(adContext: any, mediaContext: any) {
   };
 }
 
+// ── CTWA AD em RAJADA (burst) ──────────────────────────────────────────────
+// O externalAdReply (veiculo do anuncio) vem SO na 1a mensagem do clique. Quando o lead manda
+// uma rajada ("Ola tenho interesse" + "Bom dia" + "Quantos km"), o debounce responde a ULTIMA,
+// cujo payload NAO tem o anuncio -> ad_context vazio -> agente pergunta "qual modelo?" (bug real
+// lead Pulse Audace 5512991196020). Solucao: ao salvar CADA mensagem, persistimos o anuncio
+// (podado, sem thumbnail) no metadata; no turno final recuperamos do burst se o payload nao tiver.
+function deepFindExternalAdReply(obj: any, depth = 0): any {
+  if (!obj || typeof obj !== "object" || depth > 14) return null;
+  if (obj.externalAdReply && typeof obj.externalAdReply === "object") return obj.externalAdReply;
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === "object") { const r = deepFindExternalAdReply(v, depth + 1); if (r) return r; }
+  }
+  return null;
+}
+// Mantem so os campos de TEXTO do anuncio (veiculo/preco/link); descarta thumbnail/blobs gigantes.
+function pruneCtwaAd(ear: any): Record<string, any> | null {
+  if (!ear || typeof ear !== "object") return null;
+  const pick = (...ks: string[]) => { for (const k of ks) { const v = ear[k]; if (typeof v === "string" && v.trim()) return v.trim(); } return null; };
+  const out: Record<string, any> = {
+    greetingMessageBody: pick("greetingMessageBody", "greetingMessage", "greeting"),
+    title: pick("title"),
+    body: pick("body", "description"),
+    sourceUrl: pick("sourceUrl", "source_url", "sourceURL", "mediaUrl"),
+    sourceApp: pick("sourceApp"),
+  };
+  return Object.values(out).some(Boolean) ? out : null;
+}
+// Payload sintetico que resolvePedroAdContext sabe ler (externalAdReply no topo).
+function payloadWithRecoveredAd(basePayload: any, prunedEar: Record<string, any>): any {
+  return { ...(basePayload && typeof basePayload === "object" ? basePayload : {}), externalAdReply: prunedEar };
+}
+
 function mergeBrainPlanIntoIntent(intent: any, brainPlan: any, vehicleResolution: any) {
   const interestPatch = vehicleResolution?.query
     ? {
@@ -1419,13 +1451,18 @@ export async function processPedroV2Turn(
   let myUserMsgCreatedAt: string | null = null;
   if (!dryRun && lead?.id && text) {
     try {
-      const userMetadata = mediaContext.has_media_context ? {
-        media: [{
-          file: mediaContext.media_url || mediaContext.media_data_url || null,
-          url: mediaContext.media_url || mediaContext.media_data_url || null,
-          type: mediaContext.kind || "image",
-          caption: mediaContext.text || ""
-        }]
+      // CTWA: guarda o anuncio (podado) no metadata p/ recuperar no turno final do burst (ver helpers).
+      const _ctwaAd = pruneCtwaAd(deepFindExternalAdReply(input.payload));
+      const userMetadata = (mediaContext.has_media_context || _ctwaAd) ? {
+        ...(mediaContext.has_media_context ? {
+          media: [{
+            file: mediaContext.media_url || mediaContext.media_data_url || null,
+            url: mediaContext.media_url || mediaContext.media_data_url || null,
+            type: mediaContext.kind || "image",
+            caption: mediaContext.text || ""
+          }]
+        } : {}),
+        ...(_ctwaAd ? { ctwa_ad: _ctwaAd } : {}),
       } : null;
 
       const { data: insertedUserMsg } = await supabase.from("wa_chat_history").insert({
@@ -1645,7 +1682,30 @@ export async function processPedroV2Turn(
   }
 
   const intent = routePedroIntent({ message: text, current_memory: currentMemory });
-  const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(input.payload, text, _openaiKey), mediaContext);
+  // CTWA em RAJADA: se o payload da vez NAO traz o anuncio (rajada respondida na ultima msg, sem
+  // externalAdReply), recupera o anuncio salvo no metadata de uma msg recente do MESMO burst (ate
+  // o ultimo turno do agente). Sem isso, "Ola tenho interesse"+"Bom dia"+"Quantos km" perdia o
+  // veiculo do anuncio (bug real lead Pulse Audace).
+  let _adResolvePayload = input.payload;
+  if (!deepFindExternalAdReply(input.payload) && lead?.id) {
+    try {
+      const { data: _recent } = await supabase
+        .from("wa_chat_history")
+        .select("metadata, role, created_at")
+        .eq("agent_id", input.agent.id).eq("remote_jid", remoteJid)
+        .order("created_at", { ascending: false }).limit(12);
+      for (const row of _recent || []) {
+        if (String(row?.role) === "assistant") break; // so o burst atual (nao anuncio de conversa ja respondida)
+        const _savedAd = (row?.metadata as any)?.ctwa_ad;
+        if (_savedAd) {
+          _adResolvePayload = payloadWithRecoveredAd(input.payload, _savedAd);
+          log("info", "pedro_v2_ctwa_ad_recovered_from_burst", { lead_id: lead.id });
+          break;
+        }
+      }
+    } catch (_e) { /* recuperacao best-effort: nunca derruba o turno */ }
+  }
+  const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(_adResolvePayload, text, _openaiKey), mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
   const adMemory = adContextToMemory(adContext);
   const adNeedsVehicleConfirmation = adContext.has_ad_context && !adContext.vehicle_query;
