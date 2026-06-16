@@ -4,7 +4,6 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   User,
-  MessageCircle,
   Building2,
   Sparkles,
   RefreshCw,
@@ -15,7 +14,6 @@ import {
   Tv,
   KanbanSquare,
 } from 'lucide-react';
-import { WhatsAppSettingsTab } from '@/components/settings/WhatsAppSettingsTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
@@ -57,7 +55,6 @@ export default function SettingsPage() {
     { label: 'Seu perfil', description: 'Nome e preferências pessoais', tab: null, route: '/perfil', icon: User },
     { label: 'Conectar anúncios', description: 'Meta Ads, Google Ads e WhatsApp', tab: null, route: '/connect-accounts', icon: RefreshCw },
     { label: 'Configurar IA', description: 'Personalizar como os agentes falam', tab: 'ai', icon: Sparkles },
-    { label: 'WhatsApp', description: 'Número e instância para disparos', tab: 'whatsapp', icon: MessageCircle },
   ];
 
   return (
@@ -110,10 +107,6 @@ export default function SettingsPage() {
               <Sparkles className="h-4 w-4" />
               IA
             </TabsTrigger>
-            <TabsTrigger value="whatsapp" className="gap-2">
-              <MessageCircle className="h-4 w-4" />
-              WhatsApp
-            </TabsTrigger>
             <TabsTrigger value="sync" className="gap-2">
               <RefreshCw className="h-4 w-4" />
               Sincronização
@@ -136,7 +129,6 @@ export default function SettingsPage() {
 
           <TabsContent value="company"><CompanySettingsTab /></TabsContent>
           <TabsContent value="ai"><AISettingsTab /></TabsContent>
-          <TabsContent value="whatsapp"><WhatsAppSettingsTab /></TabsContent>
           <TabsContent value="sync"><DataSyncSettingsTab /></TabsContent>
           <TabsContent value="dashboard-tv"><DashboardTVSettingsTab /></TabsContent>
           <TabsContent value="kanban-marcos"><KanbanSettingsTab /></TabsContent>
