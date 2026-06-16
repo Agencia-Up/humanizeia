@@ -319,6 +319,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
   // Vendedores ativos (com last_lead_received_at) pro rodízio do clique-pra-transferir.
   const [queueSellers, setQueueSellers] = useState<any[]>([]);
+  const [agentsList, setAgentsList] = useState<any[]>([]);
   const [transferringId, setTransferringId] = useState<string | null>(null);
   // Tick incrementado a cada evento realtime/poll — passado pros componentes
   // filhos (ex.: card Real vs Falso) re-buscarem junto, sem re-assinar o canal.
@@ -566,10 +567,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .order('created_at', { ascending: false })
           .limit(50);
 
-        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, poolRes] = await Promise.all([
-          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery, poolQuery,
+        // Agentes da conta (pra mostrar a fila do rodízio POR AGENTE).
+        const agentsQuery = (supabase as any)
+          .from('wa_ai_agents').select('id, name, is_active').eq('user_id', effectiveUserId);
+
+        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, poolRes, agentsRes] = await Promise.all([
+          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery, poolQuery, agentsQuery,
         ]);
         if (!cancelled) setPoolLeads((poolRes?.data as any[]) || []);
+        if (!cancelled) setAgentsList((agentsRes?.data as any[]) || []);
 
         if (cancelled) return;
 
@@ -1054,6 +1060,29 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     )[0] || null;
   }, [queueSellers]);
 
+  // Próximo da fila POR AGENTE: cada agente (loja/número) tem sua própria fila entre
+  // os vendedores ligados dele. 1 agente → 1 próximo; 2+ agentes → o próximo de cada.
+  const nextSellerByAgent = useMemo(() => {
+    const pickNext = (pool: any[]) => {
+      if (!pool.length) return null;
+      const never = pool.filter((s: any) => !s.last_lead_received_at);
+      if (never.length) return never[0];
+      return [...pool].sort((a: any, b: any) =>
+        new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
+      )[0] || null;
+    };
+    const activeAgents = (agentsList || []).filter((a: any) => a.is_active !== false);
+    if (activeAgents.length === 0) {
+      // Sem lista de agentes: cai pro próximo único da conta.
+      return nextSeller ? [{ agentId: null, agentName: '', seller: nextSeller }] : [];
+    }
+    return activeAgents.map((ag: any) => ({
+      agentId: ag.id,
+      agentName: ag.name,
+      seller: pickNext((queueSellers || []).filter((s: any) => s.agent_id === ag.id)),
+    }));
+  }, [agentsList, queueSellers, nextSeller]);
+
   // Transfere o lead pro próximo da fila via manual-transfer (mesma função do
   // CRM). Confirma antes (envia WhatsApp real pro vendedor). Dedup de 30s no back.
   const handleTransferToNext = useCallback(async (lead: LeadNaoTransferido) => {
@@ -1430,9 +1459,23 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
       {/* ───── PRODUÇÃO INDIVIDUAL DOS VENDEDORES ───── */}
       <section className="shrink-0 px-8 pb-6">
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold">Leads Não Transferidos</h2>
-          <p className="text-[10px] text-slate-500 italic">{leadsNaoTransferidos.length} pendente(s) no período</p>
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold shrink-0">Leads Não Transferidos</h2>
+          {/* Fila de Vendedores: próximo da fila de cada agente ativo */}
+          {nextSellerByAgent.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <span className="text-[10px] uppercase tracking-widest text-cyan-300/80 font-bold shrink-0">Fila de Vendedores</span>
+              {nextSellerByAgent.map(({ agentId, agentName, seller }, i) => (
+                <span key={agentId || i} className="inline-flex items-center gap-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-bold text-cyan-100">
+                  {nextSellerByAgent.length > 1 && agentName && (
+                    <span className="text-cyan-300/70 font-semibold">{agentName}:</span>
+                  )}
+                  {seller ? seller.name : 'sem vendedor ativo'}
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-slate-500 italic shrink-0">{leadsNaoTransferidos.length} pendente(s) no período</p>
         </div>
 
         {leadsNaoTransferidos.length === 0 ? (
