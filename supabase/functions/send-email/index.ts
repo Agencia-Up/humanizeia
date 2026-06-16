@@ -358,7 +358,7 @@ Deno.serve(async (req) => {
     let html = '';
     const appUrl = redirectTo?.includes('localhost')
       ? 'http://localhost:8080'
-      : 'https://logosia.com.br';
+      : 'https://logosiabrasil.com';
 
     if (type === 'welcome') {
       subject = '🎉 Bem-vindo à LogosIA!';
