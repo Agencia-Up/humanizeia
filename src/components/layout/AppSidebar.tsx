@@ -27,7 +27,6 @@ import {
   Users,
   GraduationCap,
   Bot,
-  BarChart3,
   Wallet,
   ShieldCheck,
 } from 'lucide-react';
