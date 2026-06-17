@@ -47,7 +47,7 @@ export function useComercialData({ ownerUserId, refDate, isSeller }: Params) {
         ? Promise.resolve({ data: [] as any[] })
         : (supabase as any)
             .from('ai_team_members')
-            .select('id, name')
+            .select('id, name, whatsapp_number')
             .eq('user_id', ownerUserId)
             .neq('active_in_system', false);
 
@@ -67,10 +67,40 @@ export function useComercialData({ ownerUserId, refDate, isSeller }: Params) {
         sellersPromise,
       ]);
 
-      const vendas: VendaComercial[] = (vendasRes?.data || []).map((v: any) => ({ ...v, valor: Number(v.valor) || 0 }));
+      // matriz: ai_team_members tem 1 linha por (agente × vendedor) — a MESMA
+      // pessoa aparece N vezes (N = nº de agentes). Deduplica por telefone (fallback
+      // nome) e mapeia TODA id de membro -> id canônico da pessoa, pra somar
+      // vendas/metas numa linha só (senão o vendedor aparece duplicado e as vendas
+      // racham entre as cópias).
+      const normPhone = (p: string) => (p || '').replace(/\D/g, '');
+      const rawSellers = (sellersRes?.data || []) as any[];
+      const personKey = (s: any) =>
+        normPhone(s.whatsapp_number) || `nome:${String(s.name || '').trim().toLowerCase()}` || `id:${s.id}`;
+      const groups = new Map<string, any[]>();
+      for (const s of rawSellers) {
+        const k = personKey(s);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k)!.push(s);
+      }
+      const idToCanonical = new Map<string, string>();
+      const dedupSellers: VendedorComercial[] = [];
+      for (const rows of groups.values()) {
+        const canon = [...rows].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0];
+        for (const r of rows) idToCanonical.set(r.id, canon.id);
+        dedupSellers.push({ id: canon.id, nome: canon.name });
+      }
+      dedupSellers.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+      const canonId = (sid: string) => idToCanonical.get(sid) || sid;
+
+      const vendas: VendaComercial[] = (vendasRes?.data || []).map((v: any) => ({
+        ...v, valor: Number(v.valor) || 0, seller_id: canonId(v.seller_id),
+      }));
+      const metasFixed = ((metasRes?.data || []) as any[]).map(m =>
+        m.tipo === 'individual' && m.seller_id ? { ...m, seller_id: canonId(m.seller_id) } : m);
+
       setVendasAno(vendas);
-      setMetas((metasRes?.data || []) as MetaComercial[]);
-      setSellers(((sellersRes?.data || []) as any[]).map(s => ({ id: s.id, nome: s.name })));
+      setMetas(metasFixed as MetaComercial[]);
+      setSellers(dedupSellers);
     } catch {
       setVendasAno([]); setMetas([]); setSellers([]);
     } finally {
