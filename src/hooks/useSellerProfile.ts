@@ -49,11 +49,12 @@ export interface VisibleFeatures {
   agent_daniel: boolean;
 }
 
-// Padrão de permissões pra novo vendedor convidado (atualizado 28/05/2026).
-// Cobre o caso de uso típico: vendedor opera Pedro (atendimento IA + Painel
-// ao Vivo + Instâncias do whatsapp dele) E Marcos (Kanban + Contatos + Inbox
-// + Disparo). Sem agentes de marketing (José/Paulo/Maria etc.) por default —
-// master libera caso queira.
+// Padrão de permissões pra novo vendedor convidado (atualizado 17/06/2026).
+// Vendedor opera Pedro (atendimento IA + Painel ao Vivo + Instâncias) E Marcos
+// (Kanban + Contatos + Inbox + Disparo + Instâncias), e tem Painel Geral,
+// Integrações e Configurações no menu. Fica de fora por default: métricas/config
+// do agente, gestão de equipe, Meu Plano (cobrança) e os agentes de marketing
+// (José/Paulo/Maria etc.) — o dono libera caso queira.
 export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   // ── Abas do agente Pedro ────────────────────────────────────────────
   tab_crm: true,          // Meus Leads
@@ -69,15 +70,15 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   marcos_disparo: true,    // Disparo em Massa
   marcos_inbox: true,      // Inbox WhatsApp
   marcos_formularios: false,
-  marcos_instancias: false,
+  marcos_instancias: true,   // Gerenciar conexões do WhatsApp
   marcos_automacoes: false,
   // ── Sidebar ─────────────────────────────────────────────────────────
   sidebar_dashboard: true,    // Painel principal
-  sidebar_painel_geral: false,// Painel Geral (visão dos próprios leads) — master libera
+  sidebar_painel_geral: true, // Painel Geral (visão dos próprios leads)
   sidebar_treinamento: true,  // Base de conhecimento
-  sidebar_meu_plano: false,
-  sidebar_integracoes: false,
-  sidebar_configuracoes: false,
+  sidebar_meu_plano: false,   // plano/cobrança fica só com o dono
+  sidebar_integracoes: true,  // Conexões externas
+  sidebar_configuracoes: true,// Opções do sistema
   // ── Agentes liberados (cards dashboard + sidebar) ────────────────────
   // Pedro + Marcos por default — sao os 2 agentes que o vendedor usa.
   // Demais (José/Salomão/Paulo/Maria/Davi/João/Daniel) ficam off ate
