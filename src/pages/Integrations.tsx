@@ -170,7 +170,7 @@ export default function Integrations() {
               <div className="rounded-lg border border-border/40 bg-card/40 p-4 flex gap-3">
                 <span className="text-lg shrink-0">🔑</span>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  <strong className="text-foreground">Chave API IA</strong> — Conecte a sua própria chave de IA (OpenAI / Claude / DeepSeek) e tenha conversas ilimitadas, pagas na sua conta do provedor. A chave fica cifrada no cofre (Vault) e nunca é exibida de volta.
+                  <strong className="text-foreground">Chave API IA</strong> — Conecte a sua chave da <strong className="text-foreground">OpenAI</strong> para o agente de atendimento funcionar, com conversas ilimitadas pagas na sua conta da OpenAI. A chave fica cifrada no cofre (Vault) e nunca é exibida de volta.
                 </p>
               </div>
               <ClientAiKeysCard />

@@ -10,17 +10,20 @@ import { KeyRound, CheckCircle2, Loader2, Trash2, ShieldCheck } from 'lucide-rea
 
 /**
  * ClientAiKeysCard — BYOK ("traga sua chave de IA")
- * O cliente cola a chave de IA dele (OpenAI/Claude/DeepSeek). Fica CIFRADA no
- * Vault (via RPC save_my_ai_key). Quando configurada, os agentes passam a usar
- * a chave dele em vez da nossa — conversas ilimitadas por conta do cliente.
+ * O cliente cola a chave da OpenAI dele. Fica CIFRADA no Vault (via RPC
+ * save_my_ai_key). Quando configurada, os agentes passam a usar a chave dele
+ * em vez da nossa — conversas ilimitadas por conta do cliente.
+ * SO OpenAI por padrao (decisao 16/06): outros provedores foram tirados da UI
+ * pra evitar agentes que nao funcionam bem (ex.: reply quebra no Claude). O
+ * backend segue aceitando os 3, mas a tela so oferece OpenAI.
  */
 
 type Provider = 'openai' | 'anthropic' | 'deepseek';
 
+// Apenas OpenAI: padronizado p/ evitar agentes que nao funcionam bem em outros provedores.
+// Todo cliente novo PRECISA cadastrar a chave da OpenAI para o agente de atendimento responder.
 const PROVIDERS: { id: Provider; label: string; hint: string; placeholder: string }[] = [
-  { id: 'openai', label: 'OpenAI', hint: 'Principal — usada pelo Pedro e pela maioria dos agentes.', placeholder: 'sk-...' },
-  { id: 'anthropic', label: 'Anthropic (Claude)', hint: 'Usada em estratégia e copy mais avançada.', placeholder: 'sk-ant-...' },
-  { id: 'deepseek', label: 'DeepSeek', hint: 'Opcional, mais barata — usada em disparos em massa.', placeholder: 'sk-...' },
+  { id: 'openai', label: 'OpenAI', hint: 'Obrigatória — o agente de atendimento responde usando a sua chave da OpenAI. Gere em platform.openai.com/api-keys.', placeholder: 'sk-...' },
 ];
 
 interface KeyStatus { is_set: boolean; last4: string | null; }
