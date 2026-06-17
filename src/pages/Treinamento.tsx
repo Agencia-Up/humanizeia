@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useToast } from '@/hooks/use-toast';
 import {
   GraduationCap, Plus, Loader2, Trash2, Edit2, Play, X,
@@ -87,6 +88,7 @@ const PLATFORM_LABELS: Record<string, { label: string; color: string }> = {
 
 export default function Treinamento() {
   const { user } = useAuth();
+  const { isAdmin } = useIsAdmin(); // só o superadmin (Logos) edita; o resto só assiste
   const { toast } = useToast();
   const [sections, setSections] = useState<TrainingSection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,10 +112,12 @@ export default function Treinamento() {
     if (!user) return;
     setLoading(true);
     try {
+      // Biblioteca GLOBAL: todas as contas veem o mesmo treinamento (is_global).
+      // Só o superadmin edita (a RLS bloqueia escrita pra quem não é).
       const { data: secs } = await (supabase as any)
         .from('training_sections')
         .select('id, title, description, sort_order')
-        .eq('user_id', user.id)
+        .eq('is_global', true)
         .order('sort_order', { ascending: true });
 
       const sectionIds = (secs || []).map((s: any) => s.id);
@@ -166,7 +170,7 @@ export default function Treinamento() {
         toast({ title: 'Secao atualizada!' });
       } else {
         await (supabase as any).from('training_sections')
-          .insert({ user_id: user.id, title: sectionTitle.trim(), description: sectionDesc.trim() || null, sort_order: sections.length });
+          .insert({ user_id: user.id, title: sectionTitle.trim(), description: sectionDesc.trim() || null, sort_order: sections.length, is_global: true });
         toast({ title: 'Secao criada!' });
       }
       setSectionDialog(false);
@@ -205,6 +209,7 @@ export default function Treinamento() {
       await (supabase as any).from('training_videos').insert({
         section_id: targetSectionId,
         user_id: user.id,
+        is_global: true,
         title: videoTitle.trim(),
         description: videoDesc.trim() || null,
         video_url: videoUrl.trim(),
@@ -251,12 +256,16 @@ export default function Treinamento() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground">Treinamento</h1>
-              <p className="text-xs text-muted-foreground">Organize seus materiais de treinamento em secoes</p>
+              <p className="text-xs text-muted-foreground">
+                {isAdmin ? 'Gerencie as aulas — visível para todas as contas.' : 'Aprenda a usar a Logos IA — aulas em vídeo.'}
+              </p>
             </div>
           </div>
-          <Button onClick={openNewSection} className="gap-2">
-            <FolderPlus className="h-4 w-4" /> Nova Secao
-          </Button>
+          {isAdmin && (
+            <Button onClick={openNewSection} className="gap-2">
+              <FolderPlus className="h-4 w-4" /> Nova Seção
+            </Button>
+          )}
         </div>
 
         {/* ── Empty State ── */}
@@ -265,13 +274,17 @@ export default function Treinamento() {
             <div className="mx-auto w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
               <Video className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h3 className="font-semibold text-lg">Nenhum treinamento ainda</h3>
+            <h3 className="font-semibold text-lg">{isAdmin ? 'Nenhum treinamento ainda' : 'As aulas estão chegando'}</h3>
             <p className="text-muted-foreground text-sm mt-2 mb-6 max-w-sm mx-auto">
-              Crie secoes e adicione videos do YouTube, Vimeo ou PandaVideo para montar sua area de treinamento.
+              {isAdmin
+                ? 'Crie seções e adicione vídeos do YouTube, Vimeo ou PandaVideo para montar a área de treinamento.'
+                : 'Em breve os vídeos de como usar a Logos IA aparecem aqui.'}
             </p>
-            <Button onClick={openNewSection} className="gap-2">
-              <FolderPlus className="h-4 w-4" /> Criar Primeira Secao
-            </Button>
+            {isAdmin && (
+              <Button onClick={openNewSection} className="gap-2">
+                <FolderPlus className="h-4 w-4" /> Criar Primeira Seção
+              </Button>
+            )}
           </div>
         )}
 
@@ -284,17 +297,19 @@ export default function Treinamento() {
                 <h2 className="text-base font-semibold text-foreground">{section.title}</h2>
                 <Badge variant="outline" className="text-[10px]">{section.videos.length} videos</Badge>
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => openAddVideo(section.id)} className="h-7 px-2 text-xs gap-1 text-primary">
-                  <Plus className="h-3 w-3" /> Video
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => openEditSection(section)} className="h-7 w-7 p-0 text-muted-foreground">
-                  <Edit2 className="h-3 w-3" />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => handleDeleteSection(section.id)} className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive">
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
+              {isAdmin && (
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => openAddVideo(section.id)} className="h-7 px-2 text-xs gap-1 text-primary">
+                    <Plus className="h-3 w-3" /> Vídeo
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => openEditSection(section)} className="h-7 w-7 p-0 text-muted-foreground">
+                    <Edit2 className="h-3 w-3" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleDeleteSection(section.id)} className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              )}
             </div>
 
             {section.description && (
@@ -304,10 +319,12 @@ export default function Treinamento() {
             {/* Video cards — horizontal scroll */}
             {section.videos.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border/40 bg-card/20 p-8 text-center">
-                <p className="text-xs text-muted-foreground mb-2">Nenhum video nesta secao</p>
-                <Button variant="outline" size="sm" onClick={() => openAddVideo(section.id)} className="text-xs gap-1">
-                  <Plus className="h-3 w-3" /> Adicionar Video
-                </Button>
+                <p className="text-xs text-muted-foreground mb-2">{isAdmin ? 'Nenhum vídeo nesta seção' : 'Aulas em breve nesta seção'}</p>
+                {isAdmin && (
+                  <Button variant="outline" size="sm" onClick={() => openAddVideo(section.id)} className="text-xs gap-1">
+                    <Plus className="h-3 w-3" /> Adicionar Vídeo
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto pb-2 -mx-1 px-1">
@@ -345,12 +362,14 @@ export default function Treinamento() {
                             <p className="text-[11px] text-muted-foreground line-clamp-2">{video.description}</p>
                           )}
                           <div className="flex items-center justify-between pt-1">
-                            <button
-                              onClick={e => { e.stopPropagation(); handleDeleteVideo(video.id); }}
-                              className="text-[10px] text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1"
-                            >
-                              <Trash2 className="h-2.5 w-2.5" /> Excluir
-                            </button>
+                            {isAdmin ? (
+                              <button
+                                onClick={e => { e.stopPropagation(); handleDeleteVideo(video.id); }}
+                                className="text-[10px] text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1"
+                              >
+                                <Trash2 className="h-2.5 w-2.5" /> Excluir
+                              </button>
+                            ) : <span />}
                             <a
                               href={video.video_url}
                               target="_blank"
