@@ -7,13 +7,20 @@ export type PlanId = 'basico' | 'pro' | 'enterprise';
 // O plano é vendido/medido em ATENDIMENTOS (leads), não em tokens crus.
 // 1 atendimento = 1 lead atendido pelo Pedro dentro do ciclo de cobrança.
 // `atendimentoCost` = preço de 1 atendimento avulso (recarga), em R$.
+// Precos reais (fonte: supabase/functions/_shared/checkout-plans.ts). Hoje todo
+// cliente pagante e FUNDADOR: a mensalidade de fundador vale por 3 meses e
+// depois volta pro valor normal. `price` = valor pago HOJE (fundador);
+// `priceNormal` = pra onde sobe depois da promo.
 export const PLANS = {
   basico: {
     id: 'basico' as PlanId,
     name: 'Básico',
     subtitle: 'Solo',
     price: 497,
-    setup: 2000,
+    priceNormal: 497,
+    founder: false,
+    founderMonths: 0,
+    setup: 1497,
     atendimentosIncluded: 150,
     atendimentoCost: 2.0,
     color: '#6B7280',
@@ -21,9 +28,12 @@ export const PLANS = {
   pro: {
     id: 'pro' as PlanId,
     name: 'Pro',
-    subtitle: 'Agência',
-    price: 997,
-    setup: 3997,
+    subtitle: 'Fundador',
+    price: 497,
+    priceNormal: 797.90,
+    founder: true,
+    founderMonths: 3,
+    setup: 1497.90,
     atendimentosIncluded: 300,
     atendimentoCost: 1.5,
     color: '#5C6BC0',
@@ -31,9 +41,12 @@ export const PLANS = {
   enterprise: {
     id: 'enterprise' as PlanId,
     name: 'Pro Max',
-    subtitle: 'Completo',
-    price: 1497,
-    setup: 5997,
+    subtitle: 'Fundador',
+    price: 797.90,
+    priceNormal: 1297.90,
+    founder: true,
+    founderMonths: 3,
+    setup: 1497.90,
     atendimentosIncluded: 500,
     atendimentoCost: 1.0,
     color: '#DAA520',

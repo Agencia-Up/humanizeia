@@ -10,7 +10,7 @@ import {
   Bot, PenTool, Instagram, Mail, Brain, Target, ChevronLeft, Coins,
 } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  ComposedChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { useSubscription, PLANS, ATENDIMENTO_PACKAGES, type PlanId } from '@/hooks/useSubscription';
 import { useToast } from '@/hooks/use-toast';
@@ -45,26 +45,6 @@ const AGENT_COLORS: Record<string, string> = {
   trafego: 'text-blue-400',
   default: 'text-muted-foreground',
 };
-
-/* ── daily usage chart data ─────────────────────────────────────────── */
-function buildChartData(transactions: any[]) {
-  const days: Record<string, { date: string; consumo: number; recarga: number }> = {};
-  const now = new Date();
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const key = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    days[key] = { date: key, consumo: 0, recarga: 0 };
-  }
-  transactions.forEach((tx) => {
-    const key = new Date(tx.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    if (days[key]) {
-      if (tx.amount < 0) days[key].consumo += Math.abs(tx.amount);
-      else days[key].recarga += tx.amount;
-    }
-  });
-  return Object.values(days);
-}
 
 /* ── Plan comparison card ───────────────────────────────────────────── */
 const PLAN_FEATURES: Record<PlanId, string[]> = {
@@ -113,8 +93,7 @@ export default function MeuPlano() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const {
-    subscription, transactions, loading, error, refetch,
-    tokensAvailable, tokensTotal, usagePercent,
+    subscription, loading, error, refetch,
     planInfo, upgradePlan,
   } = useSubscription();
   const { user } = useAuth();
@@ -235,11 +214,19 @@ export default function MeuPlano() {
   }
 
   const plan = PLANS[subscription.plan_id];
-  const remaining = 100 - usagePercent;
-  const isLow = remaining <= 20;
-  const isCritical = remaining <= 10;
+  const planFounder = (plan as any).founder === true;
+  const planPriceNormal = Number((plan as any).priceNormal ?? plan.price);
   const renewDate = new Date(subscription.renewal_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  const chartData = buildChartData(transactions);
+
+  // ── Conversas (BYOK): o saldo da OpenAI vira "conversas restantes" e cada
+  // conversa do Pedro vai descontando. Fonte: RPC cliente_saldo_ia.
+  const temSaldo = !!saldo?.tem_saldo;
+  const convTotal = Number(saldo?.conversas_total ?? 0);
+  const convUsadas = Number(saldo?.conversas_usadas ?? 0);
+  const convRestantes = Number(saldo?.conversas_restantes ?? 0);
+  const convPct = convTotal > 0 ? Math.min(100, (convUsadas / convTotal) * 100) : 0;
+  const convLow = temSaldo && convTotal > 0 && convRestantes / convTotal <= 0.2;
+  const convCritical = temSaldo && convTotal > 0 && convRestantes / convTotal <= 0.1;
 
   // ── Custo das conversas (IA) — dados para o grafico por dia ──────────
   const custoTotais = custo?.totais ?? null;
@@ -253,6 +240,16 @@ export default function MeuPlano() {
     custo: Number(d.custo_cliente_brl),
     n: Number(d.n_conversas),
   }));
+
+  // ── Histórico de conversas: barras = conversas por dia; linha = conversas
+  // restantes descendo a partir do total (saldo). por_dia ja vem em ordem.
+  let _run = convTotal;
+  const convChart = (custo?.por_dia ?? []).map((d: any) => {
+    const n = Number(d.n_conversas);
+    _run = Math.max(0, _run - n);
+    return { dia: fmtDia(d.dia), conversas: n, restantes: convTotal > 0 ? _run : null };
+  });
+  const convTemDados = convChart.length > 0;
 
   // Abre o checkout de recarga (cartao salvo = 1 clique; senao cartao novo/PIX).
   const handlePurchase = (amount: number, price: number) => {
@@ -318,52 +315,72 @@ export default function MeuPlano() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-widest">Plano atual</p>
-              <h2 className="text-xl font-bold">{plan.name} <span className="text-muted-foreground font-normal text-sm">({plan.subtitle})</span></h2>
-              <p className="text-2xl font-bold mt-1">R$ {plan.price.toLocaleString('pt-BR')}<span className="text-sm font-normal text-muted-foreground">/mês</span></p>
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                {plan.name}
+                {planFounder && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider rounded-full px-2 py-0.5 bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
+                    Fundador
+                  </span>
+                )}
+              </h2>
+              <p className="text-2xl font-bold mt-1">{fmtR(plan.price)}<span className="text-sm font-normal text-muted-foreground">/mês</span></p>
+              {planFounder && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Promoção fundador nos 3 primeiros meses. Depois {fmtR(planPriceNormal)}/mês.
+                </p>
+              )}
             </div>
             <div className="text-right">
               <p className="text-xs text-muted-foreground">Próxima cobrança</p>
               <p className="font-semibold flex items-center gap-1 justify-end">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" /> {renewDate}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">{fmt(plan.atendimentosIncluded)} atendimentos/mês</p>
+              <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1 justify-end">
+                <Coins className="h-3 w-3" /> Conversas pela sua chave OpenAI
+              </p>
             </div>
           </div>
 
-          {/* Token bar */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Atendimentos utilizados</span>
-              <span className={`font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : ''}`}>
-                {fmt(subscription.tokens_used)} / {fmt(tokensTotal)}
-              </span>
-            </div>
-            <div className="h-3 rounded-full bg-muted overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${isCritical ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-primary'}`}
-                style={{ width: `${Math.min(100, usagePercent)}%` }}
-              />
-            </div>
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{fmt(tokensAvailable)} restantes</span>
-              {isLow && (
-                <span className={`flex items-center gap-1 font-medium ${isCritical ? 'text-red-400' : 'text-yellow-400'}`}>
-                  <AlertTriangle className="h-3 w-3" />
-                  {isCritical ? 'Atendimentos críticos!' : 'Atendimentos baixos'}
+          {/* Barra de conversas (saldo OpenAI) */}
+          {temSaldo ? (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Conversas usadas neste saldo</span>
+                <span className={`font-semibold ${convCritical ? 'text-red-400' : convLow ? 'text-yellow-400' : ''}`}>
+                  {fmt(convUsadas)} / {fmt(convTotal)}
                 </span>
-              )}
-              <span>Renova em {renewDate}</span>
+              </div>
+              <div className="h-3 rounded-full bg-muted overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${convCritical ? 'bg-red-500' : convLow ? 'bg-yellow-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${Math.min(100, convPct)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span className="text-emerald-400 font-medium">≈ {fmt(convRestantes)} conversas restantes</span>
+                {convLow && (
+                  <span className={`flex items-center gap-1 font-medium ${convCritical ? 'text-red-400' : 'text-yellow-400'}`}>
+                    <AlertTriangle className="h-3 w-3" />
+                    {convCritical ? 'Saldo acabando!' : 'Saldo baixo'}
+                  </span>
+                )}
+                <span>Atualize o saldo abaixo</span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-muted-foreground">
+              Informe abaixo o saldo da sua chave OpenAI para acompanhar quantas conversas você tem e o quanto já usou.
+            </div>
+          )}
 
         </div>
 
         {/* Stats */}
         <div className="flex flex-col gap-3">
           {[
-            { label: 'Atendimentos inclusos/mês', value: fmt(plan.atendimentosIncluded), icon: Zap, color: 'text-primary' },
-            { label: 'Atendimentos avulsos', value: fmt(subscription.tokens_purchased), icon: TrendingUp, color: 'text-green-400' },
-            { label: 'Atendimentos restantes', value: fmt(tokensAvailable), icon: CreditCard, color: 'text-yellow-400' },
+            { label: 'Conversas restantes', value: temSaldo ? `≈ ${fmt(convRestantes)}` : '—', icon: Coins, color: 'text-emerald-400' },
+            { label: 'Conversas usadas no ciclo', value: fmt(custoNConversas), icon: TrendingUp, color: 'text-primary' },
+            { label: 'Saldo restante', value: temSaldo ? fmtR(Number(saldo.restante_brl)) : '—', icon: CreditCard, color: 'text-yellow-400' },
           ].map((s) => (
             <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5 flex items-center gap-3">
               <div className="rounded-lg bg-background p-2">
@@ -516,69 +533,34 @@ export default function MeuPlano() {
             )}
           </div>
 
-          {/* Chart */}
+          {/* Histórico de conversas (substitui o consumo/extrato de atendimentos) */}
           <div className="rounded-xl border border-border/50 bg-card/50 p-5">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-primary" /> Consumo últimos 14 dias
+            <h3 className="font-semibold mb-1 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-primary" /> Histórico de conversas
             </h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="consumoGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#5C6BC0" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#5C6BC0" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="recargaGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="date" tick={{ fill: '#9CA3AF', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 8, color: '#F9FAFB' }}
-                  formatter={(v: number) => [fmt(v), '']}
-                />
-                <Legend wrapperStyle={{ fontSize: 12, color: '#9CA3AF' }} />
-                <Area type="monotone" dataKey="consumo" name="Consumo" stroke="#5C6BC0" fill="url(#consumoGrad)" strokeWidth={2} />
-                <Area type="monotone" dataKey="recarga" name="Recarga" stroke="#10B981" fill="url(#recargaGrad)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Transactions */}
-          <div className="rounded-xl border border-border/50 bg-card/50 overflow-hidden">
-            <div className="px-5 py-3 border-b border-border/40">
-              <h3 className="font-semibold">Extrato de Atendimentos</h3>
-            </div>
-            <div className="divide-y divide-border/30">
-              {transactions.slice(0, 15).map((tx) => {
-                const AgentIcon = AGENT_ICONS[tx.agent || 'default'] || AGENT_ICONS.default;
-                const agentColor = AGENT_COLORS[tx.agent || 'default'] || AGENT_COLORS.default;
-                const isCredit = tx.amount > 0;
-                return (
-                  <div key={tx.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20 transition-colors">
-                    <div className={`rounded-full p-1.5 ${isCredit ? 'bg-green-500/10' : 'bg-primary/10'}`}>
-                      <AgentIcon className={`h-3.5 w-3.5 ${isCredit ? 'text-green-400' : agentColor}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{tx.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(tx.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                        {tx.agent && <span className="ml-2 capitalize">· {tx.agent}</span>}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className={`font-semibold text-sm ${isCredit ? 'text-green-400' : 'text-foreground'}`}>
-                        {isCredit ? '+' : ''}{fmt(tx.amount)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">saldo: {fmt(tx.balance_after)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <p className="text-xs text-muted-foreground mb-4">
+              Conversas por dia (barras) e quantas ainda restam do seu saldo (linha) — vai descendo a cada nova conversa do Pedro.
+            </p>
+            {!convTemDados ? (
+              <div className="text-sm text-muted-foreground py-6">
+                Ainda não há conversas neste ciclo. Assim que o Pedro conversar com leads, o histórico aparece aqui.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <ComposedChart data={convChart}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="dia" tick={{ fill: '#9CA3AF', fontSize: 11 }} />
+                  <YAxis yAxisId="left" tick={{ fill: '#9CA3AF', fontSize: 11 }} allowDecimals={false} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fill: '#9CA3AF', fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 8, color: '#F9FAFB' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, color: '#9CA3AF' }} />
+                  <Bar yAxisId="left" dataKey="conversas" name="Conversas no dia" fill="#5C6BC0" radius={[4, 4, 0, 0]} />
+                  <Line yAxisId="right" type="monotone" dataKey="restantes" name="Conversas restantes" stroke="#10B981" strokeWidth={2} dot={false} connectNulls />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       )}
