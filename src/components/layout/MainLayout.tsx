@@ -45,7 +45,7 @@ export function MainLayout({ children }: MainLayoutProps) {
     document.body.style.removeProperty('pointer-events');
   });
 
-  const isFullPageApp = ['/marcos', '/pedro', '/whatsapp/inbox'].includes(location.pathname);
+  const isFullPageApp = ['/marcos', '/pedro', '/whatsapp/inbox', '/painel-ao-vivo'].includes(location.pathname);
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen} open={sidebarOpen} onOpenChange={setSidebarOpen}>

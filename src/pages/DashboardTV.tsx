@@ -375,6 +375,13 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     catch { return 1; }
   });
   useEffect(() => { try { localStorage.setItem('dashtv_zoom_embed', String(zoomEmbed)); } catch { /* ignore */ } }, [zoomEmbed]);
+  // Modo do zoom embutido: 'auto' = encaixa na altura da área (igual TV); 'manual'
+  // = o que o usuário definir no controle. Default 'auto'.
+  const [zoomEmbedMode, setZoomEmbedMode] = useState<'auto' | 'manual'>(() => {
+    try { return localStorage.getItem('dashtv_zoom_embed_mode') === 'manual' ? 'manual' : 'auto'; }
+    catch { return 'auto'; }
+  });
+  useEffect(() => { try { localStorage.setItem('dashtv_zoom_embed_mode', zoomEmbedMode); } catch { /* ignore */ } }, [zoomEmbedMode]);
 
   // Auto-ajuste: mede a altura real do painel e calcula o zoom que faz tudo caber
   // na altura da tela (a largura já é preenchida via width:100/zoom%). Converge em
@@ -396,11 +403,35 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedded, zoomMode, viewport, profileLoading, loading, kpis, liveTick]);
 
+  // Auto-fit do modo EMBUTIDO (Painel ao Vivo na sidebar): encaixa o conteúdo na
+  // ALTURA da área disponível (o container limitado pelo MainLayout). Mede a
+  // altura real do conteúdo (transform:scale não afeta o layout) vs a do container.
+  useLayoutEffect(() => {
+    if (!embedded || zoomEmbedMode !== 'auto') return;
+    const cont = containerRef.current;
+    const el = contentRef.current;
+    if (!cont || !el) return;
+    const fit = () => {
+      const avail = cont.clientHeight;
+      const h = el.scrollHeight;
+      if (!avail || !h) return;
+      const ideal = Math.max(0.4, Math.min(1.5, (avail * 0.995) / h));
+      setZoomEmbed(prev => (Math.abs(prev - ideal) > 0.012 ? ideal : prev));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    ro.observe(cont);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, zoomEmbedMode, viewport, profileLoading, loading, kpis, liveTick]);
+
   // Controle de zoom some sozinho: aparece quando o mouse mexe na tela e
   // desaparece após 5s de mouse parado (pra não atrapalhar a visualização na TV).
   const [controlsVisible, setControlsVisible] = useState(true);
   useEffect(() => {
-    if (embedded) return;
+    // Vale pro TV e pro embutido (Painel ao Vivo): o controle de zoom só aparece
+    // quando o mouse mexe e some após 5s parado.
     let timer: number | undefined;
     const show = () => {
       setControlsVisible(true);
@@ -413,7 +444,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       window.removeEventListener('mousemove', show);
       if (timer) window.clearTimeout(timer);
     };
-  }, [embedded]);
+  }, []);
 
 
   // Persiste período escolhido
@@ -1172,7 +1203,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // coluna flex, sem scroll. ~2% de padding em cada eixo = margem de overscan
   // pra TVs que cortam as bordas. A área de vendedores (flex-1) absorve a sobra.
   const wrapperClass = embedded
-    ? 'min-h-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white'
+    ? 'h-full overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white'
     : 'relative flex flex-col h-[100dvh] w-[100dvw] overflow-hidden px-[2vw] py-[2vh] bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white';
 
   // Loading inicial (perfil + dados)
@@ -1625,13 +1656,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   if (embedded) {
     return (
       <div ref={containerRef} className={`relative ${wrapperClass}`}>
-        <div style={{ zoom: zoomEmbed }}>{panelContent}</div>
+        <div
+          ref={contentRef}
+          className="relative flex flex-col"
+          style={{ width: `${100 / zoomEmbed}%`, transform: `scale(${zoomEmbed})`, transformOrigin: 'top left' }}
+        >
+          {panelContent}
+        </div>
         <ZoomControl
           zoom={zoomEmbed}
-          mode="manual"
-          visible={true}
-          onZoom={(z) => setZoomEmbed(z)}
-          onAuto={() => setZoomEmbed(1)}
+          mode={zoomEmbedMode}
+          visible={controlsVisible}
+          onZoom={(z) => { setZoomEmbed(z); setZoomEmbedMode('manual'); }}
+          onAuto={() => setZoomEmbedMode('auto')}
         />
       </div>
     );
