@@ -56,8 +56,15 @@ interface VendedorData {
    *  (ai_lead_transfers). São re-atribuições — NÃO contam como tráfego pago
    *  novo nem entram no `total`. Indicador informativo separado. */
   repassados: number;
+  /** Contagem por COLUNA do Kanban do Marcos (chave = nome da coluna). Origens
+   *  dinâmicas: o painel reflete as colunas configuradas no Marcos. Tráfego Pago
+   *  (Pedro) e Venda concluída (resultado) seguem em campos próprios. */
+  por_coluna: Record<string, number>;
   total: number;
 }
+
+/** Uma coluna/origem do Marcos exibida no painel (vem das stages do Kanban). */
+interface ColunaOrigem { key: string; label: string; color: string; }
 
 interface KPIsData {
   total_leads: number;
@@ -67,6 +74,9 @@ interface KPIsData {
   nao_atribuidos: number;
   por_origem: Record<string, number>;
   percentuais: Record<string, number>;
+  /** Colunas/origens DINÂMICAS (do Kanban do Marcos) exibidas no painel, na
+   *  ordem das stages. Não inclui Tráfego Pago nem Venda concluída (fixos). */
+  colunas: ColunaOrigem[];
   /** 0-100 — média ponderada IA(50%) + Feedback(30%) + Notas(20%) */
   qualidade_media: number;
   qualidade_label: 'Ótimo' | 'Bom' | 'Médio' | 'Baixo' | 'Sem dados';
@@ -505,7 +515,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // do Marcos desde sempre. Bug exposto pelo banner de debug.
         let marcosQuery = (supabase as any)
           .from('crm_leads')
-          .select('id, origem, assigned_to, stage_id, arrived_at, created_at, stage:crm_pipeline_stages(name)')
+          .select('id, origem, assigned_to, stage_id, arrived_at, created_at, stage:crm_pipeline_stages(name, color, position, tipo)')
           .eq('user_id', effectiveUserId)
           // Periodo pela DATA REAL DE CHEGADA (arrived_at) quando informada, senao created_at.
           .or(`and(arrived_at.gte.${todayStart},arrived_at.lte.${todayEnd}),and(arrived_at.is.null,created_at.gte.${todayStart},created_at.lte.${todayEnd})`);
@@ -621,7 +631,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             null;
           agg[s.id] = {
             id: s.id, name: s.name, effective_avatar: effectiveAvatar, rank: 0,
-            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, repassados: 0, total: 0,
+            trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, repassados: 0, por_coluna: {}, total: 0,
           };
         }
 
@@ -634,7 +644,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const NAO_ATRIBUIDO_ID = '__nao_atribuido__';
         agg[NAO_ATRIBUIDO_ID] = {
           id: NAO_ATRIBUIDO_ID, name: 'Sem vendedor atribuído', effective_avatar: null, rank: 0,
-          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, repassados: 0, total: 0,
+          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0, venda_concluida: 0, repassados: 0, por_coluna: {}, total: 0,
         };
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
@@ -690,51 +700,49 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           }
         }
 
-        // 5. Marcos: agrupa por STAGE NAME (coluna do Kanban) — fix 28/05/2026.
-        // Spec do usuario: "o que aparece na coluna do Marcos tem que aparecer
-        // no Painel ao Vivo". Antes contava por `origem` que dava mismatch:
-        // ex: form "Consignado-Indicacao" -> kanban Consignado mas origem=indicacao
-        // -> Painel mostrava como Indicacao em vez de Consignado.
-        // Agora usa stage.name diretamente do JOIN com crm_pipeline_stages.
-        function stageToCol(stageName: string | null | undefined): keyof Pick<VendedorData, 'porta'|'marketplace'|'consignado'|'indicacao'|'redes_sociais'> | null {
-          if (!stageName) return null;
-          const n = stageName.trim().toLowerCase();
-          // Porta/loja, Porta, Loja -> porta
-          if (n === 'porta/loja' || n === 'porta' || n === 'loja' || n === 'porta loja') return 'porta';
-          if (n === 'marketplace') return 'marketplace';
-          if (n === 'consignado') return 'consignado';
-          if (n === 'indicação' || n === 'indicacao') return 'indicacao';
-          // MELHORIA 1 (29/05/2026): coluna "Redes Sociais"
-          if (n === 'redes sociais' || n === 'redes_sociais' || n === 'redes') return 'redes_sociais';
-          return null; // outras stages (Leads Inativos, Negociacao, Fechado, etc.) nao contam
-        }
+        // 5. Marcos: agrupa por COLUNA do Kanban (crm_pipeline_stages) — DINÂMICO
+        // (refactor 17/06/2026). As ORIGENS do painel = as colunas que o dono
+        // configurou no Marcos (Configurações > Kanban Marcos). Qualquer coluna
+        // conta; coluna removida some daqui. Tráfego Pago (Pedro) e Venda
+        // concluída (resultado, de comercial_vendas) ficam FORA desta lista.
+        const ORIGEM_PALETTE = ['#a855f7','#06b6d4','#fb923c','#ec4899','#84cc16','#eab308','#f97316','#14b8a6','#8b5cf6','#f43f5e'];
+        const ORIGEM_FALLBACK_LABEL: Record<string,string> = {
+          porta: 'Porta', marketplace: 'Marketplace', consignado: 'Consignado',
+          indicacao: 'Indicação', redes_sociais: 'Redes Sociais',
+        };
+        // Colunas de resultado/saída não são origem (a venda vem de comercial_vendas).
+        const isColunaResultado = (nome: string, tipo?: string | null) =>
+          tipo === 'saida' || /venda\s*conclu/i.test(nome) || /fechad/i.test(nome) || /inativ/i.test(nome) || /negocia/i.test(nome);
+        const colunasMeta = new Map<string, { color: string; position: number }>();
         const marcosLeads = (marcosRes.data || []) as Array<{
           id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
-          stage: { name: string } | null;
+          stage: { name: string; color: string | null; position: number | null; tipo: string | null } | null;
         }>;
         for (const l of marcosLeads) {
-          // Fallback pra row virtual "Sem vendedor atribuído" quando assigned_to=NULL
-          // ou aponta pra vendedor inexistente.
           const v = agg[l.assigned_to || ''] || agg[NAO_ATRIBUIDO_ID];
-          if (!l.assigned_to || !agg[l.assigned_to]) {
-            naoAtribuidos++; // conta no contador geral (UI sub-texto)
+          if (!l.assigned_to || !agg[l.assigned_to]) naoAtribuidos++;
+          const stageName = (l.stage?.name || '').trim();
+          let colName: string | null = null;
+          let colColor = '';
+          let colPos = 999;
+          if (stageName && !isColunaResultado(stageName, l.stage?.tipo)) {
+            colName = stageName; colColor = l.stage?.color || ''; colPos = l.stage?.position ?? 999;
+          } else if (!stageName && l.origem && ORIGEM_FALLBACK_LABEL[l.origem]) {
+            // lead sem stage (deletada/null): cai na origem canônica
+            colName = ORIGEM_FALLBACK_LABEL[l.origem];
           }
-          // PRIORIDADE: usar stage.name (coluna Kanban onde o lead esta visualmente).
-          // Fallback pra origem se stage for null (lead sem stage_id ou stage deletada).
-          const col = stageToCol(l.stage?.name) || (
-            l.origem === 'porta' ? 'porta' :
-            l.origem === 'marketplace' ? 'marketplace' :
-            l.origem === 'consignado' ? 'consignado' :
-            l.origem === 'indicacao' ? 'indicacao' :
-            l.origem === 'redes_sociais' ? 'redes_sociais' : null // MELHORIA 1 (29/05/2026)
-          );
-          if (col) {
-            v[col]++;
+          if (colName) {
+            v.por_coluna[colName] = (v.por_coluna[colName] || 0) + 1;
             v.total++;
+            const meta = colunasMeta.get(colName);
+            if (!meta) colunasMeta.set(colName, { color: colColor, position: colPos });
+            else if (colColor && !meta.color) meta.color = colColor;
           }
-          // Stages "Leads Inativos", "Negociacao", "Fechado", "Nao tem no Estoque",
-          // "Agendamento" nao tem coluna no Painel — sao ignorados.
         }
+        // Lista ordenada de origens (= colunas ativas do Marcos) com cor.
+        const colunasOrigem: ColunaOrigem[] = Array.from(colunasMeta.entries())
+          .sort((a, b) => (a[1].position - b[1].position) || a[0].localeCompare(b[0]))
+          .map(([nome, meta], i) => ({ key: nome, label: nome, color: meta.color || ORIGEM_PALETTE[i % ORIGEM_PALETTE.length] }));
 
         // 6. Busca feedbacks (priority) dos leads do período (Pedro + Marcos)
         //    Usado pra calcular o peso 30% da qualidade
@@ -847,8 +855,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           if (v.id === NAO_ATRIBUIDO_ID) continue;
           const k = _phoneOf.get(v.id) || v.id;
           const cur = _merged.get(k);
-          if (!cur) { _merged.set(k, { ...v }); continue; }
+          if (!cur) { _merged.set(k, { ...v, por_coluna: { ...v.por_coluna } }); continue; }
           for (const f of _NUM) (cur as any)[f] = ((cur as any)[f] || 0) + ((v as any)[f] || 0);
+          for (const [c, n] of Object.entries(v.por_coluna || {})) (cur.por_coluna as any)[c] = ((cur.por_coluna as any)[c] || 0) + (n as number);
           if ((v.total || 0) > (cur.total || 0)) { cur.id = v.id; cur.name = v.name; cur.effective_avatar = v.effective_avatar; }
         }
         const sorted = Array.from(_merged.values())
@@ -862,16 +871,12 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         //     e "Origem dos Leads" continuam refletindo todos os leads mesmo
         //     agora que a row virtual saiu do ranking de cards (passo 9).
         const allRows = Object.values(agg); // reais + virtual "Sem vendedor"
-        const porOrigem: Record<string, number> = {
-          trafico_pago: 0, porta: 0, marketplace: 0, consignado: 0, indicacao: 0, redes_sociais: 0,
-        };
+        // Totais por origem = soma do por_coluna (dinâmico) de todas as rows.
+        const porOrigem: Record<string, number> = {};
         for (const v of allRows) {
-          porOrigem.trafico_pago += v.trafico_pago;
-          porOrigem.porta        += v.porta;
-          porOrigem.marketplace  += v.marketplace;
-          porOrigem.consignado   += v.consignado;
-          porOrigem.indicacao    += v.indicacao;
-          porOrigem.redes_sociais += v.redes_sociais; // MELHORIA 1 (29/05/2026)
+          for (const [c, n] of Object.entries(v.por_coluna)) {
+            porOrigem[c] = (porOrigem[c] || 0) + n;
+          }
         }
         // "Tráfego Pago" = TODOS os leads do Pedro (ai_crm_leads) no período:
         // atendidos pela IA + adicionados manual + transferidos. Inclui os ainda
@@ -918,6 +923,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           nao_atribuidos: naoAtribuidos,
           por_origem: porOrigem,
           percentuais,
+          colunas: colunasOrigem,
           qualidade_media: qualidadeMedia,
           qualidade_label: qualidadeLbl,
           taxa_transferencia: taxaTransf,
@@ -1437,13 +1443,12 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       <section className="shrink-0 px-8 pb-6">
         <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
         <div className="grid grid-cols-6 portrait:grid-cols-2 gap-3">
-          {ORIGENS.map(origem => {
-            const Icon = origem.icon;
+          {[{ key: 'trafico_pago', label: 'Tráfego Pago', color: '#3b82f6' }, ...(kpis?.colunas || [])].map(origem => {
             const valor = kpis?.por_origem[origem.key] ?? 0;
             const pct = kpis?.percentuais[origem.key] ?? 0;
             return (
               <div key={origem.key} className="bg-slate-900/60 rounded-xl p-[clamp(0.5rem,1.8vmin,1rem)] border border-slate-800 hover:border-slate-700 transition-colors">
-                <Icon className="h-5 w-5 mb-2" style={{ color: origem.color }} />
+                <span className="h-4 w-4 mb-2 rounded-full inline-block" style={{ background: origem.color }} />
                 <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-1 truncate">{origem.label}</p>
                 <p className="text-[clamp(1.25rem,3vmin,1.875rem)] font-black tabular-nums leading-none">{valor}</p>
                 <p className="text-[10px] text-slate-500 mt-1.5">{pct.toFixed(2)}%</p>
@@ -1535,7 +1540,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           // tudo na tela. auto-rows-fr deixa as linhas com a mesma altura.
           <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] portrait:grid-cols-2 gap-3 auto-rows-fr">
             {vendedores.slice(0, 12).map(v => (
-              <VendedorCard key={v.id} v={v} secondary={branding.secondary_color} />
+              <VendedorCard key={v.id} v={v} secondary={branding.secondary_color} colunas={kpis?.colunas || []} />
             ))}
           </div>
         )}
@@ -1708,7 +1713,7 @@ function ZoomControl({
 
 // ─── Card individual de vendedor ────────────────────────────────────────────
 
-function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) {
+function VendedorCard({ v, secondary, colunas }: { v: VendedorData; secondary: string; colunas: ColunaOrigem[] }) {
   const rColor = rankColor(v.rank);
   const avatarColor = hashColor(v.id);
 
@@ -1748,14 +1753,13 @@ function VendedorCard({ v, secondary }: { v: VendedorData; secondary: string }) 
         )}
       </div>
 
-      {/* Breakdown por origem — 6 colunas (MELHORIA 1 29/05/2026: + Redes Sociais) */}
+      {/* Breakdown por origem — Tráfego Pago (Pedro) fixo no topo + as COLUNAS
+          do Kanban do Marcos (dinâmicas, refletem o que o dono configurou). */}
       <div className="space-y-1">
-        <BreakdownRow label="Tráfego Pago" value={v.trafico_pago}  color="#3b82f6" />
-        <BreakdownRow label="Porta"        value={v.porta}         color="#f59e0b" />
-        <BreakdownRow label="Marketplace"  value={v.marketplace}   color="#a855f7" />
-        <BreakdownRow label="Consignado"   value={v.consignado}    color="#06b6d4" />
-        <BreakdownRow label="Indicação"    value={v.indicacao}     color="#fb923c" />
-        <BreakdownRow label="Redes Sociais" value={v.redes_sociais} color="#ec4899" />
+        <BreakdownRow label="Tráfego Pago" value={v.trafico_pago} color="#3b82f6" />
+        {colunas.map(col => (
+          <BreakdownRow key={col.key} label={col.label} value={v.por_coluna?.[col.key] ?? 0} color={col.color} />
+        ))}
         {/* Resultado (não é origem): vendas concluídas do vendedor no período. */}
         <div className="pt-1 mt-1 border-t border-slate-800/70">
           <BreakdownRow label="Venda concluída" value={v.venda_concluida} color="#10b981" />
