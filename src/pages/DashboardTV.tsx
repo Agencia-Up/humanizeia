@@ -586,7 +586,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // período. Cada conta monta as colunas como quiser; o painel espelha.
         const stagesQuery = (supabase as any)
           .from('crm_pipeline_stages')
-          .select('id, name, color, position, tipo, ativo')
+          .select('id, name, color, position, tipo, ativo, show_in_live')
           .eq('user_id', effectiveUserId)
           .order('position', { ascending: true });
 
