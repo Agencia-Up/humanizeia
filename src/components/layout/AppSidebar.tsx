@@ -28,6 +28,7 @@ import {
   Bot,
   BarChart3,
   Wallet,
+  ShieldCheck,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -450,6 +451,10 @@ export function AppSidebar() {
               {/* FASE 4 — Painel interno de margem de IA. SO o superadmin (operador) ve. */}
               {isAdmin && (
                 <NavItem collapsed={collapsed} item={{ title: 'Margem (IA)', url: '/admin/margem', icon: Wallet }} />
+              )}
+              {/* Painel de Administracao (donos): saude/qualidade dos agentes por cliente. */}
+              {isAdmin && (
+                <NavItem collapsed={collapsed} item={{ title: 'Administração', url: '/administracao', icon: ShieldCheck }} />
               )}
             </NavGroup>
           </>
