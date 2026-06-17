@@ -55,16 +55,45 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
 
     setLoading(true);
     try {
-      const [{ data: teamData, error: teamErr }, { data: agentsData }, { data: agentData }] = await Promise.all([
-        // Vendedores DESTE agente (no modelo matriz, são todos os da conta — cada um com a chave deste agente).
-        (supabase as any).from('ai_team_members').select('*').eq('agent_id', agentId).order('name', { ascending: true }),
+      const [{ data: allMembers, error: allErr }, { data: thisAgentRows }, { data: agentsData }, { data: agentData }] = await Promise.all([
+        // TODOS os vendedores da CONTA (qualquer agente) — fonte da verdade do roster.
+        // Assim, vendedor cadastrado em OUTRO agente (ou antes deste existir) também
+        // aparece aqui. Antes carregava só os deste agente => sumiam.
+        (supabase as any).from('ai_team_members').select('*').eq('user_id', userId).order('name', { ascending: true }),
+        // Linhas DESTE agente — definem a chave (is_active) por vendedor neste agente.
+        (supabase as any).from('ai_team_members').select('id, whatsapp_number, is_active').eq('agent_id', agentId),
         // Todos os agentes da conta — pra propagar adicionar/excluir/editar.
         (supabase as any).from('wa_ai_agents').select('id').eq('user_id', userId),
         (supabase as any).from('wa_ai_agents').select('gerente_phone, gerente_phone_2').eq('id', agentId).single(),
       ]);
 
-      if (teamErr) throw teamErr;
-      setTeamMembers(teamData || []);
+      if (allErr) throw allErr;
+
+      // Chave (is_active) + id da linha DESTE agente, indexados por telefone.
+      const activeByPhone = new Map<string, boolean>();
+      const rowIdByPhone = new Map<string, string>();
+      for (const r of (thisAgentRows as any[]) || []) {
+        const k = normPhone(r.whatsapp_number);
+        activeByPhone.set(k, !!r.is_active);
+        rowIdByPhone.set(k, r.id);
+      }
+
+      // Roster: 1 entrada por vendedor da conta (dedupe por telefone), já com a chave
+      // DESTE agente (desligada por padrão se ainda não tem linha aqui).
+      const byPhone = new Map<string, any>();
+      for (const m of (allMembers as any[]) || []) {
+        const k = normPhone(m.whatsapp_number);
+        if (!k) continue;
+        if (!byPhone.has(k)) {
+          byPhone.set(k, {
+            ...m,
+            is_active: activeByPhone.get(k) ?? false,
+            _thisAgentRowId: rowIdByPhone.get(k) ?? null,
+          });
+        }
+      }
+
+      setTeamMembers([...byPhone.values()]);
       setAccountAgentIds(((agentsData as any[]) || []).map(a => a.id));
 
       setGerentePhone(agentData?.gerente_phone || '');
@@ -144,13 +173,34 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
     }
   };
 
-  // Chave LIGA/DESLIGA é POR AGENTE: atualiza só a linha deste agente (member.id).
-  const handleToggleSellerStatus = async (id: string, currentStatus: boolean) => {
+  // Chave LIGA/DESLIGA é POR AGENTE. Se o vendedor ainda NÃO tem linha neste agente
+  // (foi cadastrado em outro), criamos a linha deste agente ao ligar.
+  const handleToggleSellerStatus = async (member: any) => {
+    const k = normPhone(member.whatsapp_number);
+    const next = !member.is_active;
     try {
-      await (supabase as any).from('ai_team_members').update({ is_active: !currentStatus }).eq('id', id);
-      setTeamMembers(prev => prev.map(m => m.id === id ? { ...m, is_active: !currentStatus } : m));
+      let rowId: string | null = member._thisAgentRowId || null;
+      if (rowId) {
+        const { error } = await (supabase as any).from('ai_team_members').update({ is_active: next }).eq('id', rowId);
+        if (error) throw error;
+      } else {
+        // Sem linha neste agente → cria já ligada/desligada conforme o toggle.
+        const { data: created, error } = await (supabase as any).from('ai_team_members').insert({
+          user_id: userId,
+          agent_id: agentId,
+          name: member.name,
+          whatsapp_number: k,
+          email: member.email || null,
+          is_active: next,
+        }).select('id').single();
+        if (error) throw error;
+        rowId = created?.id ?? null;
+      }
+      setTeamMembers(prev => prev.map(m =>
+        normPhone(m.whatsapp_number) === k ? { ...m, is_active: next, _thisAgentRowId: rowId } : m
+      ));
     } catch (err: any) {
-      toast({ title: 'Erro', variant: 'destructive' });
+      toast({ title: 'Erro ao mudar a chave', description: err?.message, variant: 'destructive' });
     }
   };
 
@@ -441,7 +491,7 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
                             <Switch
                               id={`status-${member.id}`}
                               checked={member.is_active}
-                              onCheckedChange={() => handleToggleSellerStatus(member.id, member.is_active)}
+                              onCheckedChange={() => handleToggleSellerStatus(member)}
                               className="scale-90"
                             />
                           </div>
