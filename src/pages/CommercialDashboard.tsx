@@ -221,7 +221,8 @@ export function FunnelPanel({
 }
 
 export function useCommercialDashboardData(userId: string | undefined, dateRange: DateRange, filterSellerId?: string | null) {
-  const { isSeller, seller, masterUserId, loading: sellerLoading } = useSellerProfile(userId);
+  const { isSeller, seller, masterUserId, memberIds, loading: sellerLoading } = useSellerProfile(userId);
+  const memberIdsKey = (memberIds || []).join(',');
   const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -236,8 +237,14 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
       setLoading(true);
       try {
         const today = startOfDay();
-        // Vendedor logado: sempre só ele. Master: usa o filtro global se houver.
-        const sellerId = isSeller ? seller?.id : (filterSellerId || null);
+        // Vendedor logado: TODOS os registros dele (modelo matriz = 1 por agente),
+        // via .in(memberIds). Master: filtro global opcional (1 vendedor), via .eq.
+        const sellerMemberIds = isSeller
+          ? ((memberIds && memberIds.length) ? memberIds : ['00000000-0000-0000-0000-000000000000'])
+          : null;
+        const masterSellerId = !isSeller ? (filterSellerId || null) : null;
+        const applySeller = (qb: any, col: string) =>
+          sellerMemberIds ? qb.in(col, sellerMemberIds) : (masterSellerId ? qb.eq(col, masterSellerId) : qb);
 
         // Filtros DATA aplicados em todas as queries de leads/campanhas/followups
         // (spec: filtro global afeta TUDO menos o Ranking, que tem hook próprio).
@@ -248,7 +255,7 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
           .gte('created_at', dateRange.start).lte('created_at', dateRange.end)
           .order('created_at', { ascending: false })
           .limit(5000);
-        if (sellerId) pedroQuery = pedroQuery.eq('assigned_to_id', sellerId);
+        pedroQuery = applySeller(pedroQuery, 'assigned_to_id');
 
         let marcosQuery = (supabase as any)
           .from('crm_leads')
@@ -258,21 +265,21 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
           .gte('created_at', dateRange.start).lte('created_at', dateRange.end)
           .order('created_at', { ascending: false })
           .limit(5000);
-        if (sellerId) marcosQuery = marcosQuery.eq('assigned_to', sellerId);
+        marcosQuery = applySeller(marcosQuery, 'assigned_to');
 
         let campaignsQuery = (supabase as any)
           .from('wa_campaigns')
           .select('id, status, sent_count, failed_count, total_contacts, seller_member_id, created_at')
           .eq('user_id', effectiveUserId)
           .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
-        if (sellerId) campaignsQuery = campaignsQuery.eq('seller_member_id', sellerId);
+        campaignsQuery = applySeller(campaignsQuery, 'seller_member_id');
 
         let followupsQuery = (supabase as any)
           .from('marcos_followup_schedules')
           .select('id, status, seller_member_id, created_at')
           .eq('user_id', effectiveUserId)
           .gte('created_at', dateRange.start).lte('created_at', dateRange.end);
-        if (sellerId) followupsQuery = followupsQuery.eq('seller_member_id', sellerId);
+        followupsQuery = applySeller(followupsQuery, 'seller_member_id');
 
         const [pedroRes, marcosRes, stagesRes, campaignsRes, followupsRes] = await Promise.all([
           pedroQuery,
@@ -363,7 +370,7 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
 
     load();
     return () => { cancelled = true; };
-  }, [effectiveUserId, isSeller, seller?.id, sellerLoading, refreshKey, dateRange.start, dateRange.end, filterSellerId]);
+  }, [effectiveUserId, isSeller, seller?.id, memberIdsKey, sellerLoading, refreshKey, dateRange.start, dateRange.end, filterSellerId]);
 
   return { data, loading, refresh: () => setRefreshKey(key => key + 1) };
 }
