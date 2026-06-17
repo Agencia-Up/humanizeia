@@ -230,7 +230,7 @@ function tokenSimilarity(left: string, right: string) {
   return 1 - levenshteinDistance(left, right) / Math.max(left.length, right.length);
 }
 
-function getVehicleSubcategory(vehicle: BndvVehicle): "hatch" | "sedan" | "suv" | "pickup" | "unknown" {
+export function getVehicleSubcategory(vehicle: BndvVehicle): "hatch" | "sedan" | "suv" | "pickup" | "unknown" {
   const model = normalizeText(vehicle.modelName);
   const version = normalizeText(vehicle.versionName);
   const text = `${model} ${version}`;
@@ -350,7 +350,7 @@ function isLikelyMotorcycle(vehicle: BndvVehicle) {
   return /\b(yamaha|kawasaki|shineray|harley|dafra|triumph|ducati|ktm|bajaj|haojue|biz|cg|fan|titan|bros|xre|pcx|nmax|fazer|factor|lander|ybr|twister|crosser|hornet|scooter)\b/.test(text);
 }
 
-function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string, any>, hasModelQuery = false) {
+export function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record<string, any>, hasModelQuery = false) {
   const requestedType = inferRequestedVehicleType(filters);
   if (requestedType === "moto") {
     return isLikelyMotorcycle(vehicle);
@@ -431,7 +431,7 @@ function vehicleMatchesStrictModel(vehicle: BndvVehicle, modelTerms: string[]) {
   return indexed.includes(primaryModelTerm);
 }
 
-function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
+export function scoreVehicle(vehicle: BndvVehicle, filters: Record<string, any>) {
   const searchText = buildScoringText(filters);
   if (!searchText) return { score: 1, matchedTokens: [] as string[] };
 
@@ -548,12 +548,21 @@ function passesNumericFilters(vehicle: BndvVehicle, filters: Record<string, any>
   );
 }
 
-function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
+export function rankVehicles(vehicles: BndvVehicle[], filters: Record<string, any>) {
+  // marca_required (Pilar B): marca pedida EXPLICITAMENTE ("so se for Honda") = filtro DURO.
+  // Sem isso, o bonus de carroceria (body_type +40) mantem sedans de OUTRAS marcas ACIMA da
+  // marca pedida e a busca mostra Chevrolet/Fiat ignorando a Honda que existe (lead 99627-7728).
+  // Aplica em TODOS os caminhos (estrito e relaxado) zerando o pool fora da marca.
+  const _marcaReq = (filters as any)?.marca_required ? normalizeText(String(filters.marca || "")) : "";
+  const pool = !_marcaReq ? vehicles : vehicles.filter((v) => {
+    const mk = normalizeText(String(v.markName || ""));
+    return !!mk && (mk.includes(_marcaReq) || _marcaReq.includes(mk));
+  });
   const modelTerms = detectDynamicModelTerms(filters);
   const hasModelQuery = modelTerms.length > 0;
   // Lead nomeou o modelo -> carro do modelo sem preco (erro de cadastro) NAO pode sumir.
   const allowPriceless = hasModelQuery;
-  const typedVehicles = vehicles
+  const typedVehicles = pool
     .filter((vehicle) => passesRequestedVehicleType(vehicle, filters, hasModelQuery))
     .filter((vehicle) => vehicleMatchesStrictModel(vehicle, modelTerms));
   const searchText = buildSearchText(filters);

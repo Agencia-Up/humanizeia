@@ -550,7 +550,25 @@ function normalizeIntent(value: any, fallback: PedroV2Intent): PedroV2Intent {
     : fallback;
 }
 
-function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
+// ── PILAR B (slots): vocabulario CANONICO de marcas (BR) p/ recuperar a marca que o LLM
+// descarta ("so se for Honda" -> modelo:"sedan", marca vazia). alias -> canonico (bate markName).
+const BRAND_ALIASES: Record<string, string> = {
+  chevrolet: "chevrolet", chevy: "chevrolet", gm: "chevrolet",
+  volkswagen: "volkswagen", vw: "volkswagen",
+  fiat: "fiat", hyundai: "hyundai", renault: "renault", toyota: "toyota",
+  honda: "honda", nissan: "nissan", jeep: "jeep", ford: "ford",
+  peugeot: "peugeot", citroen: "citroen", mitsubishi: "mitsubishi",
+  mini: "mini", chery: "chery", caoa: "chery", kia: "kia", bmw: "bmw",
+  mercedes: "mercedes", audi: "audi", ram: "ram", byd: "byd",
+  volvo: "volvo", suzuki: "suzuki",
+};
+// "modelo" que e so a CARROCERIA/tipo (nao modelo real) -> vira tipo_veiculo.
+const TYPE_AS_MODEL: Record<string, string> = {
+  sedan: "sedan", seda: "sedan", hatch: "hatch", hatchback: "hatch",
+  suv: "suv", picape: "pickup", pickup: "pickup", caminhonete: "pickup", utilitario: "suv",
+};
+
+export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   message: string;
   heuristic_intent?: PedroV2IntentResult | null;
   vehicle_resolution: PedroVehicleResolution;
@@ -838,6 +856,42 @@ function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     if (_yrs.length >= 2) {
       (plan.search_filters as any).ano_min = Math.min(..._yrs);
       (plan.search_filters as any).ano_max = Math.max(..._yrs);
+    }
+  }
+
+  // ── PILAR B (slots) — RECUPERA A MARCA explicita que o lead citou e o LLM descartou. ──
+  // Caso real (lead 99627-7728): "Sedan. So se for Honda" -> LLM punha modelo:"sedan", marca
+  // vazia -> orchestrator buscava "sedan" generico (mostrava Chevrolet/Fiat) e NUNCA a Honda
+  // City que EXISTE. A BUSCA ja acha a marca certa quando recebe marca+query=marca (provado no
+  // harness local); aqui so garantimos que o planner NAO perca a marca. Generico p/ qualquer marca.
+  if (plan.action === "stock_search") {
+    const f = (plan.search_filters || {}) as any;
+    const msgN = normalizeText(input.message);
+    let canon: string | null = f.marca && Object.values(BRAND_ALIASES).includes(String(f.marca).toLowerCase())
+      ? String(f.marca).toLowerCase() : null;
+    if (!canon) {
+      for (const alias of Object.keys(BRAND_ALIASES)) {
+        if (new RegExp(`\\b${alias}\\b`).test(msgN)) { canon = BRAND_ALIASES[alias]; break; }
+      }
+    }
+    if (canon) {
+      const modeloN = normalizeText(String(f.modelo_desejado || plan.search_query || ""));
+      const modeloEhTipo = Object.prototype.hasOwnProperty.call(TYPE_AS_MODEL, modeloN);
+      // modelo == a propria MARCA ("Honda") nao e modelo real -> busca por MARCA.
+      const modeloEhMarca = modeloN === canon || Object.prototype.hasOwnProperty.call(BRAND_ALIASES, modeloN);
+      const limparModelo = modeloEhTipo || modeloEhMarca;
+      plan.search_filters = {
+        ...f,
+        marca: canon,
+        // marca explicita SEM modelo real = sinal p/ o orchestrator NAO embaralhar (broad/multi-modelo).
+        ...(limparModelo ? { modelo_desejado: null, marca_required: true } : {}),
+        ...(modeloEhTipo ? { tipo_veiculo: f.tipo_veiculo || TYPE_AS_MODEL[modeloN] } : {}),
+      };
+      // sem modelo real, a busca LIDERA pela marca (query=marca acha "Honda City"); com modelo
+      // real (ex. "Civic"), mantem o modelo e so ganha a marca.
+      if (limparModelo) plan.search_query = canon;
+      else if (!plan.search_query) plan.search_query = canon;
+      plan.reason = `slot_brand_recovered:${canon}:${plan.reason || ""}`;
     }
   }
 

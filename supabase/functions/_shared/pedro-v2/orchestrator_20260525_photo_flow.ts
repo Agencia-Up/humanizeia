@@ -204,7 +204,10 @@ function leadMessageAsksBroadStock(message?: string | null) {
 function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any, options?: any) {
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
-  const broadStock = Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
+  // marca pedida EXPLICITAMENTE (marca_required, Pilar B) NAO e busca ampla — senao o broadStock
+  // APAGA a marca abaixo e "so se for Honda" vira sedan generico de qualquer marca (lead 99627-7728).
+  const _marcaRequired = Boolean(brainPlan?.search_filters?.marca_required);
+  const broadStock = !_marcaRequired && Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
   // MEM-1: NAO herdar filtros VELHOS do interesse (preco/tipo/cambio/cor/modelo) quando o turno
   // ATUAL nomeia um MODELO novo. Sem isso, um interesse de uma busca ANTERIOR (ex.: suv ate 80k)
   // contaminava a busca nova (ex.: "tem hilux?" herdava preco_max:80000) e filtrava/zerava errado.
@@ -1836,7 +1839,10 @@ export async function processPedroV2Turn(
       isGenericQuery = true;
     }
 
-    const broadStockIntent = Boolean((stockFilters as any).stock_broad || leadMessageAsksBroadStock(text));
+    // marca_required (Pilar B): marca explicita ("so se for Honda") NAO e busca ampla — senao este
+    // bloco ZERA a query ("honda") e liga stock_broad, e a busca vira sedan generico de qualquer marca.
+    const broadStockIntent = !(stockFilters as any).marca_required
+      && Boolean((stockFilters as any).stock_broad || leadMessageAsksBroadStock(text));
     if (broadStockIntent) {
       isGenericQuery = false;
       (stockFilters as any).stock_broad = true;
@@ -1980,7 +1986,10 @@ export async function processPedroV2Turn(
   // Busca CADA modelo citado e JUNTA com o resultado primario -> apresenta TODOS que existem.
   // So em mensagem CURTA de escolha de modelo (evita falso positivo em frase comum).
   const _hadModelQuery = Boolean(stockFilters && ((stockFilters as any).modelo_desejado || (stockFilters as any).modelo || (stockFilters as any).marca));
-  if (stockFilters && !isGenericQuery && _hadModelQuery
+  // marca_required (Pilar B) = restricao de marca UNICA ("so se for Honda"), NAO multi-modelo —
+  // sem a guarda, a virgula em "quero um sedan, so se for honda" dispara sub-buscas genericas
+  // que sobrepoem o resultado correto da marca.
+  if (stockFilters && !isGenericQuery && _hadModelQuery && !(stockFilters as any)?.marca_required
       && normalizePhotoText(text).split(/\s+/).filter(Boolean).length <= 6
       && /(?:\bou\b|\/|,|\be\b)/i.test(text)) {
     const _mmParts = text.split(/\s+ou\s+|\s*\/\s*|\s*,\s*|\s+e\s+/i)
@@ -2037,12 +2046,28 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ── PILAR B: marca_required + busca principal ZEROU. A unidade da marca pode nao casar a
+  // carroceria estrita (ex.: Honda City subcat "unknown" some quando tipo=sedan). Re-busca SO a
+  // MARCA (sem tipo) — fica DENTRO da marca pedida (acha a Honda City que existe), NUNCA cai em
+  // outras marcas. Se nem assim achar, fica vazio e o grounding/reply trata com honestidade.
+  if (stockFilters && (stockFilters as any).marca_required && (stockFilters as any).marca
+      && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length === 0) {
+    const _hr = await searchPedroStock(supabase, {
+      user_id: input.agent.user_id,
+      query: String((stockFilters as any).marca),
+      filters: { marca: String((stockFilters as any).marca), marca_required: true },
+      limit: 12,
+    } as any);
+    if (_hr?.success && Array.isArray(_hr.items) && _hr.items.length > 0) stockResult = _hr;
+  }
+
   // SEARCH-AND-RETRY (fix relatorio mestre / Falha 5 - Edison): a busca ESPECIFICA nao
   // achou nada -> NAO encerra de maos vazias. Faz uma 2a busca AMPLA (mesma categoria e/ou
   // teto de preco, SEM o modelo/marca) e oferece os parecidos como ALTERNATIVA, em vez de
   // "nao temos" + pular pro funil de pagamento. O searchPedroStock ja ordena por preco
   // crescente (mais em conta primeiro). So dispara quando havia um modelo/marca especifico.
-  if (stockFilters && !isGenericQuery && stockResult?.success
+  // marca_required NAO entra aqui (ja tratada acima — nunca oferece outras marcas).
+  if (stockFilters && !isGenericQuery && !(stockFilters as any).marca_required && stockResult?.success
       && Array.isArray(stockResult.items) && stockResult.items.length === 0) {
     const _hadSpecificModel = Boolean((stockFilters as any).modelo_desejado || (stockFilters as any).modelo || (stockFilters as any).marca);
     const _broadType = (stockFilters as any).tipo_veiculo || null;

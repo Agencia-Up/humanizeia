@@ -106,6 +106,11 @@ const stateless = [
 
   // — Tipo de veículo —
   { g: "tipo", n: "tem moto -> recusa (só carros)", text: "tem moto?", e: r => [A.replyHas(r, ["nao temos moto", "apenas com carros", "so com carros", "trabalhamos com carros", "so carros", "nao trabalhamos com moto", "nao temos motos"])] },
+
+  // — Pilar B: SLOTS (marca explícita) — ALVO REAL lead 99627-7728: "Sedan. Só se for Honda" —
+  // O agente mostrava Chevrolet/Fiat e ignorava a Honda City que EXISTE. Deve liderar com a Honda.
+  { g: "slots", n: "marca explícita Honda -> apresenta Honda (não só outras marcas)", text: "quero um sedan, so se for honda",
+    e: r => [{ pass: (r.items || []).length > 0 && r.items.some(v => /honda/i.test(String(v.marca))), label: `items inclui Honda (got: ${(r.items || []).slice(0, 4).map(v => v.marca).join("|") || "vazio"})` }, A.replyHas(r, ["honda"])] },
 ];
 
 // ── CASOS COM ESTADO (setup no banco -> dry-run -> cleanup) ──────────────────
