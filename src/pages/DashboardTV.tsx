@@ -581,8 +581,17 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         const agentsQuery = (supabase as any)
           .from('wa_ai_agents').select('id, name, is_active').eq('user_id', effectiveUserId);
 
-        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, poolRes, agentsRes] = await Promise.all([
-          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery, poolQuery, agentsQuery,
+        // Colunas CONFIGURADAS do Kanban do Marcos = origens do painel. Vêm da
+        // TABELA (não dos leads), então aparecem SEMPRE — mesmo com 0 lead no
+        // período. Cada conta monta as colunas como quiser; o painel espelha.
+        const stagesQuery = (supabase as any)
+          .from('crm_pipeline_stages')
+          .select('id, name, color, position, tipo, ativo')
+          .eq('user_id', effectiveUserId)
+          .order('position', { ascending: true });
+
+        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, poolRes, agentsRes, stagesRes] = await Promise.all([
+          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery, poolQuery, agentsQuery, stagesQuery,
         ]);
         if (!cancelled) setPoolLeads((poolRes?.data as any[]) || []);
         if (!cancelled) setAgentsList((agentsRes?.data as any[]) || []);
@@ -710,10 +719,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           porta: 'Porta', marketplace: 'Marketplace', consignado: 'Consignado',
           indicacao: 'Indicação', redes_sociais: 'Redes Sociais',
         };
-        // Colunas de resultado/saída não são origem (a venda vem de comercial_vendas).
-        const isColunaResultado = (nome: string, tipo?: string | null) =>
-          tipo === 'saida' || /venda\s*conclu/i.test(nome) || /fechad/i.test(nome) || /inativ/i.test(nome) || /negocia/i.test(nome);
-        const colunasMeta = new Map<string, { color: string; position: number }>();
+        // "Venda concluída" / etapa de saída não entra no MEIO — é resultado,
+        // mostrado embaixo a partir de comercial_vendas.
+        const isResultadoCol = (nome: string, tipo?: string | null) =>
+          tipo === 'saida' || /venda\s*conclu/i.test(nome || '');
+        // ORIGENS = COLUNAS CONFIGURADAS do Marcos (crm_pipeline_stages) que o dono
+        // marcou pra aparecer no painel (show_in_live). Vêm da TABELA, então
+        // aparecem SEMPRE — mesmo com 0 lead no período. Coluna removida/desmarcada
+        // some daqui. (show_in_live ausente = true por default, não some nada.)
+        const colunasOrigem: ColunaOrigem[] = ((stagesRes?.data || []) as any[])
+          .filter((s) => s.ativo !== false && s.show_in_live !== false && !isResultadoCol(s.name, s.tipo))
+          .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+          .map((s, i) => ({ key: String(s.name || '').trim(), label: String(s.name || '').trim(), color: s.color || ORIGEM_PALETTE[i % ORIGEM_PALETTE.length] }));
+        const liveColSet = new Set(colunasOrigem.map((c) => c.key));
         const marcosLeads = (marcosRes.data || []) as Array<{
           id: string; origem: string | null; assigned_to: string | null; stage_id: string | null;
           stage: { name: string; color: string | null; position: number | null; tipo: string | null } | null;
@@ -722,27 +740,16 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           const v = agg[l.assigned_to || ''] || agg[NAO_ATRIBUIDO_ID];
           if (!l.assigned_to || !agg[l.assigned_to]) naoAtribuidos++;
           const stageName = (l.stage?.name || '').trim();
+          // Conta SÓ nas colunas que o painel mostra (selecionadas pelo dono), pra
+          // o total bater com a soma das linhas visíveis.
           let colName: string | null = null;
-          let colColor = '';
-          let colPos = 999;
-          if (stageName && !isColunaResultado(stageName, l.stage?.tipo)) {
-            colName = stageName; colColor = l.stage?.color || ''; colPos = l.stage?.position ?? 999;
-          } else if (!stageName && l.origem && ORIGEM_FALLBACK_LABEL[l.origem]) {
-            // lead sem stage (deletada/null): cai na origem canônica
-            colName = ORIGEM_FALLBACK_LABEL[l.origem];
-          }
+          if (stageName && liveColSet.has(stageName)) colName = stageName;
+          else if (!stageName && l.origem && liveColSet.has(ORIGEM_FALLBACK_LABEL[l.origem] || '')) colName = ORIGEM_FALLBACK_LABEL[l.origem];
           if (colName) {
             v.por_coluna[colName] = (v.por_coluna[colName] || 0) + 1;
             v.total++;
-            const meta = colunasMeta.get(colName);
-            if (!meta) colunasMeta.set(colName, { color: colColor, position: colPos });
-            else if (colColor && !meta.color) meta.color = colColor;
           }
         }
-        // Lista ordenada de origens (= colunas ativas do Marcos) com cor.
-        const colunasOrigem: ColunaOrigem[] = Array.from(colunasMeta.entries())
-          .sort((a, b) => (a[1].position - b[1].position) || a[0].localeCompare(b[0]))
-          .map(([nome, meta], i) => ({ key: nome, label: nome, color: meta.color || ORIGEM_PALETTE[i % ORIGEM_PALETTE.length] }));
 
         // 6. Busca feedbacks (priority) dos leads do período (Pedro + Marcos)
         //    Usado pra calcular o peso 30% da qualidade
