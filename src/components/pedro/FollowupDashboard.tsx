@@ -30,6 +30,7 @@ import {
 } from 'recharts';
 import {
   Send, RefreshCw, Users, CalendarDays, Loader2, Phone, UserCheck, Clock,
+  ListChecks, CheckCircle2, MessageCircleReply,
 } from 'lucide-react';
 
 /* ── Fuso São Paulo (UTC-3 fixo) ───────────────────────────────────────── */
@@ -92,6 +93,19 @@ interface HourBucket {
   hora: string;
   count: number;
 }
+interface QueueStatus {
+  cycleStartedAt: string | null;
+  total: number;
+  enviados: number;
+  restantes: number;
+  responderam: number;
+}
+
+function spDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(new Date(iso).getTime() - SP_OFFSET_MS);
+  return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)} às ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
 
 /* ── Componente ────────────────────────────────────────────────────────── */
 export default function FollowupDashboard({ userId }: { userId?: string | null }) {
@@ -102,6 +116,8 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
   const [monthCount, setMonthCount] = useState(0);
   const [hourly, setHourly] = useState<HourBucket[]>([]);
   const [items, setItems] = useState<DispatchItem[]>([]);
+  const [queue, setQueue] = useState<QueueStatus | null>(null);
+  const [queueLoading, setQueueLoading] = useState(true);
 
   const todayStr = spTodayStr();
   const isToday = selectedDate === todayStr;
@@ -284,11 +300,46 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
     }
   }, [userId, selectedDate]);
 
+  // Andamento da fila de reativação (estado AGORA, não depende do dia).
+  const fetchQueue = useCallback(async () => {
+    if (!userId) return;
+    setQueueLoading(true);
+    try {
+      const { data, error } = await (supabase as any)
+        .rpc('get_reactivation_queue_status', { p_user_id: userId });
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row) {
+        setQueue({
+          cycleStartedAt: row.cycle_started_at ?? null,
+          total: Number(row.total_fila ?? 0),
+          enviados: Number(row.enviados_ciclo ?? 0),
+          restantes: Number(row.restantes_ciclo ?? 0),
+          responderam: Number(row.responderam_ciclo ?? 0),
+        });
+      } else {
+        setQueue(null);
+      }
+    } catch (e) {
+      console.error('[FollowupDashboard] erro ao buscar fila de reativação:', e);
+      setQueue(null);
+    } finally {
+      setQueueLoading(false);
+    }
+  }, [userId]);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    fetchQueue();
+  }, [fetchQueue]);
+
   const hasData = dayCount > 0;
+  const queueProgress = queue && queue.total > 0
+    ? Math.round((queue.enviados / queue.total) * 100)
+    : 0;
 
   return (
     <div className="space-y-3">
@@ -309,7 +360,7 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
             variant="outline"
             size="sm"
             className="h-8 text-xs gap-1.5"
-            onClick={fetchData}
+            onClick={() => { fetchData(); fetchQueue(); }}
             disabled={loading}
           >
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
@@ -317,6 +368,74 @@ export default function FollowupDashboard({ userId }: { userId?: string | null }
           </Button>
         </div>
       </div>
+
+      {/* ── Andamento da fila de reativação (round-robin) ─────────────────── */}
+      <Card className="bg-card border-primary/30">
+        <CardHeader className="pb-1 pt-3">
+          <CardTitle className="text-xs flex items-center gap-1.5">
+            <ListChecks className="h-3.5 w-3.5 text-primary" />
+            Andamento da fila de reativação
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pb-3 space-y-3">
+          {queueLoading ? (
+            <div className="h-16 flex items-center justify-center text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+          ) : !queue || queue.total + queue.enviados === 0 ? (
+            <p className="text-xs text-muted-foreground py-2">
+              Nenhum lead inativo elegível na fila no momento. Quando houver leads na coluna
+              "Lead Inativo", o Pedro começa a percorrer a fila e o andamento aparece aqui.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border border-border/50 p-2">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-emerald-400/80" /> Já contatados
+                  </p>
+                  <p className="text-xl font-bold text-foreground mt-0.5">{queue.enviados}</p>
+                </div>
+                <div className="rounded-lg border border-border/50 p-2">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                    <Clock className="h-3 w-3 text-amber-400/80" /> Faltam nesta volta
+                  </p>
+                  <p className="text-xl font-bold text-foreground mt-0.5">{queue.restantes}</p>
+                </div>
+                <div className="rounded-lg border border-border/50 p-2">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                    <MessageCircleReply className="h-3 w-3 text-cyan-400/80" /> Responderam
+                  </p>
+                  <p className="text-xl font-bold text-foreground mt-0.5">{queue.responderam}</p>
+                </div>
+              </div>
+
+              {/* Barra de progresso da volta atual */}
+              <div className="space-y-1">
+                <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${queueProgress}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>
+                    {queue.enviados} de {queue.enviados + queue.restantes} contatados nesta volta
+                    {' '}({queueProgress}%)
+                  </span>
+                  <span>Volta começou {spDateTime(queue.cycleStartedAt)}</span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {queue.restantes === 0
+                  ? 'Volta completa: todos os leads da fila já foram contatados. O Pedro vai iniciar uma nova volta do começo.'
+                  : `O Pedro contata todos os ${queue.enviados + queue.restantes} leads da fila uma vez antes de repetir qualquer um. Faltam ${queue.restantes} para fechar esta volta.`}
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-2">

@@ -3088,6 +3088,20 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           required: ["motivo"]
         }
       }
+    },
+    {
+      type: "function",
+      function: {
+        name: "marcar_lead_perdido",
+        description: "Use APENAS quando o cliente disser de forma CLARA que ja comprou um carro em outro lugar, ou que desistiu / nao tem mais interesse de forma definitiva. Esta ferramenta move o lead para a coluna 'Perdido' do CRM e ENCERRA os follow-ups automaticos (o lead nao recebe mais reativacao). No mesmo turno, continue respondendo o cliente normalmente, com cordialidade (deseje sucesso e deixe a porta aberta para o futuro). NAO use em caso de duvida, objecao de preco, 'vou pensar' ou 'depois eu vejo' — nesses casos siga o atendimento normal.",
+        parameters: {
+          type: "object",
+          properties: {
+            motivo: { type: "string", description: "Resumo curto do motivo do encerramento. Ex: 'cliente comprou em outro lugar', 'cliente desistiu da compra'." }
+          },
+          required: ["motivo"]
+        }
+      }
     }
   ];
 
@@ -3522,7 +3536,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 - Quando transferir para vendedor, envie resumo completo e mantenha o lead aguardando confirmacao. O campo do vendedor fica "Aguardando" ate o vendedor responder "Ok".
 - Quando o vendedor responder "Ok", ele e atribuido ao lead, mas o lead continua na coluna "Novo". So vendedor ou gerente move o lead para Lead Inativo, Pouco Qualif., Qualificado ou qualquer outra etapa.
 - A regra automatica de 10 minutos tambem nao move a coluna do CRM; ela apenas transfere o lead para a fila de vendedores.
-- Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.`;
+- Nunca responda vendedores cadastrados como se fossem leads. Se um vendedor responder "Ok", isso e confirmacao de atendimento, nao novo lead.
+- EXCECAO (lead perdido): se o cliente disser CLARAMENTE que ja comprou em outro lugar, ou que desistiu / nao tem mais interesse de forma definitiva, chame a ferramenta "marcar_lead_perdido" e, no mesmo turno, responda com cordialidade (deseje sucesso, deixe a porta aberta). Essa e a UNICA situacao em que a coluna do CRM e movida automaticamente (para "Perdido"). Em duvida, objecao de preco ou adiamento ("vou pensar", "depois eu vejo"), NAO use — siga o atendimento normal.`;
 
   // ── BNDV: Check if user has BNDV integration and append system prompt instruction ──
   let hasBndvIntegration = false;
@@ -3795,6 +3810,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
     // handler atualizar_etapa_crm NÃO disparar uma segunda transferência nem
     // sobrescrever o status 'transferido' com a etapa do CRM.
     let transferExecutedThisTurn = false;
+    let leadMarkedLostThisTurn = false;
     const transferToolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'transferir_para_vendedor');
     if (transferToolCall) {
       let transferResult: any = { success: false, error: 'unknown' };
@@ -4131,13 +4147,57 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
       }
     }
 
+    // ── LEAD PERDIDO (marcar_lead_perdido) ───────────────────────────────
+    // Cliente disse claramente que ja comprou em outro lugar / desistiu. Esta e
+    // a UNICA excecao ao funil manual: move a coluna visual do CRM para
+    // "Perdido" e encerra a fila de reativacao (o lead nao recebe mais cutucao).
+    // A resposta cordial ao cliente continua sendo enviada normalmente (abaixo).
+    const lostToolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'marcar_lead_perdido');
+    if (lostToolCall) {
+      try {
+        const lostArgs = JSON.parse(lostToolCall.function.arguments || '{}');
+        const lostMotivo = String(lostArgs.motivo || 'cliente encerrou o interesse').slice(0, 200);
+        leadMarkedLostThisTurn = true;
+
+        const { data: lostLead } = await supabase
+          .from('ai_crm_leads')
+          .update({
+            status: 'perdido',
+            status_crm: 'perdido',
+            summary: lostMotivo,
+            last_interaction_at: new Date().toISOString(),
+          })
+          .eq('agent_id', agent.id)
+          .eq('remote_jid', remoteJid)
+          .select('id')
+          .maybeSingle();
+
+        // Encerra a fila de reativacao deste lead (nao recebe mais follow-up).
+        if (lostLead?.id) {
+          await supabase.from('pedro_followup_reactivation')
+            .update({ status: 'stopped' })
+            .eq('lead_id', lostLead.id);
+        }
+
+        console.log(`[LeadPerdido] Lead ${remoteJid} -> Perdido (${lostMotivo}); reativacao encerrada.`);
+
+        // Garante resposta cordial mesmo se a IA nao tiver gerado texto no turno.
+        if (!aiResponse || !aiResponse.trim()) {
+          aiResponse = 'Entendi, obrigado por avisar! Fico feliz que tenha resolvido. Qualquer coisa no futuro, e so me chamar aqui. Sucesso com o seu carro novo!';
+        }
+      } catch (lostErr) {
+        console.error('[LeadPerdido] erro ao marcar lead perdido:', lostErr);
+      }
+    }
+
     // ── CRM Tool Call (atualizar_etapa_crm) ─────────────────────────────
     const toolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'atualizar_etapa_crm');
-    if (toolCall && transferExecutedThisTurn) {
+    if (toolCall && (transferExecutedThisTurn || leadMarkedLostThisTurn)) {
       // FIX-13: transferir_para_vendedor já resolveu a transferência neste turno
       // (status='transferido', briefing + gerente já enviados). Rodar o handler
       // legado aqui sobrescreveria o status e poderia disparar transferência dupla.
-      console.log('[CRM] atualizar_etapa_crm ignorado: transferência já executada neste turno (FIX-13).');
+      // leadMarkedLostThisTurn: idem — nao deixar o CRM legado sobrescrever 'perdido'.
+      console.log('[CRM] atualizar_etapa_crm ignorado: transferência/lead-perdido já resolvido neste turno.');
     } else if (toolCall) {
       try {
         const args = JSON.parse(toolCall.function.arguments);
