@@ -12,7 +12,7 @@ import {
 import {
   ShieldCheck, RefreshCcw, AlertTriangle, ChevronDown, ChevronRight,
   Activity, Users, BadgeCheck, Home, HeartPulse, ClipboardList,
-  UserCheck, CalendarCheck, Inbox,
+  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power,
 } from 'lucide-react';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
@@ -33,6 +33,7 @@ const intBR = (n: unknown) => Math.round(Number(n ?? 0) || 0).toLocaleString('pt
 const TABS = [
   { key: 'saude', label: 'Saúde dos agentes', icon: HeartPulse },
   { key: 'operacao', label: 'Operação', icon: ClipboardList },
+  { key: 'clientes', label: 'Clientes & Agentes', icon: Building2 },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
@@ -81,6 +82,7 @@ export default function Administracao() {
 
       {tab === 'saude' && <SaudeTab />}
       {tab === 'operacao' && <OperacaoTab />}
+      {tab === 'clientes' && <ClientesTab />}
     </div>
   );
 }
@@ -346,6 +348,131 @@ function OperacaoTab() {
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         "Com vendedor" = leads com um vendedor atribuído. "Turnos IA" = mensagens processadas pela IA no período.
         Leads e visitas são o total acumulado da carteira do agente.
+      </p>
+    </div>
+  );
+}
+
+/* ════════════════════════ ABA: CLIENTES & AGENTES ════════════════════════ */
+interface AgentCliente {
+  agent_id: string;
+  agent_name: string;
+  is_active: boolean;
+  model: string | null;
+  agent_type: string | null;
+  total_replies: number | null;
+  client_name: string | null;
+  grandfathered: boolean;
+  has_own_key: boolean;
+  own_key_providers: string | null;
+  plan_id: string | null;
+  plan_status: string | null;
+  stock_sources: string | null;
+}
+const PLANO_LABEL: Record<string, string> = { basico: 'Básico', pro: 'Pro', enterprise: 'Pro Max' };
+function aiKeyInfo(a: AgentCliente): { label: string; tone: 'good' | 'neutral' | 'warn'; detail?: string } {
+  if (a.has_own_key) return { label: 'Própria (BYOK)', tone: 'good', detail: a.own_key_providers || undefined };
+  if (a.grandfathered) return { label: 'Plataforma', tone: 'neutral' };
+  return { label: 'Sem chave', tone: 'warn' };
+}
+
+function ClientesTab() {
+  const [agents, setAgents] = useState<AgentCliente[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = useCallback(async () => {
+    setLoading(true); setErro(null);
+    try {
+      const { data, error } = await (supabase as any).rpc('admin_clientes_overview');
+      if (error) throw error;
+      setAgents(Array.isArray(data?.agents) ? data.agents : []);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErro(msg.includes('forbidden') ? 'Acesso restrito aos administradores.' : (msg || 'Falha ao carregar.'));
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const ativos = agents.filter((a) => a.is_active).length;
+  const comChavePropria = agents.filter((a) => a.has_own_key).length;
+  const semChave = agents.filter((a) => !a.has_own_key && !a.grandfathered).length;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">Carteira de clientes e seus agentes — status, plano, origem da chave de IA e fonte de estoque.</p>
+        <Button variant="outline" size="sm" onClick={carregar} disabled={loading}>
+          <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar
+        </Button>
+      </div>
+
+      {erro && <ErroBox msg={erro} />}
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <TotalCard icon={Building2} cor="text-sky-500" titulo="Agentes" valor={loading ? null : intBR(agents.length)} sub="na carteira" />
+        <TotalCard icon={Power} cor="text-emerald-500" titulo="Ativos" valor={loading ? null : intBR(ativos)} sub={`de ${agents.length}`} />
+        <TotalCard icon={KeyRound} cor="text-emerald-500" titulo="Chave própria (BYOK)" valor={loading ? null : intBR(comChavePropria)} sub="paga a própria IA" />
+        <TotalCard icon={AlertTriangle} cor={semChave > 0 ? 'text-red-500' : 'text-emerald-500'} titulo="Sem chave de IA" valor={loading ? null : intBR(semChave)} sub={semChave > 0 ? 'não respondem!' : 'tudo certo'} />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Por agente</CardTitle></CardHeader>
+        <CardContent className="px-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Agente / Cliente</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Plano</TableHead>
+                  <TableHead>Chave de IA</TableHead>
+                  <TableHead>Modelo</TableHead>
+                  <TableHead>Estoque</TableHead>
+                  <TableHead className="text-right">Respostas</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? <LinhasSkeleton cols={7} /> : agents.length === 0 ? (
+                  <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhum agente cadastrado.</TableCell></TableRow>
+                ) : agents.map((a) => {
+                  const key = aiKeyInfo(a);
+                  const keyCls = key.tone === 'good' ? 'text-emerald-600 dark:text-emerald-400'
+                    : key.tone === 'warn' ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-muted-foreground';
+                  return (
+                    <TableRow key={a.agent_id} className={a.is_active ? '' : 'opacity-60'}>
+                      <TableCell className="max-w-[200px]">
+                        <div className="truncate font-medium">{a.agent_name}</div>
+                        {a.client_name && <div className="truncate text-[11px] text-muted-foreground">{a.client_name}</div>}
+                      </TableCell>
+                      <TableCell>
+                        {a.is_active
+                          ? <Badge className="bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15 dark:text-emerald-400">Ativo</Badge>
+                          : <Badge variant="secondary" className="text-muted-foreground">Pausado</Badge>}
+                      </TableCell>
+                      <TableCell><Badge variant="secondary" className="text-[11px]">{a.plan_id ? (PLANO_LABEL[a.plan_id] ?? a.plan_id) : '—'}</Badge></TableCell>
+                      <TableCell>
+                        <span className={`text-[12px] ${keyCls}`}>{key.label}</span>
+                        {key.detail && <span className="ml-1 text-[10px] uppercase text-muted-foreground">{key.detail}</span>}
+                      </TableCell>
+                      <TableCell className="text-[12px] text-muted-foreground">{a.model || '—'}</TableCell>
+                      <TableCell className="text-[12px]">{a.stock_sources
+                        ? <Badge variant="outline" className="text-[10px] uppercase">{a.stock_sources}</Badge>
+                        : <span className="text-muted-foreground/50">—</span>}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{intBR(a.total_replies)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        "Plataforma" = conta antiga usando a nossa chave de IA (grandfathered). "Própria (BYOK)" = cliente novo
+        pagando a própria IA. "Sem chave" = conta nova sem chave configurada — <span className="font-medium text-red-500">não responde</span> até configurar.
+        O <span className="font-medium">Modelo</span> é o configurado no agente (pode estar sobreposto por um override global — ver aba de provedores).
       </p>
     </div>
   );
