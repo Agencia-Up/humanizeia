@@ -1,11 +1,13 @@
 import { useNavigate } from 'react-router-dom';
-import { Zap, AlertTriangle, TrendingUp, Infinity as InfinityIcon } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Zap, AlertTriangle, TrendingUp, Infinity as InfinityIcon, Coins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSubscription } from '@/hooks/useSubscription';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { supabase } from '@/integrations/supabase/client';
 
 function fmt(n: number) {
   return n.toLocaleString('pt-BR');
@@ -16,11 +18,31 @@ function fmt(n: number) {
 // "Ilimitado" em vez de numero/percentual (que ficava negativo).
 const UNLIMITED_AT = 999999;
 
+// Puxa o saldo da chave OpenAI -> conversas restantes (mesmo RPC do Meu Plano).
+// Se o cliente informou o saldo, o widget mostra "≈ N conversas" em vez de
+// "ilimitado". `enabled` evita buscar pra vendedor/sem assinatura.
+function useConversasRestantes(enabled: boolean) {
+  const [saldo, setSaldo] = useState<any>(null);
+  useEffect(() => {
+    if (!enabled) { setSaldo(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await (supabase as any).rpc('cliente_saldo_ia');
+        if (alive) setSaldo(data || null);
+      } catch { if (alive) setSaldo(null); }
+    })();
+    return () => { alive = false; };
+  }, [enabled]);
+  return saldo;
+}
+
 export function TokenWidget() {
   const navigate = useNavigate();
   const { subscription, tokensAvailable, tokensTotal, usagePercent, planInfo, loading } = useSubscription();
   const { user } = useAuth();
   const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const saldo = useConversasRestantes(!sellerLoading && !isSeller && !!subscription);
 
   // O plano (ex.: 150 atendimentos) e da CONTA MASTER que contratou. Vendedores
   // vinculados nao compram credito nem rodam a IA (ela so existe na master),
@@ -28,16 +50,26 @@ export function TokenWidget() {
   if (sellerLoading || isSeller) return null;
   if (loading || !subscription) return null;
 
+  // Prioridade: se informou o saldo da OpenAI, mostra conversas reais; senao,
+  // "ilimitado" (cota ponte 999999); senao, o velho modelo de atendimentos.
+  const hasConv = !!saldo?.tem_saldo;
+  const convRestantes = hasConv ? Number(saldo.conversas_restantes) : 0;
+  const convTotal = hasConv ? Number(saldo.conversas_total) : 0;
   const isUnlimited = (subscription.tokens_included ?? 0) >= UNLIMITED_AT;
+  const showInfinity = isUnlimited && !hasConv;
   const safeAvailable = Math.max(0, tokensAvailable);
-  const remaining = isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
-  const isLow = !isUnlimited && remaining <= 20;
-  const isCritical = !isUnlimited && remaining <= 10;
+  const remaining = hasConv
+    ? (convTotal > 0 ? Math.max(0, Math.min(100, (convRestantes / convTotal) * 100)) : 100)
+    : isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
+  const isLow = hasConv ? remaining <= 20 : (!isUnlimited && remaining <= 20);
+  const isCritical = hasConv ? remaining <= 10 : (!isUnlimited && remaining <= 10);
 
   const barColor = isCritical
     ? 'bg-red-500'
     : isLow
     ? 'bg-yellow-500'
+    : (hasConv || showInfinity)
+    ? 'bg-emerald-400'
     : 'bg-primary';
 
   const renewDate = new Date(subscription.renewal_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
@@ -51,12 +83,14 @@ export function TokenWidget() {
         >
           {/* Icon */}
           <div className="flex items-center gap-1">
-            {isUnlimited ? (
-              <InfinityIcon className="h-3.5 w-3.5 text-emerald-400" />
-            ) : isCritical ? (
+            {isCritical ? (
               <AlertTriangle className="h-3.5 w-3.5 text-red-400 animate-pulse" />
             ) : isLow ? (
               <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />
+            ) : hasConv ? (
+              <Coins className="h-3.5 w-3.5 text-emerald-400" />
+            ) : showInfinity ? (
+              <InfinityIcon className="h-3.5 w-3.5 text-emerald-400" />
             ) : (
               <Zap className="h-3.5 w-3.5 text-primary" />
             )}
@@ -66,9 +100,11 @@ export function TokenWidget() {
           <div className="flex flex-col gap-0.5 min-w-[90px]">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] text-muted-foreground">
-                {isUnlimited ? 'Conversas ilimitadas' : `${fmt(safeAvailable)} restantes`}
+                {hasConv
+                  ? `≈ ${fmt(convRestantes)} conversas`
+                  : showInfinity ? 'Conversas ilimitadas' : `${fmt(safeAvailable)} restantes`}
               </span>
-              {!isUnlimited && (
+              {!hasConv && !showInfinity && (
                 <span className={`text-[10px] font-semibold ${isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
                   {remaining}%
                 </span>
@@ -77,7 +113,7 @@ export function TokenWidget() {
             {/* Custom progress with colored bar */}
             <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${isUnlimited ? 'bg-emerald-400' : barColor}`}
+                className={`h-full rounded-full transition-all ${barColor}`}
                 style={{ width: `${Math.max(2, remaining)}%` }}
               />
             </div>
@@ -93,13 +129,19 @@ export function TokenWidget() {
         <div className="space-y-1.5 text-xs">
           <div className="flex justify-between font-semibold">
             <span>Plano {planInfo.name}</span>
-            <span className={isUnlimited ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'}>
-              {isUnlimited ? 'Ilimitado' : isCritical ? 'Crítico' : isLow ? 'Baixo' : 'OK'}
+            <span className={(hasConv || showInfinity) ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'}>
+              {hasConv ? (isCritical ? 'Crítico' : isLow ? 'Baixo' : 'OK') : showInfinity ? 'Ilimitado' : isCritical ? 'Crítico' : isLow ? 'Baixo' : 'OK'}
             </span>
           </div>
           <div className="text-muted-foreground">
-            {isUnlimited ? (
-              <div>Conversas ilimitadas — você usa sua própria chave de IA. Veja o saldo em Meu Plano.</div>
+            {hasConv ? (
+              <>
+                <div className="text-emerald-400 font-semibold">≈ {fmt(convRestantes)} conversas restantes</div>
+                <div>{fmt(convTotal)} no total deste saldo · pela sua chave OpenAI</div>
+                <div>Atualize o saldo em Meu Plano.</div>
+              </>
+            ) : showInfinity ? (
+              <div>Conversas ilimitadas — você usa sua própria chave de IA. Informe seu saldo em Meu Plano para ver quantas conversas tem.</div>
             ) : (
               <>
                 <div>{subscription.tokens_used.toLocaleString('pt-BR')} atendimentos usados</div>
@@ -129,16 +171,23 @@ export function TokenWidgetCompact() {
   const { subscription, tokensAvailable, usagePercent, planInfo, loading } = useSubscription();
   const { user } = useAuth();
   const { isSeller, loading: sellerLoading } = useSellerProfile(user?.id);
+  const saldo = useConversasRestantes(!sellerLoading && !isSeller && !!subscription);
 
   // So a conta master ve o plano/uso (ver comentario em TokenWidget).
   if (sellerLoading || isSeller) return null;
   if (loading) return null;
 
+  const hasConv = !!saldo?.tem_saldo;
+  const convRestantes = hasConv ? Number(saldo.conversas_restantes) : 0;
+  const convTotal = hasConv ? Number(saldo.conversas_total) : 0;
   const isUnlimited = (subscription?.tokens_included ?? 0) >= UNLIMITED_AT;
+  const showInfinity = isUnlimited && !hasConv;
   const safeAvailable = Math.max(0, tokensAvailable);
-  const remaining = isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
-  const isCritical = !isUnlimited && remaining <= 10;
-  const isLow = !isUnlimited && remaining <= 20;
+  const remaining = hasConv
+    ? (convTotal > 0 ? Math.max(0, Math.min(100, (convRestantes / convTotal) * 100)) : 100)
+    : isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
+  const isCritical = hasConv ? remaining <= 10 : (!isUnlimited && remaining <= 10);
+  const isLow = hasConv ? remaining <= 20 : (!isUnlimited && remaining <= 20);
 
   return (
     <button
@@ -147,22 +196,24 @@ export function TokenWidgetCompact() {
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          {isUnlimited ? (
-            <InfinityIcon className="h-3 w-3 text-emerald-400" />
-          ) : isCritical ? (
+          {isCritical ? (
             <AlertTriangle className="h-3 w-3 text-red-400 animate-pulse" />
+          ) : hasConv ? (
+            <Coins className="h-3 w-3 text-emerald-400" />
+          ) : showInfinity ? (
+            <InfinityIcon className="h-3 w-3 text-emerald-400" />
           ) : (
             <Zap className="h-3 w-3 text-primary" />
           )}
           <span className="text-[10px] font-medium">{planInfo.name}</span>
         </div>
-        <span className={`text-[10px] font-semibold ${isUnlimited ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
-          {isUnlimited ? 'Ilimitado' : `${fmt(safeAvailable)} restantes`}
+        <span className={`text-[10px] font-semibold ${(hasConv || showInfinity) ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
+          {hasConv ? `≈ ${fmt(convRestantes)} conversas` : showInfinity ? 'Ilimitado' : `${fmt(safeAvailable)} restantes`}
         </span>
       </div>
       <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
         <div
-          className={`h-full rounded-full ${isUnlimited ? 'bg-emerald-400' : isCritical ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-primary'}`}
+          className={`h-full rounded-full ${isCritical ? 'bg-red-500' : isLow ? 'bg-yellow-500' : (hasConv || showInfinity) ? 'bg-emerald-400' : 'bg-primary'}`}
           style={{ width: `${Math.max(2, remaining)}%` }}
         />
       </div>
