@@ -1,6 +1,7 @@
 import {
   Home,
   BarChart3,
+  MonitorPlay,
   Brain,
   PenTool,
   Palette,
@@ -354,6 +355,10 @@ export function AppSidebar() {
                 {visibleFeatures.sidebar_painel_geral && (
                   <NavItem collapsed={collapsed} item={{ title: 'Painel Geral', url: '/painel-geral', icon: BarChart3 }} />
                 )}
+                {/* Painel ao Vivo — do sistema; respeita a permissão do vendedor. */}
+                {visibleFeatures.tab_crm_ao_vivo && (
+                  <NavItem collapsed={collapsed} item={{ title: 'Painel ao Vivo', url: '/painel-ao-vivo', icon: MonitorPlay }} />
+                )}
               </NavGroup>
             )}
 
@@ -405,6 +410,8 @@ export function AppSidebar() {
               {/* [Unificado] item "Dashboard" removido — virou parte do Painel Geral. */}
               {/* Painel Geral — soma Pedro + Marcos. Master only. */}
               <NavItem collapsed={collapsed} item={{ title: 'Painel Geral', url: '/painel-geral', icon: BarChart3 }} />
+              {/* Painel ao Vivo — do sistema (saiu do agente Pedro). */}
+              <NavItem collapsed={collapsed} item={{ title: 'Painel ao Vivo', url: '/painel-ao-vivo', icon: MonitorPlay }} />
             </NavGroup>
 
             {/* ── Agentes (Pedro + Marcos + José + demais conforme plano) ── */}

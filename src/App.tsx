@@ -246,6 +246,7 @@ const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
 const WhatsAppAIAgent = lazy(() => import("./pages/WhatsAppAIAgent"));
 const CrmAoVivo = lazy(() => import("./pages/CrmAoVivo"));
 const DashboardTV = lazy(() => import("./pages/DashboardTV"));
+const PainelAoVivo = lazy(() => import("./pages/PainelAoVivo"));
 const PainelGeral = lazy(() => import("./pages/PainelGeral"));
 const WhatsAppCampaigns = lazy(() => import("./pages/WhatsAppCampaigns"));
 const WhatsAppGroups = lazy(() => import("./pages/WhatsAppGroups"));
@@ -384,8 +385,10 @@ const App = () => (
                 <Route path="/whatsapp/instances"   element={<ProtectedRoute><Lazy><WhatsAppInstances /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/ai-agent"    element={<ProtectedRoute><Lazy><WhatsAppAIAgent /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/crm-ao-vivo" element={<ProtectedRoute><Lazy><CrmAoVivo /></Lazy></ProtectedRoute>} />
-                {/* Dashboard TV pra projetar em tela (master only, oculto do menu) */}
+                {/* Dashboard TV pra projetar em tela (tela cheia, oculto do menu) */}
                 <Route path="/dashboard-tv"         element={<ProtectedRoute><Lazy><DashboardTV /></Lazy></ProtectedRoute>} />
+                {/* Painel ao Vivo — mesmo painel, embutido no layout (item da sidebar) */}
+                <Route path="/painel-ao-vivo"       element={<ProtectedRoute><Lazy><PainelAoVivo /></Lazy></ProtectedRoute>} />
                 {/* Painel Geral — master vê todos (ranking); vendedor vê só os próprios leads (liberado via sidebar_painel_geral) */}
                 <Route path="/painel-geral"         element={<ProtectedRoute><Lazy><PainelGeral /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/campaigns"   element={<ProtectedRoute><Lazy><WhatsAppCampaigns /></Lazy></ProtectedRoute>} />

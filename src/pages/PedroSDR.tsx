@@ -5465,7 +5465,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 // Spec 27/05/2026: "Painel ao Vivo" antes do "CRM Avançado" no agente Pedro.
 const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
-  { id: 'ao-vivo',      label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺' },
+  // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
@@ -5475,7 +5475,7 @@ const MASTER_TABS = [
 // Todas as tabs possíveis para o seller (filtradas por visible_features)
 const ALL_SELLER_TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,     emoji: '📊', featureKey: 'tab_performance' },
-  { id: 'ao-vivo',     label: 'Painel ao Vivo', icon: MonitorPlay, emoji: '📺', featureKey: 'tab_crm_ao_vivo' },
+  // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
@@ -5616,13 +5616,8 @@ export default function PedroSDR() {
                 </TabsContent>
               )}
 
-              {/* CRM ao Vivo → substituído pelo Dashboard TV em 2026-05-26 a pedido do usuário.
-                  Kanban antigo (CrmAoVivo) ainda existe em /whatsapp/crm-ao-vivo como rota separada. */}
-              {(!isSeller || visibleFeatures.tab_crm_ao_vivo) && (
-                <TabsContent value="ao-vivo" className="mt-0 h-full">
-                  <DashboardTV embedded />
-                </TabsContent>
-              )}
+              {/* "Painel ao Vivo" saiu do agente Pedro (28/06): agora é item do
+                  sistema na sidebar, rota /dashboard-tv (mesmo DashboardTV). */}
 
               {/* Inbox */}
               {(!isSeller || visibleFeatures.tab_inbox) && (
