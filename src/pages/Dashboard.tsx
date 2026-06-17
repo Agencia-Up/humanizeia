@@ -124,11 +124,12 @@ export default function Dashboard() {
   const { isSeller, visibleFeatures } = useSellerProfile(user?.id);
   const { toast } = useToast();
   const navigate = useNavigate();
-  // Prioriza o nome editado no Perfil (profiles.full_name), igual ao Topbar.
-  const firstName = (profile?.full_name
+  // Nome completo do Perfil (profiles.full_name), igual ao Topbar — sem cortar
+  // pra primeira palavra.
+  const firstName = profile?.full_name
     || user?.user_metadata?.full_name
     || user?.email?.split('@')[0]
-    || 'Usuário').split(' ')[0];
+    || 'Usuário';
 
   /* Filtra agentes baseado em permissões (master ve tudo, seller ve só os liberados) */
   const visibleAgents = isSeller
