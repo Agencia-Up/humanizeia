@@ -116,12 +116,15 @@ const QUICK_ACTION_TIERS: Record<string, 'basico' | 'pro' | 'enterprise'> = {
 };
 
 export default function AgentHub() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { isAdmin } = useIsAdmin();
   const { subscription } = useSubscription();
   const { isSeller, visibleFeatures } = useSellerProfile(user?.id);
   const navigate = useNavigate();
-  const firstName = user?.user_metadata?.full_name?.split(' ')[0] || user?.email?.split('@')[0] || 'Usuário';
+  // Mesma fonte do Topbar: prioriza o nome editado no Perfil (profiles.full_name),
+  // depois o nome do cadastro (auth), por fim o e-mail. Sem isso a saudacao
+  // ficava presa no nome antigo (ex.: "MDJ") mesmo apos editar o perfil.
+  const firstName = (profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário').split(' ')[0];
 
   // Admin sempre vê tudo; senão usa o plano real do usuário
   const userTier = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
