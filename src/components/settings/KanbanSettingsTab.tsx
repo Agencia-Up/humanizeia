@@ -41,6 +41,7 @@ interface Row {
   ativo: boolean;
   responsavel_padrao_id: string;   // '' = nenhum
   is_default: boolean;
+  show_in_live: boolean;           // aparece como origem no Painel ao Vivo
   leads_count: number;
   _isNew?: boolean;
   _dirty?: boolean;
@@ -89,7 +90,7 @@ export function KanbanSettingsTab() {
       //    permanecem aqui pra reativar)
       const { data: stagesRaw, error: stErr } = await (supabase as any)
         .from('crm_pipeline_stages')
-        .select('id, name, color, position, tipo, ativo, responsavel_padrao_id, is_default')
+        .select('id, name, color, position, tipo, ativo, responsavel_padrao_id, is_default, show_in_live')
         .eq('user_id', ownerId)
         .order('position', { ascending: true });
       if (stErr) throw stErr;
@@ -131,6 +132,7 @@ export function KanbanSettingsTab() {
         ativo: s.ativo !== false,
         responsavel_padrao_id: s.responsavel_padrao_id || '',
         is_default: !!s.is_default,
+        show_in_live: s.show_in_live !== false,
         leads_count: countsMap.get(s.id) || 0,
       })));
       setDeletedIds([]);
@@ -153,6 +155,7 @@ export function KanbanSettingsTab() {
       id: `new-${++tempCounter}`,
       name: '', color: '#64748b', position: maxPos + 1,
       tipo: '', ativo: true, responsavel_padrao_id: '', is_default: false,
+      show_in_live: true,
       leads_count: 0, _isNew: true,
     }]);
   };
@@ -228,6 +231,7 @@ export function KanbanSettingsTab() {
         ativo: r.ativo,
         responsavel_padrao_id: r.responsavel_padrao_id || null,
         is_default: r.is_default ?? false,
+        show_in_live: r.show_in_live ?? true,
         updated_at: nowIso,
       }));
       const up = await (supabase as any).from('crm_pipeline_stages')
@@ -279,6 +283,7 @@ export function KanbanSettingsTab() {
                   <th className="text-left font-semibold px-2 py-2 w-36">Tipo</th>
                   <th className="text-left font-semibold px-2 py-2 min-w-[150px]">Responsável padrão</th>
                   <th className="text-center font-semibold px-2 py-2 w-24">Ativo</th>
+                  <th className="text-center font-semibold px-2 py-2 w-28">Painel ao Vivo</th>
                   <th className="text-left font-semibold px-2 py-2 w-20">Leads</th>
                   <th className="px-2 py-2 w-10"></th>
                 </tr>
@@ -286,7 +291,7 @@ export function KanbanSettingsTab() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center text-muted-foreground py-6 text-sm">
+                    <td colSpan={9} className="text-center text-muted-foreground py-6 text-sm">
                       Nenhuma coluna cadastrada. Adicione a primeira abaixo.
                     </td>
                   </tr>
@@ -315,7 +320,8 @@ export function KanbanSettingsTab() {
                     </td>
                     {/* Nome */}
                     <td className="px-2 py-1.5">
-                      <Input value={r.name} onChange={e => patch(r.id, { name: e.target.value })} disabled={saving}
+                      <Input value={r.name} onChange={e => patch(r.id, { name: e.target.value })} disabled={saving || (isSeller && r.show_in_live)}
+                        title={(isSeller && r.show_in_live) ? 'Coluna do Painel ao Vivo — só o dono pode renomear' : undefined}
                         placeholder="Nome da coluna" className="h-8 text-sm" />
                     </td>
                     {/* Tipo */}
@@ -343,15 +349,24 @@ export function KanbanSettingsTab() {
                         {r.ativo ? 'Ativa' : 'Inativa'}
                       </button>
                     </td>
+                    {/* Painel ao Vivo (origem) — só o dono (master) altera */}
+                    <td className="px-2 py-1.5 text-center">
+                      <button onClick={() => patch(r.id, { show_in_live: !r.show_in_live })} disabled={saving || isSeller}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${r.show_in_live ? 'bg-blue-500/15 text-blue-400 hover:bg-blue-500/25' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                        title={isSeller ? 'Só o dono da conta escolhe o que aparece no Painel ao Vivo' : (r.show_in_live ? 'Aparece no Painel ao Vivo — clique pra esconder' : 'Não aparece no Painel ao Vivo — clique pra mostrar')}>
+                        {r.show_in_live ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                        {r.show_in_live ? 'Mostra' : 'Oculta'}
+                      </button>
+                    </td>
                     {/* Leads */}
                     <td className="px-2 py-1.5 text-[11px] text-muted-foreground tabular-nums whitespace-nowrap">
                       {r.leads_count} {r.leads_count === 1 ? 'lead' : 'leads'}
                     </td>
                     {/* Excluir */}
                     <td className="px-2 py-1.5 text-right">
-                      <button onClick={() => removeRow(r.id)} disabled={saving || (!r._isNew && r.leads_count > 0)}
+                      <button onClick={() => removeRow(r.id)} disabled={saving || (!r._isNew && r.leads_count > 0) || (isSeller && r.show_in_live)}
                         className="h-7 w-7 inline-flex items-center justify-center text-red-400 hover:text-red-300 disabled:opacity-20 disabled:cursor-not-allowed"
-                        title={(!r._isNew && r.leads_count > 0) ? `Mova os ${r.leads_count} lead(s) antes de excluir` : 'Excluir coluna'}>
+                        title={(isSeller && r.show_in_live) ? 'Coluna do Painel ao Vivo — só o dono pode excluir' : ((!r._isNew && r.leads_count > 0) ? `Mova os ${r.leads_count} lead(s) antes de excluir` : 'Excluir coluna')}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </td>
