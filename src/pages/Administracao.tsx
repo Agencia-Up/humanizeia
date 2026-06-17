@@ -12,7 +12,7 @@ import {
 import {
   ShieldCheck, RefreshCcw, AlertTriangle, ChevronDown, ChevronRight,
   Activity, Users, BadgeCheck, Home, HeartPulse, ClipboardList,
-  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power,
+  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap,
 } from 'lucide-react';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
@@ -34,6 +34,7 @@ const TABS = [
   { key: 'saude', label: 'Saúde dos agentes', icon: HeartPulse },
   { key: 'operacao', label: 'Operação', icon: ClipboardList },
   { key: 'clientes', label: 'Clientes & Agentes', icon: Building2 },
+  { key: 'provedores', label: 'Provedores de IA', icon: Cpu },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
@@ -83,6 +84,7 @@ export default function Administracao() {
       {tab === 'saude' && <SaudeTab />}
       {tab === 'operacao' && <OperacaoTab />}
       {tab === 'clientes' && <ClientesTab />}
+      {tab === 'provedores' && <ProvedoresTab />}
     </div>
   );
 }
@@ -473,6 +475,139 @@ function ClientesTab() {
         "Plataforma" = conta antiga usando a nossa chave de IA (grandfathered). "Própria (BYOK)" = cliente novo
         pagando a própria IA. "Sem chave" = conta nova sem chave configurada — <span className="font-medium text-red-500">não responde</span> até configurar.
         O <span className="font-medium">Modelo</span> é o configurado no agente (pode estar sobreposto por um override global — ver aba de provedores).
+      </p>
+    </div>
+  );
+}
+
+/* ════════════════════════ ABA: PROVEDORES DE IA ════════════════════════ */
+interface ProviderState {
+  name: string;
+  has_key: boolean;
+  status: string;
+  code?: string;
+  http?: number;
+  in_use: { planner: boolean; reply: boolean };
+}
+interface ProvidersResp {
+  ok: boolean;
+  planner_provider: string;
+  reply_force_provider: string | null;
+  reply_note: string;
+  providers: ProviderState[];
+  recent_provider_errors_24h: number;
+  error?: string;
+}
+const PROVIDER_LABEL: Record<string, string> = { openai: 'OpenAI', deepseek: 'DeepSeek', anthropic: 'Anthropic (Claude)' };
+const STATUS_META: Record<string, { label: string; tone: 'good' | 'warn' | 'bad' | 'muted' }> = {
+  ok: { label: 'No ar', tone: 'good' },
+  quota: { label: 'Sem crédito', tone: 'bad' },
+  auth: { label: 'Chave inválida', tone: 'bad' },
+  rate: { label: 'Limite de taxa', tone: 'warn' },
+  down: { label: 'Fora do ar', tone: 'bad' },
+  no_key: { label: 'Sem chave', tone: 'muted' },
+  other: { label: 'Erro', tone: 'warn' },
+};
+const toneCls = (tone: string) =>
+  tone === 'good' ? 'text-emerald-600 dark:text-emerald-400'
+    : tone === 'bad' ? 'text-red-600 dark:text-red-400'
+      : tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground';
+const dotCls = (tone: string) =>
+  tone === 'good' ? 'bg-emerald-500' : tone === 'bad' ? 'bg-red-500' : tone === 'warn' ? 'bg-amber-500' : 'bg-muted-foreground/40';
+
+function ProvedoresTab() {
+  const [data, setData] = useState<ProvidersResp | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = useCallback(async () => {
+    setLoading(true); setErro(null);
+    try {
+      const { data: resp, error } = await supabase.functions.invoke('admin-ai-providers', { body: {} });
+      if (error) throw error;
+      const r = resp as ProvidersResp;
+      if (!r?.ok) throw new Error(r?.error || 'Falha ao carregar.');
+      setData(r);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErro(msg.includes('forbidden') ? 'Acesso restrito aos administradores.' : (msg || 'Falha ao carregar.'));
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const providers = data?.providers ?? [];
+  // alerta critico: algum provedor EM USO esta com problema?
+  const emUsoComProblema = providers.filter((p) => (p.in_use.planner || p.in_use.reply) && p.status !== 'ok');
+  const replyEmUso = data?.reply_force_provider || 'por agente';
+  const plannerEmUso = data?.planner_provider || '—';
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">Estado dos provedores de IA da plataforma (sondagem ao vivo) e qual está em uso de fato.</p>
+        <Button variant="outline" size="sm" onClick={carregar} disabled={loading}>
+          <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Testar agora
+        </Button>
+      </div>
+
+      {erro && <ErroBox msg={erro} />}
+
+      {!loading && emUsoComProblema.length > 0 && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Provedor em uso com problema!</AlertTitle>
+          <AlertDescription>
+            {emUsoComProblema.map((p) => `${PROVIDER_LABEL[p.name] ?? p.name}: ${STATUS_META[p.status]?.label ?? p.status}`).join(' · ')}.
+            O agente pode estar degradado. Considere trocar o provedor em uso.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* em uso */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <TotalCard icon={Zap} cor="text-primary" titulo="Reply em uso" valor={loading ? null : (PROVIDER_LABEL[replyEmUso] ?? replyEmUso)} sub={data?.reply_note} />
+        <TotalCard icon={Cpu} cor="text-sky-500" titulo="Planner em uso" valor={loading ? null : (PROVIDER_LABEL[plannerEmUso] ?? plannerEmUso)} sub="cérebro/decisão" />
+        <TotalCard icon={BadgeCheck} cor="text-emerald-500" titulo="Provedores no ar" valor={loading ? null : `${providers.filter((p) => p.status === 'ok').length}/${providers.length}`} sub="sondagem ao vivo" />
+        <TotalCard icon={AlertTriangle} cor={(data?.recent_provider_errors_24h ?? 0) > 0 ? 'text-amber-500' : 'text-emerald-500'} titulo="Erros de IA (24h)" valor={loading ? null : intBR(data?.recent_provider_errors_24h)} sub="quota/chave nos turnos" />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Provedores</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)
+          ) : providers.map((p) => {
+            const meta = STATUS_META[p.status] ?? STATUS_META.other;
+            const emUso = p.in_use.planner || p.in_use.reply;
+            return (
+              <div key={p.name} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3">
+                <div className="flex items-center gap-3">
+                  <span className={`h-2.5 w-2.5 rounded-full ${dotCls(meta.tone)}`} />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{PROVIDER_LABEL[p.name] ?? p.name}</span>
+                      {emUso && <Badge className="h-5 bg-primary/15 px-1.5 text-[10px] text-primary hover:bg-primary/15">EM USO</Badge>}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {emUso
+                        ? `${p.in_use.planner ? 'planner' : ''}${p.in_use.planner && p.in_use.reply ? ' + ' : ''}${p.in_use.reply ? 'reply' : ''}`
+                        : (p.has_key ? 'disponível (não em uso)' : 'sem chave configurada')}
+                    </div>
+                  </div>
+                </div>
+                <div className={`text-sm font-semibold ${toneCls(meta.tone)}`}>
+                  {meta.label}{p.code && p.status !== 'ok' ? <span className="ml-1 text-[10px] font-normal text-muted-foreground">({p.code})</span> : null}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        A sondagem faz uma chamada mínima a cada provedor (1 token) pra checar crédito/chave. "Reply/Planner em uso"
+        reflete o override global (<span className="font-mono">PEDRO_REPLY_FORCE_PROVIDER</span> / <span className="font-mono">PEDRO_PLANNER_PROVIDER</span>);
+        sem override, o reply segue o modelo configurado em cada agente.
       </p>
     </div>
   );
