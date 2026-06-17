@@ -470,6 +470,29 @@ export function AppSidebar() {
           </div>
         )}
         <SidebarMenu>
+          {/* Atalhos fixos: Configurações + Meu Perfil (sempre no rodapé) */}
+          {(!isSeller || visibleFeatures?.sidebar_configuracoes) && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Configurações"
+                onClick={() => navigate('/settings')}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Settings className="h-4 w-4" />
+                {!collapsed && <span className="text-sm">Configurações</span>}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Meu Perfil"
+              onClick={() => navigate('/perfil')}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Users className="h-4 w-4" />
+              {!collapsed && <span className="text-sm">Meu Perfil</span>}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip={isDarkMode ? 'Modo Claro' : 'Modo Escuro'}
