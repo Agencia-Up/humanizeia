@@ -310,7 +310,7 @@ serve(async (req) => {
     // 1. Masters com follow-up IA ATIVO (is_active=true). Sem config => nada.
     let q = supabase
       .from("followup_ia_config")
-      .select("user_id, is_active, max_disparos_dia, intervalo_min_minutes, intervalo_max_minutes, periodo_dias, horario_inicio, horario_fim, dias_semana, mensagem_base, gerar_variacoes_ia, simular_humano")
+      .select("user_id, is_active, max_disparos_dia, intervalo_min_minutes, intervalo_max_minutes, periodo_dias, horario_inicio, horario_fim, dias_semana, mensagem_base, gerar_variacoes_ia, simular_humano, reactivation_cycle_at")
       .eq("is_active", true);
     if (onlyUserId) q = q.eq("user_id", onlyUserId);
     const { data: configs, error: cfgErr } = await q;
@@ -379,6 +379,12 @@ serve(async (req) => {
       // 5. Quantos enviar nesta execucao (respeita cap restante).
       const remaining = dryRun ? maxPerMaster : Math.min(maxPerMaster, cap - (sentToday ?? 0));
 
+      // CICLO DE FILA: o lead so volta a receber follow-up depois que TODA a fila
+      // passou. cycleAt = inicio do ciclo atual; quem foi cutucado neste ciclo
+      // (last_sent_at >= cycleAt) fica de fora ate a fila zerar e abrir ciclo novo.
+      let cycleAt: string | null = cfg.reactivation_cycle_at || null;
+      let cycleReset = false;
+
       for (let i = 0; i < remaining; i++) {
         // 5a. Proximo lead: fila em rodizio (RPC) OU lead especifico (teste).
         let lead: any = null;
@@ -402,13 +408,35 @@ serve(async (req) => {
             };
           }
         } else {
-          // Busca um LOTE da fila (rodizio) e pega o 1o quieto ha >24h (trava do dono).
-          const { data: rows } = await supabase.rpc("get_next_reactivation_lead", {
-            p_user_id: cfg.user_id,
-            p_periodo_dias: cfg.periodo_dias ?? null,
-            p_limit: 25,
-          });
-          lead = await pickEligibleByRecency(supabase, rows);
+          // Busca um LOTE da fila do CICLO atual (rodizio) e pega o 1o quieto >24h.
+          const fetchBatch = async (cyc: string | null) => {
+            const { data: rows } = await supabase.rpc("get_next_reactivation_lead", {
+              p_user_id: cfg.user_id,
+              p_periodo_dias: cfg.periodo_dias ?? null,
+              p_limit: 25,
+              p_cycle_at: cyc,
+            });
+            return await pickEligibleByRecency(supabase, rows);
+          };
+          lead = await fetchBatch(cycleAt);
+          // CICLO: se a fila do ciclo atual zerou mas AINDA ha leads inativos
+          // (todos ja cutucados neste ciclo), abre ciclo novo e recomeca o rodizio.
+          // So assim um lead volta a receber follow-up — depois da fila inteira.
+          if (!lead && !cycleReset) {
+            cycleReset = true;
+            const newCycle = now.toISOString();
+            const restarted = await fetchBatch(newCycle);
+            if (restarted) {
+              if (!dryRun) {
+                await supabase.from("followup_ia_config")
+                  .update({ reactivation_cycle_at: newCycle })
+                  .eq("user_id", cfg.user_id);
+              }
+              cycleAt = newCycle;
+              lead = restarted;
+              r.actions.push({ note: "ciclo_reiniciado_fila_completa" });
+            }
+          }
         }
 
         if (!lead) { r.actions.push({ note: "fila_vazia" }); break; }
