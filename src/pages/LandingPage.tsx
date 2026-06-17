@@ -210,6 +210,10 @@ const faqs = [
     a: 'Marcos foi feito justamente para evitar isso. Ele dispara segmentado por origem/funil/cidade, com intervalos seguros entre envios, e nunca envia duas vezes pro mesmo lead na mesma campanha.',
   },
   {
+    q: 'O José substitui meu gestor de tráfego ou minha agência?',
+    a: 'O José coloca o tráfego pago dentro da sua própria estrutura: gerencia Meta e Google Ads, mede o custo por lead de cada campanha e cruza com o Pedro pra mostrar qual anúncio gera lead que realmente fecha — não só clique. Você passa a otimizar com dado real, sem depender de relatório de agência.',
+  },
+  {
     q: 'Posso cancelar quando quiser?',
     a: 'Sim. Sem multa, sem fidelidade. Você decide quando começar e quando parar.',
   },
@@ -273,6 +277,7 @@ export default function LandingPage() {
             <a href="#como-funciona" className="hover:text-foreground transition-colors">Como funciona</a>
             <a href="#agente-pedro" className="hover:text-foreground transition-colors">Pedro</a>
             <a href="#agente-marcos" className="hover:text-foreground transition-colors">Marcos</a>
+            <a href="#agente-jose" className="hover:text-foreground transition-colors">José</a>
             <a href="#em-breve" className="hover:text-foreground transition-colors">Em breve</a>
             <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
             <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
@@ -326,6 +331,7 @@ export default function LandingPage() {
               { href: '#como-funciona', label: 'Como funciona' },
               { href: '#agente-pedro', label: 'Pedro' },
               { href: '#agente-marcos', label: 'Marcos' },
+              { href: '#agente-jose', label: 'José' },
               { href: '#em-breve', label: 'Em breve' },
               { href: '#planos', label: 'Planos' },
               { href: '#faq', label: 'FAQ' },
@@ -402,8 +408,9 @@ export default function LandingPage() {
             {/* Subtítulo */}
             <p className="text-base md:text-lg lg:text-xl text-muted-foreground max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed">
               <strong className="text-foreground">Pedro</strong> atende, qualifica e classifica cada lead no WhatsApp em segundos.{' '}
-              <strong className="text-foreground">Marcos</strong> dispara campanhas inteligentes e mantém seu CRM organizado.
-              Você nunca mais perde um lead por demora — nem queima sua base com mensagem em massa.
+              <strong className="text-foreground">Marcos</strong> dispara campanhas inteligentes e mantém seu CRM organizado.{' '}
+              <strong className="text-foreground">José</strong> cuida do tráfego pago e mede o custo por lead de cada campanha.
+              Uma estrutura completa: você nunca mais perde um lead por demora, nem queima base, nem investe no escuro.
             </p>
 
             {/* Microbenefícios */}
@@ -1089,51 +1096,78 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── JOSÉ · GESTOR DE TRÁFEGO (já disponível no Pro) ───────────── */}
-      <section className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden bg-card/30">
+      {/* ── AGENTE JOSÉ · GESTOR DE TRÁFEGO PAGO ─────────────────────── */}
+      <section id="agente-jose" className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden" style={{ background: 'rgba(15, 38, 71, 0.03)' }}>
         <div className="relative max-w-6xl mx-auto">
-          <div className="text-center mb-10 md:mb-12 animate-fade-in">
-            <Badge
-              variant="outline"
-              className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider border-orange-500/40 text-orange-400 bg-orange-500/10"
-            >
-              <Target className="inline-block h-3 w-3 mr-1.5" />
-              Novo · já disponível no Pro
+          <div className="text-center mb-12 md:mb-14 animate-fade-in">
+            <Badge className="mb-5 border-0 px-4 py-1.5 text-xs font-bold uppercase tracking-wider" style={{ background: 'var(--brand-success-bg)', color: 'var(--brand-success)' }}>
+              <span className="inline-block w-1.5 h-1.5 rounded-full mr-2 animate-pulse" style={{ background: 'var(--brand-success)' }} />
+              Agente Ativo · incluído no Pro
             </Badge>
-            <h2
-              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
-              José, seu <span style={{ color: 'var(--brand-gold)' }}>gestor de tráfego</span> que não dorme
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+              <span style={{ color: 'var(--brand-gold)' }}>José</span> — O gestor de tráfego que mostra de onde vem cada lead e quanto custa cada venda.
             </h2>
-            <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-              Ele cuida das suas campanhas no Meta e no Google Ads o dia inteiro: cria, otimiza,
-              pausa o que não dá retorno e te mostra exatamente onde está o seu lucro — sem você
-              depender de agência.
+            <p className="text-base md:text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+              Anúncio sem medição é dinheiro no escuro. O José coloca o tráfego pago dentro da sua
+              estrutura: mede tudo, puxa o <span className="font-semibold text-foreground">custo por lead de cada campanha</span> e
+              cruza com o Pedro pra você saber qual anúncio traz lead que <span className="font-semibold text-foreground">vira venda</span> — não só clique.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5 mb-10">
+          {/* Grid de funcionalidades */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6 mb-12 md:mb-14">
             {[
-              { icon: '🎯', title: 'Meta + Google Ads', desc: 'Gerencia suas campanhas nas duas maiores plataformas, num lugar só.' },
-              { icon: '⚙️', title: 'Otimização automática', desc: 'Cria, ajusta orçamento, pausa o que gasta sem vender e escala o que funciona.' },
-              { icon: '📊', title: 'Painel de resultados', desc: 'ROAS, CPA, CTR e CPM ao vivo — você vê o retorno de cada real investido.' },
-              { icon: '🧠', title: 'Recomendações com IA', desc: 'Aponta o que melhorar com base em dados e benchmarks do seu setor.' },
-            ].map((item) => (
-              <div
-                key={item.title}
-                className="rounded-xl border border-border/40 bg-card/60 p-5 hover:border-primary/30 transition-colors"
-              >
-                <p className="text-2xl mb-2">{item.icon}</p>
-                <p className="font-bold text-sm mb-1 text-foreground">{item.title}</p>
-                <p className="text-xs text-muted-foreground leading-relaxed">{item.desc}</p>
-              </div>
-            ))}
+              { Icon: Megaphone, title: 'Meta Ads + Google Ads num lugar só', desc: 'Cria, gerencia e acompanha as campanhas das duas maiores plataformas sem sair do painel, sem depender de agência.', isGold: true },
+              { Icon: BarChart3, title: 'Custo por lead real, campanha por campanha', desc: 'Não é só clique: o José puxa o custo por lead (CPL), CPA, ROAS, CTR e CPM de cada campanha — atualizado ao vivo.', isGold: false },
+              { Icon: Database, title: 'Cruzamento de dados com o Pedro', desc: 'No painel do Pedro você vê de qual campanha veio cada lead e quais foram qualificados e fecharam — atribuição de ponta a ponta.', isGold: true },
+              { Icon: Cog, title: 'Otimização automática', desc: 'Ajusta orçamento sozinho, pausa o anúncio que gasta sem vender e escala o que traz lead bom de verdade.', isGold: false },
+              { Icon: LineChart, title: 'Painel de resultados ao vivo', desc: 'ROAS, CPA e custo por lead em tempo real. Você enxerga o retorno de cada real investido, sem planilha.', isGold: true },
+              { Icon: Brain, title: 'Recomendações com IA', desc: 'Aponta onde melhorar com base nos seus próprios números e em benchmarks do setor automotivo.', isGold: false },
+            ].map((feat, i) => {
+              const accentColor = feat.isGold ? 'var(--brand-gold)' : 'var(--brand-navy)';
+              const accentBg = feat.isGold ? 'rgba(212, 160, 23, 0.10)' : 'rgba(15, 38, 71, 0.08)';
+              return (
+                <div key={feat.title} className="group rounded-2xl bg-card p-5 md:p-6 transition-all duration-200 hover:translate-y-[-3px]" style={{ border: '1px solid rgba(15, 38, 71, 0.10)', boxShadow: 'var(--shadow-soft)', animation: `fadeIn 0.5s ease-out ${i * 0.05}s both` }}>
+                  <div style={{ background: accentBg }} className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110">
+                    <feat.Icon className="h-5 w-5" style={{ color: accentColor }} strokeWidth={2} />
+                  </div>
+                  <h3 className="text-base md:text-lg font-bold mb-2 leading-tight">{feat.title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{feat.desc}</p>
+                </div>
+              );
+            })}
           </div>
 
-          <p className="text-center text-sm text-muted-foreground">
-            <strong className="text-foreground">Já incluído no plano Pro</strong> — junto com o Pedro (WhatsApp) e o Marcos (CRM).
-          </p>
+          {/* Destaque: cruzamento de dados Pedro × José */}
+          <div className="max-w-4xl mx-auto rounded-2xl bg-card p-6 md:p-8 mb-12 md:mb-14" style={{ border: '1px solid rgba(212, 160, 23, 0.25)', boxShadow: 'var(--shadow-soft)' }}>
+            <div className="flex items-center gap-2 mb-4 justify-center">
+              <RefreshCw className="h-4 w-4" style={{ color: 'var(--brand-gold)' }} />
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--brand-gold)' }}>Cruzamento de dados no painel do Pedro</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 text-center">
+              {[
+                { n: '1', t: 'José traz o lead', d: 'A campanha gera o clique e leva o cliente pro WhatsApp.' },
+                { n: '2', t: 'Pedro atende e qualifica', d: 'O lead é atendido, classificado e marcado com a campanha de origem.' },
+                { n: '3', t: 'Você otimiza no certo', d: 'Vê qual anúncio traz lead que fecha e corta o que só queima verba.' },
+              ].map((step) => (
+                <div key={step.n} className="rounded-xl p-4" style={{ background: 'rgba(15, 38, 71, 0.04)' }}>
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center mx-auto mb-2 text-xs font-bold" style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}>{step.n}</div>
+                  <p className="text-sm font-bold mb-1 text-foreground">{step.t}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{step.d}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Bloco resultado prometido */}
+          <div className="relative max-w-4xl mx-auto rounded-3xl p-8 md:p-10 text-center overflow-hidden" style={{ background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)', boxShadow: 'var(--shadow-strong)' }}>
+            <p className="relative text-lg md:text-2xl font-bold leading-snug" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
+              Pare de otimizar campanha no escuro. Com o José medindo o custo por lead e cruzando os dados do Pedro, <span style={{ color: 'var(--brand-gold)' }}>você sabe exatamente qual anúncio vira venda</span> — e investe onde dá lucro.
+            </p>
+            <p className="relative mt-4 text-sm md:text-base" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
+              Já incluído no plano Pro — junto com o Pedro (WhatsApp) e o Marcos (CRM).
+            </p>
+          </div>
         </div>
       </section>
 
