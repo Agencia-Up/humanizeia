@@ -83,7 +83,7 @@ const allSellerSystemItems = [
   { title: 'Treinamento',    url: '/treinamento',  icon: GraduationCap,   featureKey: 'sidebar_treinamento' as keyof VisibleFeatures },
   { title: 'Meu Plano',      url: '/meu-plano',    icon: CreditCard,      featureKey: 'sidebar_meu_plano' as keyof VisibleFeatures },
   { title: 'Integrações',    url: '/integrations', icon: Plug,            featureKey: 'sidebar_integracoes' as keyof VisibleFeatures },
-  { title: 'Configurações',  url: '/settings',     icon: Settings,        featureKey: 'sidebar_configuracoes' as keyof VisibleFeatures },
+  // Configurações saiu daqui — agora fica fixo no rodapé (respeitando a permissão).
 ];
 
 // ── Agentes Seller — filtrados por visibleFeatures (unificado com Dashboard) ─
@@ -119,8 +119,7 @@ const systemItems = [
   { title: 'Treinamento',      url: '/treinamento',   icon: GraduationCap },
   { title: 'Meu Plano',        url: '/meu-plano',     icon: CreditCard },
   { title: 'Integrações',      url: '/integrations',  icon: Plug },
-  { title: 'Meu Perfil',       url: '/perfil',        icon: Users },
-  { title: 'Configurações',    url: '/settings',      icon: Settings },
+  // Meu Perfil e Configurações saíram daqui — agora ficam fixos no rodapé.
   // Fase 6.5 — gerencia cidades + origens dinâmicas
   { title: 'Campos Dinâmicos', url: '/configuracoes/campos-dinamicos', icon: Sparkles },
 ];
