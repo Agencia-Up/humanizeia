@@ -20,6 +20,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
+import { useSubscription } from '@/hooks/useSubscription';
 import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -176,8 +177,8 @@ const FEATURE_GROUPS: FeatureGroupStyle[] = [
   },
   {
     key: 'marcos',
-    title: 'CRM & WhatsApp',
-    subtitle: 'Ferramentas de CRM e comunicação',
+    title: 'Abas do Marcos CRM',
+    subtitle: 'Abas do Marcos visíveis no painel do vendedor',
     icon: MessageSquare,
     border: 'border-emerald-500/30',
     headerGradient: 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/5',
@@ -207,9 +208,17 @@ const FEATURE_GROUPS: FeatureGroupStyle[] = [
 export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const { toast } = useToast();
 
-  // TODO: voltar a filtrar FEATURE_LABELS por plano do master (estava
-  // causando erro em runtime — foi simplificado para mostrar todos)
-  const availableFeatureLabels = FEATURE_LABELS;
+  // Mostra so os AGENTES que o plano do master libera, e esconde o grupo do
+  // Marcos quando o plano nao tem Marcos. Abas do Pedro e Menu Lateral sempre.
+  const { subscription } = useSubscription();
+  const masterTier = (subscription?.plan_id as 'basico' | 'pro' | 'enterprise') || 'enterprise';
+  const masterTierRank = TIER_ORDER[masterTier] ?? TIER_ORDER.enterprise;
+  const planHasMarcos = masterTierRank >= TIER_ORDER.pro;
+  const availableFeatureLabels = FEATURE_LABELS.filter(f => {
+    if (f.group === 'agents') return TIER_ORDER[AGENT_TIER[f.key] ?? 'enterprise'] <= masterTierRank;
+    if (f.group === 'marcos') return planHasMarcos;
+    return true;
+  });
 
   const [loading, setLoading] = useState(true);
   const [sellers, setSellers] = useState<SellerMember[]>([]);
@@ -1144,6 +1153,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                 <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
                   {FEATURE_GROUPS.map(group => {
                     const items = availableFeatureLabels.filter(f => f.group === group.key);
+                    if (items.length === 0) return null; // grupo sem feature no plano: nao mostra
                     const activeCount = items.filter(f => configFeatures[f.key]).length;
                     const allActive = activeCount === items.length;
                     const noneActive = activeCount === 0;
