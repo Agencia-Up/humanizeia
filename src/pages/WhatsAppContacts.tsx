@@ -45,6 +45,7 @@ interface ContactList {
   created_at: string;
   updated_at: string;
   auto_sync_pedro_leads?: boolean;
+  seller_member_id?: string | null;
 }
 
 interface WAContact {
@@ -87,6 +88,8 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
 
   // === Contact Lists state ===
   const [lists, setLists] = useState<ContactList[]>([]);
+  // nome do vendedor por seller_member_id (pra mostrar "quem subiu" na conta master)
+  const [sellerNames, setSellerNames] = useState<Record<string, string>>({});
   const [contacts, setContacts] = useState<WAContact[]>([]);
   const [selectedList, setSelectedList] = useState<ContactList | null>(null);
   const [listSelectionMode, setListSelectionMode] = useState(false);
@@ -138,7 +141,19 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       }
       const { data, error } = await query;
       if (error) throw error;
-      setLists((data as ContactList[]) || []);
+      const listRows = (data as ContactList[]) || [];
+      setLists(listRows);
+      // Conta master: descobre o NOME do vendedor que subiu cada lista (seller_member_id).
+      const sids = [...new Set(listRows.map(l => l.seller_member_id).filter(Boolean))] as string[];
+      if (!isSeller && sids.length) {
+        const { data: mem } = await (supabase as any)
+          .from('ai_team_members').select('id, name').in('id', sids);
+        const map: Record<string, string> = {};
+        for (const m of (mem || [])) map[m.id] = m.name || 'Vendedor';
+        setSellerNames(map);
+      } else {
+        setSellerNames({});
+      }
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     } finally {
@@ -350,14 +365,26 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     if (selectedListIds.length === 0) return;
     setIsSaving(true);
     try {
-      const chunks = Array.from({ length: Math.ceil(selectedListIds.length / 100) }, (_, index) =>
-        selectedListIds.slice(index * 100, index * 100 + 100)
-      );
+      // Apaga os CONTATOS em lotes pequenos por id (≤500) — antes apagava todos de
+      // até 100 listas numa query só e estourava o "statement timeout" (ex.: 4366
+      // contatos). Vai lista a lista, lendo e deletando em blocos.
+      for (const listId of selectedListIds) {
+        // segurança: máx ~200 blocos (100k contatos) pra não rodar pra sempre
+        for (let guard = 0; guard < 200; guard++) {
+          const { data: batch, error: selErr } = await supabase
+            .from('wa_contacts').select('id').eq('list_id', listId).limit(500);
+          if (selErr) throw selErr;
+          if (!batch || batch.length === 0) break;
+          const ids = batch.map((r: any) => r.id);
+          const { error: delErr } = await supabase.from('wa_contacts').delete().in('id', ids);
+          if (delErr) throw delErr;
+          if (batch.length < 500) break;
+        }
+      }
 
-      for (const chunk of chunks) {
-        const { error: contactsError } = await supabase.from('wa_contacts').delete().in('list_id', chunk);
-        if (contactsError) throw contactsError;
-
+      // Agora as listas (poucas linhas) — em blocos de 100 por garantia.
+      for (let i = 0; i < selectedListIds.length; i += 100) {
+        const chunk = selectedListIds.slice(i, i + 100);
         const { error: listsError } = await supabase.from('wa_contact_lists').delete().in('id', chunk);
         if (listsError) throw listsError;
       }
@@ -707,6 +734,11 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
                           <p className="text-[11px] text-muted-foreground mt-2" onClick={openOrToggleList}>
                             Criada em {format(new Date(list.created_at), "dd/MM/yyyy", { locale: ptBR })}
                           </p>
+                          {!isSeller && list.seller_member_id && (
+                            <p className="text-[11px] text-violet-300 mt-1 flex items-center gap-1" onClick={openOrToggleList}>
+                              <Users className="h-3 w-3" /> Enviada por {sellerNames[list.seller_member_id] || 'vendedor'}
+                            </p>
+                          )}
                         </CardContent>
                       </Card>
                     );

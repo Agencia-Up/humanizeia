@@ -57,18 +57,25 @@ function formatPhoneE164(raw: string): string | null {
 async function findExistingPhones(
   supabase: any,
   userId: string,
-  phones: string[]
+  phones: string[],
+  listId?: string | null,
 ): Promise<Set<string>> {
   const existing = new Set<string>();
 
   // Query in batches of 500 to avoid query size limits
   for (let i = 0; i < phones.length; i += 500) {
     const batch = phones.slice(i, i + 500);
-    const { data } = await supabase
+    let query = supabase
       .from('wa_contacts')
       .select('phone')
       .eq('user_id', userId)
       .in('phone', batch);
+    // Dedup POR LISTA: só conta como duplicado quem já está NESTA lista. O unique
+    // é (user_id, list_id, phone), então o mesmo contato pode (e deve) entrar em
+    // listas diferentes. Sem isso, contato que já existia em outra lista era
+    // ignorado e a lista nova ficava vazia (0 importados / N duplicados).
+    if (listId) query = query.eq('list_id', listId);
+    const { data } = await query;
 
     if (data) {
       for (const row of data) {
@@ -273,7 +280,7 @@ Deno.serve(async (req) => {
 
     // Step 2: Check for duplicates in database
     const phonesToCheck = Array.from(formattedMap.keys());
-    const existingPhones = await findExistingPhones(supabase, effectiveUserId, phonesToCheck);
+    const existingPhones = await findExistingPhones(supabase, effectiveUserId, phonesToCheck, list_id);
 
     // Remove duplicates that already exist in DB
     for (const phone of existingPhones) {
@@ -334,7 +341,10 @@ Deno.serve(async (req) => {
     if (list_id && sanitized.length > 0) {
       for (let i = 0; i < sanitized.length; i += 500) {
         const batch = sanitized.slice(i, i + 500);
-        const { error: insertErr } = await supabase.from('wa_contacts').insert(batch);
+        // upsert idempotente: se sobrar algum (user_id,list_id,phone) já existente
+        // NESTA lista, ignora em vez de derrubar o lote inteiro.
+        const { error: insertErr } = await supabase.from('wa_contacts')
+          .upsert(batch, { onConflict: 'user_id,list_id,phone', ignoreDuplicates: true });
         if (insertErr) {
           console.error('[sanitize-contacts] Insert batch error:', insertErr);
         } else {
