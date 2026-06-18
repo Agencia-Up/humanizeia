@@ -1195,6 +1195,37 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [fuUploading, setFuUploading]     = useState(false);
   const fuFileRef = useRef<HTMLInputElement>(null);
   const draggedColumnIdRef = useRef<string | null>(null);
+  // Auto-scroll horizontal do board enquanto arrasta o lead. O @hello-pangea/dnd só
+  // rola o scroll do PRÓPRIO droppable (cada coluna tem overflow-y) + a janela; o
+  // scroll horizontal do board é um ancestral, então o card não alcançava as colunas
+  // do fim. Aqui rolamos o board quando o ponteiro chega perto da borda esq/dir.
+  const boardScrollRef = useRef<HTMLDivElement>(null);
+  const autoScrollDirRef = useRef(0);            // -1 esquerda, 0 nada, 1 direita
+  const autoScrollRafRef = useRef<number | null>(null);
+  const boardAutoScrollStep = useCallback(() => {
+    const el = boardScrollRef.current;
+    if (el && autoScrollDirRef.current !== 0) el.scrollLeft += autoScrollDirRef.current * 22;
+    autoScrollRafRef.current = requestAnimationFrame(boardAutoScrollStep);
+  }, []);
+  const onLeadDragPointerMove = useCallback((e: MouseEvent | TouchEvent) => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+    const x = 'touches' in e ? (e.touches[0]?.clientX ?? 0) : (e as MouseEvent).clientX;
+    const rect = el.getBoundingClientRect();
+    const EDGE = 100;
+    autoScrollDirRef.current = x > rect.right - EDGE ? 1 : x < rect.left + EDGE ? -1 : 0;
+  }, []);
+  const startBoardAutoScroll = useCallback(() => {
+    window.addEventListener('mousemove', onLeadDragPointerMove);
+    window.addEventListener('touchmove', onLeadDragPointerMove, { passive: true });
+    if (autoScrollRafRef.current == null) autoScrollRafRef.current = requestAnimationFrame(boardAutoScrollStep);
+  }, [onLeadDragPointerMove, boardAutoScrollStep]);
+  const stopBoardAutoScroll = useCallback(() => {
+    window.removeEventListener('mousemove', onLeadDragPointerMove);
+    window.removeEventListener('touchmove', onLeadDragPointerMove);
+    autoScrollDirRef.current = 0;
+    if (autoScrollRafRef.current != null) { cancelAnimationFrame(autoScrollRafRef.current); autoScrollRafRef.current = null; }
+  }, [onLeadDragPointerMove]);
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
@@ -4486,8 +4517,11 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
       {/* ── PIPELINE (Kanban) com Drag & Drop ──────────────────────── */}
       {view === 'pipeline' && (
-        <DragDropContext onDragEnd={handleDragEnd}>
-          <div className="overflow-x-auto pb-2 -mx-4 px-4">
+        <DragDropContext
+          onDragStart={startBoardAutoScroll}
+          onDragEnd={(result) => { stopBoardAutoScroll(); handleDragEnd(result); }}
+        >
+          <div ref={boardScrollRef} className="overflow-x-auto pb-2 -mx-4 px-4">
             <div className="flex gap-3 min-w-max">
               {pipelineColumns.map(col => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
