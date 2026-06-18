@@ -161,6 +161,13 @@ const stateful = [
   { g: "transfer", n: "troca qualificada (interesse+veículo de troca+nome) -> anuncia consultor, não dispensa", run: () => withLead(
     { lead: { lead_name: "Marcos", trade_in_vehicle: "Onix", vehicle_interest: "Fiat Strada" }, state: { interesse: { modelo_desejado: "Fiat Strada", trade_in_vehicle: "Onix" } } },
     async (chat) => { const r = await dryRun({ chatid: chat, text: "tenho um onix 2016 na troca, 75 mil km" }); return { r, checks: [A.pronto(r, true), A.replyHas(r, ["consultor", "especialista", "avaliar", "avalia", "passar"]), A.replyHasNot(r, ["a disposicao", "estou a disposicao", "fico a disposicao"])] }; }) },
+
+  // PILAR C — INTELIGÊNCIA do cérebro (decision_context, sem if por caso): NÃO repetir a lista já
+  // mostrada + RECONHECER o sentimento. Caso real lead 99627-7728 ("ficaram orrivel" -> repetiu lista).
+  { g: "memoria", n: "reclamou dos carros já mostrados -> NÃO repete a mesma lista, reconhece e avança", run: () => withLead(
+    { lead: { lead_name: "Joao" }, state: { interesse: { tipo_veiculo: "sedan" }, veiculos_apresentados: [{ label: "Chevrolet Onix Sedan Plus 2025", marca: "Chevrolet", modelo: "Onix Sedan", ano: 2025, preco: 97990 }, { label: "Fiat Cronos 2025", marca: "Fiat", modelo: "Cronos", ano: 2025, preco: 82990 }] },
+      history: [{ role: "assistant", content: "Temos alguns sedans: 1. Chevrolet Onix Sedan Plus 2025 - R$ 97.990. 2. Fiat Cronos 2025 - R$ 82.990. Quer ver fotos de algum?" }] },
+    async (chat) => { const r = await dryRun({ chatid: chat, text: "esses ficaram horriveis" }); return { r, checks: [{ pass: !(r.replyN.includes("onix") && r.replyN.includes("cronos")), label: `não repetiu a lista (reply: "${r.reply.slice(0, 60)}")` }] }; }) },
 ];
 
 // ── REPLAY de anúncios REAIS (ctwa_diag_capture) ────────────────────────────

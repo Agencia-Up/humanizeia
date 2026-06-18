@@ -1040,6 +1040,11 @@ export async function planPedroTurn(input: {
     "- Nunca invente que enviou fotos sem a acao 'photo_request'.",
     "- 'confidence' = 0 a 1 (quao certo voce esta da acao). Use 'lead_interpretation' para explicar em 1 frase como leu a mensagem em relacao ao pending_question.",
     "",
+    "== CONTEXTO DE DECISAO (decision_context) — USE SEMPRE p/ decidir o que falar/buscar ==",
+    "- decision_context.vehicles_shown = carros que voce JA apresentou a este lead. NUNCA re-liste os MESMOS como se fossem novidade. Se o lead so reage a eles ('ok', 'gostei', 'achei caro', 'feios', 'nenhum desses'), NAO repita a lista: reconheca o que ele disse e AVANCE (pergunte qual interessa, ofereca foto, ou — se ele recusou/quer diferente — busque OUTRAS opcoes).",
+    "- decision_context.qualification = o que voce JA sabe deste lead (nome/interesse/troca/pagamento/agendamento). NAO repergunte o que ja esta preenchido aqui. Se ja ha interesse + nome + (troca OU pagamento OU agendamento), o lead esta QUALIFICADO: avance pra fechar/transferir conforme as regras, sem ficar colhendo mais dados.",
+    "- RECONHECA o que o lead acabou de dizer (elogio, reclamacao tipo 'ficaram horriveis', objecao, comparacao) ANTES de seguir — nunca ignore o sentimento nem responda no automatico/repetido.",
+    "",
     "== HANDOFF ==",
     "- Defina 'action'='handoff' SOMENTE quando o lead pediu EXPLICITAMENTE falar com um humano/vendedor/consultor (ex: 'quero falar com um vendedor', 'me passa pra um atendente').",
     "  ATENCAO — NAO e handoff aqui (use 'reply_only' e deixe o agente conduzir a QUALIFICACAO do System Prompt, uma pergunta por vez, ANTES de qualquer transferencia):",
@@ -1050,11 +1055,31 @@ export async function planPedroTurn(input: {
     "  Em 'handoff', preencha 'response_guidance' orientando uma despedida curta avisando que um consultor de vendas vai entrar em contato e agradecendo — sem prometer mais nada e sem acionar estoque.",
   ].join("\n");
 
+  // decision_context: sinais de decisao DESTILADOS da memoria (o blob `memory` e grande e o LLM nao
+  // os extrai de forma confiavel). Da ao cerebro o que faltava p/ decidir sozinho — o que JA mostrou
+  // (nao repetir) e o que JA sabe (nao re-perguntar / saber se qualificou). Robusto a campos ausentes.
+  const _mem: any = input.memory || {};
+  const _apres = Array.isArray(_mem.veiculos_apresentados) ? _mem.veiculos_apresentados : [];
+  const _int = _mem.interesse || {};
+  const decisionContext = {
+    vehicles_shown: _apres.slice(0, 8)
+      .map((v: any) => v?.label || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" "))
+      .filter(Boolean),
+    qualification: {
+      nome: _mem.lead_name || _int.nome || null,
+      interesse: _int.modelo_desejado || _int.tipo_veiculo || null,
+      troca: _int.trade_in_vehicle || _mem.trade_in_vehicle || null,
+      pagamento: _int.forma_pagamento || _int.pagamento || null,
+      agendamento: _int.dia_agendamento || _int.agendamento || null,
+    },
+  };
+
   const userPayload = JSON.stringify({
     lead_message: input.message,
     enriched_message: input.enriched_message,
     pending_question: pendingQuestion,
     last_agent_message: lastAgentMessage,
+    decision_context: decisionContext,
     memory: input.memory || {},
     heuristic_intent: input.heuristic_intent || null,
     ad_context: input.ad_context || null,
