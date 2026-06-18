@@ -247,6 +247,7 @@ const testimonials = [
 
 // Coloque o arquivo do video em public/logos-por-dentro.mp4 para ativar o player.
 const DEMO_VIDEO_SRC = '/logos-por-dentro.mp4';
+const BASIC_CHECKOUT_URL = '/checkout?plano=basico&ciclo=mensal';
 const PRO_CHECKOUT_URL = '/checkout?plano=pro&ciclo=mensal';
 const PRO_MAX_CONTACT_URL = 'mailto:suporte@logosiabrasil.com?subject=Quero%20conhecer%20o%20PRO%20MAX%20da%20LOGOS%7CIA';
 
@@ -257,6 +258,84 @@ export default function LandingPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [demoVideoAvailable, setDemoVideoAvailable] = useState(Boolean(DEMO_VIDEO_SRC));
+  const pricingPlans = [
+    {
+      id: 'basico',
+      badge: 'Plano de entrada',
+      name: 'Básico',
+      description: 'Comece com o Agente Pedro atendendo e qualificando seus leads no WhatsApp.',
+      price: '497',
+      cents: ',00',
+      priceNote: '+ R$ 1.500 de implementação (pagamento único)',
+      highlight: '1 agente incluso',
+      highlightSub: 'Pedro SDR no atendimento com IA',
+      features: [
+        'Agente Pedro incluso',
+        'Trabalha com 1 agente de IA',
+        'Até 5 instâncias de WhatsApp conectadas',
+        'CRM completo de leads',
+        'Qualificação automática no WhatsApp',
+        'Follow-up automático 24/7',
+        'Suporte por e-mail',
+      ],
+      cta: 'Assinar o Básico',
+      href: BASIC_CHECKOUT_URL,
+      featured: false,
+      contact: false,
+    },
+    {
+      id: 'pro',
+      badge: 'Oferta Fundador · 10 primeiros',
+      name: 'Pro',
+      description: 'Pedro vende e Marcos organiza a operação no automático, 24/7.',
+      price: '497',
+      cents: ',90',
+      priceNote: 'Promoção fundador por 3 meses. Depois, R$ 797,90/mês.',
+      setupNote: 'Implementação: R$ 1.997,90 por R$ 1.497,90 (única)',
+      highlight: '2 agentes inclusos',
+      highlightSub: 'Pedro + Marcos trabalhando juntos',
+      features: [
+        'Agentes Pedro e Marcos inclusos',
+        'CRM completo de leads',
+        'Até 10 conexões de WhatsApp',
+        'Disparo em massa segmentado',
+        'Follow-up automático 24/7',
+        'Conversas ilimitadas com sua própria chave de IA',
+        'Exportação de planilhas e relatórios',
+        'Suporte prioritário',
+      ],
+      cta: 'Quero o Pro Fundador',
+      href: PRO_CHECKOUT_URL,
+      featured: true,
+      contact: false,
+    },
+    {
+      id: 'pro-max',
+      badge: 'Pro Max · Fundador · 10 primeiros',
+      name: 'Pro Max',
+      description: 'Tudo do Pro, dimensionado para empresas com mais clientes e mais operação.',
+      price: '797',
+      cents: ',90',
+      priceNote: 'Promoção fundador por 3 meses. Depois, R$ 1.297,90/mês.',
+      setupNote: 'Implementação: R$ 1.997,90 por R$ 1.497,90 (única)',
+      highlight: 'Todos os agentes liberados',
+      highlightSub: 'inclui José e a operação completa',
+      features: [
+        'Tudo do plano Pro',
+        'Todos os agentes de IA liberados',
+        'Agente José para tráfego IA',
+        'Até 15 números de WhatsApp',
+        'Maior capacidade de atendimento',
+        'Todas as integrações liberadas',
+        'Acompanhamento das conversas da equipe',
+        'Onboarding e suporte VIP',
+      ],
+      cta: 'Quero o Pro Max',
+      href: PRO_MAX_CONTACT_URL,
+      featured: false,
+      contact: true,
+    },
+  ];
 
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
@@ -1691,245 +1770,159 @@ export default function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-3 text-foreground"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Escolha entre PRO e PRO MAX. <span style={{ color: 'var(--brand-gold)' }}>Pedro, Marcos e José inclusos</span>.
+              Escolha seu plano. <span style={{ color: 'var(--brand-gold)' }}>Básico, PRO ou PRO MAX</span>.
             </h2>
 
-            <p className="text-base md:text-lg text-muted-foreground max-w-xl mx-auto">
-              Comece com atendimento, CRM e tráfego IA no PRO. Suba para o PRO MAX quando quiser mais volume, prioridade e acompanhamento.
+            <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto">
+              Básico começa com Pedro. PRO adiciona Marcos. PRO MAX libera a operação completa para empresas com mais volume.
             </p>
           </div>
 
-          {/* ── CARD PRO — USA A ARTE COMPLETA COMO IMAGEM ─────────── */}
+          {/* ── CARDS DOS PLANOS ───────────────────────────────────── */}
           <div className="relative mx-auto">
 
-            {/* ── DOIS CARDS: PRO FUNDADOR + PRO MAX (lado a lado) ── */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 max-w-4xl mx-auto items-stretch">
-
-              {/* ===== CARD PRO FUNDADOR (destaque dourado) ===== */}
-              <div className="relative">
-                {/* Glow externo dourado */}
-                <div
-                  className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
-                  style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
-                />
-                <div
-                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
-                  style={{
-                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
-                    border: '2px solid var(--brand-gold)',
-                    boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)',
-                  }}
-                >
-                  {/* Faixa dourada no topo */}
-                  <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
-
-                  {/* Ribbon Oferta Fundador */}
-                  <div className="px-6 md:px-8 pt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-6xl mx-auto items-stretch">
+              {pricingPlans.map((plan) => (
+                <div key={plan.id} className="relative">
+                  {plan.featured && (
                     <div
-                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
-                      style={{ background: 'rgba(212, 160, 23, 0.15)', border: '1px solid rgba(212, 160, 23, 0.40)' }}
-                    >
-                      <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
-                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'var(--brand-gold)' }}>
-                        Oferta Fundador · 10 primeiros
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
-                    <h3
-                      className="text-3xl font-black uppercase tracking-wide"
-                      style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
-                    >
-                      Pro
-                    </h3>
-                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Entre pela oferta fundador com Pedro, Marcos e José inclusos.
-                    </p>
-
-                    {/* Preço mensal */}
-                    <div className="flex items-end gap-1 leading-none">
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
-                      <span
-                        className="text-6xl font-black leading-none"
-                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}
-                      >
-                        497
-                      </span>
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
-                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
-                    </div>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      + R$ 1.497 de implementação (pagamento único)
-                    </p>
-
-                    {/* Highlight 300 conversas */}
+                      className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
+                      style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
+                    />
+                  )}
+                  <div
+                    className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
+                    style={{
+                      background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
+                      border: plan.featured ? '2px solid var(--brand-gold)' : '1px solid rgba(212, 160, 23, 0.30)',
+                      boxShadow: plan.featured
+                        ? '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)'
+                        : '0 24px 60px -20px rgba(15, 38, 71, 0.50)',
+                    }}
+                  >
                     <div
-                      className="mt-5 mb-5 rounded-xl p-3 text-center"
-                      style={{ background: 'rgba(212, 160, 23, 0.12)', border: '1px solid rgba(212, 160, 23, 0.30)' }}
-                    >
-                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
-                        300 conversas/mês
-                      </span>
-                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
-                        incluídas no atendimento com IA
-                      </span>
-                    </div>
-
-                    {/* Features */}
-                    <ul className="space-y-2.5 text-sm flex-1">
-                      {[
-                        'CRM completo de leads',
-                        'Até 10 conexões de WhatsApp',
-                        'Disparo em massa segmentado',
-                        'Follow-up automático 24/7',
-                        'Pedro, Marcos e José inclusos',
-                        'Exportação de planilhas e relatórios',
-                        'Suporte prioritário',
-                      ].map((f) => (
-                        <li key={f} className="flex items-start gap-2.5">
-                          <span
-                            className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
-                            style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}
-                          >
-                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
-                          </span>
-                          <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* CTA — único botão */}
-                    <Button
-                      asChild
-                      size="lg"
-                      className="mt-7 w-full text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
+                      className="h-1.5 w-full"
                       style={{
-                        background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
-                        color: 'var(--brand-navy)',
-                        boxShadow: '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)',
-                        border: '2px solid var(--brand-gold-hover)',
+                        background: plan.featured
+                          ? 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))'
+                          : 'rgba(212, 160, 23, 0.45)',
                       }}
-                    >
-                      <Link to={PRO_CHECKOUT_URL}>
-                        Quero o Pro Fundador <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </Link>
-                    </Button>
+                    />
+
+                    <div className="px-6 pt-6">
+                      <div
+                        className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                        style={{
+                          background: plan.featured ? 'rgba(212, 160, 23, 0.15)' : 'rgba(250, 248, 242, 0.08)',
+                          border: plan.featured ? '1px solid rgba(212, 160, 23, 0.40)' : '1px solid rgba(250, 248, 242, 0.18)',
+                        }}
+                      >
+                        {plan.featured && <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />}
+                        <span
+                          className="text-[11px] font-bold uppercase tracking-widest"
+                          style={{ color: plan.featured ? 'var(--brand-gold)' : 'rgba(250, 248, 242, 0.85)' }}
+                        >
+                          {plan.badge}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="px-6 pt-4 pb-7 flex flex-col flex-1">
+                      <h3
+                        className="text-3xl font-black uppercase tracking-wide"
+                        style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
+                      >
+                        {plan.name}
+                      </h3>
+                      <p className="text-sm mt-1 mb-5 min-h-[3.5rem]" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                        {plan.description}
+                      </p>
+
+                      <div className="flex items-end gap-1 leading-none">
+                        <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
+                        <span
+                          className="text-5xl md:text-6xl font-black leading-none"
+                          style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.35)' }}
+                        >
+                          {plan.price}
+                        </span>
+                        <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>{plan.cents}</span>
+                        <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
+                      </div>
+                      <p className="text-xs mt-2 min-h-[2rem]" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                        {plan.priceNote}
+                      </p>
+                      {plan.setupNote && (
+                        <p className="text-xs mt-1" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                          {plan.setupNote}
+                        </p>
+                      )}
+
+                      <div
+                        className="mt-5 mb-5 rounded-xl p-3 text-center"
+                        style={{
+                          background: plan.featured ? 'rgba(212, 160, 23, 0.12)' : 'rgba(250, 248, 242, 0.06)',
+                          border: plan.featured ? '1px solid rgba(212, 160, 23, 0.30)' : '1px solid rgba(250, 248, 242, 0.14)',
+                        }}
+                      >
+                        <span
+                          className="text-lg font-extrabold"
+                          style={{ color: plan.featured ? 'var(--brand-gold)' : 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}
+                        >
+                          {plan.highlight}
+                        </span>
+                        <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.72)' }}>
+                          {plan.highlightSub}
+                        </span>
+                      </div>
+
+                      <ul className="space-y-2.5 text-sm flex-1">
+                        {plan.features.map((feature) => (
+                          <li key={feature} className="flex items-start gap-2.5">
+                            <span
+                              className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
+                              style={{ width: 18, height: 18, background: plan.featured ? 'rgba(212, 160, 23, 0.18)' : 'rgba(250, 248, 242, 0.12)' }}
+                            >
+                              <CheckCircle2 className="h-3 w-3" style={{ color: plan.featured ? 'var(--brand-gold)' : 'var(--brand-cream)' }} />
+                            </span>
+                            <span style={{ color: 'rgba(250, 248, 242, 0.90)' }}>{feature}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <Button
+                        asChild
+                        size="lg"
+                        className="mt-7 w-full text-sm md:text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px] whitespace-normal h-auto"
+                        style={{
+                          background: plan.featured
+                            ? 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)'
+                            : 'transparent',
+                          color: plan.featured ? 'var(--brand-navy)' : 'var(--brand-cream)',
+                          boxShadow: plan.featured ? '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)' : 'none',
+                          border: '2px solid var(--brand-gold)',
+                        }}
+                      >
+                        {plan.contact ? (
+                          <a href={plan.href}>
+                            {plan.cta} <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                          </a>
+                        ) : (
+                          <Link to={plan.href}>
+                            {plan.cta} <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                          </Link>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              {/* ===== CARD PRO MAX ===== */}
-              <div className="relative">
-                <div
-                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
-                  style={{
-                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
-                    border: '1px solid rgba(212, 160, 23, 0.30)',
-                    boxShadow: '0 24px 60px -20px rgba(15, 38, 71, 0.50)',
-                  }}
-                >
-                  <div className="h-1.5 w-full" style={{ background: 'rgba(212, 160, 23, 0.45)' }} />
-
-                  <div className="px-6 md:px-8 pt-6">
-                    <div
-                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
-                      style={{ background: 'rgba(250, 248, 242, 0.08)', border: '1px solid rgba(250, 248, 242, 0.18)' }}
-                    >
-                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'rgba(250, 248, 242, 0.85)' }}>
-                        Para escala
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
-                    <h3
-                      className="text-3xl font-black uppercase tracking-wide"
-                      style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
-                    >
-                      Pro Max
-                    </h3>
-                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Mais volume, prioridade e acompanhamento para operações em crescimento.
-                    </p>
-
-                    {/* Preço mensal */}
-                    <div className="flex items-end gap-1 leading-none">
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
-                      <span
-                        className="text-6xl font-black leading-none"
-                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.30)' }}
-                      >
-                        1.497
-                      </span>
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,00</span>
-                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
-                    </div>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      + R$ 5.997 de implementação (pagamento único)
-                    </p>
-
-                    {/* Highlight 500 conversas */}
-                    <div
-                      className="mt-5 mb-5 rounded-xl p-3 text-center"
-                      style={{ background: 'rgba(250, 248, 242, 0.06)', border: '1px solid rgba(250, 248, 242, 0.14)' }}
-                    >
-                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
-                        500 conversas/mês
-                      </span>
-                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                        incluídas no atendimento com IA
-                      </span>
-                    </div>
-
-                    {/* Features */}
-                    <ul className="space-y-2.5 text-sm flex-1">
-                      {[
-                        'Pedro, Marcos e José inclusos',
-                        'CRM completo + painel ao vivo',
-                        'Até 15 conexões de WhatsApp',
-                        'Tráfego IA com relatórios avançados',
-                        'Mais volume de conversas e recargas menores',
-                        'Prioridade de implementação',
-                        'Suporte estratégico',
-                      ].map((f) => (
-                        <li key={f} className="flex items-start gap-2.5">
-                          <span
-                            className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
-                            style={{ width: 18, height: 18, background: 'rgba(250, 248, 242, 0.12)' }}
-                          >
-                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-cream)' }} />
-                          </span>
-                          <span style={{ color: 'rgba(250, 248, 242, 0.88)' }}>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* CTA — único botão */}
-                    <Button
-                      asChild
-                      size="lg"
-                      className="mt-7 w-full text-base font-bold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
-                      style={{
-                        background: 'transparent',
-                        color: 'var(--brand-cream)',
-                        border: '2px solid var(--brand-gold)',
-                      }}
-                    >
-                      <a href={PRO_MAX_CONTACT_URL}>
-                        Quero o PRO MAX <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </a>
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
+              ))}
             </div>
 
             {/* Nota do fundador + microcopy de segurança */}
             <div className="mt-8 text-center">
               <p className="text-sm font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                PRO inclui Pedro, Marcos e José. PRO MAX aumenta volume, prioridade e acompanhamento.
+                Oferta Fundador: os 10 primeiros garantem o Pro por R$ 497,90/mês e o Pro Max por R$ 797,90/mês nos 3 primeiros meses.
               </p>
               <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <Lock className="h-3 w-3" />
