@@ -20,6 +20,7 @@ import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { AdminSettingsTab } from '@/components/settings/AdminSettingsTab';
 import { DashboardTVSettingsTab } from '@/components/settings/DashboardTVSettingsTab';
 import { KanbanSettingsTab } from '@/components/settings/KanbanSettingsTab';
+import { KanbanPedroSettingsTab } from '@/components/settings/KanbanPedroSettingsTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -29,7 +30,7 @@ export default function SettingsPage() {
   const { user, profile } = useAuth();
   const { isSeller } = useSellerProfile(user?.id);
   const tabParam = searchParams.get('tab');
-  const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'kanban-marcos', 'admin'];
+  const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'kanban-marcos', 'kanban-pedro', 'admin'];
   const [activeTab, setActiveTab] = useState(
     tabParam && validTabs.includes(tabParam) ? tabParam : 'company'
   );
@@ -86,6 +87,9 @@ export default function SettingsPage() {
     { label: 'Conectar anúncios', description: 'Meta Ads, Google Ads e WhatsApp', tab: null, route: '/connect-accounts', icon: RefreshCw },
     { label: 'Configurar IA', description: 'Personalizar como os agentes falam', tab: 'ai', icon: Sparkles },
   ];
+  // Vendedor: no checklist fica só "Seu perfil" (Dados da empresa, Conectar anúncios
+  // e Configurar IA são do dono). Perfil segue acessível pra ele dentro de Config.
+  const visibleSteps = isSeller ? setupSteps.filter(s => s.route === '/perfil') : setupSteps;
 
   return (
     <MainLayout>
@@ -96,13 +100,12 @@ export default function SettingsPage() {
           <p className="text-muted-foreground">Gerencie suas preferências e integrações</p>
         </div>
 
-        {/* ── Checklist de configuração (só dono; vendedor não faz setup da conta) ── */}
-        {!isSeller && (
+        {/* ── Checklist — dono vê tudo; vendedor só "Seu perfil" ── */}
         <div className="rounded-xl border border-border/50 bg-card/50 p-5">
-          <p className="text-sm font-semibold text-foreground mb-1">📋 Configure em ordem para começar</p>
-          <p className="text-xs text-muted-foreground mb-4">Siga os passos abaixo para deixar a plataforma pronta para usar</p>
-          <div className="space-y-2">
-            {setupSteps.map((step, i) => {
+          <p className="text-sm font-semibold text-foreground mb-1">{isSeller ? '📋 Atalhos' : '📋 Configure em ordem para começar'}</p>
+          {!isSeller && <p className="text-xs text-muted-foreground mb-4">Siga os passos abaixo para deixar a plataforma pronta para usar</p>}
+          <div className={`space-y-2 ${isSeller ? 'mt-3' : ''}`}>
+            {visibleSteps.map((step, i) => {
               const Icon = step.icon;
               return (
                 <button
@@ -126,7 +129,6 @@ export default function SettingsPage() {
             })}
           </div>
         </div>
-        )}
 
         {/* ── Tabs ── */}
         <div ref={tabsRef} className="scroll-mt-20">
@@ -158,6 +160,10 @@ export default function SettingsPage() {
               <KanbanSquare className="h-4 w-4" />
               Kanban Marcos
             </TabsTrigger>
+            <TabsTrigger value="kanban-pedro" className="gap-2">
+              <KanbanSquare className="h-4 w-4" />
+              Kanban Pedro
+            </TabsTrigger>
             {isSuperAdmin && (
               <TabsTrigger value="admin" className="gap-2 text-yellow-500 font-bold border-yellow-500/20">
                 <ShieldCheck className="h-4 w-4" />
@@ -171,6 +177,7 @@ export default function SettingsPage() {
           <TabsContent value="sync"><DataSyncSettingsTab /></TabsContent>
           {!isTabHidden('dashboard-tv') && <TabsContent value="dashboard-tv"><DashboardTVSettingsTab /></TabsContent>}
           <TabsContent value="kanban-marcos"><KanbanSettingsTab /></TabsContent>
+          <TabsContent value="kanban-pedro"><KanbanPedroSettingsTab /></TabsContent>
           {isSuperAdmin && (
             <TabsContent value="admin"><AdminSettingsTab /></TabsContent>
           )}

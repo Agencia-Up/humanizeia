@@ -1099,6 +1099,32 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   const [leads, setLeads] = useState<CrmLead[]>([]);
   const [leadMetrics, setLeadMetrics] = useState<LeadMetrics>({ total: 0, today: 0, week: 0, month: 0 });
   const [manualStages, setManualStages] = useState<PipelineColumn[]>([]);
+  // Kanban do Pedro configurável: colunas vêm de ai_crm_pipeline_stages (Configurações
+  // > Kanban Pedro). Effect separado pra NÃO mexer no fetchData grande. Fallback no
+  // render: se vazio/erro, usa PIPELINE_COLUMNS — o board nunca fica sem coluna.
+  const [pedroStages, setPedroStages] = useState<PipelineColumn[]>([]);
+  useEffect(() => {
+    if (isMarcosCrm || !effectiveUserIdState) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await (supabase as any)
+          .from('ai_crm_pipeline_stages')
+          .select('status_key, name, color, position, ativo')
+          .eq('user_id', effectiveUserIdState)
+          .order('position', { ascending: true });
+        if (cancelled) return;
+        const emojiByKey: Record<string, string> = Object.fromEntries(
+          (PIPELINE_COLUMNS as any[]).map((c: any) => [c.id, c.emoji]),
+        );
+        const cols = ((data as any[]) || [])
+          .filter((s) => s.ativo !== false)
+          .map((s) => ({ id: s.status_key, title: s.name, emoji: emojiByKey[s.status_key] || '📋', color: s.color || null }));
+        setPedroStages(cols as PipelineColumn[]);
+      } catch { /* fallback PIPELINE_COLUMNS no render */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isMarcosCrm, effectiveUserIdState]);
   // Popup "Registrar venda" — aberto quando um lead entra em "Venda concluída".
   // Grava carro + data (+ valor) na venda criada pelo gatilho (comercial_vendas).
   const [vendaDialog, setVendaDialog] = useState<{ leadId: string; nome: string } | null>(null);
@@ -3083,7 +3109,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         .update({ status_crm: newStatus })
         .eq('id', draggableId);
       if (error) throw error;
-      toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : PIPELINE_COLUMNS).find(c => c.id === newStatus)?.title || newStatus}` });
+      toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : (pedroStages.length ? pedroStages : PIPELINE_COLUMNS)).find(c => c.id === newStatus)?.title || newStatus}` });
       if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
     } catch (err: any) {
       toast({ title: 'Erro ao mover lead', description: err.message, variant: 'destructive' });
@@ -3146,7 +3172,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
   }
 
   // ── Lead Detail Panel ──────────────────────────────────────────────────────
-  const basePipelineColumns: PipelineColumn[] = isMarcosCrm && manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS;
+  const basePipelineColumns: PipelineColumn[] = isMarcosCrm
+    ? (manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS)
+    : (pedroStages.length > 0 ? pedroStages : PIPELINE_COLUMNS);
   const pipelineColumns = applyColumnOrder(basePipelineColumns, columnOrder);
   const statusOptions = isMarcosCrm
     ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' }))
