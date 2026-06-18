@@ -73,6 +73,8 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
   }, [sellerLoading, isSeller, seller, user]);
 
   const [campaigns, setCampaigns] = useState<WACampaign[]>([]);
+  // Master vê o NOME do vendedor dono de cada disparo (por seller_member_id).
+  const [sellerNames, setSellerNames] = useState<Record<string, string>>({});
   const [lists, setLists] = useState<ContactList[]>([]);
   const [instances, setInstances] = useState<WAInstance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -273,7 +275,19 @@ export default function WhatsAppBroadcast({ embedded }: { embedded?: boolean } =
       if (campaignsRes.error) throw campaignsRes.error;
       if (listsRes.error) throw listsRes.error;
       if (instancesRes.error) throw instancesRes.error;
-      setCampaigns((campaignsRes.data as unknown as WACampaign[]) || []);
+      const campaignRows = (campaignsRes.data as unknown as WACampaign[]) || [];
+      setCampaigns(campaignRows);
+      // Master: nome do vendedor dono de cada disparo (seller_member_id -> nome).
+      if (!isSeller) {
+        const sids = [...new Set(campaignRows.map((c: any) => c.seller_member_id).filter(Boolean))] as string[];
+        if (sids.length) {
+          const { data: mem } = await (supabase as any)
+            .from('ai_team_members').select('id, name').in('id', sids);
+          const map: Record<string, string> = {};
+          for (const m of (mem || [])) map[m.id] = m.name || 'Vendedor';
+          setSellerNames(map);
+        } else setSellerNames({});
+      } else setSellerNames({});
       setLists((listsRes.data as ContactList[]) || []);
       setInstances((instancesRes.data as WAInstance[]) || []);
     } catch (err: any) {
@@ -1013,7 +1027,8 @@ Não numere as variações. Não inclua explicações adicionais.`
               </Card>
             ) : (
               campaigns.map(campaign => (
-                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} hasConnectedInstance={instances.length > 0} />
+                <CampaignCard key={campaign.id} campaign={campaign} onRefresh={fetchData} onEdit={handleEdit} hasConnectedInstance={instances.length > 0}
+                  sellerName={!isSeller && (campaign as any).seller_member_id ? (sellerNames[(campaign as any).seller_member_id] || 'Vendedor') : null} />
               ))
             )}
           </TabsContent>

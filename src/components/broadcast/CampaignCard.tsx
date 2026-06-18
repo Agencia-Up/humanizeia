@@ -44,6 +44,7 @@ export interface WACampaign {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  seller_member_id?: string | null;
 }
 
 interface CampaignCardProps {
@@ -51,9 +52,11 @@ interface CampaignCardProps {
   onRefresh: () => void;
   onEdit?: (campaign: WACampaign) => void;
   hasConnectedInstance?: boolean;
+  /** Nome do vendedor que criou o disparo (só master vê) — null = disparo do próprio master. */
+  sellerName?: string | null;
 }
 
-export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance }: CampaignCardProps) {
+export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance, sellerName }: CampaignCardProps) {
   const { toast } = useToast();
   const [isStarting, setIsStarting] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
@@ -171,6 +174,12 @@ export function CampaignCard({ campaign, onRefresh, onEdit, hasConnectedInstance
                 <h3 className="font-semibold text-lg truncate">{campaign.name}</h3>
                 {campaign.prompt_base && (
                   <span title="IA ativa"><Wand2 className="h-4 w-4 text-primary shrink-0" /></span>
+                )}
+                {sellerName && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30 shrink-0 whitespace-nowrap"
+                    title="Disparo criado por este vendedor">
+                    {sellerName}
+                  </span>
                 )}
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">
