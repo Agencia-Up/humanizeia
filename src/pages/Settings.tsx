@@ -84,7 +84,6 @@ export default function SettingsPage() {
   const setupSteps = [
     { label: 'Dados da empresa', description: 'Nome, nicho e informações do negócio', tab: 'company', icon: Building2 },
     { label: 'Seu perfil', description: 'Nome e preferências pessoais', tab: null, route: '/perfil', icon: User },
-    { label: 'Conectar anúncios', description: 'Meta Ads, Google Ads e WhatsApp', tab: null, route: '/connect-accounts', icon: RefreshCw },
     { label: 'Configurar IA', description: 'Personalizar como os agentes falam', tab: 'ai', icon: Sparkles },
   ];
   // Vendedor: no checklist fica só "Seu perfil" (Dados da empresa, Conectar anúncios
