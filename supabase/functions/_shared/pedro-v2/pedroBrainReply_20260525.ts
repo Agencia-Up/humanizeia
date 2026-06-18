@@ -299,6 +299,20 @@ function isCurrentTurnAdVehicleConsultation(input: {
   if (String(input.plan?.reason || "").startsWith("enforced_ad_vehicle_consultation")) return true;
   const adVehicle = normalizeText(input.ad_context?.vehicle_query || "");
   if (!input.ad_context?.has_ad_context || !adVehicle || input.plan?.action !== "stock_search") return false;
+  // LEAD AMPLIOU P/ TIPO GENERICO (lead 99716-4335): clicou no anuncio do Tracker mas disse "procuro
+  // um suv 2020 pra frente" — pedido de CATEGORIA, sem nomear o modelo do anuncio. Nao e consulta do
+  // anuncio: o agente deve APRESENTAR os SUVs (a busca ja veio ampla), nao reduzir os fatos a so o
+  // Tracker e fixar nele. So pula quando o lead cita um TIPO e NAO cita o modelo do anuncio.
+  // SO a parte do LEAD: o enriched_message anexa "Veiculo/Contexto do anuncio: <Tracker...>" — sem
+  // tirar isso, "tracker" do anuncio contaminaria o check e o lead "pareceria" ter nomeado o modelo.
+  const _leadOnlyMsg = String(input.message || "").split(/\n*(?:ve[ií]culo do an[úu]ncio|contexto do an[úu]ncio|origem\s*\/\s*link)/i)[0];
+  const _msgN = normalizeText(_leadOnlyMsg);
+  const _leadNamedType = /\b(suv|utilitario|sedan|seda|hatch|hatchback|picape|pickup|caminhonete|camionete)\b/.test(_msgN);
+  const _adModelTokens = adVehicle.split(/\s+/).filter((t) =>
+    t.length >= 3 && !/^(19|20)\d{2}$/.test(t)
+    && !["premier", "activ", "sense", "midnight", "turbo", "flex", "aut", "mec", "manual", "automatico"].includes(t));
+  const _leadNamedAdModel = _adModelTokens.some((t) => _msgN.includes(t));
+  if (_leadNamedType && !_leadNamedAdModel) return false;
   const planVehicle = normalizeText(input.plan?.search_query || input.plan?.search_filters?.modelo_desejado || "");
   const resolvedVehicle = normalizeText(input.vehicle_resolution?.query || "");
   return Boolean(
@@ -607,11 +621,24 @@ export async function generatePedroBrainReply(input: {
   const facts = adVehicleConsultation
     ? (_adMatchedFact ? [_adMatchedFact] : allFacts.slice(0, 1))
     : allFacts;
+  // LEAD AMPLIOU P/ UM TIPO (suv/sedan/...) sem nomear o modelo do anuncio = esta NAVEGANDO a
+  // categoria (lead 99716-4335: clicou no Tracker, disse "procuro um suv 2020 pra frente"). NAO ha
+  // "veiculo em foco" unico -> o reply deve APRESENTAR as opcoes (stock.facts), nao liderar com o
+  // carro do anuncio. So a parte do LEAD (sem o anexo "Veiculo/Contexto do anuncio: <Tracker...>").
+  const _leadMsgOnly = String(input.message || "").split(/\n*(?:ve[ií]culo do an[úu]ncio|contexto do an[úu]ncio|origem\s*\/\s*link)/i)[0];
+  const _leadMsgN = normalizeText(_leadMsgOnly);
+  const _adModelTok = normalizeText(input.ad_context?.vehicle_query || "").split(/\s+/)
+    .filter((t) => t.length >= 3 && !/^(19|20)\d{2}$/.test(t)
+      && !["premier", "activ", "sense", "midnight", "turbo", "flex", "aut", "mec", "manual", "automatico"].includes(t));
+  const _leadBroadenedToType = /\b(suv|utilitario|sedan|seda|hatch|hatchback|picape|pickup|caminhonete|camionete)\b/.test(_leadMsgN)
+    && !_adModelTok.some((t) => _leadMsgN.includes(t))
+    && allFacts.length > 1;
   // VEICULO EM FOCO: o carro que o lead esta de fato discutindo (resolvido OU o
   // ultimo apresentado), com FATOS explicitos. Serve para o LLM responder
   // perguntas de atributo (preco/km/cor/ano) sobre ELE — e NUNCA sobre o carro
   // de TROCA do cliente (que pode ter contaminado memory.interesse.modelo_desejado).
   const focusVehicle = (() => {
+    if (_leadBroadenedToType) return null; // navegando categoria -> sem foco unico, apresenta a lista
     const apres = Array.isArray(input.memory?.veiculos_apresentados) ? input.memory.veiculos_apresentados : [];
     if (apres.length === 0) return null;
     const q = normalizeText(input.vehicle_resolution?.query || "");
@@ -818,6 +845,7 @@ export async function generatePedroBrainReply(input: {
                 "PRECO A CONFIRMAR: se um item de stock.facts tiver preco_a_confirmar=true, o carro EXISTE e voce DEVE apresenta-lo pelo modelo/ano/km/cor REAIS — NUNCA diga R$0, NUNCA mostre preco zerado, NUNCA negue esse carro. Em vez do valor, diga com naturalidade que vai CONFIRMAR o preco com o time e ja retorna (ex.: 'Esse eu preciso confirmar o valor certinho pra voce, ja te falo'). So omita o preco DESSE item; os demais itens com preco seguem normais.",
                 "NUNCA afirme 'nao temos' um carro SEM que o estoque tenha sido consultado neste fluxo: se stock.success for false ou stock.facts vier vazio por falta de busca (e nao porque o modelo realmente nao existe), NAO negue — confirme/pergunte qual modelo ou diga que vai verificar. So negue disponibilidade com base em stock.facts real.",
                 "VEICULOS JA APRESENTADOS (veiculos_ja_apresentados): sao os carros que voce JA mostrou neste atendimento e voce TEM as fotos de TODOS eles (tem_fotos=true). Quando o lead disser 'os outros', 'e os outros', 'mais', 'tem mais', 'o segundo'/'o terceiro', 'o de 2022', 'o branco', 'o mais barato/caro' etc., ele se refere a ESTA lista. NUNCA diga que 'so tem as fotos de um', que 'nao tem os outros' ou que 'nao tenho mais fotos': se ha mais de um item em veiculos_ja_apresentados, voce TEM os outros e as fotos deles. Essa lista e VERDADE mesmo com stock.facts vazio (turno sem busca).",
+                "PEDIU UM TIPO/CATEGORIA (suv, sedan, hatch, picape...) E HA VARIOS em stock.facts: APRESENTE as opcoes (liste 3-5, uma por LINHA, modelo/ano/cor/km/preco) e pergunte qual interessa / se quer ver fotos. NUNCA lidere com UM unico veiculo (nem o do anuncio) ignorando os demais quando o lead pediu uma CATEGORIA — ele quer ver as opcoes do tipo, nao so um carro. Se veiculo_em_foco vier null, e exatamente esse caso: foque na LISTA.",
                 "QUAL DELES (extrair o que o lead quer, NAO despejar): se o lead pede 'os outros'/'mais' e ha VARIOS em veiculos_ja_apresentados, NAO prometa 'vou te enviar as fotos de X e Y' (varios de uma vez) — apresente os OUTROS de forma curta (modelo/ano/cor/preco, um por LINHA) e PERGUNTE de QUAL deles ele quer ver as fotos. Idem se ele so disse 'sim/quero' a uma oferta de fotos sem dizer qual: pergunte qual antes de mandar. So mande/prometa as fotos de UM veiculo quando ele deixar claro QUAL (pelo modelo, ano, cor ou ordinal).",
                 "TRANSFERENCIA — COMO FALAR DO CONSULTOR: ao avisar que um consultor/vendedor vai assumir, diga SEMPRE que ele 'vai entrar em contato' com o cliente. NUNCA prometa que o consultor vai 'falar por aqui', 'dar continuidade por aqui', 'responder neste numero' ou 'aqui mesmo' — o vendedor humano atende de OUTRO numero de WhatsApp, entao prometer 'por aqui' e MENTIRA e frustra o cliente. Ex. certo: 'Seu atendimento ja esta com um dos nossos consultores de vendas, ele ja vai entrar em contato com voce. 😊'."
               ],

@@ -88,6 +88,16 @@ const stateless = [
   // "procuro suv ... pra frente" zerava 27 SUVs porque "procuro/pra/frente" viravam filtro DURO de match).
   { g: "alucinacao", n: "procuro suv pra frente -> apresenta (busca ampla não zera por ad_context)", text: "procuro suv pra frente", e: r => [A.hasItems(r), A.replyHasNot(r, NAO_TEMOS)] },
   { g: "alucinacao", n: "procuro suv 2020 pra frente -> apresenta (com ano)", text: "procuro suv 2020 pra frente", e: r => [A.hasItems(r), A.replyHasNot(r, NAO_TEMOS)] },
+  // ANÚNCIO de modelo específico + lead AMPLIA p/ tipo genérico (lead 99716-4335): o reply NÃO pode
+  // fixar/confirmar fotos do modelo do anúncio (Tracker) — deve APRESENTAR a categoria (vários SUVs).
+  { g: "alucinacao", n: "anúncio Tracker + 'procuro suv 2020 pra frente' -> apresenta SUVs (não fixa no Tracker)",
+    text: "Bom dia\nProcuro um suv 2020 pra frente",
+    ad: { title: "Fale com um consultor", body: "Veículos revisados", greetingMessageBody: "Olá! Quer saber mais sobre o Tracker Premier 1.2 2023?", sourceUrl: "https://fb.me/x" },
+    e: r => {
+      const models = ["renegade", "creta", "compass", "kicks", "pulse", "2008", "tracker", "asx", "pajero", "captur", "duster", "tcross", "t-cross", "nivus", "corolla cross", "hr-v", "hrv"];
+      const hits = models.filter(m => r.replyN.includes(m)).length;
+      return [A.fotos(r, 0), A.replyHasNot(r, ["confirmar as fotos do", "vou confirmar as fotos"]), { pass: hits >= 2, label: `apresenta >=2 SUVs distintos (got ${hits})` }];
+    } },
 
   // — Preço / faixa —
   { g: "preco", n: "corolla até 50 mil: nada acima do teto", text: "tem corolla ate 50 mil?", e: r => [A.itemsPriceMax(r, 50000)] },
@@ -232,7 +242,11 @@ async function replayCtwa(limit = 12) {
     if (j.next_action && /transfer|silence|hold|paused/.test(j.next_action)) continue;
     const reply = (typeof j.reply === "string" ? j.reply : j.reply?.text || "").toLowerCase();
     const tok = model.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
-    const ok = tok.some(w => reply.includes(w)) && reply && !/n[aã]o temos/i.test(reply);
+    // OK = não negou E (citou o modelo do anúncio OU apresentou estoque REAL). A 2ª via cobre o lead
+    // que AMPLIOU pro tipo genérico (ex.: clicou no Tracker mas disse "procuro um suv"): apresentar a
+    // CATEGORIA com preços reais é o comportamento CORRETO (v134), não precisa liderar com o modelo.
+    const presentsRealStock = /r\$\s?\d/.test(reply) || /\b(op[cç][aã]o|op[cç][oõ]es|temos\s+(alguns|algumas|v[aá]rios|v[aá]rias)|a partir de)\b/.test(reply);
+    const ok = Boolean(reply) && !/n[aã]o temos/i.test(reply) && (tok.some(w => reply.includes(w)) || presentsRealStock);
     out.push({ pass: ok, label: `anúncio "${model}" identificado | reply: ${reply.slice(0, 70)}` });
   }
   return out;

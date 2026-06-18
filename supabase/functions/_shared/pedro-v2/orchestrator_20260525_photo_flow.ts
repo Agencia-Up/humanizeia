@@ -2336,11 +2336,23 @@ export async function processPedroV2Turn(
   const _genericPhotoBlast = queryIsBroadOrGenericVehicle(
     requestedVehicleQueryForMediaGuard(brainPlan, vehicleResolution, stockFilters),
   );
+  // BUSCA AMPLA DE CATEGORIA = APRESENTAR A LISTA, nao despejar foto de UM carro (lead 99716-4335:
+  // clicou no anuncio do Tracker, disse "procuro um suv 2020 pra frente" -> busca ampla de SUV (27),
+  // mas o fluxo de foto disparava no veiculo do anuncio e respondia "vou confirmar as fotos do Tracker",
+  // ignorando os SUVs que o lead pediu). Quando o lead AMPLIA p/ um tipo (stock_broad) e NAO pediu foto
+  // EXPLICITA nesta msg, o certo e apresentar as opcoes em TEXTO (o cerebro lista) e oferecer fotos —
+  // nao fixar num modelo. Geral: vale p/ qualquer anuncio/tipo. Pedido explicito de foto ("manda foto")
+  // segue normal.
+  // Busca AMPLA de categoria = apresentar a LISTA primeiro (narrow), nunca despejar foto de 1 carro —
+  // mesmo que messageAsksForPhotos de falso-positivo (o texto enriquecido do anuncio pode casar "ver").
+  // So liberamos foto numa busca ampla se o lead pediu foto de um MODELO especifico (que ai nao e ampla).
+  const _broadCategoryBrowse = Boolean((stockFilters as any)?.stock_broad);
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
   // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
   // heterogeneo + pedido so por cor): pedir esclarecimento e mais seguro que chutar
   // um modelo errado. E NUNCA quando o lead claramente quer OUTRA coisa (_blockPhotoOffTopic).
   const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous && !_blockPhotoOffTopic
+    && !_broadCategoryBrowse
     && (brainPlan.action === "photo_request"
     || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0 && !_genericPhotoBlast));
 
