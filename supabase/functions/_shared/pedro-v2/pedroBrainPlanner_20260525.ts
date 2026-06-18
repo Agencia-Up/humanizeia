@@ -207,13 +207,20 @@ function expressesOtherVehicleWish(message?: string | null) {
 function isTradeInOffer(message?: string | null, heuristicIntent?: string | null) {
   const n = normalizeText(message);
   if (!n) return false;
-  const mentionsTrade = heuristicIntent === "trade_in" || /\b(troc\w+|na troca)\b/.test(n);
-  if (!mentionsTrade) return false;
-  // Se aponta um carro NOVO de interesse (trocar POR / interesse no/na), NAO bloquear a busca.
+  // Se aponta um carro NOVO de interesse (trocar POR / quero um ...), NAO e troca pura -> deixa buscar.
   const wantsNew = /\b(por|pel[oa])\s+(um|uma|uns|umas|outro|outra|outros|outras|o|a|esse|essa|este|esta)\b/.test(n)
     || /\b(troc\w+|interesse)\s+(por|pel[oa]|no|na)\b/.test(n)
     || /\b(quero|queria|gostaria de|prefiro|me interessa|fiquei de olho n[oa])\s+(um|uma|o|a|outro|outra)\b/.test(n);
-  return !wantsNew;
+  if (wantsNew) return false;
+  const mentionsTrade = heuristicIntent === "trade_in" || /\b(troc\w+|na troca)\b/.test(n);
+  // POSSE do carro do lead = troca/contexto, NAO interesse de compra (caso real lead 99627-7728:
+  // "Eu tenho um cruze 2016" virava busca de Cruze -> agente negava o carro DO PROPRIO lead).
+  // "(eu) tenho um/uma <X>" / "meu carro" so conta como veiculo se ha sinal (ano AAAA, "X mil", "km")
+  // -> evita falso positivo em "tenho uma duvida".
+  const possession = /\b(eu\s+)?(tenho|tinha|possuo)\s+(um|uma)\b/.test(n) || /\bmeu\s+(carro|veiculo|automovel|atual)\b/.test(n);
+  const hasVehicleSignal = /\b(19|20)\d{2}\b/.test(n) || /\b\d{1,3}\s*mil\b/.test(n) || /\bkm\b/.test(n);
+  if (possession && hasVehicleSignal) return true;
+  return mentionsTrade;
 }
 
 // Resposta CURTA que SELECIONA qual veiculo o lead quer ver, em reacao a uma oferta

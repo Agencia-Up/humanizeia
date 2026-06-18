@@ -111,6 +111,9 @@ const stateless = [
   // O agente mostrava Chevrolet/Fiat e ignorava a Honda City que EXISTE. Deve liderar com a Honda.
   { g: "slots", n: "marca explícita Honda -> apresenta Honda (não só outras marcas)", text: "quero um sedan, so se for honda",
     e: r => [{ pass: (r.items || []).length > 0 && r.items.some(v => /honda/i.test(String(v.marca))), label: `items inclui Honda (got: ${(r.items || []).slice(0, 4).map(v => v.marca).join("|") || "vazio"})` }, A.replyHas(r, ["honda"])] },
+  // TROCA: "eu tenho um cruze 2016" = carro do lead (não interesse) -> NÃO busca Cruze nem nega.
+  { g: "slots", n: "troca: 'eu tenho um cruze 2016' NÃO vira busca de Cruze", text: "Nossa muito rodando. Eu tenho um cruze 2016 com 64 mil de km",
+    e: r => [{ pass: r.action !== "stock_search" || !/cruze/i.test(String(r.filters?.modelo_desejado || r.filters?.modelo || "")), label: `não buscou Cruze (action=${r.action}, modelo=${r.filters?.modelo_desejado || "-"})` }, A.replyHasNot(r, NAO_TEMOS)] },
 ];
 
 // ── CASOS COM ESTADO (setup no banco -> dry-run -> cleanup) ──────────────────

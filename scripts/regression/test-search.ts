@@ -69,3 +69,7 @@ planner("LLM dropou marca", "Sedan. Só se for Honda", { action: "stock_search",
 planner("LLM marca-como-modelo", "tem honda?", { action: "stock_search", intent: "vehicle_reference", search_query: "Honda", search_filters: { modelo_desejado: "Honda" }, confidence: 0.8 });
 // modelo real + marca (nao pode limpar o modelo)
 planner("modelo real Civic", "quero um honda civic", { action: "stock_search", intent: "vehicle_reference", search_query: "Honda Civic", search_filters: { modelo_desejado: "Honda Civic", tipo_veiculo: "sedan" }, confidence: 0.8 });
+// TROCA: "eu tenho um cruze 2016" = carro do lead (nao interesse) -> NAO deve buscar Cruze.
+planner("troca eu tenho um cruze", "Nossa muito rodando. Eu tenho um cruze 2016 com 64 mil de km", { action: "stock_search", intent: "stock_lookup", search_query: "Chevrolet Cruze", search_filters: { modelo_desejado: "Chevrolet Cruze", ano_min: 2016, ano_max: 2022 }, confidence: 0.7 });
+// CONTRA-PROVA (nao pode virar troca): "quero trocar meu corsa por um onix" QUER o Onix.
+planner("troca-por (quer Onix)", "quero trocar meu corsa por um onix", { action: "stock_search", intent: "trade_in", search_query: "Chevrolet Onix", search_filters: { modelo_desejado: "Chevrolet Onix" }, confidence: 0.7 });
