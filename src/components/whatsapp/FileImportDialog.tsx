@@ -18,6 +18,9 @@ interface FileImportDialogProps {
   userId: string;
   lists: { id: string; name: string }[];
   onSuccess: () => void;
+  /** Quando vendedor importa: vincula a lista criada a ele (senão some da visão dele). */
+  isSeller?: boolean;
+  seller?: { id: string } | null;
 }
 
 interface ParsedContact {
@@ -124,7 +127,7 @@ function parseXLSX(buffer: ArrayBuffer): ParsedContact[] {
   return results;
 }
 
-export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess }: FileImportDialogProps) {
+export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess, isSeller, seller }: FileImportDialogProps) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -192,7 +195,14 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess 
         const name = newListName.trim() || fileName.replace(/\.[^.]+$/, '');
         const { data: newList, error } = await supabase
           .from('wa_contact_lists')
-          .insert({ user_id: userId, name, source: 'import', contact_count: 0 })
+          .insert({
+            user_id: userId,
+            name,
+            source: 'import',
+            contact_count: 0,
+            // vendedor importando -> lista vinculada a ele (senão fica invisível na visão dele).
+            seller_member_id: (isSeller && seller?.id) ? seller.id : null,
+          } as any)
           .select('id').single();
         if (error) throw error;
         listId = newList.id;

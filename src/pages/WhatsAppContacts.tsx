@@ -1098,6 +1098,8 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         userId={effectiveUserId || ''}
         lists={lists.map(l => ({ id: l.id, name: l.name }))}
         onSuccess={fetchLists}
+        isSeller={isSeller}
+        seller={seller}
       />
     </>
   );
