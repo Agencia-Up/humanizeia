@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
   GraduationCap, Plus, Loader2, Trash2, Edit2, Play, X,
@@ -37,6 +38,7 @@ interface TrainingVideo {
   platform: string;
   thumbnail_url: string | null;
   sort_order: number;
+  audience: string; // 'all' | 'seller' | 'master'
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -89,6 +91,7 @@ const PLATFORM_LABELS: Record<string, { label: string; color: string }> = {
 export default function Treinamento() {
   const { user } = useAuth();
   const { isAdmin } = useIsAdmin(); // só o superadmin (Logos) edita; o resto só assiste
+  const { isSeller } = useSellerProfile(user?.id); // vendedor vê só as aulas dele; master vê todas
   const { toast } = useToast();
   const [sections, setSections] = useState<TrainingSection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,6 +109,7 @@ export default function Treinamento() {
   const [videoTitle, setVideoTitle] = useState('');
   const [videoDesc, setVideoDesc] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
+  const [videoAudience, setVideoAudience] = useState<'all' | 'seller' | 'master'>('all');
   const [saving, setSaving] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -125,21 +129,26 @@ export default function Treinamento() {
       if (sectionIds.length > 0) {
         const { data: vids } = await (supabase as any)
           .from('training_videos')
-          .select('id, section_id, title, description, video_url, platform, thumbnail_url, sort_order')
+          .select('id, section_id, title, description, video_url, platform, thumbnail_url, sort_order, audience')
           .in('section_id', sectionIds)
           .order('sort_order', { ascending: true });
         videos = vids || [];
       }
 
-      const enriched = (secs || []).map((s: any) => ({
+      // PÚBLICO: vendedor (não-admin) NÃO vê aulas marcadas só pra 'master'.
+      // Master/owner e o superadmin veem todas.
+      const podeVer = (v: any) => !isSeller || isAdmin || v.audience !== 'master';
+      let enriched = (secs || []).map((s: any) => ({
         ...s,
-        videos: videos.filter((v: any) => v.section_id === s.id),
+        videos: videos.filter((v: any) => v.section_id === s.id && podeVer(v)),
       }));
+      // Pro vendedor, esconde seção que ficou sem aula visível (admin vê todas pra gerenciar).
+      if (isSeller && !isAdmin) enriched = enriched.filter((s: any) => s.videos.length > 0);
       setSections(enriched);
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, isSeller, isAdmin]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -196,6 +205,7 @@ export default function Treinamento() {
     setVideoTitle('');
     setVideoDesc('');
     setVideoUrl('');
+    setVideoAudience('all');
     setVideoDialog(true);
   };
 
@@ -216,6 +226,7 @@ export default function Treinamento() {
         platform,
         thumbnail_url: thumbnail,
         sort_order: section ? section.videos.length : 0,
+        audience: videoAudience,
       });
       toast({ title: 'Video adicionado!' });
       setVideoDialog(false);
@@ -342,8 +353,11 @@ export default function Treinamento() {
                           {video.thumbnail_url ? (
                             <img src={video.thumbnail_url} alt={video.title} className="w-full h-full object-cover" />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <Video className="h-10 w-10 text-muted-foreground/30" />
+                            // Capa automática branded (Logos|IA) com o título como headline
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-violet-600/40 via-purple-700/25 to-slate-900 px-3 text-center">
+                              <span className="text-[11px] font-black tracking-wide text-white/90">LOGOS<span style={{ color: 'var(--brand-gold)' }}>|IA</span></span>
+                              <span className="text-sm font-bold text-white leading-tight line-clamp-3">{video.title}</span>
+                              <span className="text-[8px] uppercase tracking-[0.2em] text-white/50">Aula</span>
                             </div>
                           )}
                           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
@@ -358,6 +372,11 @@ export default function Treinamento() {
                         {/* Info */}
                         <div className="p-3 space-y-1">
                           <p className="text-sm font-medium text-foreground truncate">{video.title}</p>
+                          {isAdmin && video.audience !== 'all' && (
+                            <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">
+                              {video.audience === 'seller' ? 'Aula de vendedor' : 'Só master'}
+                            </span>
+                          )}
                           {video.description && (
                             <p className="text-[11px] text-muted-foreground line-clamp-2">{video.description}</p>
                           )}
@@ -440,6 +459,18 @@ export default function Treinamento() {
             <div className="space-y-2">
               <Label>Descricao (opcional)</Label>
               <Textarea value={videoDesc} onChange={e => setVideoDesc(e.target.value)} placeholder="O que este video ensina..." className="min-h-[60px] resize-none" />
+            </div>
+            <div className="space-y-2">
+              <Label>Quem vê esta aula</Label>
+              <div className="flex gap-2">
+                {([['all', 'Todos'], ['seller', 'Vendedores'], ['master', 'Só Master']] as const).map(([val, lbl]) => (
+                  <button key={val} type="button" onClick={() => setVideoAudience(val)}
+                    className={`flex-1 h-8 rounded-md border text-xs transition-colors ${videoAudience === val ? 'border-violet-500 bg-violet-500/15 text-violet-300' : 'border-border/40 text-muted-foreground hover:border-border'}`}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground">Vendedor vê "Todos" + "Vendedores". "Só Master" o vendedor não enxerga.</p>
             </div>
           </div>
           <DialogFooter>
