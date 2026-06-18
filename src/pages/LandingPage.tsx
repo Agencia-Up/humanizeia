@@ -12,7 +12,7 @@ import {
   Smartphone, Cog, LineChart,
   Filter, Tags, Timer, FileText, MapPin, Upload,
   Send, ShieldCheck, List, RefreshCw, LayoutGrid, Kanban,
-  Palette, Crown, Lock,
+  Palette, Crown, Lock, PlayCircle,
   Phone, Database, Plus,
 } from 'lucide-react';
 import {
@@ -214,8 +214,8 @@ const faqs = [
     a: 'Sim. Sem multa, sem fidelidade. Você decide quando começar e quando parar.',
   },
   {
-    q: 'Quando os outros agentes ficam disponíveis?',
-    a: 'Estamos liberando aos poucos. Assinantes PRO recebem acesso antecipado e sem aumento de preço enquanto a conta estiver ativa.',
+    q: 'O Agente José já está incluso no PRO e no PRO MAX?',
+    a: 'Sim. Pedro, Marcos e José entram no PRO e no PRO MAX. Os próximos agentes do ecossistema serão liberados aos poucos para assinantes ativos.',
   },
   {
     q: 'Como funciona o suporte?',
@@ -245,14 +245,17 @@ const testimonials = [
   },
 ];
 
+// Coloque o arquivo do video em public/logos-por-dentro.mp4 para ativar o player.
+const DEMO_VIDEO_SRC = '';
+const PRO_CHECKOUT_URL = '/checkout?plano=pro&ciclo=mensal';
+const PRO_MAX_CONTACT_URL = 'mailto:suporte@logosiabrasil.com?subject=Quero%20conhecer%20o%20PRO%20MAX%20da%20LOGOS%7CIA';
+
 /* ── Componente Principal ───────────────────────────────────────────── */
 export default function LandingPage() {
   const { user, loading } = useAuth();
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  // Prompt 8 — toggle Mensal/Anual do plano PRO
-  const [billing, setBilling] = useState<'mensal' | 'anual'>('mensal');
 
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
@@ -270,10 +273,11 @@ export default function LandingPage() {
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
+            <a href="#demo" className="hover:text-foreground transition-colors">Por dentro</a>
             <a href="#como-funciona" className="hover:text-foreground transition-colors">Como funciona</a>
             <a href="#agente-pedro" className="hover:text-foreground transition-colors">Pedro</a>
             <a href="#agente-marcos" className="hover:text-foreground transition-colors">Marcos</a>
-            <a href="#em-breve" className="hover:text-foreground transition-colors">Em breve</a>
+            <a href="#em-breve" className="hover:text-foreground transition-colors">Agentes</a>
             <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
             <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
           </nav>
@@ -293,7 +297,7 @@ export default function LandingPage() {
               <Link to="/auth">Entrar</Link>
             </Button>
             <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-              <Link to="/auth?tab=signup">Começar agora</Link>
+              <Link to={PRO_CHECKOUT_URL}>Começar agora</Link>
             </Button>
           </div>
 
@@ -323,10 +327,11 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <nav className="md:hidden border-t border-border/40 bg-background/98 px-4 py-3 space-y-0.5">
             {[
+              { href: '#demo', label: 'Por dentro' },
               { href: '#como-funciona', label: 'Como funciona' },
               { href: '#agente-pedro', label: 'Pedro' },
               { href: '#agente-marcos', label: 'Marcos' },
-              { href: '#em-breve', label: 'Em breve' },
+              { href: '#em-breve', label: 'Agentes' },
               { href: '#planos', label: 'Planos' },
               { href: '#faq', label: 'FAQ' },
             ].map(item => (
@@ -344,7 +349,7 @@ export default function LandingPage() {
                 <Link to="/auth" onClick={() => setMobileMenuOpen(false)}>Entrar</Link>
               </Button>
               <Button asChild className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                <Link to="/auth?tab=signup" onClick={() => setMobileMenuOpen(false)}>Começar agora →</Link>
+                <Link to={PRO_CHECKOUT_URL} onClick={() => setMobileMenuOpen(false)}>Começar agora →</Link>
               </Button>
             </div>
           </nav>
@@ -390,20 +395,21 @@ export default function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-extrabold leading-[1.1] mb-6"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Seus vendedores cuidam do{' '}
-              <span style={{ color: 'var(--brand-gold)' }}>fechamento</span>.
+              Pare de perder lead no{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>WhatsApp</span>.
               <br className="hidden md:block" />
-              {' '}A IA cuida{' '}
+              {' '}A IA responde, organiza e{' '}
               <span className="bg-gradient-to-r from-[#0F2647] via-[#1A3A6B] to-[#D4A017] bg-clip-text text-transparent">
-                do resto
+                vende junto
               </span>.
             </h1>
 
             {/* Subtítulo */}
             <p className="text-base md:text-lg lg:text-xl text-muted-foreground max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed">
-              <strong className="text-foreground">Pedro</strong> atende, qualifica e classifica cada lead no WhatsApp em segundos.{' '}
-              <strong className="text-foreground">Marcos</strong> dispara campanhas inteligentes e mantém seu CRM organizado.
-              Você nunca mais perde um lead por demora — nem queima sua base com mensagem em massa.
+              <strong className="text-foreground">Pedro</strong> atende e qualifica em segundos.{' '}
+              <strong className="text-foreground">Marcos</strong> organiza o CRM e os disparos.{' '}
+              <strong className="text-foreground">José</strong> mostra quais campanhas escalar ou pausar.
+              Sua operação vende mais sem depender de resposta manual o dia inteiro.
             </p>
 
             {/* Microbenefícios */}
@@ -434,8 +440,7 @@ export default function LandingPage() {
                   boxShadow: 'var(--shadow-gold)',
                 }}
               >
-                {/* CTA primário — aponta para /auth?tab=signup por ora; vai virar /checkout no Prompt 10 */}
-                <Link to="/auth?tab=signup">
+                <Link to={PRO_CHECKOUT_URL}>
                   Assinar PRO agora <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>
@@ -534,6 +539,33 @@ export default function LandingPage() {
                   </div>
                 </div>
 
+                {/* Seta */}
+                <div className="flex justify-center">
+                  <div className="text-2xl opacity-40 text-foreground">↓</div>
+                </div>
+
+                {/* Card 4: José otimiza mídia */}
+                <div
+                  className="rounded-xl border p-4"
+                  style={{
+                    borderColor: 'rgba(212, 160, 23, 0.55)',
+                    background: 'rgba(212, 160, 23, 0.08)',
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: 'rgba(212, 160, 23, 0.18)' }}
+                    >
+                      <Target className="h-5 w-5" style={{ color: 'var(--brand-gold)' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold" style={{ color: 'var(--brand-gold)' }}>José · Tráfego IA</p>
+                      <p className="text-sm font-medium truncate">Escalar campanha Onix · CPL saudável</p>
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
               {/* Badge "ao vivo" */}
@@ -557,9 +589,9 @@ export default function LandingPage() {
         <div className="relative max-w-4xl mx-auto mt-14 md:mt-20">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-5">
             {[
-              { value: '2', label: 'Agentes ativos hoje' },
+              { value: '3', label: 'Agentes ativos no PRO' },
               { value: '24/7', label: 'Pedro atende sem parar' },
-              { value: '+5', label: 'Agentes em breve' },
+              { value: 'José', label: 'Otimização de tráfego IA' },
               { value: '5min', label: 'Liberação após pagar' },
             ].map((m) => (
               <div
@@ -580,6 +612,80 @@ export default function LandingPage() {
                 <p className="text-xs md:text-sm font-medium text-foreground/80 mt-2">{m.label}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── VIDEO DEMO ───────────────────────────────────────────────── */}
+      <section id="demo" className="px-4 md:px-6 py-14 md:py-20 bg-card/25">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[0.9fr_1.35fr] gap-8 lg:gap-12 items-center">
+          <div className="text-center lg:text-left">
+            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">
+              Veja por dentro
+            </Badge>
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-5"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Assista a Logos IA trabalhando numa operação real.
+            </h2>
+            <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-6">
+              Mostre aqui Pedro atendendo, Marcos organizando os leads e José analisando campanhas.
+              Essa demonstração encurta a decisão de compra porque o cliente entende em minutos como a plataforma funciona.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              {[
+                'Lead atendido em segundos',
+                'CRM atualizado automaticamente',
+                'Tráfego analisado pelo José',
+              ].map((item) => (
+                <div key={item} className="rounded-lg border border-border/50 bg-background/60 px-3 py-3 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-success)' }} />
+                  <span className="font-medium text-foreground/90">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div
+            className="relative overflow-hidden rounded-2xl border-2"
+            style={{
+              borderColor: 'rgba(212, 160, 23, 0.35)',
+              background: 'linear-gradient(160deg, #0A1C36 0%, #12305C 100%)',
+              boxShadow: '0 28px 80px -28px rgba(15, 38, 71, 0.75)',
+            }}
+          >
+            <div className="aspect-video w-full">
+              {DEMO_VIDEO_SRC ? (
+                <video
+                  className="h-full w-full object-cover"
+                  controls
+                  playsInline
+                  preload="metadata"
+                  poster="/plano-pro-oferta.png"
+                >
+                  <source src={DEMO_VIDEO_SRC} type="video/mp4" />
+                </video>
+              ) : (
+                <div className="h-full w-full flex flex-col items-center justify-center text-center px-6">
+                  <div
+                    className="h-20 w-20 rounded-full flex items-center justify-center mb-5"
+                    style={{
+                      background: 'rgba(212, 160, 23, 0.14)',
+                      border: '1px solid rgba(212, 160, 23, 0.40)',
+                    }}
+                  >
+                    <PlayCircle className="h-11 w-11" style={{ color: 'var(--brand-gold)' }} />
+                  </div>
+                  <p className="text-xl md:text-2xl font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
+                    Demonstração da Logos IA por dentro
+                  </p>
+                  <p className="text-sm md:text-base mt-3 max-w-lg" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                    Pedro, Marcos e José conectados em uma única jornada: atendimento, CRM, campanha e decisão comercial.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -1089,7 +1195,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── EM BREVE (Prompt 7 — redesign 16/05) ─────────────────────── */}
+      {/* ── AGENTES (Prompt 7 — redesign 16/05) ─────────────────────── */}
       <section
         id="em-breve"
         className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden bg-background"
@@ -1102,24 +1208,23 @@ export default function LandingPage() {
               variant="outline"
               className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider border-foreground/30 text-foreground bg-foreground/5"
             >
-              <Lock className="inline-block h-3 w-3 mr-1.5" />
-              Em desenvolvimento
+              <Sparkles className="inline-block h-3 w-3 mr-1.5" />
+              Agentes da operação
             </Badge>
 
             <h2
               className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              O ecossistema está{' '}
-              <span style={{ color: 'var(--brand-gold)' }}>crescendo</span>.
+              Pedro, Marcos e José já entram no{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>PRO</span>.
               <br className="hidden md:block" />
-              {' '}Quem assinar agora entra antes.
+              {' '}O restante do ecossistema continua crescendo.
             </h2>
 
             <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-              Esses agentes estão em desenvolvimento. Quando lançarem,{' '}
-              <strong className="text-foreground">assinantes PRO terão acesso prioritário</strong>
-              {' '}— sem aumento de preço enquanto for assinante ativo.
+              O PRO e o PRO MAX já incluem atendimento, CRM/disparo e tráfego inteligente.
+              Os próximos agentes entram como expansão para quem quer centralizar marketing e vendas na Logos IA.
             </p>
           </div>
 
@@ -1132,6 +1237,7 @@ export default function LandingPage() {
                 Icon: Target,
                 color: '#E65100',
                 bg: 'rgba(230, 81, 0, 0.08)',
+                included: true,
               },
               {
                 name: 'Paulo',
@@ -1182,65 +1288,70 @@ export default function LandingPage() {
                 color: '#D4A017',
                 bg: 'rgba(212, 160, 23, 0.10)',
               },
-            ].map((agent, i) => (
-              <div
-                key={agent.name}
-                className="relative rounded-2xl bg-card p-5 select-none border-foreground/10 border"
-                style={{
-                  boxShadow: 'var(--shadow-soft)',
-                  opacity: 0.62,
-                  cursor: 'not-allowed',
-                  animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
-                  filter: 'grayscale(0.25)',
-                }}
-              >
-                {/* Badge EM BREVE dourado forte (visual de bloqueado) */}
-                <div className="absolute top-3 right-3">
-                  <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border"
-                    style={{
-                      background: 'var(--brand-gold)',
-                      color: 'var(--brand-navy)',
-                      borderColor: 'var(--brand-gold-hover)',
-                      boxShadow: '0 2px 8px rgba(212, 160, 23, 0.45), inset 0 -1px 0 rgba(0,0,0,0.15)',
-                    }}
-                  >
-                    <Lock className="h-2.5 w-2.5" strokeWidth={3} />
-                    Em breve
-                  </span>
-                </div>
+            ].map((agent, i) => {
+              const included = Boolean(agent.included);
 
-                {/* Ícone com leve blur/opacity */}
+              return (
                 <div
-                  className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+                  key={agent.name}
+                  className="relative rounded-2xl bg-card p-5 select-none border-foreground/10 border"
                   style={{
-                    background: agent.bg,
-                    filter: 'saturate(0.65)',
+                    boxShadow: included ? '0 22px 60px -26px rgba(212, 160, 23, 0.75)' : 'var(--shadow-soft)',
+                    opacity: included ? 1 : 0.62,
+                    cursor: included ? 'default' : 'not-allowed',
+                    animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
+                    filter: included ? 'none' : 'grayscale(0.25)',
+                    borderColor: included ? 'rgba(212, 160, 23, 0.38)' : 'rgba(255,255,255,0.10)',
                   }}
                 >
-                  <agent.Icon className="h-6 w-6" style={{ color: agent.color, opacity: 0.80 }} strokeWidth={2} />
+                  <div className="absolute top-3 right-3">
+                    <span
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border"
+                      style={{
+                        background: included ? 'rgba(34, 197, 94, 0.16)' : 'var(--brand-gold)',
+                        color: included ? 'var(--brand-success)' : 'var(--brand-navy)',
+                        borderColor: included ? 'rgba(34, 197, 94, 0.35)' : 'var(--brand-gold-hover)',
+                        boxShadow: included ? 'none' : '0 2px 8px rgba(212, 160, 23, 0.45), inset 0 -1px 0 rgba(0,0,0,0.15)',
+                      }}
+                    >
+                      {included ? (
+                        <CheckCircle2 className="h-2.5 w-2.5" strokeWidth={3} />
+                      ) : (
+                        <Lock className="h-2.5 w-2.5" strokeWidth={3} />
+                      )}
+                      {included ? 'Incluso no PRO' : 'Em breve'}
+                    </span>
+                  </div>
+
+                  <div
+                    className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+                    style={{
+                      background: agent.bg,
+                      filter: included ? 'none' : 'saturate(0.65)',
+                    }}
+                  >
+                    <agent.Icon className="h-6 w-6" style={{ color: agent.color, opacity: included ? 1 : 0.80 }} strokeWidth={2} />
+                  </div>
+
+                  <h3
+                    className="text-lg font-bold mb-2 leading-tight text-foreground"
+                    style={{ fontFamily: 'var(--font-display)' }}
+                  >
+                    {agent.name}
+                  </h3>
+
+                  <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+                    {agent.desc}
+                  </p>
                 </div>
-
-                {/* Nome */}
-                <h3
-                  className="text-lg font-bold mb-2 leading-tight text-foreground"
-                  style={{ fontFamily: 'var(--font-display)' }}
-                >
-                  {agent.name}
-                </h3>
-
-                {/* Descrição */}
-                <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
-                  {agent.desc}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* ── Disclaimer ───────────────────────────────── */}
           <p className="text-center text-sm text-muted-foreground mt-10 max-w-2xl mx-auto">
             <Sparkles className="inline-block h-3.5 w-3.5 mr-1.5" style={{ color: 'var(--brand-gold)' }} />
-            Quem é PRO entra primeiro nos lançamentos, sem aumento de preço enquanto for assinante ativo.
+            José já está incluso no PRO e PRO MAX. Quem é assinante ativo entra primeiro nos próximos lançamentos.
           </p>
 
         </div>
@@ -1463,7 +1574,7 @@ export default function LandingPage() {
           {/* CTA principal */}
           <div className="text-center">
             <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-8 text-base md:text-lg gap-2 py-5 rounded-2xl font-bold shadow-lg shadow-green-900/30 h-auto whitespace-normal max-w-sm md:max-w-none">
-              <Link to="/auth?tab=signup" className="flex items-center justify-center gap-2 text-center leading-snug">
+              <Link to={PRO_CHECKOUT_URL} className="flex items-center justify-center gap-2 text-center leading-snug">
                 Quero Multiplicar Meus Resultados e Economizar Até R$15k/mês com IA
                 <ArrowRight className="h-5 w-5 shrink-0" />
               </Link>
@@ -1578,18 +1689,18 @@ export default function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-3 text-foreground"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Escolha seu plano. <span style={{ color: 'var(--brand-gold)' }}>Tudo desbloqueado</span>. Sem pegadinha.
+              Escolha entre PRO e PRO MAX. <span style={{ color: 'var(--brand-gold)' }}>Pedro, Marcos e José inclusos</span>.
             </h2>
 
             <p className="text-base md:text-lg text-muted-foreground max-w-xl mx-auto">
-              Pedro e Marcos rodando 24/7. Cancele quando quiser.
+              Comece com atendimento, CRM e tráfego IA no PRO. Suba para o PRO MAX quando quiser mais volume, prioridade e acompanhamento.
             </p>
           </div>
 
           {/* ── CARD PRO — USA A ARTE COMPLETA COMO IMAGEM ─────────── */}
           <div className="relative mx-auto">
 
-            {/* ── DOIS CARDS: PRO FUNDADOR + BASICO (lado a lado) ── */}
+            {/* ── DOIS CARDS: PRO FUNDADOR + PRO MAX (lado a lado) ── */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 max-w-4xl mx-auto items-stretch">
 
               {/* ===== CARD PRO FUNDADOR (destaque dourado) ===== */}
@@ -1631,7 +1742,7 @@ export default function LandingPage() {
                       Pro
                     </h3>
                     <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Pague o preço do Básico e leve o Pro completo.
+                      Entre pela oferta fundador com Pedro, Marcos e José inclusos.
                     </p>
 
                     {/* Preço mensal */}
@@ -1670,7 +1781,7 @@ export default function LandingPage() {
                         'Até 10 conexões de WhatsApp',
                         'Disparo em massa segmentado',
                         'Follow-up automático 24/7',
-                        'IA de atendimento (Pedro + Marcos)',
+                        'Pedro, Marcos e José inclusos',
                         'Exportação de planilhas e relatórios',
                         'Suporte prioritário',
                       ].map((f) => (
@@ -1698,7 +1809,7 @@ export default function LandingPage() {
                         border: '2px solid var(--brand-gold-hover)',
                       }}
                     >
-                      <Link to="/checkout?plano=pro&ciclo=mensal">
+                      <Link to={PRO_CHECKOUT_URL}>
                         Quero o Pro Fundador <ArrowRight className="h-5 w-5" strokeWidth={3} />
                       </Link>
                     </Button>
@@ -1706,7 +1817,7 @@ export default function LandingPage() {
                 </div>
               </div>
 
-              {/* ===== CARD BASICO ===== */}
+              {/* ===== CARD PRO MAX ===== */}
               <div className="relative">
                 <div
                   className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
@@ -1724,7 +1835,7 @@ export default function LandingPage() {
                       style={{ background: 'rgba(250, 248, 242, 0.08)', border: '1px solid rgba(250, 248, 242, 0.18)' }}
                     >
                       <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'rgba(250, 248, 242, 0.85)' }}>
-                        Plano de entrada
+                        Para escala
                       </span>
                     </div>
                   </div>
@@ -1734,10 +1845,10 @@ export default function LandingPage() {
                       className="text-3xl font-black uppercase tracking-wide"
                       style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
                     >
-                      Básico
+                      Pro Max
                     </h3>
                     <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Comece a vender com IA no WhatsApp.
+                      Mais volume, prioridade e acompanhamento para operações em crescimento.
                     </p>
 
                     {/* Preço mensal */}
@@ -1747,22 +1858,22 @@ export default function LandingPage() {
                         className="text-6xl font-black leading-none"
                         style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.30)' }}
                       >
-                        497
+                        1.497
                       </span>
                       <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,00</span>
                       <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
                     </div>
                     <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      + R$ 1.497 de implementação (pagamento único)
+                      + R$ 5.997 de implementação (pagamento único)
                     </p>
 
-                    {/* Highlight 150 conversas */}
+                    {/* Highlight 500 conversas */}
                     <div
                       className="mt-5 mb-5 rounded-xl p-3 text-center"
                       style={{ background: 'rgba(250, 248, 242, 0.06)', border: '1px solid rgba(250, 248, 242, 0.14)' }}
                     >
                       <span className="text-lg font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
-                        150 conversas/mês
+                        500 conversas/mês
                       </span>
                       <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
                         incluídas no atendimento com IA
@@ -1772,13 +1883,13 @@ export default function LandingPage() {
                     {/* Features */}
                     <ul className="space-y-2.5 text-sm flex-1">
                       {[
-                        'CRM completo de leads',
-                        'Até 5 conexões de WhatsApp',
-                        'Disparo em massa segmentado',
-                        'Follow-up automático 24/7',
-                        'IA de atendimento (Pedro + Marcos)',
-                        'Exportação de planilhas e relatórios',
-                        'Suporte por e-mail',
+                        'Pedro, Marcos e José inclusos',
+                        'CRM completo + painel ao vivo',
+                        'Até 15 conexões de WhatsApp',
+                        'Tráfego IA com relatórios avançados',
+                        'Mais volume de conversas e recargas menores',
+                        'Prioridade de implementação',
+                        'Suporte estratégico',
                       ].map((f) => (
                         <li key={f} className="flex items-start gap-2.5">
                           <span
@@ -1803,9 +1914,9 @@ export default function LandingPage() {
                         border: '2px solid var(--brand-gold)',
                       }}
                     >
-                      <Link to="/checkout?plano=basico&ciclo=mensal">
-                        Assinar o Básico <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </Link>
+                      <a href={PRO_MAX_CONTACT_URL}>
+                        Quero o PRO MAX <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                      </a>
                     </Button>
                   </div>
                 </div>
@@ -1816,7 +1927,7 @@ export default function LandingPage() {
             {/* Nota do fundador + microcopy de segurança */}
             <div className="mt-8 text-center">
               <p className="text-sm font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                Oferta Pro Fundador: os 10 primeiros assinam o Pro pagando o preço do Básico.
+                PRO inclui Pedro, Marcos e José. PRO MAX aumenta volume, prioridade e acompanhamento.
               </p>
               <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <Lock className="h-3 w-3" />
@@ -2099,7 +2210,7 @@ export default function LandingPage() {
                     border: '2px solid var(--brand-gold-hover)',
                   }}
                 >
-                  <Link to="/auth?tab=signup&plano=mensal">
+                  <Link to={PRO_CHECKOUT_URL}>
                     Quero Começar Agora <ArrowRight className="h-6 w-6" strokeWidth={3} />
                   </Link>
                 </Button>
@@ -2217,7 +2328,7 @@ export default function LandingPage() {
 
           {/* Subtítulo */}
           <p className="text-base md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
-            <strong style={{ color: 'var(--brand-cream)' }}>Pedro e Marcos</strong> começam a trabalhar hoje.
+            <strong style={{ color: 'var(--brand-cream)' }}>Pedro, Marcos e José</strong> começam a trabalhar hoje.
             Você só precisa decidir parar de fazer o que uma IA pode fazer melhor.
           </p>
 
@@ -2232,7 +2343,7 @@ export default function LandingPage() {
               boxShadow: 'var(--shadow-gold)',
             }}
           >
-            <Link to={`/auth?tab=signup&plano=${billing}`}>
+            <Link to={PRO_CHECKOUT_URL}>
               Assinar PRO agora <ArrowRight className="h-5 w-5" />
             </Link>
           </Button>
@@ -2261,7 +2372,7 @@ export default function LandingPage() {
                 <LogosIALogo size="md" variant="dark" />
               </div>
               <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                Atendimento + CRM com IA pra quem vive de WhatsApp.
+                Atendimento, CRM e tráfego IA pra quem vive de WhatsApp.
               </p>
             </div>
 
@@ -2273,7 +2384,7 @@ export default function LandingPage() {
               <ul className="space-y-2.5 text-sm">
                 <li><a href="#agente-pedro" className="opacity-80 hover:opacity-100 transition-opacity">Agente Pedro</a></li>
                 <li><a href="#agente-marcos" className="opacity-80 hover:opacity-100 transition-opacity">Agente Marcos</a></li>
-                <li><a href="#em-breve" className="opacity-80 hover:opacity-100 transition-opacity">Em breve</a></li>
+                <li><a href="#em-breve" className="opacity-80 hover:opacity-100 transition-opacity">Agentes</a></li>
                 <li><a href="#planos" className="opacity-80 hover:opacity-100 transition-opacity">Preço</a></li>
               </ul>
             </div>
