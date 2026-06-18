@@ -1113,6 +1113,33 @@ function buildVehiclePhotoReply(memory: any, message: string, topicAnchor?: any)
     };
   }
 
+  // AMBIGUIDADE ENTRE UNIDADES (lead 99214-4889): o lead aceitou ver fotos ("Sim") OU pediu "os
+  // outros"/"manda" SEM dizer QUAL, e o agente apresentou VARIAS unidades (mesmo modelo, anos/versoes/
+  // cores diferentes). Sem sinal, cairia no PRIMEIRO (default) e despejaria o album de um carro que o
+  // lead pode nem querer. O certo (pedido do dono) e EXTRAIR o que ele quer: lista os carros e PERGUNTA
+  // de qual ver as fotos. So dispara quando NAO ha sinal nenhum (default puro) E ha >=2 carros DISTINTOS.
+  // Pick AMBIGUO = sem sinal nenhum do lead (default OU ancora fraca do topico homogeneo). NAO conta
+  // como ambiguo continuar o MESMO carro ja em foto (last_photo_*) nem um pick EXPLICITO (modelo/cor/
+  // ordinal) — esses o lead deixou claro. distinctKeyCount>=2 garante que ha de fato + de uma unidade.
+  const _ambiguousPick = !reference.explicit
+    && reference.reason !== "last_photo_vehicle_key"
+    && reference.reason !== "last_photo_vehicle_index";
+  const distinctKeyCount = new Set(vehicles.map((v: any) => vehicleKey(v)).filter(Boolean)).size;
+  if (_ambiguousPick && distinctKeyCount >= 2) {
+    const lines = vehicles.slice(0, 6).map((v: any, i: number) => {
+      const lbl = cleanVehicleLabel(v) || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" ");
+      const cor = v?.cor ? `, ${String(v.cor).toLowerCase()}` : "";
+      const preco = Number(v?.preco) > 0 ? `, R$ ${String(Math.round(Number(v.preco))).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}` : "";
+      return `${i + 1}. ${lbl}${cor}${preco}`;
+    });
+    return {
+      ok: true,
+      text: `Tenho mais de uma opção pra te mostrar! De qual você quer ver as fotos?\n${lines.join("\n")}`,
+      source: "vehicle_photos_pick_which",
+      media: [],
+    };
+  }
+
   const index = reference.index;
   const vehicle = vehicles[index] || vehicles[0];
   // Fotos ja enviadas SO contam se for o MESMO veiculo da ultima vez (senao reseta).

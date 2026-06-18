@@ -69,6 +69,7 @@ const A = {
   temperatura: (r, t) => ({ pass: r.temperatura === t, label: `temperatura == ${t} (got ${r.temperatura})` }),
   nextActionNot: (r, na) => ({ pass: r.next_action !== na, label: `next_action != ${na} (got ${r.next_action})` }),
   hasItems: (r) => ({ pass: r.items.length > 0, label: `busca retornou itens (got ${r.items.length})` }),
+  noInlineList: (r) => { const bad = String(r.reply || "").split(/\n/).some(line => ((line.match(/\d{1,2}\.\s+[A-Za-zÀ-ÿ]/g) || []).length >= 2)); return { pass: !bad, label: `sem 2+ veículos numerados na mesma linha` }; },
   itemsPriceMax: (r, max) => { const bad = r.items.filter(v => Number(v.preco) > 0 && Number(v.preco) > max); return { pass: bad.length === 0, label: `nenhum item > R$${max} (viol: ${bad.map(v => v.preco)})` }; },
   itemsYearIn: (r, [lo, hi]) => { const bad = r.items.filter(v => Number(v.ano) && (Number(v.ano) < lo || Number(v.ano) > hi)); return { pass: bad.length === 0, label: `anos em [${lo},${hi}] (viol: ${bad.map(v => v.ano)})` }; },
 };
@@ -173,6 +174,42 @@ const stateful = [
     { lead: { lead_name: "Joao" }, state: { interesse: { tipo_veiculo: "sedan" }, veiculos_apresentados: [{ label: "Chevrolet Onix Sedan Plus 2025", marca: "Chevrolet", modelo: "Onix Sedan", ano: 2025, preco: 97990 }, { label: "Fiat Cronos 2025", marca: "Fiat", modelo: "Cronos", ano: 2025, preco: 82990 }] },
       history: [{ role: "assistant", content: "Temos alguns sedans: 1. Chevrolet Onix Sedan Plus 2025 - R$ 97.990. 2. Fiat Cronos 2025 - R$ 82.990. Quer ver fotos de algum?" }] },
     async (chat) => { const r = await dryRun({ chatid: chat, text: "esses ficaram horriveis" }); return { r, checks: [{ pass: !(r.replyN.includes("onix") && r.replyN.includes("cronos")), label: `não repetiu a lista (reply: "${r.reply.slice(0, 60)}")` }] }; }) },
+
+  // GROUNDING no CONJUNTO APRESENTADO (lead 99214-4889): apresentou 3 Onix (todos com fotos), lead
+  // pediu "E os outros" e o agente MENTIU ("só tenho as fotos do Activ 2017"). O reply deve oferecer
+  // os OUTROS (eles existem + têm fotos), nunca negar. Geral p/ qualquer lista de qualquer modelo.
+  { g: "fotos", n: "'E os outros' após apresentar 3 Onix -> oferece os outros, não mente que só tem 1", run: () => withLead(
+    { state: { interesse: { modelo_desejado: "Onix", tipo_veiculo: "hatch" }, veiculos_apresentados: [
+        { label: "Chevrolet Onix HATCH ACTIV 1.4 2017", marca: "Chevrolet", modelo: "Onix", versao: "ACTIV 1.4", ano: 2017, cor: "Laranja", preco: 64990, km: 111354, fotos: ["a.jpg", "b.jpg"], images_count: 16 },
+        { label: "Chevrolet Onix HATCH LT 1.0 2022", marca: "Chevrolet", modelo: "Onix", versao: "LT 1.0", ano: 2022, cor: "Azul", preco: 66990, km: 111000, fotos: ["c.jpg"], images_count: 10 },
+        { label: "Chevrolet Onix HATCH LT 2025", marca: "Chevrolet", modelo: "Onix", versao: "LT", ano: 2025, cor: "Branco", preco: 76990, km: 43900, fotos: ["d.jpg"], images_count: 10 },
+      ], ultima_foto: { veiculo_key: "chevrolet-onix-activ-2017", veiculo_index: 0, target: "overview", fotos_enviadas: [0, 3, 6] } },
+      history: [
+        { role: "assistant", content: "Temos algumas opções de Onix:\n1. Chevrolet Onix HATCH ACTIV 2017, laranja, R$ 64.990.\n2. Chevrolet Onix HATCH LT 2022, azul, R$ 66.990.\n3. Chevrolet Onix 2025, branco, R$ 76.990.\nQuer ver fotos de algum deles?" },
+        { role: "user", content: "Sim" },
+        { role: "assistant", content: "Vou te enviar as fotos do Chevrolet Onix HATCH ACTIV 2017. 😊" },
+      ] },
+    async (chat) => { const r = await dryRun({ chatid: chat, text: "E os outros" });
+      return { r, checks: [
+        A.replyHasNot(r, ["so tenho", "nao tenho mais", "nao tenho outras", "apenas as fotos do", "somente as fotos", "nao temos mais"]),
+        A.replyHas(r, ["2022", "2025", "azul", "branco", "lt"]),
+      ] }; }) },
+
+  // FORMATAÇÃO de lista (lead 99214-4889): "1. ... 2. ... 3. ..." tudo na MESMA linha = ilegível.
+  { g: "fotos", n: "lista de Onix -> cada veículo em sua própria linha", run: () => withLead(
+    { state: { interesse: { modelo_desejado: "Onix" } } },
+    async (chat) => { const r = await dryRun({ chatid: chat, text: "tem onix?" }); return { r, checks: [A.noInlineList(r)] }; }) },
+
+  // DISAMBIGUAÇÃO (lead 99214-4889 #2): "Sim" a "fotos de algum deles?" com 3 Onix -> PERGUNTA qual
+  // (extrai o que o lead quer), não despeja o álbum do primeiro.
+  { g: "fotos", n: "'Sim' a oferta de fotos com 3 Onix -> pergunta qual, não despeja o 1º", run: () => withLead(
+    { state: { interesse: { modelo_desejado: "Onix", tipo_veiculo: "hatch" }, veiculos_apresentados: [
+        { label: "Chevrolet Onix HATCH ACTIV 1.4 2017", marca: "Chevrolet", modelo: "Onix", ano: 2017, cor: "Laranja", preco: 64990, km: 111354, fotos: ["a.jpg", "b.jpg"], images_count: 16 },
+        { label: "Chevrolet Onix HATCH LT 1.0 2022", marca: "Chevrolet", modelo: "Onix", ano: 2022, cor: "Azul", preco: 66990, km: 111000, fotos: ["c.jpg"], images_count: 10 },
+        { label: "Chevrolet Onix HATCH LT 2025", marca: "Chevrolet", modelo: "Onix", ano: 2025, cor: "Branco", preco: 76990, km: 43900, fotos: ["d.jpg"], images_count: 10 },
+      ] },
+      history: [{ role: "assistant", content: "Temos algumas opções de Onix:\n1. Chevrolet Onix HATCH ACTIV 2017, laranja, R$ 64.990.\n2. Chevrolet Onix HATCH LT 2022, azul, R$ 66.990.\n3. Chevrolet Onix 2025, branco, R$ 76.990.\nQuer ver fotos de algum deles?" }] },
+    async (chat) => { const r = await dryRun({ chatid: chat, text: "Sim" }); return { r, checks: [A.fotos(r, 0), A.replyHas(r, ["qual"])] }; }) },
 ];
 
 // ── REPLAY de anúncios REAIS (ctwa_diag_capture) ────────────────────────────

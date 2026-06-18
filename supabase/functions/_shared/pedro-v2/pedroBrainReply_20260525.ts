@@ -439,7 +439,16 @@ function ensureStockReplyFormatting(input: {
 }) {
   // Mantem a formatacao humana da LLM, mas LIMPA markdown/URLs que o WhatsApp nao
   // renderiza (link de imagem cru "[Veja a foto](https://...blob...)" vazava pro cliente).
-  return stripMarkdownForWhatsApp(input.text);
+  let text = stripMarkdownForWhatsApp(input.text);
+  // LISTA DE VEICULOS LEGIVEL (lead 99214-4889: "1. Onix... R$64.990. 2. Onix... R$66.990. 3. ..."
+  // tudo na MESMA linha -> ilegivel no WhatsApp). Poe cada item NUMERADO em sua propria linha.
+  // So dispara com >=2 itens "<digito>. <LETRA>" (exige espaco+digito(s)+ponto+espaco+LETRA, entao
+  // NAO casa preco "64.990" nem "R$ 2.000": apos o ponto do preco vem digito, nunca espaco+letra).
+  const itemRe = /(?:^|\s)\d{1,2}\.\s+(?=[A-Za-zÀ-ÿ])/g;
+  if ((text.match(itemRe) || []).length >= 2) {
+    text = text.replace(/[ \t]*\n?\s*(\d{1,2})\.\s+(?=[A-Za-zÀ-ÿ])/g, "\n$1. ").trim();
+  }
+  return text;
 }
 
 function fallbackReply(input: {
@@ -622,6 +631,25 @@ export async function generatePedroBrainReply(input: {
       cor: v.cor ?? null, cambio: v.cambio ?? null, combustivel: v.combustivel ?? null,
     };
   })();
+  // CONJUNTO APRESENTADO (working set da conversa): os veiculos que o agente JA mostrou neste
+  // atendimento, COM fotos salvas. RAIZ do "agente mente sobre o proprio estoque" (lead 99214-4889:
+  // apresentou 3 Onix, lead pediu "E os outros" e o agente disse "so tenho as fotos do Activ 2017" —
+  // FALSO, tinha fotos dos 3). O reply so recebia `veiculo_em_foco` (1 carro) + stock.facts (busca do
+  // turno, VAZIA em follow-up tipo "os outros") -> alucina que so tem 1. Damos a lista inteira como
+  // VERDADE pro reply: ele nunca nega ter um carro/fotos que ESTAO aqui, e resolve "os outros / o
+  // segundo / o branco / o de 2022" contra ela. Generico p/ qualquer lista de qualquer modelo.
+  const presentedVehicles = (Array.isArray(input.memory?.veiculos_apresentados) ? input.memory!.veiculos_apresentados : [])
+    .slice(0, 12)
+    .map((v: any, i: number) => ({
+      n: i + 1,
+      label: v?.label || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" ") || null,
+      ano: v?.ano ?? null,
+      cor: v?.cor ?? null,
+      preco: v?.preco ?? null,
+      km: v?.km ?? null,
+      tem_fotos: Array.isArray(v?.fotos) ? v.fotos.length > 0 : Number(v?.images_count) > 0,
+    }))
+    .filter((v: any) => v.label);
   const currentTime = saoPauloNowInfo();
   const chatHistory = buildChatHistory(input.recent_history || input.memory?.recent_turns || [], input.message);
   // ── PROVEDOR DA RESPOSTA (conversa com o cliente): Claude principal (teste) / OpenAI / DeepSeek. ──
@@ -703,7 +731,7 @@ export async function generatePedroBrainReply(input: {
                 "- PROIBIDO encerrar com filler de cortesia vazio: 'qualquer duvida, estou a disposicao', 'estou aqui se precisar', 'fico a disposicao', 'estou a disposicao'. Termine no conteudo (ou na pergunta que avanca).",
                 "- ESPELHE o tamanho do cliente: cliente curto/objetivo => voce curto. Sem floreios, sem frases de preenchimento, sem repetir o que ja foi dito. Uma ideia por mensagem.",
                 "- Siga a sua personalidade principal do portal na escrita das mensagens.",
-                "- Se houver veiculos em stock.facts, liste as opcoes de forma natural e amigavel conforme sua personalidade. Diga os dados principais (modelo, ano, preco, km) sem formatacao mecanica, apenas integre de forma conversacional.",
+                "- Se houver veiculos em stock.facts, liste as opcoes de forma natural e amigavel conforme sua personalidade, com os dados principais (modelo, ano, preco, km). Ao listar VARIOS veiculos, coloque CADA UM em sua PROPRIA LINHA (uma quebra de linha entre eles) — NUNCA enfileire varios carros na mesma linha, fica ilegivel no WhatsApp.",
                 "- DESENVOLVA A CONVERSA quando o criterio e AMPLO (ex.: 'SUV ate 120 mil') e ha VARIAS opcoes em stock.facts: apresente NO MAXIMO ~5 opcoes (pode ser as mais em conta — stock.facts ja vem ordenado por preco). NUNCA despeje a lista inteira: mandar 10+ veiculos POLUI a conversa e espanta o cliente. SINALIZE que ha mais ('esses sao alguns dos nossos modelos', 'temos outras opcoes tambem'). E SEMPRE termine com UMA pergunta que DESENROLA pra qualificar o lead: oferecer fotos de algum, mostrar mais opcoes, OU afunilar (marca/ano/cambio/uso). Ex.: 'Quer ver fotos de algum desses ou prefere que eu te mostre mais opcoes?'. Mantendo o padrao SDR (1 pergunta por vez, sem textao).",
                 "- VARIOS MODELOS: se o lead cita MAIS DE UM modelo ('Tcross ou Compass', 'os dois', 'A e B'), trate TODOS os que ele pediu — fale/mostre cada um que exista em stock.facts. NUNCA responda so um e ignore o resto; se um deles nao tiver no estoque, diga isso e foque no(s) que tem.",
                 "- NAO REPITA A MESMA LISTA, mas TAMBEM nao trave: se voce JA apresentou alguns veiculos e o lead reforca o criterio ou quer ver mais, MOSTRE OUTROS de stock.facts que voce ainda NAO apresentou (quase sempre ha mais). So pergunte/afunile depois de mostrar uma boa variedade. NUNCA repita a lista identica.",
@@ -748,6 +776,7 @@ export async function generatePedroBrainReply(input: {
               plan: input.plan,
               vehicle_resolution: input.vehicle_resolution,
               veiculo_em_foco: focusVehicle,
+              veiculos_ja_apresentados: presentedVehicles,
               ad_context: input.ad_context || null,
               media_context: input.media_context || null,
               recent_history: input.recent_history || input.memory?.recent_turns || [],
@@ -788,6 +817,8 @@ export async function generatePedroBrainReply(input: {
                 "DISPONIBILIDADE POR MODELO (NUNCA minta 'nao temos'): se o lead pede uma ESPECIFICACAO (combustivel/cambio/cor/versao/ano) que o estoque nao tem MAS o MODELO existe em stock.facts com outra spec, NUNCA diga 'nao temos o <modelo> <spec>'. Apresente POSITIVAMENTE o que TEM informando a spec REAL (ex.: lead quer 'Toro flex' e o estoque tem Toro diesel -> 'A Toro que tenho aqui e a diesel, nao a flex — quer ver?'). So diga que NAO tem quando o MODELO inteiro nao existir no estoque.",
                 "PRECO A CONFIRMAR: se um item de stock.facts tiver preco_a_confirmar=true, o carro EXISTE e voce DEVE apresenta-lo pelo modelo/ano/km/cor REAIS — NUNCA diga R$0, NUNCA mostre preco zerado, NUNCA negue esse carro. Em vez do valor, diga com naturalidade que vai CONFIRMAR o preco com o time e ja retorna (ex.: 'Esse eu preciso confirmar o valor certinho pra voce, ja te falo'). So omita o preco DESSE item; os demais itens com preco seguem normais.",
                 "NUNCA afirme 'nao temos' um carro SEM que o estoque tenha sido consultado neste fluxo: se stock.success for false ou stock.facts vier vazio por falta de busca (e nao porque o modelo realmente nao existe), NAO negue — confirme/pergunte qual modelo ou diga que vai verificar. So negue disponibilidade com base em stock.facts real.",
+                "VEICULOS JA APRESENTADOS (veiculos_ja_apresentados): sao os carros que voce JA mostrou neste atendimento e voce TEM as fotos de TODOS eles (tem_fotos=true). Quando o lead disser 'os outros', 'e os outros', 'mais', 'tem mais', 'o segundo'/'o terceiro', 'o de 2022', 'o branco', 'o mais barato/caro' etc., ele se refere a ESTA lista. NUNCA diga que 'so tem as fotos de um', que 'nao tem os outros' ou que 'nao tenho mais fotos': se ha mais de um item em veiculos_ja_apresentados, voce TEM os outros e as fotos deles. Essa lista e VERDADE mesmo com stock.facts vazio (turno sem busca).",
+                "QUAL DELES (extrair o que o lead quer, NAO despejar): se o lead pede 'os outros'/'mais' e ha VARIOS em veiculos_ja_apresentados, NAO prometa 'vou te enviar as fotos de X e Y' (varios de uma vez) — apresente os OUTROS de forma curta (modelo/ano/cor/preco, um por LINHA) e PERGUNTE de QUAL deles ele quer ver as fotos. Idem se ele so disse 'sim/quero' a uma oferta de fotos sem dizer qual: pergunte qual antes de mandar. So mande/prometa as fotos de UM veiculo quando ele deixar claro QUAL (pelo modelo, ano, cor ou ordinal).",
                 "TRANSFERENCIA — COMO FALAR DO CONSULTOR: ao avisar que um consultor/vendedor vai assumir, diga SEMPRE que ele 'vai entrar em contato' com o cliente. NUNCA prometa que o consultor vai 'falar por aqui', 'dar continuidade por aqui', 'responder neste numero' ou 'aqui mesmo' — o vendedor humano atende de OUTRO numero de WhatsApp, entao prometer 'por aqui' e MENTIRA e frustra o cliente. Ex. certo: 'Seu atendimento ja esta com um dos nossos consultores de vendas, ele ja vai entrar em contato com voce. 😊'."
               ],
             }),
