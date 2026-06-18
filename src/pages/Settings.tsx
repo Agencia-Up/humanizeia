@@ -20,12 +20,14 @@ import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
 import { AdminSettingsTab } from '@/components/settings/AdminSettingsTab';
 import { DashboardTVSettingsTab } from '@/components/settings/DashboardTVSettingsTab';
 import { KanbanSettingsTab } from '@/components/settings/KanbanSettingsTab';
+import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
+  const { isSeller } = useSellerProfile(user?.id);
   const tabParam = searchParams.get('tab');
   const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'kanban-marcos', 'admin'];
   const [activeTab, setActiveTab] = useState(
@@ -33,6 +35,19 @@ export default function SettingsPage() {
   );
 
   const isSuperAdmin = profile?.is_superadmin === true;
+  // Vendedor não precisa de: Dados da empresa, Configurar IA, Dashboard TV
+  // (nem o checklist de setup, nem "Conectar anúncios"). Some das contas de todos
+  // os vendedores e dos novos automaticamente (gate por profiles.role='seller').
+  const sellerHiddenTabs = ['company', 'ai', 'dashboard-tv'];
+  const isTabHidden = (t: string) => isSeller && sellerHiddenTabs.includes(t);
+
+  // Se o vendedor cair numa aba escondida (ex.: default 'company'), joga pra
+  // primeira aba visível pra ele.
+  useEffect(() => {
+    if (isSeller && sellerHiddenTabs.includes(activeTab)) {
+      setActiveTab('kanban-marcos');
+    }
+  }, [isSeller, activeTab]);
   const tabsRef = useRef<HTMLDivElement>(null);
 
   // Atalho do checklist: rota -> navega; aba -> seleciona E rola ate o formulario.
@@ -81,7 +96,8 @@ export default function SettingsPage() {
           <p className="text-muted-foreground">Gerencie suas preferências e integrações</p>
         </div>
 
-        {/* ── Checklist de configuração ── */}
+        {/* ── Checklist de configuração (só dono; vendedor não faz setup da conta) ── */}
+        {!isSeller && (
         <div className="rounded-xl border border-border/50 bg-card/50 p-5">
           <p className="text-sm font-semibold text-foreground mb-1">📋 Configure em ordem para começar</p>
           <p className="text-xs text-muted-foreground mb-4">Siga os passos abaixo para deixar a plataforma pronta para usar</p>
@@ -110,27 +126,34 @@ export default function SettingsPage() {
             })}
           </div>
         </div>
+        )}
 
         {/* ── Tabs ── */}
         <div ref={tabsRef} className="scroll-mt-20">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="flex-wrap bg-muted/50">
+            {!isTabHidden('company') && (
             <TabsTrigger value="company" className="gap-2">
               <Building2 className="h-4 w-4" />
               Empresa
             </TabsTrigger>
+            )}
+            {!isTabHidden('ai') && (
             <TabsTrigger value="ai" className="gap-2">
               <Sparkles className="h-4 w-4" />
               IA
             </TabsTrigger>
+            )}
             <TabsTrigger value="sync" className="gap-2">
               <RefreshCw className="h-4 w-4" />
               Sincronização
             </TabsTrigger>
+            {!isTabHidden('dashboard-tv') && (
             <TabsTrigger value="dashboard-tv" className="gap-2">
               <Tv className="h-4 w-4" />
               Dashboard TV
             </TabsTrigger>
+            )}
             <TabsTrigger value="kanban-marcos" className="gap-2">
               <KanbanSquare className="h-4 w-4" />
               Kanban Marcos
@@ -143,10 +166,10 @@ export default function SettingsPage() {
             )}
           </TabsList>
 
-          <TabsContent value="company"><CompanySettingsTab /></TabsContent>
-          <TabsContent value="ai"><AISettingsTab /></TabsContent>
+          {!isTabHidden('company') && <TabsContent value="company"><CompanySettingsTab /></TabsContent>}
+          {!isTabHidden('ai') && <TabsContent value="ai"><AISettingsTab /></TabsContent>}
           <TabsContent value="sync"><DataSyncSettingsTab /></TabsContent>
-          <TabsContent value="dashboard-tv"><DashboardTVSettingsTab /></TabsContent>
+          {!isTabHidden('dashboard-tv') && <TabsContent value="dashboard-tv"><DashboardTVSettingsTab /></TabsContent>}
           <TabsContent value="kanban-marcos"><KanbanSettingsTab /></TabsContent>
           {isSuperAdmin && (
             <TabsContent value="admin"><AdminSettingsTab /></TabsContent>
