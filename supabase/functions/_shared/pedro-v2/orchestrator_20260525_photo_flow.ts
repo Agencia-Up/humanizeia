@@ -240,6 +240,14 @@ function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: a
     delete filters.modelo_desejado;
     delete filters.modelo;
     delete filters.marca;
+    // RAIZ "busca ampla zera com estoque cheio" (lead 99716-4335: "Procuro suv 2020 pra frente" -> 0
+    // mesmo havendo SUVs): a frase do lead sobra em ad_context (via referencia.texto_referencia).
+    // Numa busca de CATEGORIA nao ha modelo/referencia a casar; mas buildScoringText cai no fallback
+    // p/ buildSearchText (que inclui ad_context) -> hasSearch=true -> os tokens da frase ("procuro",
+    // "pra", "frente") viram requisito de match e o limiar (matchedTokens<2 -> score=0) ZERA todo o
+    // pool. ad_context e DICA de ranking, nunca filtro DURO numa busca ampla -> limpa junto da query.
+    filters.ad_context = "";
+    filters.contexto_anuncio = "";
   }
 
   const adHasVehicle = Boolean(options?.ad_context?.has_ad_context && options?.ad_context?.vehicle_query);
@@ -1847,6 +1855,10 @@ export async function processPedroV2Turn(
       isGenericQuery = false;
       (stockFilters as any).stock_broad = true;
       (stockFilters as any).query = "";
+      // Mesma raiz do bloco de buildStockFilters: numa busca de CATEGORIA, ad_context (frase do
+      // lead / blob do anuncio) nao pode agir como filtro DURO de match — senao zera o pool cheio.
+      (stockFilters as any).ad_context = "";
+      (stockFilters as any).contexto_anuncio = "";
     }
 
     // CRITERIO DE PRECO/SEGMENTO ("mais economico/barato/popular/em conta/basico")

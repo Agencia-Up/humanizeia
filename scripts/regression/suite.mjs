@@ -68,6 +68,7 @@ const A = {
   pronto: (r, v) => ({ pass: r.pronto === v, label: `pronto_para_transferir == ${v} (got ${r.pronto})` }),
   temperatura: (r, t) => ({ pass: r.temperatura === t, label: `temperatura == ${t} (got ${r.temperatura})` }),
   nextActionNot: (r, na) => ({ pass: r.next_action !== na, label: `next_action != ${na} (got ${r.next_action})` }),
+  hasItems: (r) => ({ pass: r.items.length > 0, label: `busca retornou itens (got ${r.items.length})` }),
   itemsPriceMax: (r, max) => { const bad = r.items.filter(v => Number(v.preco) > 0 && Number(v.preco) > max); return { pass: bad.length === 0, label: `nenhum item > R$${max} (viol: ${bad.map(v => v.preco)})` }; },
   itemsYearIn: (r, [lo, hi]) => { const bad = r.items.filter(v => Number(v.ano) && (Number(v.ano) < lo || Number(v.ano) > hi)); return { pass: bad.length === 0, label: `anos em [${lo},${hi}] (viol: ${bad.map(v => v.ano)})` }; },
 };
@@ -82,6 +83,10 @@ const stateless = [
   { g: "alucinacao", n: "picape cabine dupla -> apresenta", text: "tem picape cabine dupla?", e: r => [A.replyHasNot(r, NAO_TEMOS)] },
   { g: "alucinacao", n: "tem suv -> apresenta", text: "tem suv?", e: r => [A.replyHasNot(r, NAO_TEMOS)] },
   { g: "alucinacao", n: "tem hatch -> apresenta", text: "tem hatch?", e: r => [A.replyHasNot(r, NAO_TEMOS)] },
+  // Busca AMPLA não pode ZERAR por causa da frase do lead que sobra em ad_context (lead 99716-4335:
+  // "procuro suv ... pra frente" zerava 27 SUVs porque "procuro/pra/frente" viravam filtro DURO de match).
+  { g: "alucinacao", n: "procuro suv pra frente -> apresenta (busca ampla não zera por ad_context)", text: "procuro suv pra frente", e: r => [A.hasItems(r), A.replyHasNot(r, NAO_TEMOS)] },
+  { g: "alucinacao", n: "procuro suv 2020 pra frente -> apresenta (com ano)", text: "procuro suv 2020 pra frente", e: r => [A.hasItems(r), A.replyHasNot(r, NAO_TEMOS)] },
 
   // — Preço / faixa —
   { g: "preco", n: "corolla até 50 mil: nada acima do teto", text: "tem corolla ate 50 mil?", e: r => [A.itemsPriceMax(r, 50000)] },
