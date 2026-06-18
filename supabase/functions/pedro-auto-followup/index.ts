@@ -111,6 +111,10 @@ function isValidName(name: string | null | undefined): boolean {
   if (n === "" || invalidNames.includes(n)) return false;
   // Se contiver caracteres de telefone ou for número puro
   if (/^\+?\d+$/.test(n.replace(/[\s\-\(\)]/g, ""))) return false;
+  // Nome-LIXO do WhatsApp (pushName pode ser "$", ".", "🙂", so simbolos/emoji ou 1 letra): NAO e
+  // nome. Sem isso, o follow-up virava "Bom dia $!" (lead 99716-4335, pushName="$"). Exige >=2 LETRAS
+  // reais (com acento). Mesma robustez do leadFirstName do reply principal.
+  if ((name.match(/\p{L}/gu) || []).length < 2) return false;
   return true;
 }
 

@@ -168,7 +168,7 @@ function pickText(payload: any): string {
 
 function pickPushName(payload: any): string {
   const message = pickIncomingMessage(payload);
-  return message?.senderName ||
+  const raw = message?.senderName ||
     message?.notifyName ||
     message?.pushName ||
     payload?.chat?.name ||
@@ -176,7 +176,10 @@ function pickPushName(payload: any): string {
     payload?.senderName ||
     payload?.data?.pushName ||
     payload?.data?.senderName ||
-    "Lead";
+    "";
+  // Nome-LIXO do WhatsApp (pushName "$", ".", emoji, 1 letra) NAO vira lead_name: senao vaza em
+  // "Bom dia $!" no follow-up e "Cliente: $" pro vendedor. Exige >=2 letras reais; senao default "Lead".
+  return (String(raw).match(/\p{L}/gu) || []).length >= 2 ? String(raw).trim() : "Lead";
 }
 
 function normalizePlannerText(value?: string | null) {
