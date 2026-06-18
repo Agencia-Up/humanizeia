@@ -246,7 +246,7 @@ const testimonials = [
 ];
 
 // Coloque o arquivo do video em public/logos-por-dentro.mp4 para ativar o player.
-const DEMO_VIDEO_SRC = '';
+const DEMO_VIDEO_SRC = '/logos-por-dentro.mp4';
 const PRO_CHECKOUT_URL = '/checkout?plano=pro&ciclo=mensal';
 const PRO_MAX_CONTACT_URL = 'mailto:suporte@logosiabrasil.com?subject=Quero%20conhecer%20o%20PRO%20MAX%20da%20LOGOS%7CIA';
 
@@ -256,6 +256,7 @@ export default function LandingPage() {
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [demoVideoAvailable, setDemoVideoAvailable] = useState(Boolean(DEMO_VIDEO_SRC));
 
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
@@ -656,13 +657,14 @@ export default function LandingPage() {
             }}
           >
             <div className="aspect-video w-full">
-              {DEMO_VIDEO_SRC ? (
+              {demoVideoAvailable ? (
                 <video
                   className="h-full w-full object-cover"
                   controls
                   playsInline
                   preload="metadata"
                   poster="/plano-pro-oferta.png"
+                  onError={() => setDemoVideoAvailable(false)}
                 >
                   <source src={DEMO_VIDEO_SRC} type="video/mp4" />
                 </video>
