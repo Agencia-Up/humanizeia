@@ -966,38 +966,34 @@ export async function planPedroTurn(input: {
   const openaiKey = await keyFromCtx(input.ai_key_ctx, "openai");
   const deepseekKey = await keyFromCtx(input.ai_key_ctx, "deepseek");
   const anthropicKey = await keyFromCtx(input.ai_key_ctx, "anthropic");
-  const useDeepseek = plannerProvider === "deepseek" && !!deepseekKey;
-  const useAnthropic = (plannerProvider === "anthropic" || plannerProvider === "claude") && !!anthropicKey;
-  // Anthropic NAO e compativel com OpenAI: endpoint /v1/messages, header x-api-key + anthropic-version,
-  // 'system' top-level, saida em content[].text. Modelo default = haiku (planner e classificacao barata
-  // de alto volume; opus/sonnet ligaveis por env PEDRO_PLANNER_MODEL_ANTHROPIC ou override no dry-run).
-  const llm = useAnthropic
-    ? {
-        provider: "anthropic",
-        url: "https://api.anthropic.com/v1/messages",
-        key: anthropicKey as string,
-        model: Deno.env.get("PEDRO_PLANNER_MODEL_ANTHROPIC") || "claude-haiku-4-5",
-        supportsJsonSchema: false,
-        isAnthropic: true,
-      }
-    : useDeepseek
-    ? {
-        provider: "deepseek",
-        url: "https://api.deepseek.com/v1/chat/completions",
-        key: deepseekKey as string,
-        model: Deno.env.get("PEDRO_PLANNER_MODEL_DEEPSEEK") || "deepseek-chat",
-        supportsJsonSchema: false,
-        isAnthropic: false,
-      }
-    : {
-        provider: "openai",
-        url: "https://api.openai.com/v1/chat/completions",
-        key: openaiKey || "",
-        model: Deno.env.get("PEDRO_PLANNER_MODEL_OPENAI") || "gpt-4o-mini",
-        supportsJsonSchema: true,
-        isAnthropic: false,
-      };
-  if (!llm.key) return fallback;
+  // ── PILAR E: CADEIA DE FAILOVER de provedor (anti degradacao silenciosa). ──────────────────
+  // Incidente recorrente (3x): um provedor cai (OpenAI sem credito) -> o cerebro caia DIRETO na
+  // heuristica BURRA p/ TODO o trafego, em silencio. Agora montamos uma CADEIA: tenta o PRIMARIO
+  // (env/override) e, se falhar (sem credito/timeout/HTTP erro/parse), cai p/ o PROXIMO provedor
+  // COM CHAVE antes do fallback heuristico. So cai na heuristica se TODOS falharem. Cada falha e
+  // registrada (recordProviderError) p/ o monitor/alerta. Anthropic usa /v1/messages (incompativel
+  // com OpenAI: x-api-key, system top-level, saida content[].text).
+  const buildPlannerLlm = (prov: string) => {
+    if (prov === "anthropic" || prov === "claude") {
+      return anthropicKey
+        ? { provider: "anthropic", url: "https://api.anthropic.com/v1/messages", key: anthropicKey as string, model: Deno.env.get("PEDRO_PLANNER_MODEL_ANTHROPIC") || "claude-haiku-4-5", supportsJsonSchema: false, isAnthropic: true }
+        : null;
+    }
+    if (prov === "deepseek") {
+      return deepseekKey
+        ? { provider: "deepseek", url: "https://api.deepseek.com/v1/chat/completions", key: deepseekKey as string, model: Deno.env.get("PEDRO_PLANNER_MODEL_DEEPSEEK") || "deepseek-chat", supportsJsonSchema: false, isAnthropic: false }
+        : null;
+    }
+    return openaiKey
+      ? { provider: "openai", url: "https://api.openai.com/v1/chat/completions", key: openaiKey as string, model: Deno.env.get("PEDRO_PLANNER_MODEL_OPENAI") || "gpt-4o-mini", supportsJsonSchema: true, isAnthropic: false }
+      : null;
+  };
+  // Primario primeiro (env/override), depois os demais COM chave como rede de seguranca (dedup).
+  const _plannerChain = [plannerProvider, "openai", "deepseek", "anthropic"]
+    .filter((p, i, a) => a.indexOf(p) === i)
+    .map(buildPlannerLlm)
+    .filter(Boolean) as Array<NonNullable<ReturnType<typeof buildPlannerLlm>>>;
+  if (_plannerChain.length === 0) return fallback;
 
   // SINAIS DETERMINISTICOS de contexto: o QUE o agente acabou de fazer (pending_question)
   // e o texto da ultima fala dele. Sem isso o LLM nao interpretava respostas curtas/emojis
@@ -1088,30 +1084,16 @@ export async function planPedroTurn(input: {
     vehicle_resolution: input.vehicle_resolution,
   });
 
-  // OTIMIZACAO DE CUSTO: o planner e DECISAO ESTRUTURADA (temp 0.1), nao a resposta ao
-  // cliente. Roda em gpt-4o-mini por padrao; pode rodar em DeepSeek/Anthropic (override por env/dry-run).
-  const plannerModel = input.planner_model || llm.model;
-  const baseBody: Record<string, any> = {
-    model: plannerModel,
-    temperature: 0.1,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPayload },
-    ],
-  };
-
-  const callPlanner = async (responseFormat: any) => {
+  // OTIMIZACAO DE CUSTO: o planner e DECISAO ESTRUTURADA (temp 0.1), nao a resposta ao cliente.
+  // callPlanner agora recebe o `llm` (provedor da vez na cadeia de failover) e o modelo.
+  const callPlanner = async (llm: NonNullable<ReturnType<typeof buildPlannerLlm>>, responseFormat: any, model: string) => {
     if (llm.isAnthropic) {
       // Anthropic Messages API: system top-level, sem response_format/temperature (compat. opus 4.x).
       return await fetch(llm.url, {
         method: "POST",
-        headers: {
-          "x-api-key": llm.key,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
+        headers: { "x-api-key": llm.key, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: plannerModel,
+          model,
           max_tokens: 1024,
           system: `${systemPrompt}\n\nResponda APENAS com o objeto JSON pedido, sem texto extra e sem cercas de codigo.`,
           messages: [{ role: "user", content: userPayload }],
@@ -1121,54 +1103,61 @@ export async function planPedroTurn(input: {
     return await fetch(llm.url, {
       method: "POST",
       headers: { Authorization: `Bearer ${llm.key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ...baseBody, response_format: responseFormat }),
+      body: JSON.stringify({ model, temperature: 0.1, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPayload }], response_format: responseFormat }),
     });
   };
 
-  try {
-    const _t0 = (globalThis as any)?.performance?.now?.() ?? 0;
-    // 1) SAIDA ESTRUTURADA ESTRITA (so OpenAI): o schema garante action/intent/confidence validos.
-    //    DeepSeek nao suporta json_schema -> ja vai direto p/ json_object (o prompt pede JSON).
-    let res = llm.isAnthropic
-      ? await callPlanner(null)
-      : llm.supportsJsonSchema
-      ? await callPlanner({ type: "json_schema", json_schema: PLAN_JSON_SCHEMA })
-      : await callPlanner({ type: "json_object" });
-    // 2) DEGRADACAO GRACIOSA (OpenAI/DeepSeek): se rejeitar o schema, cai p/ json_object. Sem regressao.
-    if (!res.ok && !llm.isAnthropic) {
-      console.warn(`[PedroV2] planner ${llm.provider}/${plannerModel} status ${res.status}; degradando p/ json_object`);
-      res = await callPlanner({ type: "json_object" });
+  // CADEIA DE FAILOVER: tenta cada provedor; se um falhar (HTTP erro/parse/excecao), TENTA O PROXIMO.
+  // So devolve o fallback heuristico se TODOS falharem. O override de modelo (dry-run) vale so p/ o primario.
+  for (let _ci = 0; _ci < _plannerChain.length; _ci++) {
+    const llm = _plannerChain[_ci];
+    const plannerModel = (_ci === 0 && input.planner_model) ? input.planner_model : llm.model;
+    try {
+      const _t0 = (globalThis as any)?.performance?.now?.() ?? 0;
+      // 1) SAIDA ESTRUTURADA ESTRITA (so OpenAI). DeepSeek/Anthropic nao suportam -> json_object.
+      let res = llm.isAnthropic
+        ? await callPlanner(llm, null, plannerModel)
+        : llm.supportsJsonSchema
+        ? await callPlanner(llm, { type: "json_schema", json_schema: PLAN_JSON_SCHEMA }, plannerModel)
+        : await callPlanner(llm, { type: "json_object" }, plannerModel);
+      // 2) DEGRADACAO GRACIOSA (OpenAI/DeepSeek): se rejeitar o schema, cai p/ json_object.
+      if (!res.ok && !llm.isAnthropic) {
+        console.warn(`[PedroV2] planner ${llm.provider}/${plannerModel} status ${res.status}; degradando p/ json_object`);
+        res = await callPlanner(llm, { type: "json_object" }, plannerModel);
+      }
+      if (!res.ok) {
+        // Provedor falhou (sem credito/chave/rate). Registra e TENTA O PROXIMO da cadeia (failover).
+        console.warn(`[PedroV2] planner ${llm.provider} status ${res.status}; failover p/ proximo provedor`);
+        await recordProviderError(input.ai_key_ctx, llm.provider, "planner", res);
+        continue;
+      }
+      const data = await res.json();
+      // SAIDA: OpenAI/DeepSeek -> choices[0].message.content ; Anthropic -> content[].text
+      const content = llm.isAnthropic
+        ? String((Array.isArray(data?.content) ? data.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
+        : String(data?.choices?.[0]?.message?.content || "{}");
+      if (input.usage_sink) {
+        input.usage_sink.tokens += llm.isAnthropic
+          ? Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0)
+          : sumOpenAiTokens(data);
+      }
+      const parsed = JSON.parse(cleanJson(content));
+      const plan = normalizePlan(parsed, fallback, input);
+      const _t1 = (globalThis as any)?.performance?.now?.() ?? 0;
+      (plan as any)._planner_meta = {
+        provider: llm.provider,
+        model: plannerModel,
+        prompt_tokens: llm.isAnthropic ? Number(data?.usage?.input_tokens || 0) : Number(data?.usage?.prompt_tokens || 0),
+        completion_tokens: llm.isAnthropic ? Number(data?.usage?.output_tokens || 0) : Number(data?.usage?.completion_tokens || 0),
+        latency_ms: Math.round(_t1 - _t0),
+        failover_from: _ci > 0 ? _plannerChain[0].provider : null, // marca quando NAO foi o primario
+      };
+      return plan;
+    } catch (error) {
+      console.warn(`[PedroV2] planner ${llm.provider} excecao; failover p/ proximo:`, error);
+      continue; // FAILOVER: tenta o proximo provedor antes da heuristica
     }
-    if (!res.ok) {
-      if (llm.isAnthropic) console.warn(`[PedroV2] planner anthropic/${plannerModel} status ${res.status}`);
-      // Registra a falha (sem credito / chave invalida / etc) pro orchestrator decidir alertar o dono.
-      await recordProviderError(input.ai_key_ctx, llm.provider, "planner", res);
-      return fallback;
-    }
-    const data = await res.json();
-    // SAIDA: OpenAI/DeepSeek -> choices[0].message.content ; Anthropic -> content[].text
-    const content = llm.isAnthropic
-      ? String((Array.isArray(data?.content) ? data.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
-      : String(data?.choices?.[0]?.message?.content || "{}");
-    if (input.usage_sink) {
-      input.usage_sink.tokens += llm.isAnthropic
-        ? Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0)
-        : sumOpenAiTokens(data);
-    }
-    const parsed = JSON.parse(cleanJson(content));
-    const plan = normalizePlan(parsed, fallback, input);
-    // META p/ medir custo/latencia/provedor (aparece no dry-run e ajuda monitorar producao).
-    const _t1 = (globalThis as any)?.performance?.now?.() ?? 0;
-    (plan as any)._planner_meta = {
-      provider: llm.provider,
-      model: plannerModel,
-      prompt_tokens: llm.isAnthropic ? Number(data?.usage?.input_tokens || 0) : Number(data?.usage?.prompt_tokens || 0),
-      completion_tokens: llm.isAnthropic ? Number(data?.usage?.output_tokens || 0) : Number(data?.usage?.completion_tokens || 0),
-      latency_ms: Math.round(_t1 - _t0),
-    };
-    return plan;
-  } catch (error) {
-    console.warn("[PedroV2] brain planner fallback:", error);
-    return fallback;
   }
+  // Todos os provedores falharam -> heuristica (ultimo recurso).
+  return fallback;
 }

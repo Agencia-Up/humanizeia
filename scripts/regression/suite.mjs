@@ -47,6 +47,9 @@ async function dryRun({ text, externalAdReply, chatid } = {}) {
     raw: j,
     build: j.build,
     action: j.brain_plan?.action,
+    planner_source: j.brain_plan?.source || null,
+    planner_provider: j.brain_plan?._planner_meta?.provider || null,
+    reply_provider: j.reply?._reply_provider || null,
     filters: j.brain_plan?.search_filters || {},
     items: (j.stock_result?.items || []),
     fotos: Array.isArray(j.reply?.media) ? j.reply.media.length : 0,
@@ -130,6 +133,18 @@ const stateless = [
   // TROCA: "eu tenho um cruze 2016" = carro do lead (não interesse) -> NÃO busca Cruze nem nega.
   { g: "slots", n: "troca: 'eu tenho um cruze 2016' NÃO vira busca de Cruze", text: "Nossa muito rodando. Eu tenho um cruze 2016 com 64 mil de km",
     e: r => [{ pass: r.action !== "stock_search" || !/cruze/i.test(String(r.filters?.modelo_desejado || r.filters?.modelo || "")), label: `não buscou Cruze (action=${r.action}, modelo=${r.filters?.modelo_desejado || "-"})` }, A.replyHasNot(r, NAO_TEMOS)] },
+];
+
+// ── SAÚDE DO CÉREBRO: o planner/reply DEVE usar LLM, nunca a heurística burra (incidente 18/06:
+// OpenAI caiu -> tudo na heurística -> agente "burro" em silêncio; a suíte NÃO pegava). Com o
+// failover (Pilar E), só cai na heurística se TODOS os provedores falharem. ──────────────────
+const health = [
+  { g: "saude", n: "planner usa LLM (não a heurística burra)", text: "tem corolla?", e: r => [
+    { pass: r.planner_source === "llm", label: `planner.source==llm (got ${r.planner_source}, prov=${r.planner_provider || "NONE"})` },
+  ] },
+  { g: "saude", n: "reply usa LLM (não fallback determinístico) numa busca", text: "tem onix?", e: r => [
+    { pass: !!r.reply_provider, label: `reply via LLM (prov=${r.reply_provider || "NONE"})` },
+  ] },
 ];
 
 // ── CASOS COM ESTADO (setup no banco -> dry-run -> cleanup) ──────────────────
@@ -264,7 +279,7 @@ async function replayCtwa(limit = 12) {
   console.log("\n=== SUÍTE DE REGRESSÃO Pedro v2 ===\n");
 
   // stateless
-  for (const c of stateless) {
+  for (const c of [...health, ...stateless]) {
     if (onlyGroup && c.g !== onlyGroup) continue;
     try { const r = await dryRun({ text: c.text, externalAdReply: c.ad }); build = build || r.build; report(c.g, c.n, c.e(r)); }
     catch (e) { fail++; fails.push(`[${c.g}] ${c.n}`); console.log(`  ❌ [${c.g}] ${c.n} ERRO: ${e?.message || e}`); }

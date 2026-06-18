@@ -694,34 +694,45 @@ export async function generatePedroBrainReply(input: {
   // BYOK: chaves dos provedores tambem resolvem por conta (cliente > nossa-se-grandfathered).
   const anthropicKeyR = await keyFromCtx(input.ai_key_ctx, "anthropic");
   const deepseekKeyR = await keyFromCtx(input.ai_key_ctx, "deepseek");
-  const replyIsAnthropic = (replyProvider === "anthropic" || replyProvider === "claude") && !!anthropicKeyR;
-  const replyIsDeepseek = replyProvider === "deepseek" && !!deepseekKeyR;
-  const replyKey = replyIsAnthropic ? anthropicKeyR : replyIsDeepseek ? deepseekKeyR : apiKey;
-  if (!replyKey) return fallback;
-  // Modelo coerente com o provedor EFETIVO: se Claude foi pedido mas falta ANTHROPIC_API_KEY,
-  // o provedor cai p/ OpenAI e o modelo TEM que ser um gpt valido (nunca um nome de Claude).
-  const replyModel = input.reply_model_override
-    ? input.reply_model_override
-    : replyIsAnthropic
-    ? (agentTarget.provider === "anthropic" && !envForceProvider ? agentTarget.model : (Deno.env.get("PEDRO_REPLY_MODEL_ANTHROPIC") || "claude-haiku-4-5"))
-    : replyIsDeepseek
-    ? (Deno.env.get("PEDRO_REPLY_MODEL_DEEPSEEK") || "deepseek-chat")
-    : (agentTarget.provider === "openai" ? agentTarget.model : (sanitizeModel(input.agent?.model) || "gpt-4o"));
-  const callReply = async (msgs: any[]) => {
-    if (replyIsAnthropic) {
+  // ── PILAR E: CADEIA DE FAILOVER do REPLY. Primario (override/env-force/agente) primeiro; rede de
+  // seguranca = OpenAI e DeepSeek (NAO Anthropic no failover: o reply de ESTOQUE quebra no Claude ate
+  // o prompt ser adaptado). Se o provedor da vez falhar, tenta o proximo ANTES do fallback deterministico
+  // — resolve a degradacao silenciosa quando um provedor cai (OpenAI sem credito -> brush-off burro).
+  const buildReplyLlm = (prov: string) => {
+    if (prov === "anthropic" || prov === "claude") {
+      return anthropicKeyR
+        ? { provider: "anthropic", isAnthropic: true, isDeepseek: false, key: anthropicKeyR as string, model: (agentTarget.provider === "anthropic" && !envForceProvider ? agentTarget.model : (Deno.env.get("PEDRO_REPLY_MODEL_ANTHROPIC") || "claude-haiku-4-5")) }
+        : null;
+    }
+    if (prov === "deepseek") {
+      return deepseekKeyR
+        ? { provider: "deepseek", isAnthropic: false, isDeepseek: true, key: deepseekKeyR as string, model: Deno.env.get("PEDRO_REPLY_MODEL_DEEPSEEK") || "deepseek-chat" }
+        : null;
+    }
+    return apiKey
+      ? { provider: "openai", isAnthropic: false, isDeepseek: false, key: apiKey as string, model: (agentTarget.provider === "openai" ? agentTarget.model : (sanitizeModel(input.agent?.model) || "gpt-4o")) }
+      : null;
+  };
+  const _replyChain = [replyProvider, "openai", "deepseek"]
+    .filter((p, i, a) => a.indexOf(p) === i)
+    .map(buildReplyLlm)
+    .filter(Boolean) as Array<NonNullable<ReturnType<typeof buildReplyLlm>>>;
+  if (_replyChain.length === 0) return fallback;
+  const callReply = async (llm: NonNullable<ReturnType<typeof buildReplyLlm>>, model: string, msgs: any[]) => {
+    if (llm.isAnthropic) {
       const sys = `${String(msgs[0]?.content ?? "")}\n\nResponda APENAS com o objeto JSON pedido, sem texto fora do JSON e sem cercas de codigo.`;
       const conv = msgs.slice(1).map((m: any) => ({ role: m?.role === "assistant" ? "assistant" : "user", content: String(m?.content ?? "") }));
       return await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "x-api-key": replyKey as string, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify({ model: replyModel, max_tokens: 4096, system: sys, messages: conv }),
+        headers: { "x-api-key": llm.key, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+        body: JSON.stringify({ model, max_tokens: 4096, system: sys, messages: conv }),
       });
     }
-    const url = replyIsDeepseek ? "https://api.deepseek.com/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
+    const url = llm.isDeepseek ? "https://api.deepseek.com/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
     return await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${replyKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: replyModel, temperature: 0.35, response_format: { type: "json_object" }, messages: msgs }),
+      headers: { Authorization: `Bearer ${llm.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, temperature: 0.35, response_format: { type: "json_object" }, messages: msgs }),
     });
   };
   try {
@@ -857,22 +868,31 @@ export async function generatePedroBrainReply(input: {
             content: input.message,
           },
     ];
-    const res = await callReply(replyMessages);
-
-    if (!res.ok) {
-      // Registra a falha (sem credito / chave invalida / etc) pro orchestrator decidir alertar o dono.
-      const failedProvider = replyIsAnthropic ? "anthropic" : replyIsDeepseek ? "deepseek" : "openai";
-      await recordProviderError(input.ai_key_ctx, failedProvider, "reply", res);
-      return fallback;
+    // FAILOVER do reply (Pilar E): tenta cada provedor da cadeia ate um responder ok; lembra o
+    // provedor ATIVO (reusado na regeneracao do grounding). So cai no fallback deterministico se
+    // TODOS falharem. recordProviderError em cada falha alimenta o monitor/alerta.
+    let res: Response | null = null;
+    let activeLlm: NonNullable<ReturnType<typeof buildReplyLlm>> | null = null;
+    let activeModel = "";
+    for (let _ci = 0; _ci < _replyChain.length; _ci++) {
+      const llm = _replyChain[_ci];
+      const model = (_ci === 0 && input.reply_model_override) ? input.reply_model_override : llm.model;
+      try {
+        const r = await callReply(llm, model, replyMessages);
+        if (r.ok) { res = r; activeLlm = llm; activeModel = model; break; }
+        console.warn(`[PedroV2] reply ${llm.provider} status ${r.status}; failover p/ proximo provedor`);
+        await recordProviderError(input.ai_key_ctx, llm.provider, "reply", r);
+      } catch (e) { console.warn(`[PedroV2] reply ${llm.provider} excecao; failover:`, e); }
     }
+    if (!res || !activeLlm) return fallback;
     const data = await res.json();
     // SAIDA: OpenAI/DeepSeek -> choices[0].message.content ; Anthropic -> content[].text
     if (input.usage_sink) {
-      input.usage_sink.tokens += replyIsAnthropic
+      input.usage_sink.tokens += activeLlm.isAnthropic
         ? Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0)
         : sumOpenAiTokens(data);
     }
-    const content = replyIsAnthropic
+    const content = activeLlm.isAnthropic
       ? String((Array.isArray(data?.content) ? data.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
       : String(data?.choices?.[0]?.message?.content || "{}");
     const parsed = JSON.parse(cleanJson(content));
@@ -932,11 +952,11 @@ export async function generatePedroBrainReply(input: {
         console.warn("[PedroV2] grounding_violation", JSON.stringify({ violations: gv.violations }));
         let fixed = "";
         try {
-          const res2 = await callReply([...replyMessages, { role: "system", content: buildGroundingCorrection(gv.violations, facts) }]);
+          const res2 = await callReply(activeLlm, activeModel, [...replyMessages, { role: "system", content: buildGroundingCorrection(gv.violations, facts) }]);
           if (res2.ok) {
             const data2 = await res2.json();
-            if (input.usage_sink) input.usage_sink.tokens += replyIsAnthropic ? Number(data2?.usage?.input_tokens || 0) + Number(data2?.usage?.output_tokens || 0) : sumOpenAiTokens(data2);
-            const content2 = replyIsAnthropic
+            if (input.usage_sink) input.usage_sink.tokens += activeLlm.isAnthropic ? Number(data2?.usage?.input_tokens || 0) + Number(data2?.usage?.output_tokens || 0) : sumOpenAiTokens(data2);
+            const content2 = activeLlm.isAnthropic
               ? String((Array.isArray(data2?.content) ? data2.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
               : String(data2?.choices?.[0]?.message?.content || "{}");
             fixed = finalizeFrom(String(JSON.parse(cleanJson(content2))?.text || "").trim());
@@ -956,8 +976,9 @@ export async function generatePedroBrainReply(input: {
       transferir_silencioso,
       temperatura,
       grounding_corrected,
-      _reply_model: replyModel,
-      _reply_provider: replyProvider,
+      _reply_model: activeModel,
+      _reply_provider: activeLlm.provider,
+      _reply_failover_from: activeLlm.provider !== _replyChain[0].provider ? _replyChain[0].provider : null,
     };
   } catch (error) {
     console.warn("[PedroV2] brain reply fallback:", error);
