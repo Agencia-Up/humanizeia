@@ -155,7 +155,9 @@ export function KanbanSettingsTab() {
       id: `new-${++tempCounter}`,
       name: '', color: '#64748b', position: maxPos + 1,
       tipo: '', ativo: true, responsavel_padrao_id: '', is_default: false,
-      show_in_live: true,
+      // Vendedor cria coluna FORA do Painel ao Vivo (só master decide o que entra lá)
+      // — e assim o vendedor consegue nomear a coluna que ele mesmo criou.
+      show_in_live: !isSeller,
       leads_count: 0, _isNew: true,
     }]);
   };
@@ -272,6 +274,11 @@ export function KanbanSettingsTab() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {isSeller && (
+            <p className="text-[11px] text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 leading-relaxed">
+              Como vendedor você pode <strong>adicionar colunas</strong> e <strong>renomear</strong> as que não estão no Painel ao Vivo. Cor, tipo, responsável padrão, ativação, ordem, Painel ao Vivo e exclusão são só do dono da conta.
+            </p>
+          )}
           {/* Tabela de configuracoes */}
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
@@ -302,12 +309,12 @@ export function KanbanSettingsTab() {
                       <div className="flex items-center gap-1">
                         <span className="text-[10px] font-bold text-muted-foreground w-4 text-center tabular-nums">{idx + 1}</span>
                         <div className="flex flex-col">
-                          <button onClick={() => move(r.id, 'up')} disabled={idx === 0 || saving}
-                            className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed" title="Subir">
+                          <button onClick={() => move(r.id, 'up')} disabled={idx === 0 || saving || isSeller}
+                            className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed" title={isSeller ? 'Só o dono reordena as colunas' : 'Subir'}>
                             <ChevronUp className="h-3.5 w-3.5" />
                           </button>
-                          <button onClick={() => move(r.id, 'down')} disabled={idx === rows.length - 1 || saving}
-                            className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed" title="Descer">
+                          <button onClick={() => move(r.id, 'down')} disabled={idx === rows.length - 1 || saving || isSeller}
+                            className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed" title={isSeller ? 'Só o dono reordena as colunas' : 'Descer'}>
                             <ChevronDown className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -315,24 +322,24 @@ export function KanbanSettingsTab() {
                     </td>
                     {/* Cor */}
                     <td className="px-2 py-1.5">
-                      <input type="color" value={r.color} onChange={e => patch(r.id, { color: e.target.value })} disabled={saving}
-                        className="h-7 w-8 cursor-pointer rounded border border-border/40 bg-transparent p-0.5 disabled:opacity-50" title={r.color} />
+                      <input type="color" value={r.color} onChange={e => patch(r.id, { color: e.target.value })} disabled={saving || isSeller}
+                        className="h-7 w-8 cursor-pointer rounded border border-border/40 bg-transparent p-0.5 disabled:opacity-50" title={isSeller ? 'Só o dono altera a cor' : r.color} />
                     </td>
                     {/* Nome */}
                     <td className="px-2 py-1.5">
-                      <Input value={r.name} onChange={e => patch(r.id, { name: e.target.value })} disabled={saving || (isSeller && r.show_in_live)}
-                        title={(isSeller && r.show_in_live) ? 'Coluna do Painel ao Vivo — só o dono pode renomear' : undefined}
+                      <Input value={r.name} onChange={e => patch(r.id, { name: e.target.value })} disabled={saving || (isSeller && r.show_in_live && !r._isNew)}
+                        title={(isSeller && r.show_in_live && !r._isNew) ? 'Coluna do Painel ao Vivo — só o dono pode renomear' : undefined}
                         placeholder="Nome da coluna" className="h-8 text-sm" />
                     </td>
                     {/* Tipo */}
                     <td className="px-2 py-1.5">
-                      <select value={r.tipo} onChange={e => patch(r.id, { tipo: e.target.value as Tipo })} disabled={saving} className={selectCls}>
+                      <select value={r.tipo} onChange={e => patch(r.id, { tipo: e.target.value as Tipo })} disabled={saving || isSeller} title={isSeller ? 'Só o dono define o tipo da etapa' : undefined} className={selectCls}>
                         {TIPO_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                       </select>
                     </td>
                     {/* Responsavel padrao */}
                     <td className="px-2 py-1.5">
-                      <select value={r.responsavel_padrao_id} onChange={e => patch(r.id, { responsavel_padrao_id: e.target.value })} disabled={saving} className={selectCls}>
+                      <select value={r.responsavel_padrao_id} onChange={e => patch(r.id, { responsavel_padrao_id: e.target.value })} disabled={saving || isSeller} title={isSeller ? 'Só o dono define o responsável padrão' : undefined} className={selectCls}>
                         <option value="">— Nenhum —</option>
                         {sellers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         {r.responsavel_padrao_id && !sellers.some(s => s.id === r.responsavel_padrao_id) && (
@@ -342,9 +349,9 @@ export function KanbanSettingsTab() {
                     </td>
                     {/* Ativo */}
                     <td className="px-2 py-1.5 text-center">
-                      <button onClick={() => toggleAtivo(r.id)} disabled={saving}
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-colors ${r.ativo ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
-                        title={r.ativo ? 'Coluna ativa — clique pra desativar (some do board)' : 'Coluna inativa — clique pra ativar'}>
+                      <button onClick={() => toggleAtivo(r.id)} disabled={saving || isSeller}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${r.ativo ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                        title={isSeller ? 'Só o dono ativa/desativa colunas' : (r.ativo ? 'Coluna ativa — clique pra desativar (some do board)' : 'Coluna inativa — clique pra ativar')}>
                         {r.ativo ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
                         {r.ativo ? 'Ativa' : 'Inativa'}
                       </button>
@@ -364,9 +371,9 @@ export function KanbanSettingsTab() {
                     </td>
                     {/* Excluir */}
                     <td className="px-2 py-1.5 text-right">
-                      <button onClick={() => removeRow(r.id)} disabled={saving || (!r._isNew && r.leads_count > 0) || (isSeller && r.show_in_live)}
+                      <button onClick={() => removeRow(r.id)} disabled={saving || (!r._isNew && r.leads_count > 0) || (isSeller && !r._isNew)}
                         className="h-7 w-7 inline-flex items-center justify-center text-red-400 hover:text-red-300 disabled:opacity-20 disabled:cursor-not-allowed"
-                        title={(isSeller && r.show_in_live) ? 'Coluna do Painel ao Vivo — só o dono pode excluir' : ((!r._isNew && r.leads_count > 0) ? `Mova os ${r.leads_count} lead(s) antes de excluir` : 'Excluir coluna')}>
+                        title={(isSeller && !r._isNew) ? 'Só o dono exclui colunas' : ((!r._isNew && r.leads_count > 0) ? `Mova os ${r.leads_count} lead(s) antes de excluir` : 'Excluir coluna')}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </td>
