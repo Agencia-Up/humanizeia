@@ -249,6 +249,10 @@ async function resolveAgentInstance(supabase: any, agentId: string | null, cache
 // preservando a ordem do rodizio. (A mesma trava esta na migration da RPC, pra quando as
 // migrations forem aplicadas; aqui e a rede que ja vale em producao.)
 const REACT_MIN_QUIET_HOURS = 24;
+// CADENCIA (decisao do dono): no MAXIMO 3 follow-ups por lead, com >=24h entre eles, depois PARA.
+// Aplicado na RPC get_next_reactivation_lead (teto + intervalo) e ao marcar 'skipped' no teto.
+const REACT_MAX_ATTEMPTS = 3;
+const REACT_MIN_RESEND_HOURS = 24;
 async function pickEligibleByRecency(supabase: any, rows: any[]): Promise<any> {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   const ids = rows.map((r: any) => r.lead_id).filter(Boolean);
@@ -419,6 +423,8 @@ serve(async (req) => {
               p_periodo_dias: cfg.periodo_dias ?? null,
               p_limit: 25,
               p_cycle_at: cyc,
+              p_max_attempts: REACT_MAX_ATTEMPTS,   // teto de 3 follow-ups por lead
+              p_min_resend_hours: REACT_MIN_RESEND_HOURS, // >=24h entre follow-ups do mesmo lead
             });
             return await pickEligibleByRecency(supabase, rows);
           };
@@ -551,12 +557,15 @@ serve(async (req) => {
 
         // 5f. Sucesso: grava estado (status='sent' => aguardando resposta),
         //     incrementa contagem, persiste no historico de chat e grava no log histórico.
+        const _newCount = (Number(lead.send_count) || 0) + 1;
         await supabase.from("pedro_followup_reactivation")
           .upsert({
             user_id: cfg.user_id,
             lead_id: lead.lead_id,
-            status: "sent",
-            send_count: (Number(lead.send_count) || 0) + 1,
+            // TETO: ao bater REACT_MAX_ATTEMPTS, marca 'skipped' (terminal) -> sai da fila pra
+            // sempre (a RPC ja exclui send_count>=teto; isto deixa explicito no dado/relatorio).
+            status: _newCount >= REACT_MAX_ATTEMPTS ? "skipped" : "sent",
+            send_count: _newCount,
             last_sent_at: now.toISOString(),
             last_message: message,
           }, { onConflict: "lead_id" });
