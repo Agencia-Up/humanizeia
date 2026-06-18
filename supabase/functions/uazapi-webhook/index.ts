@@ -3,6 +3,7 @@
 import { sellerPhoneKey as _sellerPhoneKey, uniqueSellersByPhone as _uniqueSellersByPhone } from "../_shared/transfer/phoneKey.ts";
 import { buildEnrichedBriefing as _buildEnrichedBriefing } from "../_shared/transfer/buildBriefing.ts";
 import { logTransferFailure, resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
+import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 
 // Re-exports com nomes originais pra não quebrar call sites existentes.
 // Quando todo o arquivo migrar pra usar `_sellerPhoneKey` direto, esses
@@ -2574,6 +2575,32 @@ function extractOpenAiTokens(data: any): number {
   return t > 0 ? Math.round(t) : 0;
 }
 
+// AUDITORIA: extrai split input/output + total de uma resposta OpenAI. O `total`
+// e identico ao de extractOpenAiTokens (billing inalterado); input/output sao
+// extras so pra auditoria por chamada.
+function extractOpenAiUsage(data: any): { input: number; output: number; total: number } {
+  const u = data?.usage;
+  if (!u) return { input: 0, output: 0, total: 0 };
+  const input = Math.max(0, Math.round(Number(u.prompt_tokens) || 0));
+  const output = Math.max(0, Math.round(Number(u.completion_tokens) || 0));
+  let total = typeof u.total_tokens === 'number' ? u.total_tokens : input + output;
+  total = total > 0 ? Math.round(total) : 0;
+  return { input, output, total };
+}
+
+// Acumula uma resposta OpenAI no medidor do turno: tokens (billing, igual antes),
+// split input/output e contagem de sub-chamadas (auditoria).
+function accumulateOpenAiUsage(
+  acc: { input: number; output: number; tokens: number; subcalls: number },
+  data: any,
+): void {
+  const u = extractOpenAiUsage(data);
+  acc.input += u.input;
+  acc.output += u.output;
+  acc.tokens += u.total;
+  if (u.total > 0) acc.subcalls += 1;
+}
+
 async function consumePedroTokensAndAlert(
   supabase: any,
   opts: { userId: string; leadKey: string; tokens: number; baseUrl: string; instKey: string; gerentePhone?: string | null },
@@ -2637,7 +2664,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // Token metering: acumula os tokens gastos pelo cérebro (gpt-4o) neste turno.
   // É descontado de verdade no fim do turno (consumePedroTokensAndAlert), depois
   // que o lead já foi respondido — então nunca atrasa nem bloqueia o atendimento.
-  const llmUsage = { tokens: 0 };
+  const llmUsage = { input: 0, output: 0, tokens: 0, subcalls: 0 };
 
   // IT-4.3: trace_id por turno + timer pra latencia
   const traceId = newTraceId();
@@ -3709,7 +3736,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
     return new Response('OpenAI erro', { status: 500 });
   }
   const openaiData = await openaiRes.json()
-  llmUsage.tokens += extractOpenAiTokens(openaiData);
+  accumulateOpenAiUsage(llmUsage, openaiData);
   const aiMessage = openaiData.choices?.[0]?.message
 
   console.log(`[Webhook] Resposta da IA recebida. ToolCalls: ${aiMessage?.tool_calls?.length || 0}`);
@@ -3775,7 +3802,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
 
         if (bndvFollowupRes.ok) {
           const bndvFollowupData = await bndvFollowupRes.json();
-          llmUsage.tokens += extractOpenAiTokens(bndvFollowupData);
+          accumulateOpenAiUsage(llmUsage, bndvFollowupData);
           const bndvTextResponse = bndvFollowupData.choices?.[0]?.message?.content || '';
           if (bndvTextResponse) {
             aiResponse = bndvTextResponse;
@@ -4120,7 +4147,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
         });
         if (followupRes.ok) {
           const followupData = await followupRes.json();
-          llmUsage.tokens += extractOpenAiTokens(followupData);
+          accumulateOpenAiUsage(llmUsage, followupData);
           const finalText = followupData.choices?.[0]?.message?.content || '';
           if (finalText) aiResponse = finalText;
         } else {
@@ -4563,7 +4590,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
           });
           if (secondRes.ok) {
             const secondData = await secondRes.json();
-            llmUsage.tokens += extractOpenAiTokens(secondData);
+            accumulateOpenAiUsage(llmUsage, secondData);
             aiResponse = secondData.choices?.[0]?.message?.content || '';
             console.log(`[Webhook] Resposta final capturada: ${aiResponse}`);
           } else {
@@ -4822,6 +4849,25 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
     baseUrl,
     instKey,
     gerentePhone: agent.gerente_phone,
+  });
+
+  // AUDITORIA (so-registro): 1 linha por turno em ai_call_log. logAiCall nunca
+  // lanca; roda depois de o lead ja ter sido respondido — nao atrasa nada que o
+  // cliente perceba. O billing acima fica intacto.
+  await logAiCall(supabase, {
+    userId: waInstance.user_id,
+    disparoTipo: 'inbound_pedro',
+    modelo: aiModel,
+    inputTokens: llmUsage.input,
+    outputTokens: llmUsage.output,
+    totalTokens: llmUsage.tokens,
+    nSubcalls: llmUsage.subcalls,
+    agentId: agent?.id ?? null,
+    agentName: agent?.name ?? null,
+    traceId,
+    eventoOrigem: digitsOnly(remoteJid).slice(-4),
+    latenciaMs: Date.now() - turnStartMs,
+    status: llmUsage.tokens > 0 ? 'ok' : 'fallback',
   });
 
   return new Response(JSON.stringify({ success: true, trace_id: traceId }), { headers: corsHeaders, status: 200 })

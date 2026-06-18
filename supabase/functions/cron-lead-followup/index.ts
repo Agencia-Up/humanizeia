@@ -5,6 +5,7 @@ import { resolveLeadInterestVehicle } from "../_shared/transfer/interestVehicle.
 import { leadTransferStatusLine, leadTransferStatusText } from "../_shared/transfer/leadStatus.ts";
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, classifyLeadSdr } from "../_shared/transfer/leadSdrCategory.ts";
 import { setSdrLabelOnChat } from "../_shared/pedro-v2/uazapiLabels.ts";
+import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -378,14 +379,15 @@ async function generateFollowupText(opts: {
   kind: "reengage" | "check_help" | "farewell";
   agentName: string; companyName: string; persona: string;
   leadName?: string | null; recentTurns: any[];
-}): Promise<string> {
+}): Promise<{ text: string; usage: { input: number; output: number; total: number } }> {
+  const noUsage = { input: 0, output: 0, total: 0 };
   const fallbacks: Record<string, string> = {
     reengage: "E ai, conseguiu dar uma olhada? Posso te ajudar com mais alguma coisa? 😊",
     check_help: "Ainda esta por ai? Posso te ajudar com mais alguma coisa? 😊",
     farewell: "Vou pedir para um dos nossos consultores de vendas dar continuidade no seu atendimento, ta? Ele ja vai entrar em contato com voce. Obrigado pelo papo! 😊",
   };
   const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return fallbacks[opts.kind];
+  if (!apiKey) return { text: fallbacks[opts.kind], usage: noUsage };
   const history = (opts.recentTurns || []).slice(-8)
     .map((t: any) => `${t.role === "agent" ? opts.agentName : (opts.leadName || "Cliente")}: ${String(t.text || "").slice(0, 300)}`)
     .join("\n");
@@ -414,12 +416,18 @@ async function generateFollowupText(opts: {
         ],
       }),
     });
-    if (!res.ok) return fallbacks[opts.kind];
+    if (!res.ok) return { text: fallbacks[opts.kind], usage: noUsage };
     const data = await res.json();
+    const u = data?.usage || {};
+    const uin = Math.max(0, Math.round(Number(u.prompt_tokens) || 0));
+    const uout = Math.max(0, Math.round(Number(u.completion_tokens) || 0));
+    let utot = typeof u.total_tokens === "number" ? Math.round(u.total_tokens) : uin + uout;
+    if (!(utot > 0)) utot = uin + uout;
+    const usage = { input: uin, output: uout, total: utot };
     const text = String(data?.choices?.[0]?.message?.content || "").trim().replace(/^["']+|["']+$/g, "").trim();
-    return text || fallbacks[opts.kind];
+    return { text: text || fallbacks[opts.kind], usage };
   } catch (_e) {
-    return fallbacks[opts.kind];
+    return { text: fallbacks[opts.kind], usage: noUsage };
   }
 }
 
@@ -457,6 +465,24 @@ async function handleV2Followup(supabase: any, ctx: {
   const companyName = String(agentData?.company_name || "");
   const persona = String(agentData?.system_prompt || "");
   const leadName = lead.lead_name || (state.lead && state.lead.nome) || null;
+
+  // AUDITORIA (so-registro): registra o follow-up automatico em ai_call_log.
+  // logAiCall nunca lanca; nao bloqueia o envio.
+  const logFollowupAi = async (usage: { input: number; output: number; total: number }) => {
+    await logAiCall(supabase, {
+      userId: lead.user_id,
+      disparoTipo: "followup_auto",
+      modelo: "gpt-4o-mini",
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      totalTokens: usage.total,
+      nSubcalls: usage.total > 0 ? 1 : 0,
+      agentId,
+      agentName,
+      eventoOrigem: String(lead.id),
+      status: usage.total > 0 ? "ok" : "fallback",
+    });
+  };
 
   const saveStage = async (newStage: number) => {
     const newState = { ...state, followup: { stage: newStage, anchor: lead.last_agent_reply_at, at: now.toISOString() } };
@@ -577,7 +603,8 @@ async function handleV2Followup(supabase: any, ctx: {
       try { await setSdrLabelOnChat({ api_url: baseUrl, api_key_encrypted: instKey }, phoneNumber, _sdrCat); } catch (_e) { /* nao bloqueante */ }
     }
     } // fim do if (doTransfer)
-    const bye = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
+    const { text: bye, usage: byeUsage } = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
+    await logFollowupAi(byeUsage);
     await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, bye);
     await logChat(bye);
     await saveStage(3);
@@ -586,7 +613,8 @@ async function handleV2Followup(supabase: any, ctx: {
 
   // ─── T2 (default 8min): segunda mensagem contextual ───
   if (elapsedMin >= rules.followup.t2_min && stage < 2) {
-    const txt = await generateFollowupText({ kind: "check_help", agentName, companyName, persona, leadName, recentTurns });
+    const { text: txt, usage: txtUsage } = await generateFollowupText({ kind: "check_help", agentName, companyName, persona, leadName, recentTurns });
+    await logFollowupAi(txtUsage);
     if (await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, txt)) {
       await logChat(txt); await saveStage(2);
     }
@@ -595,7 +623,8 @@ async function handleV2Followup(supabase: any, ctx: {
 
   // ─── T1 (default 5min): primeira mensagem contextual ───
   if (elapsedMin >= rules.followup.t1_min && stage < 1) {
-    const txt = await generateFollowupText({ kind: "reengage", agentName, companyName, persona, leadName, recentTurns });
+    const { text: txt, usage: txtUsage } = await generateFollowupText({ kind: "reengage", agentName, companyName, persona, leadName, recentTurns });
+    await logFollowupAi(txtUsage);
     if (await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, txt)) {
       await logChat(txt); await saveStage(1);
       await supabase.from("ai_crm_leads").update({ followup_5min_sent: true }).eq("id", lead.id);
