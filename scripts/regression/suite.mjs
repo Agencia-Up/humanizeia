@@ -155,6 +155,12 @@ const stateful = [
   { g: "anuncio", n: "anúncio em RAJADA (metadata) -> recupera veículo", run: () => withLead(
     { history: [{ role: "user", content: "Olá! Tenho interesse e queria mais informações, por favor.", metadata: { ctwa_ad: { greetingMessageBody: "Oi! Como podemos ajudar?", body: "🚗 PULSE AUDACE T200\nAno: 2024/2025\nMotor: 1.0 Turbo\nCâmbio: Automático", title: "Por: R$ 108.990,00", sourceApp: "instagram" } } }] },
     async (chat) => { const r = await dryRun({ chatid: chat, text: "Quantos kms" }); return { r, checks: [A.replyHas(r, ["pulse"])] }; }) },
+
+  // PILAR C — TROCA qualificada -> ANUNCIA o consultor (não "à disposição" / não silêncio). Caso real
+  // lead 99710-1211 "Marcos": colheu Onix+CRLV+valor, interesse Strada, e fechou com "estou à disposição".
+  { g: "transfer", n: "troca qualificada (interesse+veículo de troca+nome) -> anuncia consultor, não dispensa", run: () => withLead(
+    { lead: { lead_name: "Marcos", trade_in_vehicle: "Onix", vehicle_interest: "Fiat Strada" }, state: { interesse: { modelo_desejado: "Fiat Strada", trade_in_vehicle: "Onix" } } },
+    async (chat) => { const r = await dryRun({ chatid: chat, text: "tenho um onix 2016 na troca, 75 mil km" }); return { r, checks: [A.pronto(r, true), A.replyHas(r, ["consultor", "especialista", "avaliar", "avalia", "passar"]), A.replyHasNot(r, ["a disposicao", "estou a disposicao", "fico a disposicao"])] }; }) },
 ];
 
 // ── REPLAY de anúncios REAIS (ctwa_diag_capture) ────────────────────────────

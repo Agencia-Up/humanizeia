@@ -2710,6 +2710,31 @@ export async function processPedroV2Turn(
     log("info", "pedro_v2_finance_transfer_enforced", { lead_id: lead?.id || null });
   }
 
+  // TROCA QUALIFICADA = TRANSFERIR com ANUNCIO (o SDR NAO avalia troca). Quando o lead OFERECE um
+  // carro na troca E ja temos o veiculo da TROCA + o INTERESSE de compra + nome, o lead esta pronto
+  // pro consultor que avalia a troca e fecha. Enforcement DETERMINISTICO: o LLM as vezes FECHA com
+  // "estou a disposicao" (dispensa) ou transfere em SILENCIO em vez de ANUNCIAR o handoff — caso
+  // real lead 99710-1211 "Marcos" (colheu Onix+CRLV+valor, interesse Strada, e deu "a disposicao").
+  // NAO mexe se: ja em modo-assistente (lead JA atribuido -> evita re-anunciar a cada msg = repeticao),
+  // se o cerebro ja escolheu handoff explicito, nem em transferencia silenciosa (desqualificado).
+  // Gated em !ownedLeadAssistantMode (igual ao financiamento): transfere+anuncia o lead qualificado
+  // AINDA nao atribuido; depois de atribuido o handoff (linha ~2738) ja nao re-transfere.
+  const _tradeIntent = String(brainPlan?.intent || contextualIntent?.intent || "") === "trade_in" || _q.tem_troca === true;
+  const _hasTradeVehicle = Boolean(lead?.trade_in_vehicle) || Boolean((effectiveMemory?.interesse as any)?.trade_in_vehicle) || Boolean(_q.veiculo_troca);
+  const _hasInterestTrade = Boolean(_q.interesse) || Boolean(lead?.vehicle_interest)
+    || Boolean(effectiveMemory?.interesse?.modelo_desejado)
+    || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
+  if (!ownedLeadAssistantMode && _tradeIntent && _hasTradeVehicle && _hasInterestTrade && _hasNome
+      && reply?.transferir_silencioso !== true && contextualIntent.needs_handoff !== true
+      && reply?.source !== "finance_transfer_enforced") {
+    const _nm = (_q.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
+    reply.pronto_para_transferir = true;
+    reply.text = `Perfeito${_nm ? ", " + _nm : ""}! Já anotei os dados do seu carro pra avaliação da troca. Vou te passar pro nosso consultor — ele avalia certinho e segue com você daqui. 😊`;
+    reply.media = [];
+    reply.source = "trade_in_transfer_enforced";
+    log("info", "pedro_v2_trade_in_transfer_enforced", { lead_id: lead?.id || null });
+  }
+
   // TEMPERATURA em ACUSACAO DE GOLPE/HOSTILIDADE: o LLM as vezes deixa temperatura=null nesses
   // casos e o lead fica sem classificacao no CRM. Marca 'desqualificado' deterministicamente em
   // sinais INEQUIVOCOS (golpe/fraude/picaretagem). Nao toca deboche leve (pode ser "kkk" positivo).
