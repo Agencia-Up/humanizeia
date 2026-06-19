@@ -12,7 +12,7 @@ import {
   Smartphone, Cog, LineChart,
   Filter, Tags, Timer, FileText, MapPin, Upload,
   Send, ShieldCheck, List, RefreshCw, LayoutGrid, Kanban,
-  Palette, Crown, Lock,
+  Palette, Crown, Lock, PlayCircle,
   Phone, Database, Plus,
 } from 'lucide-react';
 import {
@@ -210,16 +210,12 @@ const faqs = [
     a: 'Marcos foi feito justamente para evitar isso. Ele dispara segmentado por origem/funil/cidade, com intervalos seguros entre envios, e nunca envia duas vezes pro mesmo lead na mesma campanha.',
   },
   {
-    q: 'O José substitui meu gestor de tráfego ou minha agência?',
-    a: 'O José coloca o tráfego pago dentro da sua própria estrutura: gerencia Meta e Google Ads, mede o custo por lead de cada campanha e cruza com o Pedro pra mostrar qual anúncio gera lead que realmente fecha — não só clique. Você passa a otimizar com dado real, sem depender de relatório de agência.',
-  },
-  {
     q: 'Posso cancelar quando quiser?',
     a: 'Sim. Sem multa, sem fidelidade. Você decide quando começar e quando parar.',
   },
   {
-    q: 'Quando os outros agentes ficam disponíveis?',
-    a: 'Estamos liberando aos poucos. Assinantes PRO recebem acesso antecipado e sem aumento de preço enquanto a conta estiver ativa.',
+    q: 'O Agente José já está incluso no PRO e no PRO MAX?',
+    a: 'Sim. Pedro, Marcos e José entram no PRO e no PRO MAX. Os próximos agentes do ecossistema serão liberados aos poucos para assinantes ativos.',
   },
   {
     q: 'Como funciona o suporte?',
@@ -249,14 +245,105 @@ const testimonials = [
   },
 ];
 
+// Coloque o arquivo do video em public/logos-por-dentro.mp4 para ativar o player.
+const DEMO_VIDEO_SRC = '/logos-por-dentro.mp4';
+const BASIC_CHECKOUT_URL = '/checkout?plano=basico&ciclo=mensal';
+const PRO_CHECKOUT_URL = '/checkout?plano=pro&ciclo=mensal';
+const PRO_MAX_CONTACT_URL = 'mailto:suporte@logosiabrasil.com?subject=Quero%20conhecer%20o%20PRO%20MAX%20da%20LOGOS%7CIA';
+
 /* ── Componente Principal ───────────────────────────────────────────── */
 export default function LandingPage() {
   const { user, loading } = useAuth();
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  // Prompt 8 — toggle Mensal/Anual do plano PRO
-  const [billing, setBilling] = useState<'mensal' | 'anual'>('mensal');
+  const [demoVideoAvailable, setDemoVideoAvailable] = useState(Boolean(DEMO_VIDEO_SRC));
+  const [monthlyAdSpend, setMonthlyAdSpend] = useState(5000);
+  const [currentConversionRate, setCurrentConversionRate] = useState(8);
+  const [expectedConversionRate, setExpectedConversionRate] = useState(12);
+  const conversionGap = Math.max(expectedConversionRate - currentConversionRate, 0);
+  const monthlyLossEstimate = Math.round(monthlyAdSpend * (conversionGap / Math.max(currentConversionRate, 1)));
+  const pricingPlans = [
+    {
+      id: 'basico',
+      badge: 'Plano de entrada',
+      name: 'Básico',
+      description: 'Comece com o Agente Pedro atendendo e qualificando seus leads no WhatsApp.',
+      price: '497',
+      cents: ',00',
+      priceNote: '+ R$ 1.500 de implementação (pagamento único)',
+      highlight: '1 agente incluso',
+      highlightSub: 'Pedro SDR no atendimento com IA',
+      features: [
+        'Agente Pedro incluso',
+        'Trabalha com 1 agente de IA',
+        'Até 5 instâncias de WhatsApp conectadas',
+        'CRM completo de leads',
+        'Qualificação automática no WhatsApp',
+        'Follow-up automático 24/7',
+        'Suporte por e-mail',
+      ],
+      cta: 'Assinar o Básico',
+      href: BASIC_CHECKOUT_URL,
+      featured: false,
+      contact: false,
+    },
+    {
+      id: 'pro',
+      badge: 'Oferta Fundador · 10 primeiros',
+      name: 'Pro',
+      description: 'Pedro qualifica, Marcos organiza e José mostra onde seu tráfego está perdendo dinheiro.',
+      price: '497',
+      cents: ',90',
+      priceNote: 'Promoção fundador por 3 meses. Depois, R$ 797,90/mês.',
+      setupNote: 'Implementação: R$ 1.997,90 por R$ 1.497,90 (única)',
+      highlight: '3 agentes inclusos',
+      highlightSub: 'Pedro + Marcos + José trabalhando juntos',
+      joseValue: 'Inclui um gestor de tráfego IA que custaria R$ 3.000/mês.',
+      features: [
+        'Agentes Pedro, Marcos e José inclusos',
+        'CRM completo de leads',
+        'Até 10 conexões de WhatsApp',
+        'Disparo em massa segmentado',
+        'Follow-up automático 24/7',
+        'José analisa campanhas e aponta o que pausar ou escalar',
+        'Conversas ilimitadas com sua própria chave de IA',
+        'Exportação de planilhas e relatórios',
+        'Suporte prioritário',
+      ],
+      cta: 'Começar agora - Sem fidelidade',
+      href: PRO_CHECKOUT_URL,
+      featured: true,
+      contact: false,
+    },
+    {
+      id: 'pro-max',
+      badge: 'Pro Max · Fundador · 10 primeiros',
+      name: 'Pro Max',
+      description: 'Tudo do Pro, dimensionado para empresas com mais clientes e mais operação.',
+      price: '797',
+      cents: ',90',
+      priceNote: 'Promoção fundador por 3 meses. Depois, R$ 1.297,90/mês.',
+      setupNote: 'Implementação: R$ 1.997,90 por R$ 1.497,90 (única)',
+      highlight: 'Todos os agentes liberados',
+      highlightSub: 'inclui José e a operação completa',
+      joseValue: 'José entra como funcionário de elite para proteger sua verba de tráfego.',
+      features: [
+        'Tudo do plano Pro',
+        'Todos os agentes de IA liberados',
+        'Agente José para tráfego IA',
+        'Até 15 números de WhatsApp',
+        'Maior capacidade de atendimento',
+        'Todas as integrações liberadas',
+        'Acompanhamento das conversas da equipe',
+        'Onboarding e suporte VIP',
+      ],
+      cta: 'Quero o José gerindo meu tráfego',
+      href: PRO_MAX_CONTACT_URL,
+      featured: false,
+      contact: true,
+    },
+  ];
 
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
@@ -274,11 +361,13 @@ export default function LandingPage() {
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
+            <a href="#demo" className="hover:text-foreground transition-colors">Por dentro</a>
             <a href="#como-funciona" className="hover:text-foreground transition-colors">Como funciona</a>
+            <a href="#calculadora" className="hover:text-foreground transition-colors">Calculadora</a>
+            <a href="#para-quem" className="hover:text-foreground transition-colors">Para quem</a>
             <a href="#agente-pedro" className="hover:text-foreground transition-colors">Pedro</a>
             <a href="#agente-marcos" className="hover:text-foreground transition-colors">Marcos</a>
-            <a href="#agente-jose" className="hover:text-foreground transition-colors">José</a>
-            <a href="#em-breve" className="hover:text-foreground transition-colors">Em breve</a>
+            <a href="#em-breve" className="hover:text-foreground transition-colors">Agentes</a>
             <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
             <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
           </nav>
@@ -298,7 +387,7 @@ export default function LandingPage() {
               <Link to="/auth">Entrar</Link>
             </Button>
             <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-              <Link to="/auth?tab=signup">Começar agora</Link>
+              <Link to={PRO_CHECKOUT_URL}>Começar agora</Link>
             </Button>
           </div>
 
@@ -328,11 +417,13 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <nav className="md:hidden border-t border-border/40 bg-background/98 px-4 py-3 space-y-0.5">
             {[
+              { href: '#demo', label: 'Por dentro' },
               { href: '#como-funciona', label: 'Como funciona' },
+              { href: '#calculadora', label: 'Calculadora' },
+              { href: '#para-quem', label: 'Para quem' },
               { href: '#agente-pedro', label: 'Pedro' },
               { href: '#agente-marcos', label: 'Marcos' },
-              { href: '#agente-jose', label: 'José' },
-              { href: '#em-breve', label: 'Em breve' },
+              { href: '#em-breve', label: 'Agentes' },
               { href: '#planos', label: 'Planos' },
               { href: '#faq', label: 'FAQ' },
             ].map(item => (
@@ -350,7 +441,7 @@ export default function LandingPage() {
                 <Link to="/auth" onClick={() => setMobileMenuOpen(false)}>Entrar</Link>
               </Button>
               <Button asChild className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                <Link to="/auth?tab=signup" onClick={() => setMobileMenuOpen(false)}>Começar agora →</Link>
+                <Link to={PRO_CHECKOUT_URL} onClick={() => setMobileMenuOpen(false)}>Começar agora →</Link>
               </Button>
             </div>
           </nav>
@@ -396,21 +487,22 @@ export default function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-extrabold leading-[1.1] mb-6"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Seus vendedores cuidam do{' '}
-              <span style={{ color: 'var(--brand-gold)' }}>fechamento</span>.
+              Transforme seu{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>WhatsApp</span>
+              {' '}em uma máquina de vendas previsível.
               <br className="hidden md:block" />
-              {' '}A IA cuida{' '}
+              {' '}Enquanto você dorme, a IA qualifica e{' '}
               <span className="bg-gradient-to-r from-[#0F2647] via-[#1A3A6B] to-[#D4A017] bg-clip-text text-transparent">
-                do resto
+                José otimiza seu lucro
               </span>.
             </h1>
 
             {/* Subtítulo */}
             <p className="text-base md:text-lg lg:text-xl text-muted-foreground max-w-2xl mx-auto lg:mx-0 mb-8 leading-relaxed">
-              <strong className="text-foreground">Pedro</strong> atende, qualifica e classifica cada lead no WhatsApp em segundos.{' '}
-              <strong className="text-foreground">Marcos</strong> dispara campanhas inteligentes e mantém seu CRM organizado.{' '}
-              <strong className="text-foreground">José</strong> cuida do tráfego pago e mede o custo por lead de cada campanha.
-              Uma estrutura completa: você nunca mais perde um lead por demora, nem queima base, nem investe no escuro.
+              <strong className="text-foreground">Pedro</strong> atende e qualifica em segundos.{' '}
+              <strong className="text-foreground">Marcos</strong> organiza o CRM e os disparos.{' '}
+              <strong className="text-foreground">José</strong> mostra quais campanhas escalar ou pausar.
+              Sua operação vende mais sem depender de resposta manual o dia inteiro.
             </p>
 
             {/* Microbenefícios */}
@@ -441,9 +533,8 @@ export default function LandingPage() {
                   boxShadow: 'var(--shadow-gold)',
                 }}
               >
-                {/* CTA primário — aponta para /auth?tab=signup por ora; vai virar /checkout no Prompt 10 */}
-                <Link to="/auth?tab=signup">
-                  Assinar PRO agora <ArrowRight className="h-4 w-4" />
+                <Link to={PRO_CHECKOUT_URL}>
+                  Começar agora - Sem fidelidade <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>
               <Button
@@ -541,6 +632,33 @@ export default function LandingPage() {
                   </div>
                 </div>
 
+                {/* Seta */}
+                <div className="flex justify-center">
+                  <div className="text-2xl opacity-40 text-foreground">↓</div>
+                </div>
+
+                {/* Card 4: José otimiza mídia */}
+                <div
+                  className="rounded-xl border p-4"
+                  style={{
+                    borderColor: 'rgba(212, 160, 23, 0.55)',
+                    background: 'rgba(212, 160, 23, 0.08)',
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: 'rgba(212, 160, 23, 0.18)' }}
+                    >
+                      <Target className="h-5 w-5" style={{ color: 'var(--brand-gold)' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold" style={{ color: 'var(--brand-gold)' }}>José · Tráfego IA</p>
+                      <p className="text-sm font-medium truncate">Escalar campanha Onix · CPL saudável</p>
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
               {/* Badge "ao vivo" */}
@@ -564,9 +682,9 @@ export default function LandingPage() {
         <div className="relative max-w-4xl mx-auto mt-14 md:mt-20">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-5">
             {[
-              { value: '2', label: 'Agentes ativos hoje' },
+              { value: '3', label: 'Agentes ativos no PRO' },
               { value: '24/7', label: 'Pedro atende sem parar' },
-              { value: '+5', label: 'Agentes em breve' },
+              { value: 'José', label: 'Otimização de tráfego IA' },
               { value: '5min', label: 'Liberação após pagar' },
             ].map((m) => (
               <div
@@ -587,6 +705,239 @@ export default function LandingPage() {
                 <p className="text-xs md:text-sm font-medium text-foreground/80 mt-2">{m.label}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── CONTRASTE OPERACIONAL ───────────────────────────── */}
+      <section className="px-4 md:px-6 py-14 md:py-20 bg-card/25">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-10">
+            <Badge variant="outline" className="mb-4 border-red-500/30 text-red-400">
+              O prejuízo oculto
+            </Badge>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
+              A diferença entre atender lead e transformar lead em venda.
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              O cliente não compra só porque clicou no anúncio. Ele compra quando é atendido rápido,
+              qualificado corretamente e entregue para o vendedor com contexto.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="rounded-2xl border border-red-500/25 bg-red-500/5 p-5 md:p-6">
+              <div className="flex items-center gap-3 mb-5">
+                <XCircle className="h-6 w-6 text-red-400" />
+                <h3 className="text-xl font-bold text-red-300">Operação comum</h3>
+              </div>
+              <div className="space-y-4">
+                {[
+                  'Lead espera 30min+ para ser atendido',
+                  'Vendedor gasta tempo com curiosos',
+                  'Dinheiro jogado fora em campanhas ruins',
+                  'CRM desatualizado e leads esquecidos',
+                ].map((item) => (
+                  <div key={item} className="flex items-start gap-3 text-sm text-muted-foreground">
+                    <XCircle className="h-4 w-4 mt-0.5 text-red-400 shrink-0" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-green-500/30 bg-green-500/5 p-5 md:p-6">
+              <div className="flex items-center gap-3 mb-5">
+                <CheckCircle2 className="h-6 w-6 text-green-400" />
+                <h3 className="text-xl font-bold text-green-300">Operação com Logos IA</h3>
+              </div>
+              <div className="space-y-4">
+                {[
+                  'Atendimento instantâneo em 3s, 24/7',
+                  'Vendedor só recebe lead qualificado e pronto',
+                  'José pausa o que não vende e escala o lucro',
+                  'Marcos organiza tudo automaticamente',
+                ].map((item) => (
+                  <div key={item} className="flex items-start gap-3 text-sm text-muted-foreground">
+                    <CheckCircle2 className="h-4 w-4 mt-0.5 text-green-400 shrink-0" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── GARANTIA + CALCULADORA ───────────────────────────── */}
+      <section id="calculadora" className="px-4 md:px-6 py-14 md:py-20">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[0.9fr_1.1fr] gap-6 lg:gap-8 items-stretch">
+          <div className="rounded-2xl border border-primary/25 bg-card/50 p-6 md:p-8">
+            <div
+              className="h-12 w-12 rounded-xl flex items-center justify-center mb-5"
+              style={{ background: 'rgba(212, 160, 23, 0.12)' }}
+            >
+              <ShieldCheck className="h-6 w-6" style={{ color: 'var(--brand-gold)' }} />
+            </div>
+            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">
+              Garantia de implementação
+            </Badge>
+            <h2 className="text-2xl md:text-3xl font-bold mb-4">
+              Se você não conectar seu WhatsApp em 5 minutos, entramos em call com você.
+            </h2>
+            <p className="text-muted-foreground leading-relaxed mb-6">
+              A decisão não deve travar por medo técnico. Você assina, conecta e coloca Pedro,
+              Marcos e José para trabalhar com suporte humano quando precisar.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                { Icon: Smartphone, text: 'WhatsApp conectado' },
+                { Icon: LayoutDashboard, text: 'CRM pronto' },
+                { Icon: Target, text: 'José monitorando' },
+              ].map(({ Icon, text }) => (
+                <div key={text} className="rounded-xl border border-border/50 bg-background/60 p-3 text-sm font-semibold flex items-center gap-2">
+                  <Icon className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-gold)' }} />
+                  <span>{text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-6 md:p-8">
+            <Badge variant="outline" className="mb-4 border-yellow-500/40 text-yellow-400">
+              Choque de realidade
+            </Badge>
+            <h2 className="text-2xl md:text-3xl font-bold mb-2">
+              Calcule quanto você perde por mês sem IA.
+            </h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Uma melhoria pequena no atendimento e na qualificação já muda a matemática do tráfego.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+              <label className="space-y-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Investimento/mês</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={monthlyAdSpend}
+                  onChange={(event) => setMonthlyAdSpend(Math.max(Number(event.target.value), 0))}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm font-semibold outline-none focus:border-primary"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Conversão atual %</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={currentConversionRate}
+                  onChange={(event) => setCurrentConversionRate(Math.max(Number(event.target.value), 1))}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm font-semibold outline-none focus:border-primary"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Meta com IA %</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={expectedConversionRate}
+                  onChange={(event) => setExpectedConversionRate(Math.max(Number(event.target.value), 1))}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm font-semibold outline-none focus:border-primary"
+                />
+              </label>
+            </div>
+
+            <div className="rounded-2xl border border-yellow-500/25 bg-background/70 p-5 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">Oportunidade estimada</p>
+                <p className="text-4xl md:text-5xl font-black" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
+                  R$ {monthlyLossEstimate.toLocaleString('pt-BR')}
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Valor mensal aproximado que pode estar vazando por demora, falta de qualificação e campanhas sem leitura.
+                </p>
+              </div>
+              <Button asChild className="shrink-0 bg-green-600 hover:bg-green-700 text-white">
+                <Link to={PRO_CHECKOUT_URL}>
+                  Quero recuperar esse valor <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── VIDEO DEMO ───────────────────────────────────────────────── */}
+      <section id="demo" className="px-4 md:px-6 py-14 md:py-20 bg-card/25">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[0.9fr_1.35fr] gap-8 lg:gap-12 items-center">
+          <div className="text-center lg:text-left">
+            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">
+              Veja por dentro
+            </Badge>
+            <h2
+              className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-5"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Assista a Logos IA trabalhando numa operação real.
+            </h2>
+            <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-6">
+              Mostre aqui Pedro atendendo, Marcos organizando os leads e José analisando campanhas.
+              Essa demonstração encurta a decisão de compra porque o cliente entende em minutos como a plataforma funciona.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              {[
+                'Lead atendido em segundos',
+                'CRM atualizado automaticamente',
+                'Tráfego analisado pelo José',
+              ].map((item) => (
+                <div key={item} className="rounded-lg border border-border/50 bg-background/60 px-3 py-3 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: 'var(--brand-success)' }} />
+                  <span className="font-medium text-foreground/90">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div
+            className="relative overflow-hidden rounded-2xl border-2"
+            style={{
+              borderColor: 'rgba(212, 160, 23, 0.35)',
+              background: 'linear-gradient(160deg, #0A1C36 0%, #12305C 100%)',
+              boxShadow: '0 28px 80px -28px rgba(15, 38, 71, 0.75)',
+            }}
+          >
+            <div className="aspect-video w-full">
+              {demoVideoAvailable ? (
+                <video
+                  className="h-full w-full object-cover"
+                  controls
+                  playsInline
+                  preload="metadata"
+                  poster="/plano-pro-oferta.png"
+                  onError={() => setDemoVideoAvailable(false)}
+                >
+                  <source src={DEMO_VIDEO_SRC} type="video/mp4" />
+                </video>
+              ) : (
+                <div className="h-full w-full flex flex-col items-center justify-center text-center px-6">
+                  <div
+                    className="h-20 w-20 rounded-full flex items-center justify-center mb-5"
+                    style={{
+                      background: 'rgba(212, 160, 23, 0.14)',
+                      border: '1px solid rgba(212, 160, 23, 0.40)',
+                    }}
+                  >
+                    <PlayCircle className="h-11 w-11" style={{ color: 'var(--brand-gold)' }} />
+                  </div>
+                  <p className="text-xl md:text-2xl font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
+                    Demonstração da Logos IA por dentro
+                  </p>
+                  <p className="text-sm md:text-base mt-3 max-w-lg" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                    Pedro, Marcos e José conectados em uma única jornada: atendimento, CRM, campanha e decisão comercial.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -712,6 +1063,55 @@ export default function LandingPage() {
                     }}
                   />
                 )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── PARA QUEM É ───────────────────────────────────── */}
+      <section id="para-quem" className="px-4 md:px-6 py-14 md:py-20 bg-card/20">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-10">
+            <Badge variant="outline" className="mb-4 border-primary/30 text-primary">
+              Nível de dor
+            </Badge>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
+              Para quem a Logos IA vira resultado rápido?
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              Quanto maior o volume de leads, mensagens fora de hora ou verba em tráfego,
+              mais caro fica operar no manual.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {[
+              {
+                Icon: Megaphone,
+                title: 'Agências',
+                desc: 'Entregam ROI para clientes sem depender de braço humano para atender, organizar e nutrir todos os leads.',
+              },
+              {
+                Icon: MapPin,
+                title: 'Negócios locais',
+                desc: 'Recebem mensagens fora do horário comercial e precisam responder antes que o lead compre do concorrente.',
+              },
+              {
+                Icon: Rocket,
+                title: 'Infoprodutores',
+                desc: 'Qualificam leads de high-ticket no WhatsApp e entregam só oportunidades prontas para o time comercial.',
+              },
+            ].map(({ Icon, title, desc }) => (
+              <div key={title} className="rounded-2xl border border-border/50 bg-background/60 p-6">
+                <div
+                  className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5"
+                  style={{ background: 'rgba(212, 160, 23, 0.10)' }}
+                >
+                  <Icon className="h-7 w-7" style={{ color: 'var(--brand-gold)' }} />
+                </div>
+                <h3 className="text-xl font-bold mb-2">{title}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{desc}</p>
               </div>
             ))}
           </div>
@@ -1096,82 +1496,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── AGENTE JOSÉ · GESTOR DE TRÁFEGO PAGO ─────────────────────── */}
-      <section id="agente-jose" className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden" style={{ background: 'rgba(15, 38, 71, 0.03)' }}>
-        <div className="relative max-w-6xl mx-auto">
-          <div className="text-center mb-12 md:mb-14 animate-fade-in">
-            <Badge className="mb-5 border-0 px-4 py-1.5 text-xs font-bold uppercase tracking-wider" style={{ background: 'var(--brand-success-bg)', color: 'var(--brand-success)' }}>
-              <span className="inline-block w-1.5 h-1.5 rounded-full mr-2 animate-pulse" style={{ background: 'var(--brand-success)' }} />
-              Agente Ativo · incluído no Pro
-            </Badge>
-            <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
-              <span style={{ color: 'var(--brand-gold)' }}>José</span> — O gestor de tráfego que mostra de onde vem cada lead e quanto custa cada venda.
-            </h2>
-            <p className="text-base md:text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Anúncio sem medição é dinheiro no escuro. O José coloca o tráfego pago dentro da sua
-              estrutura: mede tudo, puxa o <span className="font-semibold text-foreground">custo por lead de cada campanha</span> e
-              cruza com o Pedro pra você saber qual anúncio traz lead que <span className="font-semibold text-foreground">vira venda</span> — não só clique.
-            </p>
-          </div>
-
-          {/* Grid de funcionalidades */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6 mb-12 md:mb-14">
-            {[
-              { Icon: Megaphone, title: 'Meta Ads + Google Ads num lugar só', desc: 'Cria, gerencia e acompanha as campanhas das duas maiores plataformas sem sair do painel, sem depender de agência.', isGold: true },
-              { Icon: BarChart3, title: 'Custo por lead real, campanha por campanha', desc: 'Não é só clique: o José puxa o custo por lead (CPL), CPA, ROAS, CTR e CPM de cada campanha — atualizado ao vivo.', isGold: false },
-              { Icon: Database, title: 'Cruzamento de dados com o Pedro', desc: 'No painel do Pedro você vê de qual campanha veio cada lead e quais foram qualificados e fecharam — atribuição de ponta a ponta.', isGold: true },
-              { Icon: Cog, title: 'Otimização automática', desc: 'Ajusta orçamento sozinho, pausa o anúncio que gasta sem vender e escala o que traz lead bom de verdade.', isGold: false },
-              { Icon: LineChart, title: 'Painel de resultados ao vivo', desc: 'ROAS, CPA e custo por lead em tempo real. Você enxerga o retorno de cada real investido, sem planilha.', isGold: true },
-              { Icon: Brain, title: 'Recomendações com IA', desc: 'Aponta onde melhorar com base nos seus próprios números e em benchmarks do setor automotivo.', isGold: false },
-            ].map((feat, i) => {
-              const accentColor = feat.isGold ? 'var(--brand-gold)' : 'var(--brand-navy)';
-              const accentBg = feat.isGold ? 'rgba(212, 160, 23, 0.10)' : 'rgba(15, 38, 71, 0.08)';
-              return (
-                <div key={feat.title} className="group rounded-2xl bg-card p-5 md:p-6 transition-all duration-200 hover:translate-y-[-3px]" style={{ border: '1px solid rgba(15, 38, 71, 0.10)', boxShadow: 'var(--shadow-soft)', animation: `fadeIn 0.5s ease-out ${i * 0.05}s both` }}>
-                  <div style={{ background: accentBg }} className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110">
-                    <feat.Icon className="h-5 w-5" style={{ color: accentColor }} strokeWidth={2} />
-                  </div>
-                  <h3 className="text-base md:text-lg font-bold mb-2 leading-tight">{feat.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{feat.desc}</p>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Destaque: cruzamento de dados Pedro × José */}
-          <div className="max-w-4xl mx-auto rounded-2xl bg-card p-6 md:p-8 mb-12 md:mb-14" style={{ border: '1px solid rgba(212, 160, 23, 0.25)', boxShadow: 'var(--shadow-soft)' }}>
-            <div className="flex items-center gap-2 mb-4 justify-center">
-              <RefreshCw className="h-4 w-4" style={{ color: 'var(--brand-gold)' }} />
-              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--brand-gold)' }}>Cruzamento de dados no painel do Pedro</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 text-center">
-              {[
-                { n: '1', t: 'José traz o lead', d: 'A campanha gera o clique e leva o cliente pro WhatsApp.' },
-                { n: '2', t: 'Pedro atende e qualifica', d: 'O lead é atendido, classificado e marcado com a campanha de origem.' },
-                { n: '3', t: 'Você otimiza no certo', d: 'Vê qual anúncio traz lead que fecha e corta o que só queima verba.' },
-              ].map((step) => (
-                <div key={step.n} className="rounded-xl p-4" style={{ background: 'rgba(15, 38, 71, 0.04)' }}>
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center mx-auto mb-2 text-xs font-bold" style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy)' }}>{step.n}</div>
-                  <p className="text-sm font-bold mb-1 text-foreground">{step.t}</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{step.d}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bloco resultado prometido */}
-          <div className="relative max-w-4xl mx-auto rounded-3xl p-8 md:p-10 text-center overflow-hidden" style={{ background: 'linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%)', boxShadow: 'var(--shadow-strong)' }}>
-            <p className="relative text-lg md:text-2xl font-bold leading-snug" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
-              Pare de otimizar campanha no escuro. Com o José medindo o custo por lead e cruzando os dados do Pedro, <span style={{ color: 'var(--brand-gold)' }}>você sabe exatamente qual anúncio vira venda</span> — e investe onde dá lucro.
-            </p>
-            <p className="relative mt-4 text-sm md:text-base" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
-              Já incluído no plano Pro — junto com o Pedro (WhatsApp) e o Marcos (CRM).
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── EM BREVE (Prompt 7 — redesign 16/05) ─────────────────────── */}
+      {/* ── AGENTES (Prompt 7 — redesign 16/05) ─────────────────────── */}
       <section
         id="em-breve"
         className="relative px-4 md:px-6 py-16 md:py-24 overflow-hidden bg-background"
@@ -1184,30 +1509,37 @@ export default function LandingPage() {
               variant="outline"
               className="mb-4 px-4 py-1 text-xs font-semibold uppercase tracking-wider border-foreground/30 text-foreground bg-foreground/5"
             >
-              <Lock className="inline-block h-3 w-3 mr-1.5" />
-              Em desenvolvimento
+              <Sparkles className="inline-block h-3 w-3 mr-1.5" />
+              Agentes da operação
             </Badge>
 
             <h2
               className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-4 max-w-4xl mx-auto text-foreground"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              O ecossistema está{' '}
-              <span style={{ color: 'var(--brand-gold)' }}>crescendo</span>.
+              Pedro, Marcos e José já entram no{' '}
+              <span style={{ color: 'var(--brand-gold)' }}>PRO</span>.
               <br className="hidden md:block" />
-              {' '}Quem assinar agora entra antes.
+              {' '}O restante do ecossistema continua crescendo.
             </h2>
 
             <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-              Esses agentes estão em desenvolvimento. Quando lançarem,{' '}
-              <strong className="text-foreground">assinantes PRO terão acesso prioritário</strong>
-              {' '}— sem aumento de preço enquanto for assinante ativo.
+              O PRO e o PRO MAX já incluem atendimento, CRM/disparo e tráfego inteligente.
+              Os próximos agentes entram como expansão para quem quer centralizar marketing e vendas na Logos IA.
             </p>
           </div>
 
           {/* ── GRID 4x2 DESKTOP / 2x4 TABLET / 1 MOBILE ──────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
             {[
+              {
+                name: 'José',
+                desc: 'Gestão inteligente de tráfego pago no Meta e Google Ads',
+                Icon: Target,
+                color: '#E65100',
+                bg: 'rgba(230, 81, 0, 0.08)',
+                included: true,
+              },
               {
                 name: 'Paulo',
                 desc: 'Copywriter IA com termômetro de estilo e tom configurável',
@@ -1257,65 +1589,70 @@ export default function LandingPage() {
                 color: '#D4A017',
                 bg: 'rgba(212, 160, 23, 0.10)',
               },
-            ].map((agent, i) => (
-              <div
-                key={agent.name}
-                className="relative rounded-2xl bg-card p-5 select-none border-foreground/10 border"
-                style={{
-                  boxShadow: 'var(--shadow-soft)',
-                  opacity: 0.62,
-                  cursor: 'not-allowed',
-                  animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
-                  filter: 'grayscale(0.25)',
-                }}
-              >
-                {/* Badge EM BREVE dourado forte (visual de bloqueado) */}
-                <div className="absolute top-3 right-3">
-                  <span
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border"
-                    style={{
-                      background: 'var(--brand-gold)',
-                      color: 'var(--brand-navy)',
-                      borderColor: 'var(--brand-gold-hover)',
-                      boxShadow: '0 2px 8px rgba(212, 160, 23, 0.45), inset 0 -1px 0 rgba(0,0,0,0.15)',
-                    }}
-                  >
-                    <Lock className="h-2.5 w-2.5" strokeWidth={3} />
-                    Em breve
-                  </span>
-                </div>
+            ].map((agent, i) => {
+              const included = Boolean(agent.included);
 
-                {/* Ícone com leve blur/opacity */}
+              return (
                 <div
-                  className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+                  key={agent.name}
+                  className="relative rounded-2xl bg-card p-5 select-none border-foreground/10 border"
                   style={{
-                    background: agent.bg,
-                    filter: 'saturate(0.65)',
+                    boxShadow: included ? '0 22px 60px -26px rgba(212, 160, 23, 0.75)' : 'var(--shadow-soft)',
+                    opacity: included ? 1 : 0.62,
+                    cursor: included ? 'default' : 'not-allowed',
+                    animation: `fadeIn 0.5s ease-out ${i * 0.05}s both`,
+                    filter: included ? 'none' : 'grayscale(0.25)',
+                    borderColor: included ? 'rgba(212, 160, 23, 0.38)' : 'rgba(255,255,255,0.10)',
                   }}
                 >
-                  <agent.Icon className="h-6 w-6" style={{ color: agent.color, opacity: 0.80 }} strokeWidth={2} />
+                  <div className="absolute top-3 right-3">
+                    <span
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border"
+                      style={{
+                        background: included ? 'rgba(34, 197, 94, 0.16)' : 'var(--brand-gold)',
+                        color: included ? 'var(--brand-success)' : 'var(--brand-navy)',
+                        borderColor: included ? 'rgba(34, 197, 94, 0.35)' : 'var(--brand-gold-hover)',
+                        boxShadow: included ? 'none' : '0 2px 8px rgba(212, 160, 23, 0.45), inset 0 -1px 0 rgba(0,0,0,0.15)',
+                      }}
+                    >
+                      {included ? (
+                        <CheckCircle2 className="h-2.5 w-2.5" strokeWidth={3} />
+                      ) : (
+                        <Lock className="h-2.5 w-2.5" strokeWidth={3} />
+                      )}
+                      {included ? 'Incluso no PRO' : 'Em breve'}
+                    </span>
+                  </div>
+
+                  <div
+                    className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+                    style={{
+                      background: agent.bg,
+                      filter: included ? 'none' : 'saturate(0.65)',
+                    }}
+                  >
+                    <agent.Icon className="h-6 w-6" style={{ color: agent.color, opacity: included ? 1 : 0.80 }} strokeWidth={2} />
+                  </div>
+
+                  <h3
+                    className="text-lg font-bold mb-2 leading-tight text-foreground"
+                    style={{ fontFamily: 'var(--font-display)' }}
+                  >
+                    {agent.name}
+                  </h3>
+
+                  <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+                    {agent.desc}
+                  </p>
                 </div>
-
-                {/* Nome */}
-                <h3
-                  className="text-lg font-bold mb-2 leading-tight text-foreground"
-                  style={{ fontFamily: 'var(--font-display)' }}
-                >
-                  {agent.name}
-                </h3>
-
-                {/* Descrição */}
-                <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
-                  {agent.desc}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* ── Disclaimer ───────────────────────────────── */}
           <p className="text-center text-sm text-muted-foreground mt-10 max-w-2xl mx-auto">
             <Sparkles className="inline-block h-3.5 w-3.5 mr-1.5" style={{ color: 'var(--brand-gold)' }} />
-            Quem é PRO entra primeiro nos lançamentos, sem aumento de preço enquanto for assinante ativo.
+            José já está incluso no PRO e PRO MAX. Quem é assinante ativo entra primeiro nos próximos lançamentos.
           </p>
 
         </div>
@@ -1433,10 +1770,10 @@ export default function LandingPage() {
                 ))}
               </div>
               <div className="border-t border-green-500/20 pt-4">
-                <p className="text-xs text-muted-foreground mb-1">Taxa de implementação: R$ 1.497,90 (uma vez)</p>
+                <p className="text-xs text-muted-foreground mb-1">Taxa de implementação: R$ 10.000 (uma vez)</p>
                 <div className="flex justify-between items-center">
                   <span className="font-bold text-sm">MENSALIDADE</span>
-                  <span className="text-2xl font-bold text-green-400">R$ 1.297,90/mês</span>
+                  <span className="text-2xl font-bold text-green-400">R$ 2.497/mês</span>
                 </div>
               </div>
             </div>
@@ -1452,7 +1789,7 @@ export default function LandingPage() {
               </div>
               <div className="text-2xl font-bold text-muted-foreground">vs</div>
               <div className="text-center">
-                <p className="text-3xl md:text-5xl font-black text-green-400">R$ 1.297,90</p>
+                <p className="text-3xl md:text-5xl font-black text-green-400">R$ 2.497</p>
                 <p className="text-xs text-muted-foreground mt-1">Logos IA / mês</p>
               </div>
             </div>
@@ -1476,20 +1813,20 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center justify-center py-2 sm:py-0">
                 <div className="text-center">
-                  <p className="text-3xl font-black text-green-400">R$ 162.927</p>
+                  <p className="text-3xl font-black text-green-400">R$ 140.036</p>
                   <p className="text-sm text-green-400 font-semibold mt-1">de economia no 1º ano</p>
                 </div>
               </div>
               <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-5">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Logos IA</p>
-                <p className="text-3xl font-black text-green-400">R$ 17.073</p>
+                <p className="text-3xl font-black text-green-400">R$ 39.964</p>
                 <p className="text-xs text-muted-foreground mt-1">por ano</p>
               </div>
             </div>
             <div className="mt-6 text-center">
               <p className="text-sm text-muted-foreground mb-3">Com essa economia, você pode:</p>
               <div className="flex flex-wrap gap-3 justify-center">
-                {['Contratar mais vendedores', 'Investir em estoque', 'Expandir para novos mercados', 'R$ 162k/ano a mais no caixa'].map(item => (
+                {['Contratar mais vendedores', 'Investir em estoque', 'Expandir para novos mercados', 'R$ 644k a mais no caixa'].map(item => (
                   <span key={item} className="text-xs bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 px-3 py-1.5 rounded-full">
                     ✓ {item}
                   </span>
@@ -1538,7 +1875,7 @@ export default function LandingPage() {
           {/* CTA principal */}
           <div className="text-center">
             <Button asChild size="lg" className="bg-green-600 hover:bg-green-700 text-white px-8 text-base md:text-lg gap-2 py-5 rounded-2xl font-bold shadow-lg shadow-green-900/30 h-auto whitespace-normal max-w-sm md:max-w-none">
-              <Link to="/auth?tab=signup" className="flex items-center justify-center gap-2 text-center leading-snug">
+              <Link to={PRO_CHECKOUT_URL} className="flex items-center justify-center gap-2 text-center leading-snug">
                 Quero Multiplicar Meus Resultados e Economizar Até R$15k/mês com IA
                 <ArrowRight className="h-5 w-5 shrink-0" />
               </Link>
@@ -1653,347 +1990,173 @@ export default function LandingPage() {
               className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight mb-3 text-foreground"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Escolha seu plano. <span style={{ color: 'var(--brand-gold)' }}>Tudo desbloqueado</span>. Sem pegadinha.
+              Escolha seu plano. <span style={{ color: 'var(--brand-gold)' }}>Básico, PRO ou PRO MAX</span>.
             </h2>
 
-            <p className="text-base md:text-lg text-muted-foreground max-w-xl mx-auto">
-              Pedro e Marcos rodando 24/7. Cancele quando quiser.
+            <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto">
+              Básico começa com Pedro. PRO adiciona Marcos. PRO MAX libera a operação completa para empresas com mais volume.
             </p>
           </div>
 
-          {/* ── CARD PRO — USA A ARTE COMPLETA COMO IMAGEM ─────────── */}
+          {/* ── CARDS DOS PLANOS ───────────────────────────────────── */}
           <div className="relative mx-auto">
 
-            {/* ── DOIS CARDS: PRO FUNDADOR + BASICO (lado a lado) ── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-7 max-w-6xl mx-auto items-stretch">
-
-              {/* ===== CARD PRO FUNDADOR (destaque dourado) ===== */}
-              <div className="relative">
-                {/* Glow externo dourado */}
-                <div
-                  className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
-                  style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
-                />
-                <div
-                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
-                  style={{
-                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
-                    border: '2px solid var(--brand-gold)',
-                    boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)',
-                  }}
-                >
-                  {/* Faixa dourada no topo */}
-                  <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
-
-                  {/* Ribbon Oferta Fundador */}
-                  <div className="px-6 md:px-8 pt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-6xl mx-auto items-stretch">
+              {pricingPlans.map((plan) => (
+                <div key={plan.id} className="relative">
+                  {plan.featured && (
                     <div
-                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
-                      style={{ background: 'rgba(212, 160, 23, 0.15)', border: '1px solid rgba(212, 160, 23, 0.40)' }}
-                    >
-                      <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
-                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'var(--brand-gold)' }}>
-                        Oferta Fundador · 10 primeiros
-                      </span>
-                    </div>
-                  </div>
+                      className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
+                      style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
+                    />
+                  )}
+                  <div
+                    className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
+                    style={{
+                      background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
+                      border: plan.featured ? '2px solid var(--brand-gold)' : '1px solid rgba(212, 160, 23, 0.30)',
+                      boxShadow: plan.featured
+                        ? '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)'
+                        : '0 24px 60px -20px rgba(15, 38, 71, 0.50)',
+                    }}
+                  >
+                    <div
+                      className="h-1.5 w-full"
+                      style={{
+                        background: plan.featured
+                          ? 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))'
+                          : 'rgba(212, 160, 23, 0.45)',
+                      }}
+                    />
 
-                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
-                    <h3
-                      className="text-3xl font-black uppercase tracking-wide"
-                      style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
-                    >
-                      Pro
-                    </h3>
-                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Pedro vende e Marcos organiza — no automático, 24/7.
-                    </p>
-
-                    {/* Preço mensal */}
-                    <div className="flex items-end gap-1 leading-none">
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
-                      <span
-                        className="text-6xl font-black leading-none"
-                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}
+                    <div className="px-6 pt-6">
+                      <div
+                        className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                        style={{
+                          background: plan.featured ? 'rgba(212, 160, 23, 0.15)' : 'rgba(250, 248, 242, 0.08)',
+                          border: plan.featured ? '1px solid rgba(212, 160, 23, 0.40)' : '1px solid rgba(250, 248, 242, 0.18)',
+                        }}
                       >
-                        497
-                      </span>
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,00</span>
-                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
-                    </div>
-                    <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                      Promoção fundador (10 primeiros), nos 3 primeiros meses. Depois, R$ 797,90/mês.
-                    </p>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      Implementação: <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>R$ 1.997,90</span> por R$ 1.497,90 (única)
-                    </p>
-
-                    {/* Highlight conversas ilimitadas (chave própria de IA) */}
-                    <div
-                      className="mt-5 mb-5 rounded-xl p-3 text-center"
-                      style={{ background: 'rgba(212, 160, 23, 0.12)', border: '1px solid rgba(212, 160, 23, 0.30)' }}
-                    >
-                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
-                        Conversas ilimitadas
-                      </span>
-                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
-                        com a sua própria chave de IA
-                      </span>
+                        {plan.featured && <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />}
+                        <span
+                          className="text-[11px] font-bold uppercase tracking-widest"
+                          style={{ color: plan.featured ? 'var(--brand-gold)' : 'rgba(250, 248, 242, 0.85)' }}
+                        >
+                          {plan.badge}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Features */}
-                    <ul className="space-y-2.5 text-sm flex-1">
-                      {[
-                        'CRM completo de leads',
-                        'José · gestão de tráfego pago (Meta + Google Ads)',
-                        'Até 10 conexões de WhatsApp',
-                        'Disparo em massa segmentado',
-                        'Follow-up automático 24/7',
-                        'IA de atendimento (Pedro + Marcos)',
-                        'Exportação de planilhas e relatórios',
-                        'Suporte prioritário',
-                      ].map((f) => (
-                        <li key={f} className="flex items-start gap-2.5">
-                          <span
-                            className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
-                            style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}
-                          >
-                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
-                          </span>
-                          <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* CTA — único botão */}
-                    <Button
-                      asChild
-                      size="lg"
-                      className="mt-7 w-full text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
-                      style={{
-                        background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
-                        color: 'var(--brand-navy)',
-                        boxShadow: '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)',
-                        border: '2px solid var(--brand-gold-hover)',
-                      }}
-                    >
-                      <Link to="/checkout?plano=pro&ciclo=mensal">
-                        Quero o Pro Fundador <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* ===== CARD PRO MAX (premium) ===== */}
-              <div className="relative">
-                <div
-                  className="absolute -inset-3 rounded-[2rem] blur-2xl opacity-30 pointer-events-none"
-                  style={{ background: 'linear-gradient(135deg, var(--brand-gold) 0%, transparent 70%)' }}
-                />
-                <div
-                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
-                  style={{
-                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
-                    border: '2px solid var(--brand-gold)',
-                    boxShadow: '0 32px 80px -16px rgba(15, 38, 71, 0.55), 0 0 60px rgba(212, 160, 23, 0.20)',
-                  }}
-                >
-                  <div className="h-1.5 w-full" style={{ background: 'linear-gradient(90deg, var(--brand-gold), #F0C75A, var(--brand-gold))' }} />
-
-                  <div className="px-6 md:px-8 pt-6">
-                    <div
-                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
-                      style={{ background: 'rgba(212, 160, 23, 0.15)', border: '1px solid rgba(212, 160, 23, 0.40)' }}
-                    >
-                      <Crown className="h-3.5 w-3.5" style={{ color: 'var(--brand-gold)' }} />
-                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'var(--brand-gold)' }}>
-                        Pro Max · Fundador · 10 primeiros
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
-                    <h3 className="text-3xl font-black uppercase tracking-wide" style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}>
-                      Pro Max
-                    </h3>
-                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Tudo do Pro, dimensionado para empresas com mais clientes.
-                    </p>
-
-                    <div className="flex items-end gap-1 leading-none">
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
-                      <span className="text-6xl font-black leading-none" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.40)' }}>
-                        797
-                      </span>
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,90</span>
-                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
-                    </div>
-                    <p className="text-xs mt-1.5 font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                      Promoção fundador (10 primeiros), nos 3 primeiros meses. Depois, R$ 1.297,90/mês.
-                    </p>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      Implementação: <span style={{ textDecoration: 'line-through', opacity: 0.6 }}>R$ 1.997,90</span> por R$ 1.497,90 (única)
-                    </p>
-
-                    <div className="mt-5 mb-5 rounded-xl p-3 text-center" style={{ background: 'rgba(212, 160, 23, 0.12)', border: '1px solid rgba(212, 160, 23, 0.30)' }}>
-                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>
-                        Conversas ilimitadas
-                      </span>
-                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.75)' }}>
-                        com a sua própria chave de IA
-                      </span>
-                    </div>
-
-                    <ul className="space-y-2.5 text-sm flex-1">
-                      {[
-                        'Tudo do plano Pro',
-                        'Todos os agentes de IA liberados',
-                        'Até 15 números de WhatsApp',
-                        'Maior capacidade de atendimento (alto volume de clientes)',
-                        'Todas as integrações liberadas',
-                        'Acompanhamento das conversas da equipe',
-                        'Onboarding e suporte VIP',
-                      ].map((f) => (
-                        <li key={f} className="flex items-start gap-2.5">
-                          <span className="mt-0.5 shrink-0 rounded-full flex items-center justify-center" style={{ width: 18, height: 18, background: 'rgba(212, 160, 23, 0.18)' }}>
-                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-gold)' }} />
-                          </span>
-                          <span style={{ color: 'rgba(250, 248, 242, 0.92)' }}>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    <Button
-                      asChild
-                      size="lg"
-                      className="mt-7 w-full text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
-                      style={{
-                        background: 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)',
-                        color: 'var(--brand-navy)',
-                        boxShadow: '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)',
-                        border: '2px solid var(--brand-gold-hover)',
-                      }}
-                    >
-                      <Link to="/checkout?plano=enterprise&ciclo=mensal">
-                        Quero o Pro Max <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* ===== CARD BASICO ===== */}
-              <div className="relative">
-                <div
-                  className="relative h-full rounded-[1.75rem] overflow-hidden flex flex-col"
-                  style={{
-                    background: 'linear-gradient(160deg, #12305C 0%, var(--brand-navy) 55%, #0A1C36 100%)',
-                    border: '1px solid rgba(212, 160, 23, 0.30)',
-                    boxShadow: '0 24px 60px -20px rgba(15, 38, 71, 0.50)',
-                  }}
-                >
-                  <div className="h-1.5 w-full" style={{ background: 'rgba(212, 160, 23, 0.45)' }} />
-
-                  <div className="px-6 md:px-8 pt-6">
-                    <div
-                      className="inline-flex items-center gap-2 px-3 py-1 rounded-full"
-                      style={{ background: 'rgba(250, 248, 242, 0.08)', border: '1px solid rgba(250, 248, 242, 0.18)' }}
-                    >
-                      <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: 'rgba(250, 248, 242, 0.85)' }}>
-                        Plano de entrada
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="px-6 md:px-8 pt-4 pb-7 flex flex-col flex-1">
-                    <h3
-                      className="text-3xl font-black uppercase tracking-wide"
-                      style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
-                    >
-                      Básico
-                    </h3>
-                    <p className="text-sm mt-1 mb-5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                      Comece a vender com IA no WhatsApp.
-                    </p>
-
-                    {/* Preço mensal */}
-                    <div className="flex items-end gap-1 leading-none">
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
-                      <span
-                        className="text-6xl font-black leading-none"
-                        style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.30)' }}
+                    <div className="px-6 pt-4 pb-7 flex flex-col flex-1">
+                      <h3
+                        className="text-3xl font-black uppercase tracking-wide"
+                        style={{ fontFamily: 'var(--font-display)', color: 'var(--brand-cream)' }}
                       >
-                        497
-                      </span>
-                      <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>,00</span>
-                      <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
+                        {plan.name}
+                      </h3>
+                      <p className="text-sm mt-1 mb-5 min-h-[3.5rem]" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
+                        {plan.description}
+                      </p>
+
+                      <div className="flex items-end gap-1 leading-none">
+                        <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>R$</span>
+                        <span
+                          className="text-5xl md:text-6xl font-black leading-none"
+                          style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)', textShadow: '0 4px 24px rgba(212, 160, 23, 0.35)' }}
+                        >
+                          {plan.price}
+                        </span>
+                        <span className="text-2xl font-bold pb-1.5" style={{ color: 'var(--brand-gold)', fontFamily: 'var(--font-display)' }}>{plan.cents}</span>
+                        <span className="text-base font-semibold pb-2 ml-1" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>/mês</span>
+                      </div>
+                      <p className="text-xs mt-2 min-h-[2rem]" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                        {plan.priceNote}
+                      </p>
+                      {plan.setupNote && (
+                        <p className="text-xs mt-1" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
+                          {plan.setupNote}
+                        </p>
+                      )}
+
+                      <div
+                        className="mt-5 mb-5 rounded-xl p-3 text-center"
+                        style={{
+                          background: plan.featured ? 'rgba(212, 160, 23, 0.12)' : 'rgba(250, 248, 242, 0.06)',
+                          border: plan.featured ? '1px solid rgba(212, 160, 23, 0.30)' : '1px solid rgba(250, 248, 242, 0.14)',
+                        }}
+                      >
+                        <span
+                          className="text-lg font-extrabold"
+                          style={{ color: plan.featured ? 'var(--brand-gold)' : 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}
+                        >
+                          {plan.highlight}
+                        </span>
+                        <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.72)' }}>
+                          {plan.highlightSub}
+                        </span>
+                      </div>
+
+                      {'joseValue' in plan && plan.joseValue && (
+                        <div
+                          className="mb-5 rounded-xl p-3 text-sm font-semibold leading-relaxed"
+                          style={{
+                            background: 'rgba(212, 160, 23, 0.08)',
+                            border: '1px solid rgba(212, 160, 23, 0.24)',
+                            color: 'rgba(250, 248, 242, 0.92)',
+                          }}
+                        >
+                          <Target className="inline-block h-4 w-4 mr-2 align-[-2px]" style={{ color: 'var(--brand-gold)' }} />
+                          {plan.joseValue}
+                        </div>
+                      )}
+
+                      <ul className="space-y-2.5 text-sm flex-1">
+                        {plan.features.map((feature) => (
+                          <li key={feature} className="flex items-start gap-2.5">
+                            <span
+                              className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
+                              style={{ width: 18, height: 18, background: plan.featured ? 'rgba(212, 160, 23, 0.18)' : 'rgba(250, 248, 242, 0.12)' }}
+                            >
+                              <CheckCircle2 className="h-3 w-3" style={{ color: plan.featured ? 'var(--brand-gold)' : 'var(--brand-cream)' }} />
+                            </span>
+                            <span style={{ color: 'rgba(250, 248, 242, 0.90)' }}>{feature}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <Button
+                        asChild
+                        size="lg"
+                        className="mt-7 w-full text-sm md:text-base font-extrabold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px] whitespace-normal h-auto"
+                        style={{
+                          background: plan.featured
+                            ? 'linear-gradient(135deg, var(--brand-gold-hover) 0%, var(--brand-gold) 50%, var(--brand-gold-light) 100%)'
+                            : 'transparent',
+                          color: plan.featured ? 'var(--brand-navy)' : 'var(--brand-cream)',
+                          boxShadow: plan.featured ? '0 12px 32px rgba(212, 160, 23, 0.45), inset 0 -3px 0 rgba(0,0,0,0.20)' : 'none',
+                          border: '2px solid var(--brand-gold)',
+                        }}
+                      >
+                        {plan.contact ? (
+                          <a href={plan.href}>
+                            {plan.cta} <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                          </a>
+                        ) : (
+                          <Link to={plan.href}>
+                            {plan.cta} <ArrowRight className="h-5 w-5" strokeWidth={3} />
+                          </Link>
+                        )}
+                      </Button>
                     </div>
-                    <p className="text-xs mt-2" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                      + R$ 1.497 de implementação (pagamento único)
-                    </p>
-
-                    {/* Highlight conversas ilimitadas (chave própria de IA) */}
-                    <div
-                      className="mt-5 mb-5 rounded-xl p-3 text-center"
-                      style={{ background: 'rgba(250, 248, 242, 0.06)', border: '1px solid rgba(250, 248, 242, 0.14)' }}
-                    >
-                      <span className="text-lg font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
-                        Conversas ilimitadas
-                      </span>
-                      <span className="block text-[11px] uppercase tracking-widest mt-0.5" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                        com a sua própria chave de IA
-                      </span>
-                    </div>
-
-                    {/* Features */}
-                    <ul className="space-y-2.5 text-sm flex-1">
-                      {[
-                        'CRM completo de leads',
-                        'Até 5 conexões de WhatsApp',
-                        'Disparo em massa segmentado',
-                        'Follow-up automático 24/7',
-                        'IA de atendimento (Pedro + Marcos)',
-                        'Exportação de planilhas e relatórios',
-                        'Suporte por e-mail',
-                      ].map((f) => (
-                        <li key={f} className="flex items-start gap-2.5">
-                          <span
-                            className="mt-0.5 shrink-0 rounded-full flex items-center justify-center"
-                            style={{ width: 18, height: 18, background: 'rgba(250, 248, 242, 0.12)' }}
-                          >
-                            <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--brand-cream)' }} />
-                          </span>
-                          <span style={{ color: 'rgba(250, 248, 242, 0.88)' }}>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* CTA — único botão */}
-                    <Button
-                      asChild
-                      size="lg"
-                      className="mt-7 w-full text-base font-bold gap-2 py-6 uppercase tracking-wider transition-all hover:translate-y-[-2px]"
-                      style={{
-                        background: 'transparent',
-                        color: 'var(--brand-cream)',
-                        border: '2px solid var(--brand-gold)',
-                      }}
-                    >
-                      <Link to="/checkout?plano=basico&ciclo=mensal">
-                        Assinar o Básico <ArrowRight className="h-5 w-5" strokeWidth={3} />
-                      </Link>
-                    </Button>
                   </div>
                 </div>
-              </div>
-
+              ))}
             </div>
 
             {/* Nota do fundador + microcopy de segurança */}
             <div className="mt-8 text-center">
               <p className="text-sm font-semibold" style={{ color: 'var(--brand-gold)' }}>
-                Oferta Fundador: os 10 primeiros garantem o Pro por R$ 497,00/mês e o Pro Max por R$ 797,90/mês nos 3 primeiros meses.
+                Oferta Fundador: os 10 primeiros garantem o Pro por R$ 497,90/mês e o Pro Max por R$ 797,90/mês nos 3 primeiros meses.
               </p>
               <p className="text-xs text-muted-foreground mt-2 flex items-center justify-center gap-1.5">
                 <Lock className="h-3 w-3" />
@@ -2276,7 +2439,7 @@ export default function LandingPage() {
                     border: '2px solid var(--brand-gold-hover)',
                   }}
                 >
-                  <Link to="/auth?tab=signup&plano=mensal">
+                  <Link to={PRO_CHECKOUT_URL}>
                     Quero Começar Agora <ArrowRight className="h-6 w-6" strokeWidth={3} />
                   </Link>
                 </Button>
@@ -2394,7 +2557,7 @@ export default function LandingPage() {
 
           {/* Subtítulo */}
           <p className="text-base md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
-            <strong style={{ color: 'var(--brand-cream)' }}>Pedro e Marcos</strong> começam a trabalhar hoje.
+            <strong style={{ color: 'var(--brand-cream)' }}>Pedro, Marcos e José</strong> começam a trabalhar hoje.
             Você só precisa decidir parar de fazer o que uma IA pode fazer melhor.
           </p>
 
@@ -2409,8 +2572,8 @@ export default function LandingPage() {
               boxShadow: 'var(--shadow-gold)',
             }}
           >
-            <Link to={`/auth?tab=signup&plano=${billing}`}>
-              Assinar PRO agora <ArrowRight className="h-5 w-5" />
+            <Link to={PRO_CHECKOUT_URL}>
+              Começar agora - Sem fidelidade <ArrowRight className="h-5 w-5" />
             </Link>
           </Button>
 
@@ -2438,7 +2601,7 @@ export default function LandingPage() {
                 <LogosIALogo size="md" variant="dark" />
               </div>
               <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.65)' }}>
-                Atendimento + CRM com IA pra quem vive de WhatsApp.
+                Atendimento, CRM e tráfego IA pra quem vive de WhatsApp.
               </p>
             </div>
 
@@ -2450,7 +2613,7 @@ export default function LandingPage() {
               <ul className="space-y-2.5 text-sm">
                 <li><a href="#agente-pedro" className="opacity-80 hover:opacity-100 transition-opacity">Agente Pedro</a></li>
                 <li><a href="#agente-marcos" className="opacity-80 hover:opacity-100 transition-opacity">Agente Marcos</a></li>
-                <li><a href="#em-breve" className="opacity-80 hover:opacity-100 transition-opacity">Em breve</a></li>
+                <li><a href="#em-breve" className="opacity-80 hover:opacity-100 transition-opacity">Agentes</a></li>
                 <li><a href="#planos" className="opacity-80 hover:opacity-100 transition-opacity">Preço</a></li>
               </ul>
             </div>
@@ -2461,7 +2624,6 @@ export default function LandingPage() {
                 Empresa
               </h4>
               <ul className="space-y-2.5 text-sm">
-                <li><a href="/sobre.html" className="opacity-80 hover:opacity-100 transition-opacity">Sobre a empresa</a></li>
                 <li><a href="#como-funciona" className="opacity-80 hover:opacity-100 transition-opacity">Como funciona</a></li>
                 <li><a href="#faq" className="opacity-80 hover:opacity-100 transition-opacity">FAQ</a></li>
                 <li><a href="mailto:suporte@logosiabrasil.com" className="opacity-80 hover:opacity-100 transition-opacity">Contato</a></li>
@@ -2490,8 +2652,7 @@ export default function LandingPage() {
               {/* Identidade da empresa + CNPJ — visivel pra conformidade legal/Meta */}
               <p className="text-xs leading-relaxed" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
                 <span className="font-semibold" style={{ color: 'var(--brand-cream)' }}>Agencia Up Business LTDA</span>
-                <span className="opacity-75">&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP&nbsp;·&nbsp;</span>
-                <a href="tel:+5534999080815" className="opacity-75 hover:opacity-100 transition-opacity">+55 (34) 99908-0815</a>
+                <span className="opacity-75">&nbsp;·&nbsp;CNPJ 45.660.833/0001-17&nbsp;·&nbsp;Taubaté/SP</span>
               </p>
 
               {/* Copyright + links legais + selo — mesma secao/fonte */}
