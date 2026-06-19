@@ -67,16 +67,31 @@ const RULE_LABEL: Record<string, string> = {
 interface PorCliente {
   user_id: string; cliente_nome: string; operacoes: number; tokens: number; custo_usd: number; custo_brl: number;
 }
+interface PorAgente {
+  agent_id: string; agente: string; cliente_nome: string;
+  turnos: number; chamadas: number; chamadas_por_turno: number;
+  tokens: number; input_tokens: number; output_tokens: number; custo_brl: number;
+}
 interface PorDisparo {
   disparo_tipo: string; operacoes: number; tokens: number; custo_usd: number; custo_brl: number;
+}
+interface PorModelo {
+  provedor: string; modelo: string; chamadas: number;
+  tokens: number; input_tokens: number; output_tokens: number; custo_brl: number;
 }
 interface SerieDia { dia: string; operacoes: number; tokens: number; custo_brl: number; }
 interface Overview {
   periodo_dias: number;
   config: { cambio_usd_brl?: number; gpt4o_usd_in?: number; gpt4o_usd_out?: number };
-  totais: { operacoes?: number; tokens?: number; custo_usd?: number; custo_brl?: number; n_clientes?: number };
+  totais: {
+    operacoes?: number; turnos?: number; chamadas?: number; tokens?: number;
+    input_tokens?: number; output_tokens?: number; custo_usd?: number; custo_brl?: number;
+    n_clientes?: number; n_agentes?: number;
+  };
   por_cliente: PorCliente[];
+  por_agente: PorAgente[];
   por_disparo: PorDisparo[];
+  por_modelo: PorModelo[];
   serie_dia: SerieDia[];
   gerado_em?: string;
 }
@@ -193,12 +208,14 @@ export default function AuditoriaConsumoIA() {
 
       {/* Cards de totais */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <TotalCard icon={Activity} cor="text-sky-500" titulo="Operações"
-          valor={loading ? null : int(t.operacoes)} sub={`${int(t.n_clientes)} clientes · ${dias}d`} />
+        <TotalCard icon={Activity} cor="text-sky-500" titulo="Turnos"
+          valor={loading ? null : int(t.turnos ?? t.operacoes)}
+          sub={loading ? '' : `${int(t.chamadas)} chamadas IA · ${int(t.n_agentes)} agentes`} />
         <TotalCard icon={Coins} cor="text-violet-500" titulo="Tokens"
-          valor={loading ? null : int(t.tokens)} sub="entrada + saída" />
+          valor={loading ? null : int(t.tokens)}
+          sub={loading ? '' : `entrada ${int(t.input_tokens)} / saída ${int(t.output_tokens)}`} />
         <TotalCard icon={DollarSign} cor="text-amber-500" titulo="Custo (USD)"
-          valor={loading ? null : usd(t.custo_usd)} sub="piso real estimado" />
+          valor={loading ? null : usd(t.custo_usd)} sub={`${int(t.n_clientes)} clientes · ${dias}d`} />
         <TotalCard icon={Users} cor="text-emerald-500" titulo="Custo (R$)"
           valor={loading ? null : brl(t.custo_brl, 2)}
           sub={loading ? '' : `câmbio ${brl(ov?.config?.cambio_usd_brl, 4)}`} />
@@ -212,6 +229,64 @@ export default function AuditoriaConsumoIA() {
           mexe na cobrança do cliente nem bloqueia atendimento.
         </AlertDescription>
       </Alert>
+
+      {/* Por agente — visão diagnóstica (aponta o agente fora da curva sozinho) */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Por agente</CardTitle>
+          <p className="text-[11px] text-muted-foreground">
+            "Ch/turno" alto = idas-e-voltas de ferramenta encarecendo o turno. "Entrada" muito maior que "Saída" = prompt grande re-enviado a cada chamada.
+          </p>
+        </CardHeader>
+        <CardContent className="px-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Agente</TableHead>
+                  <TableHead>Conta</TableHead>
+                  <TableHead className="text-right">Turnos</TableHead>
+                  <TableHead className="text-right">Chamadas</TableHead>
+                  <TableHead className="text-right">Ch/turno</TableHead>
+                  <TableHead className="text-right">Entrada</TableHead>
+                  <TableHead className="text-right">Saída</TableHead>
+                  <TableHead className="text-right">Custo R$</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: 8 }).map((__, j) => (
+                        <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : (ov?.por_agente ?? []).length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                      Sem dados ainda — enche conforme o Pedro atende.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  (ov?.por_agente ?? []).map((a) => (
+                    <TableRow key={a.agent_id ?? a.agente}>
+                      <TableCell className="max-w-[150px] truncate font-medium">{a.agente}</TableCell>
+                      <TableCell className="max-w-[150px] truncate text-xs text-muted-foreground">{a.cliente_nome}</TableCell>
+                      <TableCell className="text-right tabular-nums">{int(a.turnos)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{int(a.chamadas)}</TableCell>
+                      <TableCell className="text-right tabular-nums"><ChTurno v={a.chamadas_por_turno} /></TableCell>
+                      <TableCell className="text-right tabular-nums">{int(a.input_tokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{int(a.output_tokens)}</TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">{brl(a.custo_brl, 2)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Grafico: tokens por dia */}
       <Card>
@@ -380,6 +455,47 @@ export default function AuditoriaConsumoIA() {
         </Card>
       </div>
 
+      {/* Por modelo (espelha a fatura da OpenAI: gpt-4o vs mini vs embeddings) */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Por modelo</CardTitle></CardHeader>
+        <CardContent className="px-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Modelo</TableHead>
+                  <TableHead className="text-right">Chamadas</TableHead>
+                  <TableHead className="text-right">Entrada</TableHead>
+                  <TableHead className="text-right">Saída</TableHead>
+                  <TableHead className="text-right">Custo R$</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  Array.from({ length: 2 }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: 5 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}
+                    </TableRow>
+                  ))
+                ) : (ov?.por_modelo ?? []).length === 0 ? (
+                  <TableRow><TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">Sem dados.</TableCell></TableRow>
+                ) : (
+                  (ov?.por_modelo ?? []).map((m) => (
+                    <TableRow key={`${m.provedor}/${m.modelo}`}>
+                      <TableCell className="font-medium">{m.modelo}</TableCell>
+                      <TableCell className="text-right tabular-nums">{int(m.chamadas)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{int(m.input_tokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{int(m.output_tokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{brl(m.custo_brl, 2)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Traces com loop */}
       {!loading && loops.length > 0 && (
         <Card>
@@ -422,6 +538,14 @@ export default function AuditoriaConsumoIA() {
       )}
     </div>
   );
+}
+
+function ChTurno({ v }: { v: number }) {
+  const n = typeof v === 'number' ? v : Number(v ?? 0);
+  const cls = n >= 5
+    ? 'text-destructive font-semibold'
+    : n >= 3 ? 'text-amber-600 font-medium dark:text-amber-400' : '';
+  return <span className={cls}>{n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>;
 }
 
 function SeverityBadge({ sev }: { sev: string }) {
