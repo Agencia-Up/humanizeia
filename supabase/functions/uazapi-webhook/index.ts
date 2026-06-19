@@ -291,8 +291,9 @@ async function extractEntitiesWithClaude(args: {
   currentState: any;
   previousAgentMessage: string;
   apiKey: string;
+  audit?: { client: any; userId: string; agentId?: string | null; agentName?: string | null };
 }): Promise<{ delta: any; eco: boolean; objecoes: string[] }> {
-  const { message, currentState, previousAgentMessage, apiKey } = args;
+  const { message, currentState, previousAgentMessage, apiKey, audit } = args;
 
   const systemPrompt = `Você é um extrator de entidades pra um SDR de concessionária automotiva no WhatsApp. Sua única tarefa: receber a mensagem do cliente e devolver SOMENTE os campos NOVOS extraídos, em JSON. NÃO repita dados já presentes no estado atual. NÃO invente. Se não tem certeza, deixe null.
 
@@ -351,6 +352,22 @@ Se nada de novo, retorne {}.`;
       }
 
       const data = await res.json();
+      // AUDITORIA: chamada Anthropic auxiliar (extracao de dados do lead). logAiCall nunca lanca.
+      if (audit?.client && audit?.userId) {
+        const u = data?.usage || {};
+        await logAiCall(audit.client, {
+          userId: audit.userId,
+          disparoTipo: 'inbound_pedro',
+          provedor: 'anthropic',
+          modelo: data?.model || model,
+          inputTokens: Number(u.input_tokens) || 0,
+          outputTokens: Number(u.output_tokens) || 0,
+          nSubcalls: 1,
+          agentId: audit.agentId ?? null,
+          agentName: audit.agentName ?? null,
+          meta: { kind: 'extract_entities' },
+        });
+      }
       const text = data?.content?.[0]?.text || '{}';
 
       // Parse — extrai JSON do texto
@@ -3390,6 +3407,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         currentState,
         previousAgentMessage,
         apiKey: anthropicApiKey,
+        audit: { client: supabase, userId: agent.user_id, agentId: agent.id, agentName: agent.name },
       });
 
       // 5. Se for eco do nome do agente, NÃO sobrescrever lead.nome
@@ -3538,6 +3556,18 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
         })
         if (embedRes.ok) {
           const embedData = await embedRes.json()
+          // AUDITORIA: embedding (OpenAI). logAiCall nunca lanca; bloco ja e try/catch.
+          await logAiCall(supabase, {
+            userId: waInstance.user_id,
+            disparoTipo: 'embedding',
+            provedor: 'openai',
+            modelo: 'text-embedding-3-small',
+            inputTokens: Number(embedData?.usage?.prompt_tokens) || 0,
+            outputTokens: 0,
+            nSubcalls: 1,
+            agentId: agent?.id ?? null,
+            agentName: agent?.name ?? null,
+          });
           const { data: chunks } = await supabase.rpc('search_knowledge', {
             query_embedding: embedData.data[0].embedding, kb_ids: kbIds, match_threshold: 0.60, match_count: 5
           })
@@ -4857,6 +4887,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
   await logAiCall(supabase, {
     userId: waInstance.user_id,
     disparoTipo: 'inbound_pedro',
+    provedor: 'openai',
     modelo: aiModel,
     inputTokens: llmUsage.input,
     outputTokens: llmUsage.output,
