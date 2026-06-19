@@ -31,6 +31,7 @@ import {
   excludeAlreadyPresented,
   pickRoundRobinSeller,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
+import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
   pickReferencedVehicle,
   buildVehiclePhotoReply,
@@ -220,6 +221,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
 
   // lista vazia -> null (cai em no_active_seller no router).
   check("transfer", "rodízio: sem vendedor ativo -> null", pickRoundRobinSeller([]) === null);
+
+  // COMPOSIÇÃO (dedup do sócio + rodízio): vendedor duplicado por telefone (com/sem 55) é ignorado;
+  // entre o restante, o novo (null) é escolhido. Reproduz o cenário real (duplicados + vendedor novo).
+  const comDuplicado = [
+    { id: "old", whatsapp_number: "5512992338876", total_leads_received: 0, last_lead_received_at: "2026-06-19T13:00:00Z" },
+    { id: "olddup", whatsapp_number: "12992338876", total_leads_received: 0, last_lead_received_at: "2026-05-01T00:00:00Z" },
+    { id: "novo", whatsapp_number: "5512000000000", total_leads_received: 0, last_lead_received_at: null },
+  ];
+  const pickComposto = pickRoundRobinSeller(uniqueSellersByPhone(comDuplicado));
+  check("transfer", "dedup+rodízio: ignora duplicado e escolhe o novo (null)", pickComposto?.id === "novo", `escolhido=${pickComposto?.id}`);
 }
 
 // ── FORMATAÇÃO (ensureStockReplyFormatting) — lista legível no WhatsApp ──────────────────────
