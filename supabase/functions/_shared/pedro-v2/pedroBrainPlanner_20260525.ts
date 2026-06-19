@@ -3,6 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
+import { detectLeadDirectionChange } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -343,6 +344,7 @@ function adVehicleGuidance() {
     "So diga honestamente que NAO tem quando NENHUMA unidade do MESMO MODELO existir no estoque. Nesse caso, sem inventar specs, ofereca o(s) parecido(s) como alternativa.",
     "Nao liste alternativas/catalogo sem o lead pedir.",
     "Responda como consultor: apresente-se se for 1o contato, confirme o carro do anuncio e pergunte se quer fotos/detalhes.",
+    "MUDOU DE DIRECAO (CRITICO): a mensagem ATUAL do lead e a FONTE DA VERDADE; o carro do anuncio e HISTORICO, NUNCA uma trava. Se o lead AGORA pede um TIPO (suv/sedan/hatch/picape) ou OUTRO modelo (veja decision_context.lead_direction.changed_direction=true), ele MUDOU de ideia: SIGA o pedido atual — action=stock_search com search_query = o TIPO/modelo pedido e search_filters.tipo_veiculo correspondente; NAO devolva o modelo do anuncio nem insista nele. Um bom vendedor RE-ENTENDE a dor do cliente quando ele muda. (So continue no carro do anuncio se o lead estiver perguntando sobre ELE — 'esse', caracteristica, preco — nao quando amplia para um tipo.)",
   ].join(" ");
 }
 
@@ -867,6 +869,27 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     }
   }
 
+  // ── CASO #1: LEAD MUDOU DE DIREÇÃO depois do anúncio — backstop determinístico ──────────────
+  // O cérebro (prompt + decision_context.lead_direction) já é instruído a SEGUIR a mensagem atual. Este
+  // backstop pega quando o LLM AINDA devolve o modelo do anúncio: se o lead ampliou para um TIPO
+  // (changed_direction) e o plano está "preso" no modelo do anúncio, troca para busca AMPLA do TIPO.
+  // Invariante geral (não if-por-caso): a mensagem ATUAL manda, o anúncio é HISTÓRICO. Testado offline.
+  if (plan.action === "stock_search" && input.ad_context?.has_ad_context && input.ad_context?.vehicle_query) {
+    const _adVeh = String(input.ad_context.vehicle_query);
+    const _dir = detectLeadDirectionChange(input.message, _adVeh);
+    if (_dir.changed_direction && _dir.current_type) {
+      const f = (plan.search_filters || {}) as any;
+      const _adTokens = normalizeText(_adVeh).split(/\s+/).filter((t) => t.length >= 3 && !/^(?:19|20)\d{2}$/.test(t));
+      const _planText = normalizeText(`${plan.search_query || ""} ${f.modelo_desejado || ""}`);
+      const _lockedOnAd = _adTokens.some((t) => new RegExp(`\\b${t}\\b`).test(_planText));
+      if (_lockedOnAd || f.modelo_desejado || !plan.search_query) {
+        plan.search_query = _dir.current_type;
+        plan.search_filters = { ...f, tipo_veiculo: _dir.current_type, modelo_desejado: null, stock_broad: true };
+        plan.reason = `direction_change_to_type:${_dir.current_type}:${plan.reason || ""}`;
+      }
+    }
+  }
+
   // ── PILAR B (slots) — RECUPERA A MARCA explicita que o lead citou e o LLM descartou. ──
   // Caso real (lead 99627-7728): "Sedan. So se for Honda" -> LLM punha modelo:"sedan", marca
   // vazia -> orchestrator buscava "sedan" generico (mostrava Chevrolet/Fiat) e NUNCA a Honda
@@ -1059,6 +1082,12 @@ export async function planPedroTurn(input: {
   const _mem: any = input.memory || {};
   const _apres = Array.isArray(_mem.veiculos_apresentados) ? _mem.veiculos_apresentados : [];
   const _int = _mem.interesse || {};
+  // CASO #1: o lead mudou de direção? (veio do anúncio / tinha interesse antigo e AGORA pede um TIPO).
+  // O cérebro precisa RE-ENTENDER: a mensagem atual manda, o anúncio/interesse é histórico.
+  const _priorVehicle = (input.ad_context?.has_ad_context && input.ad_context?.vehicle_query)
+    ? String(input.ad_context.vehicle_query)
+    : (_int.modelo_desejado || "");
+  const _leadDirection = detectLeadDirectionChange(input.message, _priorVehicle);
   const decisionContext = {
     vehicles_shown: _apres.slice(0, 8)
       .map((v: any) => v?.label || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" "))
@@ -1069,6 +1098,12 @@ export async function planPedroTurn(input: {
       troca: _int.trade_in_vehicle || _mem.trade_in_vehicle || null,
       pagamento: _int.forma_pagamento || _int.pagamento || null,
       agendamento: _int.dia_agendamento || _int.agendamento || null,
+    },
+    // Fonte da verdade = mensagem ATUAL. prior_vehicle é HISTÓRICO (anúncio/interesse), nunca trava.
+    lead_direction: {
+      changed_direction: _leadDirection.changed_direction,
+      current_message_wants_type: _leadDirection.current_type,
+      prior_or_ad_vehicle: _leadDirection.prior_vehicle,
     },
   };
 

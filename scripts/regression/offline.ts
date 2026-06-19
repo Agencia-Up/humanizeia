@@ -25,6 +25,7 @@ import {
   detectPhotoTarget,
   queryIsBroadOrGenericVehicle,
   isValidName,
+  detectLeadDirectionChange,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import {
   pickReferencedVehicle,
@@ -125,6 +126,23 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // CONTRA-PROVA: "trocar meu corsa POR UM onix" QUER o Onix (não é só troca).
   const p4 = plan("quero trocar meu corsa por um onix", { action: "stock_search", intent: "trade_in", search_query: "Chevrolet Onix", search_filters: { modelo_desejado: "Chevrolet Onix" }, confidence: 0.7 });
   check("planner", "'trocar por um onix' busca o Onix", /onix/i.test(String(p4.search_query || p4.search_filters?.modelo_desejado || "")), `q=${p4.search_query}`);
+
+  // ── CASO #1: LEAD MUDOU DE DIREÇÃO depois do anúncio (backstop + detector) ──
+  const planAd = (msg: string, raw: any, adVeh: string) =>
+    normalizePlan(raw, FALLBACK, { message: msg, vehicle_resolution: vr() as any, memory: null, recent_history: [], ad_context: { has_ad_context: true, vehicle_query: adVeh } } as any);
+  // anúncio = Tracker; lead AMPLIA para "suv" -> NÃO trava no Tracker, busca ampla do tipo.
+  const d1 = planAd("procuro um suv 2020 pra frente", { action: "stock_search", intent: "stock_lookup", search_query: "Chevrolet Tracker", search_filters: { modelo_desejado: "Chevrolet Tracker" }, confidence: 0.7 }, "Chevrolet Tracker Premier 1.2 2023");
+  check("planner", "anúncio Tracker + 'procuro suv' -> busca TIPO suv (não Tracker)", d1.search_filters?.tipo_veiculo === "suv" && !/tracker/i.test(String(d1.search_query || "")) && Boolean(d1.search_filters?.stock_broad), `q=${d1.search_query} tipo=${d1.search_filters?.tipo_veiculo} broad=${d1.search_filters?.stock_broad}`);
+  // CONTRA-PROVA: "esse suv tem teto solar?" é sobre O carro do anúncio -> NÃO amplia (mantém Tracker).
+  const d2 = planAd("esse suv tem teto solar?", { action: "stock_search", intent: "stock_lookup", search_query: "Chevrolet Tracker", search_filters: { modelo_desejado: "Chevrolet Tracker" }, confidence: 0.7 }, "Chevrolet Tracker Premier 1.2 2023");
+  check("planner", "'esse suv tem teto?' NÃO amplia (é sobre o carro do anúncio)", /tracker/i.test(String(d2.search_query || d2.search_filters?.modelo_desejado || "")), `q=${d2.search_query}`);
+
+  // detector puro: 4 casos.
+  const dc = (m: string, prior: string) => detectLeadDirectionChange(m, prior);
+  check("detectores", "direção: 'procuro um suv' (ad Tracker) -> mudou p/ suv", dc("procuro um suv 2020 pra frente", "Chevrolet Tracker 2023").changed_direction === true && dc("procuro um suv 2020 pra frente", "Chevrolet Tracker 2023").current_type === "suv");
+  check("detectores", "direção: 'esse suv tem teto?' -> NÃO mudou (sobre o carro)", dc("esse suv tem teto solar?", "Chevrolet Tracker 2023").changed_direction === false);
+  check("detectores", "direção: 'tem suv tipo o tracker?' -> NÃO mudou (nomeou o anterior)", dc("tem suv tipo o tracker?", "Chevrolet Tracker 2023").changed_direction === false);
+  check("detectores", "direção: 'oi tudo bem' -> NÃO mudou (sem tipo)", dc("oi, tudo bem?", "Chevrolet Tracker 2023").changed_direction === false);
 }
 
 // ── FORMATAÇÃO (ensureStockReplyFormatting) — lista legível no WhatsApp ──────────────────────

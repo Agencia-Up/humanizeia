@@ -31,6 +31,40 @@ export function leadMessageAsksBroadStock(message?: string | null) {
     || /\b(quero|procuro|busco|preciso|tem|temos|gostaria)\b.{0,30}\b(picape|pickup|caminhonete|camionete|suv|sedan|hatch)\b/.test(text);
 }
 
+// ── CASO #1: LEAD MUDOU DE DIREÇÃO (anúncio/interesse antigo -> outra coisa AGORA) ─────────────
+// Invariante de venda: a mensagem ATUAL do lead manda; o veículo do anúncio/interesse é HISTÓRICO,
+// nunca uma trava. Um bom vendedor RE-ENTENDE quando o cliente muda de ideia. Detecta quando o lead,
+// agora, pede um TIPO genérico (suv/sedan/hatch/picape) e NÃO está falando do carro anterior — não
+// nomeia o modelo dele nem usa demonstrativo/pergunta sobre ELE. NÃO dispara em "esse suv tem teto?"
+// (é sobre o carro do anúncio) nem em "tem suv tipo o tracker?" (nomeou o anterior de propósito).
+// Usado em 2 lugares: (1) sinal `lead_direction` no decision_context (o cérebro re-entende); (2) backstop
+// determinístico no normalizePlan quando o LLM ainda devolve o modelo do anúncio. Puro -> testado offline.
+const _DIRECTION_TYPES: Record<string, string> = {
+  sedan: "sedan", seda: "sedan", hatch: "hatch", hatchback: "hatch", suv: "suv",
+  crossover: "suv", utilitario: "suv", picape: "pickup", pickup: "pickup", caminhonete: "pickup", camionete: "pickup",
+};
+
+export function detectLeadDirectionChange(message?: string | null, priorOrAdVehicle?: string | null) {
+  const m = normalizePlannerText(message);
+  const prior = normalizePlannerText(priorOrAdVehicle);
+  const typeWord = Object.keys(_DIRECTION_TYPES).find((t) => new RegExp(`\\b${t}\\b`).test(m)) || null;
+  const current_type = typeWord ? _DIRECTION_TYPES[typeWord] : null;
+  // tokens do MODELO anterior (anúncio/interesse): ignora ano e palavras de tipo.
+  const priorTokens = prior.split(/\s+/).filter((t) => t.length >= 3 && !/^(?:19|20)\d{2}$/.test(t) && !_DIRECTION_TYPES[t]);
+  const named_prior = priorTokens.length > 0 && priorTokens.some((t) => new RegExp(`\\b${t}\\b`).test(m));
+  // demonstrativo OU pergunta de característica/preço SOBRE aquele carro -> NÃO é mudança de direção.
+  const about_that_car = /\b(esse|este|essa|esta|nesse|neste|nessa|nesta|desse|deste|dessa|desta|dele|dela|o mesmo|esse ai|esse carro|este carro)\b/.test(m)
+    || /\b(teto solar|teto|cor|cores|km|quilometr|motor|consumo|completo|cambio|porta malas|porta-malas|aceita troca|financi|parcel|entrada|de quanto|qual o valor|qual valor|quanto custa|quanto sai|quanto fica|quanto ta|quanto esta|interi|na cor)\b/.test(m);
+  const changed_direction = Boolean(current_type && prior && !named_prior && !about_that_car);
+  return {
+    changed_direction,
+    current_type,
+    prior_vehicle: priorOrAdVehicle ? String(priorOrAdVehicle).trim() : null,
+    named_prior,
+    about_that_car,
+  };
+}
+
 export function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any, options?: any) {
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
