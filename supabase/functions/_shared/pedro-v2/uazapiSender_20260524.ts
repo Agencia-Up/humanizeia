@@ -2,6 +2,7 @@ import { digitsOnly } from "./phone.ts";
 
 import { splitMessageForHumanizationLLM } from "../humanization/llmMessageSplit.ts";
 import { sendTypingPresence } from "../humanization/typingSimulator.ts";
+import { sendMetaText, sendMetaMedia } from "./metaSender.ts";
 
 type PedroWaInstance = {
   id?: string;
@@ -9,6 +10,10 @@ type PedroWaInstance = {
   api_url?: string | null;
   api_key?: string | null;
   api_key_encrypted?: string | null;
+  // Segunda via: quando provider==='meta', o envio vai pela Cloud API do Meta
+  // (ver metaSender.ts). UAZAPI continua sendo o default (qualquer outro valor).
+  provider?: string | null;
+  meta_config?: { phone_number_id?: string | null; access_token_encrypted?: string | null } | null;
 };
 
 function normalizeBaseUrl(url?: string | null) {
@@ -134,6 +139,9 @@ export async function sendPedroText(
   input: { to: string; text: string },
   options?: { humanize?: boolean; typingOnly?: boolean },
 ) {
+  // Segunda via Meta: delega pro Cloud API. ANTES das validações UAZAPI abaixo.
+  if (instance?.provider === "meta") return sendMetaText(instance, input, options);
+
   const baseUrl = normalizeBaseUrl(instance.api_url);
   const token = getInstanceToken(instance);
   const destination = normalizeDestination(input.to);
@@ -184,6 +192,8 @@ export async function sendPedroMedia(instance: PedroWaInstance, input: {
   type?: "image" | "audio" | "video" | "document";
   caption?: string;
 }) {
+  if (instance?.provider === "meta") return sendMetaMedia(instance, input);
+
   const baseUrl = normalizeBaseUrl(instance.api_url);
   const token = getInstanceToken(instance);
   const destination = normalizeDestination(input.to);

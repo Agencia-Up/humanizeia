@@ -17,6 +17,34 @@ import {
 type Step = 'provider' | 'instance' | 'meta_credentials' | 'qrcode' | 'connected';
 type Provider = 'uazapi' | 'meta';
 
+// Config publica do App do Meta (NAO sao segredos): App ID + Configuration ID
+// do Embedded Signup. Vem do .env (VITE_*). Sem isso, o botao do Facebook avisa.
+const META_APP_ID = ((import.meta as any).env?.VITE_META_APP_ID as string | undefined) || '';
+const META_CONFIG_ID = ((import.meta as any).env?.VITE_META_CONFIG_ID as string | undefined) || '';
+const FB_SDK_VERSION = 'v23.0';
+
+// Carrega o SDK do Facebook uma vez e resolve quando window.FB esta pronto.
+function loadFacebookSdk(appId: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const w = window as any;
+    if (w.FB) { resolve(w.FB); return; }
+    w.fbAsyncInit = function () {
+      try {
+        w.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: FB_SDK_VERSION });
+        resolve(w.FB);
+      } catch (e) { reject(e); }
+    };
+    if (!document.getElementById('facebook-jssdk')) {
+      const js = document.createElement('script');
+      js.id = 'facebook-jssdk';
+      js.src = 'https://connect.facebook.net/en_US/sdk.js';
+      js.async = true; js.defer = true; (js as any).crossOrigin = 'anonymous';
+      js.onerror = () => reject(new Error('Falha ao carregar o SDK do Facebook'));
+      document.body.appendChild(js);
+    }
+  });
+}
+
 interface UazapiConnectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -44,11 +72,12 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
-  // Meta fields
-  const [metaPhoneNumberId, setMetaPhoneNumberId] = useState('');
-  const [metaWabaId, setMetaWabaId] = useState('');
-  const [metaAccessToken, setMetaAccessToken] = useState('');
+  // Meta (Embedded Signup): só o nome amigável; phone_number_id/waba_id/token
+  // vêm do popup do Facebook, não são digitados.
   const [metaFriendlyName, setMetaFriendlyName] = useState('');
+  const [metaConnecting, setMetaConnecting] = useState(false);
+  // phone_number_id + waba_id capturados do evento WA_EMBEDDED_SIGNUP.
+  const sessionInfoRef = useRef<{ phone_number_id?: string; waba_id?: string }>({});
 
   const [isCreating, setIsCreating] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,9 +105,29 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
       setFriendlyName('');
       setActiveSlug(null);
       successHandledRef.current = false;
-      setMetaPhoneNumberId(''); setMetaWabaId(''); setMetaAccessToken(''); setMetaFriendlyName('');
+      setMetaFriendlyName(''); setMetaConnecting(false);
+      sessionInfoRef.current = {};
     }
   }, [open, initialInstanceName, initialFriendlyName]);
+
+  // ── Embedded Signup: ouve o evento WA_EMBEDDED_SIGNUP do popup do Facebook ──
+  // (traz phone_number_id + waba_id). Só ativo enquanto o dialog está aberto.
+  useEffect(() => {
+    if (!open) return;
+    const onMessage = (event: MessageEvent) => {
+      const origin = String(event.origin || '');
+      if (origin !== 'https://www.facebook.com' && !origin.endsWith('.facebook.com')) return;
+      try {
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (data?.type === 'WA_EMBEDDED_SIGNUP' && data?.data) {
+          if (data.data.phone_number_id) sessionInfoRef.current.phone_number_id = data.data.phone_number_id;
+          if (data.data.waba_id) sessionInfoRef.current.waba_id = data.data.waba_id;
+        }
+      } catch { /* evento não-JSON do Facebook, ignora */ }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [open]);
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
@@ -163,35 +212,70 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
     }
   };
 
-  // ========== META FLOW ==========
-  const handleCreateMetaInstance = async () => {
-    if (!metaPhoneNumberId || !metaAccessToken || !metaFriendlyName) {
-      toast.error('Preencha todos os campos obrigatórios'); return;
+  // ========== META FLOW (Embedded Signup oficial) ==========
+  const handleEmbeddedSignup = async () => {
+    if (!metaFriendlyName.trim()) { toast.error('Informe um nome para a conexão'); return; }
+    if (!META_APP_ID || !META_CONFIG_ID) {
+      toast.error('Embedded Signup não configurado (VITE_META_APP_ID / VITE_META_CONFIG_ID).');
+      return;
     }
-    setIsCreating(true);
+    setMetaConnecting(true);
+    sessionInfoRef.current = {};
     try {
-      const { data, error } = await supabase.functions.invoke('create-uazapi-instance', {
+      const FB = await loadFacebookSdk(META_APP_ID);
+      FB.login((response: any) => {
+        const code = response?.authResponse?.code;
+        if (!code) {
+          setMetaConnecting(false);
+          toast.error('Conexão cancelada no Facebook.');
+          return;
+        }
+        void finishEmbeddedSignup(code);
+      }, {
+        config_id: META_CONFIG_ID,
+        response_type: 'code',
+        override_default_response_type: true,
+        extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
+      });
+    } catch (err: any) {
+      setMetaConnecting(false);
+      toast.error(err?.message || 'Falha ao abrir o Facebook');
+    }
+  };
+
+  const finishEmbeddedSignup = async (code: string) => {
+    try {
+      // O evento WA_EMBEDDED_SIGNUP normalmente chega antes do callback; dá um
+      // respiro curto caso ainda não tenha populado phone_number_id/waba_id.
+      if (!sessionInfoRef.current.phone_number_id) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      const { phone_number_id, waba_id } = sessionInfoRef.current;
+      if (!phone_number_id) {
+        throw new Error('Não recebi o número do Facebook. Tente novamente e conclua o passo do número.');
+      }
+      const { data, error } = await supabase.functions.invoke('meta-embedded-signup', {
         body: {
-          provider: 'meta',
+          code,
+          phone_number_id,
+          waba_id: waba_id || null,
+          friendly_name: metaFriendlyName.trim(),
           user_id: effectiveOwnerId,
           seller_member_id: effectiveSellerMemberId,
-          friendly_name: metaFriendlyName.trim(),
-          phone_number_id: metaPhoneNumberId.trim(),
-          waba_id: metaWabaId.trim() || null,
-          access_token: metaAccessToken.trim(),
         },
       });
       if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Erro ao conectar Meta API');
+      if (!data?.success) throw new Error(data?.error || 'Erro ao conectar a API oficial do Meta');
       setStep('connected');
       queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
       queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
       onConnected?.();
-      toast.success(`Meta API conectada! Número: ${data.phone_number || 'verificado'}`);
+      toast.success(`WhatsApp oficial conectado! Número: ${data.phone_number || 'verificado'}`);
+      if (data.warning) console.warn('[meta-embedded-signup] aviso:', data.warning);
     } catch (err: any) {
-      toast.error(err.message || 'Erro ao conectar Meta API');
+      toast.error(err?.message || 'Erro ao conectar a API oficial do Meta');
     } finally {
-      setIsCreating(false);
+      setMetaConnecting(false);
     }
   };
 
@@ -300,14 +384,14 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
             )}
             {step === 'provider' && 'Conectar WhatsApp'}
             {step === 'instance' && 'Nome da Conexão'}
-            {step === 'meta_credentials' && 'Configurar Meta API'}
+            {step === 'meta_credentials' && 'WhatsApp Oficial (Meta)'}
             {step === 'qrcode' && 'Escanear QR Code'}
             {step === 'connected' && 'Conectado!'}
           </DialogTitle>
           <DialogDescription>
             {step === 'provider' && 'Escolha o provedor para conectar seu WhatsApp'}
             {step === 'instance' && 'Escolha um nome e escaneie o QR Code no celular'}
-            {step === 'meta_credentials' && 'Informe os dados da API Oficial do Meta'}
+            {step === 'meta_credentials' && 'Conecte pelo Facebook — sem colar token'}
             {step === 'qrcode' && 'Abra o WhatsApp no celular e escaneie o QR Code'}
             {step === 'connected' && 'Sua instância WhatsApp está conectada com sucesso'}
           </DialogDescription>
@@ -370,36 +454,37 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
           </div>
         )}
 
-        {/* Meta: Credentials */}
+        {/* Meta: Embedded Signup */}
         {step === 'meta_credentials' && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Nome da Conexão *</Label>
+              <Label>Nome da conexão *</Label>
               <Input value={metaFriendlyName} onChange={e => setMetaFriendlyName(e.target.value)} placeholder="Ex: Minha Empresa" />
+              <p className="text-xs text-muted-foreground">
+                Só pra identificar a conexão aqui na plataforma.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label>Phone Number ID *</Label>
-              <Input value={metaPhoneNumberId} onChange={e => setMetaPhoneNumberId(e.target.value)} placeholder="Ex: 123456789012345" />
-              <p className="text-xs text-muted-foreground">Encontrado no Meta Business Suite → WhatsApp → Configurações da API</p>
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Ao clicar abaixo, abre o login oficial do Facebook. Você escolhe (ou cria) a conta
+                do WhatsApp Business e o número — sem precisar colar nenhum token. Ao final, o número
+                já fica conectado.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label>WABA ID (opcional)</Label>
-              <Input value={metaWabaId} onChange={e => setMetaWabaId(e.target.value)} placeholder="WhatsApp Business Account ID" />
-            </div>
-            <div className="space-y-2">
-              <Label>Access Token *</Label>
-              <Input type="password" value={metaAccessToken} onChange={e => setMetaAccessToken(e.target.value)} placeholder="Token de acesso permanente" />
-              <p className="text-xs text-muted-foreground">Use um System User Token de longa duração do Meta Business</p>
-            </div>
+            {(!META_APP_ID || !META_CONFIG_ID) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Conexão oficial ainda não configurada no servidor. Avise o suporte.
+              </p>
+            )}
             <div className="flex gap-2 pt-2">
-              <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">Voltar</Button>
+              <Button variant="outline" onClick={() => setStep('provider')} className="flex-1" disabled={metaConnecting}>Voltar</Button>
               <Button
-                onClick={handleCreateMetaInstance}
-                disabled={isCreating || !metaPhoneNumberId || !metaAccessToken || !metaFriendlyName}
+                onClick={handleEmbeddedSignup}
+                disabled={metaConnecting || !metaFriendlyName.trim() || !META_APP_ID || !META_CONFIG_ID}
                 className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
               >
-                {isCreating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Globe className="h-4 w-4 mr-2" />}
-                Conectar Meta API
+                {metaConnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Globe className="h-4 w-4 mr-2" />}
+                Conectar com Facebook
               </Button>
             </div>
           </div>

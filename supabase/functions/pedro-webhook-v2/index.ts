@@ -8,33 +8,10 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
+import { agentUsesInstance, agentLooksLikePedro } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
 const PEDRO_V2_BUILD = "2026-06-19-more-options-dedup-v141";
-
-function agentUsesInstance(agent: any, instanceId: string): boolean {
-  return agent?.instance_id === instanceId ||
-    (Array.isArray(agent?.instance_ids) && agent.instance_ids.includes(instanceId)) ||
-    agent?.wa_instance_id === instanceId ||
-    agent?.whatsapp_instance_id === instanceId;
-}
-
-function agentLooksLikePedro(agent: any): boolean {
-  const haystack = [
-    agent?.name,
-    agent?.agent_name,
-    agent?.title,
-    agent?.description,
-    agent?.agent_type,
-    agent?.type,
-  ].filter(Boolean).join(" ").toLowerCase();
-
-  return haystack.includes("pedro") ||
-    haystack.includes("carvalho") ||
-    haystack.includes("sdr") ||
-    haystack.includes("pre-venda") ||
-    haystack.includes("pré-venda");
-}
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];

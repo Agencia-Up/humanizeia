@@ -21,6 +21,12 @@ verify_jwt = false
 [functions.create-uazapi-instance]
 verify_jwt = false
 
+[functions.meta-embedded-signup]
+verify_jwt = false
+
+[functions.meta-webhook]
+verify_jwt = false
+
 [functions.edit-image]
 verify_jwt = false
 
