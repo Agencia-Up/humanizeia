@@ -26,6 +26,11 @@ import {
   queryIsBroadOrGenericVehicle,
   isValidName,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
+import {
+  pickReferencedVehicle,
+  buildVehiclePhotoReply,
+  sameVehicleModel,
+} from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -207,6 +212,40 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // query genérica.
   check("detectores", "genérico: 'suv' -> true", queryIsBroadOrGenericVehicle("suv") === true);
   check("detectores", "genérico: 'onix' -> false", queryIsBroadOrGenericVehicle("onix") === false);
+}
+
+// ── FOTO (pickReferencedVehicle + buildVehiclePhotoReply) — extraído p/ photoLogic.ts ──────────
+{
+  // pool de 3 unidades DISTINTAS (mesmo modelo Onix) com fotos.
+  const onix3 = [
+    { marca: "Chevrolet", modelo: "Onix", versao: "ACTIV 1.4", ano: 2017, cor: "Laranja", preco: 64990, km: 111354, fotos: ["a1.jpg", "a2.jpg"], principal_image: "a1.jpg" },
+    { marca: "Chevrolet", modelo: "Onix", versao: "LT 1.0", ano: 2022, cor: "Azul", preco: 66990, km: 111000, fotos: ["b1.jpg"], principal_image: "b1.jpg" },
+    { marca: "Chevrolet", modelo: "Onix", versao: "LT", ano: 2025, cor: "Branco", preco: 76990, km: 43900, fotos: ["c1.jpg"], principal_image: "c1.jpg" },
+  ];
+  const mix = [
+    { marca: "Chevrolet", modelo: "Tracker", versao: "PREMIER 1.2", ano: 2023, cor: "Cinza", preco: 111990, fotos: ["t1.jpg", "t2.jpg"], principal_image: "t1.jpg" },
+    { marca: "Jeep", modelo: "Renegade", versao: "LONGITUDE", ano: 2021, cor: "Preto", preco: 85990, fotos: ["r1.jpg"], principal_image: "r1.jpg" },
+  ];
+
+  // pickReferencedVehicle: ordinal explícito.
+  check("foto", "pick: 'o segundo' -> index 1 explícito", (() => { const r = pickReferencedVehicle("quero o segundo", {}, onix3); return r.index === 1 && r.explicit === true; })());
+  // pickReferencedVehicle: nome do modelo.
+  check("foto", "pick: 'foto do renegade' -> Renegade (model_name)", (() => { const r = pickReferencedVehicle("manda foto do renegade", {}, mix); return r.reason === "model_name_match" && mix[r.index].modelo === "Renegade"; })());
+  // pickReferencedVehicle: sem sinal -> default (não-explícito).
+  check("foto", "pick: 'sim' -> default não-explícito", (() => { const r = pickReferencedVehicle("sim", {}, onix3); return r.reason === "default_first_vehicle" && r.explicit === false; })());
+
+  // buildVehiclePhotoReply: AMBIGUIDADE (3 distintos, "Sim" sem dizer qual) -> pergunta qual, 0 fotos.
+  const amb = buildVehiclePhotoReply({ veiculos_apresentados: onix3 }, "Sim");
+  check("foto", "'Sim' com 3 Onix -> pergunta qual (0 fotos)", amb.source === "vehicle_photos_pick_which" && (amb.media?.length || 0) === 0, `src=${amb.source}`);
+  // buildVehiclePhotoReply: modelo NOMEADO -> manda as fotos desse carro.
+  const named = buildVehiclePhotoReply({ veiculos_apresentados: mix }, "manda foto do tracker");
+  check("foto", "'foto do tracker' -> envia fotos do Tracker", named.source === "vehicle_photos_reply" && (named.media?.length || 0) > 0 && /tracker/i.test(String((named as any).selected_vehicle_label || "")), `src=${named.source} label=${(named as any).selected_vehicle_label}`);
+  // buildVehiclePhotoReply: pool vazio -> pede referência (não inventa).
+  const empty = buildVehiclePhotoReply({ veiculos_apresentados: [] }, "manda as fotos");
+  check("foto", "pool vazio -> pede referência", empty.source === "vehicle_photos_need_reference" && (empty.media?.length || 0) === 0);
+  // sameVehicleModel: Onix vs Onix (mesmo), Tracker vs Renegade (diferente).
+  check("foto", "sameVehicleModel: Onix==Onix", sameVehicleModel(onix3[0], onix3[1]) === true);
+  check("foto", "sameVehicleModel: Tracker!=Renegade", sameVehicleModel(mix[0], mix[1]) === false);
 }
 
 console.log(`\n=== OFFLINE: ${ok} OK | ${fail} FALHA ===`);
