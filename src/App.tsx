@@ -265,8 +265,6 @@ const DaviSocialMedia = lazy(() => import('./pages/DaviSocialMedia'));
 const JoaoEmail = lazy(() => import('./pages/JoaoEmail'));
 const DanielEstrategia = lazy(() => import('./pages/DanielEstrategia'));
 const MeuPlano = lazy(() => import('./pages/MeuPlano'));
-// FASE 4 — Painel interno de margem de IA (custo real vs receita). Superadmin only.
-const MargemInterna = lazy(() => import('./pages/MargemInterna'));
 // Auditoria de consumo de IA por cliente/agente (god-view). Superadmin only.
 const AuditoriaConsumoIA = lazy(() => import('./pages/AuditoriaConsumoIA'));
 const Administracao = lazy(() => import('./pages/Administracao'));
@@ -417,7 +415,6 @@ const App = () => (
                 <Route path="/joao"                  element={<ProtectedRoute><Lazy><JoaoEmail /></Lazy></ProtectedRoute>} />
                 <Route path="/daniel"                element={<ProtectedRoute><Lazy><DanielEstrategia /></Lazy></ProtectedRoute>} />
                 <Route path="/meu-plano"             element={<ProtectedRoute><Lazy><MeuPlano /></Lazy></ProtectedRoute>} />
-                <Route path="/admin/margem"          element={<ProtectedRoute><AdminRoute><Lazy><MargemInterna /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/admin/auditoria-ia"    element={<ProtectedRoute><AdminRoute><Lazy><AuditoriaConsumoIA /></Lazy></AdminRoute></ProtectedRoute>} />
                 <Route path="/administracao"         element={<ProtectedRoute><AdminRoute><Lazy><Administracao /></Lazy></AdminRoute></ProtectedRoute>} />
                 {/* Fase 6.5 — admin de cidades + origens dinâmicas */}

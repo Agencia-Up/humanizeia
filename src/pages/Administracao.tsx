@@ -12,14 +12,16 @@ import {
 import {
   ShieldCheck, RefreshCcw, AlertTriangle, ChevronDown, ChevronRight,
   Activity, Users, BadgeCheck, Home, HeartPulse, ClipboardList,
-  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap,
+  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap, Wallet,
 } from 'lucide-react';
+import AdminMargemTab from '@/components/admin/AdminMargemTab';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
 // Organizado em ABAS pra facilitar a leitura de quem nao e tecnico. Cada aba = 1 bloco.
 //  - Saude: qualidade do atendimento por agente (alertas + drill-down).  [pedro-v2-health-monitor]
 //  - Operacao: volume/atividade por agente (leads, visitas, turnos).     [admin_pedro_ops_overview]
-// Cliente NUNCA ve (rota AdminRoute + sidebar so admin). Custo fica no /admin/margem.
+//  - Margem: receita dos clientes pagantes − custos fixos − custo de IA do Jose. [AdminMargemTab]
+// Cliente NUNCA ve (rota AdminRoute + sidebar so admin).
 
 /* ── helpers ── */
 function horaCurta(s: unknown) {
@@ -35,6 +37,7 @@ const TABS = [
   { key: 'operacao', label: 'Operação', icon: ClipboardList },
   { key: 'clientes', label: 'Clientes & Agentes', icon: Building2 },
   { key: 'provedores', label: 'Provedores de IA', icon: Cpu },
+  { key: 'margem', label: 'Margem (IA)', icon: Wallet },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
@@ -85,6 +88,7 @@ export default function Administracao() {
       {tab === 'operacao' && <OperacaoTab />}
       {tab === 'clientes' && <ClientesTab />}
       {tab === 'provedores' && <ProvedoresTab />}
+      {tab === 'margem' && <AdminMargemTab />}
     </div>
   );
 }
@@ -221,7 +225,7 @@ function SaudeTab() {
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Telefones mascarados (últimos 4 dígitos). "Alucinação barrada" é a rede de segurança funcionando (não é erro).
-        Custo e margem por cliente ficam em <span className="font-medium">Margem (IA)</span>.
+        Receita, custos e margem ficam na aba <span className="font-medium">Margem (IA)</span>.
       </p>
     </div>
   );

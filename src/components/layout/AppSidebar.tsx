@@ -27,7 +27,6 @@ import {
   Users,
   GraduationCap,
   Bot,
-  Wallet,
   ShieldCheck,
   Activity,
 } from 'lucide-react';
@@ -454,10 +453,6 @@ export function AppSidebar() {
                   : item;
                 return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
               })}
-              {/* FASE 4 — Painel interno de margem de IA. SO o superadmin (operador) ve. */}
-              {isAdmin && (
-                <NavItem collapsed={collapsed} item={{ title: 'Margem (IA)', url: '/admin/margem', icon: Wallet }} />
-              )}
               {/* Auditoria de consumo de IA por cliente/agente (god-view). */}
               {isAdmin && (
                 <NavItem collapsed={collapsed} item={{ title: 'Auditoria IA', url: '/admin/auditoria-ia', icon: Activity }} />
