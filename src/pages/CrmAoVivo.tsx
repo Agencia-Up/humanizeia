@@ -51,6 +51,30 @@ function getThreshold(f: DateFilter, customStart?: string): Date | null {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+function dedupeSellersByPhone<T extends { id?: string; whatsapp_number?: string | null }>(sellers: T[] = []): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const seller of sellers) {
+    const key = sellerPhoneKey(seller.whatsapp_number) || String(seller?.id || '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(seller);
+  }
+  return result;
+}
+
+function sortSellersByQueue<T extends { total_leads_received?: number | null; last_lead_received_at?: string | null }>(sellers: T[]): T[] {
+  return [...sellers].sort((a, b) => {
+    const totalA = a.total_leads_received ?? 0;
+    const totalB = b.total_leads_received ?? 0;
+    if (totalA !== totalB) return totalA - totalB;
+
+    const lastA = a.last_lead_received_at ? new Date(a.last_lead_received_at).getTime() : 0;
+    const lastB = b.last_lead_received_at ? new Date(b.last_lead_received_at).getTime() : 0;
+    return lastA - lastB;
+  });
+}
+
 /* ── Paleta corporativa — cores fortes ─────── */
 const C = {
   blue:   '#1565C0',
@@ -869,7 +893,10 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
   }, [teamMembers]);
   // Vendedores elegíveis ao RODÍZIO automático = espelha o backend (uazapi-webhook
   // só distribui pra quem tem is_active=true). Usado só na prévia "próximo vendedor".
-  const distributionMembers = useMemo(() => teamMembers.filter(m => m.is_active), [teamMembers]);
+  const distributionMembers = useMemo(
+    () => teamMembers.filter(m => m.is_active && m.active_in_system !== false && !!m.whatsapp_number),
+    [teamMembers],
+  );
   // Exibição (dropdown de transferência manual, KPIs, stats) usa a lista do SISTEMA.
   const activeMembers = visibleMembers;
 
@@ -906,37 +933,7 @@ export default function CrmAoVivo({ embedded }: { embedded?: boolean } = {}) {
 
   const nextSeller = useMemo(() => {
     if (!distributionMembers.length) return null;
-
-    // Dedupe por TELEFONE (mesmo vendedor pode ter múltiplas rows em
-    // ai_team_members, uma por agent_id). Sem dedupe, vendedor com 3 rows
-    // domina a fila — backend só atualiza last_lead_received_at em 1 row.
-    // Espelha lógica do backend (uazapi-webhook/uniqueSellersByPhone).
-    const phoneKey = (num: string | null | undefined): string => {
-      if (!num) return '';
-      const digits = String(num).replace(/\D/g, '');
-      // Últimos 10 dígitos (sem código país 55, sem 9 inicial de celular)
-      const last10 = digits.slice(-10);
-      return last10.length === 10 ? last10 : last10.slice(1);
-    };
-    const dedupedByPhone = (() => {
-      const seen = new Set<string>();
-      const out: any[] = [];
-      for (const m of distributionMembers) {
-        const key = phoneKey(m.whatsapp_number);
-        if (key && seen.has(key)) continue;
-        if (key) seen.add(key);
-        out.push(m);
-      }
-      return out;
-    })();
-
-    // Usa last_lead_received_at do próprio membro — atualizado tanto por transferência
-    // manual quanto automática do Pedro SDR, nunca fica desatualizado
-    const never = dedupedByPhone.filter(m => !m.last_lead_received_at);
-    if (never.length) return never[0];
-    return [...dedupedByPhone].sort((a, b) =>
-      new Date(a.last_lead_received_at).getTime() - new Date(b.last_lead_received_at).getTime()
-    )[0] || null;
+    return sortSellersByQueue(dedupeSellersByPhone(distributionMembers))[0] || null;
   }, [distributionMembers]);
 
   // Próximo da fila POR AGENTE: cada agente (cada loja/número) tem sua própria fila

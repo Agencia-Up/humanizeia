@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("user_id", effectiveUserId)
       .eq("is_active", true)
+      .order("total_leads_received", { ascending: true })
       .order("last_lead_received_at", { ascending: true, nullsFirst: true });
     if (leadAgentIds.length > 0) sellersQuery = sellersQuery.in("agent_id", leadAgentIds);
 
@@ -135,6 +136,7 @@ Deno.serve(async (req) => {
         .select("*")
         .eq("user_id", effectiveUserId)
         .eq("is_active", true)
+        .order("total_leads_received", { ascending: true })
         .order("last_lead_received_at", { ascending: true, nullsFirst: true });
       sellers = fallback.data;
       sellersErr = fallback.error;
@@ -206,16 +208,18 @@ Deno.serve(async (req) => {
         });
         if (trErr) throw trErr;
 
-        // 4c. Atualiza stats do vendedor — SEM total_leads_received
-        //     (coluna que não existe; round-robin usa só last_lead_received_at).
+        // 4c. Atualiza stats do vendedor — a fila usa menor total_leads_received
+        //     e, em empate, o last_lead_received_at mais antigo.
         const { error: memErr } = await supabase.from("ai_team_members").update({
           last_lead_received_at: now,
+          total_leads_received: (seller.total_leads_received || 0) + 1,
         }).eq("id", seller.id);
         if (memErr) throw memErr;
         // Atualiza em memória para próximas iterações
         sellerQueue[i % sellerQueue.length] = {
           ...seller,
           last_lead_received_at: now,
+          total_leads_received: (seller.total_leads_received || 0) + 1,
         };
 
         // 4d. Notifica vendedor via WhatsApp

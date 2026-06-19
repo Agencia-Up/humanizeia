@@ -2,6 +2,7 @@ import { phonesMatch } from "./phone.ts";
 import { resolveTransferFailures } from "./logTransferFailure.ts";
 import { resolveLeadInterestVehicle } from "../transfer/interestVehicle.ts";
 import { resolveAiKey } from "../aiKeys.ts";
+import { uniqueSellersByPhone } from "../transfer/phoneKey.ts";
 
 export async function findPreviousSellerForLead(
   supabase: any,
@@ -81,7 +82,7 @@ export async function chooseSellerForPedroTransfer(
     .limit(50);
 
   if (error) throw error;
-  const seller = (sellers || [])[0] || null;
+  const seller = uniqueSellersByPhone(sellers || []).find((item: any) => item.whatsapp_number) || null;
   return { seller, reason: seller ? "round_robin_next_seller" : "no_active_seller" };
 }
 
@@ -417,7 +418,10 @@ export async function executePedroV2Handoff(
   }, _briefKey);
   if (inserted?.id) await supabase.from("ai_lead_transfers").update({ notes: briefing }).eq("id", inserted.id);
   await supabase.from("ai_crm_leads").update({ summary: briefing }).eq("id", input.lead_id);
-  await supabase.from("ai_team_members").update({ last_lead_received_at: nowIso }).eq("id", choice.seller.id);
+  await supabase.from("ai_team_members").update({
+    last_lead_received_at: nowIso,
+    total_leads_received: (choice.seller.total_leads_received || 0) + 1,
+  }).eq("id", choice.seller.id);
 
   return { ok: true, seller: choice.seller, briefing, reason: input.reason || "handoff" };
 }

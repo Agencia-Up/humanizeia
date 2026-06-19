@@ -253,7 +253,7 @@ async function handleMarcosTransfer(
   // 2. Buscar vendedor + validar
   const { data: member, error: memberErr } = await supabase
     .from("ai_team_members")
-    .select("id, user_id, name, whatsapp_number, is_active, auth_user_id")
+    .select("id, user_id, name, whatsapp_number, is_active, auth_user_id, total_leads_received")
     .eq("id", memberId)
     .maybeSingle();
 
@@ -412,7 +412,10 @@ ${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ?
   // 7. Atualizar last_lead_received_at do vendedor (round-robin global)
   await supabase
     .from("ai_team_members")
-    .update({ last_lead_received_at: new Date().toISOString() })
+    .update({
+      last_lead_received_at: new Date().toISOString(),
+      total_leads_received: (member.total_leads_received || 0) + 1,
+    })
     .eq("id", memberId);
 
   return new Response(JSON.stringify({
@@ -827,6 +830,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     // 9. Update member stats
     await supabase.from("ai_team_members").update({
       last_lead_received_at: new Date().toISOString(),
+      total_leads_received: (member.total_leads_received || 0) + 1,
     }).eq("id", member.id);
 
     // 10. Sync lead to Marcos contact list (non-blocking)

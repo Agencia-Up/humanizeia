@@ -4530,6 +4530,10 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                   });
                   console.log(`[Transfer] ✅ ${nextSeller.name} → HTTP ${sendRes.status}`);
 
+                  await supabase.from('ai_team_members').update({
+                    last_lead_received_at: new Date().toISOString(),
+                    total_leads_received: (nextSeller.total_leads_received || 0) + 1,
+                  }).eq('id', nextSeller.id);
                   // Notifica Gerente
                   if (agent.gerente_phone) {
                     try {
