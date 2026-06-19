@@ -65,6 +65,35 @@ export function detectLeadDirectionChange(message?: string | null, priorOrAdVehi
   };
 }
 
+// ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
+// Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
+// pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):
+// aqui o lead quer mais do mesmo perfil, so que carros novos.
+export function leadAsksForMoreOptions(message?: string | null) {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  return /\b(mais opcoes|mais opcao|mais modelos|mais carros|mais alguns|mais algumas|mais alguma opcao|outras opcoes|outros modelos|mostra mais|me mostra mais|mostrar mais|ver mais|tem mais|que mais (tem|voce tem|tem ai)|quais mais|tem outros|tem outras|mais alguma coisa)\b/.test(t);
+}
+
+// Chave estavel de veiculo p/ comparar entre conjuntos (resultado de busca x ja-apresentados).
+// Marca+modelo+versao+ano+preco identificam a UNIDADE; tolera campos ausentes.
+export function vehicleDedupKey(v: any): string {
+  if (!v) return "";
+  if (typeof v === "string") return normalizePlannerText(v).replace(/[^\w|]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalizePlannerText([v?.marca, v?.modelo, v?.versao, v?.ano, v?.preco]
+    .filter((x) => x != null && x !== "")
+    .join("|")).replace(/[^\w|]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Remove de `items` os veiculos que o lead JA VIU. `presented` aceita veiculos OU chaves (strings).
+// Preserva a ordem/ranking de `items`. Se nada a excluir, devolve `items` intacto.
+export function excludeAlreadyPresented(items: any[], presented: any[]): any[] {
+  if (!Array.isArray(items) || items.length === 0) return Array.isArray(items) ? items : [];
+  const seen = new Set((Array.isArray(presented) ? presented : []).map(vehicleDedupKey).filter(Boolean));
+  if (seen.size === 0) return items;
+  return items.filter((v) => !seen.has(vehicleDedupKey(v)));
+}
+
 export function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any, options?: any) {
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;

@@ -34,6 +34,9 @@ import {
   messageAsksForPhotos,
   requestedVehicleQueryForMediaGuard,
   queryIsBroadOrGenericVehicle,
+  leadAsksForMoreOptions,
+  vehicleDedupKey,
+  excludeAlreadyPresented,
 } from "./decisionLogic.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -511,12 +514,15 @@ async function savePresentedVehicles(supabase: any, input: {
   user_id: string;
   current: any;
   vehicles: any[];
+  listed_keys?: string[];
 }) {
   if (!input.lead_id || !Array.isArray(input.vehicles) || input.vehicles.length === 0) return input.current || {};
   const nextState = {
     ...(input.current || {}),
     veiculos_apresentados: input.vehicles.slice(0, 30),
     veiculos_apresentados_at: new Date().toISOString(), // MEM-3: carimbo p/ TTL (nao servir pool velho)
+    // CASO #2: chaves dos carros JA LISTADOS (acumulado) p/ "mais opcoes" trazer DIFERENTES.
+    ...(Array.isArray(input.listed_keys) ? { opcoes_listadas_keys: input.listed_keys.slice(0, 40) } : {}),
     ultima_foto: null, // Limpa referencia de fotos antigas quando novos carros sao apresentados em texto
     atendimento: {
       ...(input.current?.atendimento || {}),
@@ -1731,6 +1737,33 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ── CASO #2: "MOSTRA MAIS OPCOES" — nunca repetir o que o lead JA VIU ──────────────────────
+  // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e o agente repetiu os MESMOS 5 carros.
+  // Raiz: a busca devolve o mesmo top-ranqueado e o reply lista os mesmos sem excluir o ja-listado.
+  // Aqui, quando o lead pede MAIS opcoes e ja vimos uma lista, EXCLUIMOS o que ele ja viu
+  // (opcoes_listadas_keys, acumulado abaixo) do resultado -> carros DIFERENTES. Se esgotar, o cerebro
+  // e instruido a oferecer VARIAR o criterio (preco/cambio/marca) em vez de repetir.
+  const _moreOptions = leadAsksForMoreOptions(text);
+  const _seenListedKeys: string[] = Array.isArray((nextMemory as any)?.opcoes_listadas_keys)
+    ? (nextMemory as any).opcoes_listadas_keys : [];
+  let _optionsExhausted = false;
+  if (_moreOptions && _seenListedKeys.length > 0 && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {
+    const _fresh = excludeAlreadyPresented(stockResult.items, _seenListedKeys);
+    if (_fresh.length > 0) {
+      stockResult = { ...stockResult, items: _fresh, total: _fresh.length };
+    } else {
+      _optionsExhausted = true;
+    }
+    log("info", "pedro_v2_more_options_dedup", { lead_id: lead?.id || null, seen: _seenListedKeys.length, fresh: _fresh.length, exhausted: _optionsExhausted });
+  }
+  const _replyPlanForList = (_moreOptions && _optionsExhausted)
+    ? {
+        ...ambiguousPhotoPlan,
+        response_guidance: `${(ambiguousPhotoPlan as any).response_guidance || ""}\nO lead pediu MAIS opcoes, mas ele JA viu as que batem com esse perfil. NAO repita os mesmos carros: reconheca de forma natural que ja te mostrou esses e ofereca VARIAR o criterio (faixa de preco, cambio, marca, ano) ou pergunte o que e mais importante pra ele, pra voce trazer algo diferente.`.trim(),
+        reason: `more_options_exhausted:${(ambiguousPhotoPlan as any).reason || ""}`,
+      }
+    : ambiguousPhotoPlan;
+
   let reply = shouldSendVehiclePhotos
     ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: _photoPool }, text, topicAnchorVehicle)
     : await generatePedroBrainReply({
@@ -1741,7 +1774,7 @@ export async function processPedroV2Turn(
         intent: contextualIntent,
         stock_result: stockResult,
         message: enrichedText,
-        plan: ambiguousPhotoPlan,
+        plan: _replyPlanForList,
         vehicle_resolution: vehicleResolution,
         ad_context: adContext,
         media_context: sanitizePedroMediaContext(mediaContext),
@@ -1800,6 +1833,15 @@ export async function processPedroV2Turn(
     }
 
     if (vehiclesToSave.length > 0) {
+      // CASO #2: acumula as chaves dos carros LISTADOS (top-5 mostrados) p/ "mais opcoes" nao repetir.
+      // _moreOptions => UNIAO com o que ja foi listado; lista nova (outro perfil/pivot) => RESETA.
+      const _isListReply = reply.source !== "vehicle_photos_reply";
+      const _listedNowKeys = _isListReply
+        ? (stockResult.items || []).slice(0, 5).map(vehicleDedupKey).filter(Boolean)
+        : [];
+      const _newListedKeys = _isListReply
+        ? (_moreOptions ? Array.from(new Set([..._seenListedKeys, ..._listedNowKeys])) : _listedNowKeys)
+        : _seenListedKeys;
       effectiveMemory = !dryRun && lead?.id
         ? await savePresentedVehicles(supabase, {
             lead_id: lead.id,
@@ -1807,10 +1849,12 @@ export async function processPedroV2Turn(
             user_id: input.agent.user_id,
             current: nextMemory,
             vehicles: vehiclesToSave,
+            listed_keys: _newListedKeys,
           })
         : {
             ...nextMemory,
             veiculos_apresentados: vehiclesToSave.slice(0, 30),
+            opcoes_listadas_keys: _newListedKeys.slice(0, 40),
           };
     }
   }

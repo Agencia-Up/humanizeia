@@ -26,6 +26,9 @@ import {
   queryIsBroadOrGenericVehicle,
   isValidName,
   detectLeadDirectionChange,
+  leadAsksForMoreOptions,
+  vehicleDedupKey,
+  excludeAlreadyPresented,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import {
   pickReferencedVehicle,
@@ -143,6 +146,49 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("detectores", "direção: 'esse suv tem teto?' -> NÃO mudou (sobre o carro)", dc("esse suv tem teto solar?", "Chevrolet Tracker 2023").changed_direction === false);
   check("detectores", "direção: 'tem suv tipo o tracker?' -> NÃO mudou (nomeou o anterior)", dc("tem suv tipo o tracker?", "Chevrolet Tracker 2023").changed_direction === false);
   check("detectores", "direção: 'oi tudo bem' -> NÃO mudou (sem tipo)", dc("oi, tudo bem?", "Chevrolet Tracker 2023").changed_direction === false);
+}
+
+// ── CASO #2 + MUDANÇAS DE DECISÃO DO LEAD — simula a jornada (lead muda de ideia) ─────────────
+{
+  // detecção de "mais opções" (vs mudança de tipo, vs pedido de foto).
+  check("decisao", "'M mostra mais opções' -> mais opções", leadAsksForMoreOptions("M mostra mais opções") === true);
+  check("decisao", "'tem mais?' -> mais opções", leadAsksForMoreOptions("tem mais?") === true);
+  check("decisao", "'quero um suv' -> NÃO é mais opções", leadAsksForMoreOptions("quero um suv") === false);
+  check("decisao", "'manda foto do onix' -> NÃO é mais opções", leadAsksForMoreOptions("manda foto do onix") === false);
+
+  // chave estável: mesma unidade = mesma key; ano diferente = key diferente.
+  const a = { marca: "Renault", modelo: "Sandero", versao: "ZEN FLEX 1.0", ano: 2021, preco: 53990 };
+  const b = { marca: "Renault", modelo: "Sandero", versao: "ZEN FLEX 1.6", ano: 2020, preco: 56990 };
+  check("decisao", "dedupKey: Sandero 2021 != Sandero 2020", vehicleDedupKey(a) !== vehicleDedupKey(b) && vehicleDedupKey(a) === vehicleDedupKey({ ...a }));
+
+  // SCENÁRIO DO PRINT (lead 99647-8589): 5 carros JÁ vistos + pool com eles + 3 NOVOS ->
+  // "mostra mais opções" deve EXCLUIR os 5 e trazer só os 3 novos (não repetir).
+  const vistos = [
+    { marca: "Peugeot", modelo: "207 Hatch", versao: "XR 1.4", ano: 2011, preco: 22990 },
+    { marca: "Renault", modelo: "Sandero", versao: "ZEN FLEX 1.0", ano: 2021, preco: 53990 },
+    { marca: "Renault", modelo: "Kwid", versao: "Zen 1.0", ano: 2024, preco: 55990 },
+    { marca: "Renault", modelo: "Sandero", versao: "ZEN FLEX 1.6", ano: 2020, preco: 56990 },
+    { marca: "Mitsubishi", modelo: "Pajero", versao: "TR 4 2.0", ano: 2013, preco: 60990 },
+  ];
+  const novos = [
+    { marca: "Chevrolet", modelo: "Onix", versao: "LT 1.0", ano: 2022, preco: 66990 },
+    { marca: "Hyundai", modelo: "HB20", versao: "Comfort", ano: 2023, preco: 72990 },
+    { marca: "Fiat", modelo: "Argo", versao: "Drive 1.0", ano: 2022, preco: 69990 },
+  ];
+  const poolBuscaNova = [...vistos, ...novos]; // a busca devolve os mesmos + novos
+  const seenKeys = vistos.map(vehicleDedupKey);
+  const fresh = excludeAlreadyPresented(poolBuscaNova, seenKeys);
+  const freshKeys = new Set(fresh.map(vehicleDedupKey));
+  const semRepeticao = vistos.every((v) => !freshKeys.has(vehicleDedupKey(v)));
+  check("decisao", "'mais opções' exclui os 5 já vistos (não repete)", fresh.length === 3 && semRepeticao, `fresh=${fresh.length}`);
+
+  // ESGOTOU: o lead já viu TODOS -> exclusão zera (o orchestrator então oferece variar critério).
+  const tudoVisto = excludeAlreadyPresented(vistos, vistos.map(vehicleDedupKey));
+  check("decisao", "'mais opções' com tudo já visto -> 0 (sinaliza esgotamento)", tudoVisto.length === 0);
+
+  // MUDA DE IDEIA no meio (sem anúncio): tinha interesse Onix, agora pede picape -> mudança de direção.
+  const piv = detectLeadDirectionChange("na verdade quero uma picape", "Chevrolet Onix");
+  check("decisao", "muda de ideia: interesse Onix -> 'quero uma picape' = mudou p/ pickup", piv.changed_direction === true && piv.current_type === "pickup");
 }
 
 // ── FORMATAÇÃO (ensureStockReplyFormatting) — lista legível no WhatsApp ──────────────────────
