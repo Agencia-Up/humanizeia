@@ -63,6 +63,13 @@ const RULE_LABEL: Record<string, string> = {
   subcall_loop: 'Loop de chamadas',
   absolute_daily_cap: 'Teto diário',
 };
+const PROVEDOR_LABEL: Record<string, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic (Claude)',
+  google: 'Google (Gemini)',
+  lovable: 'Lovable',
+  deepseek: 'Deepseek',
+};
 
 interface PorCliente {
   user_id: string; cliente_nome: string; operacoes: number; tokens: number; custo_usd: number; custo_brl: number;
@@ -463,6 +470,7 @@ export default function AuditoriaConsumoIA() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Plataforma</TableHead>
                   <TableHead>Modelo</TableHead>
                   <TableHead className="text-right">Chamadas</TableHead>
                   <TableHead className="text-right">Entrada</TableHead>
@@ -474,14 +482,15 @@ export default function AuditoriaConsumoIA() {
                 {loading ? (
                   Array.from({ length: 2 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 5 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}
+                      {Array.from({ length: 6 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}
                     </TableRow>
                   ))
                 ) : (ov?.por_modelo ?? []).length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">Sem dados.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">Sem dados.</TableCell></TableRow>
                 ) : (
                   (ov?.por_modelo ?? []).map((m) => (
                     <TableRow key={`${m.provedor}/${m.modelo}`}>
+                      <TableCell className="text-xs">{PROVEDOR_LABEL[m.provedor] ?? m.provedor}</TableCell>
                       <TableCell className="font-medium">{m.modelo}</TableCell>
                       <TableCell className="text-right tabular-nums">{int(m.chamadas)}</TableCell>
                       <TableCell className="text-right tabular-nums">{int(m.input_tokens)}</TableCell>
