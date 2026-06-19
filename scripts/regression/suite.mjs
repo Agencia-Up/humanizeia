@@ -1,4 +1,11 @@
 // ============================================================================
+// ⚠️ ESTA SUÍTE CUSTA DINHEIRO: bate na prod AO VIVO (gpt-4o + BNDV reais) -> cada teste é
+// uma chamada paga. É a suíte "GOLDEN" (depende do LLM: frase do reply, classificação do
+// planner). RODE RARAMENTE — só antes de subir pra prod.
+// PARA O DIA A DIA use a suíte OFFLINE ($0, sem rede/LLM):  npx tsx scripts/regression/offline.ts
+// Ela testa a LÓGICA PURA (busca/ranking, normalizePlan, formatação, nome) — onde nasce a maioria
+// dos bugs. Só caia aqui quando precisar validar o comportamento dependente de LLM.
+// ============================================================================
 // SUÍTE DE REGRESSÃO do Pedro v2 (Pilar D — blindagem).
 // Roda TODOS os casos reais que já corrigimos contra o dry-run do agente (comportamento
 // real, NÃO envia nada). Cobre as CLASSES de erro, não instâncias. Objetivo: um conserto

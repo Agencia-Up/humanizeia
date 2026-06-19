@@ -104,7 +104,7 @@ async function sendUazapiTextMessage(
 }
 
 // ── Higienização de Nome e Saudação Inteligente (Checklist 4 e 5) ───────────────
-function isValidName(name: string | null | undefined): boolean {
+export function isValidName(name: string | null | undefined): boolean {
   if (!name) return false;
   const n = name.trim().toLowerCase();
   const invalidNames = ["lead", "desconhecido", "cliente", "contato", "sem nome", "user", "desconhecida", "—", "unknown"];

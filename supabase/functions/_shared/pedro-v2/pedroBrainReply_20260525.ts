@@ -153,7 +153,7 @@ function vehicleLabel(vehicle: any) {
   return [marca, modelo, versao, vehicle?.ano].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function leadFirstName(memory?: PedroV2LeadMemory | null) {
+export function leadFirstName(memory?: PedroV2LeadMemory | null) {
   let name = String(memory?.lead?.nome || "").trim();
   if (!name || /^lead$/i.test(name)) return null;
   // O nome do WhatsApp do lead costuma vir com EMOJIS/simbolos ("RUTH ❤️🤩🍀💋").
@@ -442,7 +442,7 @@ function stripMarkdownForWhatsApp(text: string): string {
   return t;
 }
 
-function ensureStockReplyFormatting(input: {
+export function ensureStockReplyFormatting(input: {
   text: string;
   facts: any[];
   memory?: PedroV2LeadMemory | null;

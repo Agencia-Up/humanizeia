@@ -242,7 +242,7 @@ export function getVehicleSubcategory(vehicle: BndvVehicle): "hatch" | "sedan" |
   if (/\b(compass|renegade|creta|kicks|hrv|wrv|wr-v|cr-v|crv|tracker|tcross|t-cross|nivus|fastback|pulse|tiggo|sw4|ecosport|duster|asx|pajero|2008|3008|5008|corolla cross|aircross|c4 cactus|cactus|captur|territory|commander|taos|tiguan|rav4|kona|sportage|tucson|bronco|outlander|trailblazer|haval|song|forester|suv|utilitario)\b/i.test(text)) {
     return "suv";
   }
-  if (/\b(plus|sedan|sedã|virtus|voyage|prisma|cronos|grand siena|logan|corolla|civic|sentra|versa|jetta|cruze|cobalt|classic|fluence|accord|altima|city sedan|yaris sedan)\b/i.test(text)) {
+  if (/\b(plus|sedan|sedã|virtus|voyage|prisma|cronos|grand siena|logan|corolla|civic|city|sentra|versa|jetta|cruze|cobalt|classic|fluence|accord|altima|onix sedan|yaris sedan)\b/i.test(text)) {
     return "sedan";
   }
   if (/\b(hatch|hatchback|polo|argo|mobi|kwid|c3|gol|fox|sandero|up|fit|peugeot 208|208|207|mini|cooper|march|clio|celta|palio|uno|agile|punto|i30|golf|308|hb20|onix)\b/i.test(text)) {
