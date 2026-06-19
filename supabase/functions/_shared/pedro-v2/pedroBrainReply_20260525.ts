@@ -3,6 +3,7 @@ import { PedroBrainPlan } from "./pedroBrainPlanner_20260525.ts";
 import { PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
+import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 import { validateGrounding, buildGroundingCorrection, groundedFallback } from "./grounding.ts";
 
@@ -578,6 +579,7 @@ export async function generatePedroBrainReply(input: {
   recent_history?: any[];
   tool_result?: any;
   usage_sink?: UsageSink;
+  audit?: { client: any; userId: string; agentId?: string | null; agentName?: string | null };
   reply_provider_override?: string | null;
   reply_model_override?: string | null;
   ai_key_ctx?: AiKeyCtx | null;
@@ -891,6 +893,22 @@ export async function generatePedroBrainReply(input: {
       input.usage_sink.tokens += activeLlm.isAnthropic
         ? Number(data?.usage?.input_tokens || 0) + Number(data?.usage?.output_tokens || 0)
         : sumOpenAiTokens(data);
+    }
+    // AUDITORIA: chamada do reply v2 (provedor REAL do failover: openai/deepseek/anthropic). logAiCall nunca lanca.
+    if (input.audit?.client && input.audit?.userId) {
+      const u = data?.usage || {};
+      await logAiCall(input.audit.client, {
+        userId: input.audit.userId,
+        disparoTipo: "inbound_pedro",
+        provedor: activeLlm.provider,
+        modelo: activeModel,
+        inputTokens: activeLlm.isAnthropic ? (Number(u.input_tokens) || 0) : (Number(u.prompt_tokens) || 0),
+        outputTokens: activeLlm.isAnthropic ? (Number(u.output_tokens) || 0) : (Number(u.completion_tokens) || 0),
+        nSubcalls: 1,
+        agentId: input.audit.agentId ?? null,
+        agentName: input.audit.agentName ?? null,
+        meta: { kind: "pedro_v2_reply" },
+      });
     }
     const content = activeLlm.isAnthropic
       ? String((Array.isArray(data?.content) ? data.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")

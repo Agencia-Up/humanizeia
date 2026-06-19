@@ -1,6 +1,7 @@
 import { PedroV2Intent, PedroV2IntentResult, PedroV2LeadMemory } from "./types.ts";
 import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
+import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 
 export type PedroBrainAction =
@@ -951,6 +952,7 @@ export async function planPedroTurn(input: {
   recent_history?: any[];
   vehicle_resolution: PedroVehicleResolution;
   usage_sink?: UsageSink;
+  audit?: { client: any; userId: string; agentId?: string | null; agentName?: string | null };
   planner_provider?: string | null;
   planner_model?: string | null;
   ai_key_ctx?: AiKeyCtx | null;
@@ -1152,6 +1154,22 @@ export async function planPedroTurn(input: {
         latency_ms: Math.round(_t1 - _t0),
         failover_from: _ci > 0 ? _plannerChain[0].provider : null, // marca quando NAO foi o primario
       };
+      // AUDITORIA: chamada do planner v2 (provedor REAL do failover: openai/deepseek/anthropic). logAiCall nunca lanca.
+      if (input.audit?.client && input.audit?.userId) {
+        const pm = (plan as any)._planner_meta;
+        await logAiCall(input.audit.client, {
+          userId: input.audit.userId,
+          disparoTipo: "inbound_pedro",
+          provedor: llm.provider,
+          modelo: plannerModel,
+          inputTokens: Number(pm?.prompt_tokens) || 0,
+          outputTokens: Number(pm?.completion_tokens) || 0,
+          nSubcalls: 1,
+          agentId: input.audit.agentId ?? null,
+          agentName: input.audit.agentName ?? null,
+          meta: { kind: "pedro_v2_planner", failover_from: pm?.failover_from ?? null },
+        });
+      }
       return plan;
     } catch (error) {
       console.warn(`[PedroV2] planner ${llm.provider} excecao; failover p/ proximo:`, error);

@@ -1127,6 +1127,7 @@ export async function processPedroV2Turn(
     recent_history: recentHistory,
     vehicle_resolution: vehicleResolution,
     usage_sink: usageSink,
+    audit: { client: supabase, userId: input.agent.user_id, agentId: input.agent.id, agentName: input.agent.name },
     ai_key_ctx: _aiKeyCtx,
     // Override de provedor do cerebro SO em dry-run (testes A/B de DeepSeek vs OpenAI sem
     // afetar trafego real). Em producao usa o env PEDRO_PLANNER_PROVIDER (default OpenAI).
@@ -1746,6 +1747,7 @@ export async function processPedroV2Turn(
         media_context: sanitizePedroMediaContext(mediaContext),
         recent_history: recentHistory,
         usage_sink: usageSink,
+        audit: { client: supabase, userId: input.agent.user_id, agentId: input.agent.id, agentName: input.agent.name },
         ai_key_ctx: _aiKeyCtx,
         reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
         reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
@@ -1832,6 +1834,7 @@ export async function processPedroV2Turn(
       media_context: sanitizePedroMediaContext(mediaContext),
       recent_history: recentHistory,
       usage_sink: usageSink,
+      audit: { client: supabase, userId: input.agent.user_id, agentId: input.agent.id, agentName: input.agent.name },
       ai_key_ctx: _aiKeyCtx,
       reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
       reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
