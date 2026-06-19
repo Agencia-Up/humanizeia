@@ -17,6 +17,14 @@ import {
 } from "../../supabase/functions/_shared/pedro-v2/stockSearch_20260525_photo_flow.ts";
 import { normalizePlan } from "../../supabase/functions/_shared/pedro-v2/pedroBrainPlanner_20260525.ts";
 import { ensureStockReplyFormatting, leadFirstName } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
+import {
+  buildStockFilters,
+  leadMessageAsksBroadStock,
+  leadMessageHasExplicitPriceCeiling,
+  messageAsksForPhotos,
+  detectPhotoTarget,
+  queryIsBroadOrGenericVehicle,
+} from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -136,6 +144,62 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("nome", "'Jô' -> Jô (nome real curto)", (fn("Jô") || "").toLowerCase() === "jô", String(fn("Jô")));
   check("nome", "'douglas aloan' -> Douglas", fn("douglas aloan") === "Douglas", String(fn("douglas aloan")));
   check("nome", "nome com emoji -> 1º nome limpo", fn("RUTH ❤️🤩") === "Ruth", String(fn("RUTH ❤️🤩")));
+}
+
+// ── FILTROS (buildStockFilters) — construção dos filtros de busca (extraído do orchestrator) ──
+{
+  // broad (lead pediu TIPO) limpa ad_context (raiz v131: frase do lead em ad_context zerava a busca ampla).
+  const f1 = buildStockFilters(
+    { extracted: { referencia: { texto_referencia: "procuro um suv 2020 pra frente" } } },
+    {}, "procuro um suv 2020 pra frente",
+    { search_filters: { tipo_veiculo: "suv", stock_broad: true } }, {},
+    { lead_message: "procuro um suv 2020 pra frente" },
+  );
+  check("filtros", "broad limpa ad_context (v131)", f1.ad_context === "" && f1.query === "" && f1.stock_broad === true, `ad_context=${JSON.stringify(f1.ad_context)} query=${JSON.stringify(f1.query)}`);
+
+  // marca_required NÃO é broad -> preserva a marca (não vira sedan genérico).
+  const f2 = buildStockFilters(
+    {}, {}, "sedan so se for honda",
+    { search_query: "honda", search_filters: { marca: "honda", marca_required: true, tipo_veiculo: "sedan" } }, {},
+    { lead_message: "sedan so se for honda" },
+  );
+  check("filtros", "marca_required preserva a marca", /honda/i.test(String(f2.marca || "")), `marca=${f2.marca}`);
+
+  // teto EXPLÍCITO ("ate 30 mil") -> hard_price_ceiling (não relaxa).
+  const f3 = buildStockFilters(
+    {}, {}, "tem onix ate 30 mil?",
+    { search_query: "onix", search_filters: { modelo_desejado: "onix", preco_max: 30000 } }, {},
+    { lead_message: "tem onix ate 30 mil?" },
+  );
+  check("filtros", "teto explícito -> hard_price_ceiling", f3.hard_price_ceiling === true && Number(f3.preco_max) === 30000, `ceiling=${f3.hard_price_ceiling} max=${f3.preco_max}`);
+
+  // MEM-1: modelo NOVO sem preço dito -> NÃO herda preço velho do interesse (não filtra/zera errado).
+  const f4 = buildStockFilters(
+    {}, { interesse: { preco_max: 80000, tipo_veiculo: "suv" } }, "tem hilux?",
+    { search_query: "hilux", search_filters: { modelo_desejado: "hilux" } }, {},
+    { lead_message: "tem hilux?" },
+  );
+  check("filtros", "MEM-1: não herda preço velho em modelo novo", !(Number(f4.preco_max) > 0), `preco_max=${f4.preco_max}`);
+}
+
+// ── DETECTORES (extraídos) — regex de decisão que dispararam bugs ───────────────────────────
+{
+  check("detectores", "broad: 'procuro um suv' -> true", leadMessageAsksBroadStock("procuro um suv 2020 pra frente") === true);
+  check("detectores", "broad: 'oi tudo bem' -> false", leadMessageAsksBroadStock("oi tudo bem") === false);
+  check("detectores", "teto: 'ate 30 mil' -> true", leadMessageHasExplicitPriceCeiling("tem onix ate 30 mil") === true);
+  check("detectores", "teto: 'tem onix' -> false", leadMessageHasExplicitPriceCeiling("tem onix") === false);
+  // foto: pedido explícito.
+  check("detectores", "foto: 'manda foto do onix' -> true", messageAsksForPhotos("manda foto do onix") === true);
+  // foto: placeholder de sistema NÃO é pedido (raiz v117: "[imagem recebida]" disparava álbum).
+  check("detectores", "foto: '[imagem recebida]' -> false (placeholder)", messageAsksForPhotos("[imagem recebida]") === false);
+  // foto: "pra frente" (ano em diante) NÃO é pedido de foto da "frente" (falso-positivo que disparou foto no v134).
+  check("detectores", "foto: 'procuro suv 2020 pra frente' -> false", messageAsksForPhotos("procuro um suv 2020 pra frente") === false);
+  // alvo da foto.
+  check("detectores", "alvo: 'foto da roda' -> wheel", detectPhotoTarget("foto da roda") === "wheel");
+  check("detectores", "alvo: 'manda a frente' -> front", detectPhotoTarget("manda a frente do carro") === "front");
+  // query genérica.
+  check("detectores", "genérico: 'suv' -> true", queryIsBroadOrGenericVehicle("suv") === true);
+  check("detectores", "genérico: 'onix' -> false", queryIsBroadOrGenericVehicle("onix") === false);
 }
 
 console.log(`\n=== OFFLINE: ${ok} OK | ${fail} FALHA ===`);
