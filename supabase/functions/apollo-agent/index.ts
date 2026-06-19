@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -390,7 +391,7 @@ Deno.serve(async (req) => {
     let aiResult: any = { analysis: null, actions: [], health_score: null, summary: null };
 
     if (AI_KEY && enriched.length > 0) {
-      aiResult = await runApolloAI(AI_KEY, useOpenAI, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext);
+      aiResult = await runApolloAI(AI_KEY, useOpenAI, enriched, currency, currencySymbol, datePreset, trendContext, learningContext, seasonalContext, portfolioContext, segmentContext, { client: admin, userId: user.id });
     }
 
     // ── Validate & fix campaign IDs in actions (AI sometimes returns slugs instead of numeric IDs) ──
@@ -1132,7 +1133,8 @@ function buildSegmentContext(segment: any): string {
 async function runApolloAI(
   apiKey: string, useOpenAI: boolean, campaigns: any[], currency: string, currencySymbol: string,
   datePreset: string, trendContext: string, learningContext: string,
-  seasonalContext: string, portfolioContext: string, segmentContext = ""
+  seasonalContext: string, portfolioContext: string, segmentContext = "",
+  audit?: { client: any; userId: string }
 ) {
   const periodLabel: Record<string, string> = {
     today: "hoje", yesterday: "ontem", last_7d: "últimos 7 dias",
@@ -1297,6 +1299,21 @@ Responda EXCLUSIVAMENTE em JSON válido:
     }
 
     const data = await res.json();
+    // AUDITORIA (so-registro): consumo de IA do Jose por cliente. logAiCall nunca lanca.
+    if (audit?.client && audit?.userId) {
+      const u = data?.usage || {};
+      await logAiCall(audit.client, {
+        userId: audit.userId,
+        disparoTipo: "jose_apollo",
+        provedor: useOpenAI ? "openai" : "anthropic",
+        modelo: useOpenAI ? "gpt-4o" : "claude-sonnet-4-20250514",
+        inputTokens: useOpenAI ? (Number(u.prompt_tokens) || 0) : (Number(u.input_tokens) || 0),
+        outputTokens: useOpenAI ? (Number(u.completion_tokens) || 0) : (Number(u.output_tokens) || 0),
+        nSubcalls: 1,
+        agentName: "José (tráfego pago)",
+        status: "ok",
+      });
+    }
     // OpenAI: choices[0].message.content  |  Anthropic: content[0].text
     const content = useOpenAI
       ? (data.choices?.[0]?.message?.content || "")
