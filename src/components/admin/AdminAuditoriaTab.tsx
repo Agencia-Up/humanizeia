@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-// ── Painel SUPERADMIN — Auditoria de Consumo de IA (god-view) ────────────────
-// So o operador (superadmin) ve. Cruza TODOS os clientes/agentes: tokens, custo,
+// ── Aba SUPERADMIN — Auditoria de Consumo de IA (god-view) ───────────────────
+// Vive dentro de /administracao. Cruza TODOS os clientes/agentes: tokens, custo,
 // quebra por tipo de disparo, serie por dia, traces com loop e flags de anomalia.
 // SO-REGISTRO: nada corta o atendimento. Le tudo de RPCs SECURITY DEFINER
 // (admin_ai_audit_overview / _loops / _anomaly_flags) gated por superadmin.
@@ -113,7 +113,7 @@ interface Loop {
 
 const PERIODOS = [7, 30, 90];
 
-export default function AuditoriaConsumoIA() {
+export default function AdminAuditoriaTab() {
   const { toast } = useToast();
   const [dias, setDias] = useState(30);
   const [ov, setOv] = useState<Overview | null>(null);
@@ -167,19 +167,13 @@ export default function AuditoriaConsumoIA() {
   const serie = ov?.serie_dia ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 md:p-6">
+    <div className="space-y-6">
 
-      {/* Cabecalho */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
-            <Activity className="h-6 w-6 text-primary" />
-            Auditoria de Consumo IA
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Quanto cada cliente e agente consome de IA. Visão de operação — só registra, não corta nada.
-          </p>
-        </div>
+      {/* Cabecalho da aba */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Quanto cada cliente e agente consome de IA — só registra, não corta nada.
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-md border border-border">
             {PERIODOS.map((p) => (
@@ -358,7 +352,7 @@ export default function AuditoriaConsumoIA() {
                 ) : flags.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                      Nenhuma anomalia no período. 🎉
+                      Nenhuma anomalia no período.
                     </TableCell>
                   </TableRow>
                 ) : (

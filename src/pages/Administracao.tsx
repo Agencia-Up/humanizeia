@@ -15,11 +15,13 @@ import {
   UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap, Wallet,
 } from 'lucide-react';
 import AdminMargemTab from '@/components/admin/AdminMargemTab';
+import AdminAuditoriaTab from '@/components/admin/AdminAuditoriaTab';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
 // Organizado em ABAS pra facilitar a leitura de quem nao e tecnico. Cada aba = 1 bloco.
 //  - Saude: qualidade do atendimento por agente (alertas + drill-down).  [pedro-v2-health-monitor]
 //  - Operacao: volume/atividade por agente (leads, visitas, turnos).     [admin_pedro_ops_overview]
+//  - Consumo: auditoria de tokens/custo de IA por cliente/agente (god-view).    [AdminAuditoriaTab]
 //  - Margem: receita dos clientes pagantes − custos fixos − custo de IA do Jose. [AdminMargemTab]
 // Cliente NUNCA ve (rota AdminRoute + sidebar so admin).
 
@@ -37,6 +39,7 @@ const TABS = [
   { key: 'operacao', label: 'Operação', icon: ClipboardList },
   { key: 'clientes', label: 'Clientes & Agentes', icon: Building2 },
   { key: 'provedores', label: 'Provedores de IA', icon: Cpu },
+  { key: 'consumo', label: 'Consumo de IA', icon: Activity },
   { key: 'margem', label: 'Margem (IA)', icon: Wallet },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
@@ -88,6 +91,7 @@ export default function Administracao() {
       {tab === 'operacao' && <OperacaoTab />}
       {tab === 'clientes' && <ClientesTab />}
       {tab === 'provedores' && <ProvedoresTab />}
+      {tab === 'consumo' && <AdminAuditoriaTab />}
       {tab === 'margem' && <AdminMargemTab />}
     </div>
   );

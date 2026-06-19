@@ -28,7 +28,6 @@ import {
   GraduationCap,
   Bot,
   ShieldCheck,
-  Activity,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
@@ -453,10 +452,6 @@ export function AppSidebar() {
                   : item;
                 return <NavItem key={item.url} item={itemWithBadge} collapsed={collapsed} />;
               })}
-              {/* Auditoria de consumo de IA por cliente/agente (god-view). */}
-              {isAdmin && (
-                <NavItem collapsed={collapsed} item={{ title: 'Auditoria IA', url: '/admin/auditoria-ia', icon: Activity }} />
-              )}
               {/* Painel de Administracao (donos): saude/qualidade dos agentes por cliente. */}
               {isAdmin && (
                 <NavItem collapsed={collapsed} item={{ title: 'Administração', url: '/administracao', icon: ShieldCheck }} />
