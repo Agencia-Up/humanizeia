@@ -166,6 +166,19 @@ export function requestedVehicleQueryForMediaGuard(plan: any, vehicleResolution:
   return query || null;
 }
 
+// Nome VÁLIDO do lead? (usado pelo follow-up). Nome-lixo do WhatsApp (pushName "$", ".", emoji,
+// 1 letra, só dígitos) NÃO é nome -> follow-up usa saudação genérica em vez de "Bom dia $!".
+// Exige >=2 LETRAS reais (com acento). Mesma robustez do leadFirstName do reply.
+export function isValidName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name.trim().toLowerCase();
+  const invalidNames = ["lead", "desconhecido", "cliente", "contato", "sem nome", "user", "desconhecida", "—", "unknown"];
+  if (n === "" || invalidNames.includes(n)) return false;
+  if (/^\+?\d+$/.test(n.replace(/[\s\-\(\)]/g, ""))) return false;
+  if ((name.match(/\p{L}/gu) || []).length < 2) return false;
+  return true;
+}
+
 export function queryIsBroadOrGenericVehicle(value?: string | null) {
   const normalized = normalizePhotoText(value || "");
   if (!normalized) return true;

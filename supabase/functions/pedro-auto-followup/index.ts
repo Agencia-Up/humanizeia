@@ -30,6 +30,8 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// isValidName -> em decisionLogic.ts (puro, testável offline). NÃO redefinir aqui.
+import { isValidName } from "../_shared/pedro-v2/decisionLogic.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -103,20 +105,7 @@ async function sendUazapiTextMessage(
   return false;
 }
 
-// ── Higienização de Nome e Saudação Inteligente (Checklist 4 e 5) ───────────────
-export function isValidName(name: string | null | undefined): boolean {
-  if (!name) return false;
-  const n = name.trim().toLowerCase();
-  const invalidNames = ["lead", "desconhecido", "cliente", "contato", "sem nome", "user", "desconhecida", "—", "unknown"];
-  if (n === "" || invalidNames.includes(n)) return false;
-  // Se contiver caracteres de telefone ou for número puro
-  if (/^\+?\d+$/.test(n.replace(/[\s\-\(\)]/g, ""))) return false;
-  // Nome-LIXO do WhatsApp (pushName pode ser "$", ".", "🙂", so simbolos/emoji ou 1 letra): NAO e
-  // nome. Sem isso, o follow-up virava "Bom dia $!" (lead 99716-4335, pushName="$"). Exige >=2 LETRAS
-  // reais (com acento). Mesma robustez do leadFirstName do reply principal.
-  if ((name.match(/\p{L}/gu) || []).length < 2) return false;
-  return true;
-}
+// ── Higienização de Nome e Saudação Inteligente — isValidName importado de decisionLogic.ts ──
 
 function getBrasiliaGreeting(d: Date): string {
   // Ajusta fuso de Brasília (UTC-3)

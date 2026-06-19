@@ -24,6 +24,7 @@ import {
   messageAsksForPhotos,
   detectPhotoTarget,
   queryIsBroadOrGenericVehicle,
+  isValidName,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
@@ -144,6 +145,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("nome", "'Jô' -> Jô (nome real curto)", (fn("Jô") || "").toLowerCase() === "jô", String(fn("Jô")));
   check("nome", "'douglas aloan' -> Douglas", fn("douglas aloan") === "Douglas", String(fn("douglas aloan")));
   check("nome", "nome com emoji -> 1º nome limpo", fn("RUTH ❤️🤩") === "Ruth", String(fn("RUTH ❤️🤩")));
+  // isValidName (usado pelo follow-up): nome-lixo -> false (não vira "Bom dia $!").
+  check("nome", "isValidName('$') -> false", isValidName("$") === false);
+  check("nome", "isValidName('Jô') -> true", isValidName("Jô") === true);
+  check("nome", "isValidName('Douglas') -> true", isValidName("Douglas") === true);
+  check("nome", "isValidName('123') -> false", isValidName("123") === false);
+  check("nome", "isValidName('lead') -> false", isValidName("lead") === false);
 }
 
 // ── FILTROS (buildStockFilters) — construção dos filtros de busca (extraído do orchestrator) ──
