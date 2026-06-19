@@ -3,6 +3,7 @@ import { resolveTransferFailures } from "./logTransferFailure.ts";
 import { resolveLeadInterestVehicle } from "../transfer/interestVehicle.ts";
 import { resolveAiKey } from "../aiKeys.ts";
 import { uniqueSellersByPhone } from "../transfer/phoneKey.ts";
+import { pickRoundRobinSeller } from "./decisionLogic.ts";
 
 export async function findPreviousSellerForLead(
   supabase: any,
@@ -77,12 +78,15 @@ export async function chooseSellerForPedroTransfer(
     .eq("user_id", input.user_id)
     .eq("agent_id", input.agent_id)
     .eq("is_active", true)
-    .order("total_leads_received", { ascending: true })
-    .order("last_lead_received_at", { ascending: true, nullsFirst: true })
     .limit(50);
 
   if (error) throw error;
-  const seller = uniqueSellersByPhone(sellers || []).find((item: any) => item.whatsapp_number) || null;
+  // DUAS correcoes combinadas (eu + socio): (1) uniqueSellersByPhone dedup vendedores DUPLICADOS
+  // (mesmo telefone em varios agent_id) — sem isso a row antiga domina a fila; (2) pickRoundRobinSeller
+  // faz rodizio JUSTO: quem NUNCA recebeu (last_lead_received_at null) vai PRIMEIRO. O `.order(...,
+  // nullsFirst:true)` antigo NAO aplicava NULLS FIRST em producao -> vendedor novo caia pro FIM e nunca
+  // era escolhido (bug Icom: 4 novos com 0 leads). Dedup -> rodizio. Ambos testados offline ($0).
+  const seller = pickRoundRobinSeller(uniqueSellersByPhone(sellers || []));
   return { seller, reason: seller ? "round_robin_next_seller" : "no_active_seller" };
 }
 

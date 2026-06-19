@@ -29,6 +29,7 @@ import {
   leadAsksForMoreOptions,
   vehicleDedupKey,
   excludeAlreadyPresented,
+  pickRoundRobinSeller,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import {
   pickReferencedVehicle,
@@ -189,6 +190,36 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // MUDA DE IDEIA no meio (sem anúncio): tinha interesse Onix, agora pede picape -> mudança de direção.
   const piv = detectLeadDirectionChange("na verdade quero uma picape", "Chevrolet Onix");
   check("decisao", "muda de ideia: interesse Onix -> 'quero uma picape' = mudou p/ pickup", piv.changed_direction === true && piv.current_type === "pickup");
+}
+
+// ── RODÍZIO DE VENDEDOR (pickRoundRobinSeller) — vendedor novo (null) entra na fila ───────────
+{
+  // CENÁRIO REAL (Icom Motors): 3 antigos com last_lead recente + 4 novos (null) -> ESCOLHE um novo.
+  const antigos = [
+    { name: "Joao Santos", total_leads_received: 0, last_lead_received_at: "2026-06-19T13:19:15.801Z" },
+    { name: "Luiz Paulo", total_leads_received: 0, last_lead_received_at: "2026-06-19T12:30:04.833Z" },
+    { name: "Matheus", total_leads_received: 0, last_lead_received_at: "2026-06-19T11:50:04.316Z" },
+  ];
+  const novos = [
+    { name: "Bruno Henrique", total_leads_received: 0, last_lead_received_at: null },
+    { name: "Flaviane Gomes", total_leads_received: 0, last_lead_received_at: null },
+  ];
+  const escolhido = pickRoundRobinSeller([...antigos, ...novos]);
+  check("transfer", "rodízio: novo (null) é escolhido antes dos antigos com data", escolhido && escolhido.last_lead_received_at === null, `escolhido=${escolhido?.name}`);
+
+  // todos com data -> escolhe quem recebeu HÁ MAIS TEMPO (Matheus, o mais antigo).
+  const soAntigos = pickRoundRobinSeller(antigos);
+  check("transfer", "rodízio: todos com data -> o mais antigo (Matheus)", soAntigos?.name === "Matheus", `escolhido=${soAntigos?.name}`);
+
+  // empate no last_lead -> menor total_leads_received vence.
+  const porCarga = pickRoundRobinSeller([
+    { name: "A", total_leads_received: 5, last_lead_received_at: null },
+    { name: "B", total_leads_received: 2, last_lead_received_at: null },
+  ]);
+  check("transfer", "rodízio: empate em data -> menor carga (B)", porCarga?.name === "B", `escolhido=${porCarga?.name}`);
+
+  // lista vazia -> null (cai em no_active_seller no router).
+  check("transfer", "rodízio: sem vendedor ativo -> null", pickRoundRobinSeller([]) === null);
 }
 
 // ── FORMATAÇÃO (ensureStockReplyFormatting) — lista legível no WhatsApp ──────────────────────

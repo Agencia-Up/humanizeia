@@ -94,6 +94,28 @@ export function excludeAlreadyPresented(items: any[], presented: any[]): any[] {
   return items.filter((v) => !seen.has(vehicleDedupKey(v)));
 }
 
+// ── RODÍZIO DE VENDEDOR (round-robin) — quem NUNCA recebeu lead vai PRIMEIRO ──────────────────
+// Bug real (Icom Motors): vendedores novos (last_lead_received_at = NULL) NUNCA recebiam lead. Raiz:
+// o round-robin ordenava no banco por `last_lead_received_at ASC NULLS FIRST`, mas em produção o
+// `NULLS FIRST` NÃO era aplicado -> Postgres usa NULLS LAST no ASC -> o vendedor novo (null) caía pro
+// FIM da fila e nunca era escolhido. Aqui ordenamos no CÓDIGO (determinístico, testável offline): menor
+// `total_leads_received` primeiro e, no empate, quem recebeu há mais tempo — tratando NULL ("nunca
+// recebeu") como o mais antigo possível -> escolhido PRIMEIRO. Não depende do ordenamento de null do banco.
+export function pickRoundRobinSeller(sellers: any[]): any | null {
+  if (!Array.isArray(sellers) || sellers.length === 0) return null;
+  const lastTs = (v: any): number => {
+    if (!v) return 0; // nunca recebeu -> época 0 -> mais antigo -> primeiro da fila
+    const t = new Date(v).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+  return [...sellers].sort((a, b) => {
+    const ta = Number(a?.total_leads_received) || 0;
+    const tb = Number(b?.total_leads_received) || 0;
+    if (ta !== tb) return ta - tb;
+    return lastTs(a?.last_lead_received_at) - lastTs(b?.last_lead_received_at);
+  })[0] || null;
+}
+
 export function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any, options?: any) {
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
