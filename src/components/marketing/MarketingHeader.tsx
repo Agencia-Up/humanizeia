@@ -5,9 +5,7 @@ import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useAppStore } from '@/store/appStore';
 import { Moon, Sun, Menu, X } from 'lucide-react';
 
-// Header público compartilhado (home + páginas de detalhe). O CTA primário abre o
-// formulário de lead (onCta). navItems é opcional (a home passa as âncoras; as
-// páginas de detalhe ficam sem nav, só logo + Entrar + CTA).
+// Header publico compartilhado. O CTA primario abre o formulario de lead.
 export function MarketingHeader({
   onCta, navItems = [],
 }: { onCta: () => void; navItems?: { href: string; label: string }[] }) {
@@ -16,7 +14,7 @@ export function MarketingHeader({
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur-md">
-      <div className="px-4 md:px-6 py-3.5 flex items-center justify-between gap-4">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3.5 md:px-6">
         <Link to="/" className="flex items-center shrink-0 hover:opacity-90 transition-opacity">
           <LogosIALogo size="sm" variant={isDarkMode ? 'dark' : 'light'} />
         </Link>
@@ -39,22 +37,53 @@ export function MarketingHeader({
           <Button variant="ghost" size="icon" onClick={toggleDarkMode} className="text-muted-foreground hover:text-foreground h-9 w-9">
             {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(v => !v)} className="text-muted-foreground hover:text-foreground h-9 w-9" aria-label="Menu">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileMenuOpen(v => !v)}
+            className="h-10 w-10 text-muted-foreground hover:text-foreground"
+            aria-label={mobileMenuOpen ? 'Fechar menu' : 'Abrir menu'}
+            aria-expanded={mobileMenuOpen}
+          >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
         </div>
       </div>
 
       {mobileMenuOpen && (
-        <nav className="md:hidden border-t border-border/40 bg-background/98 px-4 py-3 space-y-0.5">
-          {navItems.map(it => (
-            <a key={it.href} href={it.href} className="block px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-card/60 rounded-lg transition-colors" onClick={() => setMobileMenuOpen(false)}>{it.label}</a>
-          ))}
-          <div className="pt-3 mt-2 border-t border-border/30 flex flex-col gap-2">
-            <Button variant="outline" asChild className="w-full"><Link to="/auth" onClick={() => setMobileMenuOpen(false)}>Entrar</Link></Button>
-            <Button onClick={() => { setMobileMenuOpen(false); onCta(); }} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">Quero testar agora →</Button>
-          </div>
-        </nav>
+        <div className="fixed inset-x-0 bottom-0 top-[68px] z-50 md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 w-full bg-background/55 backdrop-blur-sm"
+            aria-label="Fechar menu"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <nav className="relative mx-3 overflow-hidden rounded-2xl border border-border/60 bg-background shadow-2xl">
+            <div className="space-y-1 p-3">
+              {navItems.map(it => (
+                <a
+                  key={it.href}
+                  href={it.href}
+                  className="flex min-h-12 items-center rounded-xl px-4 text-base font-semibold text-foreground transition-colors hover:bg-card/70"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  {it.label}
+                </a>
+              ))}
+            </div>
+            <div className="flex flex-col gap-2 border-t border-border/40 bg-card/30 p-3">
+              <Button variant="outline" asChild className="h-11 w-full">
+                <Link to="/auth" onClick={() => setMobileMenuOpen(false)}>Entrar</Link>
+              </Button>
+              <Button
+                onClick={() => { setMobileMenuOpen(false); onCta(); }}
+                className="h-11 w-full bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                Quero testar agora
+              </Button>
+            </div>
+          </nav>
+        </div>
       )}
     </header>
   );

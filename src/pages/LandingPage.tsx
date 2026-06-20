@@ -126,7 +126,7 @@ export default function LandingPage() {
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
   return (
-    <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
+    <div className="min-h-screen bg-background pb-24 text-foreground overflow-x-hidden md:pb-0">
       <MarketingHeader
         onCta={() => openLead('home_header')}
         navItems={[
@@ -139,10 +139,7 @@ export default function LandingPage() {
       />
 
       {/* ── HERO + VÍDEO ─────────────────────────────────────────── */}
-      <section className="relative px-4 md:px-6 pt-10 pb-12 md:pt-16 md:pb-16 overflow-hidden">
-        <div className="absolute top-6 -left-20 w-[26rem] h-[26rem] rounded-full blur-3xl pointer-events-none opacity-25" style={{ background: 'var(--brand-navy)' }} />
-        <div className="absolute -bottom-10 -right-16 w-[22rem] h-[22rem] rounded-full blur-3xl pointer-events-none opacity-20" style={{ background: 'var(--brand-gold)' }} />
-
+      <section className="relative overflow-hidden border-b border-border/40 bg-card/25 px-4 pb-12 pt-10 md:px-6 md:pb-16 md:pt-16">
         <div className="relative max-w-4xl mx-auto text-center">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-[1.12] mb-4" style={DISPLAY}>
             A primeira equipe de marketing 100% movida por IA — <span style={{ color: 'var(--brand-gold)' }}>trabalhando pelo seu negócio agora.</span>
@@ -392,6 +389,21 @@ export default function LandingPage() {
       </section>
 
       <MarketingFooter />
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-background/95 p-3 shadow-2xl backdrop-blur md:hidden">
+        <div className="mx-auto flex max-w-md items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold text-muted-foreground">Pedro + Marcos + José</p>
+            <p className="truncate text-sm font-bold text-foreground">Equipe de IA no ar em 5 minutos</p>
+          </div>
+          <Button
+            onClick={() => openLead('home_mobile_sticky')}
+            className="shrink-0 bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+          >
+            Começar
+          </Button>
+        </div>
+      </div>
 
       <LeadCaptureForm open={leadOpen} onOpenChange={setLeadOpen} origem={leadOrigem} />
     </div>
