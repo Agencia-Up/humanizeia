@@ -331,9 +331,12 @@ const App = () => (
                 <Route path="/terms"         element={<Lazy><TermsOfService /></Lazy>} />
                 <Route path="/onboarding"    element={<Lazy><Onboarding /></Lazy>} />
                 <Route path="/"              element={<Lazy><LandingPage /></Lazy>} />
-                <Route path="/pedro"         element={<Lazy><PedroDetail /></Lazy>} />
-                <Route path="/marcos"        element={<Lazy><MarcosDetail /></Lazy>} />
-                <Route path="/jose"          element={<Lazy><JoseDetail /></Lazy>} />
+                {/* Páginas públicas de detalhe dos agentes (site de vendas).
+                    Usam prefixo /agentes/ pra NÃO colidir com /pedro, /marcos e
+                    /jose internas do app logado (PedroSDR / MarcosLeads / ApolloDashboard). */}
+                <Route path="/agentes/pedro"  element={<Lazy><PedroDetail /></Lazy>} />
+                <Route path="/agentes/marcos" element={<Lazy><MarcosDetail /></Lazy>} />
+                <Route path="/agentes/jose"   element={<Lazy><JoseDetail /></Lazy>} />
                 <Route path="/checkout"      element={<Lazy><Checkout /></Lazy>} />
                 <Route path="/checkout/sucesso" element={<Lazy><CheckoutSuccess /></Lazy>} />
                 <Route path="/f/:formId"     element={<Lazy><FormPublico /></Lazy>} />

@@ -18,19 +18,19 @@ const DISPLAY = { fontFamily: 'var(--font-display)' } as const;
 
 const AGENTS = [
   {
-    nome: 'Pedro', tagline: 'o vendedor que nunca perde um lead.', to: '/pedro', Icon: MessageSquare,
+    nome: 'Pedro', tagline: 'o vendedor que nunca perde um lead.', to: '/agentes/pedro', Icon: MessageSquare,
     cor: '#16A34A', bg: 'rgba(22, 163, 74, 0.10)',
     desc: 'Responde no WhatsApp em segundos, qualifica o cliente, consulta o estoque e entrega o lead pronto pro seu time. Não esquece ninguém, não dorme, não some no fim de semana.',
     link: 'Ver como o Pedro vende',
   },
   {
-    nome: 'Marcos', tagline: 'o CRM que protege o seu número.', to: '/marcos', Icon: Database,
+    nome: 'Marcos', tagline: 'o CRM que protege o seu número.', to: '/agentes/marcos', Icon: Database,
     cor: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.10)',
     desc: 'Organiza seus contatos, dispara campanhas em massa e cuida da saúde do seu WhatsApp pra você não cair no banimento. Sua base inteira trabalhando a seu favor, sem dor de cabeça.',
     link: 'Como o Marcos protege seu número',
   },
   {
-    nome: 'José', tagline: 'o gestor de tráfego que pensa como dono.', to: '/jose', Icon: Target,
+    nome: 'José', tagline: 'o gestor de tráfego que pensa como dono.', to: '/agentes/jose', Icon: Target,
     cor: '#E65100', bg: 'rgba(230, 81, 0, 0.10)',
     desc: 'Cria, analisa e otimiza campanhas no Meta e no Google. Decide pelo que importa: venda no fim do mês, não clique barato. Você aprova, ele executa.',
     link: 'Ver o José em ação',

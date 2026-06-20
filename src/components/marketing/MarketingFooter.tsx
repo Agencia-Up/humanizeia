@@ -17,9 +17,9 @@ export function MarketingFooter() {
           <div>
             <h4 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'var(--brand-gold)' }}>Agentes</h4>
             <ul className="space-y-2.5 text-sm">
-              <li><Link to="/pedro" className="opacity-80 hover:opacity-100 transition-opacity">Pedro — Atendimento</Link></li>
-              <li><Link to="/marcos" className="opacity-80 hover:opacity-100 transition-opacity">Marcos — CRM</Link></li>
-              <li><Link to="/jose" className="opacity-80 hover:opacity-100 transition-opacity">José — Tráfego</Link></li>
+              <li><Link to="/agentes/pedro" className="opacity-80 hover:opacity-100 transition-opacity">Pedro — Atendimento</Link></li>
+              <li><Link to="/agentes/marcos" className="opacity-80 hover:opacity-100 transition-opacity">Marcos — CRM</Link></li>
+              <li><Link to="/agentes/jose" className="opacity-80 hover:opacity-100 transition-opacity">José — Tráfego</Link></li>
             </ul>
           </div>
 
