@@ -48,12 +48,16 @@ function loadFacebookSdk(appId: string): Promise<any> {
 interface UazapiConnectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConnected?: () => void;
+  // Callback opcional ao concluir. Recebe o id da instância criada se conhecido.
+  onConnected?: (instanceId?: string) => void;
   initialInstanceName?: string;
   initialFriendlyName?: string;
+  // Quando passado, ao concluir a conexão (UAZAPI ou Meta) o id da nova
+  // instância é vinculado a esse agente (wa_ai_agents.instance_ids).
+  agentId?: string;
 }
 
-export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialInstanceName, initialFriendlyName }: UazapiConnectDialogProps) {
+export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialInstanceName, initialFriendlyName, agentId }: UazapiConnectDialogProps) {
   const { user } = useAuth();
   const { isSeller, seller } = useSellerProfile(user?.id);
   const queryClient = useQueryClient();
@@ -212,6 +216,27 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
     }
   };
 
+  // Vincula a instância criada ao agente passado (instance_ids[] do wa_ai_agents).
+  // Soma ao array existente sem duplicar. Best-effort: erro NAO trava o fluxo.
+  const linkInstanceToAgent = async (instanceId: string | null | undefined) => {
+    if (!agentId || !instanceId) return;
+    try {
+      const { data: ag } = await (supabase as any)
+        .from('wa_ai_agents')
+        .select('instance_id, instance_ids')
+        .eq('id', agentId)
+        .maybeSingle();
+      const current: string[] = Array.isArray(ag?.instance_ids) ? ag.instance_ids : [];
+      const next = current.includes(instanceId) ? current : [...current, instanceId];
+      await (supabase as any)
+        .from('wa_ai_agents')
+        .update({ instance_id: ag?.instance_id || instanceId, instance_ids: next, updated_at: new Date().toISOString() })
+        .eq('id', agentId);
+    } catch (e) {
+      console.warn('[UazapiConnect] Falha ao vincular instância ao agente:', e);
+    }
+  };
+
   // ========== META FLOW (Embedded Signup oficial) ==========
   const handleEmbeddedSignup = async () => {
     if (!metaFriendlyName.trim()) { toast.error('Informe um nome para a conexão'); return; }
@@ -266,10 +291,12 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
       });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao conectar a API oficial do Meta');
+      // Vincula a instância nova ao agente (se aberto a partir do AgentFormDialog).
+      await linkInstanceToAgent(data.instance_id);
       setStep('connected');
       queryClient.invalidateQueries({ queryKey: ['whatsapp-config'] });
       queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
-      onConnected?.();
+      onConnected?.(data.instance_id);
       toast.success(`WhatsApp oficial conectado! Número: ${data.phone_number || 'verificado'}`);
       if (data.warning) console.warn('[meta-embedded-signup] aviso:', data.warning);
     } catch (err: any) {
@@ -330,9 +357,9 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
     stopPolling();
     setStep('connected');
     queryClient.invalidateQueries({ queryKey: ['wa-instances'] });
-    onConnected?.();
 
-    // Auto-sync webhook URL with the UaZapi instance
+    // Auto-sync webhook URL + vincular ao agente (quando aberto pelo AgentFormDialog).
+    let resolvedInstanceId: string | undefined;
     if (activeSlug && user) {
       try {
         const { data: inst } = await supabase
@@ -342,15 +369,18 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
           .eq('user_id', effectiveOwnerId || user.id)
           .maybeSingle();
         if (inst?.id) {
+          resolvedInstanceId = inst.id;
           await supabase.functions.invoke('sync-uazapi-webhook', {
             body: { instance_id: inst.id, user_id: effectiveOwnerId || user.id },
           });
           console.log('[UazapiConnect] Webhook sincronizado para', activeSlug);
+          await linkInstanceToAgent(inst.id);
         }
       } catch (e) {
         console.warn('[UazapiConnect] Falha ao sincronizar webhook:', e);
       }
     }
+    onConnected?.(resolvedInstanceId);
   };
 
   const handleRefreshQr = async () => {

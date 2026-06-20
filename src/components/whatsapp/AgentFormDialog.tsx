@@ -22,6 +22,8 @@ import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
 import FunilDoAgenteTab from '@/components/pedro/FunilDoAgenteTab';
 import { WhatsAppQrCode } from '@/components/uazapi/WhatsAppQrCode';
+import { UazapiConnectDialog } from '@/components/uazapi/UazapiConnectDialog';
+import { Smartphone } from 'lucide-react';
 
 interface Instance {
   id: string;
@@ -278,6 +280,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [isInstanceConnected, setIsInstanceConnected] = useState(false);
+  // Dialog de conexão NOVO (QR UAZAPI OU Meta Oficial). Substitui o botão antigo
+  // de "Gerar QR Code" que só fazia UAZAPI.
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [nicheData, setNicheData] = useState<{ niche: string; business: string; product: string } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -845,6 +850,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className="w-[95vw] max-w-3xl max-h-[92vh] p-4 sm:p-6">
         <DialogHeader>
@@ -1117,16 +1123,26 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3">
-                    <Button 
+                    {/* Botão único — abre o seletor de provider (UAZAPI QR Code ou
+                        Meta API Oficial). A escolha + conexão acontecem dentro do
+                        UazapiConnectDialog, e ao concluir a instância é vinculada
+                        automaticamente a este agente via agentId. */}
+                    <Button
                       type="button"
-                      onClick={handleGenerateQr} 
-                      disabled={isGeneratingQr || !name.trim()} 
-                      variant="outline" 
+                      onClick={() => {
+                        if (!name.trim()) { toast({ title: 'Preencha o nome do agente primeiro', variant: 'destructive' }); return; }
+                        setConnectDialogOpen(true);
+                      }}
+                      disabled={!name.trim()}
+                      variant="outline"
                       className="w-full border-primary/50 hover:bg-primary/5 text-primary"
                     >
-                      {isGeneratingQr ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
-                      Gerar QR Code para o Agente
+                      <Smartphone className="w-4 h-4 mr-2" />
+                      Conectar WhatsApp ao agente
                     </Button>
+                    <p className="text-[11px] text-muted-foreground text-center -mt-1">
+                      Você escolhe: <strong>QR Code</strong> (UAZAPI) ou <strong>API Oficial do Meta</strong>.
+                    </p>
                     
                     {(instances || []).length > 0 && (
                       <div className="pt-2 border-t mt-2">
@@ -1371,5 +1387,22 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Dialog de conexão (QR UAZAPI ou Meta Oficial). Ao conectar, vincula a
+        instância nova a este agente (via agentId) e atualiza o estado local. */}
+    <UazapiConnectDialog
+      open={connectDialogOpen}
+      onOpenChange={setConnectDialogOpen}
+      agentId={agent?.id}
+      initialFriendlyName={name ? `WhatsApp - ${name}` : undefined}
+      onConnected={(instId) => {
+        if (instId) {
+          setSelectedInstanceIds((prev) => prev.includes(instId) ? prev : [...prev, instId]);
+          setIsInstanceConnected(true);
+        }
+        onRefreshData?.();
+      }}
+    />
+    </>
   );
 }
