@@ -1085,7 +1085,17 @@ export async function processPedroV2Turn(
       }
     } catch (_e) { /* recuperacao best-effort: nunca derruba o turno */ }
   }
-  const adContext = mergeAdAndMediaContext(await resolvePedroAdContext(_adResolvePayload, text, _openaiKey), mediaContext);
+  // BLINDAGEM: o enriquecimento do anuncio (fetch da pagina FB + inferencia LLM) e OPCIONAL — se
+  // lancar, NUNCA pode derrubar o turno (lead de anuncio ficaria SEM resposta, caso real Maria Rosa/
+  // Onix). Em falha, segue SEM ad_context (o agente ainda responde a mensagem do lead).
+  let _resolvedAd: any;
+  try {
+    _resolvedAd = await resolvePedroAdContext(_adResolvePayload, text, _openaiKey);
+  } catch (_adErr) {
+    log("warn", "pedro_v2_ad_context_failed", { lead_id: lead?.id || null, error: String((_adErr as any)?.message || _adErr).slice(0, 300) });
+    _resolvedAd = { has_ad_context: false, source: null, url: null, title: null, description: null, raw_text: null, vehicle_query: null, vehicle_type: null, summary: null, confidence: 0 };
+  }
+  const adContext = mergeAdAndMediaContext(_resolvedAd, mediaContext);
   const enrichedText = buildMessageWithAdContext(text, adContext);
   const adMemory = adContextToMemory(adContext);
   const adNeedsVehicleConfirmation = adContext.has_ad_context && !adContext.vehicle_query;

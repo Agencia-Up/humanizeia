@@ -11,7 +11,7 @@ import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-20-refine-vehicle-search-v144";
+const PEDRO_V2_BUILD = "2026-06-20-turn-safetynet-listall-v145";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -326,12 +326,37 @@ Deno.serve(async (req) => {
     );
   }
 
-  const result = await processPedroV2Turn(supabase, {
-    payload,
-    agent,
-    wa_instance: waInstance,
-    dry_run: payload?.dry_run === true || !isPedroV2MutationEnabled(),
-  });
+  let result;
+  try {
+    result = await processPedroV2Turn(supabase, {
+      payload,
+      agent,
+      wa_instance: waInstance,
+      dry_run: payload?.dry_run === true || !isPedroV2MutationEnabled(),
+    });
+  } catch (turnErr) {
+    // ── SAFETY NET: um turno que LANCA nunca pode sumir silenciosamente ───────────────────────
+    // Sem isto, uma excecao em processPedroV2Turn (ex.: enriquecimento de anuncio) sobe sem
+    // tratamento -> 500, NENHUM registro em pedro_v2_turn_logs, lead sem resposta e bug invisivel
+    // (caso real Maria Rosa, anuncio Onix). Aqui registramos o erro (pra diagnostico) e respondemos
+    // 200 (evita retry-storm do uazapi). best-effort: o log NUNCA derruba a resposta.
+    const _msg = pickIncomingMessage(payload);
+    try {
+      await supabase.from("pedro_v2_turn_logs").insert({
+        user_id: (agent as any)?.user_id || null,
+        agent_id: (agent as any)?.id || null,
+        remote_jid: String(payload?.message?.sender_pn || _msg?.chatid || _msg?.sender_pn || "").slice(0, 120) || null,
+        intent: null,
+        next_action: "turn_uncaught_error",
+        dry_run: false,
+        payload: { text: String(_msg?.text || payload?.message?.text || "").slice(0, 500) },
+        result: null,
+        error: String((turnErr as any)?.stack || (turnErr as any)?.message || turnErr).slice(0, 4000),
+      });
+    } catch (_logErr) { /* nunca derruba */ }
+    console.error("[pedro-webhook-v2] turn_uncaught_error", turnErr);
+    return jsonResponse({ ok: false, error: "turn_failed", build: PEDRO_V2_BUILD }, 200);
+  }
 
   return jsonResponse({ ...result, build: PEDRO_V2_BUILD, gate: { reason: gate.reason } }, result.ok ? 200 : 400);
 });
