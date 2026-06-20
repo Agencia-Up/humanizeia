@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,8 +11,8 @@ import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
 import {
-  GraduationCap, Plus, Loader2, Trash2, Edit2, Play, X,
-  ChevronLeft, ChevronRight, Video, FolderPlus, Save, ExternalLink,
+  GraduationCap, Plus, Loader2, Trash2, Edit2, Play, Video, FolderPlus, Save,
+  ChevronLeft, ChevronRight, ExternalLink,
 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -52,29 +51,26 @@ function detectPlatform(url: string): string {
 }
 
 function getEmbedUrl(url: string): string {
-  // YouTube
   const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/);
   if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
-
-  // Vimeo
   const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
   if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
-
-  // Loom
   const loomMatch = url.match(/loom\.com\/share\/([a-zA-Z0-9]+)/);
   if (loomMatch) return `https://www.loom.com/embed/${loomMatch[1]}`;
-
-  // PandaVideo — ja vem como embed normalmente
   if (/pandavideo/i.test(url)) {
     return url.includes('/embed/') ? url : url.replace('/share/', '/embed/');
   }
-
   return url;
 }
 
+function getYoutubeId(url: string): string | null {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
 function getThumbnail(url: string): string | null {
-  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/);
-  if (ytMatch) return `https://img.youtube.com/vi/${ytMatch[1]}/mqdefault.jpg`;
+  const id = getYoutubeId(url);
+  if (id) return `https://img.youtube.com/vi/${id}/mqdefault.jpg`;
   return null;
 }
 
@@ -86,12 +82,156 @@ const PLATFORM_LABELS: Record<string, { label: string; color: string }> = {
   other: { label: 'Video', color: 'bg-slate-500/10 text-slate-400 border-slate-500/30' },
 };
 
+// ── Card "estilo poster Netflix" ─────────────────────────────────────────────
+// Card 16:9, hover escala/sombra, título sobreposto no rodapé do thumb. Sem
+// thumbnail = capa branded com gradient roxo + LOGOS|IA em dourado + título.
+function PosterCard({
+  video, onPlay, isAdmin, onDelete,
+}: {
+  video: TrainingVideo;
+  onPlay: (v: TrainingVideo) => void;
+  isAdmin: boolean;
+  onDelete: (id: string) => void;
+}) {
+  const pInfo = PLATFORM_LABELS[video.platform] || PLATFORM_LABELS.other;
+  return (
+    <div
+      className="group relative shrink-0 w-[260px] sm:w-[300px] md:w-[320px] cursor-pointer transition-transform duration-300 ease-out hover:scale-[1.06] hover:z-10"
+      onClick={() => onPlay(video)}
+    >
+      <div
+        className="relative aspect-video rounded-md overflow-hidden bg-black ring-0 group-hover:ring-2 group-hover:ring-violet-400/70 transition-all"
+        style={{ boxShadow: '0 6px 20px -6px rgba(0,0,0,0.45)' }}
+      >
+        {video.thumbnail_url ? (
+          <img src={video.thumbnail_url} alt={video.title} className="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          // Capa padrão "poster Logos IA" — gradient profundo + marca + título
+          <div className="absolute inset-0 flex flex-col justify-between p-4"
+            style={{ background: 'linear-gradient(160deg, #5B21B6 0%, #312E81 45%, #0F2647 100%)' }}>
+            <span className="text-[10px] font-black tracking-widest text-white/90 self-start">
+              LOGOS<span style={{ color: 'var(--brand-gold)' }}>|IA</span>
+            </span>
+            <div>
+              <span className="block text-base sm:text-lg font-extrabold text-white leading-tight line-clamp-3" style={{ fontFamily: 'var(--font-display)' }}>
+                {video.title}
+              </span>
+              <span className="block mt-1.5 text-[9px] uppercase tracking-[0.25em] text-white/55">Aula</span>
+            </div>
+          </div>
+        )}
+
+        {/* Gradiente embaixo p/ legibilidade do título quando aparece on-hover */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/85 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+
+        {/* Botão play central */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="w-14 h-14 rounded-full bg-white/95 flex items-center justify-center shadow-2xl">
+            <Play className="h-6 w-6 text-black ml-0.5" fill="currentColor" />
+          </div>
+        </div>
+
+        {/* Title overlay on hover (Netflix vibe) */}
+        <div className="absolute inset-x-0 bottom-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+          <p className="text-white font-semibold text-sm leading-tight line-clamp-2">{video.title}</p>
+        </div>
+
+        {/* Plataforma top-right */}
+        <Badge variant="outline" className={`absolute top-2 right-2 text-[9px] backdrop-blur-sm ${pInfo.color}`}>
+          {pInfo.label}
+        </Badge>
+
+        {/* Indicador de público pro admin */}
+        {isAdmin && video.audience !== 'all' && (
+          <span className="absolute top-2 left-2 inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/30 text-white border border-violet-400/40 backdrop-blur-sm">
+            {video.audience === 'seller' ? 'Vendedor' : 'Master'}
+          </span>
+        )}
+
+        {/* Ações do admin (excluir / abrir) na parte inferior, on-hover */}
+        <div className="absolute right-2 bottom-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <a
+            href={video.video_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="h-7 w-7 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center text-white/90"
+            title="Abrir no YouTube"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+          {isAdmin && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(video.id); }}
+              className="h-7 w-7 rounded-full bg-black/60 hover:bg-red-600/80 flex items-center justify-center text-white/90"
+              title="Excluir vídeo"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Título debaixo do card (sempre visível, complementa o overlay) */}
+      <p className="mt-2 text-[13px] font-medium text-foreground/90 leading-snug line-clamp-2">{video.title}</p>
+      {video.description && (
+        <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">{video.description}</p>
+      )}
+    </div>
+  );
+}
+
+// ── Fileira Netflix (scroll horizontal + setas) ──────────────────────────────
+function NetflixRow({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const scroll = (dir: 'left' | 'right') => {
+    const el = ref.current;
+    if (!el) return;
+    const delta = Math.round(el.clientWidth * 0.85);
+    el.scrollBy({ left: dir === 'left' ? -delta : delta, behavior: 'smooth' });
+  };
+  return (
+    <div className="group/row relative">
+      <button
+        type="button"
+        onClick={() => scroll('left')}
+        aria-label="Anterior"
+        className="hidden md:flex absolute left-0 top-0 bottom-10 z-20 w-12 items-center justify-center bg-gradient-to-r from-background/95 via-background/70 to-transparent opacity-0 group-hover/row:opacity-100 transition-opacity"
+      >
+        <span className="h-10 w-10 rounded-full bg-black/70 hover:bg-black/90 flex items-center justify-center text-white">
+          <ChevronLeft className="h-6 w-6" />
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => scroll('right')}
+        aria-label="Próximo"
+        className="hidden md:flex absolute right-0 top-0 bottom-10 z-20 w-12 items-center justify-center bg-gradient-to-l from-background/95 via-background/70 to-transparent opacity-0 group-hover/row:opacity-100 transition-opacity"
+      >
+        <span className="h-10 w-10 rounded-full bg-black/70 hover:bg-black/90 flex items-center justify-center text-white">
+          <ChevronRight className="h-6 w-6" />
+        </span>
+      </button>
+      <div
+        ref={ref}
+        className="overflow-x-auto overflow-y-visible scroll-smooth pb-6"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' } as any}
+      >
+        <style>{`.tre-hide-scroll::-webkit-scrollbar{display:none}`}</style>
+        <div className="tre-hide-scroll flex gap-4 px-4 md:px-12 min-w-max">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Componente Principal ─────────────────────────────────────────────────────
 
 export default function Treinamento() {
   const { user } = useAuth();
-  const { isAdmin } = useIsAdmin(); // só o superadmin (Logos) edita; o resto só assiste
-  const { isSeller } = useSellerProfile(user?.id); // vendedor vê só as aulas dele; master vê todas
+  const { isAdmin } = useIsAdmin();
+  const { isSeller } = useSellerProfile(user?.id);
   const { toast } = useToast();
   const [sections, setSections] = useState<TrainingSection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,8 +256,6 @@ export default function Treinamento() {
     if (!user) return;
     setLoading(true);
     try {
-      // Biblioteca GLOBAL: todas as contas veem o mesmo treinamento (is_global).
-      // Só o superadmin edita (a RLS bloqueia escrita pra quem não é).
       const { data: secs } = await (supabase as any)
         .from('training_sections')
         .select('id, title, description, sort_order')
@@ -135,14 +273,13 @@ export default function Treinamento() {
         videos = vids || [];
       }
 
-      // PÚBLICO: vendedor (não-admin) NÃO vê aulas marcadas só pra 'master'.
-      // Master/owner e o superadmin veem todas.
+      // Vendedor não vê aulas marcadas só pra master; master e superadmin veem todas.
       const podeVer = (v: any) => !isSeller || isAdmin || v.audience !== 'master';
       let enriched = (secs || []).map((s: any) => ({
         ...s,
         videos: videos.filter((v: any) => v.section_id === s.id && podeVer(v)),
       }));
-      // Pro vendedor, esconde seção que ficou sem aula visível (admin vê todas pra gerenciar).
+      // Pro vendedor, esconde seção sem aula visível. Admin vê tudo pra gerenciar.
       if (isSeller && !isAdmin) enriched = enriched.filter((s: any) => s.videos.length > 0);
       setSections(enriched);
     } finally {
@@ -152,22 +289,9 @@ export default function Treinamento() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── CRUD Secoes ──
-
-  const openNewSection = () => {
-    setEditingSection(null);
-    setSectionTitle('');
-    setSectionDesc('');
-    setSectionDialog(true);
-  };
-
-  const openEditSection = (sec: TrainingSection) => {
-    setEditingSection(sec);
-    setSectionTitle(sec.title);
-    setSectionDesc(sec.description || '');
-    setSectionDialog(true);
-  };
-
+  // ── CRUD ──
+  const openNewSection = () => { setEditingSection(null); setSectionTitle(''); setSectionDesc(''); setSectionDialog(true); };
+  const openEditSection = (sec: TrainingSection) => { setEditingSection(sec); setSectionTitle(sec.title); setSectionDesc(sec.description || ''); setSectionDialog(true); };
   const handleSaveSection = async () => {
     if (!sectionTitle.trim() || !user) return;
     setSaving(true);
@@ -176,73 +300,48 @@ export default function Treinamento() {
         await (supabase as any).from('training_sections')
           .update({ title: sectionTitle.trim(), description: sectionDesc.trim() || null, updated_at: new Date().toISOString() })
           .eq('id', editingSection.id);
-        toast({ title: 'Secao atualizada!' });
+        toast({ title: 'Seção atualizada!' });
       } else {
         await (supabase as any).from('training_sections')
           .insert({ user_id: user.id, title: sectionTitle.trim(), description: sectionDesc.trim() || null, sort_order: sections.length, is_global: true });
-        toast({ title: 'Secao criada!' });
+        toast({ title: 'Seção criada!' });
       }
-      setSectionDialog(false);
-      await fetchData();
+      setSectionDialog(false); await fetchData();
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
-
   const handleDeleteSection = async (id: string) => {
-    if (!confirm('Excluir esta secao e todos os videos dela?')) return;
+    if (!confirm('Excluir esta seção e todos os vídeos dela?')) return;
     await (supabase as any).from('training_sections').delete().eq('id', id);
-    toast({ title: 'Secao excluida!' });
-    await fetchData();
+    toast({ title: 'Seção excluída!' }); await fetchData();
   };
-
-  // ── CRUD Videos ──
-
   const openAddVideo = (sectionId: string) => {
-    setTargetSectionId(sectionId);
-    setVideoTitle('');
-    setVideoDesc('');
-    setVideoUrl('');
-    setVideoAudience('all');
-    setVideoDialog(true);
+    setTargetSectionId(sectionId); setVideoTitle(''); setVideoDesc(''); setVideoUrl(''); setVideoAudience('all'); setVideoDialog(true);
   };
-
   const handleSaveVideo = async () => {
     if (!videoUrl.trim() || !videoTitle.trim() || !targetSectionId || !user) return;
     setSaving(true);
     try {
       const platform = detectPlatform(videoUrl);
       const thumbnail = getThumbnail(videoUrl);
-      const section = sections.find(s => s.id === targetSectionId);
+      const section = sections.find((s) => s.id === targetSectionId);
       await (supabase as any).from('training_videos').insert({
-        section_id: targetSectionId,
-        user_id: user.id,
-        is_global: true,
-        title: videoTitle.trim(),
-        description: videoDesc.trim() || null,
-        video_url: videoUrl.trim(),
-        platform,
-        thumbnail_url: thumbnail,
-        sort_order: section ? section.videos.length : 0,
-        audience: videoAudience,
+        section_id: targetSectionId, user_id: user.id, is_global: true,
+        title: videoTitle.trim(), description: videoDesc.trim() || null,
+        video_url: videoUrl.trim(), platform, thumbnail_url: thumbnail,
+        sort_order: section ? section.videos.length : 0, audience: videoAudience,
       });
-      toast({ title: 'Video adicionado!' });
-      setVideoDialog(false);
-      await fetchData();
+      toast({ title: 'Vídeo adicionado!' });
+      setVideoDialog(false); await fetchData();
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
-
   const handleDeleteVideo = async (id: string) => {
-    if (!confirm('Excluir este video?')) return;
+    if (!confirm('Excluir este vídeo?')) return;
     await (supabase as any).from('training_videos').delete().eq('id', id);
-    toast({ title: 'Video excluido!' });
-    await fetchData();
+    toast({ title: 'Vídeo excluído!' }); await fetchData();
   };
 
   if (loading) {
@@ -255,175 +354,187 @@ export default function Treinamento() {
     );
   }
 
+  // Hero/destaque: primeira aula da primeira seção (se houver) — estilo Netflix.
+  const firstSection = sections.find((s) => s.videos.length > 0);
+  const featured = firstSection?.videos[0] || null;
+
   return (
     <MainLayout>
-      <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Container full-bleed pro feel Netflix (sem max-w nas fileiras) */}
+      <div className="-mx-4 md:-mx-6 -my-4 md:-my-6">
 
-        {/* ── Header ── */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-600/20 border border-violet-500/30 flex items-center justify-center">
-              <GraduationCap className="h-5 w-5 text-violet-400" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Treinamento</h1>
-              <p className="text-xs text-muted-foreground">
-                {isAdmin ? 'Gerencie as aulas — visível para todas as contas.' : 'Aprenda a usar a Logos IA — aulas em vídeo.'}
-              </p>
-            </div>
-          </div>
-          {isAdmin && (
-            <Button onClick={openNewSection} className="gap-2">
-              <FolderPlus className="h-4 w-4" /> Nova Seção
-            </Button>
-          )}
-        </div>
-
-        {/* ── Empty State ── */}
-        {sections.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-border/60 bg-card/30 p-16 text-center">
-            <div className="mx-auto w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
-              <Video className="h-8 w-8 text-muted-foreground" />
-            </div>
-            <h3 className="font-semibold text-lg">{isAdmin ? 'Nenhum treinamento ainda' : 'As aulas estão chegando'}</h3>
-            <p className="text-muted-foreground text-sm mt-2 mb-6 max-w-sm mx-auto">
-              {isAdmin
-                ? 'Crie seções e adicione vídeos do YouTube, Vimeo ou PandaVideo para montar a área de treinamento.'
-                : 'Em breve os vídeos de como usar a Logos IA aparecem aqui.'}
-            </p>
-            {isAdmin && (
-              <Button onClick={openNewSection} className="gap-2">
-                <FolderPlus className="h-4 w-4" /> Criar Primeira Seção
-              </Button>
+        {/* ── HERO/Destaque ── */}
+        {featured ? (
+          <section
+            className="relative w-full overflow-hidden cursor-pointer"
+            style={{ minHeight: '38vh' }}
+            onClick={() => setPlayerDialog(featured)}
+          >
+            {/* Background: thumbnail expandida com overlay escuro */}
+            {featured.thumbnail_url ? (
+              <img
+                src={featured.thumbnail_url.replace('/mqdefault.jpg', '/hqdefault.jpg')}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover scale-110 blur-[1px] opacity-40"
+              />
+            ) : (
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, #5B21B6 0%, #312E81 50%, #0F2647 100%)' }} />
             )}
-          </div>
-        )}
+            <div className="absolute inset-0 bg-gradient-to-r from-background via-background/85 to-background/20" />
+            <div className="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent" />
 
-        {/* ── Secoes (Netflix-style) ── */}
-        {sections.map(section => (
-          <div key={section.id} className="space-y-3">
-            {/* Section header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-foreground">{section.title}</h2>
-                <Badge variant="outline" className="text-[10px]">{section.videos.length} videos</Badge>
-              </div>
-              {isAdmin && (
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => openAddVideo(section.id)} className="h-7 px-2 text-xs gap-1 text-primary">
-                    <Plus className="h-3 w-3" /> Vídeo
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => openEditSection(section)} className="h-7 w-7 p-0 text-muted-foreground">
-                    <Edit2 className="h-3 w-3" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => handleDeleteSection(section.id)} className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive">
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
+            <div className="relative px-4 md:px-12 py-10 md:py-14 max-w-3xl">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500/30 to-purple-600/20 border border-violet-500/40 flex items-center justify-center">
+                  <GraduationCap className="h-4 w-4 text-violet-300" />
                 </div>
+                <span className="text-xs uppercase tracking-[0.25em] text-violet-300/90 font-semibold">Treinamento Logos IA</span>
+              </div>
+              <h1
+                className="text-3xl md:text-5xl font-extrabold text-foreground leading-[1.1] mb-3"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                {featured.title}
+              </h1>
+              {featured.description && (
+                <p className="text-sm md:text-base text-muted-foreground max-w-xl leading-relaxed mb-5 line-clamp-3">
+                  {featured.description}
+                </p>
               )}
-            </div>
-
-            {section.description && (
-              <p className="text-xs text-muted-foreground -mt-1">{section.description}</p>
-            )}
-
-            {/* Video cards — horizontal scroll */}
-            {section.videos.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border/40 bg-card/20 p-8 text-center">
-                <p className="text-xs text-muted-foreground mb-2">{isAdmin ? 'Nenhum vídeo nesta seção' : 'Aulas em breve nesta seção'}</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  size="lg"
+                  onClick={(e) => { e.stopPropagation(); setPlayerDialog(featured); }}
+                  className="bg-white text-black hover:bg-white/90 font-semibold gap-2"
+                >
+                  <Play className="h-5 w-5" fill="currentColor" /> Assistir
+                </Button>
                 {isAdmin && (
-                  <Button variant="outline" size="sm" onClick={() => openAddVideo(section.id)} className="text-xs gap-1">
-                    <Plus className="h-3 w-3" /> Adicionar Vídeo
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={(e) => { e.stopPropagation(); openNewSection(); }}
+                    className="gap-2"
+                  >
+                    <FolderPlus className="h-4 w-4" /> Nova Seção
                   </Button>
                 )}
               </div>
-            ) : (
-              <div className="overflow-x-auto pb-2 -mx-1 px-1">
-                <div className="flex gap-3 min-w-max">
-                  {section.videos.map(video => {
-                    const pInfo = PLATFORM_LABELS[video.platform] || PLATFORM_LABELS.other;
-                    return (
-                      <div
-                        key={video.id}
-                        className="w-[280px] shrink-0 rounded-xl border border-border/40 bg-card/60 overflow-hidden group hover:border-violet-500/40 transition-all cursor-pointer"
-                        onClick={() => setPlayerDialog(video)}
-                      >
-                        {/* Thumbnail */}
-                        <div className="relative aspect-video bg-muted/50 overflow-hidden">
-                          {video.thumbnail_url ? (
-                            <img src={video.thumbnail_url} alt={video.title} className="w-full h-full object-cover" />
-                          ) : (
-                            // Capa automática branded (Logos|IA) com o título como headline
-                            <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-violet-600/40 via-purple-700/25 to-slate-900 px-3 text-center">
-                              <span className="text-[11px] font-black tracking-wide text-white/90">LOGOS<span style={{ color: 'var(--brand-gold)' }}>|IA</span></span>
-                              <span className="text-sm font-bold text-white leading-tight line-clamp-3">{video.title}</span>
-                              <span className="text-[8px] uppercase tracking-[0.2em] text-white/50">Aula</span>
-                            </div>
-                          )}
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity w-12 h-12 rounded-full bg-white/90 flex items-center justify-center">
-                              <Play className="h-5 w-5 text-black ml-0.5" />
-                            </div>
-                          </div>
-                          <Badge variant="outline" className={`absolute top-2 right-2 text-[9px] ${pInfo.color}`}>
-                            {pInfo.label}
-                          </Badge>
-                        </div>
-                        {/* Info */}
-                        <div className="p-3 space-y-1">
-                          <p className="text-sm font-medium text-foreground truncate">{video.title}</p>
-                          {isAdmin && video.audience !== 'all' && (
-                            <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">
-                              {video.audience === 'seller' ? 'Aula de vendedor' : 'Só master'}
-                            </span>
-                          )}
-                          {video.description && (
-                            <p className="text-[11px] text-muted-foreground line-clamp-2">{video.description}</p>
-                          )}
-                          <div className="flex items-center justify-between pt-1">
-                            {isAdmin ? (
-                              <button
-                                onClick={e => { e.stopPropagation(); handleDeleteVideo(video.id); }}
-                                className="text-[10px] text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1"
-                              >
-                                <Trash2 className="h-2.5 w-2.5" /> Excluir
-                              </button>
-                            ) : <span />}
-                            <a
-                              href={video.video_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={e => e.stopPropagation()}
-                              className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1"
-                            >
-                              <ExternalLink className="h-2.5 w-2.5" /> Abrir
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+            </div>
+          </section>
+        ) : (
+          // Sem nenhuma aula — header simples
+          <section className="px-4 md:px-12 py-10">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-600/20 border border-violet-500/30 flex items-center justify-center">
+                  <GraduationCap className="h-5 w-5 text-violet-400" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-foreground" style={{ fontFamily: 'var(--font-display)' }}>Treinamento</h1>
+                  <p className="text-xs text-muted-foreground">
+                    {isAdmin ? 'Gerencie as aulas — visível para todas as contas.' : 'Aprenda a usar a Logos IA — aulas em vídeo.'}
+                  </p>
                 </div>
               </div>
-            )}
+              {isAdmin && (
+                <Button onClick={openNewSection} className="gap-2"><FolderPlus className="h-4 w-4" /> Nova Seção</Button>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ── Empty State ── */}
+        {sections.length === 0 && (
+          <div className="px-4 md:px-12 py-10">
+            <div className="rounded-2xl border border-dashed border-border/60 bg-card/30 p-16 text-center">
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
+                <Video className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <h3 className="font-semibold text-lg">{isAdmin ? 'Nenhum treinamento ainda' : 'As aulas estão chegando'}</h3>
+              <p className="text-muted-foreground text-sm mt-2 mb-6 max-w-sm mx-auto">
+                {isAdmin
+                  ? 'Crie seções e adicione vídeos do YouTube, Vimeo ou PandaVideo para montar a área de treinamento.'
+                  : 'Em breve os vídeos de como usar a Logos IA aparecem aqui.'}
+              </p>
+              {isAdmin && (
+                <Button onClick={openNewSection} className="gap-2"><FolderPlus className="h-4 w-4" /> Criar Primeira Seção</Button>
+              )}
+            </div>
           </div>
-        ))}
+        )}
+
+        {/* ── Fileiras das Seções (estilo Netflix) ── */}
+        <div className="pt-6 md:pt-10 pb-12 space-y-10 md:space-y-14">
+          {sections.map((section) => (
+            <section key={section.id} className="space-y-3">
+              {/* Cabeçalho da fileira */}
+              <div className="px-4 md:px-12 flex items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-lg md:text-2xl font-bold text-foreground leading-tight" style={{ fontFamily: 'var(--font-display)' }}>
+                    {section.title}
+                  </h2>
+                  {section.description && (
+                    <p className="text-xs md:text-sm text-muted-foreground mt-1 max-w-2xl">{section.description}</p>
+                  )}
+                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button variant="ghost" size="sm" onClick={() => openAddVideo(section.id)} className="h-8 px-2 text-xs gap-1 text-primary">
+                      <Plus className="h-3.5 w-3.5" /> Vídeo
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => openEditSection(section)} className="h-8 w-8 p-0 text-muted-foreground">
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDeleteSection(section.id)} className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Fileira de cards */}
+              {section.videos.length === 0 ? (
+                <div className="px-4 md:px-12">
+                  <div className="rounded-xl border border-dashed border-border/40 bg-card/20 p-6 text-center">
+                    <p className="text-xs text-muted-foreground mb-2">{isAdmin ? 'Nenhum vídeo nesta seção' : 'Aulas em breve nesta seção'}</p>
+                    {isAdmin && (
+                      <Button variant="outline" size="sm" onClick={() => openAddVideo(section.id)} className="text-xs gap-1">
+                        <Plus className="h-3 w-3" /> Adicionar Vídeo
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <NetflixRow>
+                  {section.videos.map((video) => (
+                    <PosterCard
+                      key={video.id}
+                      video={video}
+                      onPlay={(v) => setPlayerDialog(v)}
+                      isAdmin={isAdmin}
+                      onDelete={handleDeleteVideo}
+                    />
+                  ))}
+                </NetflixRow>
+              )}
+            </section>
+          ))}
+        </div>
       </div>
 
-      {/* ── Dialog: Nova/Editar Secao ── */}
+      {/* ── Dialog: Nova/Editar Seção ── */}
       <Dialog open={sectionDialog} onOpenChange={setSectionDialog}>
         <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editingSection ? 'Editar Secao' : 'Nova Secao'}</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>{editingSection ? 'Editar Seção' : 'Nova Seção'}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Titulo da Secao</Label>
-              <Input value={sectionTitle} onChange={e => setSectionTitle(e.target.value)} placeholder="Ex: Modulo 1 - Introducao" />
+              <Label>Título da Seção</Label>
+              <Input value={sectionTitle} onChange={(e) => setSectionTitle(e.target.value)} placeholder="Ex: Módulo 1 - Introdução" />
             </div>
             <div className="space-y-2">
-              <Label>Descricao (opcional)</Label>
-              <Textarea value={sectionDesc} onChange={e => setSectionDesc(e.target.value)} placeholder="Descreva o conteudo desta secao..." className="min-h-[80px] resize-none" />
+              <Label>Descrição (opcional)</Label>
+              <Textarea value={sectionDesc} onChange={(e) => setSectionDesc(e.target.value)} placeholder="Descreva o conteúdo desta seção..." className="min-h-[80px] resize-none" />
             </div>
           </div>
           <DialogFooter>
@@ -436,16 +547,14 @@ export default function Treinamento() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Dialog: Adicionar Video ── */}
+      {/* ── Dialog: Adicionar Vídeo ── */}
       <Dialog open={videoDialog} onOpenChange={setVideoDialog}>
         <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Adicionar Video</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Adicionar Vídeo</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>URL do Video</Label>
-              <Input value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://youtube.com/watch?v=... ou Vimeo, PandaVideo..." />
+              <Label>URL do Vídeo</Label>
+              <Input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="https://youtube.com/watch?v=... ou Vimeo, PandaVideo..." />
               {videoUrl && (
                 <Badge variant="outline" className={`text-[10px] ${(PLATFORM_LABELS[detectPlatform(videoUrl)] || PLATFORM_LABELS.other).color}`}>
                   {(PLATFORM_LABELS[detectPlatform(videoUrl)] || PLATFORM_LABELS.other).label} detectado
@@ -453,19 +562,23 @@ export default function Treinamento() {
               )}
             </div>
             <div className="space-y-2">
-              <Label>Titulo</Label>
-              <Input value={videoTitle} onChange={e => setVideoTitle(e.target.value)} placeholder="Nome do video" />
+              <Label>Título</Label>
+              <Input value={videoTitle} onChange={(e) => setVideoTitle(e.target.value)} placeholder="Nome do vídeo" />
             </div>
             <div className="space-y-2">
-              <Label>Descricao (opcional)</Label>
-              <Textarea value={videoDesc} onChange={e => setVideoDesc(e.target.value)} placeholder="O que este video ensina..." className="min-h-[60px] resize-none" />
+              <Label>Descrição (opcional)</Label>
+              <Textarea value={videoDesc} onChange={(e) => setVideoDesc(e.target.value)} placeholder="O que este vídeo ensina..." className="min-h-[60px] resize-none" />
             </div>
             <div className="space-y-2">
               <Label>Quem vê esta aula</Label>
               <div className="flex gap-2">
                 {([['all', 'Todos'], ['seller', 'Vendedores'], ['master', 'Só Master']] as const).map(([val, lbl]) => (
-                  <button key={val} type="button" onClick={() => setVideoAudience(val)}
-                    className={`flex-1 h-8 rounded-md border text-xs transition-colors ${videoAudience === val ? 'border-violet-500 bg-violet-500/15 text-violet-300' : 'border-border/40 text-muted-foreground hover:border-border'}`}>
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setVideoAudience(val)}
+                    className={`flex-1 h-8 rounded-md border text-xs transition-colors ${videoAudience === val ? 'border-violet-500 bg-violet-500/15 text-violet-300' : 'border-border/40 text-muted-foreground hover:border-border'}`}
+                  >
                     {lbl}
                   </button>
                 ))}
@@ -498,7 +611,7 @@ export default function Treinamento() {
                 />
               </div>
               <div className="p-4 space-y-1">
-                <h3 className="font-semibold text-foreground">{playerDialog.title}</h3>
+                <h3 className="font-semibold text-foreground" style={{ fontFamily: 'var(--font-display)' }}>{playerDialog.title}</h3>
                 {playerDialog.description && (
                   <p className="text-sm text-muted-foreground">{playerDialog.description}</p>
                 )}
