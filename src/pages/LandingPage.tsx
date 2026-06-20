@@ -12,7 +12,7 @@ import {
   Smartphone, Cog, LineChart,
   Filter, Tags, Timer, FileText, MapPin, Upload,
   Send, ShieldCheck, List, RefreshCw, LayoutGrid, Kanban,
-  Palette, Crown, Lock, PlayCircle,
+  Palette, Crown, Lock,
   Phone, Database, Plus,
 } from 'lucide-react';
 import {
@@ -245,8 +245,6 @@ const testimonials = [
   },
 ];
 
-// Coloque o arquivo do video em public/logos-por-dentro.mp4 para ativar o player.
-const DEMO_VIDEO_SRC = '/logos-por-dentro.mp4';
 const BASIC_CHECKOUT_URL = '/checkout?plano=basico&ciclo=mensal';
 const PRO_CHECKOUT_URL = '/checkout?plano=pro&ciclo=mensal';
 const PRO_MAX_CONTACT_URL = 'mailto:suporte@logosiabrasil.com?subject=Quero%20conhecer%20o%20PRO%20MAX%20da%20LOGOS%7CIA';
@@ -257,7 +255,6 @@ export default function LandingPage() {
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [demoVideoAvailable, setDemoVideoAvailable] = useState(Boolean(DEMO_VIDEO_SRC));
   const [monthlyAdSpend, setMonthlyAdSpend] = useState(5000);
   const [currentConversionRate, setCurrentConversionRate] = useState(8);
   const [expectedConversionRate, setExpectedConversionRate] = useState(12);
@@ -907,36 +904,16 @@ export default function LandingPage() {
             }}
           >
             <div className="aspect-video w-full">
-              {demoVideoAvailable ? (
-                <video
-                  className="h-full w-full object-cover"
-                  controls
-                  playsInline
-                  preload="metadata"
-                  poster="/plano-pro-oferta.png"
-                  onError={() => setDemoVideoAvailable(false)}
-                >
-                  <source src={DEMO_VIDEO_SRC} type="video/mp4" />
-                </video>
-              ) : (
-                <div className="h-full w-full flex flex-col items-center justify-center text-center px-6">
-                  <div
-                    className="h-20 w-20 rounded-full flex items-center justify-center mb-5"
-                    style={{
-                      background: 'rgba(212, 160, 23, 0.14)',
-                      border: '1px solid rgba(212, 160, 23, 0.40)',
-                    }}
-                  >
-                    <PlayCircle className="h-11 w-11" style={{ color: 'var(--brand-gold)' }} />
-                  </div>
-                  <p className="text-xl md:text-2xl font-extrabold" style={{ color: 'var(--brand-cream)', fontFamily: 'var(--font-display)' }}>
-                    Demonstração da Logos IA por dentro
-                  </p>
-                  <p className="text-sm md:text-base mt-3 max-w-lg" style={{ color: 'rgba(250, 248, 242, 0.70)' }}>
-                    Pedro, Marcos e José conectados em uma única jornada: atendimento, CRM, campanha e decisão comercial.
-                  </p>
-                </div>
-              )}
+              <iframe
+                className="h-full w-full"
+                src="https://www.youtube.com/embed/CnX93PWOv8U"
+                title="Logos IA em ação"
+                frameBorder="0"
+                allow="accelerated-encoding; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                referrerPolicy="strict-origin-when-cross-origin"
+                allowFullScreen
+                loading="lazy"
+              />
             </div>
           </div>
         </div>
