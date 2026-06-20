@@ -237,6 +237,10 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("./pages/TermsOfService"));
 const LandingPage = lazy(() => import("./pages/LandingPage"));
+// Páginas públicas de detalhe dos agentes (linkadas da home nova).
+const PedroDetail = lazy(() => import("./pages/PedroDetail"));
+const MarcosDetail = lazy(() => import("./pages/MarcosDetail"));
+const JoseDetail = lazy(() => import("./pages/JoseDetail"));
 const WhatsAppContacts = lazy(() => import("./pages/WhatsAppContacts"));
 const WhatsAppBroadcast = lazy(() => import("./pages/WhatsAppBroadcast"));
 const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
@@ -327,6 +331,9 @@ const App = () => (
                 <Route path="/terms"         element={<Lazy><TermsOfService /></Lazy>} />
                 <Route path="/onboarding"    element={<Lazy><Onboarding /></Lazy>} />
                 <Route path="/"              element={<Lazy><LandingPage /></Lazy>} />
+                <Route path="/pedro"         element={<Lazy><PedroDetail /></Lazy>} />
+                <Route path="/marcos"        element={<Lazy><MarcosDetail /></Lazy>} />
+                <Route path="/jose"          element={<Lazy><JoseDetail /></Lazy>} />
                 <Route path="/checkout"      element={<Lazy><Checkout /></Lazy>} />
                 <Route path="/checkout/sucesso" element={<Lazy><CheckoutSuccess /></Lazy>} />
                 <Route path="/f/:formId"     element={<Lazy><FormPublico /></Lazy>} />
