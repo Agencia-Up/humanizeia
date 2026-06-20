@@ -7,7 +7,7 @@ import { MarketingFooter } from '@/components/marketing/MarketingFooter';
 import { LeadCaptureForm } from '@/components/marketing/LeadCaptureForm';
 import {
   ArrowRight, Play, Clock, Wallet, Zap, TrendingUp,
-  MessageSquare, Database, Target, Phone, Mail,
+  MessageSquare, Database, Target, Phone, Mail, Check,
 } from 'lucide-react';
 
 // ── Home = RESUMO EXECUTIVO (redesign 20/06) ─────────────────────────────────
@@ -46,11 +46,75 @@ const BENEFITS = [
 
 const COST_ROWS: [string, string, string][] = [
   ['Equipe', 'Gestor + social + atendente', 'Agentes de IA'],
-  ['Custo mensal', 'R$ [CONFIRMAR]+', 'A partir de R$ [CONFIRMAR]'],
   ['Disponibilidade', 'Horário comercial', '24/7'],
   ['Resposta ao lead', 'Minutos a horas', 'Segundos'],
   ['Implementação', 'Semanas', '5 minutos'],
   ['Férias, falta, rotatividade', 'Sim', 'Nunca'],
+];
+
+// Planos sem preço — só features. Botão abre o formulário de lead; o Wander entra
+// em contato pelo WhatsApp pra marcar reunião.
+const PLANS = [
+  {
+    id: 'basico',
+    badge: 'Plano de entrada',
+    nome: 'Básico',
+    tagline: 'Comece com o Pedro atendendo e qualificando seus leads no WhatsApp.',
+    destaque: '1 agente incluso',
+    destaqueSub: 'Pedro SDR no atendimento com IA',
+    features: [
+      'Agente Pedro incluso',
+      'Trabalha com 1 agente de IA',
+      'Até 5 instâncias de WhatsApp conectadas',
+      'CRM completo de leads',
+      'Qualificação automática no WhatsApp',
+      'Follow-up automático 24/7',
+      'Suporte por e-mail',
+    ],
+    cta: 'Quero o Básico',
+    featured: false,
+  },
+  {
+    id: 'pro',
+    badge: 'Mais popular',
+    nome: 'Pro',
+    tagline: 'Pedro qualifica, Marcos organiza e José mostra onde seu tráfego está perdendo dinheiro.',
+    destaque: '3 agentes inclusos',
+    destaqueSub: 'Pedro + Marcos + José trabalhando juntos',
+    features: [
+      'Agentes Pedro, Marcos e José inclusos',
+      'CRM completo de leads',
+      'Até 10 conexões de WhatsApp',
+      'Disparo em massa segmentado',
+      'Follow-up automático 24/7',
+      'José analisa campanhas e aponta o que pausar ou escalar',
+      'Conversas ilimitadas com sua própria chave de IA',
+      'Exportação de planilhas e relatórios',
+      'Suporte prioritário',
+    ],
+    cta: 'Quero o Pro',
+    featured: true,
+  },
+  {
+    id: 'promax',
+    badge: 'Operação completa',
+    nome: 'Pro Max',
+    tagline: 'Tudo do Pro, dimensionado para empresas com mais clientes e mais operação.',
+    destaque: 'Todos os agentes liberados',
+    destaqueSub: 'inclui José e a operação completa',
+    features: [
+      'Tudo do plano Pro',
+      'Todos os agentes de IA liberados',
+      'Agente José para tráfego IA',
+      'Até 15 números de WhatsApp',
+      'Maior capacidade de atendimento',
+      'Todas as integrações liberadas',
+      'Acompanhamento das conversas da equipe',
+      'Onboarding e suporte VIP',
+    ],
+    cta: 'Quero o Pro Max',
+    featured: false,
+  },
 ];
 
 export default function LandingPage() {
@@ -68,7 +132,8 @@ export default function LandingPage() {
         navItems={[
           { href: '#demo', label: 'Por dentro' },
           { href: '#agentes', label: 'Agentes' },
-          { href: '#custo', label: 'Custo' },
+          { href: '#planos', label: 'Planos' },
+          { href: '#custo', label: 'Comparativo' },
           { href: '#implementacao', label: 'Como funciona' },
         ]}
       />
@@ -231,6 +296,74 @@ export default function LandingPage() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground italic mt-7">Sem instalação, sem técnico, sem espera.</p>
+        </div>
+      </section>
+
+      {/* ── PLANOS (só features; sem preço — Wander fecha por WhatsApp) ─────── */}
+      <section id="planos" className="px-4 md:px-6 py-14 md:py-20 bg-card/30 border-y border-border/40">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center max-w-2xl mx-auto mb-10">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-3" style={DISPLAY}>Escolha seu plano</h2>
+            <p className="text-muted-foreground">
+              Três jeitos de começar. Apertou o botão, falo com você no WhatsApp pra te explicar tudo e marcar uma reunião.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6 items-stretch">
+            {PLANS.map((p) => (
+              <div
+                key={p.id}
+                className={`relative rounded-2xl p-6 md:p-7 flex flex-col bg-card transition-all ${p.featured ? 'border-2 md:scale-[1.02]' : 'border border-foreground/10'}`}
+                style={p.featured ? { borderColor: 'var(--brand-gold)', boxShadow: '0 0 40px rgba(212, 160, 23, 0.18)' } : undefined}
+              >
+                {p.featured && (
+                  <span
+                    className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
+                    style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy-dark)' }}
+                  >
+                    {p.badge}
+                  </span>
+                )}
+                {!p.featured && (
+                  <span className="self-start mb-3 inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border border-border/60 text-muted-foreground">
+                    {p.badge}
+                  </span>
+                )}
+
+                <h3 className="text-2xl font-extrabold mb-1" style={DISPLAY}>{p.nome}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-5">{p.tagline}</p>
+
+                <div className="rounded-xl border border-foreground/10 bg-background/60 p-3 mb-5">
+                  <p className="text-sm font-bold text-foreground" style={DISPLAY}>{p.destaque}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{p.destaqueSub}</p>
+                </div>
+
+                <ul className="space-y-2.5 mb-6 flex-1">
+                  {p.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-sm">
+                      <Check className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--brand-gold)' }} />
+                      <span className="text-foreground/90 leading-snug">{f}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <Button
+                  size="lg"
+                  onClick={() => openLead(`plano_${p.id}`)}
+                  className={p.featured
+                    ? 'w-full text-base'
+                    : 'w-full bg-primary text-primary-foreground hover:bg-primary/90'}
+                  style={p.featured ? { background: 'var(--brand-gold)', color: 'var(--brand-navy-dark)' } : undefined}
+                >
+                  {p.cta} <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-center text-xs text-muted-foreground mt-8">
+            Falamos sobre valores e condições direto no WhatsApp, alinhados ao seu cenário.
+          </p>
         </div>
       </section>
 
