@@ -692,7 +692,19 @@ Deno.serve(async (req) => {
           // (narrowa dentro do horario operacional global ja checado acima).
           // Sem config: regra legada — lead CRIADO fora da janela fica com o vendedor.
           if (aRules.transfer.window) {
+            // (a) nao repassa ENQUANTO agora estiver fora da janela.
             if (isWithinConfiguredWindow(aRules.transfer.window, now) === false) continue;
+            // (b) lead CRIADO fora da janela (ex.: madrugada) fica com o vendedor —
+            //     NAO repassa retroativamente quando o expediente volta de manha.
+            //     Espelha a regra legada do branch abaixo. Sem isto, o lead da noite
+            //     era repassado as 10h e o "Ok" do vendedor caia em "ja repassado".
+            if (isWithinConfiguredWindow(aRules.transfer.window, new Date(transfer.created_at)) === false) {
+              console.log(`[Cron] Transfer ${transfer.id} criado fora da janela configurada (${transfer.created_at}). Auto-confirmando - lead fica com o vendedor.`);
+              await supabase.from('ai_lead_transfers')
+                .update({ transfer_status: 'confirmed', is_confirmed: true })
+                .eq('id', transfer.id);
+              continue;
+            }
           } else if (!transferCriadoNoHorario(transfer.created_at)) {
             console.log(`[Cron] Transfer ${transfer.id} criado fora do horario de repasse (${transfer.created_at}). Auto-confirmando - lead fica com vendedor atual.`);
             await supabase.from('ai_lead_transfers')

@@ -443,8 +443,17 @@ Deno.serve(async (req) => {
         //    o vendedor — não são repassados retroativamente. ──────
         const transferCreatedAt = new Date(transfer.created_at || now);
         if (aRules.transfer.window) {
-          // Janela configurada por agente: so repassa se AGORA estiver dentro dela.
+          // (a) so repassa se AGORA estiver dentro da janela configurada.
           if (isWithinConfiguredWindow(aRules.transfer.window, new Date()) === false) continue;
+          // (b) lead CRIADO fora da janela (madrugada) fica com o vendedor — nao
+          //     repassa retroativamente quando o expediente volta (espelha o legado).
+          if (isWithinConfiguredWindow(aRules.transfer.window, transferCreatedAt) === false) {
+            console.log(`[Timeout] Transfer ${transfer.id} criado fora da janela configurada (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor.`);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'confirmed', is_confirmed: true })
+              .eq('id', transfer.id);
+            continue;
+          }
         } else if (!isWithinRepassWindow(transferCreatedAt)) {
           console.log(`[Timeout] Transfer ${transfer.id} criado fora do horário de repasse (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor atual.`);
           await supabase.from('ai_lead_transfers')
