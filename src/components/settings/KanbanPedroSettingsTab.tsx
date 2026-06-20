@@ -36,6 +36,7 @@ interface Row {
   responsavel_padrao_id: string;   // '' = nenhum
   show_in_live: boolean;
   is_engine: boolean;              // coluna do motor — nao exclui, status_key travado
+  seller_auth_id: string | null;   // null = coluna da conta (todos); uid = so daquele vendedor
   leads_count: number;
   _isNew?: boolean;
   _dirty?: boolean;
@@ -90,10 +91,13 @@ export function KanbanPedroSettingsTab() {
     setLoading(true);
     try {
       // 1. etapas do Pedro do master
+      // Escopo por vendedor: ve as colunas da CONTA (seller_auth_id null) + as
+      // SUAS (seller_auth_id = seu auth.uid()). Master ve so as da conta (null).
       const { data: stagesRaw, error: stErr } = await (supabase as any)
         .from('ai_crm_pipeline_stages')
-        .select('id, status_key, name, color, position, tipo, ativo, responsavel_padrao_id, show_in_live, is_engine')
+        .select('id, status_key, name, color, position, tipo, ativo, responsavel_padrao_id, show_in_live, is_engine, seller_auth_id')
         .eq('user_id', ownerId)
+        .or(`seller_auth_id.is.null,seller_auth_id.eq.${user?.id}`)
         .order('position', { ascending: true });
       if (stErr) throw stErr;
       let list = (stagesRaw || []) as any[];
@@ -145,6 +149,7 @@ export function KanbanPedroSettingsTab() {
         responsavel_padrao_id: s.responsavel_padrao_id || '',
         show_in_live: s.show_in_live !== false,
         is_engine: !!s.is_engine,
+        seller_auth_id: s.seller_auth_id ?? null,
         leads_count: countsMap.get(s.status_key) || 0,
         _isNew: seededLocally ? true : undefined,
       })));
@@ -173,6 +178,8 @@ export function KanbanPedroSettingsTab() {
       // vendedor cria FORA do Painel ao Vivo (e assim consegue nomear a propria coluna)
       show_in_live: !isSeller,
       is_engine: false,
+      // coluna criada por vendedor pertence SO a ele; master cria coluna da conta (null)
+      seller_auth_id: isSeller ? (user?.id ?? null) : null,
       leads_count: 0, _isNew: true,
     }]);
   };
@@ -248,6 +255,7 @@ export function KanbanPedroSettingsTab() {
         responsavel_padrao_id: r.responsavel_padrao_id || null,
         show_in_live: r.show_in_live ?? true,
         is_engine: r.is_engine ?? false,
+        seller_auth_id: r.seller_auth_id ?? null,
         updated_at: new Date().toISOString(),
       }));
       const up = await (supabase as any).from('ai_crm_pipeline_stages')

@@ -1112,6 +1112,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .from('ai_crm_pipeline_stages')
           .select('status_key, name, color, position, ativo')
           .eq('user_id', effectiveUserIdState)
+          // Escopo por vendedor: colunas da conta (null) + as do proprio vendedor.
+          .or(`seller_auth_id.is.null,seller_auth_id.eq.${userId}`)
           .order('position', { ascending: true });
         if (cancelled) return;
         const emojiByKey: Record<string, string> = Object.fromEntries(
@@ -1346,6 +1348,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           .from('crm_pipeline_stages')
           .select('id, name, color, position')
           .eq('user_id', effectiveUserId)
+          // Escopo por vendedor: colunas da conta (null) + as do proprio vendedor.
+          .or(`seller_auth_id.is.null,seller_auth_id.eq.${userId}`)
           .order('position', { ascending: true });
         const stages = (stagesData || []) as any[];
         const fallbackStage = stages[0]?.id || 'novo';
@@ -2706,6 +2710,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             .from('crm_pipeline_stages')
             .select('id')
             .eq('user_id', effectiveUserId)
+            // so reaproveita coluna da conta (null) ou a do proprio vendedor
+            .or(`seller_auth_id.is.null,seller_auth_id.eq.${userId}`)
             .ilike('name', customOrigemText)
             .maybeSingle();
           if (existingStage?.id) {
@@ -2727,6 +2733,8 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 name: customOrigemText,
                 position: nextPos,
                 color: '#a78bfa', // roxo neutro pra origens personalizadas
+                // coluna criada por vendedor pertence SO a ele (master = null)
+                seller_auth_id: isSeller ? userId : null,
               })
               .select('id')
               .single();

@@ -77,13 +77,16 @@ export function useFluxCRM() {
 
   // Load Stages
   const { data: stages = [], isLoading: loadingStages } = useQuery({
-    queryKey: ['crm-stages', effectiveUserId],
+    queryKey: ['crm-stages', effectiveUserId, user?.id],
     queryFn: async () => {
       if (!effectiveUserId) return [];
+      // Escopo por vendedor: colunas da CONTA (seller_auth_id null) + as SUAS.
+      // Sem isso, a coluna que um vendedor cria vazava pro board de todos.
       const { data, error } = await supabase
         .from('crm_pipeline_stages')
         .select('*')
         .eq('user_id', effectiveUserId)
+        .or(`seller_auth_id.is.null,seller_auth_id.eq.${user?.id}`)
         .order('position');
 
       if (error) throw error;
