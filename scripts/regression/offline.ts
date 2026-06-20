@@ -30,6 +30,8 @@ import {
   vehicleDedupKey,
   excludeAlreadyPresented,
   pickRoundRobinSeller,
+  leadRefinesVehicleNeedsSearch,
+  contextVehicleModel,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -142,6 +144,14 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const d2 = planAd("esse suv tem teto solar?", { action: "stock_search", intent: "stock_lookup", search_query: "Chevrolet Tracker", search_filters: { modelo_desejado: "Chevrolet Tracker" }, confidence: 0.7 }, "Chevrolet Tracker Premier 1.2 2023");
   check("planner", "'esse suv tem teto?' NÃO amplia (é sobre o carro do anúncio)", /tracker/i.test(String(d2.search_query || d2.search_filters?.modelo_desejado || "")), `q=${d2.search_query}`);
 
+  // ── CASO Alê: refina VERSÃO/MOTOR de veículo em contexto -> CHECA estoque (nunca nega de cabeça) ──
+  const memCompass = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", versao: "LIMITED 2.0", ano: 2019, preco: 107990 }] };
+  const r1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Não amigo. Seria o modelo 270 com nova motorização.", vehicle_resolution: vr() as any, memory: memCompass, recent_history: [] } as any);
+  check("planner", "'seria o modelo 270' (Compass em contexto) -> FORÇA busca do Compass", r1.action === "stock_search" && /compass/i.test(String(r1.search_query || r1.search_filters?.modelo_desejado || "")), `action=${r1.action} q=${r1.search_query}`);
+  // CONTRA-PROVA: despedida pura NÃO força busca.
+  const r2 = normalizePlan({ action: "reply_only", intent: "thanks", confidence: 0.7 }, FALLBACK, { message: "No momento seria só esse mesmo. Mas agradeço.", vehicle_resolution: vr() as any, memory: memCompass, recent_history: [] } as any);
+  check("planner", "despedida 'agradeço' NÃO vira busca", r2.action === "reply_only", `action=${r2.action}`);
+
   // detector puro: 4 casos.
   const dc = (m: string, prior: string) => detectLeadDirectionChange(m, prior);
   check("detectores", "direção: 'procuro um suv' (ad Tracker) -> mudou p/ suv", dc("procuro um suv 2020 pra frente", "Chevrolet Tracker 2023").changed_direction === true && dc("procuro um suv 2020 pra frente", "Chevrolet Tracker 2023").current_type === "suv");
@@ -191,6 +201,14 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // MUDA DE IDEIA no meio (sem anúncio): tinha interesse Onix, agora pede picape -> mudança de direção.
   const piv = detectLeadDirectionChange("na verdade quero uma picape", "Chevrolet Onix");
   check("decisao", "muda de ideia: interesse Onix -> 'quero uma picape' = mudou p/ pickup", piv.changed_direction === true && piv.current_type === "pickup");
+
+  // REFINA VERSÃO/MOTOR (caso Alê): detector + contextVehicleModel.
+  const memC = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", ano: 2019 }] };
+  check("decisao", "contextVehicleModel: lê o modelo apresentado (Compass)", contextVehicleModel(memC) === "Compass");
+  check("decisao", "refina '270 nova motorização' c/ Compass em contexto -> checa", leadRefinesVehicleNeedsSearch("Não amigo. Seria o modelo 270 com nova motorização.", memC) === true);
+  check("decisao", "refina 'premier' c/ contexto -> checa", leadRefinesVehicleNeedsSearch("seria a premier mesmo", memC) === true);
+  check("decisao", "'270' SEM contexto -> NÃO checa (não identifica nada)", leadRefinesVehicleNeedsSearch("modelo 270", {}) === false);
+  check("decisao", "'obrigado, era só isso' c/ contexto -> NÃO checa (despedida)", leadRefinesVehicleNeedsSearch("obrigado, era só isso", memC) === false);
 }
 
 // ── RODÍZIO DE VENDEDOR (pickRoundRobinSeller) — vendedor novo (null) entra na fila ───────────

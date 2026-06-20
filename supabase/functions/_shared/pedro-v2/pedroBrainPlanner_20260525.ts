@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -691,11 +691,19 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     "location", "small_talk", "greeting", "handoff", "human_request", "seller_ack",
     "goodbye", "farewell", "thanks", "objection",
   ].includes(String(plan.intent || ""));
-  if ((_vr?.has_current_vehicle_signal || hasLlmVehicle) && !intentNaoEhBuscaDeVeiculo && !isPureVehicleComment(input.message) && (plan.action === "reply_only" || plan.action === "clarify")) {
+  // REFINAMENTO POR CONTEXTO (lead Ale, Compass T270): o lead especifica uma VERSAO/MOTOR ("seria o
+  // modelo 270 com nova motorizacao") de um veiculo que esta no CONTEXTO (apresentado/interesse/anuncio),
+  // mas NAO nomeia o modelo na frase -> o guard acima nao pega (resolver+LLM nao acham veiculo na frase).
+  // Aqui o cerebro CHECA: refinou versao/motor de um modelo conhecido -> busca esse MODELO (a familia),
+  // o reply apresenta a variante certa. Respeita as intencoes que NAO sao busca (troca/financiamento/etc).
+  const _refinesVehicle = leadRefinesVehicleNeedsSearch(input.message, input.memory, (input.ad_context as any)?.vehicle_query);
+  if (((_vr?.has_current_vehicle_signal || hasLlmVehicle) && !intentNaoEhBuscaDeVeiculo && !isPureVehicleComment(input.message) && (plan.action === "reply_only" || plan.action === "clarify"))
+      || (_refinesVehicle && !intentNaoEhBuscaDeVeiculo && (plan.action === "reply_only" || plan.action === "clarify"))) {
     plan.action = "stock_search";
     plan.intent = plan.intent === "small_talk" ? "stock_lookup" : plan.intent;
     if (!plan.search_query) {
-      plan.search_query = _vr?.query || plan.search_filters?.modelo_desejado || null;
+      plan.search_query = _vr?.query || plan.search_filters?.modelo_desejado
+        || contextVehicleModel(input.memory, (input.ad_context as any)?.vehicle_query) || null;
     }
     plan.search_filters = {
       ...(plan.search_filters || {}),
@@ -703,7 +711,7 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
       tipo_veiculo: plan.search_filters?.tipo_veiculo || _vr?.vehicle_type || null,
     };
     plan.use_memory_vehicle = _vr?.used_memory ?? plan.use_memory_vehicle;
-    plan.reason = `enforced_llm_or_heuristic_vehicle_search:${plan.reason || ""}`;
+    plan.reason = `${_refinesVehicle && !(_vr?.has_current_vehicle_signal || hasLlmVehicle) ? "enforced_refine_vehicle_search" : "enforced_llm_or_heuristic_vehicle_search"}:${plan.reason || ""}`;
   }
 
   if (stockQuestion && plan.intent !== "trade_in" && (plan.action === "reply_only" || plan.action === "clarify")) {
@@ -1051,6 +1059,7 @@ export async function planPedroTurn(input: {
     "== RESOLUCAO DE VEICULOS (INTELIGENCIA SEMANTICA) ==",
     "- Identifique se a mensagem atual do lead (lead_message) ou o contexto recente cita algum veiculo (marca, modelo ou versao), mesmo com erros graves de digitacao, abreviacoes ou escrita fonetica (ex: 'reguede' -> 'Jeep Renegade', 'tcross' -> 'Volkswagen T-Cross', 'oroqui' -> 'Renault Oroch', 'mini cuper' -> 'Mini Cooper').",
     "- Se um veiculo for mencionado, defina 'action'='stock_search' e coloque o nome canonico (Marca + Modelo, ex: 'Jeep Renegade') em 'search_query'. ATENÇÃO: se o cliente estiver apenas OFERECENDO o veículo dele como TROCA/entrada (intent='trade_in'), defina 'action'='reply_only' e NÃO coloque o carro da troca em 'search_query' (e nem faça busca dele no estoque).",
+    "- REFINAMENTO DE VERSAO/MOTOR (REGRA FORTE): se o lead especifica uma VERSAO, MOTOR ou trim de um veiculo que JA esta em contexto (apresentado/interesse/anuncio) — ex.: 'nao, seria o modelo 270 com nova motorizacao', 'queria a Premier', 'so a versao turbo' — isso e um PEDIDO DE BUSCA: action='stock_search' com o MODELO do contexto em 'search_query' (o reply apresenta a variante certa). NUNCA diga 'nao temos' essa versao sem TER BUSCADO; afirmar indisponibilidade de cabeca, sem consultar o estoque, e ERRO GRAVE que perde a venda.",
     "- Preencha 'search_filters.modelo_desejado' com o modelo e 'search_filters.tipo_veiculo' com 'suv','pickup','hatch','sedan' ou 'moto'.",
     "- FAIXA DE PRECO / ORCAMENTO como resposta (REGRA FORTE): se o lead der um valor ou faixa de preco ('na faixa de 120 mil', 'ate 80 mil', 'uns 50 mil', 'tenho 100 mil pra gastar') e a conversa JA esta definindo um carro pra comprar (voce perguntou tipo/faixa, ou ha tipo/modelo no last_agent_message/memory), defina action='stock_search' e preencha 'search_filters.preco_max' com o valor EM REAIS (120 mil = 120000) + HERDE o 'tipo_veiculo'/'modelo_desejado' do contexto. O lead quer VER os carros nessa faixa — NUNCA responda 'reply_only' sem buscar. Ex.: agente perguntou 'picape ou SUV? qual faixa?' e o lead responde 'na faixa de 120 mil' => action='stock_search', tipo_veiculo do contexto, preco_max=120000.",
     "- Nao confie cegamente no 'vehicle_resolution' heuristico se voce puder deduzir semanticamente o veiculo a partir da mensagem do lead.",

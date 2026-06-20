@@ -116,6 +116,39 @@ export function pickRoundRobinSeller(sellers: any[]): any | null {
   })[0] || null;
 }
 
+// ── NUNCA NEGAR SEM CHECAR: lead refina a VERSÃO/MOTOR de um veículo em contexto -> SEMPRE busca ──
+// Bug real (lead Alê, Compass): apos o agente oferecer um Compass Limited 2019, o lead disse "Nao amigo.
+// Seria o modelo 270 com nova motorizacao." O planner pos needs_search=false e respondeu "nao temos o
+// 270" SEM buscar — e havia 2 Compass T270 no estoque. O guard de busca existente so dispara quando o
+// MODELO esta NA FRASE; aqui o modelo (Compass) estava no CONTEXTO e a frase so traz a VERSAO (270).
+// Um bom vendedor CHECA o estoque quando o cliente especifica uma versao/motor; nunca nega de cabeca.
+
+// Modelo do veiculo "em jogo" na conversa (apresentado / interesse / referencia / anuncio). Prefere o
+// campo `modelo` do veiculo apresentado (ex.: "Compass") p/ a busca liderar pela FAMILIA, nao pela trim.
+export function contextVehicleModel(memory: any, adVehicleQuery?: string | null): string | null {
+  const m = memory || {};
+  const apres = Array.isArray(m.veiculos_apresentados) ? m.veiculos_apresentados : [];
+  const fromPresented = apres[0]?.modelo || null;
+  const fromInterest = m.interesse?.modelo_desejado || null;
+  const fromRef = m.referencia?.veiculo_citado || m.referencia?.ultimo_veiculo || null;
+  const out = fromPresented || fromInterest || fromRef || (adVehicleQuery || null);
+  return out ? String(out).trim() || null : null;
+}
+
+// Versao/motor/trim que o lead pode estar pedindo (sinal de "checar variante especifica"). NAO usa \b no
+// fim de "motoriz" (a palavra continua: motorizacao). "270"/"t270"/"modelo X" cobrem o caso real.
+const _VERSION_SPEC = /(\bt\s?-?270\b|\b270\b|\bturbo\b|\btsi\b|\btgdi\b|\bpremier\b|\blimited\b|\blongitude\b|\btrailhawk\b|\bsport\b|\bdiesel\b|motoriz|\bmodelo\s+\w)/;
+
+export function leadRefinesVehicleNeedsSearch(message?: string | null, memory?: any, adVehicleQuery?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  // ha um veiculo em contexto pra refinar? (sem isso, "270" solto nao identifica nada)
+  if (!contextVehicleModel(memory, adVehicleQuery)) return false;
+  // despedida/agradecimento PURO (sem especificar versao) nao e refinamento -> nao forca busca.
+  if (/\b(obrigado|obrigada|valeu|tchau|ate mais|era so isso|so isso mesmo)\b/.test(t) && !_VERSION_SPEC.test(t)) return false;
+  return _VERSION_SPEC.test(t);
+}
+
 export function buildStockFilters(intent: any, memory: any, text: string, brainPlan?: any, vehicleResolution?: any, options?: any) {
   const currentVehicleQuery = brainPlan?.search_query || vehicleResolution?.query || null;
   const allowMemoryVehicle = !vehicleResolution?.has_current_vehicle_signal && brainPlan?.use_memory_vehicle !== false;
