@@ -190,3 +190,88 @@ export async function handleOwnerImage(
     return { handled: false };
   }
 }
+
+// ── Tratamento UNIFICADO do DONO: ele NUNCA é lead ────────────────────────────
+// Roda no topo do orchestrator. owner-check PRIMEIRO: se não for o responsável,
+// {handled:false} (segue o fluxo normal de lead). Se for, SEMPRE handled — texto,
+// áudio ou imagem — e jamais entra na qualificação do Pedro. Fail-safe.
+export async function handleOwnerMessage(
+  supabase: any,
+  input: { user_id: string; agent_id?: string | null; payload: any; remote_jid: string; text: string; instance?: any },
+): Promise<{ handled: boolean; action?: string }> {
+  try {
+    const fromPhone = remoteJidToPhone(input.remote_jid);
+    if (!fromPhone) return { handled: false };
+    const owners = await resolveApprovalNumbers(supabase, input.user_id);
+    if (!owners.some((n) => phonesMatch(n, fromPhone))) return { handled: false }; // não é o dono -> lead
+
+    // É o DONO. Daqui pra frente NUNCA vira lead.
+    const reply = async (text: string) => {
+      try {
+        const instance = input.instance || await resolvePedroInstance(supabase, { user_id: input.user_id, agent_id: input.agent_id || null });
+        if (instance) await sendPedroText(instance, { to: fromPhone, text });
+      } catch (_e) { /* ignore */ }
+    };
+
+    const { data: pend } = await supabase.from("jose_action_approvals")
+      .select("*").eq("user_id", input.user_id).eq("status", "pendente")
+      .order("created_at", { ascending: false }).limit(1);
+    const pending = (pend || [])[0] || null;
+
+    let text = String(input.text || "");
+
+    // ÁUDIO -> transcreve (flag voz)
+    const audio = extractAudioUrl(input.payload);
+    if (audio) {
+      if (!(await isFeatureEnabled(supabase, input.user_id, "voz"))) {
+        await reply("Recebi seu áudio. O recurso de voz está desligado — me manda por texto?");
+        return { handled: true, action: "voz_off" };
+      }
+      const dl = await downloadBase64(audio.url);
+      const stt = dl ? await callAiGateway(supabase, {
+        user_id: input.user_id, capability: "stt",
+        input: { audio: { base64: dl.base64, mime: dl.mime, filename: "audio.ogg" }, language: "pt" },
+        ref_tipo: "owner_voice_stt",
+      }) : null;
+      text = (stt && stt.ok && stt.transcript) ? stt.transcript.trim() : "";
+      if (!text) { await reply("Não entendi o áudio. Pode mandar por texto?"); return { handled: true, action: "stt_empty" }; }
+    }
+
+    // IMAGEM -> análise de criativo (flag criativo_whatsapp)
+    const image = !audio ? extractImageUrl(input.payload) : null;
+    if (image) {
+      if (!(await isFeatureEnabled(supabase, input.user_id, "criativo_whatsapp"))) {
+        await reply("Recebi sua imagem. O recurso de análise de criativo está desligado.");
+        return { handled: true, action: "criativo_off" };
+      }
+      let nicho = "generico";
+      try { const { data: acc } = await supabase.from("ad_accounts").select("nicho").eq("user_id", input.user_id).eq("is_active", true).limit(1).maybeSingle(); if (acc?.nicho) nicho = acc.nicho; } catch (_e) { /* */ }
+      const res = await analyzeCreativeImage(supabase, { user_id: input.user_id, nicho, image_url: image.url, mime: image.mime });
+      if (!res.ok || !res.analise) { await reply("Não consegui analisar a imagem agora."); return { handled: true, action: "vision_fail" }; }
+      try { await supabase.from("creatives").insert({ user_id: input.user_id, name: `WhatsApp ${new Date().toISOString().slice(0, 10)}`, type: "image", file_url: image.url, origem: "whatsapp", analise_visao: res.analise, tags: res.analise.tags || [], enriquecido_em: new Date().toISOString() }); } catch (_e) { /* */ }
+      await reply(formatAnaliseWhatsApp(res.analise));
+      return { handled: true, action: "analyzed" };
+    }
+
+    // TEXTO (digitado ou transcrito): gate SIM/NÃO, senão o José responde.
+    const decision = parseSimNao(text);
+    if (pending && decision) {
+      await supabase.from("jose_action_approvals").update({ resposta_raw: text.slice(0, 200) }).eq("id", pending.id);
+      const r = await applyApprovalDecision(supabase, pending, decision, "whatsapp");
+      await reply(decision === "aprovado" ? (r.ok ? "✅ Autorizado. José executou." : "✅ Autorizado, mas não consegui executar agora.") : "❌ Cancelado.");
+      return { handled: true, action: "gate_" + decision };
+    }
+    if (pending && !decision) {
+      await reply(`Tem 1 aprovação pendente:\n\n${pending.resumo_humano || pending.tipo_acao}\n\nResponda *SIM* ou *NÃO*.`);
+      return { handled: true, action: "reprompt" };
+    }
+    if (text.trim()) {
+      const resposta = await askJose(supabase, input.user_id, text);
+      await reply(resposta);
+      return { handled: true, action: "answered" };
+    }
+    return { handled: true, action: "owner_noop" }; // dono sem texto -> só não vira lead
+  } catch (_e) {
+    return { handled: false }; // fail-safe: não bloqueia o Pedro
+  }
+}

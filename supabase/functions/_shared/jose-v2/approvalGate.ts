@@ -26,6 +26,16 @@ export async function resolveApprovalNumbers(supabase: any, userId: string): Pro
     const { data: prof } = await supabase.from("profiles").select("phone").eq("id", userId).maybeSingle();
     if (prof?.phone) nums.push(prof.phone);
   } catch (_e) { /* ignore */ }
+  // gerente_phone/gerente_phone_2 dos agentes do dono (é onde o número do
+  // responsável costuma estar de fato — ex.: Icom tem só aqui).
+  try {
+    const { data: agents } = await supabase.from("wa_ai_agents")
+      .select("gerente_phone, gerente_phone_2").eq("user_id", userId).eq("is_active", true);
+    for (const a of (agents || []) as any[]) {
+      if (a.gerente_phone) nums.push(a.gerente_phone);
+      if (a.gerente_phone_2) nums.push(a.gerente_phone_2);
+    }
+  } catch (_e) { /* ignore */ }
   return [...new Set(nums.map((n) => normalizeBrazilPhone(n)).filter(Boolean))];
 }
 

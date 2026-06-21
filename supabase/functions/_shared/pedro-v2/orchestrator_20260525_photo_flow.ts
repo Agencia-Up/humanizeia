@@ -1,7 +1,6 @@
 import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
-import { handleApprovalReply } from "../jose-v2/approvalGate.ts";
-import { handleOwnerVoice, handleOwnerImage } from "../jose-v2/ownerVoice.ts";
+import { handleOwnerMessage } from "../jose-v2/ownerVoice.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
@@ -695,60 +694,27 @@ export async function processPedroV2Turn(
     };
   }
 
-  // ── José v3.1: resposta de aprovação do dono (gate SIM/NÃO) ────────────────
-  // Fail-safe e barato: só intercepta quando HÁ gate pendente E o remetente é o
-  // número do responsável. Senão, segue o fluxo normal do Pedro. Em dry_run não
-  // executa (igual o resto do turno). Qualquer erro aqui NÃO bloqueia o Pedro.
+  // ── José v3.1: mensagem do DONO (responsável) ─────────────────────────────
+  // O número do responsável NUNCA é lead. Trata texto/áudio/imagem do dono num só
+  // lugar (gate SIM/NÃO, análise de criativo, ou José responde a pergunta). Se NÃO
+  // for o dono, handled:false e segue o fluxo normal do Pedro. Em dry_run não roda;
+  // qualquer erro aqui NÃO bloqueia o Pedro.
   if (!dryRun) {
-    // Voz do dono (Fase 2): só dispara se a mensagem for ÁUDIO e do responsável.
-    // Texto/áudio de lead -> handled:false em 1 passo (não pesa o caminho quente).
     try {
-      const voice = await handleOwnerVoice(supabase, {
+      const owner = await handleOwnerMessage(supabase, {
         user_id: input.agent.user_id,
         agent_id: input.agent.id,
         payload: input.payload,
-        remote_jid: remoteJid,
-        instance: input.wa_instance,
-      });
-      if (voice.handled) {
-        log("info", "jose_owner_voice", { remote_jid: remoteJid, action: voice.action });
-        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_voice_" + (voice.action || "handled") };
-      }
-    } catch (e) {
-      log("warn", "jose_owner_voice_error", { error: String((e as any)?.message || e) });
-    }
-
-    // Criativo (Fase 3): imagem do dono -> José analisa por visão e responde.
-    try {
-      const img = await handleOwnerImage(supabase, {
-        user_id: input.agent.user_id,
-        agent_id: input.agent.id,
-        payload: input.payload,
-        remote_jid: remoteJid,
-        instance: input.wa_instance,
-      });
-      if (img.handled) {
-        log("info", "jose_owner_image", { remote_jid: remoteJid, action: img.action });
-        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_image_" + (img.action || "handled") };
-      }
-    } catch (e) {
-      log("warn", "jose_owner_image_error", { error: String((e as any)?.message || e) });
-    }
-
-    try {
-      const gateReply = await handleApprovalReply(supabase, {
-        user_id: input.agent.user_id,
-        agent_id: input.agent.id,
         remote_jid: remoteJid,
         text: rawText,
         instance: input.wa_instance,
       });
-      if (gateReply.handled) {
-        log("info", "jose_approval_reply", { remote_jid: remoteJid, action: gateReply.action });
-        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_approval_" + (gateReply.action || "handled") };
+      if (owner.handled) {
+        log("info", "jose_owner_message", { remote_jid: remoteJid, action: owner.action });
+        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_owner_" + (owner.action || "handled") };
       }
     } catch (e) {
-      log("warn", "jose_approval_reply_error", { error: String((e as any)?.message || e) });
+      log("warn", "jose_owner_message_error", { error: String((e as any)?.message || e) });
     }
   }
 
