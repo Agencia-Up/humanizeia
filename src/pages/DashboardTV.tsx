@@ -372,16 +372,20 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // Botão no controle de zoom. Persiste por dispositivo no localStorage, então a TV
   // lembra o formato. Em retrato o painel reflui em coluna e é enquadrado numa moldura
   // vertical 9:16; o auto-fit encaixa tudo na altura (nada fica de fora).
+  // Vale pro TV (/dashboard-tv) E pro embutido (/painel-ao-vivo da sidebar), com
+  // chaves SEPARADAS no localStorage (um não muda o outro).
+  const orientKey = embedded ? 'dashtv_orientation_embed' : 'dashtv_orientation';
   const [orientation, setOrientation] = useState<'landscape' | 'portrait'>(() => {
-    try { return localStorage.getItem('dashtv_orientation') === 'portrait' ? 'portrait' : 'landscape'; }
+    try { return localStorage.getItem(embedded ? 'dashtv_orientation_embed' : 'dashtv_orientation') === 'portrait' ? 'portrait' : 'landscape'; }
     catch { return 'landscape'; }
   });
-  useEffect(() => { try { localStorage.setItem('dashtv_orientation', orientation); } catch { /* ignore */ } }, [orientation]);
-  const isPortrait = !embedded && orientation === 'portrait';
-  // Altura natural (sem escala) do conteúdo — dimensiona a área de rolagem da TV
-  // (altura visual = contentH * zoom). Assim a barra vertical aparece exatamente
-  // quando o conteúdo passa da tela, sem rolar pra espaço vazio.
+  useEffect(() => { try { localStorage.setItem(orientKey, orientation); } catch { /* ignore */ } }, [orientation, orientKey]);
+  const isPortrait = orientation === 'portrait';
+  // Altura natural (sem escala) do conteúdo — dimensiona a área de rolagem (altura
+  // visual = contentH*zoom/zoomEmbed). A barra aparece quando o conteúdo passa da
+  // tela, sem rolar pra espaço vazio. availH = altura útil do container embutido.
   const [contentH, setContentH] = useState(0);
+  const [availH, setAvailH] = useState(0);
 
   // Zoom do modo EMBUTIDO (aba do Pedro). Separado do TV pra um não atropelar o
   // outro (o TV tem auto-fit; o embutido é manual). Default 100% = sem mudança.
@@ -420,7 +424,6 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
   // Mede a altura natural do conteúdo (sem escala) p/ dimensionar a área de rolagem.
   useLayoutEffect(() => {
-    if (embedded) return;
     const el = contentRef.current;
     if (!el) return;
     const measure = () => setContentH(el.scrollHeight);
@@ -429,7 +432,20 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     ro.observe(el);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, orientation, zoom, viewport, profileLoading, loading, kpis, liveTick]);
+  }, [embedded, orientation, zoom, zoomEmbed, viewport, profileLoading, loading, kpis, liveTick]);
+
+  // Mede a altura útil do container EMBUTIDO (p/ a moldura 9:16 do retrato).
+  useLayoutEffect(() => {
+    if (!embedded) return;
+    const cont = containerRef.current;
+    if (!cont) return;
+    const m = () => setAvailH(cont.clientHeight);
+    m();
+    const ro = new ResizeObserver(m);
+    ro.observe(cont);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, orientation, viewport, profileLoading, loading, kpis, liveTick]);
 
   // Auto-fit do modo EMBUTIDO (Painel ao Vivo na sidebar): encaixa o conteúdo na
   // ALTURA da área disponível (o container limitado pelo MainLayout). Mede a
@@ -1684,17 +1700,37 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   if (embedded) {
     return (
       <div ref={containerRef} className={`relative ${wrapperClass}`}>
+        {/* Rolagem vertical: se o conteúdo passar da área (ex.: retrato com muita
+            informação), a barra lateral aparece e NADA fica cortado; quando cabe,
+            o auto-ajuste encaixa e não há barra. */}
         <div
-          ref={contentRef}
-          className="relative flex flex-col"
-          style={{ width: `${100 / zoomEmbed}%`, transform: `scale(${zoomEmbed})`, transformOrigin: 'top left' }}
+          className="h-full w-full overflow-y-auto overflow-x-hidden"
+          style={{ scrollbarGutter: 'stable' }}
         >
-          {panelContent}
+          {/* Caixa do tamanho VISUAL (altura = contentH*zoomEmbed). Em RETRATO vira
+              coluna 9:16 centralizada (totem); em PAISAGEM preenche a largura. */}
+          <div
+            className="relative mx-auto"
+            style={{
+              width: isPortrait && availH ? `min(100%, ${Math.round(availH * 9 / 16)}px)` : '100%',
+              height: contentH ? `${Math.round(contentH * zoomEmbed)}px` : undefined,
+            }}
+          >
+            <div
+              ref={contentRef}
+              className="absolute top-0 left-0 flex flex-col"
+              style={{ width: `${100 / zoomEmbed}%`, transform: `scale(${zoomEmbed})`, transformOrigin: 'top left' }}
+            >
+              {panelContent}
+            </div>
+          </div>
         </div>
         <ZoomControl
           zoom={zoomEmbed}
           mode={zoomEmbedMode}
           visible={controlsVisible}
+          orientation={orientation}
+          onToggleOrientation={() => setOrientation(o => (o === 'portrait' ? 'landscape' : 'portrait'))}
           onZoom={(z) => { setZoomEmbed(z); setZoomEmbedMode('manual'); }}
           onAuto={() => setZoomEmbedMode('auto')}
         />
