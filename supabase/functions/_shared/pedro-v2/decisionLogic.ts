@@ -154,6 +154,49 @@ export function clearRejeitadoOnRequest(rejeitados: { modelos?: string[]; tipos?
   };
 }
 
+// ── PLANO B: ESTADO DA CONVERSA (consolidado, determinístico) ─────────────────────────────────
+// Dá ao cérebro o FILME da conversa num bloco compacto (em vez de inferir do histórico cru): de onde
+// veio, o que o lead quer, o que rejeitou, quantos já viu, qualificação e a ETAPA do funil. Lê intenção
+// melhor (especialmente em modelo barato) e conduz melhor. PURO -> testado offline. Sem custo de LLM.
+export function buildConversationState(memory?: any, adContext?: any) {
+  const m = memory || {};
+  const int = m.interesse || {};
+  const apres = Array.isArray(m.veiculos_apresentados) ? m.veiculos_apresentados : [];
+  const rej = m.rejeitados || { modelos: [], tipos: [] };
+  const nome = m.lead_name || int.nome || null;
+  const troca = int.trade_in_vehicle || m.trade_in_vehicle || int.carro_troca || null;
+  const pagamento = int.forma_pagamento || int.pagamento || null;
+  const agendamento = int.dia_agendamento || int.agendamento || null;
+  const temInteresse = Boolean(int.modelo_desejado || int.tipo_veiculo);
+  const qualificado = Boolean(nome && temInteresse && (troca || pagamento || agendamento));
+  let etapa = "descobrindo";
+  if (agendamento) etapa = "agendando";
+  else if (qualificado) etapa = "decidindo";
+  else if (apres.length > 0) etapa = "comparando";
+  else if (temInteresse) etapa = "buscando";
+  return {
+    origem: (adContext?.has_ad_context && adContext?.vehicle_query) ? `anuncio:${adContext.vehicle_query}` : (m.origem || null),
+    interesse: { tipo: int.tipo_veiculo || null, modelo: int.modelo_desejado || null, preco_max: int.preco_max || null, cambio: int.cambio || null, cor: int.cor || null },
+    rejeitou: { modelos: rej.modelos || [], tipos: rej.tipos || [] },
+    ja_viu_qtd: apres.length,
+    qualificacao: { nome, troca, pagamento, agendamento },
+    etapa,
+  };
+}
+
+// Remove dos resultados os veículos cujo MODELO o lead REJEITOU (enforcement determinístico do Plano A:
+// o cérebro pode escorregar, mas a busca NUNCA re-oferece um modelo recusado). Por MODELO (não tipo —
+// tipo o motor de busca já filtra). PURO -> testado offline.
+export function excludeRejeitados(items: any[], rejeitados?: { modelos?: string[] } | null): any[] {
+  if (!Array.isArray(items) || items.length === 0) return Array.isArray(items) ? items : [];
+  const modelos = (rejeitados?.modelos || []).map((s) => normalizePlannerText(s)).filter((s) => s.length >= 3);
+  if (modelos.length === 0) return items;
+  return items.filter((v) => {
+    const vm = normalizePlannerText(v?.modelo || "");
+    return !modelos.some((mk) => new RegExp(`\\b${mk}\\b`).test(vm));
+  });
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):

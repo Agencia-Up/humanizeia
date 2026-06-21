@@ -40,6 +40,7 @@ import {
   replyDeniesAvailability,
   updateRejeitados,
   clearRejeitadoOnRequest,
+  excludeRejeitados,
 } from "./decisionLogic.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -1765,6 +1766,19 @@ export async function processPedroV2Turn(
   // Aqui, quando o lead pede MAIS opcoes e ja vimos uma lista, EXCLUIMOS o que ele ja viu
   // (opcoes_listadas_keys, acumulado abaixo) do resultado -> carros DIFERENTES. Se esgotar, o cerebro
   // e instruido a oferecer VARIAR o criterio (preco/cambio/marca) em vez de repetir.
+  // PLANO B: enforcement determinístico do Plano A — tira dos resultados os MODELOS que o lead rejeitou
+  // (o cérebro pode escorregar; a busca NUNCA re-oferece um recusado). clearRejeitadoOnRequest já tirou
+  // da lista o que ele voltou a pedir, então isto não esconde nada que ele queira AGORA. Não esvazia o
+  // pool (se tudo for rejeitado, mantém — o reply trata via lead_rejeitou e oferece variar).
+  const _rejModels = (currentMemory as any)?.rejeitados?.modelos || [];
+  if (_rejModels.length > 0 && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {
+    const _kept = excludeRejeitados(stockResult.items, { modelos: _rejModels });
+    const _removed = stockResult.items.length - _kept.length;
+    if (_kept.length > 0 && _removed > 0) {
+      stockResult = { ...stockResult, items: _kept, total: _kept.length };
+      log("info", "pedro_v2_excluded_rejeitados", { lead_id: lead?.id || null, removed: _removed, modelos: _rejModels });
+    }
+  }
   const _moreOptions = leadAsksForMoreOptions(text);
   const _seenListedKeys: string[] = Array.isArray((nextMemory as any)?.opcoes_listadas_keys)
     ? (nextMemory as any).opcoes_listadas_keys : [];

@@ -37,6 +37,8 @@ import {
   detectLeadRejection,
   updateRejeitados,
   clearRejeitadoOnRequest,
+  buildConversationState,
+  excludeRejeitados,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -248,6 +250,17 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // mudou de ideia: pediu o que rejeitou -> sai da lista (não fica blacklist eterno).
   const cleared = clearRejeitadoOnRequest({ modelos: ["compass", "onix"], tipos: ["sedan"] }, "na verdade quero ver o compass");
   check("decisao", "clearRejeitadoOnRequest: pediu o compass -> tira compass, mantém onix", !cleared.modelos.includes("compass") && cleared.modelos.includes("onix"));
+
+  // ── PLANO B: estado da conversa (etapa) + exclusão determinística de rejeitados ──
+  check("decisao", "estado: interesse sem apresentados -> etapa 'buscando'", buildConversationState({ interesse: { tipo_veiculo: "suv", preco_max: 80000 }, lead_name: "Ana" }).etapa === "buscando");
+  check("decisao", "estado: com apresentados -> etapa 'comparando'", buildConversationState({ interesse: { modelo_desejado: "Onix" }, veiculos_apresentados: [{}, {}, {}] }).etapa === "comparando");
+  check("decisao", "estado: nome+interesse+agendamento -> etapa 'agendando'", buildConversationState({ lead_name: "Ana", interesse: { modelo_desejado: "Onix", dia_agendamento: "sexta" } }).etapa === "agendando");
+  check("decisao", "estado: lê rejeitados", buildConversationState({ rejeitados: { modelos: ["onix"], tipos: [] } }).rejeitou.modelos.includes("onix"));
+  // exclusão determinística por modelo rejeitado.
+  const poolRej = [{ modelo: "Onix" }, { modelo: "Compass" }, { modelo: "Tracker" }];
+  const semOnix = excludeRejeitados(poolRej, { modelos: ["onix"] });
+  check("decisao", "excludeRejeitados: tira Onix, mantém Compass/Tracker", semOnix.length === 2 && !semOnix.some((v) => /onix/i.test(v.modelo)));
+  check("decisao", "excludeRejeitados: sem rejeitados -> mantém tudo", excludeRejeitados(poolRej, { modelos: [] }).length === 3);
 
   // REFINA VERSÃO/MOTOR (caso Alê): detector + contextVehicleModel.
   const memC = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", ano: 2019 }] };

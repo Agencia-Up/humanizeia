@@ -7,6 +7,7 @@ import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 import { validateGrounding, buildGroundingCorrection, groundedFallback } from "./grounding.ts";
 import { getReplyProfile } from "./llmProfiles/index.ts";
+import { buildConversationState } from "./decisionLogic.ts";
 
 // Remove perguntas-isca / fillers de cortesia PROIBIDOS pelo prompt quando aparecem no FIM da
 // mensagem ("Posso ajudar com mais alguma coisa?", "Voce gostaria de saber mais sobre X?",
@@ -824,6 +825,7 @@ export async function generatePedroBrainReply(input: {
                 modelos: Array.isArray((input.memory as any)?.rejeitados?.modelos) ? (input.memory as any).rejeitados.modelos : [],
                 tipos: Array.isArray((input.memory as any)?.rejeitados?.tipos) ? (input.memory as any).rejeitados.tipos : [],
               },
+              estado_conversa: buildConversationState(input.memory, input.ad_context),
               ad_context: input.ad_context || null,
               media_context: input.media_context || null,
               recent_history: input.recent_history || input.memory?.recent_turns || [],
