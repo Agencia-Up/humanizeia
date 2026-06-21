@@ -82,6 +82,8 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
   const [metaConnecting, setMetaConnecting] = useState(false);
   // phone_number_id + waba_id capturados do evento WA_EMBEDDED_SIGNUP.
   const sessionInfoRef = useRef<{ phone_number_id?: string; waba_id?: string }>({});
+  // Último evento do Embedded Signup (p/ diagnosticar quando fecha sem número).
+  const lastEsEventRef = useRef<any>(null);
 
   const [isCreating, setIsCreating] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -123,9 +125,13 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
       if (origin !== 'https://www.facebook.com' && !origin.endsWith('.facebook.com')) return;
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-        if (data?.type === 'WA_EMBEDDED_SIGNUP' && data?.data) {
-          if (data.data.phone_number_id) sessionInfoRef.current.phone_number_id = data.data.phone_number_id;
-          if (data.data.waba_id) sessionInfoRef.current.waba_id = data.data.waba_id;
+        if (data?.type === 'WA_EMBEDDED_SIGNUP') {
+          // DIAGNÓSTICO: loga TODO evento do Embedded Signup (FINISH/CANCEL/ERROR
+          // + current_step). É o que diz onde o popup parou quando "loga e fecha".
+          console.log('[Embedded Signup] evento do Meta:', JSON.stringify(data));
+          lastEsEventRef.current = data;
+          if (data?.data?.phone_number_id) sessionInfoRef.current.phone_number_id = data.data.phone_number_id;
+          if (data?.data?.waba_id) sessionInfoRef.current.waba_id = data.data.waba_id;
         }
       } catch { /* evento não-JSON do Facebook, ignora */ }
     };
@@ -246,13 +252,24 @@ export function UazapiConnectDialog({ open, onOpenChange, onConnected, initialIn
     }
     setMetaConnecting(true);
     sessionInfoRef.current = {};
+    lastEsEventRef.current = null;
     try {
       const FB = await loadFacebookSdk(META_APP_ID);
       FB.login((response: any) => {
+        // DIAGNÓSTICO: loga o retorno completo do FB.login (status + authResponse).
+        console.log('[Embedded Signup] FB.login response:', JSON.stringify(response));
         const code = response?.authResponse?.code;
         if (!code) {
           setMetaConnecting(false);
-          toast.error('Conexão cancelada no Facebook.');
+          const ev = lastEsEventRef.current;
+          // Mostra o motivo real que o Meta mandou no evento, se houver.
+          const reason =
+            ev?.data?.error_message ||
+            ev?.data?.error_id ||
+            (ev?.event ? `Parou em: ${ev.event}${ev?.data?.current_step ? ` (${ev.data.current_step})` : ''}` : null) ||
+            (response?.status ? `status: ${response.status}` : null);
+          console.warn('[Embedded Signup] sem code. status=', response?.status, 'último evento=', JSON.stringify(ev));
+          toast.error(reason ? `Não concluiu no Facebook — ${reason}` : 'Conexão cancelada no Facebook.');
           return;
         }
         void finishEmbeddedSignup(code);
