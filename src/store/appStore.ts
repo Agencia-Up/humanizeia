@@ -46,6 +46,7 @@ interface AppState {
 }
 
 const THEME_STORAGE_KEY = 'logosia-storage';
+const THEME_PREFERENCE_KEY = 'logosia-theme-preference';
 
 const applyThemeClass = (isDarkMode: boolean) => {
   if (typeof document === 'undefined') return;
@@ -58,14 +59,21 @@ const readStoredDarkMode = () => {
   if (typeof window === 'undefined') return true;
 
   try {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (!stored) return true;
+    const preference = window.localStorage.getItem(THEME_PREFERENCE_KEY);
+    if (preference === 'light') return false;
+    if (preference === 'dark') return true;
 
-    const parsed = JSON.parse(stored);
-    return parsed?.state?.isDarkMode !== false;
+    // Old versions persisted false accidentally when the DOM was still dark.
+    // Treat legacy/missing preference as dark and only honor the new key.
+    return true;
   } catch {
     return true;
   }
+};
+
+const writeThemePreference = (isDarkMode: boolean) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(THEME_PREFERENCE_KEY, isDarkMode ? 'dark' : 'light');
 };
 
 const initialDarkMode = readStoredDarkMode();
@@ -80,6 +88,7 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           const newMode = !state.isDarkMode;
           applyThemeClass(newMode);
+          writeThemePreference(newMode);
           return { isDarkMode: newMode };
         }),
 
@@ -130,8 +139,14 @@ export const useAppStore = create<AppState>()(
     {
       name: THEME_STORAGE_KEY,
       onRehydrateStorage: () => (state) => {
-        applyThemeClass(state?.isDarkMode !== false);
+        const isDarkMode = readStoredDarkMode();
+        applyThemeClass(isDarkMode);
       },
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as Partial<AppState>),
+        isDarkMode: readStoredDarkMode(),
+      }),
       partialize: (state) => ({
         isDarkMode: state.isDarkMode,
         sidebarOpen: state.sidebarOpen,

@@ -18,6 +18,20 @@
     <meta name="twitter:description" content="Tráfego pago, criativos, CRM e atendimento no WhatsApp, cuidados por agentes de IA que não dormem, não faltam e custam uma fração de uma equipe tradicional. No ar em 5 minutos.">
     <meta name="twitter:image" content="https://logosiabrasil.com/logosia-logo-light.png">
 
+    <script>
+      (function () {
+        try {
+          var preference = localStorage.getItem('logosia-theme-preference');
+          var isDarkMode = preference !== 'light';
+          document.documentElement.classList.toggle('dark', isDarkMode);
+          document.documentElement.style.colorScheme = isDarkMode ? 'dark' : 'light';
+        } catch (error) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = 'dark';
+        }
+      })();
+    </script>
+
     <link rel="icon" type="image/png" href="/logosia-logo-light.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
