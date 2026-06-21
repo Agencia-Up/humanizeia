@@ -368,6 +368,21 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   useEffect(() => { try { localStorage.setItem('dashtv_zoom', String(zoom)); } catch { /* ignore */ } }, [zoom]);
   useEffect(() => { try { localStorage.setItem('dashtv_zoom_mode', zoomMode); } catch { /* ignore */ } }, [zoomMode]);
 
+  // Orientação da TV (manual): 'landscape' (deitada) ou 'portrait' (em pé/totem).
+  // Botão no controle de zoom. Persiste por dispositivo no localStorage, então a TV
+  // lembra o formato. Em retrato o painel reflui em coluna e é enquadrado numa moldura
+  // vertical 9:16; o auto-fit encaixa tudo na altura (nada fica de fora).
+  const [orientation, setOrientation] = useState<'landscape' | 'portrait'>(() => {
+    try { return localStorage.getItem('dashtv_orientation') === 'portrait' ? 'portrait' : 'landscape'; }
+    catch { return 'landscape'; }
+  });
+  useEffect(() => { try { localStorage.setItem('dashtv_orientation', orientation); } catch { /* ignore */ } }, [orientation]);
+  const isPortrait = !embedded && orientation === 'portrait';
+  // Altura natural (sem escala) do conteúdo — dimensiona a área de rolagem da TV
+  // (altura visual = contentH * zoom). Assim a barra vertical aparece exatamente
+  // quando o conteúdo passa da tela, sem rolar pra espaço vazio.
+  const [contentH, setContentH] = useState(0);
+
   // Zoom do modo EMBUTIDO (aba do Pedro). Separado do TV pra um não atropelar o
   // outro (o TV tem auto-fit; o embutido é manual). Default 100% = sem mudança.
   const [zoomEmbed, setZoomEmbed] = useState<number>(() => {
@@ -401,7 +416,20 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     ro.observe(el);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, zoomMode, viewport, profileLoading, loading, kpis, liveTick]);
+  }, [embedded, zoomMode, viewport, profileLoading, loading, kpis, liveTick, orientation]);
+
+  // Mede a altura natural do conteúdo (sem escala) p/ dimensionar a área de rolagem.
+  useLayoutEffect(() => {
+    if (embedded) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => setContentH(el.scrollHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, orientation, zoom, viewport, profileLoading, loading, kpis, liveTick]);
 
   // Auto-fit do modo EMBUTIDO (Painel ao Vivo na sidebar): encaixa o conteúdo na
   // ALTURA da área disponível (o container limitado pelo MainLayout). Mede a
@@ -1325,7 +1353,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       </div>
 
       {/* ───── Bloco KPIs principais (5 cards lado a lado) ───── */}
-      <section className="shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid grid-cols-5 portrait:grid-cols-1 gap-4">
+      <section className={`shrink-0 px-8 py-[clamp(0.5rem,2.2vmin,1.5rem)] grid gap-4 ${isPortrait ? 'grid-cols-1' : 'grid-cols-5 portrait:grid-cols-1'}`}>
         {/* KPI 1: Leads Gerais */}
         <div className="bg-slate-900/60 rounded-2xl p-[clamp(0.75rem,2.5vmin,1.5rem)] border border-blue-900/40 flex flex-col items-center justify-center text-center">
           <Users className="h-7 w-7 text-blue-400 mb-2" />
@@ -1480,7 +1508,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
       {/* ───── Cards de Origem (linha completa abaixo) ───── */}
       <section className="shrink-0 px-8 pb-6">
         <h2 className="text-[10px] uppercase tracking-widest text-blue-300/70 mb-3 font-bold">Origem dos Leads</h2>
-        <div className="grid grid-cols-6 portrait:grid-cols-2 gap-3">
+        <div className={`grid gap-3 ${isPortrait ? 'grid-cols-2' : 'grid-cols-6 portrait:grid-cols-2'}`}>
           {[{ key: 'trafico_pago', label: 'Tráfego Pago', color: '#3b82f6' }, ...(kpis?.colunas || [])].map(origem => {
             const valor = kpis?.por_origem[origem.key] ?? 0;
             const pct = kpis?.percentuais[origem.key] ?? 0;
@@ -1526,7 +1554,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
             Nenhum lead pendente de transferência.
           </div>
         ) : (
-          <div className="grid grid-cols-3 portrait:grid-cols-1 gap-3 max-h-44 overflow-y-auto pr-1">
+          <div className={`grid gap-3 max-h-44 overflow-y-auto pr-1 ${isPortrait ? 'grid-cols-1' : 'grid-cols-3 portrait:grid-cols-1'}`}>
             {leadsNaoTransferidos.map(lead => (
               <div
                 key={lead.id}
@@ -1576,7 +1604,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           // auto-fit: os cards esticam pra preencher a largura inteira (menos
           // linhas em telas largas). Sem rolagem interna — o zoom da TV encaixa
           // tudo na tela. auto-rows-fr deixa as linhas com a mesma altura.
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] portrait:grid-cols-2 gap-3 auto-rows-fr">
+          <div className={`grid gap-3 auto-rows-fr ${isPortrait ? 'grid-cols-2' : 'grid-cols-[repeat(auto-fit,minmax(180px,1fr))] portrait:grid-cols-2'}`}>
             {vendedores.slice(0, 12).map(v => (
               <VendedorCard key={v.id} v={v} secondary={branding.secondary_color} colunas={kpis?.colunas || []} />
             ))}
@@ -1679,21 +1707,39 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // largura sem barra horizontal. O fundo cobre 100% da tela real. Sem barras de
   // rolagem (overflow-hidden). O controle de zoom fica por cima, fora da escala.
   return (
-    <div
-      ref={containerRef}
-      className="relative h-[100dvh] w-[100dvw] overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
-    >
+    <div ref={containerRef} className="relative h-[100dvh] w-[100dvw] overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      {/* Área da TV com ROLAGEM VERTICAL: se o conteúdo passar da altura da tela
+          (ex.: retrato com muita informação, ou zoom ampliado), a barra lateral
+          aparece e NADA fica cortado. Quando cabe, o auto-ajuste encaixa e não há barra. */}
       <div
-        ref={contentRef}
-        className="relative flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
-        style={{ width: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+        className="h-full w-full overflow-y-auto overflow-x-hidden"
+        style={{ scrollbarGutter: 'stable' }}
       >
-        {panelContent}
+        {/* Caixa do tamanho VISUAL do conteúdo (altura já escalada = contentH*zoom).
+            Em RETRATO vira uma coluna 9:16 centralizada (totem); em PAISAGEM preenche
+            a largura. A altura fixa faz a barra rolar exatamente o conteúdo. */}
+        <div
+          className="relative mx-auto"
+          style={{
+            width: isPortrait ? `min(100dvw, ${Math.round(viewport.h * 9 / 16)}px)` : '100%',
+            height: contentH ? `${Math.round(contentH * zoom)}px` : undefined,
+          }}
+        >
+          <div
+            ref={contentRef}
+            className="absolute top-0 left-0 flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white"
+            style={{ width: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+          >
+            {panelContent}
+          </div>
+        </div>
       </div>
       <ZoomControl
         zoom={zoom}
         mode={zoomMode}
         visible={controlsVisible}
+        orientation={orientation}
+        onToggleOrientation={() => setOrientation(o => (o === 'portrait' ? 'landscape' : 'portrait'))}
         onZoom={(z) => { setZoom(z); setZoomMode('manual'); }}
         onAuto={() => setZoomMode('auto')}
       />
@@ -1705,13 +1751,15 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 // Fica por cima do painel, FORA da área escalada. Discreto (some um pouco quando
 // não está com o mouse em cima). Ajusta o zoom estilo navegador.
 function ZoomControl({
-  zoom, mode, onZoom, onAuto, visible,
+  zoom, mode, onZoom, onAuto, visible, orientation, onToggleOrientation,
 }: {
   zoom: number;
   mode: 'auto' | 'manual';
   onZoom: (z: number) => void;
   onAuto: () => void;
   visible: boolean;
+  orientation?: 'landscape' | 'portrait';
+  onToggleOrientation?: () => void;
 }) {
   const pct = Math.round(zoom * 100);
   const step = (d: number) => onZoom(Math.max(0.4, Math.min(2.5, +(zoom + d).toFixed(2))));
@@ -1751,6 +1799,21 @@ function ZoomControl({
         }`}
         title="Ajuste automático à tela"
       >Auto</button>
+      {onToggleOrientation && (
+        <>
+          <span className="w-px h-5 bg-slate-700" />
+          <div className="flex items-center rounded-full border border-slate-600 overflow-hidden" title="Formato da TV: deitada (paisagem) ou em pé (retrato)">
+            <button
+              onClick={() => { if (orientation !== 'landscape') onToggleOrientation(); }}
+              className={`text-[11px] font-bold px-2.5 py-0.5 transition-colors ${orientation === 'landscape' ? 'bg-blue-500/30 text-blue-200' : 'text-slate-300 hover:bg-slate-700'}`}
+            >Paisagem</button>
+            <button
+              onClick={() => { if (orientation !== 'portrait') onToggleOrientation(); }}
+              className={`text-[11px] font-bold px-2.5 py-0.5 transition-colors ${orientation === 'portrait' ? 'bg-blue-500/30 text-blue-200' : 'text-slate-300 hover:bg-slate-700'}`}
+            >Retrato</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
