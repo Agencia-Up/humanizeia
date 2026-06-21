@@ -133,10 +133,11 @@ const json = (obj: any, status = 200) =>
 
 // ── Autorizacao (espelha manual-transfer) ────────────────────────────────────
 /** Valida o JWT do usuario via GoTrue e devolve o user (ou null). */
-async function getAuthUser(url: string, apikey: string, userJwt: string): Promise<any | null> {
+async function getAuthUser(url: string, anonKey: string, userJwt: string): Promise<any | null> {
+  if (!url || !anonKey || !userJwt) return null;
   try {
     const res = await fetch(`${url}/auth/v1/user`, {
-      headers: { apikey, 'Authorization': `Bearer ${userJwt}` },
+      headers: { apikey: anonKey, 'Authorization': `Bearer ${userJwt}` },
     });
     if (!res.ok) return null;
     return await res.json();
@@ -303,10 +304,14 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const authHeader = req.headers.get('authorization') ?? '';
   const token = authHeader.replace('Bearer ', '').trim();
   if (!token) return json({ error: 'Nao autorizado' }, 401);
+  if (!supabaseUrl || !serviceKey || !anonKey) {
+    return json({ error: 'Ambiente Supabase incompleto para resgatar leads' }, 500);
+  }
 
   // Body opcional
   let body: any = {};
@@ -333,7 +338,7 @@ Deno.serve(async (req) => {
   if (isServiceCall) {
     scopeUserId = requestedUserId; // pode ser null = todos os donos
   } else {
-    const authUser = await getAuthUser(supabaseUrl, serviceKey, token);
+    const authUser = await getAuthUser(supabaseUrl, anonKey, token);
     if (!authUser?.id) return json({ error: 'Token invalido' }, 401);
     callerUserId = authUser.id;
     const effectiveUserId = await resolveEffectiveUserId(supabase, callerUserId);
