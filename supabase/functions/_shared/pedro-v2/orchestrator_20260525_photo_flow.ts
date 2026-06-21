@@ -1,7 +1,7 @@
 import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
 import { handleApprovalReply } from "../jose-v2/approvalGate.ts";
-import { handleOwnerVoice } from "../jose-v2/ownerVoice.ts";
+import { handleOwnerVoice, handleOwnerImage } from "../jose-v2/ownerVoice.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
@@ -716,6 +716,23 @@ export async function processPedroV2Turn(
       }
     } catch (e) {
       log("warn", "jose_owner_voice_error", { error: String((e as any)?.message || e) });
+    }
+
+    // Criativo (Fase 3): imagem do dono -> José analisa por visão e responde.
+    try {
+      const img = await handleOwnerImage(supabase, {
+        user_id: input.agent.user_id,
+        agent_id: input.agent.id,
+        payload: input.payload,
+        remote_jid: remoteJid,
+        instance: input.wa_instance,
+      });
+      if (img.handled) {
+        log("info", "jose_owner_image", { remote_jid: remoteJid, action: img.action });
+        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_image_" + (img.action || "handled") };
+      }
+    } catch (e) {
+      log("warn", "jose_owner_image_error", { error: String((e as any)?.message || e) });
     }
 
     try {

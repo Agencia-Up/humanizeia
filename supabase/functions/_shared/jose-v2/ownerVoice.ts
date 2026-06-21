@@ -11,6 +11,7 @@ import { phonesMatch, remoteJidToPhone } from "../pedro-v2/phone.ts";
 import { callAiGateway } from "./aiGateway.ts";
 import { resolveApprovalNumbers, applyApprovalDecision, parseSimNao } from "./approvalGate.ts";
 import { isFeatureEnabled } from "./flags.ts";
+import { analyzeCreativeImage, formatAnaliseWhatsApp } from "./visionAnalysis.ts";
 
 // Extrai a URL do áudio do payload (mesma lógica do pedro-webhook-v2). null = não é áudio.
 export function extractAudioUrl(payload: any): { url: string; mime?: string } | null {
@@ -127,5 +128,65 @@ export async function handleOwnerVoice(
     return { handled: true, action: "answered" };
   } catch (_e) {
     return { handled: false }; // fail-safe: não bloqueia o Pedro
+  }
+}
+
+// ── Fase 3: imagem (criativo) do DONO -> José analisa por visão e responde ─────
+export function extractImageUrl(payload: any): { url: string; mime?: string } | null {
+  const inMsg = (Array.isArray(payload?.messages) && payload.messages[0]) ||
+    (Array.isArray(payload?.data) && payload.data[0]) || payload?.message || payload?.data || payload;
+  const mt = String(inMsg?.messageType || "").toLowerCase();
+  const isImage = mt.includes("image") || !!inMsg?.message?.imageMessage;
+  if (!isImage) return null;
+  const url = inMsg?.mediaUrl || inMsg?.directUrl || inMsg?.media_url || inMsg?.url || inMsg?.message?.imageMessage?.url || null;
+  if (!url) return null;
+  const mime = inMsg?.mimetype || inMsg?.mime || inMsg?.message?.imageMessage?.mimetype || "image/jpeg";
+  return { url: String(url), mime: String(mime) };
+}
+
+export async function handleOwnerImage(
+  supabase: any,
+  input: { user_id: string; agent_id?: string | null; payload: any; remote_jid: string; instance?: any },
+): Promise<{ handled: boolean; action?: string }> {
+  try {
+    const img = extractImageUrl(input.payload);
+    if (!img) return { handled: false };
+    if (!(await isFeatureEnabled(supabase, input.user_id, "criativo_whatsapp"))) return { handled: false };
+
+    const fromPhone = remoteJidToPhone(input.remote_jid);
+    if (!fromPhone) return { handled: false };
+    const owners = await resolveApprovalNumbers(supabase, input.user_id);
+    if (!owners.some((n) => phonesMatch(n, fromPhone))) return { handled: false }; // imagem de lead -> Pedro
+
+    const reply = async (text: string) => {
+      try {
+        const instance = input.instance || await resolvePedroInstance(supabase, { user_id: input.user_id, agent_id: input.agent_id || null });
+        if (instance) await sendPedroText(instance, { to: fromPhone, text });
+      } catch (_e) { /* ignore */ }
+    };
+
+    // nicho da 1ª conta do dono (best-effort)
+    let nicho = "generico";
+    try {
+      const { data: acc } = await supabase.from("ad_accounts").select("nicho").eq("user_id", input.user_id).eq("is_active", true).limit(1).maybeSingle();
+      if (acc?.nicho) nicho = acc.nicho;
+    } catch (_e) { /* ignore */ }
+
+    const res = await analyzeCreativeImage(supabase, { user_id: input.user_id, nicho, image_url: img.url, mime: img.mime });
+    if (!res.ok || !res.analise) { await reply("Não consegui analisar a imagem agora. Tenta de novo?"); return { handled: true, action: "vision_fail" }; }
+
+    // guarda o criativo do WhatsApp como metadado (best-effort; não quebra se constraint).
+    try {
+      await supabase.from("creatives").insert({
+        user_id: input.user_id, name: `WhatsApp ${new Date().toISOString().slice(0, 10)}`,
+        type: "image", file_url: img.url, origem: "whatsapp",
+        analise_visao: res.analise, tags: res.analise.tags || [], enriquecido_em: new Date().toISOString(),
+      });
+    } catch (_e) { /* ignore */ }
+
+    await reply(formatAnaliseWhatsApp(res.analise));
+    return { handled: true, action: "analyzed" };
+  } catch (_e) {
+    return { handled: false };
   }
 }

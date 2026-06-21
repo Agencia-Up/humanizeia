@@ -141,6 +141,9 @@ verify_jwt = false
 [functions.jose-reasoning-core]
 verify_jwt = false
 
+[functions.jose-generate-campaign]
+verify_jwt = false
+
 [functions.jose-analyze]
 verify_jwt = false
 
