@@ -1,5 +1,6 @@
 import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
+import { handleApprovalReply } from "../jose-v2/approvalGate.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
@@ -691,6 +692,28 @@ export async function processPedroV2Turn(
       correlation_id: correlationId,
       next_action: "ignored_group_or_broadcast",
     };
+  }
+
+  // ── José v3.1: resposta de aprovação do dono (gate SIM/NÃO) ────────────────
+  // Fail-safe e barato: só intercepta quando HÁ gate pendente E o remetente é o
+  // número do responsável. Senão, segue o fluxo normal do Pedro. Em dry_run não
+  // executa (igual o resto do turno). Qualquer erro aqui NÃO bloqueia o Pedro.
+  if (!dryRun) {
+    try {
+      const gateReply = await handleApprovalReply(supabase, {
+        user_id: input.agent.user_id,
+        agent_id: input.agent.id,
+        remote_jid: remoteJid,
+        text: rawText,
+        instance: input.wa_instance,
+      });
+      if (gateReply.handled) {
+        log("info", "jose_approval_reply", { remote_jid: remoteJid, action: gateReply.action });
+        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_approval_" + (gateReply.action || "handled") };
+      }
+    } catch (e) {
+      log("warn", "jose_approval_reply_error", { error: String((e as any)?.message || e) });
+    }
   }
 
   log("info", "pedro_v2_turn_start", { remote_jid: remoteJid, dry_run: dryRun });

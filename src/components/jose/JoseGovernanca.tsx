@@ -189,6 +189,7 @@ function LimitesSection({ userId }: { userId: string }) {
       limite_minutos_voz_mes: num(body.limite_minutos_voz_mes),
       exige_aprovacao_acima_de: num(body.exige_aprovacao_acima_de),
       teto_custo_ia_mes_usd: num(body.teto_custo_ia_mes_usd),
+      aprovacao_whatsapp: (String(body.aprovacao_whatsapp || '').trim()) || null,
       updated_at: new Date().toISOString(),
     };
     let error;
@@ -221,6 +222,11 @@ function LimitesSection({ userId }: { userId: string }) {
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">Tetos de segurança</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
+            <Field label="WhatsApp do responsável (aprovações)" hint="Recebe o 'Responda SIM/NÃO' do José por aqui (DDD + número, ex.: 34999080815).">
+              <Input value={row?.aprovacao_whatsapp ?? ''} onChange={(e) => setField('aprovacao_whatsapp', e.target.value)} placeholder="DDD + número" />
+            </Field>
+          </div>
           <Field label="Máx. de ações por dia" hint="Acima disso, pede aprovação">
             <Input type="number" value={row?.limite_acoes_dia ?? ''} onChange={(e) => setField('limite_acoes_dia', e.target.value)} placeholder="ex.: 20" />
           </Field>

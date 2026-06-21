@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { checkGuardrails } from "../_shared/jose-v2/guardrails.ts";
+import { sendApprovalWhatsApp } from "../_shared/jose-v2/approvalGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -424,7 +425,7 @@ Deno.serve(async (req) => {
           if (guard.decision === "gate") {
             // Em vez de executar, cria uma APROVAÇÃO pendente (o dono responde SIM/NÃO).
             try {
-              await admin.from("jose_action_approvals").insert({
+              const { data: ap } = await admin.from("jose_action_approvals").insert({
                 user_id: user.id,
                 ad_account_id: adAccountDbId || null,
                 risco: riscoDaAcao(action),
@@ -432,10 +433,11 @@ Deno.serve(async (req) => {
                 payload: { campaign_id: action.campaign_id, action_type: action.action_type, params: action.params || {} },
                 resumo_humano: action.reason || action.description || `${tipoAcao} em ${action.campaign_id}`,
                 status: "pendente",
-                enviado_em: new Date().toISOString(),
                 expira_em: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(),
-              });
-            } catch { /* ignore approval insert error */ }
+              }).select().maybeSingle();
+              // dispara o "Responda SIM/NÃO" pro WhatsApp do responsável (best-effort).
+              if (ap) await sendApprovalWhatsApp(admin, { user_id: user.id, agent_id: null, approval: ap });
+            } catch { /* ignore approval insert/send error */ }
             executionLog.push({ ...action, gated: true, guardrail: guard.reason, executed_at: new Date().toISOString(), executed_by: "guardrail_gate" });
             continue; // aguarda o SIM/NÃO
           }
