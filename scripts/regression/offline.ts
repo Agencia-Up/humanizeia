@@ -34,6 +34,9 @@ import {
   contextVehicleModel,
   replyDeniesAvailability,
   parsePriceCeiling,
+  detectLeadRejection,
+  updateRejeitados,
+  clearRejeitadoOnRequest,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -227,6 +230,24 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // MUDA DE IDEIA no meio (sem anúncio): tinha interesse Onix, agora pede picape -> mudança de direção.
   const piv = detectLeadDirectionChange("na verdade quero uma picape", "Chevrolet Onix");
   check("decisao", "muda de ideia: interesse Onix -> 'quero uma picape' = mudou p/ pickup", piv.changed_direction === true && piv.current_type === "pickup");
+
+  // ── PLANO A: rejeição (o que o lead recusou) ──
+  check("decisao", "rejeição: 'não quero o compass' -> rejeita", detectLeadRejection("não quero o compass").has_rejection === true);
+  check("decisao", "rejeição: 'esse não, quero outro' -> rejeita o foco", (() => { const r = detectLeadRejection("esse não, quero outro"); return r.has_rejection === true && r.rejects_focus === true; })());
+  check("decisao", "rejeição: 'não quero sedan' -> tipo sedan", (() => { const r = detectLeadRejection("não quero sedan"); return r.has_rejection === true && r.rejected_type === "sedan"; })());
+  check("decisao", "rejeição: 'sedan não' -> tipo sedan", (() => { const r = detectLeadRejection("sedan não"); return r.has_rejection === true && r.rejected_type === "sedan"; })());
+  check("decisao", "rejeição: 'amanhã não posso' -> NÃO é rejeição de carro", detectLeadRejection("amanhã não posso ir aí").has_rejection === false);
+  check("decisao", "rejeição: 'não, pode mandar' -> NÃO é rejeição", detectLeadRejection("não, pode mandar as fotos").has_rejection === false);
+
+  // acumular/resolver rejeição: nome citado -> esse modelo; "esse não" -> último apresentado (foco).
+  const apres2 = [{ modelo: "Compass" }, { modelo: "Onix" }];
+  check("decisao", "updateRejeitados: 'não quero o compass' -> modelos[compass]", updateRejeitados("não quero o compass", apres2, null).modelos.includes("compass"));
+  check("decisao", "updateRejeitados: 'esse não' -> último apresentado (onix)", updateRejeitados("esse não, quero outro", apres2, { modelos: [], tipos: [] }).modelos.includes("onix"));
+  check("decisao", "updateRejeitados: 'não quero sedan' -> tipos[sedan]", updateRejeitados("não quero sedan", [], null).tipos.includes("sedan"));
+  check("decisao", "updateRejeitados: sem recusa preserva o anterior", updateRejeitados("oi tudo bem", apres2, { modelos: ["compass"], tipos: [] }).modelos.includes("compass"));
+  // mudou de ideia: pediu o que rejeitou -> sai da lista (não fica blacklist eterno).
+  const cleared = clearRejeitadoOnRequest({ modelos: ["compass", "onix"], tipos: ["sedan"] }, "na verdade quero ver o compass");
+  check("decisao", "clearRejeitadoOnRequest: pediu o compass -> tira compass, mantém onix", !cleared.modelos.includes("compass") && cleared.modelos.includes("onix"));
 
   // REFINA VERSÃO/MOTOR (caso Alê): detector + contextVehicleModel.
   const memC = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", ano: 2019 }] };

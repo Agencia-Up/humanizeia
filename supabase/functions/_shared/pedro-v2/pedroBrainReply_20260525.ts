@@ -820,6 +820,10 @@ export async function generatePedroBrainReply(input: {
               vehicle_resolution: input.vehicle_resolution,
               veiculo_em_foco: focusVehicle,
               veiculos_ja_apresentados: presentedVehicles,
+              lead_rejeitou: {
+                modelos: Array.isArray((input.memory as any)?.rejeitados?.modelos) ? (input.memory as any).rejeitados.modelos : [],
+                tipos: Array.isArray((input.memory as any)?.rejeitados?.tipos) ? (input.memory as any).rejeitados.tipos : [],
+              },
               ad_context: input.ad_context || null,
               media_context: input.media_context || null,
               recent_history: input.recent_history || input.memory?.recent_turns || [],

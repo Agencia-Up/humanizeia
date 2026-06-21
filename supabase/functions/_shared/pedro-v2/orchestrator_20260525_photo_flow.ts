@@ -38,6 +38,8 @@ import {
   vehicleDedupKey,
   excludeAlreadyPresented,
   replyDeniesAvailability,
+  updateRejeitados,
+  clearRejeitadoOnRequest,
 } from "./decisionLogic.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -1126,6 +1128,9 @@ export async function processPedroV2Turn(
           : `ad_context:${adContext.source || "unknown"}`,
       }
     : intent;
+  // PLANO A (enriquecer o cérebro): o que o lead REJEITOU. Computa ANTES do planner pra ele NÃO
+  // re-oferecer + ler "não, o outro" certo. Mutável em currentMemory -> planner e reply veem neste turno.
+  (currentMemory as any).rejeitados = updateRejeitados(text, (currentMemory as any)?.veiculos_apresentados, (currentMemory as any)?.rejeitados);
   const vehicleResolution = resolvePedroVehicleTurn({
     message: text,
     enriched_message: enrichedText,
@@ -1155,6 +1160,10 @@ export async function processPedroV2Turn(
     brainPlan.search_filters.ad_price = brainPlan.search_filters.preco_max;
     delete brainPlan.search_filters.preco_max;
   }
+  // PLANO A: lead AGORA pede explicitamente o que rejeitou (mudou de ideia) -> tira da lista de rejeitados.
+  if ((brainPlan as any)?.search_query) {
+    (currentMemory as any).rejeitados = clearRejeitadoOnRequest((currentMemory as any).rejeitados, (brainPlan as any).search_query);
+  }
   // MODO ASSISTENTE: lead com vendedor dono NUNCA recebe foto do agente (roteia pro
   // vendedor) nem handoff de rodizio (ja tem dono). Rebaixa para reply_only.
   if (ownedLeadAssistantMode) {
@@ -1179,6 +1188,8 @@ export async function processPedroV2Turn(
         lead_name: pushName,
       })
     : currentMemory;
+  // PLANO A: carrega rejeitados pro nextMemory -> o REPLY usa neste turno e a persistência final salva.
+  (nextMemory as any).rejeitados = (currentMemory as any).rejeitados;
 
   log("info", "pedro_v2_turn_routed", {
     lead_id: lead?.id || null,

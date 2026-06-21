@@ -1089,6 +1089,7 @@ export async function planPedroTurn(input: {
     "== CONTEXTO DE DECISAO (decision_context) — USE SEMPRE p/ decidir o que falar/buscar ==",
     "- decision_context.vehicles_shown = carros que voce JA apresentou a este lead. NUNCA re-liste os MESMOS como se fossem novidade. Se o lead so reage a eles ('ok', 'gostei', 'achei caro', 'feios', 'nenhum desses'), NAO repita a lista: reconheca o que ele disse e AVANCE (pergunte qual interessa, ofereca foto, ou — se ele recusou/quer diferente — busque OUTRAS opcoes).",
     "- decision_context.qualification = o que voce JA sabe deste lead (nome/interesse/troca/pagamento/agendamento). NAO repergunte o que ja esta preenchido aqui. Se ja ha interesse + nome + (troca OU pagamento OU agendamento), o lead esta QUALIFICADO: avance pra fechar/transferir conforme as regras, sem ficar colhendo mais dados.",
+    "- decision_context.lead_rejeitou = modelos/tipos que o lead JA RECUSOU. NUNCA re-ofereca, re-busque nem lidere com esses; se ele pede 'outro'/'os outros', traga algo FORA do que ele rejeitou. (Excecao: se ele AGORA pede explicitamente um deles de volta, vale o pedido atual.)",
     "- RECONHECA o que o lead acabou de dizer (elogio, reclamacao tipo 'ficaram horriveis', objecao, comparacao) ANTES de seguir — nunca ignore o sentimento nem responda no automatico/repetido.",
     "",
     "== HANDOFF ==",
@@ -1129,6 +1130,11 @@ export async function planPedroTurn(input: {
       changed_direction: _leadDirection.changed_direction,
       current_message_wants_type: _leadDirection.current_type,
       prior_or_ad_vehicle: _leadDirection.prior_vehicle,
+    },
+    // PLANO A: o que o lead JÁ RECUSOU. NÃO re-ofereça nem lidere com esses modelos/tipos.
+    lead_rejeitou: {
+      modelos: Array.isArray((_mem as any).rejeitados?.modelos) ? (_mem as any).rejeitados.modelos : [],
+      tipos: Array.isArray((_mem as any).rejeitados?.tipos) ? (_mem as any).rejeitados.tipos : [],
     },
   };
 

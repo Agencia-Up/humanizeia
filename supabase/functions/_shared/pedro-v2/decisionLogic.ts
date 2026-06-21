@@ -83,6 +83,77 @@ export function detectLeadDirectionChange(message?: string | null, priorOrAdVehi
   };
 }
 
+// ── PLANO A (enriquecer o cérebro): o que o lead REJEITOU ─────────────────────────────────────
+// O cérebro re-oferecia carro/tipo que o lead JÁ recusou, e lia mal "não, o outro". Detector PURO
+// (offline) do sinal LINGUÍSTICO de recusa de veículo: "não quero/gostei/curti X", "esse não",
+// "sedan não", "tira o X". Conservador (exige verbo de recusa OU tipo+não OU demonstrativo+não) p/
+// NÃO confundir com "não" a uma pergunta ("não, pode mandar"), tempo ("amanhã não") etc. A RESOLUÇÃO
+// de QUAL modelo (esse->foco; nome citado->apresentados) fica no orchestrator, que tem o contexto.
+const _REJECT_TYPE_WORDS = "sedan|seda|hatch|hatchback|suv|crossover|utilitario|picape|pickup|caminhonete|camionete";
+export function detectLeadRejection(message?: string | null): {
+  has_rejection: boolean;
+  rejected_type: string | null;
+  rejects_focus: boolean;
+} {
+  const t = normalizePlannerText(message);
+  const none = { has_rejection: false, rejected_type: null as string | null, rejects_focus: false };
+  if (!t) return none;
+  const recusaVerb = /\bnao\s+(quero|queria|gostei|gosto|curti|curto|gostaria|interessa|interessou|me interessa|me interessou|agrada|agradou)\b/.test(t)
+    || /\b(tira|tirando|tirar|menos|exceto|fora)\s+(o|a|os|as|esse|este|essa|esta|esses)\b/.test(t)
+    || /\b(esse|este|essa|esta|esses|desse|deste|dessa|dele|dela|esse ai|esse carro|este carro)\s+nao\b/.test(t)
+    || /\bnao\s+(esse|este|essa|esta|gostei|curti)\b/.test(t)
+    || new RegExp(`\\b(${_REJECT_TYPE_WORDS})\\s+nao\\b`).test(t);
+  if (!recusaVerb) return none;
+  const typeKey = (t.match(new RegExp(`\\b(${_REJECT_TYPE_WORDS})\\b`)) || [])[1] || null;
+  const rejected_type = typeKey ? _DIRECTION_TYPES[typeKey] || null : null;
+  const rejects_focus = /\b(esse|este|essa|esta|esses|desse|deste|dessa|dele|dela|esse ai|esse carro|este carro|o mesmo)\b/.test(t);
+  return { has_rejection: true, rejected_type, rejects_focus };
+}
+
+// Token de MODELO de um veículo (1º token significativo do modelo, ignora ano/tipo). Pra casar recusa.
+function _rejectionModelToken(vehicle: any): string {
+  return normalizePlannerText(vehicle?.modelo || "")
+    .split(/\s+/)
+    .find((w) => w.length >= 3 && !/^\d/.test(w) && !_DIRECTION_TYPES[w]) || "";
+}
+
+// Acumula o que o lead REJEITOU. Resolve QUAL modelo: nome de modelo APRESENTADO citado na recusa, ou
+// (se "esse"/demonstrativo) o ÚLTIMO apresentado (foco). Soma com o que já havia (união, deduplicado).
+// Devolve o `rejeitados` anterior intacto quando não há recusa. PURO -> testado offline.
+export function updateRejeitados(message: string, presentedVehicles: any[], prior?: { modelos?: string[]; tipos?: string[] } | null) {
+  const base = { modelos: [...(prior?.modelos || [])], tipos: [...(prior?.tipos || [])] };
+  const rej = detectLeadRejection(message);
+  if (!rej.has_rejection) return base;
+  const m = normalizePlannerText(message);
+  const apres = Array.isArray(presentedVehicles) ? presentedVehicles : [];
+  const newModels: string[] = [];
+  for (const v of apres) {
+    const mk = _rejectionModelToken(v);
+    if (mk && new RegExp(`\\b${mk}\\b`).test(m)) newModels.push(mk);
+  }
+  if (rej.rejects_focus && newModels.length === 0 && apres.length > 0) {
+    const mk = _rejectionModelToken(apres[apres.length - 1]);
+    if (mk) newModels.push(mk);
+  }
+  return {
+    modelos: Array.from(new Set([...base.modelos, ...newModels])).slice(0, 10),
+    tipos: Array.from(new Set([...base.tipos, ...(rej.rejected_type ? [rej.rejected_type] : [])])).slice(0, 6),
+  };
+}
+
+// SEGURANÇA anti-blacklist: se o lead AGORA pede explicitamente um modelo/tipo que estava rejeitado
+// (mudou de ideia), remove-o da lista de rejeitados. Evita esconder pra sempre um carro que ele voltou
+// a querer. PURO -> testado offline.
+export function clearRejeitadoOnRequest(rejeitados: { modelos?: string[]; tipos?: string[] } | null | undefined, searchQuery?: string | null) {
+  const base = { modelos: [...(rejeitados?.modelos || [])], tipos: [...(rejeitados?.tipos || [])] };
+  const q = normalizePlannerText(searchQuery);
+  if (!q) return base;
+  return {
+    modelos: base.modelos.filter((mk) => !new RegExp(`\\b${mk}\\b`).test(q)),
+    tipos: base.tipos.filter((tp) => !new RegExp(`\\b${tp}\\b`).test(q)),
+  };
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):
