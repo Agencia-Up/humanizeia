@@ -58,7 +58,7 @@ export interface VisibleFeatures {
 export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   // ── Abas do agente Pedro ────────────────────────────────────────────
   tab_crm: true,          // Meus Leads
-  tab_inbox: true,        // Inbox IA
+  tab_inbox: true,        // Conversas
   tab_instancias: true,   // Instâncias WhatsApp (whatsapp do vendedor)
   tab_crm_ao_vivo: true,  // Painel ao Vivo (visão geral)
   tab_performance: false, // métricas (default off — master libera)
@@ -68,7 +68,7 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   marcos_crm: true,        // CRM Kanban
   marcos_contatos: true,   // Base de contatos
   marcos_disparo: true,    // Disparo em Massa
-  marcos_inbox: true,      // Inbox WhatsApp
+  marcos_inbox: true,      // Conversas
   marcos_formularios: false,
   marcos_instancias: true,   // Gerenciar conexões do WhatsApp
   marcos_automacoes: false,
@@ -99,7 +99,7 @@ export interface SellerProfileResult {
   seller: SellerInfo | null;
   masterUserId: string | null;
   // Todos os ids de ai_team_members do vendedor (ele pode pertencer a varios
-  // agentes). Usado p/ escopar leads atribuidos a ele (ex: Inbox IA, CRM).
+  // agentes). Usado p/ escopar leads atribuidos a ele (ex: Conversas IA, CRM).
   memberIds: string[];
   visibleFeatures: VisibleFeatures;
   loading: boolean;

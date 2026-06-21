@@ -5537,7 +5537,7 @@ const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
   // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
-  { id: 'inbox-ia',     label: 'Inbox IA',     icon: Inbox,         emoji: '📨' },
+  { id: 'inbox-ia',     label: 'Conversas IA', icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -5549,7 +5549,7 @@ const ALL_SELLER_TABS = [
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
-  { id: 'inbox',       label: 'Inbox',        icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
+  { id: 'inbox',       label: 'Conversas',    icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
 
 export default function PedroSDR() {
@@ -5657,7 +5657,7 @@ export default function PedroSDR() {
               <CrmAvancadoTab userId={user?.id} />
             </TabsContent>
 
-            {/* Inbox IA — conversas do agente com pause/resume */}
+            {/* Conversas IA — conversas do agente com pause/resume */}
             <TabsContent value="inbox-ia" className="mt-0 h-full">
               {inboxOwnerId && (
                 <AgentInboxTab

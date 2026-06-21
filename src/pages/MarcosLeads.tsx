@@ -31,7 +31,7 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
   { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋', featureKey: 'marcos_formularios' },
   { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥', featureKey: 'marcos_contatos' },
   { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤', featureKey: 'marcos_disparo' },
-  { id: 'inbox',       label: 'Inbox',            icon: Inbox,        emoji: '💬', featureKey: 'marcos_inbox' },
+  { id: 'inbox',       label: 'Conversas',        icon: Inbox,        emoji: '💬', featureKey: 'marcos_inbox' },
   // Instâncias (números de robô) saíram daqui — agora vivem só na área de
   // Integração (menu "Instâncias", /whatsapp/instances). Refactor isolamento.
   { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡', featureKey: 'marcos_automacoes' },

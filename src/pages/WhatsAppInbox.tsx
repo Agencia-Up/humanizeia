@@ -601,7 +601,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         body: {
           leadId: lead?.id || null,
           memberId,
-          notes: 'Transferência manual via Inbox IA',
+          notes: 'Transferência manual via Conversas IA',
           remoteJid: jid,
           agentId,
           leadName: lead?.lead_name || selectedConv?.contact_name || phone,

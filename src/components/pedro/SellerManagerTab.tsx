@@ -88,7 +88,7 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'agent_daniel',  label: 'Daniel',  desc: 'Estratégia',             icon: Brain,     group: 'agents' },
   // ── Abas do Pedro SDR ──
   { key: 'tab_crm',            label: 'Meus Leads',            desc: 'Pipeline de leads e CRM',        icon: Users,          group: 'tab' },
-  { key: 'tab_inbox',          label: 'Inbox',                  desc: 'Caixa de mensagens',             icon: MessageSquare,  group: 'tab' },
+  { key: 'tab_inbox',          label: 'Conversas',              desc: 'Caixa de mensagens',             icon: MessageSquare,  group: 'tab' },
   { key: 'tab_performance',    label: 'Performance',            desc: 'Métricas e resultados',          icon: BarChart3,      group: 'tab' },
   { key: 'tab_agente_ia',      label: 'Agente IA',              desc: 'Configuração do agente',         icon: Bot,            group: 'tab' },
   { key: 'tab_crm_ao_vivo',    label: 'Painel ao Vivo',         desc: 'Leads em tempo real',            icon: Radio,          group: 'tab' },
@@ -101,7 +101,7 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'marcos_formularios', label: 'Formulários',            desc: 'Captura de leads',               icon: FileText,       group: 'marcos' },
   { key: 'marcos_contatos',    label: 'Contatos',               desc: 'Base de contatos',               icon: Users,          group: 'marcos' },
   { key: 'marcos_disparo',     label: 'Disparo em Massa',       desc: 'Campanhas WhatsApp',             icon: Send,           group: 'marcos' },
-  { key: 'marcos_inbox',       label: 'Inbox WhatsApp',         desc: 'Mensagens diretas',              icon: MessageCircle,  group: 'marcos' },
+  { key: 'marcos_inbox',       label: 'Conversas',              desc: 'Mensagens diretas',              icon: MessageCircle,  group: 'marcos' },
   { key: 'marcos_instancias',  label: 'Instâncias',             desc: 'Gerenciar conexões',             icon: Smartphone,     group: 'marcos' },
   { key: 'marcos_automacoes',  label: 'Automações',             desc: 'Fluxos automáticos',             icon: Zap,            group: 'marcos' },
   // ── Menu Lateral ──

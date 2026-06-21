@@ -885,7 +885,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
           {!selectedLead ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground">
               <Bot className="h-16 w-16 opacity-20 mb-4" />
-              <p className="text-sm font-medium">Inbox do Agente IA</p>
+              <p className="text-sm font-medium">Conversas IA</p>
               <p className="text-xs mt-1">Selecione uma conversa para visualizar</p>
             </div>
           ) : (
