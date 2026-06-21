@@ -393,7 +393,7 @@ function buildAdVehicleConsultationFallback(input: {
   ].join("\n\n");
 }
 
-function buildDeterministicStockReply(input: {
+export function buildDeterministicStockReply(input: {
   memory?: PedroV2LeadMemory | null;
   plan: PedroBrainPlan;
   intent?: PedroV2IntentResult | null;
@@ -781,6 +781,7 @@ export async function generatePedroBrainReply(input: {
                 "- NUNCA cole URL de imagem nem use markdown/links ('[texto](url)' ou '![..](..)') — o WhatsApp NAO renderiza e a URL crua aparece feia pro cliente. Para mostrar o carro, OFERECA enviar as fotos (a ferramenta de fotos manda a midia de verdade).",
                 "- Se o plano atual for 'photo_request', a tool de fotos ja selecionou e enviara as imagens. Escreva apenas um fechamento humano amigavel, sem prometer novas fotos.",
                 "- Nunca invente veiculos ou dados (ano, preco, km) que nao estejam descritos em stock.facts.",
+                "- PROIBIDO afirmar que um veiculo NAO existe ('nao temos', 'infelizmente nao temos', 'nao trabalhamos com') quando stock.facts NAO foi preenchido por uma busca (vazio/ausente). Sem ter CONSULTADO o estoque voce NAO SABE se tem — entao NAO negue de cabeca. Conduza: confirme com o lead qual modelo exatamente ele quer (que sera buscado) ou ofereca verificar. So afirme indisponibilidade quando stock.facts FOI consultado e realmente nao tem o que ele pediu. Dizer 'nao temos' sem ter buscado e ERRO GRAVE que perde a venda.",
                 "- Se o lead trocou de veiculo ou mudou de assunto, responda sobre o novo assunto. A mensagem atual sempre vence a memoria antiga.",
                 hasPresented
                   ? `- SAUDACAO/APRESENTACAO (status: JA APRESENTADO — REGRA FORTE): voce JA cumprimentou e se apresentou nesta conversa. E PROIBIDO recomecar com saudacao de horario ('Bom dia'/'Boa tarde'/'Boa noite'/'Ola') E PROIBIDO repetir a apresentacao ('Sou o ${agentName}, consultor aqui da ${input.agent?.company_name || "Icom Motors"}'). Va DIRETO ao ponto da resposta. Reapresentar/recumprimentar irrita o cliente.`

@@ -139,6 +139,19 @@ export function contextVehicleModel(memory: any, adVehicleQuery?: string | null)
 // fim de "motoriz" (a palavra continua: motorizacao). "270"/"t270"/"modelo X" cobrem o caso real.
 const _VERSION_SPEC = /(\bt\s?-?270\b|\b270\b|\bturbo\b|\btsi\b|\btgdi\b|\bpremier\b|\blimited\b|\blongitude\b|\btrailhawk\b|\bsport\b|\bdiesel\b|motoriz|\bmodelo\s+\w)/;
 
+// ── TRAVA FINAL: o reply NEGA disponibilidade de veículo? (cinto-e-suspensório anti-alucinação) ──
+// Detecta "não temos / não tenho / infelizmente não temos / não há X em estoque". Exclui "não temos
+// como" (financiamento/horário — não é sobre carro). Usado pelo orchestrator: se NEGA + o cérebro NÃO
+// buscou neste turno + o lead nomeou um veículo -> faz a busca que faltou em vez de deixar a mentira sair.
+export function replyDeniesAvailability(text?: string | null): boolean {
+  const t = normalizePlannerText(text);
+  if (!t) return false;
+  if (/\bnao temos como\b/.test(t)) return false;
+  return /\b(infelizmente\s+)?(nao temos|nao tenho|nao trabalhamos com|nao dispomos|nao possuimos)\b/.test(t)
+    || /\bnao (ha|existe|tem)\b.{0,30}\b(em estoque|no estoque|disponivel|disponiveis)\b/.test(t)
+    || /\b(no momento|atualmente)\b.{0,25}\bnao (temos|tenho)\b/.test(t);
+}
+
 export function leadRefinesVehicleNeedsSearch(message?: string | null, memory?: any, adVehicleQuery?: string | null): boolean {
   const t = normalizePlannerText(message);
   if (!t) return false;

@@ -32,6 +32,7 @@ import {
   pickRoundRobinSeller,
   leadRefinesVehicleNeedsSearch,
   contextVehicleModel,
+  replyDeniesAvailability,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -159,6 +160,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // CONTRA-PROVA: troca REAL (carro do lead) continua bloqueando a busca desse carro.
   const h2 = normalizePlan({ action: "reply_only", intent: "trade_in", confidence: 0.7 }, FALLBACK, { message: "tenho uma hilux 2015 pra dar na troca", vehicle_resolution: vr({ has_current_vehicle_signal: true, query: "Toyota Hilux" }) as any, memory: null, recent_history: [] } as any);
   check("planner", "troca REAL 'tenho uma hilux pra trocar' -> NÃO busca", h2.action !== "stock_search", `action=${h2.action}`);
+
+  // TRAVA FINAL: detector de "nega disponibilidade" (orchestrator usa p/ recuperar a busca que faltou).
+  check("detectores", "nega: 'Infelizmente não temos a Hilux' -> true", replyDeniesAvailability("Infelizmente, não temos a Hilux cabine simples no momento.") === true);
+  check("detectores", "nega: 'no momento não tenho esse modelo' -> true", replyDeniesAvailability("no momento não tenho esse modelo") === true);
+  check("detectores", "nega: apresenta carro -> false", replyDeniesAvailability("Temos um Jeep Compass T270 2023 aqui sim! Quer ver fotos?") === false);
+  check("detectores", "nega: 'não temos como simular' (financiamento) -> false", replyDeniesAvailability("não temos como simular aqui, vou te passar pro especialista") === false);
 
   // detector puro: 4 casos.
   const dc = (m: string, prior: string) => detectLeadDirectionChange(m, prior);

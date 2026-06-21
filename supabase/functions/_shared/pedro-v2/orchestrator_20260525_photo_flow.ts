@@ -9,7 +9,7 @@ import { pickInterestVehicleFromState } from "../transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText, LeadTransferStatusKey } from "../transfer/leadStatus.ts";
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, mapQualificacaoToLeadColumns, classifyLeadSdr } from "../transfer/leadSdrCategory.ts";
 import { remoteJidToPhone } from "./phone.ts";
-import { generatePedroBrainReply } from "./pedroBrainReply_20260525.ts";
+import { generatePedroBrainReply, buildDeterministicStockReply } from "./pedroBrainReply_20260525.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
 import { searchPedroStock } from "./stockSearch_20260525_photo_flow.ts";
 import { setSdrLabelOnChat } from "./uazapiLabels.ts";
@@ -37,6 +37,7 @@ import {
   leadAsksForMoreOptions,
   vehicleDedupKey,
   excludeAlreadyPresented,
+  replyDeniesAvailability,
 } from "./decisionLogic.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -1824,6 +1825,38 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ── TRAVA FINAL: NUNCA "nao temos" sem ter CHECADO (cinto-e-suspensorio anti-alucinacao) ─────────
+  // Backstop universal: se o cerebro NAO buscou neste turno (stockResult null) mas o lead NOMEOU um
+  // veiculo (resolver pegou) e o reply esta NEGANDO disponibilidade, o agente esta alucinando que nao
+  // tem (nunca checou). Faz a busca que faltou; se o carro EXISTE, troca o reply pela lista REAL (nao
+  // mente); se realmente nao existe, o "nao temos" e legitimo e segue. Pega QUALQUER gap futuro de
+  // roteamento do planner (caso real Hilux: LLM rotulou trade_in e negou um carro que existia).
+  if (stockResult === null && (vehicleResolution as any)?.has_current_vehicle_signal
+      && (reply as any)?.text && replyDeniesAvailability((reply as any).text)) {
+    const _recQuery = (vehicleResolution as any)?.query || (brainPlan as any)?.search_query
+      || (stockFilters as any)?.modelo_desejado || null;
+    if (_recQuery) {
+      try {
+        const _rec = await searchPedroStock(supabase, {
+          user_id: input.agent.user_id, query: _recQuery, limit: 6,
+          sells_motorcycles: _sellsMotos,
+          match_engine: dryRun ? ((input.payload as any)?.match_engine ?? null) : null,
+          stock_feed_url: _stockFeedOverride,
+        } as any);
+        if (_rec?.success && Array.isArray(_rec.items) && _rec.items.length > 0) {
+          stockResult = _rec;
+          reply = {
+            ok: true,
+            text: buildDeterministicStockReply({ memory: nextMemory, plan: { ...(brainPlan as any), action: "stock_search", search_query: _recQuery } as any, intent: contextualIntent as any, stock_result: _rec }),
+            source: "denial_without_search_recovered",
+            media: [],
+          } as any;
+          log("warn", "pedro_v2_denial_without_search_recovered", { lead_id: lead?.id || null, query: _recQuery, found: _rec.items.length });
+        }
+      } catch (_recErr) { /* recuperacao best-effort: nunca derruba o turno */ }
+    }
+  }
+
   let effectiveMemory = nextMemory;
   if (stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {
     const indices = Array.isArray((reply as any).presented_vehicle_indices) ? (reply as any).presented_vehicle_indices : [];
@@ -1831,7 +1864,7 @@ export async function processPedroV2Turn(
       .map((idx: number) => stockResult.items[idx - 1])
       .filter(Boolean);
 
-    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback"].includes(reply.source)) {
+    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered"].includes(reply.source)) {
       vehiclesToSave = stockResult.items;
     }
 
