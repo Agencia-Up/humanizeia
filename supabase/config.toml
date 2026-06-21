@@ -138,6 +138,9 @@ verify_jwt = false
 [functions.jose-cost-alerts]
 verify_jwt = false
 
+[functions.jose-reasoning-core]
+verify_jwt = false
+
 [functions.jose-analyze]
 verify_jwt = false
 

@@ -17,6 +17,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { AILog, AILogEntry } from '@/components/apollo/AILog';
 import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
 import { JoseGovernanca } from '@/components/jose/JoseGovernanca';
+import { JoseJulgamento } from '@/components/jose/JoseJulgamento';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -1256,6 +1257,7 @@ export default function ApolloDashboard() {
               <TabsTrigger value="golden-rules" className="gap-1 text-xs"><Shield className="h-3 w-3" />Regras de Ouro</TabsTrigger>
               <TabsTrigger value="schedule" className="gap-1 text-xs"><Settings className="h-3 w-3" />Agendamento</TabsTrigger>
               <TabsTrigger value="governanca" className="gap-1 text-xs"><Gauge className="h-3 w-3" />Governança</TabsTrigger>
+              <TabsTrigger value="julgamento" className="gap-1 text-xs"><Brain className="h-3 w-3" />Julgamento</TabsTrigger>
             </TabsList>
 
             {/* Campaigns */}
@@ -1644,6 +1646,11 @@ export default function ApolloDashboard() {
             {/* Governança (José v3.1 — Fase 0): aprovações, limites/kill-switch, permissões, custo, recursos */}
             <TabsContent value="governanca" className="mt-4">
               <JoseGovernanca />
+            </TabsContent>
+
+            {/* Julgamento (José v3.1 — Fase 1): veredito em pirâmide + base de inteligência por nicho */}
+            <TabsContent value="julgamento" className="mt-4">
+              <JoseJulgamento />
             </TabsContent>
           </Tabs>
         )}
