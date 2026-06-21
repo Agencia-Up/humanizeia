@@ -24,6 +24,24 @@ export function leadMessageHasExplicitPriceCeiling(message?: string | null) {
   return /\b(ate|maximo|maxima|no maximo|orcamento|budget|tenho|tenho ate|procuro ate|quero ate|faixa de|na faixa|valor maximo|limite)\b/.test(text);
 }
 
+// Extrai o VALOR do teto de preço de "até X mil / R$ X / Xk" (provider-independente). O planner LLM
+// (esp. DeepSeek) às vezes NÃO converte "até 50 mil" -> preco_max=50000; aqui garantimos o teto pelos
+// dois provedores. Gate em leadMessageHasExplicitPriceCeiling (precisa de marcador de teto + número) ->
+// não pega ano/km. Testado offline.
+export function parsePriceCeiling(message?: string | null): number | null {
+  if (!leadMessageHasExplicitPriceCeiling(message)) return null;
+  const t = normalizePlannerText(message);
+  const mil = t.match(/(\d{1,3}(?:[.,]\d{1,2})?)\s*mil\b/);
+  if (mil) return Math.round(parseFloat(mil[1].replace(".", "").replace(",", ".")) * 1000);
+  const k = t.match(/\b(\d{1,3})\s*k\b/);
+  if (k) return parseInt(k[1], 10) * 1000;
+  const grouped = t.match(/r?\$?\s*(\d{1,3}(?:[.\s]\d{3})+)\b/);
+  if (grouped) { const n = parseInt(grouped[1].replace(/[.\s]/g, ""), 10); if (n >= 5000) return n; }
+  const plain = t.match(/\b(\d{4,7})\b/);
+  if (plain) { const n = parseInt(plain[1], 10); if (n >= 5000 && n <= 2000000) return n; }
+  return null;
+}
+
 export function leadMessageAsksBroadStock(message?: string | null) {
   const text = normalizePlannerText(message);
   if (!text) return false;

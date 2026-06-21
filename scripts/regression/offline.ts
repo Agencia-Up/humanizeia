@@ -33,6 +33,7 @@ import {
   leadRefinesVehicleNeedsSearch,
   contextVehicleModel,
   replyDeniesAvailability,
+  parsePriceCeiling,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -160,6 +161,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // CONTRA-PROVA: troca REAL (carro do lead) continua bloqueando a busca desse carro.
   const h2 = normalizePlan({ action: "reply_only", intent: "trade_in", confidence: 0.7 }, FALLBACK, { message: "tenho uma hilux 2015 pra dar na troca", vehicle_resolution: vr({ has_current_vehicle_signal: true, query: "Toyota Hilux" }) as any, memory: null, recent_history: [] } as any);
   check("planner", "troca REAL 'tenho uma hilux pra trocar' -> NÃO busca", h2.action !== "stock_search", `action=${h2.action}`);
+
+  // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
+  check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
+  check("preco", "parse 'onix até 30 mil' -> 30000", parsePriceCeiling("onix até 30 mil") === 30000);
+  check("preco", "parse 'tenho 100 mil pra gastar' -> 100000", parsePriceCeiling("tenho 100 mil pra gastar") === 100000);
+  check("preco", "parse 'até R$ 48.000' -> 48000", parsePriceCeiling("até R$ 48.000") === 48000, String(parsePriceCeiling("até R$ 48.000")));
+  check("preco", "parse 'suv 2020 pra frente' -> null (ano, não teto)", parsePriceCeiling("procuro suv 2020 pra frente") === null, String(parsePriceCeiling("procuro suv 2020 pra frente")));
+  // normalizePlan aplica o teto mesmo quando o LLM não setou preco_max.
+  const pc = normalizePlan({ action: "stock_search", intent: "stock_lookup", search_query: "Corolla", search_filters: { modelo_desejado: "Corolla" }, confidence: 0.7 }, FALLBACK, { message: "corolla até 50 mil", vehicle_resolution: vr() as any, memory: null, recent_history: [] } as any);
+  check("preco", "normalizePlan 'corolla até 50 mil' -> preco_max=50000 + hard", Number(pc.search_filters?.preco_max) === 50000 && pc.search_filters?.hard_price_ceiling === true, `preco_max=${pc.search_filters?.preco_max} hard=${pc.search_filters?.hard_price_ceiling}`);
 
   // TRAVA FINAL: detector de "nega disponibilidade" (orchestrator usa p/ recuperar a busca que faltou).
   check("detectores", "nega: 'Infelizmente não temos a Hilux' -> true", replyDeniesAvailability("Infelizmente, não temos a Hilux cabine simples no momento.") === true);
