@@ -16,6 +16,7 @@ import { MarkdownRenderer } from '@/components/ui/markdown-renderer';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AILog, AILogEntry } from '@/components/apollo/AILog';
 import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
+import { JoseGovernanca } from '@/components/jose/JoseGovernanca';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -1254,6 +1255,7 @@ export default function ApolloDashboard() {
               <TabsTrigger value="seasonal" className="gap-1 text-xs"><Sun className="h-3 w-3" />Sazonalidade</TabsTrigger>
               <TabsTrigger value="golden-rules" className="gap-1 text-xs"><Shield className="h-3 w-3" />Regras de Ouro</TabsTrigger>
               <TabsTrigger value="schedule" className="gap-1 text-xs"><Settings className="h-3 w-3" />Agendamento</TabsTrigger>
+              <TabsTrigger value="governanca" className="gap-1 text-xs"><Gauge className="h-3 w-3" />Governança</TabsTrigger>
             </TabsList>
 
             {/* Campaigns */}
@@ -1637,6 +1639,11 @@ export default function ApolloDashboard() {
               <div className="max-w-md mx-auto">
                 <CronSettings />
               </div>
+            </TabsContent>
+
+            {/* Governança (José v3.1 — Fase 0): aprovações, limites/kill-switch, permissões, custo, recursos */}
+            <TabsContent value="governanca" className="mt-4">
+              <JoseGovernanca />
             </TabsContent>
           </Tabs>
         )}

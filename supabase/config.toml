@@ -129,6 +129,15 @@ verify_jwt = false
 [functions.jose-agent]
 verify_jwt = false
 
+[functions.jose-ai-gateway]
+verify_jwt = false
+
+[functions.jose-approval-handler]
+verify_jwt = false
+
+[functions.jose-cost-alerts]
+verify_jwt = false
+
 [functions.jose-analyze]
 verify_jwt = false
 

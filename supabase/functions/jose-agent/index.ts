@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { checkGuardrails } from "../_shared/jose-v2/guardrails.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,6 +7,36 @@ const corsHeaders = {
 };
 
 const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
+
+// ── José v3.1 / Fase 0: governança das ações autônomas ──────────────────────
+const APPROVAL_TTL_MS = (Number(Deno.env.get("JOSE_APPROVAL_TTL_HORAS")) || 2) * 60 * 60 * 1000;
+
+// Mapeia o action_type do José -> tipo_acao das permissões (jose_permissions).
+function mapTipoAcao(actionType: string): string {
+  const t = String(actionType || "");
+  if (t.includes("pause")) return "pausar_campanha";
+  if (t.includes("increase_budget") || t === "scale") return "escalar_orcamento";
+  if (t.includes("decrease_budget")) return "reduzir_orcamento";
+  if (t.includes("clone") || t.includes("create")) return "criar_campanha";
+  if (t.includes("creative") || t.includes("ad_")) return "publicar_criativo";
+  if (t.includes("audience") || t.includes("target")) return "ajustar_publico";
+  return t || "acao_generica";
+}
+// Estima o R$ de orçamento que a ação muda (pra cap/gate). Best-effort pelos params.
+function estimateGastoAlterado(action: any): number {
+  const p = action?.params || {};
+  const cand = p.budget_change ?? p.delta ?? p.new_budget ?? p.daily_budget ?? p.amount ?? 0;
+  const n = Number(cand);
+  return Number.isFinite(n) ? Math.abs(n) : 0;
+}
+// Risco da ação (pra fila de aprovação). Orçamento/criação = mais alto que pausar.
+function riscoDaAcao(action: any): string {
+  const t = String(action?.action_type || "");
+  if (t.includes("clone") || t.includes("create")) return "alto";
+  if (t.includes("budget")) return estimateGastoAlterado(action) >= 200 ? "alto" : "medio";
+  if (t.includes("pause")) return "baixo";
+  return "medio";
+}
 
 /**
  * apollo-agent v4: Level 6 Autonomous Meta Ads AI Agent — JOSÉ
@@ -376,6 +407,40 @@ Deno.serve(async (req) => {
     if (auto_execute && aiResult.actions?.length > 0) {
       for (const action of aiResult.actions) {
         if (action.auto_safe && action.action_type !== "clone_campaign") {
+          // ── Guardrails (Fase 0): kill-switch -> permissão -> cap diário -> teto IA ──
+          const tipoAcao = mapTipoAcao(action.action_type);
+          const guard = await checkGuardrails(admin, {
+            user_id: user.id,
+            ad_account_id: adAccountDbId || null,
+            tipo_acao: tipoAcao,
+            gasto_alterado: estimateGastoAlterado(action),
+          });
+
+          if (guard.decision === "block") {
+            executionLog.push({ ...action, blocked: true, guardrail: guard.reason, executed_at: new Date().toISOString(), executed_by: "guardrail_block" });
+            continue; // kill-switch / sem permissão / teto estourado -> NÃO executa
+          }
+
+          if (guard.decision === "gate") {
+            // Em vez de executar, cria uma APROVAÇÃO pendente (o dono responde SIM/NÃO).
+            try {
+              await admin.from("jose_action_approvals").insert({
+                user_id: user.id,
+                ad_account_id: adAccountDbId || null,
+                risco: riscoDaAcao(action),
+                tipo_acao: tipoAcao,
+                payload: { campaign_id: action.campaign_id, action_type: action.action_type, params: action.params || {} },
+                resumo_humano: action.reason || action.description || `${tipoAcao} em ${action.campaign_id}`,
+                status: "pendente",
+                enviado_em: new Date().toISOString(),
+                expira_em: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(),
+              });
+            } catch { /* ignore approval insert error */ }
+            executionLog.push({ ...action, gated: true, guardrail: guard.reason, executed_at: new Date().toISOString(), executed_by: "guardrail_gate" });
+            continue; // aguarda o SIM/NÃO
+          }
+
+          // guard.decision === "execute" -> roda como antes
           const result = await executeMetaAction(accessToken, action);
           executionLog.push({
             ...action,
@@ -395,6 +460,8 @@ Deno.serve(async (req) => {
               before_state: camp ? { health_score: camp.health_score, roas: camp.roas, ctr: camp.ctr, cpc: camp.cpc, spend: camp.spend } : {},
               executed_by: "apollo_auto",
               executed_at: new Date().toISOString(),
+              risco: riscoDaAcao(action),
+              platform: "meta",
             });
           } catch { /* ignore log error */ }
         }
