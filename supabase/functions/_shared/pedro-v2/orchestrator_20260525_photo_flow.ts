@@ -1,6 +1,7 @@
 import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
 import { handleApprovalReply } from "../jose-v2/approvalGate.ts";
+import { handleOwnerVoice } from "../jose-v2/ownerVoice.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
@@ -699,6 +700,24 @@ export async function processPedroV2Turn(
   // número do responsável. Senão, segue o fluxo normal do Pedro. Em dry_run não
   // executa (igual o resto do turno). Qualquer erro aqui NÃO bloqueia o Pedro.
   if (!dryRun) {
+    // Voz do dono (Fase 2): só dispara se a mensagem for ÁUDIO e do responsável.
+    // Texto/áudio de lead -> handled:false em 1 passo (não pesa o caminho quente).
+    try {
+      const voice = await handleOwnerVoice(supabase, {
+        user_id: input.agent.user_id,
+        agent_id: input.agent.id,
+        payload: input.payload,
+        remote_jid: remoteJid,
+        instance: input.wa_instance,
+      });
+      if (voice.handled) {
+        log("info", "jose_owner_voice", { remote_jid: remoteJid, action: voice.action });
+        return { ok: true, dry_run: dryRun, correlation_id: correlationId, next_action: "jose_voice_" + (voice.action || "handled") };
+      }
+    } catch (e) {
+      log("warn", "jose_owner_voice_error", { error: String((e as any)?.message || e) });
+    }
+
     try {
       const gateReply = await handleApprovalReply(supabase, {
         user_id: input.agent.user_id,
