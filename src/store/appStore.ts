@@ -45,19 +45,41 @@ interface AppState {
   setShowProductTour: (show: boolean) => void;
 }
 
+const THEME_STORAGE_KEY = 'logosia-storage';
+
+const applyThemeClass = (isDarkMode: boolean) => {
+  if (typeof document === 'undefined') return;
+
+  document.documentElement.classList.toggle('dark', isDarkMode);
+  document.documentElement.style.colorScheme = isDarkMode ? 'dark' : 'light';
+};
+
+const readStoredDarkMode = () => {
+  if (typeof window === 'undefined') return true;
+
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (!stored) return true;
+
+    const parsed = JSON.parse(stored);
+    return parsed?.state?.isDarkMode !== false;
+  } catch {
+    return true;
+  }
+};
+
+const initialDarkMode = readStoredDarkMode();
+applyThemeClass(initialDarkMode);
+
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       // Theme - default to dark mode
-      isDarkMode: true,
+      isDarkMode: initialDarkMode,
       toggleDarkMode: () =>
         set((state) => {
           const newMode = !state.isDarkMode;
-          if (newMode) {
-            document.documentElement.classList.add('dark');
-          } else {
-            document.documentElement.classList.remove('dark');
-          }
+          applyThemeClass(newMode);
           return { isDarkMode: newMode };
         }),
 
@@ -106,7 +128,10 @@ export const useAppStore = create<AppState>()(
       setShowProductTour: (show) => set({ showProductTour: show }),
     }),
     {
-      name: 'logosia-storage',
+      name: THEME_STORAGE_KEY,
+      onRehydrateStorage: () => (state) => {
+        applyThemeClass(state?.isDarkMode !== false);
+      },
       partialize: (state) => ({
         isDarkMode: state.isDarkMode,
         sidebarOpen: state.sidebarOpen,
@@ -116,17 +141,3 @@ export const useAppStore = create<AppState>()(
     }
   )
 );
-
-// Initialize dark mode on load
-if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('logosia-storage');
-  if (stored) {
-    const parsed = JSON.parse(stored);
-    if (parsed.state?.isDarkMode) {
-      document.documentElement.classList.add('dark');
-    }
-  } else {
-    // Default to dark mode
-    document.documentElement.classList.add('dark');
-  }
-}
