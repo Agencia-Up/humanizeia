@@ -30,7 +30,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { PLANS } from '../_shared/checkout-plans.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,13 +44,17 @@ const WEBHOOK_TOKEN =
 
 // ── Entitlement liberado por um pagamento confirmado do checkout publico ─────
 // O plano contratado vem de `checkout_pending.plan_type` (pro|basico), gravado
-// pela checkout-create-subscription. `tokens_included` conta ATENDIMENTOS do
-// ciclo (pro = 300, basico = 150). Linhas antigas sem plan_type caem em basico
-// (compatibilidade). NAO mexe no gating de agentes por plano (frente separada).
+// pela checkout-create-subscription. No padrao novo, `tokens_included` usa
+// 999999 como sentinela visual de ilimitado; o controle fino fica no saldo de IA.
+// Linhas antigas sem plan_type caem em basico (compatibilidade). NAO mexe no
+// gating de agentes por plano (frente separada).
+const UNLIMITED_ATENDIMENTOS = 999999;
+const DEFAULT_OPENAI_BALANCE_USD = 20;
+
 function resolveEntitlement(planType: string | null | undefined): { planId: string; atendimentos: number } {
-  if (planType === 'pro') return { planId: 'pro', atendimentos: PLANS.pro.atendimentos };
-  if (planType === 'enterprise') return { planId: 'enterprise', atendimentos: PLANS.enterprise.atendimentos };
-  return { planId: 'basico', atendimentos: PLANS.basico.atendimentos };
+  if (planType === 'pro') return { planId: 'pro', atendimentos: UNLIMITED_ATENDIMENTOS };
+  if (planType === 'enterprise') return { planId: 'enterprise', atendimentos: UNLIMITED_ATENDIMENTOS };
+  return { planId: 'basico', atendimentos: UNLIMITED_ATENDIMENTOS };
 }
 
 // Renovacao do ciclo a partir do `plano` do checkout (mensal/anual).
@@ -327,6 +330,23 @@ serve(async (req: Request) => {
               throw insErr;
             }
             console.log(`[checkout-asaas-webhook] assinatura CRIADA — user=${userId} plan=${planId} cota=${atendimentos}`);
+          }
+
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('openai_balance_usd')
+            .eq('id', userId)
+            .maybeSingle();
+          if (profile && profile.openai_balance_usd == null) {
+            const { error: balanceErr } = await supabase
+              .from('profiles')
+              .update({ openai_balance_usd: DEFAULT_OPENAI_BALANCE_USD })
+              .eq('id', userId);
+            if (balanceErr) {
+              console.warn(`[checkout-asaas-webhook] falha ao preencher saldo de IA: ${balanceErr.message}`);
+            } else {
+              console.log(`[checkout-asaas-webhook] saldo de IA inicial preenchido - user=${userId}`);
+            }
           }
         } else {
           console.warn(`[checkout-asaas-webhook] sem userId após pagamento — não foi possível provisionar acesso (pending=${pending.id})`);
