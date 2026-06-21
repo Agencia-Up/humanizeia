@@ -12,14 +12,11 @@
 // O QUE ESTA FUNCAO FAZ:
 //   Acha esses orfaos e os RE-ENCAMINHA para o proximo vendedor ativo (mesmo
 //   round-robin do timeout-checker, com fallback pra qualquer vendedor ativo).
-//   O reencaminhamento espelha EXATAMENTE o manual-transfer:
-//     - cria um transfer 'pending' novo (+15min), is_confirmed=false
-//     - NAO seta assigned_to_id (atribuicao firme so quando o vendedor manda "Ok",
-//       igual opcao A do manual-transfer). Assim o lead vira "aguardando confirmar"
-//       (verdadeiro), nao um falso "com vendedor".
+//   O reencaminhamento resgata direto:
 //     - notifica o vendedor por WhatsApp (3 tentativas, mesmo fallback de instancia)
-//   Dai o ciclo normal assume: vendedor confirma -> uazapi-webhook seta o
-//   assigned_to_id; vendedor ignora 15min -> transfer-timeout-checker escala.
+//     - cria um transfer 'confirmed', is_confirmed=true
+//     - seta assigned_to_id/status/status_crm para o vendedor ja trabalhar o lead
+//   Como sao leads que ja ficaram presos, nao dependem mais do "Ok".
 //
 // SEGURANCA:
 //   • dry_run = TRUE por padrao -> apenas RELATA o que faria (nao envia WhatsApp,
@@ -249,6 +246,11 @@ function pickNextSeller(sellers: any[], recentTransfers: any[], excludeId?: stri
   return [...active].sort((a: any, b: any) => (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0))[0] || null;
 }
 
+function addVirtualTransfer(recentTransfers: any[], sellerId: string, createdAt: string): void {
+  recentTransfers.unshift({ to_member_id: sellerId, created_at: createdAt });
+  if (recentTransfers.length > 100) recentTransfers.length = 100;
+}
+
 // ── WhatsApp (3 tentativas, igual manual-transfer) ───────────────────────────
 async function sendWAMessage(instance: any, phone: string, text: string): Promise<boolean> {
   if (!instance?.api_url || !phone) return false;
@@ -379,6 +381,23 @@ Deno.serve(async (req) => {
 
     const report: any[] = [];
     let rescued = 0, skippedPending = 0, noSeller = 0, noInstance = 0, sendFailed = 0;
+    const recentTransfersByOwner = new Map<string, any[]>();
+    let virtualTransferOffsetMs = 0;
+
+    const getRecentTransfersForOwner = async (ownerId: string): Promise<any[]> => {
+      const cached = recentTransfersByOwner.get(ownerId);
+      if (cached) return cached;
+
+      const { data: recentTransfers } = await supabase
+        .from('ai_lead_transfers')
+        .select('to_member_id,created_at')
+        .eq('user_id', ownerId)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      const rows = recentTransfers || [];
+      recentTransfersByOwner.set(ownerId, rows);
+      return rows;
+    };
 
     for (const lead of (orphanLeads || [])) {
       // 2. Pula se ja existe um transfer 'pending' (o timeout-checker cuida desse)
@@ -421,16 +440,11 @@ Deno.serve(async (req) => {
         sellers = fallback;
       }
 
-      const { data: recentTransfers } = await supabase
-        .from('ai_lead_transfers')
-        .select('to_member_id,created_at')
-        .eq('user_id', lead.user_id)
-        .order('created_at', { ascending: false })
-        .limit(100);
+      const recentTransfers = await getRecentTransfersForOwner(lead.user_id);
 
       // Exclui o ghoster; se ele for o unico ativo, cai no fallback (reenvia pra ele).
-      let nextSeller = pickNextSeller(sellers || [], recentTransfers || [], lastSellerId);
-      if (!nextSeller) nextSeller = pickNextSeller(sellers || [], recentTransfers || []);
+      let nextSeller = pickNextSeller(sellers || [], recentTransfers, lastSellerId);
+      if (!nextSeller) nextSeller = pickNextSeller(sellers || [], recentTransfers);
 
       if (!nextSeller) {
         noSeller++;
@@ -449,15 +463,16 @@ Deno.serve(async (req) => {
       // 4. DRY-RUN: so relata o que faria.
       if (dryRun) {
         report.push({ lead_id: lead.id, lead_name: lead.lead_name, acao: 'reencaminharia', vendedor: nextSeller.name });
+        addVirtualTransfer(recentTransfers, nextSeller.id, new Date(nowDate.getTime() + (++virtualTransferOffsetMs)).toISOString());
         rescued++;
         continue;
       }
 
-      // 5. LIVE — espelha manual-transfer:
-      //    instancia -> envia WhatsApp -> SO ENTAO cria o transfer pending (sem
-      //    assigned_to_id). Se nao tem instancia ou o envio falha, registra a
-      //    falha e NAO cria transfer (pra "reencaminhado" significar de verdade
-      //    "vendedor avisado"). Uma falha num lead nao aborta o lote.
+      // 5. LIVE:
+      //    instancia -> envia WhatsApp -> atribui direto ao vendedor. Se nao tem
+      //    instancia ou o envio falha, registra a falha e NAO cria transfer
+      //    (pra "reencaminhado" significar "vendedor avisado"). Uma falha num
+      //    lead nao aborta o lote.
       const instance = await resolveInstance(supabase, lead);
       if (!instance) {
         noInstance++;
@@ -527,6 +542,7 @@ Deno.serve(async (req) => {
       }).eq('id', lead.id);
       await supabase.from('ai_team_members').update({ last_lead_received_at: new Date().toISOString() }).eq('id', nextSeller.id);
       await resolveTransferFailures({ user_id: lead.user_id, lead_id: lead.id, resolved_by: 'orphan-rescue' });
+      addVirtualTransfer(recentTransfers, nextSeller.id, new Date(nowDate.getTime() + (++virtualTransferOffsetMs)).toISOString());
 
       report.push({ lead_id: lead.id, lead_name: lead.lead_name, acao: 'reencaminhado', vendedor: nextSeller.name });
       rescued++;
