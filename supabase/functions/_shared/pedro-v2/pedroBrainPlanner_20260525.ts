@@ -687,10 +687,15 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // nao podem virar busca so porque ha um carro na memoria — senao o agente re-busca e cospe fotos
   // no meio de uma conversa de financiamento (caso real 98863-4239: "quero ver financiamento" -> 5 fotos).
   const intentNaoEhBuscaDeVeiculo = [
-    "trade_in", "financing", "payment", "scheduling", "schedule", "visit", "agendamento",
+    "financing", "payment", "scheduling", "schedule", "visit", "agendamento",
     "location", "small_talk", "greeting", "handoff", "human_request", "seller_ack",
     "goodbye", "farewell", "thanks", "objection",
-  ].includes(String(plan.intent || ""));
+  ].includes(String(plan.intent || ""))
+    // TROCA so BLOQUEIA a busca quando ha sinal REAL de troca (carro do lead: "tenho/meu/na troca").
+    // Sem sinal real, "a Hilux cabine simples" e INTERESSE DE COMPRA -> tem que BUSCAR (caso 35-98788375:
+    // o LLM rotulou trade_in e o agente NEGOU a Hilux que EXISTIA, sem checar). isTradeInOffer ja
+    // distingue "ofereco o MEU carro" de "quero comprar ESSE" -> nomear um veiculo vence como compra.
+    || (String(plan.intent || "") === "trade_in" && isTradeInOffer(input.message, _heurIntent));
   // REFINAMENTO POR CONTEXTO (lead Ale, Compass T270): o lead especifica uma VERSAO/MOTOR ("seria o
   // modelo 270 com nova motorizacao") de um veiculo que esta no CONTEXTO (apresentado/interesse/anuncio),
   // mas NAO nomeia o modelo na frase -> o guard acima nao pega (resolver+LLM nao acham veiculo na frase).

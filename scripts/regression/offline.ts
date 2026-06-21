@@ -152,6 +152,14 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const r2 = normalizePlan({ action: "reply_only", intent: "thanks", confidence: 0.7 }, FALLBACK, { message: "No momento seria só esse mesmo. Mas agradeço.", vehicle_resolution: vr() as any, memory: memCompass, recent_history: [] } as any);
   check("planner", "despedida 'agradeço' NÃO vira busca", r2.action === "reply_only", `action=${r2.action}`);
 
+  // ── CASO Hilux (35-98788375): lead troca de interesse, LLM rotula trade_in errado, agente NEGA ──
+  // trade_in só bloqueia busca com sinal REAL de troca; nomear veículo de compra tem que buscar.
+  const h1 = normalizePlan({ action: "reply_only", intent: "trade_in", confidence: 0.7 }, FALLBACK, { message: "não\na Hilux cabine simples", vehicle_resolution: vr({ has_current_vehicle_signal: true, query: "Toyota Hilux" }) as any, memory: null, recent_history: [] } as any);
+  check("planner", "'a Hilux cabine simples' (LLM rotulou trade_in, SEM sinal real) -> BUSCA", h1.action === "stock_search" && /hilux/i.test(String(h1.search_query || h1.search_filters?.modelo_desejado || "")), `action=${h1.action} q=${h1.search_query}`);
+  // CONTRA-PROVA: troca REAL (carro do lead) continua bloqueando a busca desse carro.
+  const h2 = normalizePlan({ action: "reply_only", intent: "trade_in", confidence: 0.7 }, FALLBACK, { message: "tenho uma hilux 2015 pra dar na troca", vehicle_resolution: vr({ has_current_vehicle_signal: true, query: "Toyota Hilux" }) as any, memory: null, recent_history: [] } as any);
+  check("planner", "troca REAL 'tenho uma hilux pra trocar' -> NÃO busca", h2.action !== "stock_search", `action=${h2.action}`);
+
   // detector puro: 4 casos.
   const dc = (m: string, prior: string) => detectLeadDirectionChange(m, prior);
   check("detectores", "direção: 'procuro um suv' (ad Tracker) -> mudou p/ suv", dc("procuro um suv 2020 pra frente", "Chevrolet Tracker 2023").changed_direction === true && dc("procuro um suv 2020 pra frente", "Chevrolet Tracker 2023").current_type === "suv");
