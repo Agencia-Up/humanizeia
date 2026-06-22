@@ -1044,6 +1044,23 @@ export default function ApolloDashboard() {
 
   const [datePreset, setDatePreset] = useState<ApolloDatePreset>('last_30d');
   const [autoExecute, setAutoExecute] = useState(false);
+  // Auto-Pilot do topo: PERSISTE no banco (config do cron, auto_execute) pra ficar
+  // ligado depois de sair/voltar da página. Sincroniza com a aba Agendamento.
+  const { config: cronCfg, saveConfig: saveCronCfg } = useApolloCronConfig();
+  useEffect(() => { if (cronCfg) setAutoExecute(cronCfg.auto_execute ?? false); }, [cronCfg]);
+  const handleAutoPilot = useCallback((v: boolean) => {
+    setAutoExecute(v);
+    if (cronCfg) saveCronCfg.mutate({
+      is_enabled: cronCfg.is_enabled ?? false,
+      run_hour: cronCfg.run_hour ?? 8,
+      run_minute: cronCfg.run_minute ?? 0,
+      auto_execute: v,
+      send_whatsapp_on_critical: cronCfg.send_whatsapp_on_critical ?? true,
+      send_daily_report: cronCfg.send_daily_report ?? true,
+      whatsapp_report_number: cronCfg.whatsapp_report_number ?? null,
+      report_sender_instance_id: cronCfg.report_sender_instance_id ?? null,
+    });
+  }, [cronCfg, saveCronCfg]);
   const [activeTab, setActiveTab] = useState('campaigns');
   const [adsetCache, setAdsetCache] = useState<Record<string, any[]>>({});
   const [loadingAdsets, setLoadingAdsets] = useState<Record<string, boolean>>({});
@@ -1336,7 +1353,7 @@ export default function ApolloDashboard() {
             </Select>
 
             <div className={`flex items-center gap-2 border rounded-lg px-3 h-9 transition-all duration-500 ${autoExecute ? 'bg-primary/10 border-primary/40 animate-pulse-glow' : 'bg-card'}`}>
-              <Switch id="auto-exec" checked={autoExecute} onCheckedChange={setAutoExecute} className="scale-75" />
+              <Switch id="auto-exec" checked={autoExecute} onCheckedChange={handleAutoPilot} className="scale-75" />
               <Label htmlFor="auto-exec" className={`text-xs cursor-pointer whitespace-nowrap ${autoExecute ? 'text-primary font-semibold' : ''}`}>
                 {autoExecute ? '⚡ Auto-Pilot ATIVO' : 'Auto-Pilot'}
               </Label>
