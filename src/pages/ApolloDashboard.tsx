@@ -30,7 +30,7 @@ import {
   Loader2, Minus, Pause, Play, Radar, Settings, Sparkles,
   ThumbsDown, TrendingDown, TrendingUp, Zap, Sun, BarChart3,
   Flame, Gauge, PieChart, RefreshCw, MessageCircle, Phone, Shield,
-  Image as ImageIcon, Film,
+  Image as ImageIcon, Film, DollarSign, ShieldCheck, Target,
 } from 'lucide-react';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -143,6 +143,272 @@ function mainMetricFor(campaign: ApolloEnrichedCampaign, sym: string): { label: 
 // ── CampaignCard ──────────────────────────────────────────────────────────────
 
 // ── CreativeCard: um anúncio (criativo) com preview de imagem/vídeo + métricas ──
+function josePlainStatus(score: number | null) {
+  if (score === null) return {
+    label: 'Pronto para analisar',
+    detail: 'Clique em analisar para o Jose traduzir suas campanhas em decisoes simples.',
+    cls: 'border-[#D4A017]/30 bg-[#D4A017]/10 text-[#D4A017]',
+  };
+  if (score >= 70) return {
+    label: 'Bom, com chance de escala',
+    detail: 'As campanhas estao saudaveis. O Jose vai procurar onde economizar e onde crescer.',
+    cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  };
+  if (score >= 45) return {
+    label: 'Precisa de atencao',
+    detail: 'Existe verba em pontos que podem melhorar. Priorize as recomendacoes abaixo.',
+    cls: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  };
+  return {
+    label: 'Acao urgente',
+    detail: 'Ha campanhas gastando mal. Revise antes de aumentar verba.',
+    cls: 'border-red-500/30 bg-red-500/10 text-red-300',
+  };
+}
+
+function beginnerActionLabel(action: ApolloAction): string {
+  const map: Record<string, string> = {
+    pause: 'Pausar campanha cara',
+    pause_adset: 'Pausar conjunto caro',
+    decrease_budget: 'Reduzir verba com baixo retorno',
+    increase_budget: 'Aumentar verba no vencedor',
+    activate: 'Reativar oportunidade',
+    activate_adset: 'Reativar conjunto promissor',
+    clone_campaign: 'Duplicar campanha vencedora',
+    rotate_creative: 'Trocar criativo cansado',
+    reallocate_budget: 'Redistribuir verba',
+    notify: 'Revisar manualmente',
+  };
+  return map[action.action_type] || actionLabel(action.action_type);
+}
+
+function actionImpactChip(action: ApolloAction) {
+  const impact = String(action.impact || action.reason || '').toLowerCase();
+  if (impact.includes('econom') || action.action_type === 'pause' || action.action_type === 'decrease_budget') {
+    return { label: 'protege verba', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' };
+  }
+  if (action.action_type === 'increase_budget' || action.action_type === 'activate' || action.action_type === 'clone_campaign') {
+    return { label: 'potencial de escala', cls: 'border-[#3B82C4]/40 bg-[#3B82C4]/10 text-[#3B82C4]' };
+  }
+  if (action.action_type === 'rotate_creative') {
+    return { label: 'fadiga criativa', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-300' };
+  }
+  const priorityLabels: Record<string, string> = { critical: 'alta urgencia', high: 'importante', medium: 'prioridade media', low: 'acompanhar' };
+  return { label: priorityLabels[action.priority] || priorityLabels.low, cls: priorityStyle(action.priority) };
+}
+
+function MetricTile({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  tone = 'gold',
+}: {
+  icon: any;
+  label: string;
+  value: string;
+  hint: string;
+  tone?: 'gold' | 'blue' | 'green';
+}) {
+  const toneClass = {
+    gold: 'text-[#D4A017] bg-[#D4A017]/10 border-[#D4A017]/25',
+    blue: 'text-[#3B82C4] bg-[#3B82C4]/10 border-[#3B82C4]/25',
+    green: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25',
+  }[tone];
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+      <div className="flex items-center gap-3">
+        <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${toneClass}`}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-[#FAF8F2]/60">{label}</p>
+          <p className="truncate text-xl font-bold text-[#FAF8F2]">{value}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-[#FAF8F2]/55">{hint}</p>
+    </div>
+  );
+}
+
+function JoseBrandOverview({
+  session,
+  pendingActions,
+  currencySymbol,
+  isAnalyzing,
+  onAnalyze,
+  onOpenActions,
+  onExecute,
+  executingCampaignId,
+}: {
+  session: any;
+  pendingActions: ApolloAction[];
+  currencySymbol: string;
+  isAnalyzing: boolean;
+  onAnalyze: () => void;
+  onOpenActions: () => void;
+  onExecute: (action: ApolloAction) => void;
+  executingCampaignId?: string;
+}) {
+  const campaigns = session?.campaigns || [];
+  const score = session?.health_score ?? null;
+  const status = josePlainStatus(score);
+  const totalSpend = campaigns.reduce((sum: number, c: any) => sum + (c.spend || 0), 0);
+  const totalLeads = campaigns.reduce((sum: number, c: any) => sum + (c.conversions || c.leads || c.results || 0), 0);
+  const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : 0;
+  const topActions = pendingActions.slice(0, 3);
+  const sortedCampaigns = [...campaigns].sort((a: any, b: any) => (a.health_score || 0) - (b.health_score || 0)).slice(0, 4);
+  const explanation = topActions[0]?.reason
+    || session?.summary
+    || 'Quando voce clicar em analisar, eu mostro onde sua verba esta funcionando, onde esta vazando dinheiro e qual acao tomar primeiro.';
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-[#D4A017]/20" style={{ background: 'linear-gradient(145deg, #081830 0%, #0F2647 48%, #0B1222 100%)' }}>
+      <div className="border-b border-[#D4A017]/15 px-4 py-4 md:px-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[#D4A017]/35 bg-[#D4A017]/10 shadow-[0_0_32px_rgba(212,160,23,0.16)]">
+              <Radar className="h-6 w-6 text-[#D4A017]" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#D4A017]">Logos IA</p>
+                <Badge className="border-[#D4A017]/25 bg-[#D4A017]/10 text-[10px] text-[#D4A017]">Gestor de Trafego IA</Badge>
+              </div>
+              <h2 className="mt-1 text-2xl font-black text-[#FAF8F2] md:text-3xl">Jose</h2>
+              <p className="mt-1 max-w-2xl text-sm text-[#FAF8F2]/68">
+                O Jose traduz Meta Ads em decisoes simples: o que pausar, o que escalar e onde sua verba esta escapando.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={onAnalyze} disabled={isAnalyzing} className="h-10 gap-2 font-bold" style={{ background: '#D4A017', color: '#081830' }}>
+              {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
+              {isAnalyzing ? 'Analisando...' : 'Analisar agora'}
+            </Button>
+            <Button variant="outline" onClick={onOpenActions} className="h-10 border-[#D4A017]/35 bg-transparent text-[#FAF8F2] hover:bg-[#D4A017]/10">
+              Ver recomendacoes
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+            <div className={`rounded-lg border p-4 ${status.cls}`}>
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Seu trafego hoje</p>
+              <div className="mt-4 flex items-center gap-4">
+                <div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-current bg-black/15">
+                  <span className="text-xl font-black">{score ?? '--'}</span>
+                </div>
+                <div>
+                  <p className="text-base font-bold">{status.label}</p>
+                  <p className="mt-1 text-xs opacity-75">{score === null ? 'Sem score ainda' : `Score ${score}/100`}</p>
+                </div>
+              </div>
+              <p className="mt-4 text-xs leading-relaxed opacity-80">{status.detail}</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <MetricTile icon={DollarSign} label="Investido" value={`${currencySymbol} ${fmt(totalSpend)}`} hint="verba usada no periodo" />
+              <MetricTile icon={Target} label="Leads" value={totalLeads ? String(totalLeads) : '--'} hint="resultados identificados" tone="blue" />
+              <MetricTile icon={ShieldCheck} label="Custo por lead" value={costPerLead ? `${currencySymbol} ${fmt(costPerLead)}` : '--'} hint="quanto custa cada oportunidade" tone="green" />
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-[#FAF8F2]">O que Jose recomenda agora</p>
+                <p className="text-xs text-[#FAF8F2]/55">Acoes em ordem de prioridade, sem jargao tecnico.</p>
+              </div>
+              {pendingActions.length > 3 && (
+                <Button variant="ghost" size="sm" onClick={onOpenActions} className="h-8 text-xs text-[#D4A017] hover:bg-[#D4A017]/10">
+                  Ver todas <ChevronRight className="ml-1 h-3 w-3" />
+                </Button>
+              )}
+            </div>
+            <div className="mt-3 space-y-2">
+              {topActions.length ? topActions.map((action) => {
+                const chip = actionImpactChip(action);
+                return (
+                  <div key={`${action.campaign_id}-${action.action_type}`} className="flex flex-col gap-3 rounded-lg border border-white/10 bg-[#081830]/60 p-3 md:flex-row md:items-center">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#D4A017]/25 bg-[#D4A017]/10 text-[#D4A017]">
+                      <Zap className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-[#FAF8F2]">{beginnerActionLabel(action)}</p>
+                        <Badge variant="outline" className={`text-[10px] ${chip.cls}`}>{chip.label}</Badge>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-[#FAF8F2]/55">{action.campaign_name || action.reason || 'Campanha selecionada pelo Jose'}</p>
+                    </div>
+                    <div className="flex gap-2 md:shrink-0">
+                      <Button size="sm" onClick={() => onExecute(action)} disabled={executingCampaignId === action.campaign_id} className="h-8 flex-1 gap-1.5 text-xs md:flex-none" style={{ background: '#D4A017', color: '#081830' }}>
+                        {executingCampaignId === action.campaign_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                        Aplicar
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={onOpenActions} className="h-8 flex-1 border-white/15 bg-transparent text-xs text-[#FAF8F2]/75 md:flex-none">
+                        Ver por que
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }) : (
+                <div className="rounded-lg border border-dashed border-[#D4A017]/25 bg-[#D4A017]/5 p-4 text-sm text-[#FAF8F2]/70">
+                  Ainda nao ha recomendacoes. Clique em <strong className="text-[#D4A017]">Analisar agora</strong> para o Jose montar a lista do que fazer primeiro.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-[#3B82C4]/25 bg-[#3B82C4]/10 p-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-[#3B82C4]" />
+              <p className="text-sm font-bold text-[#FAF8F2]">Jose explica</p>
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-[#FAF8F2]/72">{explanation}</p>
+            {topActions[0] && (
+              <Button variant="outline" size="sm" onClick={onOpenActions} className="mt-4 h-8 border-[#3B82C4]/35 bg-transparent text-xs text-[#FAF8F2]">
+                Abrir recomendacao completa
+              </Button>
+            )}
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+            <p className="text-sm font-bold text-[#FAF8F2]">Campanhas em ordem de prioridade</p>
+            <div className="mt-3 space-y-2">
+              {sortedCampaigns.length ? sortedCampaigns.map((campaign: any) => {
+                const scoreValue = campaign.health_score ?? 0;
+                const label = scoreValue >= 70 ? 'Boa' : scoreValue >= 45 ? 'Atencao' : 'Urgente';
+                const pill = scoreValue >= 70
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                  : scoreValue >= 45
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                  : 'border-red-500/30 bg-red-500/10 text-red-300';
+                return (
+                  <div key={campaign.id} className="flex items-center gap-3 rounded-lg border border-white/10 bg-[#081830]/50 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold text-[#FAF8F2]">{campaign.name}</p>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                        <div className="h-full rounded-full bg-[#D4A017]" style={{ width: `${Math.max(8, Math.min(scoreValue, 100))}%` }} />
+                      </div>
+                    </div>
+                    <Badge variant="outline" className={`text-[10px] ${pill}`}>{label}</Badge>
+                  </div>
+                );
+              }) : (
+                <p className="rounded-lg border border-dashed border-white/10 p-4 text-xs text-[#FAF8F2]/55">
+                  As campanhas aparecem aqui depois da primeira analise.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CreativeCard({ ad, currencySymbol }: { ad: ApolloAd; currencySymbol: string }) {
   const active = ad.effective_status === 'ACTIVE';
   const isVideo = ad.media_type === 'video' || ad.media_type === 'VIDEO';
@@ -1090,6 +1356,19 @@ export default function ApolloDashboard() {
         </div>
 
         {/* ── No account ── */}
+        {session && (
+          <JoseBrandOverview
+            session={session}
+            pendingActions={pendingActions}
+            currencySymbol={currencySymbol}
+            isAnalyzing={isAnalyzing}
+            onAnalyze={handleAnalyze}
+            onOpenActions={() => setActiveTab('actions')}
+            onExecute={handleExecute}
+            executingCampaignId={executeAction.variables?.campaign_id}
+          />
+        )}
+
         {!isLoadingAccount && !accountId && (
           <Card className="border-amber-500/30 bg-amber-500/5">
             <CardContent className="flex flex-col items-center justify-center py-14 gap-4">
