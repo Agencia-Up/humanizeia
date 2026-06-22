@@ -492,8 +492,14 @@ Deno.serve(async (req) => {
       sendCriticalWhatsApp(admin, user.id, aiResult, enriched, currencySymbol).catch(() => { });
     }
 
-    // ── Daily WhatsApp report (resumo de campanhas + ações) ──
-    sendDailyReport(admin, user.id).catch(() => { });
+    // ── Daily WhatsApp report — SÓ no disparo AGENDADO (cron) ──────────────────
+    // Antes saía no fim de TODA análise -> o relatório ia pro dono toda vez que
+    // alguém clicava "Nova Análise" ou o Auto-Pilot rodava (ex.: saiu 11:23 numa
+    // análise manual, mesmo com o agendamento marcado pra 9:30). O "Enviar agora
+    // (teste)" continua pelo caminho próprio (action send_report_now).
+    if (isCronCall) {
+      sendDailyReport(admin, user.id).catch(() => { });
+    }
 
     return new Response(JSON.stringify({
       status: "analyzed",
