@@ -127,14 +127,18 @@ export interface DashboardCards {
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
 
-function ymd(d: Date): string { return d.toISOString().slice(0, 10); }
+// Data YYYY-MM-DD em America/Sao_Paulo (BRT), com deslocamento de dias — casa com o
+// fuso da conta de anúncios da Meta (o date_preset da Meta usa o tz da conta).
+function brtDateStr(offsetDays = 0): string {
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  return d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); // YYYY-MM-DD
+}
 function presetToRange(preset: string): { since: string; until: string } {
-  const since = new Date(); const until = new Date();
-  if (preset === "yesterday") { since.setDate(since.getDate() - 1); until.setDate(until.getDate() - 1); }
-  else if (preset === "last_30d") since.setDate(since.getDate() - 29);
-  else if (preset === "last_7d") since.setDate(since.getDate() - 6);
-  // "today" => since = until = hoje
-  return { since: ymd(since), until: ymd(until) };
+  const until = brtDateStr(0);
+  if (preset === "yesterday") { const y = brtDateStr(-1); return { since: y, until: y }; }
+  if (preset === "last_30d") return { since: brtDateStr(-29), until };
+  if (preset === "last_7d")  return { since: brtDateStr(-6), until };
+  return { since: until, until }; // today
 }
 function efetivaStatus(status: string, ia: string | null): "venda" | "bom" | "medio" | "ruim" | null {
   if (status === "fechado") return "venda";
@@ -150,8 +154,8 @@ async function periodLeadQuality(
   const { data } = await admin.from("ai_crm_leads")
     .select("status_crm, qualidade_lead, created_at")
     .eq("user_id", userId)
-    .gte("created_at", `${since}T00:00:00`)
-    .lte("created_at", `${until}T23:59:59`);
+    .gte("created_at", `${since}T00:00:00-03:00`)
+    .lte("created_at", `${until}T23:59:59-03:00`);
   let bom = 0, vendas = 0, total = 0;
   for (const l of (data || []) as any[]) {
     total++;
