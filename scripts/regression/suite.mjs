@@ -33,10 +33,16 @@ const onlyGroup = (process.argv[2] || "").toLowerCase();
 let _seq = 0;
 const freshChat = () => `5599${(Date.now() % 1e7).toString().padStart(7, "0")}${_seq++}@s.whatsapp.net`;
 
-// Override opt-in de provedor (mitigação/teste multi-LLM). Ex.: FORCE_PROVIDER=deepseek node suite.mjs
+// Override opt-in de provedor/MODELO (teste multi-LLM). Ex.:
+//   FORCE_PROVIDER=deepseek node suite.mjs
+//   FORCE_PROVIDER=openai REPLY_MODEL=gpt-4.1-mini node suite.mjs   (testa o reply num modelo barato)
 const FORCE_PROVIDER = (process.env.FORCE_PROVIDER || "").trim().toLowerCase();
+const REPLY_MODEL = (process.env.REPLY_MODEL || "").trim();
+const PLANNER_MODEL = (process.env.PLANNER_MODEL || "").trim();
 function applyProviderOverride(body) {
   if (FORCE_PROVIDER) { body.planner_provider = FORCE_PROVIDER; body.reply_provider = FORCE_PROVIDER; }
+  if (REPLY_MODEL) body.reply_model = REPLY_MODEL;
+  if (PLANNER_MODEL) body.planner_model = PLANNER_MODEL;
   return body;
 }
 
