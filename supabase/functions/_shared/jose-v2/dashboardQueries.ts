@@ -61,11 +61,15 @@ function conversasFromActions(actions: any[]): number {
 
 async function fetchInsights(
   acc: MetaAccount,
-  opts: { datePreset: string; breakdowns?: string; level?: string },
+  opts: { datePreset?: string; timeRange?: { since: string; until: string }; breakdowns?: string; level?: string },
 ): Promise<any[]> {
   const url = new URL(`${META_GRAPH_URL}/${acc.accountId}/insights`);
   url.searchParams.set("access_token", acc.accessToken);
-  url.searchParams.set("date_preset", opts.datePreset);
+  if (opts.timeRange?.since && opts.timeRange?.until) {
+    url.searchParams.set("time_range", JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until }));
+  } else {
+    url.searchParams.set("date_preset", opts.datePreset || "last_7d");
+  }
   url.searchParams.set("fields", "spend,cpm,cpc,ctr,impressions,clicks,reach,actions");
   if (opts.level) url.searchParams.set("level", opts.level);
   if (opts.breakdowns) url.searchParams.set("breakdowns", opts.breakdowns);
@@ -128,18 +132,16 @@ export interface DashboardCards {
 export async function getDashboardCards(
   admin: any,
   userId: string,
-  opts?: { adAccountId?: string; datePreset?: string },
+  opts?: { adAccountId?: string; datePreset?: string; timeRange?: { since: string; until: string } },
 ): Promise<DashboardCards | null> {
-  const datePreset = opts?.datePreset || "last_7d";
+  const timeRange = (opts?.timeRange?.since && opts?.timeRange?.until) ? opts.timeRange : undefined;
+  const datePreset = timeRange ? undefined : (opts?.datePreset || "last_7d");
   const acc = await resolveMetaAccount(admin, userId, opts?.adAccountId);
   if (!acc) return null;
 
   // 1) Vitrine — base + idade + região, em paralelo
-  const [base, byAge, byRegion] = await Promise.all([
-    fetchInsights(acc, { datePreset }),
-    fetchInsights(acc, { datePreset, breakdowns: "age" }),
-    fetchInsights(acc, { datePreset, breakdowns: "region" }),
-  ]);
+  const fi = (breakdowns?: string) => fetchInsights(acc, { datePreset, timeRange, breakdowns });
+  const [base, byAge, byRegion] = await Promise.all([fi(), fi("age"), fi("region")]);
 
   const b0 = base[0] || {};
   const gasto = num(b0.spend), impressoes = num(b0.impressions), cliques = num(b0.clicks);
@@ -185,7 +187,7 @@ export async function getDashboardCards(
     }));
 
   return {
-    periodo: datePreset, ad_account_id: acc.accountDbId, moeda: acc.moeda,
+    periodo: timeRange ? `${timeRange.since} a ${timeRange.until}` : (datePreset || "last_7d"), ad_account_id: acc.accountDbId, moeda: acc.moeda,
     gasto, impressoes, cliques,
     cpm: num(b0.cpm), cpc: num(b0.cpc), ctr: num(b0.ctr),
     conversas, cpl,

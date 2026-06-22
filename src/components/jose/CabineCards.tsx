@@ -88,11 +88,13 @@ export function CabineCards() {
   const [enabled, setEnabled] = useState(true);
   const [cards, setCards] = useState<Cards | null>(null);
   const [periodo, setPeriodo] = useState('last_7d');
+  const [desde, setDesde] = useState('');
+  const [ate, setAte] = useState('');
 
-  const load = useCallback(async (preset: string) => {
+  const load = useCallback(async (body: { date_preset?: string; time_range?: { since: string; until: string } }) => {
     setLoading(true);
     try {
-      const { data, error } = await db.functions.invoke('jose-dashboard', { body: { date_preset: preset } });
+      const { data, error } = await db.functions.invoke('jose-dashboard', { body });
       if (error) throw error;
       setEnabled(data?.enabled !== false);
       setCards(data?.cards || null);
@@ -102,7 +104,11 @@ export function CabineCards() {
     } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(periodo); }, [periodo, load]);
+  // Presets carregam ao trocar; "Personalizado" carrega no botão Aplicar.
+  useEffect(() => { if (periodo !== 'custom') load({ date_preset: periodo }); }, [periodo, load]);
+  const recarregar = useCallback(() => {
+    load(periodo === 'custom' && desde && ate ? { time_range: { since: desde, until: ate } } : { date_preset: periodo });
+  }, [load, periodo, desde, ate]);
 
   // Auto-esconde nas contas sem o recurso ligado.
   if (!loading && (!enabled || !cards)) return null;
@@ -124,16 +130,27 @@ export function CabineCards() {
           <p className="text-xs text-muted-foreground mt-1">Os números que importam, sempre à vista — sem precisar pedir relatório.</p>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="flex gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             {PRESETS.map((p) => (
               <Button key={p.value} size="sm" variant={periodo === p.value ? 'default' : 'outline'} className="h-8 text-xs" onClick={() => setPeriodo(p.value)} disabled={loading}>{p.label}</Button>
             ))}
+            <Button size="sm" variant={periodo === 'custom' ? 'default' : 'outline'} className="h-8 text-xs" onClick={() => setPeriodo('custom')} disabled={loading}>Personalizado</Button>
           </div>
-          <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => load(periodo)} disabled={loading}>
+          <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={recarregar} disabled={loading}>
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           </Button>
         </div>
       </div>
+
+      {periodo === 'custom' && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-muted-foreground">De</span>
+          <input type="date" value={desde} max={ate || undefined} onChange={(e) => setDesde(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-xs" />
+          <span className="text-muted-foreground">até</span>
+          <input type="date" value={ate} min={desde || undefined} onChange={(e) => setAte(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-xs" />
+          <Button size="sm" className="h-8 text-xs" disabled={loading || !desde || !ate} onClick={() => load({ time_range: { since: desde, until: ate } })}>Aplicar</Button>
+        </div>
+      )}
 
       {loading && !cards && (
         <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">

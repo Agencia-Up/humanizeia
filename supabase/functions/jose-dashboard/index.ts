@@ -55,6 +55,7 @@ Deno.serve(async (req) => {
     const cards = await getDashboardCards(admin, userId!, {
       adAccountId: body?.ad_account_id,
       datePreset: body?.date_preset || body?.periodo || "last_7d",
+      timeRange: body?.time_range,
     });
     if (!cards) return json({ enabled: true, cards: null, reason: "sem_conta_meta" });
 
