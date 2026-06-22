@@ -49,6 +49,26 @@ function phonesMatch(left: string | null | undefined, right: string | null | und
   return leftKeys.some((key) => rightKeys.has(key));
 }
 
+// Este telefone pertence a um lead do CRM deste master? Usado p/ auditar SOMENTE as
+// conversas vendedor↔lead (nunca os contatos pessoais do vendedor). remote_jid em
+// ai_crm_leads e sempre "<digits>@s.whatsapp.net" (12-13 digitos, prefixo 55).
+async function phoneBelongsToLead(supabase: any, userId: string, phone: string): Promise<boolean> {
+  const keys = phoneMatchKeys(phone);
+  if (keys.length === 0) return false;
+  const candidates = new Set<string>();
+  for (const k of keys) {
+    candidates.add(k);
+    candidates.add(`${k}@s.whatsapp.net`);
+  }
+  const { data } = await supabase
+    .from("ai_crm_leads")
+    .select("id")
+    .eq("user_id", userId)
+    .in("remote_jid", [...candidates])
+    .limit(1);
+  return Array.isArray(data) && data.length > 0;
+}
+
 async function getActiveAgentForInstance(supabase: any, instance: any) {
   const { data: byInstanceIds } = await supabase
     .from("wa_ai_agents")
@@ -457,9 +477,15 @@ async function processEvolutionIncomingMessage(
   if (messageData.participant) console.log("[wa-inbox-webhook] participant:", messageData.participant);
   if (messageData.messageTimestamp) console.log("[wa-inbox-webhook] timestamp:", messageData.messageTimestamp);
 
-  if (key.fromMe) {
+  // Mensagens enviadas (fromMe) sao normalmente ignoradas — o agente/painel ja gravam
+  // os proprios envios. EXCECAO: instancias de VENDEDOR. O vendedor responde o lead pelo
+  // proprio celular e esses envios nao sao gravados em lugar nenhum; capturamos como
+  // 'outgoing' (so p/ leads do CRM, abaixo) p/ o gerente auditar a conversa vendedor↔lead.
+  const isFromMe = key.fromMe === true;
+  if (isFromMe && !instance.seller_member_id) {
     return null;
   }
+  const direction: "incoming" | "outgoing" = isFromMe ? "outgoing" : "incoming";
 
   const remoteJid = key.remoteJid || "";
   const remoteJidAlt = key.remoteJidAlt || "";
@@ -488,6 +514,12 @@ async function processEvolutionIncomingMessage(
 
   const pushName = messageData.pushName || null;
   const remoteMessageId = key.id || null;
+
+  // Auditoria do vendedor: so captura o que o vendedor ENVIA para LEADS do CRM.
+  // (Conversas pessoais do vendedor pelo mesmo numero ficam de fora.)
+  if (isFromMe && !(await phoneBelongsToLead(supabase, instance.user_id, phone))) {
+    return null;
+  }
 
   let messageType = "text";
   let content = "";
@@ -576,9 +608,25 @@ async function processEvolutionIncomingMessage(
     console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
   }
 
-  const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
-  if (sellerAck.isSeller) {
-    return null;
+  // sellerAck so faz sentido p/ mensagens RECEBIDAS (vendedor confirmando transferencia).
+  if (direction === "incoming") {
+    const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
+    if (sellerAck.isSeller) {
+      return null;
+    }
+  }
+
+  // Dedupe: se este envio do vendedor ja foi gravado (ex.: pelo painel via wa-send-reply),
+  // nao duplica — o webhook do uazapi exclui wasSentByApi, mas mantemos a guarda.
+  if (direction === "outgoing" && remoteMessageId) {
+    const { data: dup } = await supabase
+      .from("wa_inbox")
+      .select("id")
+      .eq("user_id", instance.user_id)
+      .eq("remote_message_id", remoteMessageId)
+      .limit(1)
+      .maybeSingle();
+    if (dup?.id) return dup.id;
   }
 
   const { data: inboxMsg, error: insertErr } = await supabase
@@ -588,13 +636,14 @@ async function processEvolutionIncomingMessage(
       instance_id: instance.id,
       contact_id: contact?.id || null,
       phone,
-      contact_name: pushName,
-      direction: "incoming",
+      // fromMe: nao gravar o pushName (que e o nome do VENDEDOR) como contato do lead.
+      contact_name: isFromMe ? null : pushName,
+      direction,
       message_type: messageType,
       content,
       media_url: mediaUrl,
       remote_message_id: remoteMessageId,
-      is_read: false,
+      is_read: direction === "outgoing",
     })
     .select("id")
     .single();
@@ -604,7 +653,7 @@ async function processEvolutionIncomingMessage(
     return null;
   }
 
-  if (content && content.trim().length > 0) {
+  if (direction === "incoming" && content && content.trim().length > 0) {
     await categorizeAndAutomate(supabase, instance, inboxMsg.id, content, phone, pushName, contact?.id, replyTarget, messageType, remoteMessageId, instanceName);
   }
 

@@ -110,6 +110,15 @@ function initials(name: string) {
 }
 
 /* ── Componente principal ────────────────────────────────────────── */
+/* Chave canônica de telefone p/ casar lead × conversa, tolerante ao 9º dígito BR.
+   Ex.: "5512997423129" e "551297423129" → "1297423129". */
+function leadKey(raw: string | null | undefined): string {
+  let d = (raw || '').replace(/\D/g, '');
+  if (d.startsWith('55') && d.length > 11) d = d.slice(2);              // tira DDI
+  if (d.length === 11 && d[2] === '9') d = d.slice(0, 2) + d.slice(3);  // tira 9º dígito
+  return d;
+}
+
 export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -136,6 +145,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [sendInstanceId, setSendInstanceId]   = useState<string>('');
   const [isMobileChat, setIsMobileChat]       = useState(false);
   const [sellerLeadPhones, setSellerLeadPhones] = useState<Set<string> | null>(null);
+  // Master: telefones (chave canônica) de TODOS os leads do CRM — usado p/ mostrar só
+  // conversas de leads nas instâncias dos vendedores (auditoria sem poluição).
+  const [masterLeadPhones, setMasterLeadPhones] = useState<Set<string> | null>(null);
   const [uploadingMedia, setUploadingMedia]   = useState(false);
   const [recording, setRecording]             = useState(false);
   const [recordSeconds, setRecordSeconds]     = useState(0);
@@ -164,6 +176,30 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       setSellerLeadPhones(phones);
     })();
   }, [isSeller, seller, effectiveUserId]);
+
+  /* ── Master: telefones de TODOS os leads do CRM ────────────────────
+   * Nas instâncias dos vendedores o inbox mostra SÓ conversas com leads do CRM
+   * (não os contatos pessoais do vendedor). Paginado p/ não ser cortado em 1000. */
+  useEffect(() => {
+    if (isSeller || !effectiveUserId) return;
+    let cancelled = false;
+    (async () => {
+      const keys = new Set<string>();
+      const PAGE = 1000;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await (supabase as any)
+          .from('ai_crm_leads')
+          .select('remote_jid')
+          .eq('user_id', effectiveUserId)
+          .range(from, from + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        for (const l of data) { const k = leadKey(l.remote_jid); if (k) keys.add(k); }
+        if (data.length < PAGE) break;
+      }
+      if (!cancelled) setMasterLeadPhones(keys);
+    })();
+    return () => { cancelled = true; };
+  }, [isSeller, effectiveUserId]);
 
   /* ── Fetch instâncias (vendedor só vê as DELE; master vê só sem dono) ──
    * Inbox é PESSOAL: cada usuário vê apenas inbox das instâncias que pertencem
@@ -195,6 +231,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     if (!effectiveUserId) return;
     // Vendedor: espera carregar os phones dos leads dele
     if (isSeller && sellerLeadPhones === null) return;
+    // Master: espera carregar os phones dos leads (p/ filtrar instâncias de vendedor)
+    if (!isSeller && masterLeadPhones === null) return;
     if (isInitial) setLoading(true);
 
     // Defesa em camadas: limita conversas APENAS às instâncias visíveis ao
@@ -240,13 +278,23 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
 
     let convList = Array.from(convMap.values());
-    // Vendedor: filtra conversas apenas dos leads atribuídos a ele
     if (isSeller && sellerLeadPhones) {
+      // Vendedor: só conversas dos leads atribuídos a ele
       convList = convList.filter(c => sellerLeadPhones.has(c.phone));
+    } else if (!isSeller && masterLeadPhones) {
+      // Master: nas instâncias de VENDEDOR, mostra só conversas com leads do CRM
+      // (não os contatos pessoais do vendedor). Instâncias da loja seguem completas.
+      const sellerInstanceIds = new Set(
+        allInstances.filter(i => i.seller_member_id).map(i => i.id)
+      );
+      convList = convList.filter(c =>
+        !(c.instance_id && sellerInstanceIds.has(c.instance_id))
+        || masterLeadPhones.has(leadKey(c.phone))
+      );
     }
     setConversations(convList);
     if (isInitial) setLoading(false);
-  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones, allInstances]);
+  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones, masterLeadPhones, allInstances]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
   const fetchMessages = useCallback(async (phone: string, instanceId: string | null) => {
@@ -659,6 +707,15 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     return inst ? (inst.friendly_name || inst.instance_name) : null;
   };
 
+  // Nome do vendedor dono da instância (quando a conversa é numa instância de vendedor).
+  const sellerForInstance = (id: string | null) => {
+    if (!id) return null;
+    const inst = allInstances.find(i => i.id === id);
+    if (!inst?.seller_member_id) return null;
+    return teamMembers.find((m: any) => m.id === inst.seller_member_id)?.name
+      || inst.friendly_name || inst.instance_name || 'Vendedor';
+  };
+
   /* ── Wrapper ───────────────────────────────────────────────────── */
   const Wrapper = embedded
     ? ({ children }: { children: React.ReactNode }) => <>{children}</>
@@ -828,12 +885,17 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
                             {/* Linha 3: instância + categoria + tags */}
                             <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                              {iName && activeInstanceTab === 'all' && (
+                              {sellerForInstance(conv.instance_id) ? (
+                                <span className="flex items-center gap-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full" title="Atendimento do vendedor (auditoria)">
+                                  <UserCheck className="h-2.5 w-2.5" />
+                                  {sellerForInstance(conv.instance_id)}
+                                </span>
+                              ) : (iName && activeInstanceTab === 'all' && (
                                 <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded-full">
                                   <Wifi className="h-2.5 w-2.5" />
                                   {iName}
                                 </span>
-                              )}
+                              ))}
                               {conv.ai_category && (
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${CATEGORY_COLORS[conv.ai_category] || ''}`}>
                                   {CATEGORY_LABELS[conv.ai_category] || conv.ai_category}
@@ -902,6 +964,15 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                           <span className="flex items-center gap-1 text-xs text-muted-foreground">
                             <Wifi className="h-3 w-3 text-emerald-500" />
                             {instName(selectedConv?.instance_id ?? null)}
+                          </span>
+                        </>
+                      )}
+                      {sellerForInstance(selectedConv?.instance_id ?? null) && (
+                        <>
+                          <span className="text-muted-foreground/30 text-xs">·</span>
+                          <span className="flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400" title="Atendimento do vendedor (auditoria)">
+                            <UserCheck className="h-3 w-3" />
+                            Vendedor: {sellerForInstance(selectedConv?.instance_id ?? null)}
                           </span>
                         </>
                       )}
