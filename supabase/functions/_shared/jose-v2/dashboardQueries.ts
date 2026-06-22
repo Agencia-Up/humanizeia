@@ -1,0 +1,195 @@
+/**
+ * dashboardQueries.ts — José Cabine de Comando / Bloco A (cards) — FONTE ÚNICA
+ *
+ * As funções aqui são a ÚNICA fonte dos números da Cabine: os cards do painel E
+ * (no Bloco B) as ferramentas do chat do José importam DAQUI. Painel e chat nunca
+ * divergem porque leem a MESMA camada de dados (princípio anti-divergência).
+ *
+ * Mistura a VITRINE (Meta Insights: CPL/CPM/CPC, idade, região de entrega) com a
+ * VERDADE (lead_quality_by_ad: custo por lead BOM, anúncios por qualidade real).
+ */
+
+import { leadQualityByAd, type LeadQualityByAdRow } from "./leadQuality.ts";
+
+const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
+const CURRENCY_SYMBOL: Record<string, string> = { BRL: "R$", USD: "$", EUR: "€" };
+
+export interface MetaAccount {
+  accessToken: string;
+  accountId: string;   // act_...
+  accountDbId: string; // uuid em ad_accounts
+  currency: string;
+  moeda: string;       // símbolo
+}
+
+export async function resolveMetaAccount(
+  admin: any,
+  userId: string,
+  adAccountId?: string,
+): Promise<MetaAccount | null> {
+  let q = admin.from("ad_accounts")
+    .select("id, account_id, currency, access_token_encrypted, is_active, platform")
+    .eq("user_id", userId).eq("platform", "meta").eq("is_active", true);
+  if (adAccountId) q = q.eq("id", adAccountId);
+  const { data } = await q.limit(1).maybeSingle();
+  if (!data?.access_token_encrypted || !data?.account_id) return null;
+  const currency = data.currency || "BRL";
+  const acct = String(data.account_id);
+  return {
+    accessToken: data.access_token_encrypted,
+    accountId: acct.startsWith("act_") ? acct : `act_${acct}`,
+    accountDbId: data.id,
+    currency,
+    moeda: CURRENCY_SYMBOL[currency] || currency,
+  };
+}
+
+function num(v: any): number { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+
+// "conversas iniciadas" (resultado típico de CTWA/messaging) somadas das actions.
+function conversasFromActions(actions: any[]): number {
+  if (!Array.isArray(actions)) return 0;
+  let total = 0;
+  for (const a of actions) {
+    const t = String(a?.action_type || "");
+    if (t.includes("messaging_conversation_started") || t === "lead" || t.includes("onsite_conversion.lead_grouped")) {
+      total += num(a.value);
+    }
+  }
+  return total;
+}
+
+async function fetchInsights(
+  acc: MetaAccount,
+  opts: { datePreset: string; breakdowns?: string; level?: string },
+): Promise<any[]> {
+  const url = new URL(`${META_GRAPH_URL}/${acc.accountId}/insights`);
+  url.searchParams.set("access_token", acc.accessToken);
+  url.searchParams.set("date_preset", opts.datePreset);
+  url.searchParams.set("fields", "spend,cpm,cpc,ctr,impressions,clicks,reach,actions");
+  if (opts.level) url.searchParams.set("level", opts.level);
+  if (opts.breakdowns) url.searchParams.set("breakdowns", opts.breakdowns);
+  url.searchParams.set("limit", "500");
+  try {
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    if (data?.error) { console.warn("[dashboardQueries] insights erro:", data.error?.message); return []; }
+    return Array.isArray(data?.data) ? data.data : [];
+  } catch (e) { console.warn("[dashboardQueries] insights fetch falhou:", e); return []; }
+}
+
+// De onde os leads REALMENTE vieram (cidade declarada) + quantos bons por cidade.
+async function leadOriginByCity(
+  admin: any,
+  userId: string,
+): Promise<Array<{ cidade: string; leads: number; leads_bom: number }>> {
+  const { data } = await admin.from("ai_crm_leads")
+    .select("client_city, qualidade_lead")
+    .eq("user_id", userId)
+    .not("client_city", "is", null);
+  const map = new Map<string, { leads: number; leads_bom: number }>();
+  for (const r of (data || []) as any[]) {
+    const city = String(r.client_city || "").trim();
+    if (!city) continue;
+    const m = map.get(city) || { leads: 0, leads_bom: 0 };
+    m.leads += 1;
+    if (r.qualidade_lead === "bom") m.leads_bom += 1;
+    map.set(city, m);
+  }
+  return Array.from(map.entries())
+    .map(([cidade, v]) => ({ cidade, ...v }))
+    .sort((a, b) => b.leads - a.leads)
+    .slice(0, 12);
+}
+
+export interface DashboardCards {
+  periodo: string;
+  ad_account_id: string; // uuid da conta em ad_accounts (p/ dedupe do snapshot)
+  moeda: string;
+  // vitrine
+  gasto: number; impressoes: number; cliques: number;
+  cpm: number; cpc: number; ctr: number;
+  conversas: number;            // resultado da Meta
+  cpl: number | null;           // gasto / conversas (vitrine)
+  // verdade
+  leads_bom: number; leads_classificados: number;
+  custo_por_lead_bom: number | null; // gasto / leads_bom (a verdade ao lado do CPL)
+  // breakdowns
+  idade: Array<{ faixa: string; gasto: number; conversas: number; cpl: number | null }>;
+  regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
+  regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
+  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; pct_bom: number | null }>;
+  atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
+}
+
+/**
+ * Calcula TODOS os cards da Cabine. Fonte única (cards do painel + tools do chat).
+ */
+export async function getDashboardCards(
+  admin: any,
+  userId: string,
+  opts?: { adAccountId?: string; datePreset?: string },
+): Promise<DashboardCards | null> {
+  const datePreset = opts?.datePreset || "last_7d";
+  const acc = await resolveMetaAccount(admin, userId, opts?.adAccountId);
+  if (!acc) return null;
+
+  // 1) Vitrine — base + idade + região, em paralelo
+  const [base, byAge, byRegion] = await Promise.all([
+    fetchInsights(acc, { datePreset }),
+    fetchInsights(acc, { datePreset, breakdowns: "age" }),
+    fetchInsights(acc, { datePreset, breakdowns: "region" }),
+  ]);
+
+  const b0 = base[0] || {};
+  const gasto = num(b0.spend), impressoes = num(b0.impressions), cliques = num(b0.clicks);
+  const conversas = conversasFromActions(b0.actions);
+  const cpl = conversas > 0 ? gasto / conversas : null;
+
+  // 2) Verdade — qualidade por anúncio (DB)
+  const lq: LeadQualityByAdRow[] = await leadQualityByAd(admin, userId, { minLeads: 1 });
+  let leads_bom = 0, leads_classif = 0;
+  const atrib = { por_ad_id: 0, por_titulo: 0, sem_origem: 0 };
+  for (const r of lq) {
+    leads_bom += num(r.leads_bom);
+    leads_classif += num(r.leads_bom) + num(r.leads_medio) + num(r.leads_ruim);
+    if (r.ad_key_kind === "ad_id") atrib.por_ad_id += num(r.leads_total);
+    else if (r.ad_key_kind === "titulo") atrib.por_titulo += num(r.leads_total);
+    else atrib.sem_origem += num(r.leads_total);
+  }
+  const custo_por_lead_bom = leads_bom > 0 ? gasto / leads_bom : null;
+
+  // 3) Idade (vitrine)
+  const idade = byAge.map((r: any) => {
+    const g = num(r.spend), c = conversasFromActions(r.actions);
+    return { faixa: String(r.age || "—"), gasto: g, conversas: c, cpl: c > 0 ? g / c : null };
+  }).sort((a, b) => b.gasto - a.gasto);
+
+  // 4) Região de ENTREGA (Meta) — onde o anúncio aparece (proxy do alvo)
+  const regiao_entrega = byRegion.map((r: any) => ({
+    regiao: String(r.region || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
+  })).sort((a, b) => b.gasto - a.gasto).slice(0, 12);
+
+  // 5) Região de ORIGEM — de onde os leads REALMENTE vêm (cidade declarada)
+  const regiao_origem = await leadOriginByCity(admin, userId);
+
+  // 6) Anúncios por QUALIDADE REAL (não CTR)
+  const anuncios = lq
+    .filter((r) => r.ad_key_kind !== "sem_origem")
+    .sort((a, b) => (num(b.pct_bom) - num(a.pct_bom)) || (num(b.leads_total) - num(a.leads_total)))
+    .slice(0, 12)
+    .map((r) => ({
+      ad_name: r.ad_name, ad_key_kind: r.ad_key_kind,
+      leads_total: num(r.leads_total), leads_bom: num(r.leads_bom),
+      leads_ruim: num(r.leads_ruim), pct_bom: r.pct_bom,
+    }));
+
+  return {
+    periodo: datePreset, ad_account_id: acc.accountDbId, moeda: acc.moeda,
+    gasto, impressoes, cliques,
+    cpm: num(b0.cpm), cpc: num(b0.cpc), ctr: num(b0.ctr),
+    conversas, cpl,
+    leads_bom, leads_classificados: leads_classif, custo_por_lead_bom,
+    idade, regiao_entrega, regiao_origem, anuncios, atribuicao: atrib,
+  };
+}

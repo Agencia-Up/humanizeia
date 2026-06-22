@@ -112,6 +112,7 @@ async function normalizeMetaMessage(msg: any, contactName: string | null, token:
         body: msg.referral.body || null,
         sourceUrl: msg.referral.source_url || null,
         sourceApp: msg.referral.source_type || null,
+        sourceId: msg.referral.source_id || null, // ad_id REAL do anúncio (Cabine/Bloco D)
         ctwaClid: msg.referral.ctwa_clid || null,
       } }
     : undefined;

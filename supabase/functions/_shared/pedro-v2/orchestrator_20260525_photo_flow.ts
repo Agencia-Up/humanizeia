@@ -1,6 +1,8 @@
 import { makeTurnLogger, newTraceId } from "../observability/structuredLog.ts";
 import { identifyPedroContact } from "./contactIdentity.ts";
 import { handleOwnerMessage } from "../jose-v2/ownerVoice.ts";
+import { isFeatureEnabled } from "../jose-v2/flags.ts";
+import { mapQualidadeLead } from "../jose-v2/leadQuality.ts";
 import { ensurePedroV2Lead, findPedroV2Lead, loadPedroMemory, updatePedroMemoryFromIntent } from "./leadMemory.ts";
 import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
@@ -260,6 +262,7 @@ function pruneCtwaAd(ear: any): Record<string, any> | null {
     body: pick("body", "description"),
     sourceUrl: pick("sourceUrl", "source_url", "sourceURL", "mediaUrl"),
     sourceApp: pick("sourceApp"),
+    sourceId: pick("sourceId", "source_id", "ad_id"), // ad_id real (Meta 2ª via via referral.source_id)
   };
   return Object.values(out).some(Boolean) ? out : null;
 }
@@ -873,6 +876,24 @@ export async function processPedroV2Turn(
       }).select("id, created_at").maybeSingle();
       myUserMsgId = insertedUserMsg?.id || null;
       myUserMsgCreatedAt = insertedUserMsg?.created_at || null;
+
+      // Bloco D (Cabine de Comando): carimba a ORIGEM do anúncio no lead. ad_id é o
+      // preciso (vem do referral.source_id da Meta 2ª via); ad_name é o título do CTWA
+      // (UAZAPI só tem isso). Preenche só o que estiver nulo (idempotente). Atrás do flag.
+      if ((_ctwaAd?.title || _ctwaAd?.sourceId) && await isFeatureEnabled(supabase, input.agent.user_id, "handoff_qualidade")) {
+        try {
+          if (_ctwaAd.sourceId) {
+            await supabase.from("ai_crm_leads")
+              .update({ ad_id: String(_ctwaAd.sourceId).trim() })
+              .eq("id", lead.id).is("ad_id", null);
+          }
+          if (_ctwaAd.title) {
+            await supabase.from("ai_crm_leads")
+              .update({ ad_name: String(_ctwaAd.title).trim() })
+              .eq("id", lead.id).is("ad_name", null);
+          }
+        } catch (_ec) { /* carimbo best-effort, nunca atrapalha o fluxo */ }
+      }
     } catch (err) {
       console.warn("[PedroV2] Failed to save user message to chat history:", err);
     }
@@ -2393,6 +2414,21 @@ export async function processPedroV2Turn(
           if (["inativo", "pouco_qualificado", "qualificado"].includes(_persistCat as string)) {
             _leadPatch.status_crm = _persistCat;
           }
+          // Bloco D (Cabine de Comando): qualidade do lead (bom/medio/ruim) p/ "de qual
+          // anúncio vêm os bons". Derivada dos sinais que o Pedro JÁ tem (temperatura +
+          // categoria SDR) — nada inventado. Vai no MESMO _leadPatch (zero round-trip
+          // extra). Atrás do flag handoff_qualidade; best-effort nunca derruba o handoff.
+          try {
+            if (await isFeatureEnabled(supabase, input.agent.user_id, "handoff_qualidade")) {
+              const _qual = mapQualidadeLead(_temp, _persistCat);
+              if (_qual) {
+                _leadPatch.qualidade_lead = _qual.qualidade;
+                _leadPatch.motivo_classificacao = _qual.motivo;
+                _leadPatch.classificado_em = new Date().toISOString();
+                _leadPatch.classificado_por = "pedro";
+              }
+            }
+          } catch (_eq) { /* classificação best-effort */ }
           if (Object.keys(_leadPatch).length > 0) {
             await supabase.from("ai_crm_leads").update(_leadPatch).eq("id", lead.id);
           }

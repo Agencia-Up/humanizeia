@@ -19,6 +19,7 @@ import { GoldenRulesTab } from '@/components/apollo/GoldenRulesTab';
 import { JoseGovernanca } from '@/components/jose/JoseGovernanca';
 import { JoseJulgamento } from '@/components/jose/JoseJulgamento';
 import { JoseCriarCampanha } from '@/components/jose/JoseCriarCampanha';
+import { CabineCards } from '@/components/jose/CabineCards';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -1704,6 +1705,7 @@ export default function ApolloDashboard() {
               <TabsTrigger value="governanca" className="gap-1 text-xs"><Gauge className="h-3 w-3" />Governança</TabsTrigger>
               <TabsTrigger value="julgamento" className="gap-1 text-xs"><Brain className="h-3 w-3" />Julgamento</TabsTrigger>
               <TabsTrigger value="criar" className="gap-1 text-xs"><Sparkles className="h-3 w-3" />Criar campanha</TabsTrigger>
+              <TabsTrigger value="cabine" className="gap-1 text-xs"><Gauge className="h-3 w-3" />Cabine</TabsTrigger>
             </TabsList>
 
             {/* Campaigns */}
@@ -2102,6 +2104,10 @@ export default function ApolloDashboard() {
             {/* Criar campanha (José v3.1 — Fase 4): rascunho gerado pelo José + simulação */}
             <TabsContent value="criar" className="mt-4">
               <JoseCriarCampanha />
+            </TabsContent>
+
+            <TabsContent value="cabine" className="mt-4">
+              <CabineCards />
             </TabsContent>
           </Tabs>
         )}

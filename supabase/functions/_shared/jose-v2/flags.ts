@@ -10,7 +10,8 @@
 
 export type JoseFeature =
   | "voz" | "criativo_whatsapp" | "criacao_campanha"
-  | "google_ads" | "otimizacao_proativa" | "reasoning_core";
+  | "google_ads" | "otimizacao_proativa" | "reasoning_core"
+  | "handoff_qualidade" | "cabine_cards";
 
 // hash determinístico (FNV-1a) -> 0..99. Mesmo user/feature => mesmo bucket.
 function bucketOf(userId: string, feature: string): number {
