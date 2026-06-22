@@ -136,9 +136,9 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, event: "connection", state: state || null });
   }
 
-  if (isOutgoingMessage(payload)) {
-    return jsonResponse({ ok: true, ignored: "from_me" });
-  }
+  // NÃO descartar fromMe aqui — instâncias de VENDEDOR precisam capturar o que o
+  // vendedor envia (auditoria). O descarte de fromMe acontece ABAIXO, escopado às
+  // instâncias que NÃO são de vendedor, depois de resolver a instância.
 
   const instanceName =
     payload?.instanceName ||
@@ -161,6 +161,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: "active_instance_not_found" }, 404);
   }
 
+  // fromMe: nas instâncias do AGENTE ignoramos os próprios envios (a IA não reage ao
+  // que foi enviado pela própria linha). Nas instâncias de VENDEDOR NÃO ignoramos —
+  // o ramo abaixo grava a resposta do vendedor (outgoing) p/ o gerente auditar.
+  if (isOutgoingMessage(payload) && !waInstance.seller_member_id) {
+    return jsonResponse({ ok: true, ignored: "from_me" });
+  }
+
   // ── HARD RULE: a seller's number is NEVER answered by the AI ────────────────
   // Only the master's configured number (the instance linked inside the AI agent)
   // may run Pedro. Seller instances always carry seller_member_id: they connect
@@ -180,7 +187,7 @@ Deno.serve(async (req) => {
   if (waInstance.seller_member_id) {
     try {
       const inMsg = pickIncomingMessage(payload);
-      
+
       // 1. Resolver JID real tratando LIDs de privacidade do WhatsApp
       let remoteJidRaw =
         inMsg?.key?.remoteJid || inMsg?.chatid || inMsg?.sender || inMsg?.from || payload?.chatid || "";
