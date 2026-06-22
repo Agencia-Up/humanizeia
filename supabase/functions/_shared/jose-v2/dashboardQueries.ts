@@ -46,17 +46,17 @@ export async function resolveMetaAccount(
 
 function num(v: any): number { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
-// "conversas iniciadas" (resultado típico de CTWA/messaging) somadas das actions.
+// Resultado primário no nível da CONTA, alinhado ao relatório do José (pickResult do
+// apollo-agent): mensagens (WhatsApp) + leads de formulário, por PRIORIDADE — sem somar
+// variantes do mesmo evento (evita dupla contagem). Concessionária = ~só messaging.
+// Assim o CPL da Cabine bate com o "Custo por conversa" do relatório (ex.: 883/50=17,66).
 function conversasFromActions(actions: any[]): number {
   if (!Array.isArray(actions)) return 0;
-  let total = 0;
-  for (const a of actions) {
-    const t = String(a?.action_type || "");
-    if (t.includes("messaging_conversation_started") || t === "lead" || t.includes("onsite_conversion.lead_grouped")) {
-      total += num(a.value);
-    }
-  }
-  return total;
+  const val = (t: string) => { const a = actions.find((x: any) => x?.action_type === t); return a ? num(a.value) : 0; };
+  const mensagens = val("onsite_conversion.messaging_conversation_started_7d");
+  const leads = val("onsite_conversion.lead_grouped") || val("lead")
+    || val("offsite_conversion.fb_pixel_lead") || val("onsite_conversion.lead") || val("onsite_web_lead");
+  return mensagens + leads;
 }
 
 async function fetchInsights(
