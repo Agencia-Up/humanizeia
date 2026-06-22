@@ -1519,10 +1519,9 @@ export default function ApolloDashboard() {
             </p>
           )}
         </div>
-
-        {/* ── No account ── */}
         )}
 
+        {/* ── No account ── */}
         {!isLoadingAccount && accountId && !isLoadingSession && (
           <JoseBrandOverview
             session={session}
