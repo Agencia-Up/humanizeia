@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, Users, MapPin, Award,
-  TrendingUp, MousePointerClick, MessageCircle, Sparkles,
+  TrendingUp, MousePointerClick, MessageCircle, Gauge,
 } from 'lucide-react';
 
 // ── Cabine de Comando / Bloco A — cards fixos estilo Power BI.
@@ -79,38 +79,21 @@ export function CabineCards() {
 
   useEffect(() => { load(periodo); }, [periodo, load]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Calculando a Cabine...
-      </div>
-    );
-  }
-
-  if (!enabled) {
-    return (
-      <Card><CardContent className="py-10 text-center space-y-2">
-        <Sparkles className="h-8 w-8 mx-auto text-muted-foreground" />
-        <p className="font-medium">Cabine de Comando desligada</p>
-        <p className="text-sm text-muted-foreground">Ative o recurso <b>Cabine (cards)</b> em <b>Governança → Recursos</b> para ver os indicadores.</p>
-      </CardContent></Card>
-    );
-  }
-
-  if (!cards) {
-    return (
-      <Card><CardContent className="py-10 text-center space-y-2">
-        <p className="font-medium">Sem dados pra mostrar</p>
-        <p className="text-sm text-muted-foreground">{reason === 'sem_conta_meta' ? 'Nenhuma conta de anúncios da Meta conectada.' : 'Sem números no período.'}</p>
-      </CardContent></Card>
-    );
-  }
+  // Renderizado SEMPRE na tela principal do José -> fica invisível (null) quando o
+  // recurso está desligado ou ainda não há dado, pra não poluir contas fora do piloto.
+  void reason;
+  if (loading || !enabled || !cards) return null;
 
   const totalAtrib = n(cards.atribuicao.por_ad_id) + n(cards.atribuicao.por_titulo) + n(cards.atribuicao.sem_origem);
   const semPct = totalAtrib > 0 ? Math.round(100 * n(cards.atribuicao.sem_origem) / totalAtrib) : 0;
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Gauge className="h-5 w-5 text-primary" />
+        <h2 className="text-lg font-bold">Cabine de Comando</h2>
+        <Badge variant="secondary" className="text-[10px]">a verdade por anúncio</Badge>
+      </div>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex gap-1">
           {PRESETS.map(p => (

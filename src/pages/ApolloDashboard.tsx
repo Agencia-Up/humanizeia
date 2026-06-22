@@ -1535,6 +1535,14 @@ export default function ApolloDashboard() {
           />
         )}
 
+        {/* Cabine de Comando (Bloco A) — cards fixos, sempre visíveis na tela
+            principal. O componente se auto-esconde (null) se o flag estiver off. */}
+        {!isLoadingAccount && accountId && (
+          <div className="mt-4">
+            <CabineCards />
+          </div>
+        )}
+
         {!isLoadingAccount && !accountId && (
           <Card className="border-amber-500/30 bg-amber-500/5">
             <CardContent className="flex flex-col items-center justify-center py-14 gap-4">
