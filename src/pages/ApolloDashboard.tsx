@@ -20,6 +20,7 @@ import { JoseGovernanca } from '@/components/jose/JoseGovernanca';
 import { JoseJulgamento } from '@/components/jose/JoseJulgamento';
 import { JoseCriarCampanha } from '@/components/jose/JoseCriarCampanha';
 import { CabineCards } from '@/components/jose/CabineCards';
+import { JoseChatPanel } from '@/components/jose/JoseChatPanel';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -1538,8 +1539,9 @@ export default function ApolloDashboard() {
         {/* Cabine de Comando (Bloco A) — cards fixos, sempre visíveis na tela
             principal. O componente se auto-esconde (null) se o flag estiver off. */}
         {!isLoadingAccount && accountId && (
-          <div className="mt-4">
+          <div className="mt-4 space-y-4">
             <CabineCards />
+            <JoseChatPanel />
           </div>
         )}
 

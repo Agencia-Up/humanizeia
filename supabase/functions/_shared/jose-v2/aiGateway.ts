@@ -38,6 +38,9 @@ export interface GatewayInput {
   // tts
   text?: string;
   voice?: string;
+  // function-calling (llm) — só Anthropic suporta hoje; o fallback OpenAI degrada p/ texto.
+  tools?: any[];
+  tool_choice?: any;
   // genérico
   params?: Record<string, any>;
 }
@@ -58,6 +61,9 @@ export interface GatewayResult {
   model: string;
   used_fallback: boolean;
   text?: string;        // llm / vision
+  tool_use?: any[];     // blocos tool_use (function-calling Anthropic)
+  content?: any[];      // content cru do assistant (replay no loop de ferramentas)
+  stop_reason?: string;
   transcript?: string;  // stt
   audio_base64?: string;// tts
   usage: { tokens_in?: number; tokens_out?: number; minutes?: number; images?: number };
@@ -140,15 +146,22 @@ async function callAnthropicLLM(key: string, model: string, input: GatewayInput)
       max_tokens: input.max_tokens ?? 2000,
       ...(typeof input.temperature === "number" ? { temperature: input.temperature } : {}),
       ...(input.system ? { system: input.system } : {}),
+      ...(Array.isArray(input.tools) && input.tools.length ? { tools: input.tools } : {}),
+      ...(input.tool_choice ? { tool_choice: input.tool_choice } : {}),
       messages: input.messages ?? [],
     }),
   });
   if (!res.ok) return { ok: false as const, res };
   const j = await res.json();
-  const text = (j?.content || []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
+  const content = Array.isArray(j?.content) ? j.content : [];
+  const text = content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
+  const tool_use = content.filter((b: any) => b?.type === "tool_use");
   return {
     ok: true as const,
     text,
+    tool_use,
+    content,
+    stop_reason: j?.stop_reason,
     tokens_in: j?.usage?.input_tokens ?? 0,
     tokens_out: j?.usage?.output_tokens ?? 0,
   };
@@ -267,7 +280,7 @@ async function runOne(
       { unidade: "tokens_in", quantidade: out.tokens_in, custo_usd: (out.tokens_in / 1_000_000) * (PRICE_LLM[model]?.in ?? DEFAULT_LLM_PRICE.in) },
       { unidade: "tokens_out", quantidade: out.tokens_out, custo_usd: (out.tokens_out / 1_000_000) * (PRICE_LLM[model]?.out ?? DEFAULT_LLM_PRICE.out) },
     ]);
-    return { result: { text: out.text, usage: { tokens_in: out.tokens_in, tokens_out: out.tokens_out }, cost_usd: cost }, source };
+    return { result: { text: out.text, tool_use: (out as any).tool_use, content: (out as any).content, stop_reason: (out as any).stop_reason, usage: { tokens_in: out.tokens_in, tokens_out: out.tokens_out }, cost_usd: cost }, source };
   }
   if (cap === "stt") {
     const out = await callOpenAISTT(key, model, opts.input);
