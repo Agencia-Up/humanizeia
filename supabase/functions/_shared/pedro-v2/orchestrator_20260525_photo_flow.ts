@@ -1875,6 +1875,29 @@ export async function processPedroV2Turn(
     }
   }
 
+  // ── MÍDIA SEM FAILOVER (áudio/imagem não processados) — pedir TEXTO, nunca dar brush-off ────────
+  // A transcrição (Whisper) e a visão usam SÓ a OpenAI; quando ela cai (sem crédito) e o failover é o
+  // DeepSeek (texto puro, não faz mídia), o áudio chega "[áudio recebido]" e a imagem "[imagem recebida]".
+  // Caso real (lead Luize): 3 áudios -> agente não entendeu, deu brush-off e transferiu. Aqui, quando a
+  // mídia NÃO foi processada e o turno é SÓ a mídia (sem texto real), respondemos de forma DETERMINÍSTICA
+  // e acolhedora pedindo por TEXTO — sem prometer "vou ouvir", sem transferir. (Quando houver provedor de
+  // mídia de failover, isto deixa de disparar porque a mídia será processada.)
+  if (mediaContext.kind === "audio" && !(mediaContext as any).diagnostics?.audio_transcribed && text === "[áudio recebido]") {
+    reply = {
+      ok: true,
+      text: "Recebi seu áudio, mas não consegui ouvir ele agora 😕 Me manda por texto rapidinho qual carro você procura (o modelo ou uma faixa de preço) que eu já confiro no estoque pra você! 😊",
+      source: "audio_not_transcribed_ask_text",
+      media: [],
+    } as any;
+  } else if (mediaContext.kind === "image" && !(mediaContext as any).vehicle_query && text === "[imagem recebida]") {
+    reply = {
+      ok: true,
+      text: "Recebi sua imagem! Só pra eu te ajudar certinho, me conta qual carro/modelo você tem interesse (ou uma faixa de preço) que eu confiro no estoque pra você. 😊",
+      source: "image_not_processed_ask_text",
+      media: [],
+    } as any;
+  }
+
   // ── TRAVA FINAL: NUNCA "nao temos" sem ter CHECADO (cinto-e-suspensorio anti-alucinacao) ─────────
   // Backstop universal: se o cerebro NAO buscou neste turno (stockResult null) mas o lead NOMEOU um
   // veiculo (resolver pegou) e o reply esta NEGANDO disponibilidade, o agente esta alucinando que nao
