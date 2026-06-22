@@ -378,6 +378,10 @@ export function useCommercialDashboardData(userId: string | undefined, dateRange
 // ─── Hook RANKING (filtros INDEPENDENTES do global) ──────────────────────
 // Recebe rankDateRange + rankSellerId, retorna ranking + lista de vendedores
 // pra popular o dropdown.
+// Telefone normalizado (últimos 10 dígitos) — chave pra deduplicar o MESMO vendedor
+// que tem 1 linha por agente (modelo matriz). Sem isso, ele aparece em dobro.
+function normPhone(s?: string | null): string { return (s || '').replace(/\D/g, '').slice(-10); }
+
 function useRankingData(userId: string | undefined, rankDateRange: DateRange, rankSellerId: string) {
   const { isSeller, seller, masterUserId, loading: sellerLoading } = useSellerProfile(userId);
   const [ranking, setRanking] = useState<SellerRanking[]>([]);
@@ -397,9 +401,17 @@ function useRankingData(userId: string | undefined, rankDateRange: DateRange, ra
         .eq('user_id', effectiveUserId)
         .order('name', { ascending: true });
       if (cancelled) return;
-      // Vendedores ATIVOS NO SISTEMA — não filtra pelo status do agente de IA
-      // (is_active). !== false p/ resiliência se a migration ainda não rodou.
-      setAllSellers((teamData || []).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string }>);
+      // Vendedores ATIVOS NO SISTEMA, DEDUPLICADOS por telefone (modelo matriz: 1 linha
+      // por agente). Mantém a linha "em uso" (mais leads) como canônica.
+      const byPhone = new Map<string, any>();
+      for (const s of (teamData || []) as any[]) {
+        if (s.active_in_system === false) continue;
+        const key = normPhone(s.whatsapp_number) || s.id;
+        const cur = byPhone.get(key);
+        if (!cur || Number(s.total_leads_received || 0) > Number(cur.total_leads_received || 0)) byPhone.set(key, s);
+      }
+      const deduped = Array.from(byPhone.values()).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      setAllSellers(deduped as Array<{ id: string; name: string }>);
     })();
     return () => { cancelled = true; };
   }, [effectiveUserId, sellerLoading]);
@@ -444,20 +456,28 @@ function useRankingData(userId: string | undefined, rankDateRange: DateRange, ra
 
         const pedroLeads = pedroRes.data || [];
         const marcosLeads = marcosRes.data || [];
-        // Ativos NO SISTEMA (visibilidade) — não filtra pelo status do agente.
-        const team = ((teamRes.data || []) as any[]).filter((t: any) => t.active_in_system !== false) as Array<{ id: string; name: string }>;
-        const targetTeam = targetSellerId ? team.filter(t => t.id === targetSellerId) : team;
+        // Ativos NO SISTEMA, AGRUPADOS por telefone (matriz: 1 linha por agente).
+        // Pra cada pessoa, SOMA os leads de TODAS as suas linhas (senão racha o número).
+        const team = ((teamRes.data || []) as any[]).filter((t: any) => t.active_in_system !== false);
+        const byPhone = new Map<string, { canonical: any; ids: string[] }>();
+        for (const m of team) {
+          const key = normPhone(m.whatsapp_number) || m.id;
+          const g = byPhone.get(key);
+          if (g) {
+            g.ids.push(m.id);
+            if (Number(m.total_leads_received || 0) > Number(g.canonical.total_leads_received || 0)) g.canonical = m;
+          } else {
+            byPhone.set(key, { canonical: m, ids: [m.id] });
+          }
+        }
+        let groups = Array.from(byPhone.values());
+        if (targetSellerId) groups = groups.filter((g) => g.ids.includes(targetSellerId));
 
-        const computed = targetTeam.map((member): SellerRanking => {
-          const pedro = pedroLeads.filter((lead: any) => lead.assigned_to_id === member.id).length;
-          const marcos = marcosLeads.filter((lead: any) => lead.assigned_to === member.id || lead.custom_fields?.seller_member_id === member.id).length;
-          return {
-            id: member.id,
-            name: member.name || 'Vendedor',
-            pedro,
-            marcos,
-            total: pedro + marcos,
-          };
+        const computed = groups.map(({ canonical, ids }): SellerRanking => {
+          const idset = new Set(ids);
+          const pedro = pedroLeads.filter((lead: any) => idset.has(lead.assigned_to_id)).length;
+          const marcos = marcosLeads.filter((lead: any) => idset.has(lead.assigned_to) || idset.has(lead.custom_fields?.seller_member_id)).length;
+          return { id: canonical.id, name: canonical.name || 'Vendedor', pedro, marcos, total: pedro + marcos };
         }).sort((a, b) => b.total - a.total).slice(0, targetSellerId ? 1 : 5);
 
         setRanking(computed);
