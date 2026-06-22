@@ -44,6 +44,21 @@ Deno.serve(async (req) => {
 
   for (const config of (dueUsers || [])) {
     try {
+      // ── RESERVA O SLOT PRIMEIRO (anti-duplicação) ──────────────────────────
+      // O runner roda a cada minuto. O apollo-agent abaixo DEMORA (análise leva
+      // minutos). Se a gente só atualizasse next_run_at DEPOIS, os ticks seguintes
+      // do cron re-pegariam o mesmo usuário (next_run_at ainda no passado) e o
+      // relatório sairia VÁRIAS vezes. Avançando o next_run_at pra amanhã ANTES da
+      // chamada, os próximos ticks não re-pegam. Só claim quem ainda não foi
+      // reservado neste minuto (guard contra corrida).
+      const nextRun = computeNextRun(config.run_hour, config.run_minute, config.timezone);
+      const { data: claimed } = await admin.from("apollo_cron_config").update({
+        last_run_at: now,
+        next_run_at: nextRun,
+        updated_at: now,
+      }).eq("user_id", config.user_id).lte("next_run_at", now).select("user_id");
+      if (!claimed || claimed.length === 0) continue; // outro tick já reservou
+
       // Get a valid access token for this user's account
       const { data: account } = await admin
         .from("ad_accounts")
@@ -74,14 +89,7 @@ Deno.serve(async (req) => {
       });
 
       const data = await response.json().catch(() => ({}));
-
-      // Update next_run_at
-      const nextRun = computeNextRun(config.run_hour, config.run_minute, config.timezone);
-      await admin.from("apollo_cron_config").update({
-        last_run_at: now,
-        next_run_at: nextRun,
-        updated_at: now,
-      }).eq("user_id", config.user_id);
+      // (next_run_at já foi reservado no topo do loop — anti-duplicação)
 
       results.push({
         user_id: config.user_id,
