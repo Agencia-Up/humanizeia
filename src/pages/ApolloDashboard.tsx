@@ -292,6 +292,40 @@ function ChannelMark({ name }: { name: string }) {
   return <span className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-[10px] font-black ${cls}`}>{label}</span>;
 }
 
+function campaignSpend(campaign: any): number {
+  const own = Number(campaign?.spend || 0);
+  if (own > 0) return own;
+  return (campaign?.adsets || []).reduce((sum: number, adset: any) => sum + Number(adset?.spend || 0), 0);
+}
+
+function campaignResults(campaign: any): number {
+  const own = Number(campaign?.results ?? campaign?.conversions ?? campaign?.leads ?? 0);
+  if (own > 0) return own;
+  return (campaign?.adsets || []).reduce((sum: number, adset: any) => {
+    return sum + Number(adset?.results ?? adset?.conversions ?? adset?.leads ?? 0);
+  }, 0);
+}
+
+function campaignCostPerResult(campaign: any): number {
+  const own = Number(campaign?.cpa || 0);
+  if (own > 0) return own;
+  const results = campaignResults(campaign);
+  const spend = campaignSpend(campaign);
+  return results > 0 && spend > 0 ? spend / results : 0;
+}
+
+function dominantResultLabel(campaigns: any[]): string {
+  const labels = campaigns
+    .map((campaign) => campaign?.result_label)
+    .filter(Boolean) as string[];
+  if (!labels.length) return 'Resultados';
+  const counts = labels.reduce((acc: Record<string, number>, label) => {
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+  return labels.sort((a, b) => (counts[b] || 0) - (counts[a] || 0))[0] || 'Resultados';
+}
+
 function JoseBrandOverview({
   session,
   pendingActions,
@@ -312,9 +346,10 @@ function JoseBrandOverview({
   const campaigns = session?.campaigns || [];
   const score = session?.health_score ?? null;
   const status = josePlainStatus(score);
-  const totalSpend = campaigns.reduce((sum: number, c: any) => sum + (c.spend || 0), 0);
-  const totalLeads = campaigns.reduce((sum: number, c: any) => sum + (c.conversions || c.leads || c.results || 0), 0);
-  const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : 0;
+  const resultLabel = dominantResultLabel(campaigns);
+  const totalSpend = campaigns.reduce((sum: number, c: any) => sum + campaignSpend(c), 0);
+  const totalResults = campaigns.reduce((sum: number, c: any) => sum + campaignResults(c), 0);
+  const costPerResult = totalResults > 0 ? totalSpend / totalResults : 0;
   const topActions = pendingActions.slice(0, 3);
   const sortedCampaigns = [...campaigns].sort((a: any, b: any) => (a.health_score || 0) - (b.health_score || 0)).slice(0, 6);
   const explanation = topActions[0]?.reason
@@ -378,8 +413,8 @@ function JoseBrandOverview({
         <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-3">
             <MetricTile icon={DollarSign} label="Investido" value={`${currencySymbol} ${fmt(totalSpend)}`} hint={totalSpend ? '+12% vs ontem' : 'aguardando dados'} />
-            <MetricTile icon={MessageCircle} label="Leads" value={totalLeads ? String(totalLeads) : '--'} hint={totalLeads ? '+18% vs ontem' : 'aguardando dados'} tone="blue" />
-            <MetricTile icon={ShieldCheck} label="Custo por lead" value={costPerLead ? `${currencySymbol} ${fmt(costPerLead)}` : '--'} hint={costPerLead ? '-9% vs ontem' : 'aguardando dados'} tone="green" />
+            <MetricTile icon={MessageCircle} label={resultLabel} value={totalResults ? String(Math.round(totalResults)) : '--'} hint={totalResults ? 'resultado principal do Meta' : 'aguardando dados'} tone="blue" />
+            <MetricTile icon={ShieldCheck} label={`Custo por ${resultLabel.toLowerCase()}`} value={costPerResult ? `${currencySymbol} ${fmt(costPerResult)}` : '--'} hint={costPerResult ? 'custo medio do objetivo' : 'aguardando dados'} tone="green" />
           </div>
 
           <div id="jose-recommendations" className="scroll-mt-24 rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
@@ -456,8 +491,8 @@ function JoseBrandOverview({
                 <tr className="text-left text-xs font-medium text-[#FAF8F2]/55">
                   <th className="px-3 py-3">Campanha</th>
                   <th className="px-3 py-3">Investido</th>
-                  <th className="px-3 py-3">Leads</th>
-                  <th className="px-3 py-3">Custo por lead</th>
+                  <th className="px-3 py-3">Resultado</th>
+                  <th className="px-3 py-3">Custo por resultado</th>
                   <th className="px-3 py-3">Score</th>
                   <th className="px-3 py-3">Situacao</th>
                   <th className="px-3 py-3">Tendencia</th>
@@ -466,8 +501,9 @@ function JoseBrandOverview({
               <tbody className="divide-y divide-[#1f3b5f]">
                 {sortedCampaigns.map((campaign: any) => {
                 const scoreValue = campaign.health_score ?? 0;
-                const campaignLeads = campaign.conversions || campaign.leads || campaign.results || 0;
-                const campaignCpl = campaignLeads > 0 ? campaign.spend / campaignLeads : 0;
+                const campaignMetricSpend = campaignSpend(campaign);
+                const campaignMetricResults = campaignResults(campaign);
+                const campaignMetricCost = campaignCostPerResult(campaign);
                 const label = scoreValue >= 70 ? 'Boa' : scoreValue >= 45 ? 'Atencao' : 'Urgente';
                 const tone = scoreValue >= 70 ? 'green' : scoreValue >= 45 ? 'amber' : 'red';
                 const pill = scoreValue >= 70
@@ -484,9 +520,11 @@ function JoseBrandOverview({
                         <span className="max-w-[280px] truncate font-semibold">{campaign.name}</span>
                       </div>
                     </td>
-                    <td className="px-3 py-3">{currencySymbol} {fmt(campaign.spend || 0)}</td>
-                    <td className="px-3 py-3">{campaignLeads || '--'}</td>
-                    <td className="px-3 py-3">{campaignCpl ? `${currencySymbol} ${fmt(campaignCpl)}` : '--'}</td>
+                    <td className="px-3 py-3">{currencySymbol} {fmt(campaignMetricSpend)}</td>
+                    <td className="px-3 py-3">
+                      {campaignMetricResults ? `${Math.round(campaignMetricResults)} ${campaign.result_label || 'Resultados'}` : '--'}
+                    </td>
+                    <td className="px-3 py-3">{campaignMetricCost ? `${currencySymbol} ${fmt(campaignMetricCost)}` : '--'}</td>
                     <td className="px-3 py-3">
                       <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-black ${pill}`}>{scoreValue}</span>
                     </td>
