@@ -299,10 +299,19 @@ function campaignSpend(campaign: any): number {
 }
 
 function campaignResults(campaign: any): number {
-  const own = Number(campaign?.results ?? campaign?.conversions ?? campaign?.leads ?? 0);
+  const own = Math.max(
+    Number(campaign?.results || 0),
+    Number(campaign?.conversions || 0),
+    Number(campaign?.leads || 0),
+    Number(campaign?.crm_leads_total || 0),
+  );
   if (own > 0) return own;
   return (campaign?.adsets || []).reduce((sum: number, adset: any) => {
-    return sum + Number(adset?.results ?? adset?.conversions ?? adset?.leads ?? 0);
+    return sum + Math.max(
+      Number(adset?.results || 0),
+      Number(adset?.conversions || 0),
+      Number(adset?.leads || 0),
+    );
   }, 0);
 }
 

@@ -354,6 +354,8 @@ Deno.serve(async (req) => {
 
     // ── Enrich campaigns with insights + health score ──
     const enriched = campaigns.map((c: any) => enrichCampaign(c, insightsMap, adSetInsightsMap, currency, adsetBudgets));
+    const leadMetricsByCampaign = await loadLeadMetricsByCampaign(admin, user.id, adAccountDbId, datePreset);
+    attachLeadMetricsToCampaigns(enriched, leadMetricsByCampaign);
 
     // ── Build historical context for Claude ──
     const trendContext = buildTrendContext(historicalSnapshots, enriched, currency, currencySymbol);
@@ -776,6 +778,96 @@ function enrichCampaign(c: any, insightsMap: Map<string, any>, adSetInsightsMap:
 }
 
 // ── Historical context ────────────────────────────────────────────────────────
+
+function leadDateRange(datePreset: string): { since: string; until?: string } {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (datePreset === "today") return { since: start.toISOString() };
+  if (datePreset === "yesterday") {
+    const y = new Date(start);
+    y.setDate(y.getDate() - 1);
+    const end = new Date(start);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+    return { since: y.toISOString(), until: end.toISOString() };
+  }
+  const days = datePreset === "last_7d" ? 7 : datePreset === "last_14d" ? 14 : 30;
+  start.setDate(start.getDate() - days + 1);
+  return { since: start.toISOString() };
+}
+
+function normalizeCampaignKey(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function addLeadMetric(map: Map<string, any>, id: string | null | undefined, name: string | null | undefined, lead: any) {
+  const keys = [
+    id ? `id:${id}` : "",
+    name ? `name:${normalizeCampaignKey(name)}` : "",
+  ].filter(Boolean);
+  for (const key of keys) {
+    const cur = map.get(key) || { total: 0, qualified: 0, sales: 0, sale_value: 0, by_status: {} };
+    const status = lead.status || lead.status_crm || lead.ai_classification || "";
+    cur.total += 1;
+    if (["qualificado", "proposta", "agendou"].includes(status)) cur.qualified += 1;
+    if (["venda_realizada", "fechado", "ganho"].includes(status)) cur.sales += 1;
+    cur.sale_value += Number(lead.sale_value || 0);
+    if (status) cur.by_status[status] = (cur.by_status[status] || 0) + 1;
+    map.set(key, cur);
+  }
+}
+
+async function loadLeadMetricsByCampaign(admin: any, userId: string, accountDbId: string | null, datePreset: string): Promise<Map<string, any>> {
+  const range = leadDateRange(datePreset);
+  const metrics = new Map<string, any>();
+
+  try {
+    let q = admin
+      .from("leads")
+      .select("campaign_id_meta,campaign_name,status,sale_value,created_at")
+      .eq("user_id", userId)
+      .gte("created_at", range.since);
+    if (range.until) q = q.lte("created_at", range.until);
+    if (accountDbId) q = q.eq("account_id", accountDbId);
+    const { data } = await q.limit(5000);
+    for (const lead of data || []) addLeadMetric(metrics, lead.campaign_id_meta, lead.campaign_name, lead);
+  } catch { /* CRM PME opcional */ }
+
+  try {
+    let q = admin
+      .from("ai_crm_leads")
+      .select("campaign_id,campaign_name,status_crm,entry_datetime,created_at")
+      .eq("user_id", userId)
+      .gte("created_at", range.since);
+    if (range.until) q = q.lte("created_at", range.until);
+    const { data } = await q.limit(5000);
+    for (const lead of data || []) addLeadMetric(metrics, lead.campaign_id, lead.campaign_name, lead);
+  } catch { /* Pedro/Meta lead quality opcional */ }
+
+  return metrics;
+}
+
+function attachLeadMetricsToCampaigns(campaigns: any[], metrics: Map<string, any>) {
+  for (const campaign of campaigns || []) {
+    const metric = metrics.get(`id:${campaign.id}`) || metrics.get(`name:${normalizeCampaignKey(campaign.name)}`);
+    if (!metric) continue;
+    campaign.crm_leads_total = metric.total;
+    campaign.crm_qualified_leads = metric.qualified;
+    campaign.crm_sales_count = metric.sales;
+    campaign.crm_sale_value = metric.sale_value;
+    campaign.crm_status_breakdown = metric.by_status;
+    campaign.leads = Math.max(Number(campaign.leads || 0), Number(metric.total || 0));
+    if (!Number(campaign.results || 0) && metric.total > 0) {
+      campaign.result_label = "Leads do CRM";
+      campaign.cpa = Number(campaign.spend || 0) > 0 ? Number(campaign.spend || 0) / metric.total : campaign.cpa;
+    }
+  }
+}
 
 async function loadHistoricalSnapshots(admin: any, userId: string, accountDbId: string) {
   const { data } = await admin
@@ -1983,11 +2075,15 @@ async function handleLoadSession(admin: any, userId: string, targetAccountId: st
       }
     }
 
+    const campaignsSnapshot = session.campaigns_snapshot || [];
+    const leadMetricsByCampaign = await loadLeadMetricsByCampaign(admin, userId, session.account_id || null, session.date_preset || "last_30d");
+    attachLeadMetricsToCampaigns(campaignsSnapshot, leadMetricsByCampaign);
+
     return new Response(JSON.stringify({
       session: {
         status: "loaded",
         account: accountInfo,
-        campaigns: session.campaigns_snapshot || [],
+        campaigns: campaignsSnapshot,
         health_score: session.health_score,
         summary: session.summary,
         ai_analysis: session.ai_analysis,
