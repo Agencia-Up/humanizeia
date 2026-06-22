@@ -1356,7 +1356,7 @@ export default function ApolloDashboard() {
         </div>
 
         {/* ── No account ── */}
-        {session && (
+        {!isLoadingAccount && accountId && !isLoadingSession && (
           <JoseBrandOverview
             session={session}
             pendingActions={pendingActions}
