@@ -1379,16 +1379,8 @@ export default function ApolloDashboard() {
     analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute });
   }, [analyze, accountId, datePreset, autoExecute]);
 
-  // Auto-análise UMA vez por conta quando não há sessão salva — preenche o topo
-  // ("Seu tráfego hoje") sozinho, sem o dono clicar "Analisar agora". auto_execute=false:
-  // só LÊ/analisa, nunca age sem o Auto-Pilot. Depois fica salvo no banco e não re-roda.
-  const autoAnalyzedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (accountId && sessionLoaded && !session && !isAnalyzing && !isLoadingSession && autoAnalyzedRef.current !== accountId) {
-      autoAnalyzedRef.current = accountId;
-      analyze({ targetAccountId: accountId, datePreset, auto_execute: false });
-    }
-  }, [accountId, sessionLoaded, session, isAnalyzing, isLoadingSession, analyze, datePreset]);
+  // (O overview "Seu tráfego hoje" foi removido a pedido do dono; a Cabine não depende
+  //  de sessão — calcula sozinha pelo jose-dashboard. Sem auto-análise por aqui.)
 
   // Trocar o período é uma AÇÃO do usuário: além de mudar o filtro, re-analisa
   // na hora (se já houver uma análise) pra os números baterem com o período
@@ -1536,16 +1528,23 @@ export default function ApolloDashboard() {
         )}
 
         {/* ── No account ── */}
-        {!isLoadingAccount && accountId && !isLoadingSession && (
-          <JoseBrandOverview
-            session={session}
-            pendingActions={pendingActions}
-            currencySymbol={currencySymbol}
-            isAnalyzing={isAnalyzing}
-            onAnalyze={handleAnalyze}
-            onExecute={handleExecute}
-            executingCampaignId={executeAction.variables?.campaign_id}
-          />
+        {/* Header enxuto do José. O overview "Seu tráfego hoje" (Score/Leads/recomendações/
+            campanhas) foi REMOVIDO a pedido do dono — a Cabine de Comando é a tela principal. */}
+        {!isLoadingAccount && accountId && (
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full border-2 border-primary flex items-center justify-center shrink-0">
+                <Gauge className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold leading-none">José</h1>
+                <p className="text-xs text-muted-foreground mt-0.5">Gestor de Tráfego IA</p>
+              </div>
+            </div>
+            <Badge variant="outline" className="gap-1.5 text-xs h-7 px-2.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" /> Conectado às suas contas
+            </Badge>
+          </div>
         )}
 
         {/* Cabine de Comando (Bloco A) — cards fixos, sempre visíveis na tela
