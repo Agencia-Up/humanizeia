@@ -17,6 +17,7 @@ export interface VisibleFeatures {
   // Tabs do Pedro
   tab_crm: boolean;
   tab_inbox: boolean;
+  tab_inbox_ia: boolean;   // "Conversas IA" — consulta somente-leitura do vendedor
   tab_instancias: boolean;
   tab_performance: boolean;
   tab_agente_ia: boolean;
@@ -59,6 +60,7 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   // ── Abas do agente Pedro ────────────────────────────────────────────
   tab_crm: true,          // Meus Leads
   tab_inbox: true,        // Conversas
+  tab_inbox_ia: true,     // Conversas IA (consulta da conversa do lead atribuído)
   tab_instancias: true,   // Instâncias WhatsApp (whatsapp do vendedor)
   tab_crm_ao_vivo: true,  // Painel ao Vivo (visão geral)
   tab_performance: false, // métricas (default off — master libera)

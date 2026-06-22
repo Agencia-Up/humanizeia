@@ -512,32 +512,48 @@ async function processEvolutionIncomingMessage(
     messageType = "image";
     content = buildImageContent(message.imageMessage.caption || "");
     mediaUrl = message.imageMessage.url || null;
+    // A URL crua do provider é o blob .enc criptografado (não abre no inbox).
+    // Re-hospeda no bucket público p/ virar URL renderizável; se falhar, mantém.
+    const rehosted = await rehostIncomingMedia(supabase, instance, messageData, instanceName, phone);
+    if (rehosted) mediaUrl = rehosted;
   } else if (message.videoMessage) {
     messageType = "video";
     content = message.videoMessage.caption || "";
     mediaUrl = message.videoMessage.url || null;
+    const rehostedVideo = await rehostIncomingMedia(supabase, instance, messageData, instanceName, phone);
+    if (rehostedVideo) mediaUrl = rehostedVideo;
   } else if (message.audioMessage) {
     messageType = "audio";
     mediaUrl = message.audioMessage.url || null;
     console.log(`[wa-inbox-webhook] Audio message detected from UazAPI. mediaUrl: ${mediaUrl}, mimetype: ${message.audioMessage.mimetype}`);
     try {
-      const transcription = await transcribeAudioFromEvolution(supabase, instance, messageData, instanceName);
-      if (transcription) {
-        content = transcription;
-        console.log(`[wa-inbox-webhook] Audio transcribed successfully: ${content.substring(0, 80)}`);
+      // Um único fetch de base64 serve pra RE-HOSPEDAR (tocar no inbox) e TRANSCREVER.
+      const media = await fetchMediaBase64FromUazapi(supabase, instance, messageData, instanceName);
+      if (media?.base64) {
+        const rehostedAudio = await uploadBase64ToWaMedia(
+          supabase, instance.user_id, phone, media.base64,
+          media.mimetype || message.audioMessage.mimetype || "audio/ogg",
+        );
+        if (rehostedAudio) mediaUrl = rehostedAudio;
+        const transcription = await transcribeWithGemini(media.base64, media.mimetype || "audio/ogg");
+        content = transcription || buildAudioFallbackContent();
+        if (transcription) console.log(`[wa-inbox-webhook] Audio transcribed successfully: ${content.substring(0, 80)}`);
+        else console.warn("[wa-inbox-webhook] Audio transcription returned null, using fallback content");
       } else {
         content = buildAudioFallbackContent();
-        console.warn("[wa-inbox-webhook] Audio transcription returned null, using fallback content");
+        console.warn("[wa-inbox-webhook] Audio base64 fetch returned null, using fallback content");
       }
     } catch (transcErr) {
       content = buildAudioFallbackContent();
-      console.error("[wa-inbox-webhook] Audio transcription threw error:", transcErr);
+      console.error("[wa-inbox-webhook] Audio handling threw error:", transcErr);
     }
   } else if (message.documentMessage) {
     messageType = "document";
     const fileName = message.documentMessage.fileName || "Arquivo";
     content = `[Arquivo recebido: ${fileName}]`;
     mediaUrl = message.documentMessage.url || null;
+    const rehostedDoc = await rehostIncomingMedia(supabase, instance, messageData, instanceName, phone);
+    if (rehostedDoc) mediaUrl = rehostedDoc;
   } else if (message.stickerMessage) {
     messageType = "sticker";
   }
@@ -2904,12 +2920,16 @@ async function executeAutomation(
 
 // ====================== AUDIO TRANSCRIPTION ======================
 
-async function transcribeAudioFromEvolution(
+// Baixa os BYTES (base64) de uma mídia recebida via UazAPI. A URL crua que vem
+// no webhook (message.*.url) é o blob CRIPTOGRAFADO do WhatsApp (`.enc`) e não
+// abre no navegador — a única forma de obter o conteúdo é por este endpoint.
+// Reutilizado tanto pela transcrição de áudio quanto pelo re-host de mídia.
+async function fetchMediaBase64FromUazapi(
   supabase: any,
   instance: any,
   messageData: any,
   instanceName: string,
-): Promise<string | null> {
+): Promise<{ base64: string; mimetype: string } | null> {
   try {
     const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
     const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
@@ -2924,71 +2944,144 @@ async function transcribeAudioFromEvolution(
     const apiKey = evolutionApiKey || instanceData?.api_key_encrypted;
 
     if (!apiUrl || !apiKey) {
-      console.error("[audio-transcribe] Missing UazAPI credentials");
+      console.error("[media-fetch] Missing UazAPI credentials");
       return null;
     }
 
     const key = messageData.key || {};
     const message = messageData.message || messageData;
-    console.log(`[audio-transcribe] Requesting base64 from UazAPI: ${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`);
-    console.log(`[audio-transcribe] Key: ${JSON.stringify(key)}`);
 
-    // Try V2 endpoint first, then V1
-    let base64Audio: string | null = null;
-    let mimetype = "audio/ogg";
+    let base64: string | null = null;
+    let mimetype = "";
 
-    // Attempt 1: Standard endpoint with full message body
+    // Attempt 1: corpo completo da mensagem.
     const mediaRes = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: apiKey,
-      },
-      body: JSON.stringify({ message: { key, message: message } }),
+      headers: { "Content-Type": "application/json", apikey: apiKey },
+      body: JSON.stringify({ message: { key, message } }),
     });
-
-    console.log(`[audio-transcribe] UazAPI response status: ${mediaRes.status}`);
 
     if (mediaRes.ok) {
       const mediaData = await mediaRes.json();
-      console.log(`[audio-transcribe] UazAPI response keys: ${JSON.stringify(Object.keys(mediaData))}`);
-      base64Audio = mediaData.base64 || mediaData.data?.base64 || mediaData.mediaBase64 || null;
-      mimetype = mediaData.mimetype || mediaData.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
+      base64 = mediaData.base64 || mediaData.data?.base64 || mediaData.mediaBase64 || null;
+      mimetype = mediaData.mimetype || mediaData.data?.mimetype || "";
     } else {
       const errText = await mediaRes.text();
-      console.error(`[audio-transcribe] UazAPI getBase64 failed: ${mediaRes.status} - ${errText}`);
-      
-      // Attempt 2: Try with just key (some UazAPI versions)
+      console.error(`[media-fetch] getBase64 failed: ${mediaRes.status} - ${errText}`);
+      // Attempt 2: só a key (algumas versões do UazAPI).
       const mediaRes2 = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: apiKey,
-        },
+        headers: { "Content-Type": "application/json", apikey: apiKey },
         body: JSON.stringify({ message: { key }, convertToMp4: false }),
       });
-
-      console.log(`[audio-transcribe] UazAPI retry status: ${mediaRes2.status}`);
       if (mediaRes2.ok) {
         const mediaData2 = await mediaRes2.json();
-        base64Audio = mediaData2.base64 || mediaData2.data?.base64 || mediaData2.mediaBase64 || null;
-        mimetype = mediaData2.mimetype || mediaData2.data?.mimetype || message.audioMessage?.mimetype || "audio/ogg";
+        base64 = mediaData2.base64 || mediaData2.data?.base64 || mediaData2.mediaBase64 || null;
+        mimetype = mediaData2.mimetype || mediaData2.data?.mimetype || "";
       } else {
         await mediaRes2.text(); // consume body
       }
     }
 
-    if (!base64Audio) {
-      console.error("[audio-transcribe] No base64 audio returned from UazAPI after all attempts");
+    if (!base64) {
+      console.error("[media-fetch] No base64 returned from UazAPI after all attempts");
       return null;
     }
 
-    console.log(`[audio-transcribe] Got base64 audio, length: ${base64Audio.length}, mimetype: ${mimetype}`);
-    return await transcribeWithGemini(base64Audio, mimetype);
+    // Às vezes vem como data URL ("data:...;base64,XXXX") — normaliza p/ base64 puro.
+    if (base64.startsWith("data:")) {
+      const comma = base64.indexOf(",");
+      if (comma >= 0) {
+        if (!mimetype) mimetype = base64.slice(5, base64.indexOf(";"));
+        base64 = base64.slice(comma + 1);
+      }
+    }
+    return { base64, mimetype };
   } catch (err) {
-    console.error("[audio-transcribe] UazAPI transcription error:", err);
+    console.error("[media-fetch] UazAPI media fetch error:", err);
     return null;
   }
+}
+
+function extFromMime(mime: string): string {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("3gpp") || m.includes("3gp")) return "3gp";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("wav")) return "wav";
+  if (m.includes("pdf")) return "pdf";
+  return "bin";
+}
+
+function decodeBase64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64.replace(/\s/g, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// Sobe a mídia recebida pro bucket público `wa-media` e devolve a URL pública
+// (renderizável no inbox). Usa a service-role do webhook (bypassa RLS).
+async function uploadBase64ToWaMedia(
+  supabase: any,
+  userId: string,
+  phone: string,
+  base64: string,
+  mimetype: string,
+): Promise<string | null> {
+  try {
+    const bytes = decodeBase64ToBytes(base64);
+    if (!bytes || bytes.length === 0) return null;
+    const ext = extFromMime(mimetype);
+    const safePhone = (phone || "").replace(/\D/g, "") || "lead";
+    const path = `${userId}/${safePhone}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabase.storage
+      .from("wa-media")
+      .upload(path, bytes, { contentType: mimetype || "application/octet-stream", upsert: true });
+    if (error) {
+      console.error("[media-rehost] upload error:", error.message || error);
+      return null;
+    }
+    const { data: pub } = supabase.storage.from("wa-media").getPublicUrl(path);
+    return pub?.publicUrl || null;
+  } catch (err) {
+    console.error("[media-rehost] upload threw:", err);
+    return null;
+  }
+}
+
+// Baixa + re-hospeda uma mídia recebida. Devolve a URL pública ou null.
+async function rehostIncomingMedia(
+  supabase: any,
+  instance: any,
+  messageData: any,
+  instanceName: string,
+  phone: string,
+): Promise<string | null> {
+  const media = await fetchMediaBase64FromUazapi(supabase, instance, messageData, instanceName);
+  if (!media?.base64) return null;
+  return await uploadBase64ToWaMedia(supabase, instance.user_id, phone, media.base64, media.mimetype);
+}
+
+// Transcrição de áudio — agora reaproveita o fetch de base64 acima.
+async function transcribeAudioFromEvolution(
+  supabase: any,
+  instance: any,
+  messageData: any,
+  instanceName: string,
+): Promise<string | null> {
+  const media = await fetchMediaBase64FromUazapi(supabase, instance, messageData, instanceName);
+  if (!media?.base64) {
+    console.error("[audio-transcribe] No base64 audio returned from UazAPI");
+    return null;
+  }
+  return await transcribeWithGemini(media.base64, media.mimetype || "audio/ogg");
 }
 
 async function transcribeAudioFromMeta(

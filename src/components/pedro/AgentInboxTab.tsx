@@ -12,7 +12,7 @@ import {
 import {
   Bot, Send, Loader2, Search, ArrowLeft, Pause, Play,
   MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
-  Paperclip, Mic, FileText, Download, Trash2, X, Square,
+  Paperclip, Mic, FileText, Download, Trash2, X, Square, Eye,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -61,6 +61,9 @@ interface AgentInboxTabProps {
   // Quando vendedor, escopa os leads aos atribuidos a ele (assigned_to_id).
   isSeller?: boolean;
   sellerMemberIds?: string[];
+  // Somente leitura (consulta): esconde pausar IA, compositor e gravacao.
+  // O vendedor so visualiza a conversa dos leads atribuidos a ele.
+  readOnly?: boolean;
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -99,6 +102,45 @@ function mediaTypeFromMime(mime: string): 'image' | 'audio' | 'video' | 'documen
   return 'document';
 }
 
+/* URLs que o navegador NÃO consegue abrir: o blob criptografado do WhatsApp
+   (mmg.whatsapp.net / *.enc). Tratadas como "sem mídia" no inbox — assim caímos
+   no fallback (base64 do Pedro V2 ou placeholder) em vez de quebrar a imagem. */
+function isRenderableMedia(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  if (u.startsWith('data:') || u.startsWith('blob:')) return true;
+  if (u.includes('mmg.whatsapp.net') || u.includes('.enc')) return false;
+  return /^https?:\/\//.test(u);
+}
+
+function msgHasRenderableMedia(m: Pick<Message, 'media_url' | 'media_list'>): boolean {
+  if (isRenderableMedia(m.media_url)) return true;
+  return (m.media_list || []).some(x => isRenderableMedia(x?.file || x?.url));
+}
+
+/* Texto a exibir no balao: remove os rotulos automaticos de midia recebida
+   ("[Imagem recebida]", "[áudio recebido]", "Legenda:") para nao poluir, mas
+   preserva legendas reais e transcricoes de audio. */
+function displayText(content: string | null | undefined): string {
+  const s = (content || '').trim();
+  if (!s) return '';
+  const imgLegenda = s.match(/^\[Imagem recebida[^\]]*\]\s*(?:\n?Legenda:\s*)?([\s\S]*)$/i);
+  if (imgLegenda) return imgLegenda[1].trim();
+  if (/^\[[^\]]*\]$/.test(s)) return ''; // placeholder puro: [áudio recebido], [Arquivo recebido: x]
+  return s;
+}
+
+const MEDIA_PLACEHOLDER: Record<string, string> = {
+  image: '🖼️ Imagem',
+  audio: '🎤 Áudio',
+  ptt: '🎤 Áudio',
+  voice: '🎤 Áudio',
+  video: '🎬 Vídeo',
+  document: '📎 Arquivo',
+  file: '📎 Arquivo',
+  sticker: '🌟 Figurinha',
+};
+
 /* Valor "coringa" do seletor: mostra os leads de TODOS os agentes (paridade com
    o CRM, que filtra so por user_id). Sem isso, o inbox filtrava por agent_id e a
    lista vinha vazia quando o lead estava sob outro agente (ou agent_id null). */
@@ -106,7 +148,7 @@ const ALL_AGENTS = '__all__';
 const ALL_SELLERS = '__all_sellers__'; // filtro "todos" do dropdown de vendedor (só master)
 
 /* ── Componente Principal ──────────────────────────────────────────── */
-export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }: AgentInboxTabProps) {
+export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false }: AgentInboxTabProps) {
   const { toast } = useToast();
 
   // Agents
@@ -299,17 +341,31 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
         // silencioso — mantem somente o wa_inbox
       }
 
-      // Evita balao duplicado quando a mesma mensagem existe nas duas fontes
-      // (mesma direcao + mesmo texto dentro de ~2min). Prioriza o wa_inbox (tem midia).
-      const historyToAdd = historyRows.filter(h =>
-        !inboxRows.some(r =>
-          r.direction === h.direction &&
-          (r.content || '').trim() === (h.content || '').trim() &&
-          Math.abs(new Date(r.created_at).getTime() - new Date(h.created_at).getTime()) < 120000
-        )
-      );
+      // Funde as duas fontes evitando balao duplicado. Considera "mesma mensagem"
+      // quando: mesma direcao + janela de ~2min + (mesmo texto OU ambas sao midia
+      // do mesmo tipo). Ao deduplicar, MANTEM a linha com midia RENDERIZAVEL — a
+      // entrada do lead via wa_inbox grava a URL .enc (nao abre), enquanto o Pedro
+      // V2 as vezes guarda o base64 tocavel em wa_chat_history. Sem isto, audio/
+      // imagem do lead somem do inbox.
+      const sameMessage = (a: Message, b: Message) => {
+        if (a.direction !== b.direction) return false;
+        if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
+        const aMedia = a.message_type !== 'text';
+        const bMedia = b.message_type !== 'text';
+        if (aMedia && bMedia) return a.message_type === b.message_type;
+        return (a.content || '').trim() === (b.content || '').trim();
+      };
+      const merged: Message[] = [...inboxRows];
+      for (const h of historyRows) {
+        const idx = merged.findIndex(r => sameMessage(r, h));
+        if (idx === -1) { merged.push(h); continue; }
+        // Troca pela linha do history só quando ela tem midia boa e a atual nao.
+        if (msgHasRenderableMedia(h) && !msgHasRenderableMedia(merged[idx])) {
+          merged[idx] = { ...h, id: merged[idx].id };
+        }
+      }
 
-      const rows: Message[] = [...inboxRows, ...historyToAdd].sort(
+      const rows: Message[] = merged.sort(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       );
     // Preserva mensagens otimistas (id "opt-") que ainda nao apareceram no banco.
@@ -745,7 +801,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
         <Bot className="h-5 w-5 text-violet-400 shrink-0" />
         <div className="flex-1 min-w-0">
           <Select value={selectedAgentId} onValueChange={v => { setSelectedAgentId(v); setSelectedLead(null); }}>
-            <SelectTrigger className="h-8 text-xs w-full max-w-[280px]">
+            <SelectTrigger className="h-9 text-sm w-full max-w-[300px]">
               <SelectValue placeholder="Selecionar agente..." />
             </SelectTrigger>
             <SelectContent>
@@ -768,7 +824,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
         </div>
         {!isSeller && sellers.length > 0 && (
           <Select value={sellerFilter} onValueChange={v => { setSellerFilter(v); setSelectedLead(null); }}>
-            <SelectTrigger className="h-8 text-xs w-[180px] shrink-0" title="Acompanhar as conversas de um vendedor">
+            <SelectTrigger className="h-9 text-sm w-[200px] shrink-0" title="Acompanhar as conversas de um vendedor">
               <SelectValue placeholder="Vendedor" />
             </SelectTrigger>
             <SelectContent>
@@ -796,16 +852,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Painel Esquerdo: Lista de Conversas ── */}
-        <div className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-96 border-r border-border/40`}>
+        <div className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40`}>
           {/* Search */}
-          <div className="p-2 border-b border-border/30">
+          <div className="p-3 border-b border-border/30">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar por nome ou telefone..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="h-8 pl-8 text-xs"
+                className="h-9 pl-9 text-sm"
               />
             </div>
           </div>
@@ -829,13 +885,13 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                   <button
                     key={lead.id}
                     onClick={() => setSelectedLead(lead)}
-                    className={`w-full text-left px-3 py-2.5 border-b border-border/20 transition-colors hover:bg-accent/40 ${
+                    className={`w-full text-left px-3.5 py-3 border-b border-border/20 transition-colors hover:bg-accent/40 ${
                       isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : ''
                     }`}
                   >
                     <div className="flex items-start gap-2.5">
-                      <Avatar className="h-9 w-9 shrink-0">
-                        <AvatarFallback className={`text-[10px] font-bold ${
+                      <Avatar className="h-11 w-11 shrink-0">
+                        <AvatarFallback className={`text-xs font-bold ${
                           lead.ai_paused
                             ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                             : 'bg-violet-500/15 text-violet-400 border border-violet-500/30'
@@ -845,29 +901,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                       </Avatar>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-1">
-                          <p className="text-sm font-medium truncate text-foreground">
+                          <p className="text-[15px] font-semibold truncate text-foreground">
                             {lead.lead_name || lead.remote_jid}
                           </p>
-                          <span className="text-[10px] text-muted-foreground shrink-0">
+                          <span className="text-[11px] text-muted-foreground shrink-0">
                             {lead.last_interaction_at ? fmtTime(lead.last_interaction_at) : ''}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${st.color}`}>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${st.color}`}>
                             {st.label}
                           </span>
                           {lead.ai_paused ? (
-                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 flex items-center gap-0.5">
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 flex items-center gap-0.5">
                               <Pause className="h-2.5 w-2.5" /> Manual
                             </span>
                           ) : (
-                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 flex items-center gap-0.5">
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-violet-500/15 text-violet-400 flex items-center gap-0.5">
                               <Bot className="h-2.5 w-2.5" /> IA
                             </span>
                           )}
                         </div>
                         {lead.summary && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate block whitespace-nowrap overflow-hidden text-ellipsis w-full" title={lead.summary}>
+                          <p className="text-xs text-muted-foreground mt-1 truncate block whitespace-nowrap overflow-hidden text-ellipsis w-full" title={lead.summary}>
                             {lead.summary.replace(/\r?\n|\r/g, ' ')}
                           </p>
                         )}
@@ -891,7 +947,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
           ) : (
             <>
               {/* Chat header */}
-              <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/50 bg-muted/20">
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/20">
                 <Button
                   variant="ghost" size="sm"
                   className="h-8 w-8 p-0 md:hidden"
@@ -900,8 +956,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
 
-                <Avatar className="h-9 w-9 shrink-0">
-                  <AvatarFallback className={`text-[10px] font-bold ${
+                <Avatar className="h-11 w-11 shrink-0">
+                  <AvatarFallback className={`text-xs font-bold ${
                     selectedLead.ai_paused
                       ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                       : 'bg-violet-500/15 text-violet-400 border border-violet-500/30'
@@ -911,8 +967,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                 </Avatar>
 
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{selectedLead.lead_name || selectedLead.remote_jid}</p>
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <p className="text-base font-semibold truncate">{selectedLead.lead_name || selectedLead.remote_jid}</p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
                     <Phone className="h-2.5 w-2.5" />
                     {displayPhone(selectedLead.remote_jid)}
                     <span className="mx-1">|</span>
@@ -921,36 +977,43 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                   </p>
                 </div>
 
-                {/* Pause / Resume button */}
-                <Button
-                  size="sm"
-                  variant={selectedLead.ai_paused ? 'default' : 'outline'}
-                  className={`h-8 text-xs gap-1.5 shrink-0 ${
-                    selectedLead.ai_paused
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                      : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
-                  }`}
-                  onClick={() => handleTogglePause(selectedLead)}
-                  disabled={togglingPause}
-                >
-                  {togglingPause ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : selectedLead.ai_paused ? (
-                    <>
-                      <Play className="h-3.5 w-3.5" />
-                      Reativar IA
-                    </>
-                  ) : (
-                    <>
-                      <Pause className="h-3.5 w-3.5" />
-                      Pausar IA
-                    </>
-                  )}
-                </Button>
+                {/* Pause / Resume button — escondido em modo consulta (vendedor) */}
+                {readOnly ? (
+                  <Badge variant="outline" className="h-8 px-3 text-xs gap-1.5 shrink-0 border-border/60 text-muted-foreground">
+                    <Eye className="h-3.5 w-3.5" />
+                    Somente leitura
+                  </Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant={selectedLead.ai_paused ? 'default' : 'outline'}
+                    className={`h-9 text-sm gap-1.5 shrink-0 ${
+                      selectedLead.ai_paused
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
+                    }`}
+                    onClick={() => handleTogglePause(selectedLead)}
+                    disabled={togglingPause}
+                  >
+                    {togglingPause ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : selectedLead.ai_paused ? (
+                      <>
+                        <Play className="h-4 w-4" />
+                        Reativar IA
+                      </>
+                    ) : (
+                      <>
+                        <Pause className="h-4 w-4" />
+                        Pausar IA
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
 
               {/* AI status banner */}
-              {selectedLead.ai_paused && (
+              {!readOnly && selectedLead.ai_paused && (
                 <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2">
                   <Pause className="h-3.5 w-3.5 text-amber-400 shrink-0" />
                   <p className="text-xs text-amber-300">
@@ -973,54 +1036,68 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                   <div className="space-y-2">
                     {messages.map(msg => {
                       const isOutgoing = msg.direction === 'outgoing';
+                      const album = (msg.media_list || []).filter(m => isRenderableMedia(m?.file || m?.url));
+                      const mt = msg.message_type;
+                      const isAudio = mt === 'audio' || mt === 'ptt' || mt === 'voice';
+                      const isDoc = mt === 'document' || mt === 'file';
+                      const isMediaType = mt !== 'text' && mt !== '';
+                      const mainOk = isRenderableMedia(msg.media_url);
+                      // Mídia presente mas não-renderizável (ex.: URL .enc do WhatsApp).
+                      const mediaUnavailable = isMediaType && album.length === 0 && !mainOk && !isDoc;
+                      const caption = displayText(msg.content);
                       return (
                         <div key={msg.id} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+                          <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm ${
                             isOutgoing
                               ? 'bg-primary/20 text-foreground rounded-br-md'
-                              : 'bg-muted/60 text-foreground rounded-bl-md'
+                              : 'bg-muted/70 text-foreground rounded-bl-md'
                           }`}>
-                            {msg.media_list && msg.media_list.length > 0 ? (
-                              <div className={`grid ${msg.media_list.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-1.5 mb-1.5 max-w-[280px]`}>
-                                {msg.media_list.map((m: any, idx: number) => {
+                            {album.length > 0 ? (
+                              <div className={`grid ${album.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-2 max-w-[360px]`}>
+                                {album.map((m: any, idx: number) => {
                                   const url = m.file || m.url;
                                   return (
-                                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="overflow-hidden rounded-lg block aspect-square border border-border/30 bg-muted/20">
-                                      <img src={url} alt="" className="w-full h-full object-cover hover:scale-105 transition-transform duration-200" />
+                                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="overflow-hidden rounded-xl block aspect-square border border-border/30 bg-muted/20">
+                                      <img src={url} alt="" loading="lazy" className="w-full h-full object-cover hover:scale-105 transition-transform duration-200" />
                                     </a>
                                   );
                                 })}
                               </div>
                             ) : (
-                              msg.media_url && msg.message_type === 'image' && (
-                                <a href={msg.media_url} target="_blank" rel="noopener noreferrer">
-                                  <img src={msg.media_url} alt="" className="max-w-full rounded-lg mb-1.5 max-h-48 object-cover" />
+                              mainOk && mt === 'image' && (
+                                <a href={msg.media_url!} target="_blank" rel="noopener noreferrer">
+                                  <img src={msg.media_url!} alt="" loading="lazy" className="max-w-full rounded-xl mb-2 max-h-72 object-cover" />
                                 </a>
                               )
                             )}
-                            {msg.media_url && (msg.message_type === 'audio' || msg.message_type === 'ptt' || msg.message_type === 'voice') && (
-                              <audio controls src={msg.media_url} className="max-w-full mb-1.5" />
+                            {mainOk && isAudio && (
+                              <audio controls src={msg.media_url!} className="w-full min-w-[240px] mb-1.5" />
                             )}
-                            {msg.media_url && msg.message_type === 'video' && (
-                              <video controls src={msg.media_url} className="max-w-full rounded-lg mb-1.5 max-h-48" />
+                            {mainOk && mt === 'video' && (
+                              <video controls src={msg.media_url!} className="max-w-full rounded-xl mb-2 max-h-72" />
                             )}
-                            {msg.media_url && (msg.message_type === 'document' || msg.message_type === 'file') && (
+                            {mainOk && isDoc && (
                               <a
-                                href={msg.media_url}
+                                href={msg.media_url!}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="flex items-center gap-2 rounded-lg bg-background/60 px-2.5 py-2 mb-1.5 hover:bg-background/80 transition-colors"
+                                className="flex items-center gap-2.5 rounded-xl bg-background/60 px-3 py-2.5 mb-1.5 hover:bg-background/80 transition-colors"
                               >
-                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="text-xs truncate flex-1">{msg.content || 'Arquivo'}</span>
-                                <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                                <span className="text-sm truncate flex-1">{caption || 'Arquivo'}</span>
+                                <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
                               </a>
                             )}
-                            {msg.content && msg.message_type !== 'document' && msg.message_type !== 'file' && (
-                              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                            {mediaUnavailable && (
+                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-background/50 px-2.5 py-1.5 mb-1.5 text-xs text-muted-foreground">
+                                {MEDIA_PLACEHOLDER[mt] || '📎 Mídia'}
+                              </span>
                             )}
-                            <p className={`text-[9px] mt-1 flex items-center gap-1 ${
-                              isOutgoing ? 'text-primary/50 justify-end' : 'text-muted-foreground/50'
+                            {caption && !isDoc && (
+                              <p className="whitespace-pre-wrap break-words">{caption}</p>
+                            )}
+                            <p className={`text-[11px] mt-1.5 flex items-center gap-1 ${
+                              isOutgoing ? 'text-primary/60 justify-end' : 'text-muted-foreground/60'
                             }`}>
                               {fmtTime(msg.created_at)}
                               {isOutgoing && <CheckCheck className="h-3 w-3" />}
@@ -1034,7 +1111,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                 )}
               </ScrollArea>
 
+              {/* Rodapé somente-leitura (consulta do vendedor) */}
+              {readOnly && (
+                <div className="px-4 py-3 border-t border-border/50 bg-muted/20 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                  <Eye className="h-3.5 w-3.5" />
+                  Somente leitura — consulta da conversa
+                </div>
+              )}
+
               {/* Reply input */}
+              {!readOnly && (
               <div className="px-4 py-3 border-t border-border/50 bg-muted/20">
                 <input
                   ref={fileInputRef}
@@ -1213,6 +1299,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [] }
                   </p>
                 )}
               </div>
+              )}
             </>
           )}
         </div>

@@ -5547,6 +5547,7 @@ const ALL_SELLER_TABS = [
   { id: 'performance', label: 'Performance',  icon: BarChart3,     emoji: '📊', featureKey: 'tab_performance' },
   // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
+  { id: 'inbox-ia',    label: 'Conversas IA', icon: Inbox,         emoji: '📨', featureKey: 'tab_inbox_ia' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
   { id: 'inbox',       label: 'Conversas',    icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
@@ -5664,6 +5665,7 @@ export default function PedroSDR() {
                   userId={inboxOwnerId}
                   isSeller={isSeller}
                   sellerMemberIds={memberIds}
+                  readOnly={isSeller}
                 />
               )}
             </TabsContent>
