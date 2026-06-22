@@ -3,7 +3,6 @@ import { useNavigate, Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
   Zap, TrendingUp, CheckCircle2, XCircle, CreditCard, AlertTriangle,
   RefreshCcw, Star, Clock, BarChart3, Info,
@@ -22,6 +21,10 @@ import RecargaDialog from '@/components/subscription/RecargaDialog';
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
 function fmtR(n: number) { return `R$ ${n.toFixed(2).replace('.', ',')}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function fmtUSD(n: number) { return `US$ ${Number(n || 0).toFixed(4)}`; }
+function fmtCompact(n: number) {
+  return Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n || 0));
+}
 // 'YYYY-MM-DD' -> 'DD/MM' sem deslocar o dia por fuso (ancorando ao meio-dia).
 function fmtDia(iso?: string | null) {
   if (!iso) return '--';
@@ -124,9 +127,8 @@ export default function MeuPlano() {
     return () => { alive = false; };
   }, [user]);
 
-  // Custo das conversas (IA) do PROPRIO cliente, ja com a margem aplicada no
-  // servidor. A RPC e SECURITY DEFINER e so devolve o que e do auth.uid() —
-  // nunca o custo real nem o markup.
+  // Custo real de tokens (IA) do PROPRIO cliente. A RPC e SECURITY DEFINER e
+  // so devolve o consumo agregado do auth.uid(), sem permitir escolher user_id.
   const [custo, setCusto] = useState<any>(null);
   const [custoLoading, setCustoLoading] = useState(true);
   useEffect(() => {
@@ -148,7 +150,7 @@ export default function MeuPlano() {
   }, [user]);
 
   // Saldo da chave OpenAI (BYOK): o cliente informa o saldo (US$); calculamos
-  // conversas restantes (~R$0,50/conversa), descontando o gasto real.
+  // o gasto real em tokens gravado no ai_call_log somente para a propria conta.
   const [saldo, setSaldo] = useState<any>(null);
   const [balInput, setBalInput] = useState('');
   const [savingBal, setSavingBal] = useState(false);
@@ -171,7 +173,7 @@ export default function MeuPlano() {
       if (error) throw error;
       setBalInput('');
       await fetchSaldo();
-      toast({ title: 'Saldo atualizado!', description: 'Calculamos as conversas com base no seu saldo da OpenAI.' });
+      toast({ title: 'Saldo atualizado!', description: 'Calculamos o saldo com base no custo real dos tokens OpenAI.' });
     } catch (e: any) {
       toast({ title: 'Erro', description: e?.message, variant: 'destructive' });
     } finally { setSavingBal(false); }
@@ -218,38 +220,46 @@ export default function MeuPlano() {
   const planPriceNormal = Number((plan as any).priceNormal ?? plan.price);
   const renewDate = new Date(subscription.renewal_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  // ── Conversas (BYOK): o saldo da OpenAI vira "conversas restantes" e cada
-  // conversa do Pedro vai descontando. Fonte: RPC cliente_saldo_ia.
+  // ── Saldo BYOK: o saldo informado da OpenAI desconta o gasto real em tokens.
   const temSaldo = !!saldo?.tem_saldo;
-  const convTotal = Number(saldo?.conversas_total ?? 0);
-  const convUsadas = Number(saldo?.conversas_usadas ?? 0);
-  const convRestantes = Number(saldo?.conversas_restantes ?? 0);
-  const convPct = convTotal > 0 ? Math.min(100, (convUsadas / convTotal) * 100) : 0;
-  const convLow = temSaldo && convTotal > 0 && convRestantes / convTotal <= 0.2;
-  const convCritical = temSaldo && convTotal > 0 && convRestantes / convTotal <= 0.1;
+  const saldoUsd = Number(saldo?.balance_usd ?? 0);
+  const gastoUsdSaldo = Number(saldo?.gasto_usd ?? 0);
+  const restanteUsd = Number(saldo?.restante_usd ?? Math.max(saldoUsd - gastoUsdSaldo, 0));
+  const saldoPct = saldoUsd > 0 ? Math.min(100, (gastoUsdSaldo / saldoUsd) * 100) : 0;
+  const saldoLow = temSaldo && saldoUsd > 0 && restanteUsd / saldoUsd <= 0.2;
+  const saldoCritical = temSaldo && saldoUsd > 0 && restanteUsd / saldoUsd <= 0.1;
+  const saldoTokens = Number(saldo?.total_tokens ?? 0);
+  const saldoInputTokens = Number(saldo?.input_tokens ?? 0);
+  const saldoOutputTokens = Number(saldo?.output_tokens ?? 0);
 
-  // ── Custo das conversas (IA) — dados para o grafico por dia ──────────
+  // ── Custo real de tokens (IA) — dados para o grafico por dia ──────────
   const custoTotais = custo?.totais ?? null;
-  const custoNConversas = Number(custoTotais?.n_conversas ?? 0);
-  const custoTemDados = !!custoTotais && custoNConversas > 0;
+  const custoChamadas = Number(custoTotais?.chamadas ?? 0);
+  const custoOperacoes = Number(custoTotais?.operacoes ?? 0);
+  const custoTokens = Number(custoTotais?.total_tokens ?? 0);
+  const custoInputTokens = Number(custoTotais?.input_tokens ?? 0);
+  const custoOutputTokens = Number(custoTotais?.output_tokens ?? 0);
+  const custoBrl = Number(custoTotais?.custo_brl ?? 0);
+  const custoUsd = Number(custoTotais?.custo_usd ?? 0);
+  const custoTemDados = !!custoTotais && (custoTokens > 0 || custoBrl > 0 || custoOperacoes > 0);
   const custoMaxVal = Number(custoTotais?.dia_maior_valor ?? 0);
-  const custoMinVal = Number(custoTotais?.dia_menor_valor ?? 0);
-  const custoMedio = custoNConversas > 0 ? Number(custoTotais?.custo_cliente_brl ?? 0) / custoNConversas : 0;
+  const custoMedio = custoChamadas > 0 ? custoBrl / custoChamadas : 0;
   const custoChart = (custo?.por_dia ?? []).map((d: any) => ({
     dia: fmtDia(d.dia),
-    custo: Number(d.custo_cliente_brl),
-    n: Number(d.n_conversas),
+    custo: Number(d.custo_brl ?? 0),
+    tokens: Number(d.total_tokens ?? 0),
+    chamadas: Number(d.chamadas ?? d.operacoes ?? 0),
   }));
 
-  // ── Histórico de conversas: barras = conversas por dia; linha = conversas
-  // restantes descendo a partir do total (saldo). por_dia ja vem em ordem.
-  let _run = convTotal;
-  const convChart = (custo?.por_dia ?? []).map((d: any) => {
-    const n = Number(d.n_conversas);
-    _run = Math.max(0, _run - n);
-    return { dia: fmtDia(d.dia), conversas: n, restantes: convTotal > 0 ? _run : null };
+  // ── Historico de tokens: barras = tokens por dia; linha = custo real em BRL.
+  const tokenChart = (custo?.por_dia ?? []).map((d: any) => {
+    return {
+      dia: fmtDia(d.dia),
+      tokens: Number(d.total_tokens ?? 0),
+      custo: Number(d.custo_brl ?? 0),
+    };
   });
-  const convTemDados = convChart.length > 0;
+  const tokenTemDados = tokenChart.length > 0;
 
   // Abre o checkout de recarga (cartao salvo = 1 clique; senao cartao novo/PIX).
   const handlePurchase = (amount: number, price: number) => {
@@ -336,32 +346,32 @@ export default function MeuPlano() {
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" /> {renewDate}
               </p>
               <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1 justify-end">
-                <Coins className="h-3 w-3" /> Conversas pela sua chave OpenAI
+                <Coins className="h-3 w-3" /> Tokens pela sua chave OpenAI
               </p>
             </div>
           </div>
 
-          {/* Barra de conversas (saldo OpenAI) */}
+          {/* Barra de consumo real do saldo OpenAI */}
           {temSaldo ? (
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Conversas usadas neste saldo</span>
-                <span className={`font-semibold ${convCritical ? 'text-red-400' : convLow ? 'text-yellow-400' : ''}`}>
-                  {fmt(convUsadas)} / {fmt(convTotal)}
+                <span className="text-muted-foreground">Gasto real deste saldo</span>
+                <span className={`font-semibold ${saldoCritical ? 'text-red-400' : saldoLow ? 'text-yellow-400' : ''}`}>
+                  {fmtUSD(gastoUsdSaldo)} / {fmtUSD(saldoUsd)}
                 </span>
               </div>
               <div className="h-3 rounded-full bg-muted overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all ${convCritical ? 'bg-red-500' : convLow ? 'bg-yellow-500' : 'bg-emerald-500'}`}
-                  style={{ width: `${Math.min(100, convPct)}%` }}
+                  className={`h-full rounded-full transition-all ${saldoCritical ? 'bg-red-500' : saldoLow ? 'bg-yellow-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${Math.min(100, saldoPct)}%` }}
                 />
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span className="text-emerald-400 font-medium">≈ {fmt(convRestantes)} conversas restantes</span>
-                {convLow && (
-                  <span className={`flex items-center gap-1 font-medium ${convCritical ? 'text-red-400' : 'text-yellow-400'}`}>
+                <span className="text-emerald-400 font-medium">{fmtUSD(restanteUsd)} restante na chave</span>
+                {saldoLow && (
+                  <span className={`flex items-center gap-1 font-medium ${saldoCritical ? 'text-red-400' : 'text-yellow-400'}`}>
                     <AlertTriangle className="h-3 w-3" />
-                    {convCritical ? 'Saldo acabando!' : 'Saldo baixo'}
+                    {saldoCritical ? 'Saldo acabando!' : 'Saldo baixo'}
                   </span>
                 )}
                 <span>Atualize o saldo abaixo</span>
@@ -369,7 +379,7 @@ export default function MeuPlano() {
             </div>
           ) : (
             <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-muted-foreground">
-              Informe abaixo o saldo da sua chave OpenAI para acompanhar quantas conversas você tem e o quanto já usou.
+              Informe abaixo o saldo da sua chave OpenAI para acompanhar o custo real dos tokens usados.
             </div>
           )}
 
@@ -378,8 +388,8 @@ export default function MeuPlano() {
         {/* Stats */}
         <div className="flex flex-col gap-3">
           {[
-            { label: 'Conversas restantes', value: temSaldo ? `≈ ${fmt(convRestantes)}` : '—', icon: Coins, color: 'text-emerald-400' },
-            { label: 'Conversas usadas no ciclo', value: fmt(custoNConversas), icon: TrendingUp, color: 'text-primary' },
+            { label: 'Saldo OpenAI restante', value: temSaldo ? fmtUSD(restanteUsd) : '—', icon: Coins, color: 'text-emerald-400' },
+            { label: 'Tokens usados no ciclo', value: fmtCompact(custoTokens), icon: TrendingUp, color: 'text-primary' },
             { label: 'Saldo restante', value: temSaldo ? fmtR(Number(saldo.restante_brl)) : '—', icon: CreditCard, color: 'text-yellow-400' },
           ].map((s) => (
             <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5 flex items-center gap-3">
@@ -413,13 +423,13 @@ export default function MeuPlano() {
       {/* ── Overview tab ───────────────────────────────────────────── */}
       {tab === 'overview' && (
         <div className="space-y-5">
-          {/* Saldo da sua chave OpenAI -> conversas restantes (BYOK) */}
+          {/* Saldo da sua chave OpenAI -> custo real de tokens (BYOK) */}
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
             <h3 className="font-semibold mb-1 flex items-center gap-2">
               <Coins className="h-4 w-4 text-emerald-400" /> Saldo da sua chave OpenAI
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              A OpenAI não mostra o saldo por fora, então informe aqui quanto você tem de crédito (em dólar). A gente converte para real e calcula quantas conversas dá — descontando o que já gastou.
+              A OpenAI não mostra o saldo por fora, então informe aqui quanto você tem de crédito (em dólar). A gente converte para real e desconta o custo real dos tokens usados pela sua conta.
             </p>
 
             {saldo?.tem_saldo ? (
@@ -431,17 +441,18 @@ export default function MeuPlano() {
                     <p className="text-[11px] text-muted-foreground">{fmtR(Number(saldo.saldo_brl))}</p>
                   </div>
                   <div className="rounded-lg bg-background/40 border border-border/40 p-3">
-                    <p className="text-[11px] text-muted-foreground">Já gastou</p>
+                    <p className="text-[11px] text-muted-foreground">Gasto real</p>
                     <p className="text-lg font-bold">{fmtR(Number(saldo.gasto_brl))}</p>
-                    <p className="text-[11px] text-muted-foreground">{fmt(Number(saldo.conversas_usadas))} conversas</p>
+                    <p className="text-[11px] text-muted-foreground">{fmtUSD(Number(saldo.gasto_usd))}</p>
                   </div>
                   <div className="rounded-lg bg-background/40 border border-border/40 p-3">
                     <p className="text-[11px] text-muted-foreground">Resta</p>
                     <p className="text-lg font-bold text-emerald-400">{fmtR(Number(saldo.restante_brl))}</p>
                   </div>
                   <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3">
-                    <p className="text-[11px] text-emerald-300/80">Conversas restantes</p>
-                    <p className="text-2xl font-extrabold text-emerald-400 leading-tight">≈ {fmt(Number(saldo.conversas_restantes))}</p>
+                    <p className="text-[11px] text-emerald-300/80">Tokens usados</p>
+                    <p className="text-2xl font-extrabold text-emerald-400 leading-tight">{fmtCompact(saldoTokens)}</p>
+                    <p className="text-[11px] text-emerald-300/70">in {fmtCompact(saldoInputTokens)} / out {fmtCompact(saldoOutputTokens)}</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
@@ -454,7 +465,7 @@ export default function MeuPlano() {
                   </Button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Conta ~{fmtR(Number(saldo.custo_conversa))} por conversa. Atualize sempre que adicionar crédito na OpenAI.
+                  O desconto considera somente chamadas OpenAI gravadas na sua conta desde a ultima atualizacao deste saldo.
                 </p>
               </div>
             ) : (
@@ -464,19 +475,19 @@ export default function MeuPlano() {
                   <Input value={balInput} onChange={(e) => setBalInput(e.target.value)} placeholder="Ex: 20" inputMode="decimal" className="h-9 mt-1" />
                 </div>
                 <Button onClick={handleSaveBalance} disabled={savingBal} className="h-9 gradient-primary text-white">
-                  {savingBal ? <RefreshCcw className="h-4 w-4 animate-spin" /> : 'Calcular conversas'}
+                  {savingBal ? <RefreshCcw className="h-4 w-4 animate-spin" /> : 'Calcular saldo'}
                 </Button>
               </div>
             )}
           </div>
 
-          {/* Custo das suas conversas (IA) */}
+          {/* Custo real dos tokens (IA) */}
           <div className="rounded-xl border border-border/50 bg-card/50 p-5">
             <h3 className="font-semibold mb-1 flex items-center gap-2">
-              <Coins className="h-4 w-4 text-primary" /> Custo das suas conversas (IA)
+              <Coins className="h-4 w-4 text-primary" /> Custo real dos tokens (IA)
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Quanto cada conversa do seu atendimento inteligente custou neste ciclo.
+              Consumo real da sua conta neste ciclo, calculado por tokens de entrada/saida e modelo usado.
             </p>
 
             {custoLoading ? (
@@ -485,18 +496,18 @@ export default function MeuPlano() {
               </div>
             ) : !custoTemDados ? (
               <div className="text-sm text-muted-foreground py-6">
-                Ainda não há conversas registradas neste ciclo. Assim que seu atendimento inteligente
-                conversar com leads, o custo aparece aqui.
+                Ainda não há chamadas de IA registradas neste ciclo. Assim que os agentes usarem tokens,
+                o custo aparece aqui.
               </div>
             ) : (
               <>
                 {/* Mini-stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                   {[
-                    { label: 'Custo total no ciclo', value: fmtR(Number(custoTotais.custo_cliente_brl)) },
-                    { label: 'Conversas', value: fmt(custoNConversas) },
-                    { label: 'Custo médio/conversa', value: fmtR(custoMedio) },
-                    { label: 'Dia que mais gastou', value: `${fmtDia(custoTotais.dia_maior)} · ${fmtR(custoMaxVal)}` },
+                    { label: 'Custo real no ciclo', value: `${fmtR(custoBrl)} (${fmtUSD(custoUsd)})` },
+                    { label: 'Tokens usados', value: fmt(custoTokens) },
+                    { label: 'Entrada / saida', value: `${fmtCompact(custoInputTokens)} / ${fmtCompact(custoOutputTokens)}` },
+                    { label: 'Custo medio/chamada', value: fmtR(custoMedio) },
                   ].map((s) => (
                     <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5">
                       <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -519,7 +530,7 @@ export default function MeuPlano() {
                       {custoChart.map((d: any, i: number) => (
                         <Cell
                           key={i}
-                          fill={d.custo === custoMaxVal ? '#10B981' : d.custo === custoMinVal ? '#6B7280' : '#5C6BC0'}
+                          fill={d.custo === custoMaxVal ? '#10B981' : '#5C6BC0'}
                         />
                       ))}
                     </Bar>
@@ -527,27 +538,45 @@ export default function MeuPlano() {
                 </ResponsiveContainer>
                 <div className="flex flex-wrap gap-4 mt-2 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Dia que mais gastou</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500 inline-block" /> Dia que menos gastou ({fmtDia(custoTotais.dia_menor)} · {fmtR(custoMinVal)})</span>
+                  <span>{fmt(custoChamadas)} chamadas de IA em {fmt(custoOperacoes)} operacoes</span>
                 </div>
+                {(custo?.por_modelo ?? []).length > 0 && (
+                  <div className="mt-5 overflow-hidden rounded-xl border border-border/50">
+                    <div className="grid grid-cols-[1.3fr_.8fr_.8fr_.8fr] gap-3 bg-background/40 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      <span>Modelo</span>
+                      <span>Tokens</span>
+                      <span>Custo</span>
+                      <span>Chamadas</span>
+                    </div>
+                    {(custo?.por_modelo ?? []).slice(0, 5).map((m: any) => (
+                      <div key={`${m.provedor}-${m.modelo}`} className="grid grid-cols-[1.3fr_.8fr_.8fr_.8fr] gap-3 border-t border-border/40 px-3 py-2 text-sm">
+                        <span className="min-w-0 truncate font-medium">{m.provedor} / {m.modelo}</span>
+                        <span>{fmt(Number(m.total_tokens ?? 0))}</span>
+                        <span>{fmtR(Number(m.custo_brl ?? 0))}</span>
+                        <span>{fmt(Number(m.chamadas ?? 0))}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
 
-          {/* Histórico de conversas (substitui o consumo/extrato de atendimentos) */}
+          {/* Historico de tokens */}
           <div className="rounded-xl border border-border/50 bg-card/50 p-5">
             <h3 className="font-semibold mb-1 flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-primary" /> Histórico de conversas
+              <BarChart3 className="h-4 w-4 text-primary" /> Historico de tokens
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Conversas por dia (barras) e quantas ainda restam do seu saldo (linha) — vai descendo a cada nova conversa do Pedro.
+              Tokens usados por dia (barras) e custo real em reais (linha), somente da sua conta.
             </p>
-            {!convTemDados ? (
+            {!tokenTemDados ? (
               <div className="text-sm text-muted-foreground py-6">
-                Ainda não há conversas neste ciclo. Assim que o Pedro conversar com leads, o histórico aparece aqui.
+                Ainda não há tokens neste ciclo. Assim que os agentes usarem IA, o historico aparece aqui.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
-                <ComposedChart data={convChart}>
+                <ComposedChart data={tokenChart}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis dataKey="dia" tick={{ fill: '#9CA3AF', fontSize: 11 }} />
                   <YAxis yAxisId="left" tick={{ fill: '#9CA3AF', fontSize: 11 }} allowDecimals={false} />
@@ -556,8 +585,8 @@ export default function MeuPlano() {
                     contentStyle={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 8, color: '#F9FAFB' }}
                   />
                   <Legend wrapperStyle={{ fontSize: 12, color: '#9CA3AF' }} />
-                  <Bar yAxisId="left" dataKey="conversas" name="Conversas no dia" fill="#5C6BC0" radius={[4, 4, 0, 0]} />
-                  <Line yAxisId="right" type="monotone" dataKey="restantes" name="Conversas restantes" stroke="#10B981" strokeWidth={2} dot={false} connectNulls />
+                  <Bar yAxisId="left" dataKey="tokens" name="Tokens no dia" fill="#5C6BC0" radius={[4, 4, 0, 0]} />
+                  <Line yAxisId="right" type="monotone" dataKey="custo" name="Custo real (R$)" stroke="#10B981" strokeWidth={2} dot={false} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
