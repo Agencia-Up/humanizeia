@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -801,10 +801,24 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.reason = `enforced_accepted_recent_photo_offer:${plan.reason || ""}`;
   }
 
+  // PROMETE E NAO CUMPRE (foto, bug real Barbara): lead RECLAMA que a foto veio ERRADA ou NAO chegou
+  // ("essas fts n sao peugeot", "vc n mandou nenhuma do carro certo"). O agente NAO tem como "enviar
+  // depois" -> NUNCA prometer; re-DISPARA a foto do carro certo AGORA (o orchestrator re-ancora no
+  // interesse). Forca photo_request do interesse, mesmo que o LLM tenha decidido so conversar/prometer.
+  const _photoComplaint = leadComplainsPhotoWrongOrMissing(input.message)
+    && Boolean(input.memory?.interesse?.modelo_desejado || hasPresentedVehicles);
+  if (_photoComplaint) {
+    plan.action = "photo_request";
+    plan.intent = "photo_request";
+    plan.use_memory_vehicle = true;
+    if (!plan.search_query) plan.search_query = input.memory?.interesse?.modelo_desejado || null;
+    plan.reason = `enforced_photo_complaint_resend:${plan.reason || ""}`;
+  }
+
   // Anti-envio acidental: impede que a LLM envie fotos do nada se o lead não pediu de fato
   const photo = isPhotoText(input.message);
   const photoSelectorReply = isPhotoSelectorReply(input.message) && hasPresentedVehicles;
-  if (plan.action === "photo_request" && !photo && !acceptedPhotoOffer && !photoSelectorReply) {
+  if (plan.action === "photo_request" && !photo && !acceptedPhotoOffer && !photoSelectorReply && !_photoComplaint) {
     if (stockQuestion) {
       plan.action = "stock_search";
       plan.intent = plan.intent === "photo_request" ? "stock_lookup" : plan.intent;

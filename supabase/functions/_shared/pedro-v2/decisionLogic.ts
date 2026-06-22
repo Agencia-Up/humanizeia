@@ -214,6 +214,23 @@ export function photoRequestTargetModel(message?: string | null, memory?: any, f
   return (fallbackQuery && String(fallbackQuery).trim()) || null;
 }
 
+// ── "PROMETE E NÃO CUMPRE" (foto): lead RECLAMA que a foto veio ERRADA ou NÃO chegou ──────────
+// Bug real (lead Barbara): recebeu foto da Tracker, disse "essas fts n sao peugeot / vc n mandou
+// nenhuma do carro certo" -> o agente PROMETEU "vou verificar e enviar as corretas" e mandou ZERO.
+// O agente NAO tem como enviar depois -> tem que RE-DISPARAR a foto do carro certo AGORA, nunca prometer.
+// Detector PURO (offline) do sinal de reclamacao de foto errada/faltando. Conservador.
+export function leadComplainsPhotoWrongOrMissing(message?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  const photoWord = /\b(foto|fotos|fts|imagem|imagens)\b/.test(t);
+  // "n" = abreviacao de "nao" no WhatsApp ("essas fts n sao peugeot", "vc n mandou").
+  const nao = "(nao|n)";
+  const wrongSignal = new RegExp(`\\b(errad|trocad|${nao}\\s+(sao|e|eh|era|mandou|enviou|recebi|chegou)|cade|kade|carro errado|outro carro)\\b`).test(t);
+  return (photoWord && wrongSignal)
+    || new RegExp(`\\b${nao}\\s+mandou\\s+nenhuma\\b`).test(t)
+    || /\b(do|o)\s+carro\s+certo\b/.test(t);
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):

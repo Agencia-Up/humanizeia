@@ -11,7 +11,7 @@ import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-22-photo-right-car-reanchor-v154";
+const PEDRO_V2_BUILD = "2026-06-22-photo-complaint-resend-v155";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];

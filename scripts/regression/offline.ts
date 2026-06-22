@@ -40,6 +40,7 @@ import {
   buildConversationState,
   excludeRejeitados,
   photoRequestTargetModel,
+  leadComplainsPhotoWrongOrMissing,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -168,6 +169,10 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const h2 = normalizePlan({ action: "reply_only", intent: "trade_in", confidence: 0.7 }, FALLBACK, { message: "tenho uma hilux 2015 pra dar na troca", vehicle_resolution: vr({ has_current_vehicle_signal: true, query: "Toyota Hilux" }) as any, memory: null, recent_history: [] } as any);
   check("planner", "troca REAL 'tenho uma hilux pra trocar' -> NÃO busca", h2.action !== "stock_search", `action=${h2.action}`);
 
+  // PROMETE E NÃO CUMPRE (foto): reclamação -> força photo_request (não promete).
+  const pc1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Essas fts n são peugeot\nVc n mandou do carro certo", vehicle_resolution: vr() as any, memory: { interesse: { modelo_desejado: "Peugeot 2008 2021" } }, recent_history: [] } as any);
+  check("planner", "reclamação de foto errada -> força photo_request (não promete)", pc1.action === "photo_request", `action=${pc1.action}`);
+
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
   check("preco", "parse 'onix até 30 mil' -> 30000", parsePriceCeiling("onix até 30 mil") === 30000);
@@ -268,6 +273,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("foto", "alvo: 'fts do 2008 2021' (interesse Peugeot 2008) -> Peugeot 2008", photoRequestTargetModel("quero ver as fts do 2008 2021", memBarbara, null) === "Peugeot 2008 2021");
   check("foto", "alvo: 'fotos desse' (sem referência) -> fallback (âncora)", photoRequestTargetModel("manda fotos desse", { interesse: { modelo_desejado: "Onix" } }, null) === null);
   check("foto", "alvo: 'foto do compass' (interesse Onix) -> usa o nomeado (fallback search_query)", photoRequestTargetModel("manda foto do compass", { interesse: { modelo_desejado: "Onix" } }, "Compass") === "Compass");
+
+  // "promete e não cumpre": reclamação de foto errada/faltando -> deve re-disparar (não prometer).
+  check("foto", "reclama: 'essas fts n são peugeot' -> reclamação", leadComplainsPhotoWrongOrMissing("Essas fts n são peugeot\nSão de uma Tracker") === true);
+  check("foto", "reclama: 'vc n mandou nenhuma do carro certo' -> reclamação", leadComplainsPhotoWrongOrMissing("Vc n mandou nenhuma\nDo carro certo") === true);
+  check("foto", "reclama: 'manda as fotos' -> NÃO é reclamação (é pedido)", leadComplainsPhotoWrongOrMissing("manda as fotos do onix") === false);
+  check("foto", "reclama: 'essas fotos ficaram lindas' -> NÃO é reclamação", leadComplainsPhotoWrongOrMissing("essas fotos ficaram lindas") === false);
 
   // REFINA VERSÃO/MOTOR (caso Alê): detector + contextVehicleModel.
   const memC = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", ano: 2019 }] };
