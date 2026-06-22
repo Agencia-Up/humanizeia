@@ -40,8 +40,25 @@ export function verifyReplyText(replyText?: string | null, ctx?: {
 
   // 4) RE-OFERECE um modelo que o lead REJEITOU.
   const rej = (c.rejeitadosModelos || []).map((s) => normalizePlannerText(s)).filter((s) => s.length >= 3);
-  const hitRej = rej.find((mk) => new RegExp(`\\b${mk}\\b`).test(t));
+  const hitRej = rej.find((mk) => new RegExp(`\\b${escapeRe(mk)}\\b`).test(t));
   if (hitRej) out.push({ type: "offers_rejected", detail: hitRej });
 
   return out;
+}
+
+function escapeRe(s: string): string { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+// O reply cita ao menos UM dos veículos achados? Usado na apresentação de CATEGORIA: o modelo barato
+// (gpt-4.1-mini) às vezes só saúda/pergunta rapport e IGNORA a lista — aí o orchestrator relista de
+// forma determinística (decisão do dono v134: pediu TIPO + há vários => APRESENTA). PURO -> offline.
+export function replyMentionsAnyVehicle(replyText?: string | null, vehicles?: Array<{ modelo?: any; marca?: any }> | null): boolean {
+  const t = normalizePlannerText(replyText);
+  if (!t || !Array.isArray(vehicles) || vehicles.length === 0) return false;
+  for (const v of vehicles) {
+    const modeloTokens = normalizePlannerText(String(v?.modelo || "")).split(/\s+/).filter((w) => w.length >= 3);
+    if (modeloTokens.some((tok) => new RegExp(`\\b${escapeRe(tok)}\\b`).test(t))) return true;
+    const marca = normalizePlannerText(String(v?.marca || ""));
+    if (marca.length >= 3 && new RegExp(`\\b${escapeRe(marca)}\\b`).test(t)) return true;
+  }
+  return false;
 }

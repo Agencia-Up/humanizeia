@@ -46,7 +46,7 @@ import {
   excludeRejeitados,
   photoRequestTargetModel,
 } from "./decisionLogic.ts";
-import { verifyReplyText } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle } from "./preSendVerify.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
   vehicleKey,
@@ -2014,6 +2014,23 @@ export async function processPedroV2Turn(
         } as any;
       }
     }
+
+    // CATEGORIA que NAO apresenta (gap provado do gpt-4.1-mini): lead AMPLIOU p/ um TIPO (_broadCategoryBrowse),
+    // a busca trouxe >=2 opcoes, mas o reply so saudou/perguntou rapport e NAO citou NENHUM veiculo achado
+    // (variancia do modelo barato — as vezes lista, as vezes ignora). Decisao do dono (v134): pediu TIPO +
+    // ha varios => APRESENTA as opcoes. Relista de forma DETERMINISTICA (provider-independente, sem custo).
+    if (_broadCategoryBrowse && stockResult?.success && Array.isArray(stockResult.items)
+        && stockResult.items.length >= 2
+        && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
+        && !replyMentionsAnyVehicle((reply as any)?.text || "", stockResult.items)) {
+      reply = {
+        ok: true,
+        text: buildDeterministicStockReply({ memory: nextMemory, plan: { ...(brainPlan as any), action: "stock_search" } as any, intent: contextualIntent as any, stock_result: stockResult }),
+        source: "category_relisted_deterministic",
+        media: [],
+      } as any;
+      log("warn", "pedro_v2_category_relisted", { lead_id: lead?.id || null, count: stockResult.items.length });
+    }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 
   let effectiveMemory = nextMemory;
@@ -2023,7 +2040,7 @@ export async function processPedroV2Turn(
       .map((idx: number) => stockResult.items[idx - 1])
       .filter(Boolean);
 
-    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered"].includes(reply.source)) {
+    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic"].includes(reply.source)) {
       vehiclesToSave = stockResult.items;
     }
 

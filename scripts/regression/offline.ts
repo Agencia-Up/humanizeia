@@ -42,7 +42,7 @@ import {
   photoRequestTargetModel,
   leadComplainsPhotoWrongOrMissing,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
   pickReferencedVehicle,
@@ -184,6 +184,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("verificacao", "nega disponibilidade sem ter buscado -> denies_without_search", vTypes("Infelizmente não temos o Compass no momento.", { hasVehicleSignal: true, searchedThisTurn: false }).includes("denies_without_search"));
   check("verificacao", "nega MAS buscou neste turno -> NÃO viola (busca rodou)", vTypes("Infelizmente não temos o Compass no momento.", { hasVehicleSignal: true, searchedThisTurn: true }).length === 0);
   check("verificacao", "re-oferece modelo REJEITADO -> offers_rejected", vTypes("Temos um Onix lindo, quer ver?", { rejeitadosModelos: ["Onix"] }).includes("offers_rejected"));
+
+  // Apresentação de CATEGORIA: o reply cita ao menos UM veículo achado? (gap 4.1-mini: às vezes só saúda)
+  const _suvs = [{ modelo: "Pajero TR4", marca: "Mitsubishi" }, { modelo: "Tracker", marca: "Chevrolet" }, { modelo: "Renegade", marca: "Jeep" }];
+  check("verificacao", "reply lista SUVs -> menciona veículo (não relista)", replyMentionsAnyVehicle("Temos o Pajero TR4 e o Renegade...", _suvs) === true);
+  check("verificacao", "reply só saúda/rapport -> NÃO menciona veículo (relista)", replyMentionsAnyVehicle("Boa tarde! Você é de Taubaté mesmo? Já conhece a nossa loja?", _suvs) === false);
+  check("verificacao", "reply cita por MARCA -> menciona veículo", replyMentionsAnyVehicle("Temos uma Honda City linda!", [{ modelo: "City", marca: "Honda" }]) === true);
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
