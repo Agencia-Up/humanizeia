@@ -55,21 +55,21 @@ function blobToBase64(blob: Blob): Promise<string> {
 // Avatar do José (alvo num círculo gradiente indigo→dourado).
 function JoseAvatar({ big = false }: { big?: boolean }) {
   return (
-    <div className={`flex ${big ? 'h-9 w-9' : 'h-8 w-8'} shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-amber-500 text-white ring-1 ring-inset ring-white/20 shadow-sm`}>
+    <div className={`flex ${big ? 'h-9 w-9' : 'h-8 w-8'} shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-amber-600 text-white ring-1 ring-inset ring-amber-300/40 shadow-sm shadow-amber-500/25`}>
       <Target className={big ? 'h-5 w-5' : 'h-4 w-4'} />
     </div>
   );
 }
 
 // Tijolo do "Contexto analisado".
-function CtxCard({ icon: Icon, label, value, tint }: { icon: any; label: string; value: string; tint: string }) {
+function CtxCard({ icon: Icon, label, value, tile, wrap }: { icon: any; label: string; value: string; tile: string; wrap: string }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-card/60 p-3">
+    <div className={`rounded-xl border p-3 shadow-sm shadow-black/20 ${wrap}`}>
       <div className="flex items-center gap-2.5">
-        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${tint}`}><Icon className="h-4 w-4" /></div>
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${tile}`}><Icon className="h-4 w-4" /></div>
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-          <div className="text-sm font-bold tabular-nums leading-tight truncate">{value}</div>
+          <div className="text-sm font-bold tabular-nums leading-tight truncate text-foreground">{value}</div>
         </div>
       </div>
     </div>
@@ -191,7 +191,7 @@ export function JoseChatPanel() {
   if (enabled !== true) return null;
 
   return (
-    <Card>
+    <Card className="border-primary/30 shadow-lg shadow-primary/5">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2"><MessageSquare className="h-4 w-4 text-primary" /> Converse com o José</CardTitle>
       </CardHeader>
@@ -202,10 +202,10 @@ export function JoseChatPanel() {
             <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5"><Gauge className="h-3.5 w-3.5" /> Contexto analisado</div>
             {contexto ? (
               <>
-                <CtxCard icon={DollarSign} label="Investido" value={money(contexto.moeda, contexto.gasto)} tint="bg-blue-500/15 text-blue-400 ring-blue-400/20" />
-                <CtxCard icon={MessageCircle} label="Conversas" value={int(contexto.conversas)} tint="bg-cyan-500/15 text-cyan-400 ring-cyan-400/20" />
-                <CtxCard icon={Target} label="Custo por lead" value={money(contexto.moeda, contexto.cpl)} tint="bg-violet-500/15 text-violet-400 ring-violet-400/20" />
-                <CtxCard icon={CheckCircle2} label="Lead bom" value={contexto.leads_bom > 0 ? money(contexto.moeda, contexto.custo_por_lead_bom) : '—'} tint="bg-emerald-500/15 text-emerald-400 ring-emerald-400/20" />
+                <CtxCard icon={DollarSign} label="Investido" value={money(contexto.moeda, contexto.gasto)} tile="bg-blue-500/20 text-blue-400 ring-blue-400/30" wrap="border-blue-500/30 bg-blue-500/[0.07]" />
+                <CtxCard icon={MessageCircle} label="Conversas" value={int(contexto.conversas)} tile="bg-cyan-500/20 text-cyan-300 ring-cyan-400/30" wrap="border-cyan-500/30 bg-cyan-500/[0.07]" />
+                <CtxCard icon={Target} label="Custo por lead" value={money(contexto.moeda, contexto.cpl)} tile="bg-violet-500/20 text-violet-300 ring-violet-400/30" wrap="border-violet-500/30 bg-violet-500/[0.07]" />
+                <CtxCard icon={CheckCircle2} label="Lead bom" value={contexto.leads_bom > 0 ? money(contexto.moeda, contexto.custo_por_lead_bom) : '—'} tile="bg-emerald-500/20 text-emerald-300 ring-emerald-400/30" wrap="border-emerald-500/30 bg-emerald-500/[0.07]" />
                 <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Dados de hoje · atualizado agora</div>
               </>
             ) : (
@@ -214,7 +214,7 @@ export function JoseChatPanel() {
           </aside>
 
           {/* ── Chat ─────────────────────────────────────────────────────── */}
-          <div className="flex flex-col rounded-xl border border-border/60 bg-card/40 overflow-hidden">
+          <div className="flex flex-col rounded-xl border border-primary/20 bg-gradient-to-b from-primary/[0.04] to-transparent overflow-hidden">
             {/* Cabeçalho do José */}
             <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border/50">
               <JoseAvatar big />
@@ -236,7 +236,7 @@ export function JoseChatPanel() {
                   </div>
                   <div className="flex flex-wrap gap-1.5 pl-10">
                     {SUGESTOES.map((s) => (
-                      <Button key={s} size="sm" variant="outline" className="h-7 text-[11px] rounded-full" onClick={() => send(s)}>{s}</Button>
+                      <Button key={s} size="sm" variant="outline" className="h-7 text-[11px] rounded-full border-primary/30 hover:bg-primary/10 hover:text-primary" onClick={() => send(s)}>{s}</Button>
                     ))}
                   </div>
                 </div>
@@ -297,7 +297,7 @@ export function JoseChatPanel() {
             {/* Chips de ação rápida */}
             <div className="flex flex-wrap gap-1.5 px-4 pb-2">
               {QUICK.map((q) => (
-                <Button key={q.label} size="sm" variant="outline" className="h-7 text-[11px] gap-1.5 rounded-full" disabled={sending} onClick={() => send(q.msg)}>
+                <Button key={q.label} size="sm" variant="outline" className="h-7 text-[11px] gap-1.5 rounded-full border-primary/40 text-primary hover:bg-primary/10 hover:text-primary" disabled={sending} onClick={() => send(q.msg)}>
                   <q.icon className="h-3 w-3" /> {q.label}
                 </Button>
               ))}
