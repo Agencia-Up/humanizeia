@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { joseChatTurn } from "../_shared/jose-v2/joseBrain.ts";
 import { isFeatureEnabled } from "../_shared/jose-v2/flags.ts";
 import { resolveAiKey } from "../_shared/aiKeys.ts";
+import { callAiGateway } from "../_shared/jose-v2/aiGateway.ts";
 
 /**
  * jose-chat — José Cabine de Comando / Bloco B (transporte PAINEL).
@@ -45,8 +46,27 @@ Deno.serve(async (req) => {
     if (!flagOn) return json({ enabled: false, reason: "flag_off" });
 
     const message = String(body?.message || "").trim();
-    if (!message) return json({ error: "message obrigatório" }, 400);
+    const attachments = Array.isArray(body?.attachments) ? body.attachments : [];
+    if (!message && attachments.length === 0) return json({ error: "message ou anexo obrigatório" }, 400);
     const session_id: string = body?.session_id || crypto.randomUUID();
+
+    // Anexos: áudio -> transcreve (STT); imagem/documento -> blocos multimodais (visão).
+    let messageText = message;
+    const attachmentBlocks: any[] = [];
+    for (const att of attachments) {
+      if (!att?.base64) continue;
+      if (att.kind === "audio") {
+        try {
+          const stt = await callAiGateway(admin, { user_id: user.id, capability: "stt", input: { audio: { base64: att.base64, mime: att.mime } }, ref_tipo: "chat", ref_id: session_id });
+          if (stt.ok && stt.transcript) messageText += `\n\n[áudio do usuário, transcrito]: ${stt.transcript}`;
+        } catch { /* áudio que falhou: ignora */ }
+      } else if (att.kind === "image") {
+        attachmentBlocks.push({ type: "image", source: { type: "base64", media_type: att.mime || "image/jpeg", data: att.base64 } });
+      } else if (att.kind === "document") {
+        attachmentBlocks.push({ type: "document", source: { type: "base64", media_type: att.mime || "application/pdf", data: att.base64 } });
+      }
+    }
+    if (!messageText.trim()) messageText = "Analise o anexo que enviei e me dê sua leitura.";
 
     // Histórico (turnos de texto) da sessão, p/ continuidade.
     const { data: hist } = await admin.from("jose_chat_messages")
@@ -64,8 +84,9 @@ Deno.serve(async (req) => {
       ad_account_id: body?.ad_account_id ?? null,
       session_id,
       canal: "painel",
-      userMessage: message,
+      userMessage: messageText,
       history,
+      attachmentBlocks,
     });
     return json({ enabled: true, ...r });
   } catch (e) {

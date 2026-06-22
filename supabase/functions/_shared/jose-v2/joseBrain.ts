@@ -40,10 +40,14 @@ export async function joseChatTurn(admin: any, opts: {
   canal: "painel" | "whatsapp";
   userMessage: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+  attachmentBlocks?: any[]; // blocos multimodais (image/document) p/ o turno do usuário
 }): Promise<ChatTurnResult> {
+  const userContent = (opts.attachmentBlocks && opts.attachmentBlocks.length)
+    ? [{ type: "text", text: opts.userMessage }, ...opts.attachmentBlocks]
+    : opts.userMessage;
   const messages: any[] = [
     ...(opts.history || []).map((m) => ({ role: m.role, content: m.content })),
-    { role: "user", content: opts.userMessage },
+    { role: "user", content: userContent },
   ];
   const toolCalls: string[] = [];
   let totalCost = 0;
