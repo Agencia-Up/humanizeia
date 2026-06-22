@@ -123,11 +123,25 @@ Deno.serve(async (req) => {
   }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });
 
+// Offset do fuso vs UTC, em minutos (ex.: America/Sao_Paulo = -180). Fallback BRT.
+function tzOffsetMinutes(timeZone: string): number {
+  try {
+    const now = new Date();
+    const utc = new Date(now.toLocaleString("en-US", { timeZone: "UTC" }));
+    const local = new Date(now.toLocaleString("en-US", { timeZone }));
+    return Math.round((local.getTime() - utc.getTime()) / 60000);
+  } catch (_e) { return -180; }
+}
+
 function computeNextRun(hour: number, minute: number, timezone: string): string {
-  // Simple: next occurrence of hour:minute in UTC (approximate)
+  // hour:minute são no FUSO do cliente (default America/Sao_Paulo) — NÃO em UTC.
+  // Converte a hora local de parede pra UTC (UTC = local - offset).
+  const tz = timezone || "America/Sao_Paulo";
+  const offsetMin = tzOffsetMinutes(tz); // ex.: -180 p/ BRT
   const now = new Date();
   const next = new Date();
   next.setUTCHours(hour, minute, 0, 0);
+  next.setUTCMinutes(next.getUTCMinutes() - offsetMin);
   if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
   return next.toISOString();
 }
