@@ -175,6 +175,11 @@ const ORIGEM_VENDA_LABEL: Record<string, string> = {
 function brlMoney(n: number): string {
   return (n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
+const premiumCardClass =
+  'border-white/10 bg-card/85 shadow-[0_18px_55px_rgba(0,0,0,0.22)] backdrop-blur-xl';
+const premiumPanelClass =
+  'rounded-2xl border border-white/10 bg-card/85 shadow-[0_18px_55px_rgba(0,0,0,0.22)] backdrop-blur-xl';
+
 function normStage(name: string | null | undefined): string {
   return (name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
@@ -203,15 +208,17 @@ function MetricCard({
   label: string; value: string | number; sub?: string; icon: React.ElementType; color: string;
 }) {
   return (
-    <Card className="bg-card border-border/50">
-      <CardContent className="pt-5 pb-4 px-5">
+    <Card className={`group relative overflow-hidden ${premiumCardClass}`}>
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
+      <div className="absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-white/[0.035] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+      <CardContent className="relative px-5 pb-4 pt-5">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground font-medium">{label}</p>
-            <p className="text-2xl font-bold text-foreground">{value}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+            <p className="text-2xl font-extrabold tracking-tight text-foreground tabular-nums">{value}</p>
             {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
           </div>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}>
+          <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ring-1 ring-white/10 ${color}`}>
             <Icon className="h-5 w-5" />
           </div>
         </div>
@@ -531,8 +538,11 @@ export default function PainelGeral() {
   if (loading || !data) {
     return (
       <MainLayout>
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-7 w-7 animate-spin text-primary" />
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-card/80 px-5 py-4 shadow-[0_18px_55px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <span className="text-sm font-medium text-muted-foreground">Carregando painel executivo...</span>
+          </div>
         </div>
       </MainLayout>
     );
@@ -569,12 +579,19 @@ export default function PainelGeral() {
 
   return (
     <MainLayout>
-      <div className="space-y-6 p-4 lg:p-6">
+      <div className="relative space-y-6 overflow-hidden bg-[linear-gradient(180deg,hsl(var(--background))_0%,rgba(15,23,42,0.48)_42%,hsl(var(--background))_100%)] p-4 lg:p-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className={`${premiumPanelClass} relative overflow-hidden px-5 py-5`}>
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-cyan-400/0 via-cyan-400/45 to-emerald-400/0" />
+          <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">Painel Geral</h1>
-            <p className="text-sm text-muted-foreground">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+              <BarChart3 className="h-3.5 w-3.5" />
+              Visao executiva
+            </div>
+            <h1 className="text-2xl font-extrabold tracking-tight lg:text-3xl">Painel Geral</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               {isSeller
                 ? 'Seus leads — Pedro (Tráfego Pago) + Marcos (Outros canais)'
                 : 'Soma e média Pedro (Tráfego Pago) + Marcos (Outros canais)'}
@@ -584,7 +601,7 @@ export default function PainelGeral() {
           {/* Filtro de período */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Período</span>
-            <div className="flex items-center gap-1 bg-card/60 rounded-lg p-1 border border-border/50">
+            <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-background/45 p-1 shadow-inner">
               {([
                 { id: 'today',     label: 'Hoje' },
                 { id: 'yesterday', label: 'Ontem' },
@@ -597,10 +614,10 @@ export default function PainelGeral() {
                   <button
                     key={opt.id}
                     onClick={() => setPeriod(opt.id)}
-                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                    className={`rounded-lg border px-3 py-1 text-xs font-semibold transition-all ${
                       active
-                        ? 'bg-primary/15 text-primary border border-primary/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
+                        ? 'bg-primary text-primary-foreground shadow-sm border-primary'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/60 border-transparent'
                     }`}
                   >
                     {opt.label}
@@ -612,11 +629,11 @@ export default function PainelGeral() {
               <div className="flex items-center gap-1.5 text-xs">
                 <input type="date" value={customRange.start} max={customRange.end}
                   onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
-                  className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+                  className="rounded-lg border border-white/10 bg-background/50 px-2 py-1 shadow-inner" />
                 <span className="text-muted-foreground">até</span>
                 <input type="date" value={customRange.end} min={customRange.start}
                   onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
-                  className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+                  className="rounded-lg border border-white/10 bg-background/50 px-2 py-1 shadow-inner" />
               </div>
             )}
             {/* Filtro GLOBAL de vendedor — re-escopa o painel inteiro (só master). */}
@@ -624,7 +641,7 @@ export default function PainelGeral() {
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Vendedor</span>
                 <Select value={globalSellerId || '__all__'} onValueChange={(v) => setGlobalSellerId(v === '__all__' ? null : v)}>
-                  <SelectTrigger className="h-9 w-[190px]"><SelectValue placeholder="Vendedor" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[190px] rounded-xl border-white/10 bg-background/50 shadow-inner"><SelectValue placeholder="Vendedor" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Todos os vendedores</SelectItem>
                     {vendedores.map(v => <SelectItem key={v.id} value={v.id}>{v.nome}</SelectItem>)}
@@ -632,6 +649,7 @@ export default function PainelGeral() {
                 </Select>
               </div>
             )}
+          </div>
           </div>
         </div>
 
@@ -668,7 +686,7 @@ export default function PainelGeral() {
 
           {/* Desempenho por vendedor — só master */}
           {!isSeller && (
-            <Card className="bg-card border-border/50">
+            <Card className={premiumCardClass}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Users className="h-4 w-4 text-blue-400" /> Desempenho por vendedor
@@ -692,7 +710,7 @@ export default function PainelGeral() {
                       <tr><td colSpan={6} className="py-6 text-center text-muted-foreground text-xs">Nenhum vendedor com leads no período.</td></tr>
                     )}
                     {[...vendedores].filter(v => !globalSellerId || v.id === globalSellerId).sort((a, b) => (b.conversao - a.conversao) || (b.vendas - a.vendas)).map(v => (
-                      <tr key={v.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
+                      <tr key={v.id} className="border-b border-white/5 hover:bg-white/[0.035] transition-colors">
                         <td className="py-2 pr-2 font-medium truncate max-w-[200px]">{v.nome}</td>
                         <td className="py-2 px-2 text-center tabular-nums">{v.total}</td>
                         <td className="py-2 px-2 text-center tabular-nums text-emerald-400">{v.qualificados}</td>
@@ -712,7 +730,7 @@ export default function PainelGeral() {
           )}
 
           {/* Rastreamento de vendas concluídas (auditoria: data + vendedor) */}
-          <Card className="bg-card border-border/50">
+          <Card className={premiumCardClass}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Vendas concluídas no período
@@ -736,7 +754,7 @@ export default function PainelGeral() {
                     </thead>
                     <tbody>
                       {vendasList.map(v => (
-                        <tr key={v.id} className="border-b border-border/30">
+                        <tr key={v.id} className="border-b border-white/5 hover:bg-white/[0.03] transition-colors">
                           <td className="py-2 pr-2 tabular-nums text-muted-foreground">{(v.data || '').split('-').reverse().join('/')}</td>
                           <td className="py-2 px-2 font-medium">{v.sellerNome}</td>
                           <td className="py-2 px-2 text-muted-foreground">{v.origemLabel}</td>
@@ -801,7 +819,7 @@ export default function PainelGeral() {
         {/* ── Comparativo Pedro vs Marcos ───────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Pedro */}
-          <Card className="bg-card border-blue-500/30">
+          <Card className={`${premiumCardClass} border-blue-500/25`}>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Bot className="h-4 w-4 text-blue-400" />
@@ -826,7 +844,7 @@ export default function PainelGeral() {
           </Card>
 
           {/* Marcos */}
-          <Card className="bg-card border-purple-500/30">
+          <Card className={`${premiumCardClass} border-purple-500/25`}>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Layers className="h-4 w-4 text-purple-400" />
@@ -865,14 +883,14 @@ export default function PainelGeral() {
 
         {/* ── [Unificado] Origem e conversão + Alertas inteligentes ────────── */}
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+          <div className={`${premiumPanelClass} p-5`}>
             <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
               <Target className="h-4 w-4 text-primary" />
               Origem e conversao
             </h3>
             <div className="grid gap-3">
               {originCards.map(card => (
-                <div key={card.label} className="flex items-center justify-between rounded-xl border border-border/40 bg-background/35 px-4 py-3">
+                <div key={card.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-background/45 px-4 py-3 shadow-inner">
                   <div>
                     <p className="text-sm font-semibold text-foreground">{card.label}</p>
                     <p className="text-xs text-muted-foreground">{card.sub}</p>
@@ -883,7 +901,7 @@ export default function PainelGeral() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+          <div className={`${premiumPanelClass} p-5`}>
             <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
               <AlertCircle className="h-4 w-4 text-amber-300" />
               Alertas inteligentes
@@ -911,7 +929,7 @@ export default function PainelGeral() {
         </div>
 
         {/* ── Gráfico de atividade sobreposto ──────────────────────────────── */}
-        <Card className="bg-card border-border/50">
+        <Card className={premiumCardClass}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-blue-400" />
@@ -941,7 +959,7 @@ export default function PainelGeral() {
 
         {/* ── Ranking de Vendedores (unificado) — só master (vendedor não vê colegas) ── */}
         {!isSeller && (
-        <Card className="bg-card border-border/50">
+        <Card className={premiumCardClass}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Users className="h-4 w-4 text-cyan-400" />
@@ -968,7 +986,7 @@ export default function PainelGeral() {
                   </thead>
                   <tbody>
                     {vendedores.filter(v => !globalSellerId || v.id === globalSellerId).map((v, idx) => (
-                      <tr key={v.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
+                      <tr key={v.id} className="border-b border-white/5 hover:bg-white/[0.035] transition-colors">
                         <td className="py-2 px-2 text-xs font-bold text-muted-foreground tabular-nums">{idx + 1}º</td>
                         <td className="py-2 px-2 text-sm font-medium truncate max-w-[200px]">{v.nome}</td>
                         <td className="py-2 px-2 text-right tabular-nums text-blue-400">{v.pedroLeads}</td>
@@ -989,7 +1007,7 @@ export default function PainelGeral() {
         )}
 
         {/* ── [Unificado] Ações sugeridas ──────────────────────────────────── */}
-        <Card className="bg-card border-border/50">
+        <Card className={premiumCardClass}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-yellow-300" />
@@ -998,15 +1016,15 @@ export default function PainelGeral() {
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-3">
-              <button onClick={() => navigate('/pedro?tab=crm')} className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-left transition-colors hover:bg-blue-500/15">
+              <button onClick={() => navigate('/pedro?tab=crm')} className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-4 py-3 text-left shadow-inner transition-all hover:-translate-y-0.5 hover:bg-blue-500/15 hover:shadow-[0_14px_35px_rgba(59,130,246,0.14)]">
                 <p className="text-sm font-semibold text-foreground">Revisar leads do Pedro</p>
                 <p className="text-xs text-muted-foreground">Acompanhar IA, transferencias e vendedores.</p>
               </button>
-              <button onClick={() => navigate('/marcos?tab=performance')} className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-3 text-left transition-colors hover:bg-purple-500/15">
+              <button onClick={() => navigate('/marcos?tab=performance')} className="rounded-xl border border-purple-500/25 bg-purple-500/10 px-4 py-3 text-left shadow-inner transition-all hover:-translate-y-0.5 hover:bg-purple-500/15 hover:shadow-[0_14px_35px_rgba(168,85,247,0.14)]">
                 <p className="text-sm font-semibold text-foreground">Ver performance do Marcos</p>
                 <p className="text-xs text-muted-foreground">Campanhas, listas, follow-ups e CRM manual.</p>
               </button>
-              <button onClick={() => navigate('/whatsapp/broadcast')} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-left transition-colors hover:bg-amber-500/15">
+              <button onClick={() => navigate('/whatsapp/broadcast')} className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-left shadow-inner transition-all hover:-translate-y-0.5 hover:bg-amber-500/15 hover:shadow-[0_14px_35px_rgba(245,158,11,0.14)]">
                 <p className="text-sm font-semibold text-foreground">Criar campanha</p>
                 <p className="text-xs text-muted-foreground">Retomar leads parados com seguranca.</p>
               </button>
