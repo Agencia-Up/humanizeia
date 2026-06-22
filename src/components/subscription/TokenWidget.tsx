@@ -12,17 +12,13 @@ function fmt(n: number) {
   return n.toLocaleString('pt-BR');
 }
 
-function fmtUSD(n: number) {
-  return `US$ ${Number(n || 0).toFixed(2)}`;
-}
-
 // Cota ILIMITADA (BYOK / ponte 999999): o cliente usa a propria chave de IA e
 // paga o provedor, entao a "cota de atendimentos" nao se aplica — mostra
 // "Ilimitado" em vez de numero/percentual (que ficava negativo).
 const UNLIMITED_AT = 999999;
 
-// Puxa o saldo real da chave OpenAI (mesmo RPC do Meu Plano). Se o cliente
-// informou o saldo, o widget mostra US$ restante em vez de "ilimitado".
+// Puxa o saldo da chave OpenAI (mesmo RPC do Meu Plano). Se o cliente informou
+// o saldo, o widget mostra conversas restantes em vez de "ilimitado".
 // `enabled` evita buscar pra vendedor/sem assinatura.
 function useSaldoOpenAI(enabled: boolean) {
   const [saldo, setSaldo] = useState<any>(null);
@@ -53,16 +49,16 @@ export function TokenWidget() {
   if (sellerLoading || isSeller) return null;
   if (loading || !subscription) return null;
 
-  // Prioridade: se informou o saldo da OpenAI, mostra saldo real; senao,
+  // Prioridade: se informou o saldo da OpenAI, mostra conversas; senao,
   // "ilimitado" (cota ponte 999999); senao, o velho modelo de atendimentos.
   const hasSaldo = !!saldo?.tem_saldo;
-  const saldoRestanteUsd = hasSaldo ? Number(saldo.restante_usd ?? 0) : 0;
-  const saldoTotalUsd = hasSaldo ? Number(saldo.balance_usd ?? 0) : 0;
+  const conversasRestantes = hasSaldo ? Number(saldo.conversas_restantes ?? 0) : 0;
+  const conversasTotal = hasSaldo ? Number(saldo.conversas_total ?? 0) : 0;
   const isUnlimited = (subscription.tokens_included ?? 0) >= UNLIMITED_AT;
   const showInfinity = isUnlimited && !hasSaldo;
   const safeAvailable = Math.max(0, tokensAvailable);
   const remaining = hasSaldo
-    ? (saldoTotalUsd > 0 ? Math.max(0, Math.min(100, (saldoRestanteUsd / saldoTotalUsd) * 100)) : 100)
+    ? (conversasTotal > 0 ? Math.max(0, Math.min(100, (conversasRestantes / conversasTotal) * 100)) : 100)
     : isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
   const isLow = hasSaldo ? remaining <= 20 : (!isUnlimited && remaining <= 20);
   const isCritical = hasSaldo ? remaining <= 10 : (!isUnlimited && remaining <= 10);
@@ -104,7 +100,7 @@ export function TokenWidget() {
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] text-muted-foreground">
                 {hasSaldo
-                  ? fmtUSD(saldoRestanteUsd)
+                  ? `≈ ${fmt(conversasRestantes)} conversas`
                   : showInfinity ? 'Conversas ilimitadas' : `${fmt(safeAvailable)} restantes`}
               </span>
               {!hasSaldo && !showInfinity && (
@@ -139,8 +135,8 @@ export function TokenWidget() {
           <div className="text-muted-foreground">
             {hasSaldo ? (
               <>
-                <div className="text-emerald-400 font-semibold">{fmtUSD(saldoRestanteUsd)} restante</div>
-                <div>{fmtUSD(saldoTotalUsd)} informado neste saldo · pela sua chave OpenAI</div>
+                <div className="text-emerald-400 font-semibold">≈ {fmt(conversasRestantes)} conversas restantes</div>
+                <div>{fmt(conversasTotal)} conversas adicionadas por este saldo</div>
                 <div>Atualize o saldo em Meu Plano.</div>
               </>
             ) : showInfinity ? (
@@ -181,13 +177,13 @@ export function TokenWidgetCompact() {
   if (loading) return null;
 
   const hasSaldo = !!saldo?.tem_saldo;
-  const saldoRestanteUsd = hasSaldo ? Number(saldo.restante_usd ?? 0) : 0;
-  const saldoTotalUsd = hasSaldo ? Number(saldo.balance_usd ?? 0) : 0;
+  const conversasRestantes = hasSaldo ? Number(saldo.conversas_restantes ?? 0) : 0;
+  const conversasTotal = hasSaldo ? Number(saldo.conversas_total ?? 0) : 0;
   const isUnlimited = (subscription?.tokens_included ?? 0) >= UNLIMITED_AT;
   const showInfinity = isUnlimited && !hasSaldo;
   const safeAvailable = Math.max(0, tokensAvailable);
   const remaining = hasSaldo
-    ? (saldoTotalUsd > 0 ? Math.max(0, Math.min(100, (saldoRestanteUsd / saldoTotalUsd) * 100)) : 100)
+    ? (conversasTotal > 0 ? Math.max(0, Math.min(100, (conversasRestantes / conversasTotal) * 100)) : 100)
     : isUnlimited ? 100 : Math.max(0, 100 - usagePercent);
   const isCritical = hasSaldo ? remaining <= 10 : (!isUnlimited && remaining <= 10);
   const isLow = hasSaldo ? remaining <= 20 : (!isUnlimited && remaining <= 20);
@@ -211,7 +207,7 @@ export function TokenWidgetCompact() {
           <span className="text-[10px] font-medium">{planInfo.name}</span>
         </div>
         <span className={`text-[10px] font-semibold ${(hasSaldo || showInfinity) ? 'text-emerald-400' : isCritical ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-muted-foreground'}`}>
-          {hasSaldo ? fmtUSD(saldoRestanteUsd) : showInfinity ? 'Ilimitado' : `${fmt(safeAvailable)} restantes`}
+          {hasSaldo ? `≈ ${fmt(conversasRestantes)} conversas` : showInfinity ? 'Ilimitado' : `${fmt(safeAvailable)} restantes`}
         </span>
       </div>
       <div className="h-1 w-full rounded-full bg-muted overflow-hidden">

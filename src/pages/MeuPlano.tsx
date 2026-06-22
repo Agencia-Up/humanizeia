@@ -21,7 +21,7 @@ import RecargaDialog from '@/components/subscription/RecargaDialog';
 /* ── helpers ────────────────────────────────────────────────────────── */
 function fmt(n: number) { return n.toLocaleString('pt-BR'); }
 function fmtR(n: number) { return `R$ ${n.toFixed(2).replace('.', ',')}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
-function fmtUSD(n: number) { return `US$ ${Number(n || 0).toFixed(4)}`; }
+function fmtUSD(n: number) { return `US$ ${Number(n || 0).toFixed(2)}`; }
 function fmtCompact(n: number) {
   return Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n || 0));
 }
@@ -149,8 +149,8 @@ export default function MeuPlano() {
     return () => { alive = false; };
   }, [user]);
 
-  // Saldo da chave OpenAI (BYOK): o cliente informa o saldo (US$); calculamos
-  // o gasto real em tokens gravado no ai_call_log somente para a propria conta.
+  // Saldo da chave OpenAI (BYOK): o cliente informa o saldo (US$); o sistema
+  // converte para BRL e traduz em conversas usando R$0,50 por conversa.
   const [saldo, setSaldo] = useState<any>(null);
   const [balInput, setBalInput] = useState('');
   const [savingBal, setSavingBal] = useState(false);
@@ -173,7 +173,7 @@ export default function MeuPlano() {
       if (error) throw error;
       setBalInput('');
       await fetchSaldo();
-      toast({ title: 'Saldo atualizado!', description: 'Calculamos o saldo com base no custo real dos tokens OpenAI.' });
+      toast({ title: 'Saldo atualizado!', description: 'Calculamos quantas conversas esse saldo adiciona.' });
     } catch (e: any) {
       toast({ title: 'Erro', description: e?.message, variant: 'destructive' });
     } finally { setSavingBal(false); }
@@ -220,19 +220,16 @@ export default function MeuPlano() {
   const planPriceNormal = Number((plan as any).priceNormal ?? plan.price);
   const renewDate = new Date(subscription.renewal_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  // ── Saldo BYOK: o saldo informado da OpenAI desconta o gasto real em tokens.
+  // ── Saldo BYOK: saldo informado vira conversas em cima de R$0,50/conversa.
   const temSaldo = !!saldo?.tem_saldo;
-  const saldoUsd = Number(saldo?.balance_usd ?? 0);
-  const gastoUsdSaldo = Number(saldo?.gasto_usd ?? 0);
-  const restanteUsd = Number(saldo?.restante_usd ?? Math.max(saldoUsd - gastoUsdSaldo, 0));
-  const saldoPct = saldoUsd > 0 ? Math.min(100, (gastoUsdSaldo / saldoUsd) * 100) : 0;
-  const saldoLow = temSaldo && saldoUsd > 0 && restanteUsd / saldoUsd <= 0.2;
-  const saldoCritical = temSaldo && saldoUsd > 0 && restanteUsd / saldoUsd <= 0.1;
-  const saldoTokens = Number(saldo?.total_tokens ?? 0);
-  const saldoInputTokens = Number(saldo?.input_tokens ?? 0);
-  const saldoOutputTokens = Number(saldo?.output_tokens ?? 0);
-
-  // ── Custo real de tokens (IA) — dados para o grafico por dia ──────────
+  const conversasTotal = Number(saldo?.conversas_total ?? 0);
+  const conversasUsadas = Number(saldo?.conversas_usadas ?? 0);
+  const conversasRestantes = Number(saldo?.conversas_restantes ?? 0);
+  const custoConversa = Number(saldo?.custo_conversa ?? 0.50);
+  const saldoPct = conversasTotal > 0 ? Math.min(100, (conversasUsadas / conversasTotal) * 100) : 0;
+  const saldoLow = temSaldo && conversasTotal > 0 && conversasRestantes / conversasTotal <= 0.2;
+  const saldoCritical = temSaldo && conversasTotal > 0 && conversasRestantes / conversasTotal <= 0.1;
+  // ── Custo real de tokens (IA) — historico completo disponivel por dia.
   const custoTotais = custo?.totais ?? null;
   const custoChamadas = Number(custoTotais?.chamadas ?? 0);
   const custoOperacoes = Number(custoTotais?.operacoes ?? 0);
@@ -346,18 +343,18 @@ export default function MeuPlano() {
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" /> {renewDate}
               </p>
               <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1 justify-end">
-                <Coins className="h-3 w-3" /> Tokens pela sua chave OpenAI
+                <Coins className="h-3 w-3" /> Conversas pela sua chave OpenAI
               </p>
             </div>
           </div>
 
-          {/* Barra de consumo real do saldo OpenAI */}
+          {/* Barra de conversas do saldo OpenAI */}
           {temSaldo ? (
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Gasto real deste saldo</span>
+                <span className="text-muted-foreground">Conversas usadas neste saldo</span>
                 <span className={`font-semibold ${saldoCritical ? 'text-red-400' : saldoLow ? 'text-yellow-400' : ''}`}>
-                  {fmtUSD(gastoUsdSaldo)} / {fmtUSD(saldoUsd)}
+                  {fmt(conversasUsadas)} / {fmt(conversasTotal)}
                 </span>
               </div>
               <div className="h-3 rounded-full bg-muted overflow-hidden">
@@ -367,7 +364,7 @@ export default function MeuPlano() {
                 />
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span className="text-emerald-400 font-medium">{fmtUSD(restanteUsd)} restante na chave</span>
+                <span className="text-emerald-400 font-medium">≈ {fmt(conversasRestantes)} conversas restantes</span>
                 {saldoLow && (
                   <span className={`flex items-center gap-1 font-medium ${saldoCritical ? 'text-red-400' : 'text-yellow-400'}`}>
                     <AlertTriangle className="h-3 w-3" />
@@ -379,7 +376,7 @@ export default function MeuPlano() {
             </div>
           ) : (
             <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs text-muted-foreground">
-              Informe abaixo o saldo da sua chave OpenAI para acompanhar o custo real dos tokens usados.
+              Informe abaixo o saldo da sua chave OpenAI para calcular quantas conversas esse valor adiciona.
             </div>
           )}
 
@@ -388,8 +385,8 @@ export default function MeuPlano() {
         {/* Stats */}
         <div className="flex flex-col gap-3">
           {[
-            { label: 'Saldo OpenAI restante', value: temSaldo ? fmtUSD(restanteUsd) : '—', icon: Coins, color: 'text-emerald-400' },
-            { label: 'Tokens usados no ciclo', value: fmtCompact(custoTokens), icon: TrendingUp, color: 'text-primary' },
+            { label: 'Conversas restantes', value: temSaldo ? `≈ ${fmt(conversasRestantes)}` : '—', icon: Coins, color: 'text-emerald-400' },
+            { label: 'Conversas adicionadas', value: temSaldo ? fmt(conversasTotal) : '—', icon: TrendingUp, color: 'text-primary' },
             { label: 'Saldo restante', value: temSaldo ? fmtR(Number(saldo.restante_brl)) : '—', icon: CreditCard, color: 'text-yellow-400' },
           ].map((s) => (
             <div key={s.label} className="rounded-xl border border-border/50 bg-card/40 p-3.5 flex items-center gap-3">
@@ -423,13 +420,13 @@ export default function MeuPlano() {
       {/* ── Overview tab ───────────────────────────────────────────── */}
       {tab === 'overview' && (
         <div className="space-y-5">
-          {/* Saldo da sua chave OpenAI -> custo real de tokens (BYOK) */}
+          {/* Saldo da sua chave OpenAI -> conversas (BYOK) */}
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
             <h3 className="font-semibold mb-1 flex items-center gap-2">
               <Coins className="h-4 w-4 text-emerald-400" /> Saldo da sua chave OpenAI
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              A OpenAI não mostra o saldo por fora, então informe aqui quanto você tem de crédito (em dólar). A gente converte para real e desconta o custo real dos tokens usados pela sua conta.
+              Informe o valor que você colocou na sua chave OpenAI. A gente converte para real e mostra quantas conversas esse saldo adiciona, usando R$0,50 por conversa.
             </p>
 
             {saldo?.tem_saldo ? (
@@ -438,21 +435,22 @@ export default function MeuPlano() {
                   <div className="rounded-lg bg-background/40 border border-border/40 p-3">
                     <p className="text-[11px] text-muted-foreground">Saldo informado</p>
                     <p className="text-lg font-bold">US$ {Number(saldo.balance_usd).toFixed(2)}</p>
-                    <p className="text-[11px] text-muted-foreground">{fmtR(Number(saldo.saldo_brl))}</p>
+                    <p className="text-[11px] text-muted-foreground">{fmtR(Number(saldo.saldo_brl))} = {fmt(conversasTotal)} conversas</p>
                   </div>
                   <div className="rounded-lg bg-background/40 border border-border/40 p-3">
-                    <p className="text-[11px] text-muted-foreground">Gasto real</p>
+                    <p className="text-[11px] text-muted-foreground">Já consumiu</p>
                     <p className="text-lg font-bold">{fmtR(Number(saldo.gasto_brl))}</p>
-                    <p className="text-[11px] text-muted-foreground">{fmtUSD(Number(saldo.gasto_usd))}</p>
+                    <p className="text-[11px] text-muted-foreground">{fmt(conversasUsadas)} conversas</p>
                   </div>
                   <div className="rounded-lg bg-background/40 border border-border/40 p-3">
                     <p className="text-[11px] text-muted-foreground">Resta</p>
                     <p className="text-lg font-bold text-emerald-400">{fmtR(Number(saldo.restante_brl))}</p>
+                    <p className="text-[11px] text-muted-foreground">{fmt(conversasRestantes)} conversas</p>
                   </div>
                   <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3">
-                    <p className="text-[11px] text-emerald-300/80">Tokens usados</p>
-                    <p className="text-2xl font-extrabold text-emerald-400 leading-tight">{fmtCompact(saldoTokens)}</p>
-                    <p className="text-[11px] text-emerald-300/70">in {fmtCompact(saldoInputTokens)} / out {fmtCompact(saldoOutputTokens)}</p>
+                    <p className="text-[11px] text-emerald-300/80">Conversas restantes</p>
+                    <p className="text-2xl font-extrabold text-emerald-400 leading-tight">≈ {fmt(conversasRestantes)}</p>
+                    <p className="text-[11px] text-emerald-300/70">{fmtR(custoConversa)} cada conversa</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
@@ -465,7 +463,7 @@ export default function MeuPlano() {
                   </Button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  O desconto considera somente chamadas OpenAI gravadas na sua conta desde a ultima atualizacao deste saldo.
+                  O histórico de gasto abaixo vem do consumo real da IA. O saldo acima usa o valor manual de {fmtR(custoConversa)} por conversa para ficar simples de acompanhar.
                 </p>
               </div>
             ) : (
@@ -475,7 +473,7 @@ export default function MeuPlano() {
                   <Input value={balInput} onChange={(e) => setBalInput(e.target.value)} placeholder="Ex: 20" inputMode="decimal" className="h-9 mt-1" />
                 </div>
                 <Button onClick={handleSaveBalance} disabled={savingBal} className="h-9 gradient-primary text-white">
-                  {savingBal ? <RefreshCcw className="h-4 w-4 animate-spin" /> : 'Calcular saldo'}
+                  {savingBal ? <RefreshCcw className="h-4 w-4 animate-spin" /> : 'Calcular conversas'}
                 </Button>
               </div>
             )}
@@ -487,7 +485,7 @@ export default function MeuPlano() {
               <Coins className="h-4 w-4 text-primary" /> Custo real dos tokens (IA)
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Consumo real da sua conta neste ciclo, calculado por tokens de entrada/saida e modelo usado.
+              Histórico real de gasto da IA na sua conta, calculado pelos tokens de entrada/saida e modelo usado.
             </p>
 
             {custoLoading ? (
@@ -496,7 +494,7 @@ export default function MeuPlano() {
               </div>
             ) : !custoTemDados ? (
               <div className="text-sm text-muted-foreground py-6">
-                Ainda não há chamadas de IA registradas neste ciclo. Assim que os agentes usarem tokens,
+                Ainda não há chamadas de IA registradas no histórico desta conta. Assim que os agentes usarem tokens,
                 o custo aparece aqui.
               </div>
             ) : (
@@ -504,8 +502,8 @@ export default function MeuPlano() {
                 {/* Mini-stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                   {[
-                    { label: 'Custo real no ciclo', value: `${fmtR(custoBrl)} (${fmtUSD(custoUsd)})` },
-                    { label: 'Tokens usados', value: fmt(custoTokens) },
+                    { label: 'Custo real histórico', value: `${fmtR(custoBrl)} (${fmtUSD(custoUsd)})` },
+                    { label: 'Tokens históricos', value: fmt(custoTokens) },
                     { label: 'Entrada / saida', value: `${fmtCompact(custoInputTokens)} / ${fmtCompact(custoOutputTokens)}` },
                     { label: 'Custo medio/chamada', value: fmtR(custoMedio) },
                   ].map((s) => (
@@ -572,7 +570,7 @@ export default function MeuPlano() {
             </p>
             {!tokenTemDados ? (
               <div className="text-sm text-muted-foreground py-6">
-                Ainda não há tokens neste ciclo. Assim que os agentes usarem IA, o historico aparece aqui.
+                Ainda não há tokens no histórico desta conta. Assim que os agentes usarem IA, o historico aparece aqui.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={240}>
