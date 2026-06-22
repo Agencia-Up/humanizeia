@@ -4,13 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { MessageSquare, Send, Loader2, Sparkles, Paperclip, Mic, Square, X, FileText, Image as ImageIcon } from 'lucide-react';
+import { MessageSquare, Send, Loader2, Sparkles, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, ShieldAlert, Check } from 'lucide-react';
 
 // ── Bloco B — chat conversável do José (estilo ChatGPT) na tela principal. Mesmo
 // cérebro do WhatsApp (edge jose-chat -> joseBrain), lê os MESMOS dados dos cards.
 // Aceita imagem (analisa), áudio (transcreve) e documento/PDF (lê). Auto-esconde se off.
+// Quando a conta pode AGIR (flag jose_acao), o José pode PROPOR ação (pausar/verba) e
+// o chat mostra os botões Autorizar/Cancelar (gate -> jose-approval-handler).
 const db = supabase as any;
-type Msg = { role: 'user' | 'assistant'; content: string };
+type Proposal = { approval_id: string; resumo: string; risco: string; action_type: string };
+type Msg = { role: 'user' | 'assistant'; content: string; proposal?: Proposal | null; decided?: 'aprovado' | 'rejeitado' };
 type Attach = { kind: 'image' | 'audio' | 'document'; mime: string; base64: string; name: string };
 
 const SUGESTOES = [
@@ -104,12 +107,30 @@ export function JoseChatPanel() {
       });
       if (error) throw error;
       if (data?.session_id) setSessionId(data.session_id);
-      setMessages((m) => [...m, { role: 'assistant', content: data?.text || 'Não consegui responder agora.' }]);
+      setMessages((m) => [...m, { role: 'assistant', content: data?.text || 'Não consegui responder agora.', proposal: data?.proposal || null }]);
     } catch (e: any) {
       toast.error('Erro no chat do José: ' + (e?.message || e));
       setMessages((m) => [...m, { role: 'assistant', content: 'Tive um problema pra responder. Tenta de novo?' }]);
     } finally { setSending(false); }
   }, [input, pending, sending, sessionId]);
+
+  // Fecha o gate de aprovação (botões da proposta) -> jose-approval-handler executa na Meta.
+  const decide = useCallback(async (idx: number, approvalId: string, decision: 'aprovado' | 'rejeitado') => {
+    setMessages((m) => m.map((msg, i) => i === idx ? { ...msg, decided: decision } : msg));
+    try {
+      const { data, error } = await db.functions.invoke('jose-approval-handler', { body: { approval_id: approvalId, decision } });
+      if (error) throw error;
+      if (decision === 'aprovado') {
+        toast.success(data?.ok ? 'Autorizado — o José executou a ação.' : (data?.error || 'Autorizado, mas não consegui executar agora.'));
+      } else {
+        toast('Proposta cancelada — nada foi executado.');
+      }
+    } catch (e: any) {
+      // Reverte o estado visual se a chamada falhou.
+      setMessages((m) => m.map((msg, i) => i === idx ? { ...msg, decided: undefined } : msg));
+      toast.error('Não consegui registrar sua resposta: ' + (e?.message || e));
+    }
+  }, []);
 
   if (enabled !== true) return null;
 
@@ -131,8 +152,34 @@ export function JoseChatPanel() {
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>{m.content}</div>
+            <div key={i} className="space-y-1.5">
+              <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>{m.content}</div>
+              </div>
+              {m.role === 'assistant' && m.proposal && (
+                <div className="flex justify-start">
+                  <div className="w-full max-w-[90%] rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                      <ShieldAlert className="h-3.5 w-3.5" /> Proposta de ação · risco {m.proposal.risco}
+                    </div>
+                    <p className="text-xs">{m.proposal.resumo}</p>
+                    {m.decided ? (
+                      <p className={`text-[11px] font-medium ${m.decided === 'aprovado' ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                        {m.decided === 'aprovado' ? '✅ Autorizado — ação executada.' : '❌ Cancelado — nada foi executado.'}
+                      </p>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button size="sm" className="h-7 text-[11px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => decide(i, m.proposal!.approval_id, 'aprovado')}>
+                          <Check className="h-3 w-3" /> Autorizar
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={() => decide(i, m.proposal!.approval_id, 'rejeitado')}>
+                          <X className="h-3 w-3" /> Cancelar
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           {sending && (

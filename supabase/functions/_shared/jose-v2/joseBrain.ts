@@ -8,7 +8,8 @@
  */
 
 import { callAiGateway } from "./aiGateway.ts";
-import { JOSE_TOOLS, executeJoseTool } from "./joseTools.ts";
+import { getJoseTools, executeJoseTool } from "./joseTools.ts";
+import { isFeatureEnabled } from "./flags.ts";
 
 const SYSTEM = `Você é o José, gestor de tráfego de IA de uma concessionária/revenda de veículos.
 
@@ -24,6 +25,15 @@ Regras:
 - A atribuição por anúncio pode vir "por título" (aproximada) quando a conta usa o WhatsApp
   não-oficial; deixe claro quando for o caso, sem fingir precisão que não tem.`;
 
+// Anexado ao system só quando a flag jose_acao está ligada (conta pode AGIR).
+const ACTION_GUIDE = `
+
+Você PODE propor ações (pausar/reativar campanha, subir/baixar a verba) — com disciplina:
+- NUNCA proponha sem antes olhar os números: use listar_campanhas (pega o campaign_id e o gasto) e consultar_qualidade_por_anuncio (pra saber o que traz lead bom).
+- Proponha só com um motivo claro e defensável. No campo 'motivo', explique em UMA frase com número (ex.: "gastou R$420 em 7 dias e só trouxe leads ruins").
+- Você NÃO executa nada: o propor_acao cria uma PROPOSTA que o DONO autoriza (SIM/NÃO). Deixe isso explícito ("criei a proposta, é só você autorizar").
+- Uma proposta por vez. Se o pedido for vago ("resolve aí"), pergunte qual campanha antes de propor.`;
+
 export interface ChatTurnResult {
   ok: boolean;
   text: string;
@@ -31,6 +41,9 @@ export interface ChatTurnResult {
   cost_usd: number;
   session_id: string;
   error?: string;
+  // Proposta de ação pendente (quando o José chamou propor_acao) — a UI mostra
+  // os botões Autorizar/Cancelar pra fechar o gate via jose-approval-handler.
+  proposal?: { approval_id: string; resumo: string; risco: string; action_type: string } | null;
 }
 
 export async function joseChatTurn(admin: any, opts: {
@@ -52,6 +65,13 @@ export async function joseChatTurn(admin: any, opts: {
   const toolCalls: string[] = [];
   let totalCost = 0;
   let finalText = "";
+  let proposal: ChatTurnResult["proposal"] = null;
+
+  // Conta pode AGIR? (flag jose_acao). Se sim, libera as ferramentas de ação e o
+  // guia de propor com disciplina. Se não, chat fica 100% consultivo (leitura).
+  const canAct = await isFeatureEnabled(admin, opts.user_id, "jose_acao");
+  const tools = getJoseTools(canAct);
+  const system = canAct ? SYSTEM + ACTION_GUIDE : SYSTEM;
 
   await persist(admin, opts, "user", opts.userMessage, null);
 
@@ -61,7 +81,7 @@ export async function joseChatTurn(admin: any, opts: {
       user_id: opts.user_id,
       ad_account_id: opts.ad_account_id ?? null,
       capability: "llm",
-      input: { system: SYSTEM, messages, max_tokens: 1500, tools: JOSE_TOOLS },
+      input: { system, messages, max_tokens: 1500, tools },
       ref_tipo: "chat",
       ref_id: opts.session_id,
     });
@@ -86,8 +106,12 @@ export async function joseChatTurn(admin: any, opts: {
     for (const tu of toolUse) {
       toolCalls.push(tu.name);
       let out: any;
-      try { out = await executeJoseTool(admin, opts.user_id, tu.name, tu.input || {}); }
+      try { out = await executeJoseTool(admin, opts.user_id, tu.name, tu.input || {}, { ad_account_id: opts.ad_account_id ?? null }); }
       catch (e) { out = { erro: String((e as any)?.message || e) }; }
+      // Capturou uma proposta de ação? Guarda pra UI mostrar os botões (último vence).
+      if (tu.name === "propor_acao" && out?.approval_id) {
+        proposal = { approval_id: out.approval_id, resumo: out.resumo, risco: out.risco, action_type: out.action_type };
+      }
       results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
     }
     messages.push({ role: "user", content: results });
@@ -95,7 +119,7 @@ export async function joseChatTurn(admin: any, opts: {
 
   if (!finalText) finalText = "Não consegui montar a resposta. Pode reformular a pergunta?";
   await persist(admin, opts, "assistant", finalText, toolCalls);
-  return { ok: true, text: finalText, tool_calls: toolCalls, cost_usd: totalCost, session_id: opts.session_id };
+  return { ok: true, text: finalText, tool_calls: toolCalls, cost_usd: totalCost, session_id: opts.session_id, proposal };
 }
 
 async function persist(
