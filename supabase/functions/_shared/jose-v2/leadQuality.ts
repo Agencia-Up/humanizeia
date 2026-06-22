@@ -50,6 +50,7 @@ export interface LeadQualityByAdRow {
   leads_bom: number;
   leads_medio: number;
   leads_ruim: number;
+  vendas: number;
   leads_sem_classificacao: number;
   pct_bom: number | null;
 }
@@ -66,7 +67,7 @@ export async function leadQualityByAd(
 ): Promise<LeadQualityByAdRow[]> {
   const { data, error } = await admin
     .from("lead_quality_by_ad")
-    .select("ad_key, ad_key_kind, ad_id, ad_name, leads_total, leads_bom, leads_medio, leads_ruim, leads_sem_classificacao, pct_bom")
+    .select("ad_key, ad_key_kind, ad_id, ad_name, leads_total, leads_bom, leads_medio, leads_ruim, vendas, leads_sem_classificacao, pct_bom")
     .eq("user_id", userId);
   if (error || !data) return [];
   const min = opts?.minLeads ?? 1;

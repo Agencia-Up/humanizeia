@@ -20,10 +20,11 @@ interface Cards {
   cpm: number; cpc: number; ctr: number;
   conversas: number; cpl: number | null;
   leads_bom: number; leads_classificados: number; custo_por_lead_bom: number | null;
+  vendas: number; custo_por_venda: number | null;
   idade: Array<{ faixa: string; gasto: number; conversas: number; cpl: number | null }>;
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
-  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; pct_bom: number | null }>;
+  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
 
@@ -113,7 +114,7 @@ export function CabineCards() {
   // Auto-esconde nas contas sem o recurso ligado.
   if (!loading && (!enabled || !cards)) return null;
 
-  const periodoLabel = PRESETS.find((p) => p.value === periodo)?.label || '7 dias';
+  const periodoLabel = periodo === 'custom' ? 'período escolhido' : (PRESETS.find((p) => p.value === periodo)?.label || '7 dias');
   const totalAtrib = cards ? n(cards.atribuicao.por_ad_id) + n(cards.atribuicao.por_titulo) + n(cards.atribuicao.sem_origem) : 0;
   const semPct = cards && totalAtrib > 0 ? Math.round(100 * n(cards.atribuicao.sem_origem) / totalAtrib) : 0;
 
@@ -160,26 +161,40 @@ export function CabineCards() {
 
       {cards && (
         <>
-          {/* HERO — a vitrine vs a verdade, lado a lado */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* HERO — vitrine vs verdade vs venda */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Card>
               <CardContent className="p-5">
                 <div className="text-xs text-muted-foreground">Custo por lead — o que o Meta cobra</div>
                 <div className="text-3xl font-bold mt-1">{money(cards.moeda, cards.cpl)}</div>
-                <div className="text-[11px] text-muted-foreground mt-1">{int(cards.conversas)} conversas iniciadas no Meta ({periodoLabel})</div>
+                <div className="text-[11px] text-muted-foreground mt-1">{int(cards.conversas)} conversas no Meta ({periodoLabel})</div>
               </CardContent>
             </Card>
             <Card className="border-emerald-500/40 bg-emerald-500/[0.04]">
               <CardContent className="p-5">
-                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Custo por lead BOM — o que vale de verdade</div>
+                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Custo por lead BOM</div>
                 {cards.leads_bom > 0
                   ? (<>
                       <div className="text-3xl font-bold mt-1">{money(cards.moeda, cards.custo_por_lead_bom)}</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">{int(cards.leads_bom)} leads aprovados pelo Pedro ({periodoLabel})</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">{int(cards.leads_bom)} leads que avançaram no funil ({periodoLabel})</div>
                     </>)
                   : (<>
-                      <div className="text-lg font-semibold mt-2 text-muted-foreground">Aguardando o Pedro classificar</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">Conforme o Pedro atende e marca os leads bons, este número aparece.</div>
+                      <div className="text-lg font-semibold mt-2 text-muted-foreground">Sem lead bom no período</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">Conta quem avançou: negociação, qualificado ou venda.</div>
+                    </>)}
+              </CardContent>
+            </Card>
+            <Card className="border-amber-500/40 bg-amber-500/[0.05]">
+              <CardContent className="p-5">
+                <div className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1"><Award className="h-3.5 w-3.5" /> Custo por VENDA</div>
+                {cards.vendas > 0
+                  ? (<>
+                      <div className="text-3xl font-bold mt-1">{money(cards.moeda, cards.custo_por_venda)}</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">{int(cards.vendas)} venda(s) fechada(s) ({periodoLabel})</div>
+                    </>)
+                  : (<>
+                      <div className="text-lg font-semibold mt-2 text-muted-foreground">Sem venda no período</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">Quando um lead vira "fechado" no CRM, aparece aqui.</div>
                     </>)}
               </CardContent>
             </Card>
@@ -221,6 +236,7 @@ export function CabineCards() {
                               {a.ad_key_kind === 'titulo' && <Badge variant="outline" className="ml-1.5 text-[9px] h-4 px-1 font-normal">aproximado</Badge>}
                             </span>
                             <span className="text-muted-foreground tabular-nums hidden sm:inline">{int(a.leads_total)} leads</span>
+                            {a.vendas > 0 && <span className="text-amber-600 dark:text-amber-400 font-semibold tabular-nums">{int(a.vendas)} venda{a.vendas > 1 ? 's' : ''}</span>}
                             <span className="text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">{int(a.leads_bom)} bons</span>
                             <span className="text-rose-600 dark:text-rose-400 tabular-nums">{int(a.leads_ruim)} ruins</span>
                             <span className="font-bold w-12 text-right tabular-nums">{a.pct_bom == null ? '—' : `${a.pct_bom}%`}</span>

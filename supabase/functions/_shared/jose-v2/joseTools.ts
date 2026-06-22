@@ -53,6 +53,7 @@ export async function executeJoseTool(
       periodo: cards.periodo, moeda: cards.moeda,
       investido: cards.gasto, conversas_meta: cards.conversas,
       cpl_vitrine: cards.cpl, custo_por_lead_bom: cards.custo_por_lead_bom, leads_bom: cards.leads_bom,
+      vendas: cards.vendas, custo_por_venda: cards.custo_por_venda,
       cpm: cards.cpm, cpc: cards.cpc,
       por_idade: cards.idade.slice(0, 5),
       regiao_entrega: cards.regiao_entrega.slice(0, 5),
@@ -67,7 +68,7 @@ export async function executeJoseTool(
       anuncios: rows.slice(0, 20).map((r) => ({
         anuncio: r.ad_name, origem: r.ad_key_kind,
         leads: r.leads_total, bons: r.leads_bom, medios: r.leads_medio, ruins: r.leads_ruim,
-        sem_classificacao: r.leads_sem_classificacao, pct_bom: r.pct_bom,
+        vendas: (r as any).vendas, sem_classificacao: r.leads_sem_classificacao, pct_bom: r.pct_bom,
       })),
     };
   }

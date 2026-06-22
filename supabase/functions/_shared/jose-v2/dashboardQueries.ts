@@ -116,14 +116,49 @@ export interface DashboardCards {
   conversas: number;            // resultado da Meta
   cpl: number | null;           // gasto / conversas (vitrine)
   // verdade
-  leads_bom: number; leads_classificados: number;
+  leads_bom: number; leads_classificados: number; vendas: number;
   custo_por_lead_bom: number | null; // gasto / leads_bom (a verdade ao lado do CPL)
+  custo_por_venda: number | null;    // gasto / vendas (o topo da hierarquia de verdade)
   // breakdowns
   idade: Array<{ faixa: string; gasto: number; conversas: number; cpl: number | null }>;
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
-  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; pct_bom: number | null }>;
+  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
+}
+
+function ymd(d: Date): string { return d.toISOString().slice(0, 10); }
+function presetToRange(preset: string): { since: string; until: string } {
+  const since = new Date(); const until = new Date();
+  if (preset === "yesterday") { since.setDate(since.getDate() - 1); until.setDate(until.getDate() - 1); }
+  else if (preset === "last_30d") since.setDate(since.getDate() - 29);
+  else if (preset === "last_7d") since.setDate(since.getDate() - 6);
+  // "today" => since = until = hoje
+  return { since: ymd(since), until: ymd(until) };
+}
+function efetivaStatus(status: string, ia: string | null): "venda" | "bom" | "medio" | "ruim" | null {
+  if (status === "fechado") return "venda";
+  if (["negociacao", "qualificado", "agendamento"].includes(status)) return "bom";
+  if (["em_atendimento", "pouco_qualificado", "carro_nao_disponivel"].includes(status)) return "medio";
+  if (["perdido", "inativo"].includes(status)) return "ruim";
+  return (ia === "bom" || ia === "medio" || ia === "ruim") ? ia : null;
+}
+// Conta leads BONS e VENDAS na janela (created_at), coerente com o gasto do período.
+async function periodLeadQuality(
+  admin: any, userId: string, since: string, until: string,
+): Promise<{ leads_bom: number; vendas: number; total: number }> {
+  const { data } = await admin.from("ai_crm_leads")
+    .select("status_crm, qualidade_lead, created_at")
+    .eq("user_id", userId)
+    .gte("created_at", `${since}T00:00:00`)
+    .lte("created_at", `${until}T23:59:59`);
+  let bom = 0, vendas = 0, total = 0;
+  for (const l of (data || []) as any[]) {
+    total++;
+    const ef = efetivaStatus(String(l.status_crm || ""), l.qualidade_lead);
+    if (ef === "venda") { vendas++; bom++; } else if (ef === "bom") bom++;
+  }
+  return { leads_bom: bom, vendas, total };
 }
 
 /**
@@ -150,16 +185,22 @@ export async function getDashboardCards(
 
   // 2) Verdade — qualidade por anúncio (DB)
   const lq: LeadQualityByAdRow[] = await leadQualityByAd(admin, userId, { minLeads: 1 });
-  let leads_bom = 0, leads_classif = 0;
+  let leads_classif = 0;
   const atrib = { por_ad_id: 0, por_titulo: 0, sem_origem: 0 };
   for (const r of lq) {
-    leads_bom += num(r.leads_bom);
     leads_classif += num(r.leads_bom) + num(r.leads_medio) + num(r.leads_ruim);
     if (r.ad_key_kind === "ad_id") atrib.por_ad_id += num(r.leads_total);
     else if (r.ad_key_kind === "titulo") atrib.por_titulo += num(r.leads_total);
     else atrib.sem_origem += num(r.leads_total);
   }
+  // Hero (custo por lead BOM / por VENDA): conta os leads NO MESMO período do gasto
+  // (created_at na janela) — senão dividiria gasto-do-período por leads-de-sempre.
+  const range = timeRange ?? presetToRange(datePreset || "last_7d");
+  const pq = await periodLeadQuality(admin, userId, range.since, range.until);
+  const leads_bom = pq.leads_bom;
+  const vendas = pq.vendas;
   const custo_por_lead_bom = leads_bom > 0 ? gasto / leads_bom : null;
+  const custo_por_venda = vendas > 0 ? gasto / vendas : null;
 
   // 3) Idade (vitrine)
   const idade = byAge.map((r: any) => {
@@ -183,7 +224,7 @@ export async function getDashboardCards(
     .map((r) => ({
       ad_name: r.ad_name, ad_key_kind: r.ad_key_kind,
       leads_total: num(r.leads_total), leads_bom: num(r.leads_bom),
-      leads_ruim: num(r.leads_ruim), pct_bom: r.pct_bom,
+      leads_ruim: num(r.leads_ruim), vendas: num((r as any).vendas), pct_bom: r.pct_bom,
     }));
 
   return {
@@ -191,7 +232,7 @@ export async function getDashboardCards(
     gasto, impressoes, cliques,
     cpm: num(b0.cpm), cpc: num(b0.cpc), ctr: num(b0.ctr),
     conversas, cpl,
-    leads_bom, leads_classificados: leads_classif, custo_por_lead_bom,
+    leads_bom, leads_classificados: leads_classif, vendas, custo_por_lead_bom, custo_por_venda,
     idade, regiao_entrega, regiao_origem, anuncios, atribuicao: atrib,
   };
 }
