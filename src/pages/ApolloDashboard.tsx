@@ -1378,6 +1378,17 @@ export default function ApolloDashboard() {
     analyze({ targetAccountId: accountId, datePreset, auto_execute: autoExecute });
   }, [analyze, accountId, datePreset, autoExecute]);
 
+  // Auto-análise UMA vez por conta quando não há sessão salva — preenche o topo
+  // ("Seu tráfego hoje") sozinho, sem o dono clicar "Analisar agora". auto_execute=false:
+  // só LÊ/analisa, nunca age sem o Auto-Pilot. Depois fica salvo no banco e não re-roda.
+  const autoAnalyzedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (accountId && sessionLoaded && !session && !isAnalyzing && !isLoadingSession && autoAnalyzedRef.current !== accountId) {
+      autoAnalyzedRef.current = accountId;
+      analyze({ targetAccountId: accountId, datePreset, auto_execute: false });
+    }
+  }, [accountId, sessionLoaded, session, isAnalyzing, isLoadingSession, analyze, datePreset]);
+
   // Trocar o período é uma AÇÃO do usuário: além de mudar o filtro, re-analisa
   // na hora (se já houver uma análise) pra os números baterem com o período
   // escolhido — senão os cards continuariam mostrando o período anterior, que é
