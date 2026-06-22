@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -962,6 +962,27 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
       else if (!plan.search_query) plan.search_query = canon;
       plan.reason = `slot_brand_recovered:${canon}:${plan.reason || ""}`;
     }
+  }
+
+  // ── "QUANDO INCERTO, PERGUNTAR — NÃO CHUTAR" (palavra final do normalizePlan) ─────────────────────
+  // Mensagem genérica SEM critério ("quero um carro", "me ajuda a escolher", "qual o melhor") e SEM
+  // veículo resolvido / na memória -> NUNCA despeja carros aleatórios (o "chute" que dá errado); vira
+  // reply_only e o reply faz UMA pergunta de qualificação (tipo / faixa de preço / uso). Vendedor bom
+  // QUALIFICA antes de apresentar; best-practice: classificar intenção ERRADA é pior que não classificar.
+  // Gate: o resolver marca o GENÉRICO "carro" como sinal (query="carro", has_signal=true) — isso NÃO
+  // é critério real. Por isso checamos só `canonical_model` (modelo REAL resolvido) + memória; o próprio
+  // messageIsTooVagueToAct já garante ausência de tipo/preço/marca na frase.
+  if (messageIsTooVagueToAct(input.message, input.memory)
+      && !plan.use_memory_vehicle
+      && !memoryVehicle
+      && !(input.vehicle_resolution as any)?.canonical_model) {
+    plan.action = "reply_only";
+    plan.intent = "small_talk";
+    plan.search_query = null;
+    plan.search_filters = { ...(plan.search_filters || {}), stock_broad: false, modelo_desejado: null, tipo_veiculo: null };
+    plan.use_memory_vehicle = false;
+    (plan as any).precisa_qualificar = true;
+    plan.reason = `enforced_qualify_vague:${plan.reason || ""}`;
   }
 
   return plan;

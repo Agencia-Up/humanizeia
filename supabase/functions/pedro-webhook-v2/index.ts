@@ -8,10 +8,10 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
-import { agentUsesInstance, agentLooksLikePedro } from "../_shared/pedro-v2/webhookRouting.ts";
+import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-22-category-relist-deterministic-v157";
+const PEDRO_V2_BUILD = "2026-06-22-qualify-vague-lead-v159";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -299,21 +299,17 @@ Deno.serve(async (req) => {
     }, 423);
   }
 
-  const { data: agents, error: agentError } = await supabase
+  const { data: allAgents, error: agentError } = await supabase
     .from("wa_ai_agents")
     .select("*")
-    .eq("user_id", waInstance.user_id)
-    .eq("is_active", true);
+    .eq("user_id", waInstance.user_id);
 
-  const activeAgents = Array.isArray(agents) ? agents : [];
-  const agent =
-    activeAgents.find((item) => agentUsesInstance(item, waInstance.id)) ||
-    activeAgents.find(agentLooksLikePedro) ||
-    activeAgents[0] ||
-    null;
+  const agentsList = Array.isArray(allAgents) ? allAgents : [];
+  const agent = selectActiveAgent(agentsList, waInstance.id);
 
   if (agentError || !agent) {
-    return jsonResponse({ ok: false, error: "active_agent_not_found" }, 404);
+    console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${waInstance.id} (Carvalho copia)`);
+    return jsonResponse({ ok: true, ignored: "agent_not_found_or_inactive", instance: instanceName });
   }
 
   // ── Roteamento por tipo de agente ──────────────────────────────────────────

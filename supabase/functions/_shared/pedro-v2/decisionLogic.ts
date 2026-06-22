@@ -231,6 +231,29 @@ export function leadComplainsPhotoWrongOrMissing(message?: string | null): boole
     || /\b(do|o)\s+carro\s+certo\b/.test(t);
 }
 
+// ── "QUANDO INCERTO, PERGUNTAR — NÃO CHUTAR" (best-practice: intenção errada é pior que nenhuma) ──────
+// Mensagem GENÉRICA sem NENHUM critério ("quero um carro", "me ajuda a escolher", "qual o melhor",
+// "não sei qual") -> o agente NÃO deve despejar carros aleatórios (o "chute"); deve fazer UMA pergunta
+// de qualificação (tipo/faixa de preço/uso). Detector PURO + conservador: só dispara sem tipo, sem
+// número (preço/ano), sem foto/financiamento/troca, sem marca/modelo nomeado, e sem interesse na
+// memória. "o que vocês têm?" (pedido de mostruário) NÃO conta como vago -> apresenta amostra.
+export function messageIsTooVagueToAct(message?: string | null, memory?: any): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 12) return false;
+  if (memory?.interesse?.modelo_desejado || memory?.interesse?.tipo_veiculo) return false;
+  // Já tem CRITÉRIO -> não é vago.
+  if (/\b(suv|sedan|sedã|hatch|hatchback|picape|pickup|caminhonete|utilitario|4x4|cabine|sw4)\b/.test(t)) return false;
+  if (/\d/.test(t)) return false; // qualquer número (preço/ano/cilindrada) = já tem critério
+  if (/\b(foto|fotos|fts|imagem|financ|troca|trocar|agendar|test ?drive|preco|valor|parcel|entrada)\b/.test(t)) return false;
+  // Sinal de querer-genérico SEM critério, OU pedido de ajuda/recomendação.
+  const genericWant =
+    /\b(quero|queria|procuro|busco|gostaria|to querendo|estou querendo|to procurando|estou procurando|to a procura|estou a procura)\b.{0,14}\b(carro|veiculo|automovel|algo|alguma coisa)\b/.test(t)
+    || /\b(me ajuda|me ajudem|pode me ajudar|preciso de ajuda|qual (o )?melhor|o que (voces|vc) (recomenda|indica)|que carro (voces|vc) (recomenda|indica)|to na duvida|nao sei qual|to indeciso|estou indeciso|to perdido)\b/.test(t);
+  return genericWant;
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):

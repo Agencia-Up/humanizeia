@@ -45,6 +45,7 @@ import {
   clearRejeitadoOnRequest,
   excludeRejeitados,
   photoRequestTargetModel,
+  messageIsTooVagueToAct,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle } from "./preSendVerify.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
@@ -2021,6 +2022,7 @@ export async function processPedroV2Turn(
     // ha varios => APRESENTA as opcoes. Relista de forma DETERMINISTICA (provider-independente, sem custo).
     if (_broadCategoryBrowse && stockResult?.success && Array.isArray(stockResult.items)
         && stockResult.items.length >= 2
+        && !messageIsTooVagueToAct(text, currentMemory)
         && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
         && !replyMentionsAnyVehicle((reply as any)?.text || "", stockResult.items)) {
       reply = {
@@ -2030,6 +2032,25 @@ export async function processPedroV2Turn(
         media: [],
       } as any;
       log("warn", "pedro_v2_category_relisted", { lead_id: lead?.id || null, count: stockResult.items.length });
+    }
+
+    // QUALIFICACAO de lead VAGO ("perguntar, nao chutar"): o planner marcou precisa_qualificar (msg
+    // generica sem criterio — "quero um carro", "me ajuda a escolher"). Garante que o reply FACA uma
+    // pergunta de qualificacao; se o LLM nao perguntou (sem "?" ou sem citar tipo/faixa), usa pergunta
+    // DETERMINISTICA (zero variancia) — nunca despeja carros aleatorios.
+    if ((brainPlan as any)?.precisa_qualificar) {
+      const _rt = String((reply as any)?.text || "");
+      const _asksQualifier = /\?/.test(_rt)
+        && /\b(tipo|suv|sedan|seda|hatch|picape|pickup|faixa|preco|preço|valor|orcamento|orçamento|uso|usar|procura|prefere|modelo)\b/i.test(_rt);
+      if (!_asksQualifier) {
+        reply = {
+          ok: true,
+          text: "Claro, vou te ajudar a achar o carro ideal! 😊 Pra eu já filtrar certinho pra você: tem algum *tipo* em mente (SUV, sedan, hatch, picape) ou prefere me dizer uma *faixa de preço*?",
+          source: "qualify_vague_deterministic",
+          media: [],
+        } as any;
+        log("warn", "pedro_v2_qualify_vague", { lead_id: lead?.id || null });
+      }
     }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 

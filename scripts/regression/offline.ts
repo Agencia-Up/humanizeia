@@ -41,6 +41,7 @@ import {
   excludeRejeitados,
   photoRequestTargetModel,
   leadComplainsPhotoWrongOrMissing,
+  messageIsTooVagueToAct,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
@@ -190,6 +191,17 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("verificacao", "reply lista SUVs -> menciona veículo (não relista)", replyMentionsAnyVehicle("Temos o Pajero TR4 e o Renegade...", _suvs) === true);
   check("verificacao", "reply só saúda/rapport -> NÃO menciona veículo (relista)", replyMentionsAnyVehicle("Boa tarde! Você é de Taubaté mesmo? Já conhece a nossa loja?", _suvs) === false);
   check("verificacao", "reply cita por MARCA -> menciona veículo", replyMentionsAnyVehicle("Temos uma Honda City linda!", [{ modelo: "City", marca: "Honda" }]) === true);
+
+  // ── "QUANDO INCERTO, PERGUNTAR — NÃO CHUTAR" (qualificação de lead vago) ──
+  check("qualificacao", "'quero um carro' -> vago (pergunta, não despeja)", messageIsTooVagueToAct("quero um carro") === true);
+  check("qualificacao", "'me ajuda a escolher um carro' -> vago", messageIsTooVagueToAct("me ajuda a escolher um carro") === true);
+  check("qualificacao", "'qual o melhor de vocês?' -> vago", messageIsTooVagueToAct("qual o melhor de vocês?") === true);
+  check("qualificacao", "'não sei qual escolher' -> vago", messageIsTooVagueToAct("não sei qual escolher") === true);
+  check("qualificacao", "'quero um suv' -> NÃO vago (tem tipo)", messageIsTooVagueToAct("quero um suv") === false);
+  check("qualificacao", "'quero um onix' -> NÃO vago (tem modelo)", messageIsTooVagueToAct("quero um onix") === false);
+  check("qualificacao", "'quero um carro até 50 mil' -> NÃO vago (tem preço)", messageIsTooVagueToAct("quero um carro até 50 mil") === false);
+  check("qualificacao", "'o que vocês têm?' -> NÃO vago (mostruário, apresenta)", messageIsTooVagueToAct("o que vocês têm?") === false);
+  check("qualificacao", "com interesse na memória -> NÃO vago (usa o interesse)", messageIsTooVagueToAct("me ajuda", { interesse: { tipo_veiculo: "suv" } }) === false);
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
