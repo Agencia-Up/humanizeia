@@ -3,24 +3,45 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { MessageSquare, Send, Loader2, Sparkles, Paperclip, Mic, Square, X, FileText, Image as ImageIcon, ShieldAlert, Check } from 'lucide-react';
+import {
+  MessageSquare, Send, Loader2, Sparkles, Paperclip, Mic, Square, X, FileText,
+  Image as ImageIcon, Check, Target, DollarSign, MessageCircle, CheckCircle2,
+  Gauge, BarChart3, Lightbulb,
+} from 'lucide-react';
 
 // ── Bloco B — chat conversável do José (estilo ChatGPT) na tela principal. Mesmo
 // cérebro do WhatsApp (edge jose-chat -> joseBrain), lê os MESMOS dados dos cards.
-// Aceita imagem (analisa), áudio (transcreve) e documento/PDF (lê). Auto-esconde se off.
-// Quando a conta pode AGIR (flag jose_acao), o José pode PROPOR ação (pausar/verba) e
-// o chat mostra os botões Autorizar/Cancelar (gate -> jose-approval-handler).
+// Reskin premium no padrão do mockup do dono: painel "Contexto analisado" + thread
+// com avatar/horário + card de sugestão (Autorizar/Cancelar). A LÓGICA é a mesma.
 const db = supabase as any;
 type Proposal = { approval_id: string; resumo: string; risco: string; action_type: string };
-type Msg = { role: 'user' | 'assistant'; content: string; proposal?: Proposal | null; decided?: 'aprovado' | 'rejeitado' };
+type Msg = { role: 'user' | 'assistant'; content: string; proposal?: Proposal | null; decided?: 'aprovado' | 'rejeitado'; ts?: string };
 type Attach = { kind: 'image' | 'audio' | 'document'; mime: string; base64: string; name: string };
+type Contexto = { moeda: string; gasto: number; conversas: number; cpl: number | null; custo_por_lead_bom: number | null; leads_bom: number } | null;
 
 const SUGESTOES = [
-  'Como está meu custo por lead bom?',
-  'De qual anúncio vêm os leads ruins?',
   'Qual anúncio eu deveria pausar?',
+  'De qual anúncio vêm os leads ruins?',
+  'Como está meu custo por lead bom?',
 ];
+const QUICK = [
+  { label: 'Analisar campanhas', icon: BarChart3, msg: 'Analise minhas campanhas ativas e me diga o que está indo bem e o que não está.' },
+  { label: 'Gerar recomendação', icon: Lightbulb, msg: 'Me dê uma recomendação do que fazer agora pra melhorar os resultados.' },
+  { label: 'Criar campanha', icon: Sparkles, msg: 'Quero criar uma campanha nova. Me ajuda a montar?' },
+];
+
+const ACAO_TITULO: Record<string, string> = {
+  pause: 'Pausar campanha', activate: 'Reativar campanha',
+  increase_budget: 'Aumentar a verba', decrease_budget: 'Reduzir a verba',
+};
+
+function nowHHMM() { try { return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } }
+function money(moeda: string, v: number | null | undefined) {
+  return v == null ? '—' : `${moeda} ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function int(v: number | null | undefined) { return Number(v || 0).toLocaleString('pt-BR'); }
 
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -31,6 +52,30 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+// Avatar do José (alvo num círculo gradiente indigo→dourado).
+function JoseAvatar({ big = false }: { big?: boolean }) {
+  return (
+    <div className={`flex ${big ? 'h-9 w-9' : 'h-8 w-8'} shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-amber-500 text-white ring-1 ring-inset ring-white/20 shadow-sm`}>
+      <Target className={big ? 'h-5 w-5' : 'h-4 w-4'} />
+    </div>
+  );
+}
+
+// Tijolo do "Contexto analisado".
+function CtxCard({ icon: Icon, label, value, tint }: { icon: any; label: string; value: string; tint: string }) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/60 p-3">
+      <div className="flex items-center gap-2.5">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${tint}`}><Icon className="h-4 w-4" /></div>
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+          <div className="text-sm font-bold tabular-nums leading-tight truncate">{value}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function JoseChatPanel() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -39,6 +84,7 @@ export function JoseChatPanel() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [pending, setPending] = useState<Attach[]>([]);
   const [recording, setRecording] = useState(false);
+  const [contexto, setContexto] = useState<Contexto>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const mrRef = useRef<MediaRecorder | null>(null);
@@ -50,6 +96,17 @@ export function JoseChatPanel() {
         const { data } = await db.functions.invoke('jose-chat', { body: { ping: true } });
         setEnabled(data?.enabled === true);
       } catch { setEnabled(false); }
+    })();
+  }, []);
+
+  // Contexto analisado (dados de hoje) — best-effort; se falhar, o painel some.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await db.functions.invoke('jose-dashboard', { body: { date_preset: 'today' } });
+        const c = data?.cards;
+        if (c) setContexto({ moeda: c.moeda, gasto: c.gasto, conversas: c.conversas, cpl: c.cpl, custo_por_lead_bom: c.custo_por_lead_bom, leads_bom: c.leads_bom });
+      } catch { /* silencioso */ }
     })();
   }, []);
 
@@ -99,7 +156,7 @@ export function JoseChatPanel() {
     setInput('');
     setPending([]);
     const label = q || `(${atts.map((a) => a.name).join(', ')})`;
-    setMessages((m) => [...m, { role: 'user', content: label }]);
+    setMessages((m) => [...m, { role: 'user', content: label, ts: nowHHMM() }]);
     setSending(true);
     try {
       const { data, error } = await db.functions.invoke('jose-chat', {
@@ -107,10 +164,10 @@ export function JoseChatPanel() {
       });
       if (error) throw error;
       if (data?.session_id) setSessionId(data.session_id);
-      setMessages((m) => [...m, { role: 'assistant', content: data?.text || 'Não consegui responder agora.', proposal: data?.proposal || null }]);
+      setMessages((m) => [...m, { role: 'assistant', content: data?.text || 'Não consegui responder agora.', proposal: data?.proposal || null, ts: nowHHMM() }]);
     } catch (e: any) {
       toast.error('Erro no chat do José: ' + (e?.message || e));
-      setMessages((m) => [...m, { role: 'assistant', content: 'Tive um problema pra responder. Tenta de novo?' }]);
+      setMessages((m) => [...m, { role: 'assistant', content: 'Tive um problema pra responder. Tenta de novo?', ts: nowHHMM() }]);
     } finally { setSending(false); }
   }, [input, pending, sending, sessionId]);
 
@@ -126,7 +183,6 @@ export function JoseChatPanel() {
         toast('Proposta cancelada — nada foi executado.');
       }
     } catch (e: any) {
-      // Reverte o estado visual se a chamada falhou.
       setMessages((m) => m.map((msg, i) => i === idx ? { ...msg, decided: undefined } : msg));
       toast.error('Não consegui registrar sua resposta: ' + (e?.message || e));
     }
@@ -136,83 +192,146 @@ export function JoseChatPanel() {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2"><MessageSquare className="h-4 w-4 text-primary" /> Converse com o José</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-          {messages.length === 0 && (
-            <div className="text-xs text-muted-foreground space-y-2">
-              <p className="flex items-center gap-1"><Sparkles className="h-3 w-3" /> Pergunte em linguagem natural, ou envie uma <b>imagem</b>, um <b>áudio</b> ou um <b>PDF</b> — ele lê os mesmos números dos cards.</p>
-              <div className="flex flex-wrap gap-1">
-                {SUGESTOES.map((s) => (
-                  <Button key={s} size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => send(s)}>{s}</Button>
-                ))}
+      <CardContent>
+        <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4">
+          {/* ── Contexto analisado ───────────────────────────────────────── */}
+          <aside className="hidden lg:flex flex-col gap-2.5">
+            <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5"><Gauge className="h-3.5 w-3.5" /> Contexto analisado</div>
+            {contexto ? (
+              <>
+                <CtxCard icon={DollarSign} label="Investido" value={money(contexto.moeda, contexto.gasto)} tint="bg-blue-500/15 text-blue-400 ring-blue-400/20" />
+                <CtxCard icon={MessageCircle} label="Conversas" value={int(contexto.conversas)} tint="bg-cyan-500/15 text-cyan-400 ring-cyan-400/20" />
+                <CtxCard icon={Target} label="Custo por lead" value={money(contexto.moeda, contexto.cpl)} tint="bg-violet-500/15 text-violet-400 ring-violet-400/20" />
+                <CtxCard icon={CheckCircle2} label="Lead bom" value={contexto.leads_bom > 0 ? money(contexto.moeda, contexto.custo_por_lead_bom) : '—'} tint="bg-emerald-500/15 text-emerald-400 ring-emerald-400/20" />
+                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Dados de hoje · atualizado agora</div>
+              </>
+            ) : (
+              <div className="rounded-xl border border-dashed border-border/60 p-3 text-[11px] text-muted-foreground">O José lê os mesmos números dos cards da Cabine pra responder.</div>
+            )}
+          </aside>
+
+          {/* ── Chat ─────────────────────────────────────────────────────── */}
+          <div className="flex flex-col rounded-xl border border-border/60 bg-card/40 overflow-hidden">
+            {/* Cabeçalho do José */}
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border/50">
+              <JoseAvatar big />
+              <div>
+                <div className="text-sm font-bold flex items-center gap-1.5">José <Badge variant="secondary" className="text-[9px] h-4 px-1.5">IA</Badge></div>
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Gestor de Tráfego IA</div>
               </div>
             </div>
-          )}
-          {messages.map((m, i) => (
-            <div key={i} className="space-y-1.5">
-              <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-lg px-3 py-2 text-xs whitespace-pre-wrap ${m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>{m.content}</div>
-              </div>
-              {m.role === 'assistant' && m.proposal && (
-                <div className="flex justify-start">
-                  <div className="w-full max-w-[90%] rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2.5 space-y-2">
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                      <ShieldAlert className="h-3.5 w-3.5" /> Proposta de ação · risco {m.proposal.risco}
+
+            {/* Thread */}
+            <div className="px-4 py-4 space-y-4 max-h-[420px] overflow-y-auto">
+              {messages.length === 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <JoseAvatar />
+                    <div className="rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5 text-xs max-w-[85%]">
+                      Oi! Sou o José, seu gestor de tráfego. Me pergunte sobre seus anúncios, custos e leads — ou peça pra eu analisar e sugerir uma ação.
                     </div>
-                    <p className="text-xs">{m.proposal.resumo}</p>
-                    {m.decided ? (
-                      <p className={`text-[11px] font-medium ${m.decided === 'aprovado' ? 'text-emerald-500' : 'text-muted-foreground'}`}>
-                        {m.decided === 'aprovado' ? '✅ Autorizado — ação executada.' : '❌ Cancelado — nada foi executado.'}
-                      </p>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button size="sm" className="h-7 text-[11px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => decide(i, m.proposal!.approval_id, 'aprovado')}>
-                          <Check className="h-3 w-3" /> Autorizar
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={() => decide(i, m.proposal!.approval_id, 'rejeitado')}>
-                          <X className="h-3 w-3" /> Cancelar
-                        </Button>
-                      </div>
-                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pl-10">
+                    {SUGESTOES.map((s) => (
+                      <Button key={s} size="sm" variant="outline" className="h-7 text-[11px] rounded-full" onClick={() => send(s)}>{s}</Button>
+                    ))}
                   </div>
                 </div>
               )}
+
+              {messages.map((m, i) => (
+                <div key={i} className="space-y-2">
+                  <div className={`flex items-end gap-2.5 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                    {m.role === 'assistant' && <JoseAvatar />}
+                    <div className={`max-w-[85%] ${m.role === 'user' ? 'items-end' : ''}`}>
+                      <div className={`rounded-2xl px-3.5 py-2.5 text-xs whitespace-pre-wrap ${m.role === 'user' ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-muted rounded-tl-sm'}`}>{m.content}</div>
+                      {m.ts && <div className={`text-[10px] text-muted-foreground mt-1 ${m.role === 'user' ? 'text-right' : 'pl-1'}`}>{m.ts}{m.role === 'user' && ' ✓✓'}</div>}
+                    </div>
+                  </div>
+
+                  {/* Card de SUGESTÃO (proposta de ação) */}
+                  {m.role === 'assistant' && m.proposal && (
+                    <div className="ml-10">
+                      <div className="rounded-xl border border-amber-500/50 bg-gradient-to-br from-amber-500/10 to-transparent p-3.5 shadow-sm shadow-black/20 max-w-[92%]">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/20 text-amber-400 ring-1 ring-inset ring-amber-400/20"><Lightbulb className="h-4 w-4" /></div>
+                          <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">Sugestão do José</span>
+                          <Badge variant="outline" className="ml-auto text-[9px] h-4 px-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400">risco {m.proposal.risco}</Badge>
+                        </div>
+                        <p className="text-sm font-semibold">{ACAO_TITULO[m.proposal.action_type] || 'Ação sugerida'}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{m.proposal.resumo}</p>
+                        {m.decided ? (
+                          <p className={`text-[11px] font-medium mt-2.5 ${m.decided === 'aprovado' ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                            {m.decided === 'aprovado' ? '✅ Autorizado — ação executada.' : '❌ Cancelado — nada foi executado.'}
+                          </p>
+                        ) : (
+                          <div className="flex gap-2 mt-3">
+                            <Button size="sm" variant="outline" className="h-8 text-[11px] gap-1" onClick={() => decide(i, m.proposal!.approval_id, 'rejeitado')}>
+                              <X className="h-3.5 w-3.5" /> Cancelar
+                            </Button>
+                            <Button size="sm" className="h-8 text-[11px] gap-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={() => decide(i, m.proposal!.approval_id, 'aprovado')}>
+                              <Check className="h-3.5 w-3.5" /> Autorizar
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {sending && (
+                <div className="flex items-end gap-2.5">
+                  <JoseAvatar />
+                  <div className="bg-muted rounded-2xl rounded-tl-sm px-3.5 py-2.5 text-xs flex items-center gap-1.5 text-muted-foreground">
+                    Analisando<span className="inline-flex gap-0.5"><span className="animate-bounce">.</span><span className="animate-bounce [animation-delay:120ms]">.</span><span className="animate-bounce [animation-delay:240ms]">.</span></span>
+                  </div>
+                </div>
+              )}
+              <div ref={endRef} />
             </div>
-          ))}
-          {sending && (
-            <div className="flex justify-start">
-              <div className="bg-muted rounded-lg px-3 py-2 text-xs flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> pensando...</div>
+
+            {/* Chips de ação rápida */}
+            <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+              {QUICK.map((q) => (
+                <Button key={q.label} size="sm" variant="outline" className="h-7 text-[11px] gap-1.5 rounded-full" disabled={sending} onClick={() => send(q.msg)}>
+                  <q.icon className="h-3 w-3" /> {q.label}
+                </Button>
+              ))}
             </div>
-          )}
-          <div ref={endRef} />
+
+            {/* Anexos pendentes */}
+            {pending.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+                {pending.map((a, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 bg-muted rounded-md px-2 py-1 text-[11px]">
+                    {a.kind === 'image' ? <ImageIcon className="h-3 w-3" /> : a.kind === 'audio' ? <Mic className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+                    <span className="max-w-[140px] truncate">{a.name}</span>
+                    <button type="button" className="opacity-60 hover:opacity-100" onClick={() => setPending((p) => p.filter((_, j) => j !== i))}><X className="h-3 w-3" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Barra de envio */}
+            <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex items-center gap-1.5 px-3 py-3 border-t border-border/50">
+              <input ref={fileRef} type="file" accept="image/*,audio/*,application/pdf" className="hidden" onChange={onPickFile} />
+              <Button type="button" size="icon" variant="ghost" className="h-9 w-9 shrink-0" disabled={sending} onClick={() => fileRef.current?.click()} title="Anexar imagem, áudio ou PDF">
+                <Paperclip className="h-4 w-4" />
+              </Button>
+              <Button type="button" size="icon" variant={recording ? 'destructive' : 'ghost'} className="h-9 w-9 shrink-0" disabled={sending} onClick={recording ? stopRec : startRec} title={recording ? 'Parar gravação' : 'Gravar voz'}>
+                {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </Button>
+              <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder={recording ? 'Gravando voz... clique no quadrado p/ parar' : 'Pergunte ao José ou envie um anexo...'} className="h-9 text-sm rounded-full" disabled={sending || recording} />
+              <Button type="submit" size="sm" className="h-9 gap-1.5 shrink-0 rounded-full px-4" disabled={sending || (!input.trim() && pending.length === 0)}><Send className="h-3.5 w-3.5" /> Enviar</Button>
+            </form>
+          </div>
         </div>
 
-        {pending.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {pending.map((a, i) => (
-              <span key={i} className="inline-flex items-center gap-1 bg-muted rounded-md px-2 py-1 text-[11px]">
-                {a.kind === 'image' ? <ImageIcon className="h-3 w-3" /> : a.kind === 'audio' ? <Mic className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
-                <span className="max-w-[140px] truncate">{a.name}</span>
-                <button type="button" className="opacity-60 hover:opacity-100" onClick={() => setPending((p) => p.filter((_, j) => j !== i))}><X className="h-3 w-3" /></button>
-              </span>
-            ))}
-          </div>
-        )}
-
-        <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex items-center gap-1.5">
-          <input ref={fileRef} type="file" accept="image/*,audio/*,application/pdf" className="hidden" onChange={onPickFile} />
-          <Button type="button" size="icon" variant="ghost" className="h-9 w-9 shrink-0" disabled={sending} onClick={() => fileRef.current?.click()} title="Anexar imagem, áudio ou PDF">
-            <Paperclip className="h-4 w-4" />
-          </Button>
-          <Button type="button" size="icon" variant={recording ? 'destructive' : 'ghost'} className="h-9 w-9 shrink-0" disabled={sending} onClick={recording ? stopRec : startRec} title={recording ? 'Parar gravação' : 'Gravar voz'}>
-            {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-          </Button>
-          <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder={recording ? 'Gravando voz... clique no quadrado p/ parar' : 'Pergunte ao José ou envie um anexo...'} className="h-9 text-sm" disabled={sending || recording} />
-          <Button type="submit" size="sm" className="h-9 gap-1 shrink-0" disabled={sending || (!input.trim() && pending.length === 0)}><Send className="h-3.5 w-3.5" /></Button>
-        </form>
+        <p className="text-[10px] text-muted-foreground text-center mt-3">O José pode errar. Sempre revise antes de aplicar mudanças.</p>
       </CardContent>
     </Card>
   );
