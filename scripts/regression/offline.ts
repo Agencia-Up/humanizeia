@@ -39,6 +39,7 @@ import {
   clearRejeitadoOnRequest,
   buildConversationState,
   excludeRejeitados,
+  photoRequestTargetModel,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -261,6 +262,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const semOnix = excludeRejeitados(poolRej, { modelos: ["onix"] });
   check("decisao", "excludeRejeitados: tira Onix, mantém Compass/Tracker", semOnix.length === 2 && !semOnix.some((v) => /onix/i.test(v.modelo)));
   check("decisao", "excludeRejeitados: sem rejeitados -> mantém tudo", excludeRejeitados(poolRej, { modelos: [] }).length === 3);
+
+  // ── FOTO DO CARRO CERTO (caso Bárbara): mensagem referencia o interesse -> alvo = interesse ──
+  const memBarbara = { interesse: { modelo_desejado: "Peugeot 2008 2021" } };
+  check("foto", "alvo: 'fts do 2008 2021' (interesse Peugeot 2008) -> Peugeot 2008", photoRequestTargetModel("quero ver as fts do 2008 2021", memBarbara, null) === "Peugeot 2008 2021");
+  check("foto", "alvo: 'fotos desse' (sem referência) -> fallback (âncora)", photoRequestTargetModel("manda fotos desse", { interesse: { modelo_desejado: "Onix" } }, null) === null);
+  check("foto", "alvo: 'foto do compass' (interesse Onix) -> usa o nomeado (fallback search_query)", photoRequestTargetModel("manda foto do compass", { interesse: { modelo_desejado: "Onix" } }, "Compass") === "Compass");
 
   // REFINA VERSÃO/MOTOR (caso Alê): detector + contextVehicleModel.
   const memC = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", ano: 2019 }] };

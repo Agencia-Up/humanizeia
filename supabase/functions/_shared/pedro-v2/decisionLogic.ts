@@ -197,6 +197,23 @@ export function excludeRejeitados(items: any[], rejeitados?: { modelos?: string[
   });
 }
 
+// ── FOTO DO CARRO CERTO: qual MODELO o lead quer ver em foto ──────────────────────────────────
+// Bug real (lead Barbara): interesse="Peugeot 2008 2021" mas o pool/ancora estava ESTRAGADO com uma
+// Tracker (apresentacao anterior) -> mandou foto da Tracker. Se a MENSAGEM referencia o modelo de
+// INTERESSE (compartilha um token, ex.: "fotos do 2008 2021" cita "2008"/"2021" do interesse "Peugeot
+// 2008 2021"), o alvo da foto e o INTERESSE — nao a ancora velha. Senao (demonstrativo "esse"/sem
+// referencia), cai no fallback (search_query/resolver) e o fluxo usa a ancora normal. PURO -> offline.
+export function photoRequestTargetModel(message?: string | null, memory?: any, fallbackQuery?: string | null): string | null {
+  const t = normalizePlannerText(message);
+  const interestRaw = memory?.interesse?.modelo_desejado || null;
+  const interest = normalizePlannerText(interestRaw);
+  if (t && interest) {
+    const interestTokens = interest.split(/\s+/).filter((w) => w.length >= 3);
+    if (interestTokens.some((tok) => new RegExp(`\\b${tok}\\b`).test(t))) return interestRaw;
+  }
+  return (fallbackQuery && String(fallbackQuery).trim()) || null;
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):

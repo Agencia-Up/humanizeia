@@ -44,6 +44,7 @@ import {
   updateRejeitados,
   clearRejeitadoOnRequest,
   excludeRejeitados,
+  photoRequestTargetModel,
 } from "./decisionLogic.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -1803,6 +1804,39 @@ export async function processPedroV2Turn(
           log("info", "pedro_v2_photo_stock_lookup", { query: _photoModelQuery, found: _ph.items.length });
         }
       } catch (_e) { /* nao bloqueia: cai no need_reference padrao */ }
+    }
+  }
+
+  // ── FOTO DO CARRO ERRADO (bug real Bárbara/Peugeot 2008): o pool/âncora estava ESTRAGADO com OUTRO
+  // modelo (Tracker de apresentação anterior do anúncio genérico) e a lead pediu foto do INTERESSE
+  // (Peugeot 2008) -> mandou a Tracker. Aqui: se o lead pede foto e o MODELO-ALVO (interesse referenciado
+  // OU nomeado) NÃO bate com a âncora, busca o modelo certo + re-ancora. Se não existir no estoque,
+  // esvazia o pool (fluxo honesto, NUNCA manda o carro errado).
+  if (shouldSendVehiclePhotos && !topicIsAmbiguous && _photoPool.length > 0) {
+    const _wantModel = photoRequestTargetModel(
+      text,
+      nextMemory,
+      String((brainPlan as any)?.search_query || (stockFilters as any)?.modelo_desejado || (vehicleResolution as any)?.query || "").trim() || null,
+    );
+    const _anchorVeh = topicAnchorVehicle || _photoPool[0];
+    if (_wantModel && _anchorVeh && !vehicleMatchesRequestedQuery(_anchorVeh, _wantModel)) {
+      try {
+        const _ph2 = await searchPedroStock(supabase, {
+          user_id: input.agent.user_id, query: _wantModel, limit: 6,
+          sells_motorcycles: _sellsMotos,
+          match_engine: dryRun ? ((input.payload as any)?.match_engine ?? null) : null,
+          stock_feed_url: _stockFeedOverride,
+        } as any);
+        if (_ph2?.success && Array.isArray(_ph2.items) && _ph2.items.length > 0) {
+          _photoPool = _ph2.items;
+          topicAnchorVehicle = _ph2.items[0];
+          log("warn", "pedro_v2_photo_pool_mismatch_research", { lead_id: lead?.id || null, want: _wantModel, was: (_anchorVeh as any)?.modelo || null, found: _ph2.items.length });
+        } else {
+          _photoPool = [];
+          topicAnchorVehicle = undefined as any;
+          log("warn", "pedro_v2_photo_pool_mismatch_no_stock", { lead_id: lead?.id || null, want: _wantModel, was: (_anchorVeh as any)?.modelo || null });
+        }
+      } catch (_e) { /* nao bloqueia */ }
     }
   }
 
