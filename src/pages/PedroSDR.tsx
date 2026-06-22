@@ -1451,11 +1451,30 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
           consignado_estado: lead.consignado_estado || null,
         }));
 
-        const enrichedTeam = teamData.map(m => ({
-          ...m,
-          leadsCount: mappedLeads.filter(l => l.assigned_to_id === m.id).length,
-          qualifiedCount: mappedLeads.filter(l => l.assigned_to_id === m.id && l.status_crm === 'qualificado').length,
-        }));
+        // MATRIZ: o mesmo vendedor tem 1 linha por agente em ai_team_members → sem
+        // deduplicar por telefone, o dropdown/lista do Marcos mostrava o vendedor EM
+        // DOBRO (7 vendedores apareciam 14x). Mesmo dedup do caminho do Pedro (abaixo):
+        // junta os ids do mesmo telefone e mantém 1 linha por pessoa.
+        const dedupedTeam = new Map<string, TeamMember>();
+        for (const m of teamData) {
+          const key = m.whatsapp_number || m.id; // fallback p/ id se sem número
+          const existing = dedupedTeam.get(key);
+          if (!existing) {
+            dedupedTeam.set(key, m);
+          } else if ((m.active_in_system !== false) && (existing.active_in_system === false)) {
+            dedupedTeam.set(key, { ...m, _allIds: [...(existing as any)._allIds || [existing.id], m.id] });
+          } else {
+            (existing as any)._allIds = [...((existing as any)._allIds || [existing.id]), m.id];
+          }
+        }
+        const enrichedTeam = Array.from(dedupedTeam.values()).map(m => {
+          const allIds: string[] = (m as any)._allIds || [m.id];
+          return {
+            ...m,
+            leadsCount: mappedLeads.filter(l => l.assigned_to_id && allIds.includes(l.assigned_to_id)).length,
+            qualifiedCount: mappedLeads.filter(l => l.assigned_to_id && allIds.includes(l.assigned_to_id) && l.status_crm === 'qualificado').length,
+          };
+        });
 
         setLeads(mappedLeads);
         setFeedbacks([]);
