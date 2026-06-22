@@ -1,6 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { checkGuardrails } from "../_shared/jose-v2/guardrails.ts";
 import { sendApprovalWhatsApp } from "../_shared/jose-v2/approvalGate.ts";
+import { computeCampaignVerdict } from "../_shared/jose-v2/reasoningCore.ts";
+import { isFeatureEnabled } from "../_shared/jose-v2/flags.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -489,6 +491,30 @@ Deno.serve(async (req) => {
         analyzed_at: new Date().toISOString(),
       }, { onConflict: "user_id,account_id" });
     } catch { /* ignore session save error */ }
+
+    // ── José v3.1 / Fase 1: veredito automático (hierarquia de verdade) ──────
+    // Toda análise gera um veredito da conta (venda > lead qualificado > vitrine)
+    // e popula a aba Julgamento sozinha. Best-effort, atrás do flag reasoning_core.
+    try {
+      if (await isFeatureEnabled(admin, user.id, "reasoning_core")) {
+        let spend = 0, volume = 0, ctrSum = 0, cpcSum = 0, cpmSum = 0, n = 0;
+        for (const c of enriched as any[]) {
+          spend += Number(c.spend ?? c.cost ?? 0);
+          volume += Number(c.results ?? c.conversions ?? c.leads ?? 0);
+          ctrSum += Number(c.ctr ?? 0); cpcSum += Number(c.cpc ?? 0); cpmSum += Number(c.cpm ?? 0); n++;
+        }
+        await computeCampaignVerdict(admin, {
+          user_id: user.id,
+          ad_account_id: adAccountDbId || null,
+          campaign_id: "conta-geral",
+          nivel1: {
+            spend, volume,
+            ctr: n ? ctrSum / n : 0, cpc: n ? cpcSum / n : 0, cpm: n ? cpmSum / n : 0,
+            cpl_vitrine: volume > 0 ? spend / volume : null,
+          },
+        });
+      }
+    } catch { /* veredito é best-effort, não quebra a análise */ }
 
     // ── Save snapshot (fire and forget) ──
     saveMetricSnapshot(admin, user.id, adAccountDbId || "", enriched, historicalSnapshots, aiResult.health_score).catch(() => {});
