@@ -203,20 +203,20 @@ function MetricCard({
   label: string; value: string | number; sub?: string; icon: React.ElementType; color: string;
 }) {
   return (
-    <Card className="bg-card border-border/50">
-      <CardContent className="pt-5 pb-4 px-5">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <p className="text-xs text-muted-foreground font-medium">{label}</p>
-            <p className="text-2xl font-bold text-foreground">{value}</p>
-            {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
-          </div>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}>
-            <Icon className="h-5 w-5" />
-          </div>
+    <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-card p-4 shadow-sm shadow-black/20 transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-md hover:shadow-black/30">
+      {/* hairline de brilho no topo — toque premium */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 space-y-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+          <p className="text-[26px] font-bold leading-tight tracking-tight text-foreground tabular-nums">{value}</p>
+          {sub && <p className="text-[11px] leading-tight text-muted-foreground">{sub}</p>}
         </div>
-      </CardContent>
-    </Card>
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ring-white/10 ${color}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -702,7 +702,7 @@ export default function PainelGeral() {
 
           {/* Desempenho por vendedor — só master */}
           {!isSeller && (
-            <Card className="bg-card border-border/50">
+            <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Users className="h-4 w-4 text-blue-400" /> Desempenho por vendedor
@@ -746,7 +746,7 @@ export default function PainelGeral() {
           )}
 
           {/* Rastreamento de vendas concluídas (auditoria: data + vendedor) */}
-          <Card className="bg-card border-border/50">
+          <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Vendas concluídas no período
@@ -955,7 +955,7 @@ export default function PainelGeral() {
         </div>
 
         {/* ── Gráfico de atividade sobreposto ──────────────────────────────── */}
-        <Card className="bg-card border-border/50">
+        <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-blue-400" />
@@ -985,7 +985,7 @@ export default function PainelGeral() {
 
         {/* ── Ranking de Vendedores (unificado) — só master (vendedor não vê colegas) ── */}
         {!isSeller && (
-        <Card className="bg-card border-border/50">
+        <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Users className="h-4 w-4 text-cyan-400" />
@@ -1033,7 +1033,7 @@ export default function PainelGeral() {
         )}
 
         {/* ── [Unificado] Ações sugeridas ──────────────────────────────────── */}
-        <Card className="bg-card border-border/50">
+        <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-yellow-300" />
