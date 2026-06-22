@@ -1467,7 +1467,7 @@ export default function ApolloDashboard() {
     <MainLayout>
       <div className="space-y-6">
         {/* ── Header ── */}
-        {showLegacyOverview && (
+        {showLegacyOverview && (<>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -1525,7 +1525,7 @@ export default function ApolloDashboard() {
             </p>
           )}
         </div>
-        )}
+        </>)}
 
         {/* ── No account ── */}
         {/* Header enxuto do José. O overview "Seu tráfego hoje" (Score/Leads/recomendações/
