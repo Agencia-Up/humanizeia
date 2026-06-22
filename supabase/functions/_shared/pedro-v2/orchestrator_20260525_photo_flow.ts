@@ -46,6 +46,7 @@ import {
   excludeRejeitados,
   photoRequestTargetModel,
 } from "./decisionLogic.ts";
+import { verifyReplyText } from "./preSendVerify.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
   vehicleKey,
@@ -1984,6 +1985,36 @@ export async function processPedroV2Turn(
       } catch (_recErr) { /* recuperacao best-effort: nunca derruba o turno */ }
     }
   }
+
+  // ── CAMADA DE VERIFICACAO PRE-ENVIO (Chain-of-Verification): ultimo check antes de enviar ────────
+  // Roda em TODA resposta. LOGA as violacoes (eval-driven: medimos o que dispara em trafego real) e
+  // corrige a "besteira" mais clara (promessa de foto sem anexar midia -> nunca prometer; oferece no
+  // presente). Consolida os invariantes espalhados; cada novo "erro bobo" vira +1 check em
+  // preSendVerify.ts (com 1 teste offline) em vez de remendo solto no orchestrator.
+  try {
+    const _mediaCount = Array.isArray((reply as any)?.media) ? (reply as any).media.length : 0;
+    const _violations = verifyReplyText((reply as any)?.text || "", {
+      mediaCount: _mediaCount,
+      searchedThisTurn: stockResult !== null,
+      hasVehicleSignal: Boolean((vehicleResolution as any)?.has_current_vehicle_signal),
+      rejeitadosModelos: Array.isArray((nextMemory as any)?.rejeitados?.modelos) ? (nextMemory as any).rejeitados.modelos : [],
+    });
+    if (_violations.length > 0) {
+      log("warn", "pedro_v2_presend_violations", { lead_id: lead?.id || null, types: _violations.map((v) => v.type), source: (reply as any)?.source });
+      // CORRECAO determinista: prometeu enviar foto mas NAO anexou midia -> NAO promete; oferece AGORA.
+      if (_violations.some((v) => v.type === "promise_undelivered_media") && _mediaCount === 0) {
+        const _focus = (nextMemory as any)?.interesse?.modelo_desejado || null;
+        reply = {
+          ok: true,
+          text: _focus
+            ? `Quer que eu te mande as fotos do ${_focus} agora? Posso mostrar na hora! 😊`
+            : `Me confirma qual carro você quer ver que eu já te mando as fotos certinhas! 😊`,
+          source: "presend_fixed_no_photo_promise",
+          media: [],
+        } as any;
+      }
+    }
+  } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 
   let effectiveMemory = nextMemory;
   if (stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {

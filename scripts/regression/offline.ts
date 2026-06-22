@@ -42,6 +42,7 @@ import {
   photoRequestTargetModel,
   leadComplainsPhotoWrongOrMissing,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
+import { verifyReplyText } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
   pickReferencedVehicle,
@@ -172,6 +173,17 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // PROMETE E NÃO CUMPRE (foto): reclamação -> força photo_request (não promete).
   const pc1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Essas fts n são peugeot\nVc n mandou do carro certo", vehicle_resolution: vr() as any, memory: { interesse: { modelo_desejado: "Peugeot 2008 2021" } }, recent_history: [] } as any);
   check("planner", "reclamação de foto errada -> força photo_request (não promete)", pc1.action === "photo_request", `action=${pc1.action}`);
+
+  // ── CAMADA DE VERIFICAÇÃO PRÉ-ENVIO (Chain-of-Verification) ──
+  const vTypes = (r: string, ctx?: any) => verifyReplyText(r, ctx).map((v) => v.type);
+  check("verificacao", "promessa de foto SEM mídia anexada -> promise_undelivered_media", vTypes("Vou verificar e enviar as fotos corretas pra você!", { mediaCount: 0 }).includes("promise_undelivered_media"));
+  check("verificacao", "promessa de foto COM mídia anexada -> OK (está enviando)", vTypes("Vou enviar as fotos do Onix agora!", { mediaCount: 5 }).length === 0);
+  check("verificacao", "oferta no presente ('quer ver as fotos?') -> NÃO é promessa", vTypes("Quer ver as fotos dele? Posso te mostrar!", { mediaCount: 0 }).length === 0);
+  check("verificacao", "retorno assíncrono ('vou verificar e já te aviso') -> promise_async_followup", vTypes("Vou verificar o consumo e já te aviso, tá?", {}).includes("promise_async_followup"));
+  check("verificacao", "transferência ('o consultor vai entrar em contato') -> NÃO viola", vTypes("Perfeito! O consultor vai entrar em contato com você em instantes.", {}).length === 0);
+  check("verificacao", "nega disponibilidade sem ter buscado -> denies_without_search", vTypes("Infelizmente não temos o Compass no momento.", { hasVehicleSignal: true, searchedThisTurn: false }).includes("denies_without_search"));
+  check("verificacao", "nega MAS buscou neste turno -> NÃO viola (busca rodou)", vTypes("Infelizmente não temos o Compass no momento.", { hasVehicleSignal: true, searchedThisTurn: true }).length === 0);
+  check("verificacao", "re-oferece modelo REJEITADO -> offers_rejected", vTypes("Temos um Onix lindo, quer ver?", { rejeitadosModelos: ["Onix"] }).includes("offers_rejected"));
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
