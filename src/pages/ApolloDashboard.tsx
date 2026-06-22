@@ -298,7 +298,6 @@ function JoseBrandOverview({
   currencySymbol,
   isAnalyzing,
   onAnalyze,
-  onOpenActions,
   onExecute,
   executingCampaignId,
 }: {
@@ -307,7 +306,6 @@ function JoseBrandOverview({
   currencySymbol: string;
   isAnalyzing: boolean;
   onAnalyze: () => void;
-  onOpenActions: () => void;
   onExecute: (action: ApolloAction) => void;
   executingCampaignId?: string;
 }) {
@@ -322,6 +320,7 @@ function JoseBrandOverview({
   const explanation = topActions[0]?.reason
     || session?.summary
     || 'Quando voce clicar em analisar, eu mostro onde sua verba esta funcionando, onde esta vazando dinheiro e qual acao tomar primeiro.';
+  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   return (
     <div className="space-y-3 rounded-xl border border-[#17395f] bg-[#061426] p-3 text-[#FAF8F2] shadow-[0_24px_80px_rgba(0,0,0,0.28)] md:p-4">
@@ -368,7 +367,7 @@ function JoseBrandOverview({
               {isAnalyzing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
               {isAnalyzing ? 'Analisando...' : 'Analisar agora'}
             </Button>
-            <Button variant="outline" onClick={onOpenActions} className="h-14 rounded-md border-[#D4A017] bg-transparent text-base font-bold text-[#FAF8F2] hover:bg-[#D4A017]/10">
+            <Button variant="outline" onClick={() => scrollTo('jose-recommendations')} className="h-14 rounded-md border-[#D4A017] bg-transparent text-base font-bold text-[#FAF8F2] hover:bg-[#D4A017]/10">
               Ver recomendacoes <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
@@ -383,10 +382,10 @@ function JoseBrandOverview({
             <MetricTile icon={ShieldCheck} label="Custo por lead" value={costPerLead ? `${currencySymbol} ${fmt(costPerLead)}` : '--'} hint={costPerLead ? '-9% vs ontem' : 'aguardando dados'} tone="green" />
           </div>
 
-          <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
+          <div id="jose-recommendations" className="scroll-mt-24 rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1f3b5f] pb-3">
               <p className="text-lg font-black text-[#D4A017]">O que Jose recomenda agora</p>
-              <Button variant="ghost" size="sm" onClick={onOpenActions} className="h-8 text-xs text-[#3B82C4] hover:bg-[#3B82C4]/10">
+              <Button variant="ghost" size="sm" onClick={() => scrollTo('jose-campaigns')} className="h-8 text-xs text-[#3B82C4] hover:bg-[#3B82C4]/10">
                 Ver todas
               </Button>
             </div>
@@ -410,7 +409,7 @@ function JoseBrandOverview({
                         {executingCampaignId === action.campaign_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
                         Aplicar
                       </Button>
-                      <Button size="sm" variant="outline" onClick={onOpenActions} className="h-9 border-[#D4A017]/60 bg-transparent text-xs text-[#FAF8F2]/85">
+                      <Button size="sm" variant="outline" onClick={() => scrollTo('jose-explanation')} className="h-9 border-[#D4A017]/60 bg-transparent text-xs text-[#FAF8F2]/85">
                         Ver por que
                       </Button>
                     </div>
@@ -424,7 +423,7 @@ function JoseBrandOverview({
             </div>
           </div>
         </div>
-        <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
+        <div id="jose-explanation" className="scroll-mt-24 rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
           <div className="flex h-full flex-col">
             <div className="flex items-center gap-2">
               <MessageCircle className="h-5 w-5 text-[#D4A017]" />
@@ -437,16 +436,11 @@ function JoseBrandOverview({
                 <p className="text-xs leading-relaxed text-[#FAF8F2]/60">Foco: reduzir desperdicios e investir no que da resultado.</p>
               </div>
             </div>
-            {topActions[0] && (
-              <Button variant="outline" size="sm" onClick={onOpenActions} className="mt-3 h-10 border-[#3B82C4]/45 bg-transparent text-[#3B82C4] hover:bg-[#3B82C4]/10">
-                Conversar com Jose
-              </Button>
-            )}
           </div>
         </div>
       </div>
 
-      <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
+      <div id="jose-campaigns" className="scroll-mt-24 rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
         <div className="flex flex-col gap-3 border-b border-[#1f3b5f] pb-3 md:flex-row md:items-center md:justify-between">
           <p className="text-lg font-black text-[#D4A017]">Campanhas em ordem de prioridade</p>
           <div className="flex flex-wrap gap-4 text-xs">
@@ -1420,6 +1414,7 @@ export default function ApolloDashboard() {
     <MainLayout>
       <div className="space-y-6">
         {/* ── Header ── */}
+        {showLegacyOverview && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -1479,6 +1474,8 @@ export default function ApolloDashboard() {
         </div>
 
         {/* ── No account ── */}
+        )}
+
         {!isLoadingAccount && accountId && !isLoadingSession && (
           <JoseBrandOverview
             session={session}
@@ -1486,7 +1483,6 @@ export default function ApolloDashboard() {
             currencySymbol={currencySymbol}
             isAnalyzing={isAnalyzing}
             onAnalyze={handleAnalyze}
-            onOpenActions={() => setActiveTab('actions')}
             onExecute={handleExecute}
             executingCampaignId={executeAction.variables?.campaign_id}
           />
@@ -1647,7 +1643,7 @@ export default function ApolloDashboard() {
         )}
 
         {/* ── Main tabs ── */}
-        {(session || snapshots.length > 0) && (
+        {showLegacyOverview && (session || snapshots.length > 0) && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="flex-wrap h-auto gap-1">
               {session && <TabsTrigger value="campaigns" className="gap-1 text-xs"><Radar className="h-3 w-3" />Campanhas <Badge variant="secondary" className="text-[10px] h-4 px-1">{session.campaigns.length}</Badge></TabsTrigger>}
