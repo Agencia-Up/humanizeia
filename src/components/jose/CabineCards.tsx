@@ -25,6 +25,8 @@ interface Cards {
   idade: Array<{ faixa: string; gasto: number; conversas: number; cpl: number | null }>;
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
+  por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -277,6 +279,22 @@ export function CabineCards() {
                 )}
               </CardContent>
             </Card>
+          </div>
+
+          {/* Por público (adset) e por criativo (anúncio) — vitrine da Meta */}
+          <div>
+            <h3 className="text-sm font-semibold mb-1">Por público e por criativo</h3>
+            <p className="text-[11px] text-muted-foreground mb-2">Quais conjuntos (públicos) e quais anúncios trouxeram mais conversas e onde foi a verba. A qualidade do lead por público/criativo entra quando a conta usar o WhatsApp oficial da Meta.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Lista
+                icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período."
+                linhas={cards.por_publico.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}` }))}
+              />
+              <Lista
+                icon={Award} titulo="Por anúncio / criativo" ajuda="cada anúncio (a peça/criativo)" vazio="Sem dados no período."
+                linhas={cards.por_criativo.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}` }))}
+              />
+            </div>
           </div>
 
           {/* Público: região (alvo x real) + idade */}

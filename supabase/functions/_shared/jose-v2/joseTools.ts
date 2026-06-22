@@ -57,6 +57,8 @@ export async function executeJoseTool(
       vendas: cards.vendas, custo_por_venda: cards.custo_por_venda,
       cpm: cards.cpm, cpc: cards.cpc,
       por_idade: cards.idade.slice(0, 5),
+      por_publico: cards.por_publico.slice(0, 6),
+      por_criativo: cards.por_criativo.slice(0, 6),
       regiao_entrega: cards.regiao_entrega.slice(0, 5),
       regiao_origem_real: cards.regiao_origem.slice(0, 5),
       atribuicao: cards.atribuicao,

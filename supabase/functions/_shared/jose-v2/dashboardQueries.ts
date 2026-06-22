@@ -70,7 +70,8 @@ async function fetchInsights(
   } else {
     url.searchParams.set("date_preset", opts.datePreset || "last_7d");
   }
-  url.searchParams.set("fields", "spend,cpm,cpc,ctr,impressions,clicks,reach,actions");
+  const nameField = opts.level === "adset" ? ",adset_name" : opts.level === "ad" ? ",ad_name" : "";
+  url.searchParams.set("fields", "spend,cpm,cpc,ctr,impressions,clicks,reach,actions" + nameField);
   if (opts.level) url.searchParams.set("level", opts.level);
   if (opts.breakdowns) url.searchParams.set("breakdowns", opts.breakdowns);
   url.searchParams.set("limit", "500");
@@ -124,6 +125,8 @@ export interface DashboardCards {
   idade: Array<{ faixa: string; gasto: number; conversas: number; cpl: number | null }>;
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
+  por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -181,7 +184,11 @@ export async function getDashboardCards(
 
   // 1) Vitrine — base + idade + região, em paralelo
   const fi = (breakdowns?: string) => fetchInsights(acc, { datePreset, timeRange, breakdowns });
-  const [base, byAge, byRegion] = await Promise.all([fi(), fi("age"), fi("region")]);
+  const [base, byAge, byRegion, byAdset, byAd] = await Promise.all([
+    fi(), fi("age"), fi("region"),
+    fetchInsights(acc, { datePreset, timeRange, level: "adset" }),
+    fetchInsights(acc, { datePreset, timeRange, level: "ad" }),
+  ]);
 
   const b0 = base[0] || {};
   const gasto = num(b0.spend), impressoes = num(b0.impressions), cliques = num(b0.clicks);
@@ -221,6 +228,14 @@ export async function getDashboardCards(
   // 5) Região de ORIGEM — de onde os leads REALMENTE vêm (cidade declarada)
   const regiao_origem = await leadOriginByCity(admin, userId);
 
+  // 5b) Por PÚBLICO (adset) e por CRIATIVO (anúncio) — vitrine da Meta (conversas/gasto).
+  const por_publico = byAdset.map((r: any) => ({
+    nome: String(r.adset_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
+  })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
+  const por_criativo = byAd.map((r: any) => ({
+    nome: String(r.ad_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
+  })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
+
   // 6) Anúncios por QUALIDADE REAL (não CTR)
   const anuncios = lq
     .filter((r) => r.ad_key_kind !== "sem_origem")
@@ -238,6 +253,6 @@ export async function getDashboardCards(
     cpm: num(b0.cpm), cpc: num(b0.cpc), ctr: num(b0.ctr),
     conversas, cpl,
     leads_recebidos: pq.total, leads_bom, leads_classificados: leads_classif, vendas, custo_por_lead_bom, custo_por_venda,
-    idade, regiao_entrega, regiao_origem, anuncios, atribuicao: atrib,
+    idade, regiao_entrega, regiao_origem, por_publico, por_criativo, anuncios, atribuicao: atrib,
   };
 }
