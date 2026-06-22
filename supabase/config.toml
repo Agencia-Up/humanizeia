@@ -144,6 +144,9 @@ verify_jwt = false
 [functions.jose-generate-campaign]
 verify_jwt = false
 
+[functions.jose-proactive]
+verify_jwt = false
+
 [functions.jose-analyze]
 verify_jwt = false
 
