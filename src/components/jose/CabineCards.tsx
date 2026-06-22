@@ -1,17 +1,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
+  Wallet, ShoppingCart, UserCheck,
 } from 'lucide-react';
 
 // ── Bloco A — Cabine de Comando (cards fixos). Lê tudo do edge jose-dashboard (mesma
 // camada de dados do chat -> nunca divergem). Foco: QUALQUER LEIGO entender de relance.
-// Estilo neutro (shadcn) de propósito — a identidade visual da marca entra depois.
+// Reskin premium (indigo + dourado) no padrão dos mockups do dono — a LÓGICA e os
+// DADOS são os mesmos; mudou só a apresentação.
 const db = supabase as any;
 
 interface Cards {
@@ -38,6 +39,15 @@ const PRESETS = [
   { value: 'last_30d', label: '30 dias' },
 ];
 
+// Tiles de ícone coloridos (strings completas p/ o Tailwind enxergar — nada dinâmico).
+const TILE: Record<string, string> = {
+  blue: 'bg-blue-500/15 text-blue-400 ring-blue-400/20',
+  emerald: 'bg-emerald-500/15 text-emerald-400 ring-emerald-400/20',
+  amber: 'bg-amber-500/15 text-amber-400 ring-amber-400/20',
+  violet: 'bg-violet-500/15 text-violet-400 ring-violet-400/20',
+  cyan: 'bg-cyan-500/15 text-cyan-400 ring-cyan-400/20',
+};
+
 function n(v: number | null | undefined) { return Number.isFinite(Number(v)) ? Number(v) : 0; }
 function money(moeda: string, v: number | null | undefined) {
   return v == null ? '—' : `${moeda} ${n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -45,45 +55,59 @@ function money(moeda: string, v: number | null | undefined) {
 function int(v: number | null | undefined) { return n(v).toLocaleString('pt-BR'); }
 function nomeRegiao(r: string) { return !r || r.toLowerCase() === 'unknown' ? 'Não identificado' : r; }
 
-// Tijolo de número simples (label em cima, valor grande, ajuda embaixo).
-function Stat({ icon: Icon, label, value, hint }: { icon: any; label: string; value: string; hint?: string }) {
+// Card-base premium (cantos, borda e sombra do padrão da marca).
+function Panel({ children, className = '' }: { children: any; className?: string }) {
+  return <div className={`rounded-xl border border-border/60 bg-card shadow-sm shadow-black/20 ${className}`}>{children}</div>;
+}
+
+// Tijolo de número (ícone em tile colorido + label + valor grande + ajuda).
+function Stat({ icon: Icon, label, value, hint, tint = 'blue' }: { icon: any; label: string; value: string; hint?: string; tint?: string }) {
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Icon className="h-4 w-4" /> {label}</div>
-        <div className="text-2xl font-bold mt-1 leading-none">{value}</div>
-        {hint && <div className="text-[11px] text-muted-foreground mt-1">{hint}</div>}
-      </CardContent>
-    </Card>
+    <Panel className="p-4">
+      <div className="flex items-center gap-3">
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE[tint]}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[11px] text-muted-foreground flex items-center gap-1">{label}{hint && <Info className="h-3 w-3 opacity-60" />}</div>
+          <div className="text-xl font-bold leading-tight tabular-nums">{value}</div>
+          {hint && <div className="text-[11px] text-muted-foreground leading-tight">{hint}</div>}
+        </div>
+      </div>
+    </Panel>
   );
 }
 
-// Lista simples (linha = nome à esquerda, valor à direita).
-function Lista({ titulo, ajuda, icon: Icon, vazio, linhas }: {
+// Lista (cabeçalho com ícone + linhas nome→valor).
+function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas }: {
   titulo: string; ajuda: string; icon: any; vazio: string;
-  linhas: Array<{ nome: string; valor: string }>;
+  linhas: Array<{ nome: string; valor: string }>; verTodas?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="p-4 space-y-2">
-        <div>
-          <div className="text-sm font-semibold flex items-center gap-1.5"><Icon className="h-4 w-4" /> {titulo}</div>
-          <div className="text-[11px] text-muted-foreground">{ajuda}</div>
+    <Panel className="p-4 flex flex-col">
+      <div className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"><Icon className="h-4 w-4" /></div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold leading-tight">{titulo}</div>
+          <div className="text-[11px] text-muted-foreground leading-tight">{ajuda}</div>
         </div>
-        {linhas.length === 0
-          ? <p className="text-xs text-muted-foreground py-1">{vazio}</p>
-          : (
-            <div className="space-y-1.5">
-              {linhas.map((l, i) => (
-                <div key={i} className="flex justify-between gap-3 text-xs">
-                  <span className="truncate">{l.nome}</span>
-                  <span className="text-muted-foreground shrink-0 tabular-nums">{l.valor}</span>
-                </div>
-              ))}
-            </div>
-          )}
-      </CardContent>
-    </Card>
+      </div>
+      {linhas.length === 0
+        ? <p className="text-xs text-muted-foreground py-3">{vazio}</p>
+        : (
+          <div className="mt-3 space-y-2 flex-1">
+            {linhas.map((l, i) => (
+              <div key={i} className="flex justify-between gap-3 text-xs">
+                <span className="truncate text-foreground/90">{l.nome}</span>
+                <span className="text-muted-foreground shrink-0 tabular-nums font-medium">{l.valor}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      {verTodas && linhas.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-border/40 text-[11px] text-primary/80">{verTodas}</div>
+      )}
+    </Panel>
   );
 }
 
@@ -121,27 +145,35 @@ export function CabineCards() {
   const totalAtrib = cards ? n(cards.atribuicao.por_ad_id) + n(cards.atribuicao.por_titulo) + n(cards.atribuicao.sem_origem) : 0;
   const semPct = cards && totalAtrib > 0 ? Math.round(100 * n(cards.atribuicao.sem_origem) / totalAtrib) : 0;
 
+  // Setas do funil (clip-path) — encaixam uma na outra (chegaram → qualificados → vendas).
+  const arrow = (pos: 'first' | 'mid' | 'last') =>
+    pos === 'first' ? 'polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%)'
+    : pos === 'last' ? 'polygon(0 0, 100% 0, 100% 100%, 0 100%, 20px 50%)'
+    : 'polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%, 20px 50%)';
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <div className="flex items-center gap-2">
-            <Gauge className="h-5 w-5 text-primary" />
-            <h2 className="text-xl font-bold leading-none">Cabine de Comando</h2>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-inset ring-primary/20"><Gauge className="h-5 w-5" /></div>
+            <h2 className="text-2xl font-bold leading-none tracking-tight">Cabine de Comando</h2>
             <Badge variant="secondary" className="text-[10px]">a verdade por anúncio</Badge>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">Os números que importam, sempre à vista — sem precisar pedir relatório.</p>
+          <p className="text-sm text-muted-foreground mt-1.5">Os números que importam, sempre à vista — sem precisar pedir relatório.</p>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center gap-1 flex-wrap">
+          <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-card/60 p-1">
             {PRESETS.map((p) => (
-              <Button key={p.value} size="sm" variant={periodo === p.value ? 'default' : 'outline'} className="h-8 text-xs" onClick={() => setPeriodo(p.value)} disabled={loading}>{p.label}</Button>
+              <button key={p.value} onClick={() => setPeriodo(p.value)} disabled={loading}
+                className={`h-7 rounded-lg px-3 text-xs font-semibold transition-colors ${periodo === p.value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}>{p.label}</button>
             ))}
-            <Button size="sm" variant={periodo === 'custom' ? 'default' : 'outline'} className="h-8 text-xs" onClick={() => setPeriodo('custom')} disabled={loading}>Personalizado</Button>
+            <button onClick={() => setPeriodo('custom')} disabled={loading}
+              className={`h-7 rounded-lg px-3 text-xs font-semibold transition-colors ${periodo === 'custom' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}>Personalizado</button>
           </div>
-          <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={recarregar} disabled={loading}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          <Button size="sm" variant="outline" className="h-9 w-9 p-0" onClick={recarregar} disabled={loading} title="Atualizar">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           </Button>
         </div>
       </div>
@@ -165,126 +197,152 @@ export function CabineCards() {
       {cards && (
         <>
           {/* HERO — vitrine vs verdade vs venda */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Card>
-              <CardContent className="p-5">
-                <div className="text-xs text-muted-foreground">Custo por lead — o que o Meta cobra</div>
-                <div className="text-3xl font-bold mt-1">{money(cards.moeda, cards.cpl)}</div>
-                <div className="text-[11px] text-muted-foreground mt-1">{int(cards.conversas)} conversas no Meta ({periodoLabel})</div>
-              </CardContent>
-            </Card>
-            <Card className="border-emerald-500/40 bg-emerald-500/[0.04]">
-              <CardContent className="p-5">
-                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Custo por lead BOM</div>
-                {cards.leads_bom > 0
-                  ? (<>
-                      <div className="text-3xl font-bold mt-1">{money(cards.moeda, cards.custo_por_lead_bom)}</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">{int(cards.leads_bom)} leads que avançaram no funil ({periodoLabel})</div>
-                    </>)
-                  : (<>
-                      <div className="text-lg font-semibold mt-2 text-muted-foreground">Sem lead bom no período</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">Conta quem avançou: negociação, qualificado ou venda.</div>
-                    </>)}
-              </CardContent>
-            </Card>
-            <Card className="border-amber-500/40 bg-amber-500/[0.05]">
-              <CardContent className="p-5">
-                <div className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1"><Award className="h-3.5 w-3.5" /> Custo por VENDA</div>
-                {cards.vendas > 0
-                  ? (<>
-                      <div className="text-3xl font-bold mt-1">{money(cards.moeda, cards.custo_por_venda)}</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">{int(cards.vendas)} venda(s) fechada(s) ({periodoLabel})</div>
-                    </>)
-                  : (<>
-                      <div className="text-lg font-semibold mt-2 text-muted-foreground">Sem venda no período</div>
-                      <div className="text-[11px] text-muted-foreground mt-1">Quando um lead vira "fechado" no CRM, aparece aqui.</div>
-                    </>)}
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Custo por lead Meta */}
+            <div className="relative overflow-hidden rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-500/10 to-transparent p-5 shadow-sm shadow-black/20">
+              <div className="flex items-start gap-3">
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.blue}`}><DollarSign className="h-5 w-5" /></div>
+                <div className="min-w-0">
+                  <div className="text-xs text-muted-foreground">Custo por lead — o que o Meta cobra</div>
+                  <div className="text-3xl font-bold mt-1 tabular-nums">{money(cards.moeda, cards.cpl)}</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">{int(cards.conversas)} conversas no Meta ({periodoLabel})</div>
+                </div>
+              </div>
+            </div>
+            {/* Custo por lead BOM */}
+            <div className="relative overflow-hidden rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-transparent p-5 shadow-sm shadow-black/20">
+              <div className="flex items-start gap-3">
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.emerald}`}><CheckCircle2 className="h-5 w-5" /></div>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Custo por lead BOM</div>
+                  {cards.leads_bom > 0
+                    ? (<>
+                        <div className="text-3xl font-bold mt-1 tabular-nums">{money(cards.moeda, cards.custo_por_lead_bom)}</div>
+                        <div className="text-[11px] text-muted-foreground mt-1">{int(cards.leads_bom)} leads que avançaram no funil ({periodoLabel})</div>
+                      </>)
+                    : (<>
+                        <div className="text-lg font-semibold mt-2 text-muted-foreground">Sem lead bom no período</div>
+                        <div className="text-[11px] text-muted-foreground mt-1">Conta quem avançou: negociação, qualificado ou venda.</div>
+                      </>)}
+                </div>
+              </div>
+            </div>
+            {/* Custo por VENDA */}
+            <div className="relative overflow-hidden rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-500/10 to-transparent p-5 shadow-sm shadow-black/20">
+              <div className="flex items-start gap-3">
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.amber}`}><Award className="h-5 w-5" /></div>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-amber-600 dark:text-amber-400">Custo por VENDA</div>
+                  {cards.vendas > 0
+                    ? (<>
+                        <div className="text-3xl font-bold mt-1 tabular-nums">{money(cards.moeda, cards.custo_por_venda)}</div>
+                        <div className="text-[11px] text-muted-foreground mt-1">{int(cards.vendas)} venda(s) fechada(s) ({periodoLabel})</div>
+                      </>)
+                    : (<>
+                        <div className="text-lg font-semibold mt-2 text-muted-foreground">Sem venda no período</div>
+                        <div className="text-[11px] text-muted-foreground mt-1">Quando um lead vira "fechado" no CRM, aparece aqui.</div>
+                      </>)}
+                </div>
+              </div>
+            </div>
           </div>
-          <p className="text-[11px] text-muted-foreground flex items-start gap-1 -mt-2">
+          <p className="text-[11px] text-muted-foreground flex items-start gap-1 -mt-3">
             <Info className="h-3 w-3 mt-0.5 shrink-0" />
             O Meta conta toda conversa como "lead". O José só conta como BOM o lead que o Pedro qualificou no atendimento — é o custo que importa de verdade.
           </p>
 
           {/* Resumo do investimento */}
           <div>
-            <h3 className="text-sm font-semibold mb-2">Resumo do investimento ({periodoLabel})</h3>
+            <h3 className="text-sm font-semibold mb-2.5">Resumo do investimento ({periodoLabel})</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Stat icon={DollarSign} label="Investido" value={money(cards.moeda, cards.gasto)} />
-              <Stat icon={MessageCircle} label="Conversas" value={int(cards.conversas)} hint="pessoas que chamaram" />
-              <Stat icon={TrendingUp} label="CPM" value={money(cards.moeda, cards.cpm)} hint="custo p/ mil pessoas verem" />
-              <Stat icon={MousePointerClick} label="CPC" value={money(cards.moeda, cards.cpc)} hint="custo por clique" />
+              <Stat icon={Wallet} label="Investido" value={money(cards.moeda, cards.gasto)} tint="blue" />
+              <Stat icon={MessageCircle} label="Conversas" value={int(cards.conversas)} hint="pessoas que chamaram" tint="cyan" />
+              <Stat icon={TrendingUp} label="CPM" value={money(cards.moeda, cards.cpm)} hint="custo p/ mil pessoas verem" tint="blue" />
+              <Stat icon={MousePointerClick} label="CPC" value={money(cards.moeda, cards.cpc)} hint="custo por clique" tint="violet" />
             </div>
           </div>
 
-          {/* Funil do tráfego: chegaram -> qualificados -> vendas */}
+          {/* Funil do tráfego: chegaram -> qualificados -> vendas (setas encaixadas) */}
           <div>
-            <h3 className="text-sm font-semibold mb-2">Funil do tráfego ({periodoLabel})</h3>
-            <Card>
-              <CardContent className="p-4">
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div>
-                    <div className="text-2xl font-bold">{int(cards.leads_recebidos)}</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">leads chegaram</div>
-                  </div>
-                  <div className="border-x border-border/50">
-                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{int(cards.leads_bom)}</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">qualificados{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.leads_bom / cards.leads_recebidos)}%` : ''}</div>
-                  </div>
-                  <div>
-                    <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{int(cards.vendas)}</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">vendas{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.vendas / cards.leads_recebidos)}%` : ''}</div>
-                  </div>
+            <h3 className="text-sm font-semibold mb-2.5">Funil do tráfego ({periodoLabel})</h3>
+            <div className="flex items-stretch">
+              {/* chegaram */}
+              <div className="relative flex-1 bg-gradient-to-r from-blue-600/25 to-blue-500/10 border-y border-l border-blue-500/30 py-4 pl-5 pr-7"
+                   style={{ clipPath: arrow('first') }}>
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.blue}`}><Users className="h-5 w-5" /></div>
+                  <div><div className="text-2xl font-bold tabular-nums leading-none">{int(cards.leads_recebidos)}</div><div className="text-[11px] text-muted-foreground mt-1">leads chegaram</div></div>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-3 text-center">Dos leads que entraram no período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
-              </CardContent>
-            </Card>
+              </div>
+              {/* qualificados */}
+              <div className="relative flex-1 -ml-3 bg-gradient-to-r from-emerald-600/25 to-emerald-500/10 border-y border-emerald-500/30 py-4 pl-7 pr-7"
+                   style={{ clipPath: arrow('mid') }}>
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.emerald}`}><UserCheck className="h-5 w-5" /></div>
+                  <div><div className="text-2xl font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-300">{int(cards.leads_bom)}</div><div className="text-[11px] text-muted-foreground mt-1">qualificado{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.leads_bom / cards.leads_recebidos)}%` : ''}</div></div>
+                </div>
+              </div>
+              {/* vendas */}
+              <div className="relative flex-1 -ml-3 bg-gradient-to-r from-amber-600/25 to-amber-500/10 border-y border-r border-amber-500/30 py-4 pl-7 pr-5"
+                   style={{ clipPath: arrow('last') }}>
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.amber}`}><ShoppingCart className="h-5 w-5" /></div>
+                  <div><div className="text-2xl font-bold tabular-nums leading-none text-amber-600 dark:text-amber-300">{int(cards.vendas)}</div><div className="text-[11px] text-muted-foreground mt-1">vendas{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.vendas / cards.leads_recebidos)}%` : ''}</div></div>
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-2.5 text-center">Dos leads que entraram no período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
           </div>
 
-          {/* Anúncios por qualidade real */}
+          {/* Anúncios por qualidade real — com barra de % */}
           <div>
-            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> De qual anúncio vêm os bons clientes</h3>
-            <p className="text-[11px] text-muted-foreground mb-2">Ranking pela qualidade REAL do lead (não por curtidas nem cliques).</p>
-            <Card>
-              <CardContent className="p-4">
-                {cards.anuncios.length === 0
-                  ? <p className="text-xs text-muted-foreground">Ainda sem leads classificados por anúncio. Conforme o Pedro atende, os anúncios aparecem aqui ordenados do melhor pro pior.</p>
-                  : (
-                    <div className="space-y-1.5">
+            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4 text-amber-400" /> De qual anúncio vêm os bons clientes</h3>
+            <p className="text-[11px] text-muted-foreground mb-2.5">Ranking pela qualidade REAL do lead (não por curtidas nem cliques).</p>
+            <Panel className="p-4">
+              {cards.anuncios.length === 0
+                ? <p className="text-xs text-muted-foreground">Ainda sem leads classificados por anúncio. Conforme o Pedro atende, os anúncios aparecem aqui ordenados do melhor pro pior.</p>
+                : (
+                  <div>
+                    <div className="hidden sm:grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground pb-2 border-b border-border/50">
+                      <span>Anúncio</span><span className="text-center">Leads</span><span className="text-center text-emerald-500">Bons</span><span className="text-center text-rose-500">Ruins</span><span className="text-right">% Bons</span>
+                    </div>
+                    <div className="divide-y divide-border/40">
                       {cards.anuncios.map((a, i) => {
                         const pct = n(a.pct_bom);
                         const cor = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-rose-500';
+                        const dot = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-rose-500';
                         return (
-                          <div key={i} className="flex items-center gap-2 text-xs border-b last:border-0 border-border/50 py-2">
-                            <span className={`h-2.5 w-2.5 rounded-full ${cor} shrink-0`} />
-                            <span className="flex-1 truncate font-medium" title={a.ad_name || ''}>
-                              {a.ad_name || '(sem nome)'}
-                              {a.ad_key_kind === 'titulo' && <Badge variant="outline" className="ml-1.5 text-[9px] h-4 px-1 font-normal">aproximado</Badge>}
+                          <div key={i} className="grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 items-center py-2.5 text-xs">
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span className={`h-2.5 w-2.5 rounded-full ${dot} shrink-0`} />
+                              <span className="truncate font-medium" title={a.ad_name || ''}>{a.ad_name || '(sem nome)'}</span>
+                              {a.ad_key_kind === 'titulo' && <Badge variant="outline" className="text-[9px] h-4 px-1 font-normal shrink-0">aproximado</Badge>}
                             </span>
-                            <span className="text-muted-foreground tabular-nums hidden sm:inline">{int(a.leads_total)} leads</span>
-                            {a.vendas > 0 && <span className="text-amber-600 dark:text-amber-400 font-semibold tabular-nums">{int(a.vendas)} venda{a.vendas > 1 ? 's' : ''}</span>}
-                            <span className="text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">{int(a.leads_bom)} bons</span>
-                            <span className="text-rose-600 dark:text-rose-400 tabular-nums">{int(a.leads_ruim)} ruins</span>
-                            <span className="font-bold w-12 text-right tabular-nums">{a.pct_bom == null ? '—' : `${a.pct_bom}%`}</span>
+                            <span className="text-center tabular-nums text-muted-foreground">{int(a.leads_total)}</span>
+                            <span className="text-center tabular-nums text-emerald-600 dark:text-emerald-400 font-medium">{int(a.leads_bom)}</span>
+                            <span className="text-center tabular-nums text-rose-600 dark:text-rose-400">{int(a.leads_ruim)}</span>
+                            <span className="flex items-center gap-2 justify-end">
+                              <span className="font-bold tabular-nums w-11 text-right">{a.pct_bom == null ? '—' : `${a.pct_bom}%`}</span>
+                              <span className="h-1.5 w-12 rounded-full bg-muted overflow-hidden hidden sm:block"><span className={`block h-full rounded-full ${cor}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></span>
+                            </span>
                           </div>
                         );
                       })}
                     </div>
-                  )}
-                {semPct > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/50">
-                    Atribuição: {int(cards.atribuicao.por_ad_id)} precisos · {int(cards.atribuicao.por_titulo)} por título · {int(cards.atribuicao.sem_origem)} sem origem ({semPct}%). Fica preciso conforme as contas usam o WhatsApp oficial da Meta.
-                  </p>
+                    {semPct > 0 && (
+                      <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/50">
+                        Atribuição: {int(cards.atribuicao.por_ad_id)} precisos · {int(cards.atribuicao.por_titulo)} por título · {int(cards.atribuicao.sem_origem)} sem origem ({semPct}%). Fica preciso conforme as contas usam o WhatsApp oficial da Meta.
+                      </p>
+                    )}
+                  </div>
                 )}
-              </CardContent>
-            </Card>
+            </Panel>
           </div>
 
           {/* Por público (adset) e por criativo (anúncio) — vitrine da Meta */}
           <div>
             <h3 className="text-sm font-semibold mb-1">Por público e por criativo</h3>
-            <p className="text-[11px] text-muted-foreground mb-2">Quais conjuntos (públicos) e quais anúncios trouxeram mais conversas e onde foi a verba. A qualidade do lead por público/criativo entra quando a conta usar o WhatsApp oficial da Meta.</p>
+            <p className="text-[11px] text-muted-foreground mb-2.5">Quais conjuntos (públicos) e quais anúncios trouxeram mais conversas e onde foi a verba. A qualidade do lead por público/criativo entra quando a conta usar o WhatsApp oficial da Meta.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Lista
                 icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período."
@@ -299,18 +357,18 @@ export function CabineCards() {
 
           {/* Público: região (alvo x real) + idade */}
           <div>
-            <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5"><Users className="h-4 w-4" /> Quem está vendo e quem está chamando</h3>
+            <h3 className="text-sm font-semibold mb-2.5 flex items-center gap-1.5"><Users className="h-4 w-4" /> Quem está vendo e quem está chamando</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Lista
-                icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período."
+                icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período." verTodas="Ver todas as regiões →"
                 linhas={cards.regiao_entrega.slice(0, 6).map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto) }))}
               />
               <Lista
-                icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda."
+                icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda." verTodas="Ver todas as cidades →"
                 linhas={cards.regiao_origem.slice(0, 6).map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads` }))}
               />
               <Lista
-                icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período."
+                icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período." verTodas="Ver todas as idades →"
                 linhas={cards.idade.slice(0, 6).map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto) }))}
               />
             </div>
