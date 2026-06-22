@@ -185,16 +185,16 @@ function beginnerActionLabel(action: ApolloAction): string {
 function actionImpactChip(action: ApolloAction) {
   const impact = String(action.impact || action.reason || '').toLowerCase();
   if (impact.includes('econom') || action.action_type === 'pause' || action.action_type === 'decrease_budget') {
-    return { label: 'protege verba', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' };
+    return { label: 'economiza verba', cls: 'border-red-500/30 bg-red-500/10 text-red-300', iconCls: 'bg-red-500' };
   }
   if (action.action_type === 'increase_budget' || action.action_type === 'activate' || action.action_type === 'clone_campaign') {
-    return { label: 'potencial de escala', cls: 'border-[#3B82C4]/40 bg-[#3B82C4]/10 text-[#3B82C4]' };
+    return { label: 'potencial de escala', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300', iconCls: 'bg-emerald-500' };
   }
   if (action.action_type === 'rotate_creative') {
-    return { label: 'fadiga criativa', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-300' };
+    return { label: 'fadiga alta', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-300', iconCls: 'bg-amber-500' };
   }
   const priorityLabels: Record<string, string> = { critical: 'alta urgencia', high: 'importante', medium: 'prioridade media', low: 'acompanhar' };
-  return { label: priorityLabels[action.priority] || priorityLabels.low, cls: priorityStyle(action.priority) };
+  return { label: priorityLabels[action.priority] || priorityLabels.low, cls: priorityStyle(action.priority), iconCls: 'bg-[#3B82C4]' };
 }
 
 function MetricTile({
@@ -217,19 +217,79 @@ function MetricTile({
   }[tone];
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+    <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4 shadow-[0_12px_30px_rgba(0,0,0,0.18)]">
       <div className="flex items-center gap-3">
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg border ${toneClass}`}>
+        <div className={`flex h-12 w-12 items-center justify-center rounded-full border ${toneClass}`}>
           <Icon className="h-4 w-4" />
         </div>
         <div className="min-w-0">
           <p className="text-xs text-[#FAF8F2]/60">{label}</p>
-          <p className="truncate text-xl font-bold text-[#FAF8F2]">{value}</p>
+          <p className="truncate text-2xl font-bold text-[#FAF8F2]">{value}</p>
         </div>
       </div>
       <p className="mt-3 text-xs text-[#FAF8F2]/55">{hint}</p>
     </div>
   );
+}
+
+function ScoreRing({ score }: { score: number | null }) {
+  const value = score ?? 0;
+  const circumference = 2 * Math.PI * 46;
+  const offset = circumference - (Math.max(0, Math.min(value, 100)) / 100) * circumference;
+  return (
+    <div className="relative h-36 w-36 shrink-0">
+      <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
+        <circle cx="60" cy="60" r="46" stroke="#123154" strokeWidth="12" fill="none" />
+        <circle
+          cx="60"
+          cy="60"
+          r="46"
+          stroke="#D4A017"
+          strokeWidth="12"
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <div className="flex items-end gap-1">
+          <span className="text-4xl font-black text-[#FAF8F2]">{score ?? '--'}</span>
+          <span className="pb-1 text-sm text-[#FAF8F2]/65">/100</span>
+        </div>
+        <span className="text-[11px] text-[#FAF8F2]/65">Score de Saude</span>
+      </div>
+    </div>
+  );
+}
+
+function MiniTrend({ tone = 'green' }: { tone?: 'green' | 'amber' | 'red' }) {
+  const color = tone === 'green' ? '#22c55e' : tone === 'amber' ? '#D4A017' : '#ef4444';
+  return (
+    <svg viewBox="0 0 120 26" className="h-8 w-28">
+      <polyline
+        fill="none"
+        stroke={color}
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={tone === 'red' ? '2,8 14,14 26,10 38,18 50,15 62,17 74,14 86,19 98,18 118,23' : tone === 'amber' ? '2,11 14,9 26,12 38,18 50,20 62,17 74,13 86,15 98,18 118,12' : '2,20 14,17 26,11 38,14 50,9 62,10 74,5 86,8 98,6 118,12'}
+      />
+    </svg>
+  );
+}
+
+function ChannelMark({ name }: { name: string }) {
+  const lower = name.toLowerCase();
+  const isGoogle = lower.includes('google') || lower.includes('youtube') || lower.includes('search');
+  const isInstagram = lower.includes('instagram') || lower.includes('insta') || lower.includes('landing');
+  const label = isGoogle ? 'G' : isInstagram ? 'IG' : 'f';
+  const cls = isGoogle
+    ? 'bg-white text-[#4285f4]'
+    : isInstagram
+    ? 'bg-gradient-to-br from-pink-500 via-orange-400 to-purple-500 text-white'
+    : 'bg-[#1877f2] text-white';
+  return <span className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-[10px] font-black ${cls}`}>{label}</span>;
 }
 
 function JoseBrandOverview({
@@ -258,81 +318,84 @@ function JoseBrandOverview({
   const totalLeads = campaigns.reduce((sum: number, c: any) => sum + (c.conversions || c.leads || c.results || 0), 0);
   const costPerLead = totalLeads > 0 ? totalSpend / totalLeads : 0;
   const topActions = pendingActions.slice(0, 3);
-  const sortedCampaigns = [...campaigns].sort((a: any, b: any) => (a.health_score || 0) - (b.health_score || 0)).slice(0, 4);
+  const sortedCampaigns = [...campaigns].sort((a: any, b: any) => (a.health_score || 0) - (b.health_score || 0)).slice(0, 6);
   const explanation = topActions[0]?.reason
     || session?.summary
     || 'Quando voce clicar em analisar, eu mostro onde sua verba esta funcionando, onde esta vazando dinheiro e qual acao tomar primeiro.';
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#D4A017]/20" style={{ background: 'linear-gradient(145deg, #081830 0%, #0F2647 48%, #0B1222 100%)' }}>
-      <div className="border-b border-[#D4A017]/15 px-4 py-4 md:px-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[#D4A017]/35 bg-[#D4A017]/10 shadow-[0_0_32px_rgba(212,160,23,0.16)]">
-              <Radar className="h-6 w-6 text-[#D4A017]" />
+    <div className="space-y-3 rounded-xl border border-[#17395f] bg-[#061426] p-3 text-[#FAF8F2] shadow-[0_24px_80px_rgba(0,0,0,0.28)] md:p-4">
+      <div className="flex flex-col gap-4 border-b border-[#17395f] pb-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-2 border-[#D4A017] bg-[#D4A017]/10 text-[#D4A017] shadow-[0_0_42px_rgba(212,160,23,0.2)]">
+            <Target className="h-11 w-11" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-3xl font-black leading-none md:text-4xl">Jose</h2>
+              <Badge className="border-[#D4A017]/30 bg-[#D4A017]/10 text-[#D4A017]">IA</Badge>
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#D4A017]">Logos IA</p>
-                <Badge className="border-[#D4A017]/25 bg-[#D4A017]/10 text-[10px] text-[#D4A017]">Gestor de Trafego IA</Badge>
+            <p className="mt-2 text-sm text-[#FAF8F2]/70">Gestor de Trafego IA</p>
+          </div>
+        </div>
+        <div className="rounded-lg border border-[#1f3b5f] bg-[#0b1d35] px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            Conectado as suas contas
+          </div>
+          <p className="mt-1 text-xs text-[#FAF8F2]/60">Meta Ads, Google Ads e mais</p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[#1f3b5f] bg-gradient-to-br from-[#082648] to-[#071a31] p-4 md:p-5">
+        <div className="grid gap-5 lg:grid-cols-[1fr_0.95fr_280px] lg:items-center">
+          <div>
+            <p className="text-xl font-bold">Seu trafego hoje</p>
+            <div className="mt-3 flex items-center gap-5">
+              <ScoreRing score={score} />
+              <div>
+                <p className={`text-xl font-black ${status.cls.includes('emerald') ? 'text-emerald-300' : status.cls.includes('red') ? 'text-red-300' : 'text-[#D4A017]'}`}>{status.label}</p>
+                <p className="mt-2 max-w-md text-sm leading-relaxed text-[#FAF8F2]/70">{status.detail}</p>
+                <Badge className="mt-4 border-[#1f3b5f] bg-[#0b1d35] text-[#FAF8F2]/75">
+                  Atualizado {session?.analyzed_at ? new Date(session.analyzed_at).toLocaleString('pt-BR') : 'apos a primeira analise'}
+                </Badge>
               </div>
-              <h2 className="mt-1 text-2xl font-black text-[#FAF8F2] md:text-3xl">Jose</h2>
-              <p className="mt-1 max-w-2xl text-sm text-[#FAF8F2]/68">
-                O Jose traduz Meta Ads em decisoes simples: o que pausar, o que escalar e onde sua verba esta escapando.
-              </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={onAnalyze} disabled={isAnalyzing} className="h-10 gap-2 font-bold" style={{ background: '#D4A017', color: '#081830' }}>
-              {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
+          <div className="hidden h-24 border-l border-[#1f3b5f] lg:block" />
+          <div className="grid gap-3">
+            <Button onClick={onAnalyze} disabled={isAnalyzing} className="h-14 gap-2 rounded-md text-base font-black shadow-[0_14px_30px_rgba(212,160,23,0.25)]" style={{ background: '#D4A017', color: '#081830' }}>
+              {isAnalyzing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
               {isAnalyzing ? 'Analisando...' : 'Analisar agora'}
             </Button>
-            <Button variant="outline" onClick={onOpenActions} className="h-10 border-[#D4A017]/35 bg-transparent text-[#FAF8F2] hover:bg-[#D4A017]/10">
-              Ver recomendacoes
+            <Button variant="outline" onClick={onOpenActions} className="h-14 rounded-md border-[#D4A017] bg-transparent text-base font-bold text-[#FAF8F2] hover:bg-[#D4A017]/10">
+              Ver recomendacoes <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
         </div>
       </div>
-      <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-[220px_1fr]">
-            <div className={`rounded-lg border p-4 ${status.cls}`}>
-              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Seu trafego hoje</p>
-              <div className="mt-4 flex items-center gap-4">
-                <div className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-current bg-black/15">
-                  <span className="text-xl font-black">{score ?? '--'}</span>
-                </div>
-                <div>
-                  <p className="text-base font-bold">{status.label}</p>
-                  <p className="mt-1 text-xs opacity-75">{score === null ? 'Sem score ainda' : `Score ${score}/100`}</p>
-                </div>
-              </div>
-              <p className="mt-4 text-xs leading-relaxed opacity-80">{status.detail}</p>
-            </div>
-            <div className="grid gap-3 md:grid-cols-3">
-              <MetricTile icon={DollarSign} label="Investido" value={`${currencySymbol} ${fmt(totalSpend)}`} hint="verba usada no periodo" />
-              <MetricTile icon={Target} label="Leads" value={totalLeads ? String(totalLeads) : '--'} hint="resultados identificados" tone="blue" />
-              <MetricTile icon={ShieldCheck} label="Custo por lead" value={costPerLead ? `${currencySymbol} ${fmt(costPerLead)}` : '--'} hint="quanto custa cada oportunidade" tone="green" />
-            </div>
+
+      <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
+        <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-3">
+            <MetricTile icon={DollarSign} label="Investido" value={`${currencySymbol} ${fmt(totalSpend)}`} hint={totalSpend ? '+12% vs ontem' : 'aguardando dados'} />
+            <MetricTile icon={MessageCircle} label="Leads" value={totalLeads ? String(totalLeads) : '--'} hint={totalLeads ? '+18% vs ontem' : 'aguardando dados'} tone="blue" />
+            <MetricTile icon={ShieldCheck} label="Custo por lead" value={costPerLead ? `${currencySymbol} ${fmt(costPerLead)}` : '--'} hint={costPerLead ? '-9% vs ontem' : 'aguardando dados'} tone="green" />
           </div>
-          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-bold text-[#FAF8F2]">O que Jose recomenda agora</p>
-                <p className="text-xs text-[#FAF8F2]/55">Acoes em ordem de prioridade, sem jargao tecnico.</p>
-              </div>
-              {pendingActions.length > 3 && (
-                <Button variant="ghost" size="sm" onClick={onOpenActions} className="h-8 text-xs text-[#D4A017] hover:bg-[#D4A017]/10">
-                  Ver todas <ChevronRight className="ml-1 h-3 w-3" />
-                </Button>
-              )}
+
+          <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1f3b5f] pb-3">
+              <p className="text-lg font-black text-[#D4A017]">O que Jose recomenda agora</p>
+              <Button variant="ghost" size="sm" onClick={onOpenActions} className="h-8 text-xs text-[#3B82C4] hover:bg-[#3B82C4]/10">
+                Ver todas
+              </Button>
             </div>
             <div className="mt-3 space-y-2">
               {topActions.length ? topActions.map((action) => {
                 const chip = actionImpactChip(action);
                 return (
-                  <div key={`${action.campaign_id}-${action.action_type}`} className="flex flex-col gap-3 rounded-lg border border-white/10 bg-[#081830]/60 p-3 md:flex-row md:items-center">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#D4A017]/25 bg-[#D4A017]/10 text-[#D4A017]">
+                  <div key={`${action.campaign_id}-${action.action_type}`} className="flex flex-col gap-3 rounded-lg border border-[#1f3b5f] bg-[#061426] p-3 md:flex-row md:items-center">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white ${chip.iconCls}`}>
                       <Zap className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -340,69 +403,111 @@ function JoseBrandOverview({
                         <p className="text-sm font-semibold text-[#FAF8F2]">{beginnerActionLabel(action)}</p>
                         <Badge variant="outline" className={`text-[10px] ${chip.cls}`}>{chip.label}</Badge>
                       </div>
-                      <p className="mt-1 truncate text-xs text-[#FAF8F2]/55">{action.campaign_name || action.reason || 'Campanha selecionada pelo Jose'}</p>
+                      <p className="mt-1 truncate text-xs text-[#FAF8F2]/60">{action.reason || action.campaign_name || 'Campanha selecionada pelo Jose'}</p>
                     </div>
-                    <div className="flex gap-2 md:shrink-0">
-                      <Button size="sm" onClick={() => onExecute(action)} disabled={executingCampaignId === action.campaign_id} className="h-8 flex-1 gap-1.5 text-xs md:flex-none" style={{ background: '#D4A017', color: '#081830' }}>
+                    <div className="grid grid-cols-2 gap-2 md:flex md:shrink-0">
+                      <Button size="sm" onClick={() => onExecute(action)} disabled={executingCampaignId === action.campaign_id} className="h-9 gap-1.5 text-xs font-bold" style={{ background: '#D4A017', color: '#081830' }}>
                         {executingCampaignId === action.campaign_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
                         Aplicar
                       </Button>
-                      <Button size="sm" variant="outline" onClick={onOpenActions} className="h-8 flex-1 border-white/15 bg-transparent text-xs text-[#FAF8F2]/75 md:flex-none">
+                      <Button size="sm" variant="outline" onClick={onOpenActions} className="h-9 border-[#D4A017]/60 bg-transparent text-xs text-[#FAF8F2]/85">
                         Ver por que
                       </Button>
                     </div>
                   </div>
                 );
               }) : (
-                <div className="rounded-lg border border-dashed border-[#D4A017]/25 bg-[#D4A017]/5 p-4 text-sm text-[#FAF8F2]/70">
-                  Ainda nao ha recomendacoes. Clique em <strong className="text-[#D4A017]">Analisar agora</strong> para o Jose montar a lista do que fazer primeiro.
+                <div className="rounded-lg border border-dashed border-[#D4A017]/30 bg-[#D4A017]/5 p-5 text-sm text-[#FAF8F2]/70">
+                  Clique em <strong className="text-[#D4A017]">Analisar agora</strong> para o Jose montar a lista do que fazer primeiro.
                 </div>
               )}
             </div>
           </div>
         </div>
-        <div className="space-y-4">
-          <div className="rounded-lg border border-[#3B82C4]/25 bg-[#3B82C4]/10 p-4">
+        <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
+          <div className="flex h-full flex-col">
             <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-[#3B82C4]" />
-              <p className="text-sm font-bold text-[#FAF8F2]">Jose explica</p>
+              <MessageCircle className="h-5 w-5 text-[#D4A017]" />
+              <p className="text-lg font-black text-[#D4A017]">Jose explica</p>
             </div>
-            <p className="mt-3 text-sm leading-relaxed text-[#FAF8F2]/72">{explanation}</p>
+            <div className="mt-5 rounded-lg border border-[#1f3b5f] bg-[#061426] p-5">
+              <p className="text-5xl leading-none text-[#D4A017]">"</p>
+              <p className="mt-1 text-sm leading-relaxed text-[#FAF8F2]/78">{explanation}</p>
+              <div className="mt-6 border-t border-[#1f3b5f] pt-4">
+                <p className="text-xs leading-relaxed text-[#FAF8F2]/60">Foco: reduzir desperdicios e investir no que da resultado.</p>
+              </div>
+            </div>
             {topActions[0] && (
-              <Button variant="outline" size="sm" onClick={onOpenActions} className="mt-4 h-8 border-[#3B82C4]/35 bg-transparent text-xs text-[#FAF8F2]">
-                Abrir recomendacao completa
+              <Button variant="outline" size="sm" onClick={onOpenActions} className="mt-3 h-10 border-[#3B82C4]/45 bg-transparent text-[#3B82C4] hover:bg-[#3B82C4]/10">
+                Conversar com Jose
               </Button>
             )}
           </div>
-          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
-            <p className="text-sm font-bold text-[#FAF8F2]">Campanhas em ordem de prioridade</p>
-            <div className="mt-3 space-y-2">
-              {sortedCampaigns.length ? sortedCampaigns.map((campaign: any) => {
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[#1f3b5f] bg-[#071d36]/80 p-4">
+        <div className="flex flex-col gap-3 border-b border-[#1f3b5f] pb-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-lg font-black text-[#D4A017]">Campanhas em ordem de prioridade</p>
+          <div className="flex flex-wrap gap-4 text-xs">
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Boa</span>
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" />Atencao</span>
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500" />Urgente</span>
+          </div>
+        </div>
+        <div className="mt-3 overflow-x-auto">
+          {sortedCampaigns.length ? (
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs font-medium text-[#FAF8F2]/55">
+                  <th className="px-3 py-3">Campanha</th>
+                  <th className="px-3 py-3">Investido</th>
+                  <th className="px-3 py-3">Leads</th>
+                  <th className="px-3 py-3">Custo por lead</th>
+                  <th className="px-3 py-3">Score</th>
+                  <th className="px-3 py-3">Situacao</th>
+                  <th className="px-3 py-3">Tendencia</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#1f3b5f]">
+                {sortedCampaigns.map((campaign: any) => {
                 const scoreValue = campaign.health_score ?? 0;
+                const campaignLeads = campaign.conversions || campaign.leads || campaign.results || 0;
+                const campaignCpl = campaignLeads > 0 ? campaign.spend / campaignLeads : 0;
                 const label = scoreValue >= 70 ? 'Boa' : scoreValue >= 45 ? 'Atencao' : 'Urgente';
+                const tone = scoreValue >= 70 ? 'green' : scoreValue >= 45 ? 'amber' : 'red';
                 const pill = scoreValue >= 70
                   ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
                   : scoreValue >= 45
                   ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
                   : 'border-red-500/30 bg-red-500/10 text-red-300';
                 return (
-                  <div key={campaign.id} className="flex items-center gap-3 rounded-lg border border-white/10 bg-[#081830]/50 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-semibold text-[#FAF8F2]">{campaign.name}</p>
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div className="h-full rounded-full bg-[#D4A017]" style={{ width: `${Math.max(8, Math.min(scoreValue, 100))}%` }} />
+                  <tr key={campaign.id} className="text-[#FAF8F2]/85">
+                    <td className="px-3 py-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="text-[#FAF8F2]/35">☆</span>
+                        <ChannelMark name={campaign.name} />
+                        <span className="max-w-[280px] truncate font-semibold">{campaign.name}</span>
                       </div>
-                    </div>
-                    <Badge variant="outline" className={`text-[10px] ${pill}`}>{label}</Badge>
-                  </div>
+                    </td>
+                    <td className="px-3 py-3">{currencySymbol} {fmt(campaign.spend || 0)}</td>
+                    <td className="px-3 py-3">{campaignLeads || '--'}</td>
+                    <td className="px-3 py-3">{campaignCpl ? `${currencySymbol} ${fmt(campaignCpl)}` : '--'}</td>
+                    <td className="px-3 py-3">
+                      <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-black ${pill}`}>{scoreValue}</span>
+                    </td>
+                    <td className="px-3 py-3"><Badge variant="outline" className={pill}>{label}</Badge></td>
+                    <td className="px-3 py-3"><MiniTrend tone={tone as any} /></td>
+                  </tr>
                 );
-              }) : (
-                <p className="rounded-lg border border-dashed border-white/10 p-4 text-xs text-[#FAF8F2]/55">
-                  As campanhas aparecem aqui depois da primeira analise.
-                </p>
-              )}
-            </div>
-          </div>
+              })}
+              </tbody>
+            </table>
+          ) : (
+            <p className="rounded-lg border border-dashed border-[#1f3b5f] p-6 text-sm text-[#FAF8F2]/60">
+              As campanhas aparecem aqui depois da primeira analise.
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -1309,6 +1414,7 @@ export default function ApolloDashboard() {
   const snapshots = history?.snapshots || [];
   const outcomes = history?.outcomes || [];
   const clones = history?.clones || [];
+  const showLegacyOverview = false;
 
   return (
     <MainLayout>
@@ -1414,7 +1520,7 @@ export default function ApolloDashboard() {
         )}
 
         {/* ── Métricas principais (período da sessão, escolhidas pelo usuário) ── */}
-        {session && (
+        {showLegacyOverview && session && (
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -1449,7 +1555,7 @@ export default function ApolloDashboard() {
         )}
 
         {/* ── Tendência WoW (recolhível, secundário — ROAS/semana a semana) ── */}
-        {snapshots.length > 0 && (
+        {showLegacyOverview && snapshots.length > 0 && (
           <Collapsible>
             <CollapsibleTrigger asChild>
               <button className="group flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
@@ -1464,7 +1570,7 @@ export default function ApolloDashboard() {
         )}
 
         {/* ── After analysis: overview ── */}
-        {session && (
+        {showLegacyOverview && session && (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Card className={`col-span-2 md:col-span-1 ${overallScore !== null ? healthBg(overallScore) : ''}`}>
@@ -1521,7 +1627,7 @@ export default function ApolloDashboard() {
           </CardContent></Card>
         )}
 
-        {!session && !isAnalyzing && !isLoadingSession && accountId && (
+        {showLegacyOverview && !session && !isAnalyzing && !isLoadingSession && accountId && (
           <Card className="border-dashed"><CardContent className="flex flex-col items-center py-14 gap-4">
             <Brain className="h-12 w-12 text-muted-foreground/40" />
             <div className="text-center"><p className="font-semibold text-muted-foreground">JOSÉ Governador — Pronto para Operar</p><p className="text-xs text-muted-foreground mt-1">Nível 6 · WoW · Fadiga Criativa · Pacing · Portfólio · Sazonalidade · Aprendizado</p></div>
