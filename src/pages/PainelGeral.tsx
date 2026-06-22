@@ -758,28 +758,38 @@ export default function PainelGeral() {
                 <p className="text-sm text-muted-foreground text-center py-6">Nenhuma venda concluída no período.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border/50">
-                        <th className="py-2 pr-2">Data</th>
-                        <th className="py-2 px-2">Vendedor</th>
-                        <th className="py-2 px-2">Origem</th>
-                        <th className="py-2 px-2 text-center">Dias até vender</th>
-                        <th className="py-2 pl-2 text-right">Valor</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vendasList.map(v => (
-                        <tr key={v.id} className="border-b border-border/30">
-                          <td className="py-2 pr-2 tabular-nums text-muted-foreground">{(v.data || '').split('-').reverse().join('/')}</td>
-                          <td className="py-2 px-2 font-medium">{v.sellerNome}</td>
-                          <td className="py-2 px-2 text-muted-foreground">{v.origemLabel}</td>
-                          <td className="py-2 px-2 text-center tabular-nums text-cyan-300">{v.dias !== null ? `${v.dias} d` : '—'}</td>
-                          <td className="py-2 pl-2 text-right tabular-nums">{v.valor > 0 ? brlMoney(v.valor) : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  {(() => {
+                    // CONSOLIDADO POR VENDEDOR — 1 linha por pessoa (sem repetir o mesmo
+                    // vendedor): soma o nº de vendas e o valor de cada um no período.
+                    const porVend = new Map<string, { nome: string; qtd: number; valor: number }>();
+                    for (const v of vendasList) {
+                      const cur = porVend.get(v.sellerNome) || { nome: v.sellerNome, qtd: 0, valor: 0 };
+                      cur.qtd += 1;
+                      cur.valor += v.valor || 0;
+                      porVend.set(v.sellerNome, cur);
+                    }
+                    const rows = Array.from(porVend.values()).sort((a, b) => b.qtd - a.qtd || b.valor - a.valor);
+                    return (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border/50">
+                            <th className="py-2 pr-2">Vendedor</th>
+                            <th className="py-2 px-2 text-center">Nº de vendas</th>
+                            <th className="py-2 pl-2 text-right">Valor total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.nome} className="border-b border-border/30">
+                              <td className="py-2 pr-2 font-medium">{r.nome}</td>
+                              <td className="py-2 px-2 text-center tabular-nums">{r.qtd}</td>
+                              <td className="py-2 pl-2 text-right tabular-nums">{r.valor > 0 ? brlMoney(r.valor) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    );
+                  })()}
                 </div>
               )}
             </CardContent>
