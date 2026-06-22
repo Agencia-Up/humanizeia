@@ -52,6 +52,7 @@ export async function executeJoseTool(
     return {
       periodo: cards.periodo, moeda: cards.moeda,
       investido: cards.gasto, conversas_meta: cards.conversas,
+      leads_recebidos: cards.leads_recebidos, qualificados: cards.leads_bom,
       cpl_vitrine: cards.cpl, custo_por_lead_bom: cards.custo_por_lead_bom, leads_bom: cards.leads_bom,
       vendas: cards.vendas, custo_por_venda: cards.custo_por_venda,
       cpm: cards.cpm, cpc: cards.cpc,

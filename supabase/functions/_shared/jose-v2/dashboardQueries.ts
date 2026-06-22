@@ -116,6 +116,7 @@ export interface DashboardCards {
   conversas: number;            // resultado da Meta
   cpl: number | null;           // gasto / conversas (vitrine)
   // verdade
+  leads_recebidos: number; // leads que entraram no período (funil)
   leads_bom: number; leads_classificados: number; vendas: number;
   custo_por_lead_bom: number | null; // gasto / leads_bom (a verdade ao lado do CPL)
   custo_por_venda: number | null;    // gasto / vendas (o topo da hierarquia de verdade)
@@ -236,7 +237,7 @@ export async function getDashboardCards(
     gasto, impressoes, cliques,
     cpm: num(b0.cpm), cpc: num(b0.cpc), ctr: num(b0.ctr),
     conversas, cpl,
-    leads_bom, leads_classificados: leads_classif, vendas, custo_por_lead_bom, custo_por_venda,
+    leads_recebidos: pq.total, leads_bom, leads_classificados: leads_classif, vendas, custo_por_lead_bom, custo_por_venda,
     idade, regiao_entrega, regiao_origem, anuncios, atribuicao: atrib,
   };
 }

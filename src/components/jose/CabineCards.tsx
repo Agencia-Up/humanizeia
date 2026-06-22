@@ -19,6 +19,7 @@ interface Cards {
   gasto: number; impressoes: number; cliques: number;
   cpm: number; cpc: number; ctr: number;
   conversas: number; cpl: number | null;
+  leads_recebidos: number;
   leads_bom: number; leads_classificados: number; custo_por_lead_bom: number | null;
   vendas: number; custo_por_venda: number | null;
   idade: Array<{ faixa: string; gasto: number; conversas: number; cpl: number | null }>;
@@ -213,6 +214,30 @@ export function CabineCards() {
               <Stat icon={TrendingUp} label="CPM" value={money(cards.moeda, cards.cpm)} hint="custo p/ mil pessoas verem" />
               <Stat icon={MousePointerClick} label="CPC" value={money(cards.moeda, cards.cpc)} hint="custo por clique" />
             </div>
+          </div>
+
+          {/* Funil do tráfego: chegaram -> qualificados -> vendas */}
+          <div>
+            <h3 className="text-sm font-semibold mb-2">Funil do tráfego ({periodoLabel})</h3>
+            <Card>
+              <CardContent className="p-4">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <div className="text-2xl font-bold">{int(cards.leads_recebidos)}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">leads chegaram</div>
+                  </div>
+                  <div className="border-x border-border/50">
+                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{int(cards.leads_bom)}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">qualificados{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.leads_bom / cards.leads_recebidos)}%` : ''}</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{int(cards.vendas)}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">vendas{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.vendas / cards.leads_recebidos)}%` : ''}</div>
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-3 text-center">Dos leads que entraram no período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Anúncios por qualidade real */}
