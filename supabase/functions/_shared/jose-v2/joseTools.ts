@@ -46,18 +46,18 @@ const READ_TOOLS = [
       "bons/ruins', 'qual anúncio pausar', 'qual anúncio escalar'.",
     input_schema: { type: "object", properties: {} },
   },
+  {
+    name: "listar_campanhas",
+    description:
+      "Lista as campanhas da conta com nome, ID, status (ativa/pausada), verba diária, gasto " +
+      "e conversas dos últimos 7 dias. Use pra ANALISAR as campanhas, ver o que gasta muito " +
+      "e decidir o que pausar/escalar — cruzando com consultar_qualidade_por_anuncio (lead bom).",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
 
 // ── Ferramentas de AÇÃO (só com a flag jose_acao ligada) ────────────────────
 const ACTION_TOOLS = [
-  {
-    name: "listar_campanhas",
-    description:
-      "Lista as campanhas da conta de anúncios com ID, status (ativa/pausada), verba diária " +
-      "e gasto dos últimos 7 dias. Use SEMPRE antes de propor qualquer ação, pra pegar o " +
-      "campaign_id certo e ver quanto cada campanha está gastando.",
-    input_schema: { type: "object", properties: {} },
-  },
   {
     name: "propor_acao",
     description:
