@@ -2464,19 +2464,26 @@ export async function processPedroV2Turn(
   // Gated em !ownedLeadAssistantMode (igual ao financiamento): transfere+anuncia o lead qualificado
   // AINDA nao atribuido; depois de atribuido o handoff (linha ~2738) ja nao re-transfere.
   const _tradeIntent = String(brainPlan?.intent || contextualIntent?.intent || "") === "trade_in" || _q.tem_troca === true;
-  const _hasTradeVehicle = Boolean(lead?.trade_in_vehicle) || Boolean((effectiveMemory?.interesse as any)?.trade_in_vehicle) || Boolean(_q.veiculo_troca);
-  const _hasInterestTrade = Boolean(_q.interesse) || Boolean(lead?.vehicle_interest)
-    || Boolean(effectiveMemory?.interesse?.modelo_desejado)
-    || (Array.isArray(effectiveMemory?.veiculos_apresentados) && effectiveMemory.veiculos_apresentados.length > 0);
-  if (!ownedLeadAssistantMode && _tradeIntent && _hasTradeVehicle && _hasInterestTrade && _hasNome
-      && reply?.transferir_silencioso !== true && contextualIntent.needs_handoff !== true
+  // BUG REAL (lead 99603-7979): checava `_q.veiculo_troca` mas o campo do schema/persistencia e
+  // `carro_troca` -> o carro de troca NUNCA era reconhecido -> a transferencia de troca nao disparava
+  // e o agente ENCERRAVA o lead quente. Aceita o campo certo + o valor persistido em negociacao.
+  const _tradeVehicleName = lead?.trade_in_vehicle || (effectiveMemory?.interesse as any)?.trade_in_vehicle
+    || _q.carro_troca || _q.veiculo_troca || (effectiveMemory as any)?.negociacao?.carro_troca || null;
+  const _hasTradeVehicle = Boolean(_tradeVehicleName);
+  // TROCA = lead QUENTE -> SEMPRE transfere ANUNCIANDO, NUNCA encerra/silencia. Decisao do dono: lead que
+  // oferece carro na troca e um lead em potencial obvio (era pra transferir + colher dados). Basta
+  // intencao de troca + veiculo de troca + nome (interesse de compra NAO e mais obrigatorio — o consultor
+  // ajuda a escolher). O SDR NAO avalia troca nem promete proposta: quem avalia/traz a proposta e o consultor.
+  if (!ownedLeadAssistantMode && _tradeIntent && _hasTradeVehicle && _hasNome
+      && contextualIntent.needs_handoff !== true
       && reply?.source !== "finance_transfer_enforced") {
     const _nm = (_q.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
     reply.pronto_para_transferir = true;
-    reply.text = `Perfeito${_nm ? ", " + _nm : ""}! Já anotei os dados do seu carro pra avaliação da troca. Vou te passar pro nosso consultor — ele avalia certinho e segue com você daqui. 😊`;
+    reply.transferir_silencioso = false; // troca e HOT: anuncia o handoff, NAO encerra em silencio
+    reply.text = `Perfeito${_nm ? ", " + _nm : ""}! Já anotei o seu ${String(_tradeVehicleName).trim()} pra avaliação da troca. 😊 Quem faz a avaliação certinha e te traz a proposta é o nosso consultor — já vou passar pra ele, que entra em contato com você!`;
     reply.media = [];
     reply.source = "trade_in_transfer_enforced";
-    log("info", "pedro_v2_trade_in_transfer_enforced", { lead_id: lead?.id || null });
+    log("info", "pedro_v2_trade_in_transfer_enforced", { lead_id: lead?.id || null, trade_vehicle: _tradeVehicleName });
   }
 
   // TEMPERATURA em ACUSACAO DE GOLPE/HOSTILIDADE: o LLM as vezes deixa temperatura=null nesses
