@@ -43,7 +43,7 @@ import {
   leadComplainsPhotoWrongOrMissing,
   messageIsTooVagueToAct,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -225,6 +225,15 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("preco", "R6: teto do lead 'até R$ 50.000' + preço real -> NÃO viola (orçamento ≠ preço)", validateGrounding("Procura até R$ 50.000? Tenho o Civic por R$ 73.990,00", _civic).ok === true);
   check("preco", "extractVehiclePriceClaims: 'até 50 mil' -> [] (orçamento excluído)", extractVehiclePriceClaims("carros automático até 50 mil").length === 0);
   check("preco", "extractVehiclePriceClaims: 'por R$ 73.990,00' -> [73990]", extractVehiclePriceClaims("por R$ 73.990,00").includes(73990));
+
+  // ── OFERTA DE FOTO SEM FOTO (carro "em preparação", images_count=0) ──
+  check("fotos", "detecta oferta 'Quer ver fotos dele?'", replyOffersPhotos("Temos o Civic 2014. Quer ver fotos dele?") === true);
+  check("fotos", "detecta oferta 'posso te mandar fotos'", replyOffersPhotos("Posso te mandar fotos se quiser") === true);
+  check("fotos", "NÃO é oferta: 'recebi suas fotos'", replyOffersPhotos("Recebi suas fotos, obrigado!") === false);
+  const _ph = rewriteUnavailablePhotoOffer("Temos o Honda Civic 2014 por R$ 73.990. Quer ver fotos dele?");
+  check("fotos", "reescreve: tira a oferta de foto", _ph.changed === true && !/quer ver fotos/i.test(_ph.text));
+  check("fotos", "reescreve: mantém o carro + oferece detalhes/visita", /civic/i.test(_ph.text) && /(detalhes|visita)/i.test(_ph.text));
+  check("fotos", "sem oferta de foto -> NÃO mexe", rewriteUnavailablePhotoOffer("Temos o Civic 2014 por R$ 73.990.").changed === false);
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));

@@ -95,6 +95,27 @@ export function detectUngroundedSpecs(replyText?: string | null, factsText?: str
   return out;
 }
 
+// O reply OFERECE/promete fotos? (caso real dos prints: ofereceu "quer ver fotos?" e o carro estava
+// "em preparação" = images_count 0 -> teve que voltar atrás. Backstop: se NENHUM veículo do turno tem
+// foto, troca a oferta por detalhes/visita — NÃO oferece o que não pode entregar.) PURO -> offline.
+export function replyOffersPhotos(replyText?: string | null): boolean {
+  const t = normalizePlannerText(replyText);
+  if (!t || !/\bfotos?\b/.test(t)) return false;
+  return /\b(quer ver|quer (que eu )?(mande|envie|mostre|veja)|posso (te )?(mandar|enviar|mostrar)|gostaria de ver|te (envio|mando)|mando as|envio as|ver as fotos|fotos dele|fotos desse|fotos de algum)\b/.test(t);
+}
+
+// Remove a(s) frase(s) de OFERTA DE FOTO e troca por CTA de detalhes/visita (quando o veículo não tem
+// foto cadastrada). Mantém o resto da resposta (apresentação do carro). Determinístico.
+export function rewriteUnavailablePhotoOffer(replyText?: string | null): { text: string; changed: boolean } {
+  const raw = String(replyText || "");
+  if (!replyOffersPhotos(raw)) return { text: raw, changed: false };
+  const parts = raw.split(/(?<=[.!?\n])/);
+  const kept = parts.filter((p) => !(/\bfotos?\b/i.test(p) && /\b(quer|posso|gostaria|envio|mando|mandar|enviar|mostrar|ver)\b/i.test(p)) && p.trim().length > 0);
+  const cta = "As fotos desse ainda não estão no sistema, mas posso te passar todos os detalhes ou agendar uma visita pra você ver pessoalmente — o que prefere? 😊";
+  const text = `${kept.join(" ").replace(/\s+/g, " ").trim()} ${cta}`.trim();
+  return { text, changed: true };
+}
+
 const _SPEC_LABEL: Record<string, string> = {
   consumo: "o consumo (km/l)",
   potencia: "a potência (cavalos)",

@@ -47,7 +47,7 @@ import {
   photoRequestTargetModel,
   messageIsTooVagueToAct,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2024,6 +2024,22 @@ export async function processPedroV2Turn(
             source: "wrong_price_relisted_deterministic",
             media: [],
           } as any;
+        }
+      }
+    }
+
+    // OFERTA DE FOTO SEM FOTO (caso real dos prints: carro "em preparação" = images_count 0, o agente
+    // oferecia "quer ver fotos?" e depois recuava). Se o reply OFERECE foto mas NENHUM veículo do turno
+    // tem foto cadastrada, troca a oferta por CTA de detalhes/visita. Só dispara quando NÃO há foto em
+    // lugar nenhum (lista com algum carro COM foto mantém a oferta). Não toca em envio real de fotos.
+    if ((reply as any)?.source !== "vehicle_photos_reply" && replyOffersPhotos((reply as any)?.text || "")) {
+      const _hasPhoto = (arr: any) => (Array.isArray(arr) ? arr : []).some((v: any) => Number(v?.images_count) > 0 || (Array.isArray(v?.fotos) && v.fotos.length > 0));
+      const _anyPhotos = _hasPhoto((stockResult as any)?.items) || _hasPhoto((nextMemory as any)?.veiculos_apresentados);
+      if (!_anyPhotos) {
+        const _photoRw = rewriteUnavailablePhotoOffer((reply as any)?.text || "");
+        if (_photoRw.changed) {
+          reply = { ...(reply as any), text: _photoRw.text };
+          log("warn", "pedro_v2_photo_offer_without_photos", { lead_id: lead?.id || null, source: (reply as any)?.source });
         }
       }
     }
