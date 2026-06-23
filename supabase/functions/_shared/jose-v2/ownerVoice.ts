@@ -12,6 +12,7 @@ import { callAiGateway } from "./aiGateway.ts";
 import { resolveApprovalNumbers, applyApprovalDecision, parseSimNao } from "./approvalGate.ts";
 import { isFeatureEnabled } from "./flags.ts";
 import { analyzeCreativeImage, formatAnaliseWhatsApp } from "./visionAnalysis.ts";
+import { joseChatTurn } from "./joseBrain.ts";
 
 // Extrai a URL do áudio do payload (mesma lógica do pedro-webhook-v2). null = não é áudio.
 export function extractAudioUrl(payload: any): { url: string; mime?: string } | null {
@@ -37,38 +38,38 @@ async function downloadBase64(url: string): Promise<{ base64: string; mime: stri
   } catch (_e) { return null; }
 }
 
-// Pergunta aberta do dono -> José responde por texto, com um contexto enxuto da conta.
-async function askJose(admin: any, userId: string, question: string): Promise<string> {
-  // contexto barato: último veredito + vendas recentes.
-  let contexto = "";
+// Pergunta aberta do dono -> José responde com o MESMO cérebro do chat do painel
+// (joseChatTurn: dados reais + conhecimento de gestor + linguagem de leigo). Guarda o
+// histórico por número (mesma sessão no WhatsApp) e converte o markdown pro WhatsApp.
+async function askJose(admin: any, userId: string, question: string, fromPhone?: string): Promise<string> {
+  const sessionId = `wa-${fromPhone || userId}`;
+  let history: Array<{ role: "user" | "assistant"; content: string }> = [];
   try {
-    const { data: vd } = await admin.from("jose_campaign_verdict")
-      .select("veredito, justificativa, nivel3, created_at").eq("user_id", userId)
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (vd) contexto += `Último veredito: ${vd.veredito}. ${vd.justificativa || ""} `;
-  } catch (_e) { /* ignore */ }
+    const { data } = await admin.from("jose_chat_messages")
+      .select("role, content").eq("user_id", userId).eq("session_id", sessionId)
+      .order("created_at", { ascending: false }).limit(10);
+    history = ((data || []) as any[]).reverse()
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: String(m.content || "") }));
+  } catch (_e) { /* sem histórico -> responde mesmo assim */ }
   try {
-    const since = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
-    const { count } = await admin.from("comercial_vendas").select("id", { count: "exact", head: true })
-      .eq("user_id", userId).gte("data_venda", since);
-    contexto += `Vendas nos últimos 7 dias: ${count || 0}.`;
-  } catch (_e) { /* ignore */ }
-
-  const system = [
-    "Você é o JOSÉ, gestor de tráfego pago da concessionária, falando com o DONO no WhatsApp.",
-    "Responda em português, CURTO e direto (no máximo 4-5 frases), como um gestor experiente.",
-    "Baseie-se no contexto fornecido; NÃO invente números. Se não tiver o dado, diga que precisa de uma análise no painel.",
-  ].join(" ");
-  try {
-    const r = await callAiGateway(admin, {
-      user_id: userId, capability: "llm",
-      input: { system, messages: [{ role: "user", content: `Contexto: ${contexto}\n\nPergunta do dono: ${question}` }], max_tokens: 350 },
-      ref_tipo: "owner_voice",
+    const r = await joseChatTurn(admin, {
+      user_id: userId, session_id: sessionId, canal: "whatsapp",
+      userMessage: question, history,
     });
-    return (r.ok && r.text) ? r.text.trim() : "Recebi sua mensagem, mas não consegui processar agora. Dá uma olhada no painel do José.";
+    return mdToWhatsApp((r.ok && r.text) ? r.text : "Tive um problema pra pensar agora. Tenta de novo em instantes?");
   } catch (_e) {
     return "Recebi sua mensagem, mas não consegui processar agora. Dá uma olhada no painel do José.";
   }
+}
+
+// Markdown -> WhatsApp: **negrito** vira *negrito*, tira ## de título e colapsa linhas vazias.
+function mdToWhatsApp(text: string): string {
+  return String(text || "")
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // Trata o áudio do DONO. Retorna { handled }. Áudio de lead -> handled:false (Pedro segue).
@@ -123,7 +124,7 @@ export async function handleOwnerVoice(
     }
 
     // 2) pergunta aberta -> José responde por texto
-    const resposta = await askJose(supabase, input.user_id, transcript);
+    const resposta = await askJose(supabase, input.user_id, transcript, fromPhone);
     await reply(resposta);
     return { handled: true, action: "answered" };
   } catch (_e) {
@@ -266,7 +267,7 @@ export async function handleOwnerMessage(
       return { handled: true, action: "reprompt" };
     }
     if (text.trim()) {
-      const resposta = await askJose(supabase, input.user_id, text);
+      const resposta = await askJose(supabase, input.user_id, text, fromPhone);
       await reply(resposta);
       return { handled: true, action: "answered" };
     }

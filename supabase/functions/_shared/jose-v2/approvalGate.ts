@@ -36,6 +36,14 @@ export async function resolveApprovalNumbers(supabase: any, userId: string): Pro
       if (a.gerente_phone_2) nums.push(a.gerente_phone_2);
     }
   } catch (_e) { /* ignore */ }
+  // número do RELATÓRIO do José (apollo_cron_config.whatsapp_report_number): é onde o
+  // dono cadastra QUEM RECEBE o relatório. Esse número TAMBÉM é o responsável do tráfego
+  // -> nunca é lead e pode perguntar das campanhas pro José no WhatsApp (igual ao chat).
+  try {
+    const { data: cron } = await supabase.from("apollo_cron_config")
+      .select("whatsapp_report_number").eq("user_id", userId).maybeSingle();
+    if (cron?.whatsapp_report_number) nums.push(cron.whatsapp_report_number);
+  } catch (_e) { /* ignore */ }
   return [...new Set(nums.map((n) => normalizeBrazilPhone(n)).filter(Boolean))];
 }
 
