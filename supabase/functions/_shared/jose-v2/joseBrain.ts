@@ -101,19 +101,23 @@ export async function joseChatTurn(admin: any, opts: {
 
   // Loop curto: a leitura já está no prompt; só pode haver round-trip de propor_acao.
   for (let i = 0; i < 4; i++) {
-    const r = await callAiGateway(admin, {
+    const callInput = {
       user_id: opts.user_id,
       ad_account_id: opts.ad_account_id ?? null,
-      capability: "llm",
+      capability: "llm" as const,
       input: { system, messages, max_tokens: 1500, ...(tools.length ? { tools, tool_choice: { type: "auto" } } : {}) },
       ref_tipo: "chat",
       ref_id: opts.session_id,
-    });
+    };
+    let r = await callAiGateway(admin, callInput);
+    // Retry uma vez em falha transitória do provedor (rate-limit/overload/timeout).
+    if (!r.ok) { await new Promise((s) => setTimeout(s, 1500)); r = await callAiGateway(admin, callInput); }
     totalCost += r.cost_usd || 0;
 
     if (!r.ok) {
-      finalText = "Tive um problema pra pensar agora. Tenta de novo em instantes?";
-      await persist(admin, opts, "assistant", finalText, toolCalls);
+      finalText = "Tive um problema técnico pra pensar agora. Tenta de novo em instantes?";
+      // Grava o MOTIVO do erro junto (diagnóstico). O frontend mostra só o texto limpo.
+      await persist(admin, opts, "assistant", `${finalText} [debug:${r.error || 'sem_detalhe'}]`, toolCalls);
       return { ok: false, text: finalText, tool_calls: toolCalls, cost_usd: totalCost, session_id: opts.session_id, error: r.error };
     }
 
