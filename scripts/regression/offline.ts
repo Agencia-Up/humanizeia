@@ -44,6 +44,7 @@ import {
   messageIsTooVagueToAct,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
   pickReferencedVehicle,
@@ -214,6 +215,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("ficha", "neutraliza: tira a frase do km/l", _neut.neutralized === true && !/13\s*km\/l/i.test(_neut.text));
   check("ficha", "neutraliza: mantém oferta + pergunta de foto", /onix/i.test(_neut.text) && /fotos/i.test(_neut.text) && /confirmar/i.test(_neut.text));
   check("ficha", "sem spec -> NÃO mexe na resposta", neutralizeUngroundedSpecs("Temos o Onix 2020 por R$ 65 mil, quer ver?", "").neutralized === false);
+
+  // ── R6: PREÇO INVENTADO (caso GRAVE dos prints: Civic 73.990 -> 50.000, S10 91.990 -> 59.000) ──
+  const _civic = [{ marca: "Honda", modelo: "Civic", ano: 2014, preco: 73990 }];
+  check("preco", "R6: Civic dito por R$ 50.000 (real 73.990) -> viola", validateGrounding("Temos o Honda Civic por R$ 50.000,00", _civic).violations.some((v) => v.rule === "R6"));
+  check("preco", "R6: S10 dita por R$ 59.000 (real 91.990) -> viola", validateGrounding("Chevrolet S10 por R$ 59.000,00", [{ marca: "Chevrolet", modelo: "S10", ano: 2014, preco: 91990 }]).violations.some((v) => v.rule === "R6"));
+  check("preco", "R6: preço REAL (R$ 73.990) -> NÃO viola", validateGrounding("Temos o Honda Civic por R$ 73.990,00", _civic).ok === true);
+  check("preco", "R6: arredondamento 'R$ 74 mil' (real 73.990) -> NÃO viola", validateGrounding("Sai por uns R$ 74 mil", _civic).ok === true);
+  check("preco", "R6: teto do lead 'até R$ 50.000' + preço real -> NÃO viola (orçamento ≠ preço)", validateGrounding("Procura até R$ 50.000? Tenho o Civic por R$ 73.990,00", _civic).ok === true);
+  check("preco", "extractVehiclePriceClaims: 'até 50 mil' -> [] (orçamento excluído)", extractVehiclePriceClaims("carros automático até 50 mil").length === 0);
+  check("preco", "extractVehiclePriceClaims: 'por R$ 73.990,00' -> [73990]", extractVehiclePriceClaims("por R$ 73.990,00").includes(73990));
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));

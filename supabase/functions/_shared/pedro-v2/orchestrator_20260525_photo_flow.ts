@@ -48,6 +48,7 @@ import {
   messageIsTooVagueToAct,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs } from "./preSendVerify.ts";
+import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
   vehicleKey,
@@ -2004,6 +2005,29 @@ export async function processPedroV2Turn(
       log("warn", "pedro_v2_spec_hallucination_neutralized", { lead_id: lead?.id || null, hits: _specNeutral.hits, source: (reply as any)?.source });
     }
 
+    // PRECO INVENTADO (backstop final — caso GRAVE dos prints: Civic 73.990->50.000, S10 91.990->59.000):
+    // mesmo com o grounding do reply (R6), garante que NENHUM preco fora do estoque saia, por QUALQUER
+    // caminho de resposta. Se o texto final cita preco que nao bate com veiculo real (stock+apresentados),
+    // relista DETERMINISTICAMENTE com os precos REAIS. Preco errado quebra confianca e e risco comercial.
+    const _priceFacts = [
+      ...(((stockResult as any)?.items as any[]) || []),
+      ...(((nextMemory as any)?.veiculos_apresentados as any[]) || []),
+    ].filter(Boolean);
+    if (_priceFacts.length > 0) {
+      const _r6 = validateGrounding((reply as any)?.text || "", _priceFacts).violations.filter((v) => v.rule === "R6");
+      if (_r6.length > 0) {
+        log("warn", "pedro_v2_wrong_price_blocked", { lead_id: lead?.id || null, prices: _r6.map((v) => v.detail), source: (reply as any)?.source });
+        if ((stockResult as any)?.success && Array.isArray((stockResult as any).items) && (stockResult as any).items.length > 0) {
+          reply = {
+            ok: true,
+            text: buildDeterministicStockReply({ memory: nextMemory, plan: { ...(brainPlan as any), action: "stock_search" } as any, intent: contextualIntent as any, stock_result: stockResult }),
+            source: "wrong_price_relisted_deterministic",
+            media: [],
+          } as any;
+        }
+      }
+    }
+
     const _mediaCount = Array.isArray((reply as any)?.media) ? (reply as any).media.length : 0;
     const _violations = verifyReplyText((reply as any)?.text || "", {
       mediaCount: _mediaCount,
@@ -2072,7 +2096,7 @@ export async function processPedroV2Turn(
       .map((idx: number) => stockResult.items[idx - 1])
       .filter(Boolean);
 
-    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic"].includes(reply.source)) {
+    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic", "wrong_price_relisted_deterministic"].includes(reply.source)) {
       vehiclesToSave = stockResult.items;
     }
 

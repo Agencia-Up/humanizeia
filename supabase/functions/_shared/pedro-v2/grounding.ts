@@ -12,7 +12,29 @@
  * qualificada por ano/motor/versao (ex.: "nao temos o Onix 2015" tendo so 2017 = honesto).
  */
 
-export interface GroundingViolation { rule: "R1" | "R2" | "R3" | "R5"; subject: string; detail?: string; }
+export interface GroundingViolation { rule: "R1" | "R2" | "R3" | "R5" | "R6"; subject: string; detail?: string; }
+
+// Extrai PREÇOS de VEÍCULO afirmados no texto (R$ 73.990,00 / R$ 73 mil / "por 50 mil"). EXCLUI faixas
+// de ORÇAMENTO do lead ("até 50 mil", "faixa de R$ 35.000") — essas não são preço de carro, são teto.
+// Usado pela R6 (preço inventado): caso real Civic R$73.990 virou R$50.000 (deflacionado pro orçamento).
+export function extractVehiclePriceClaims(text: string): number[] {
+  let t = String(text || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  // remove faixas de orçamento (teto do lead) ANTES de extrair — não são preço de veículo.
+  t = t.replace(/\b(ate|faixa(\s+de)?|orcamento|dentro\s+d\w+|no\s+maximo|maximo\s+de?|abaixo\s+de|a?\s*partir\s+de)\s*(de\s*)?(r\$\s*)?[\d.]+\s*(mil|reais)?/g, " ");
+  const out: number[] = [];
+  let m: RegExpExecArray | null;
+  const re1 = /r\$\s*([\d][\d.]*)(?:\s*,\s*\d{2})?/g;
+  while ((m = re1.exec(t)) !== null) {
+    const n = Number(String(m[1]).replace(/\./g, ""));
+    if (Number.isFinite(n) && n >= 5000) out.push(n); // preço de carro >= 5 mil (ignora "R$ 0", anos)
+  }
+  const re2 = /\b(\d{1,3})\s*mil\b/g;
+  while ((m = re2.exec(t)) !== null) {
+    const n = Number(m[1]) * 1000;
+    if (n >= 5000) out.push(n);
+  }
+  return out;
+}
 
 const norm = (s: string) =>
   String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -109,6 +131,22 @@ export function validateGrounding(text: string, facts: any[]): { ok: boolean; vi
       }
     }
   }
+  // ── R6: PREÇO inventado (valor de veículo citado NÃO bate com NENHUM preço real do estoque) ──
+  // Pega o caso GRAVE dos prints: Civic real R$73.990 virou R$50.000, S10 R$91.990 virou R$59.000 — o
+  // LLM deflaciona o preço pro orçamento do lead. Tolerância 2% (ou R$500) absorve arredondamento ("74
+  // mil" p/ 73.990) mas pega fabricação (50k vs 73.990 = 32% fora). Preço de veículo é o número MAIS
+  // crítico — errar destrói a confiança e cria problema comercial.
+  const realPrices = facts.map((f) => Number(f?.preco)).filter((n) => Number.isFinite(n) && n > 0);
+  if (realPrices.length > 0) {
+    const claimSeen = new Set<number>();
+    for (const claim of extractVehiclePriceClaims(text)) {
+      if (claimSeen.has(claim)) continue;
+      claimSeen.add(claim);
+      const grounded = realPrices.some((rp) => Math.abs(rp - claim) <= Math.max(500, rp * 0.02));
+      if (!grounded) violations.push({ rule: "R6", subject: String(claim), detail: `R$ ${claim.toLocaleString("pt-BR")}` });
+    }
+  }
+
   // dedup por (rule+detail)
   const seen = new Set<string>();
   const uniq = violations.filter((v) => { const k = `${v.rule}:${v.detail}`; if (seen.has(k)) return false; seen.add(k); return true; });
@@ -117,14 +155,16 @@ export function validateGrounding(text: string, facts: any[]): { ok: boolean; vi
 
 // Instrucao corretiva pra REGERAR a resposta (1x), apontando o erro + os fatos reais.
 export function buildGroundingCorrection(violations: GroundingViolation[], facts: any[]): string {
-  const neg = violations.filter((v) => v.rule !== "R5").map((v) => v.detail).filter(Boolean);
+  const neg = violations.filter((v) => v.rule !== "R5" && v.rule !== "R6").map((v) => v.detail).filter(Boolean);
   const inv = violations.filter((v) => v.rule === "R5").map((v) => v.detail || v.subject);
+  const badPrices = violations.filter((v) => v.rule === "R6").map((v) => v.detail || v.subject);
   const list = facts.slice(0, 6).map((f, i) => `${i + 1}. ${[f.marca, f.modelo, f.ano].filter(Boolean).join(" ")}${Number(f.preco) > 0 ? ` por R$ ${Number(f.preco).toLocaleString("pt-BR")}` : ""}`).join("\n");
   const parts = [
     "CORRECAO OBRIGATORIA (sua resposta anterior contradisse o estoque real):",
   ];
   if (neg.length) parts.push(`- Voce disse que NAO temos [${neg.join(", ")}], mas TEMOS sim no estoque abaixo. NUNCA negue isso.`);
   if (inv.length) parts.push(`- Voce afirmou ter [${inv.join(", ")}] que NAO esta no estoque. NAO cite veiculo que nao esteja na lista.`);
+  if (badPrices.length) parts.push(`- Voce citou o(s) preco(s) [${badPrices.join(", ")}] que NAO existe(m) no estoque. PROIBIDO inventar ou ajustar preco pro orcamento do lead: use EXATAMENTE o preco real de cada veiculo da lista abaixo, mesmo que fique acima do que o lead pediu.`);
   parts.push("Reescreva a resposta APRESENTANDO POSITIVAMENTE estes veiculos REAIS (e SOMENTE estes), curto e natural, terminando com uma pergunta que avanca (oferecer fotos / qual interessa):");
   parts.push(list);
   parts.push("Responda APENAS o JSON pedido, com o texto corrigido em 'text'.");
