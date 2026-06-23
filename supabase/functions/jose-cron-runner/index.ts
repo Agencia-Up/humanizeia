@@ -43,9 +43,12 @@ Deno.serve(async (req) => {
   const functionsUrl = Deno.env.get("SUPABASE_URL")!.replace(".supabase.co", ".supabase.co/functions/v1");
 
   // ── Find users due for analysis ──
+  // NÃO usa ad_accounts!inner: a config tem account_id null em muitas contas e o
+  // INNER JOIN excluía quem não tinha o link (mesmo com conta Meta ativa) -> o
+  // relatório nunca rodava. A conta é resolvida por user_id no loop (pula se não tiver).
   const { data: dueUsers } = await admin
     .from("apollo_cron_config")
-    .select("*, ad_accounts!inner(id, account_id, user_id)")
+    .select("*")
     .eq("is_enabled", true)
     .lte("next_run_at", now)
     .limit(20);
