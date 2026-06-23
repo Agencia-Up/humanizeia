@@ -2372,7 +2372,19 @@ export async function processPedroV2Turn(
       };
       }
     } else {
-      const preserveFormatting = ["stock_fact_reply", "brain_stock_reply", "brain_stock_fallback"].includes(reply.source);
+      // PRESERVAR FORMATAÇÃO (lista de veículos): a humanização (LLM que reflui em até 3 msgs) DESTRÓI as
+      // quebras de linha da lista -> sai tudo grudado/desorganizado (reclamação real do dono). Toda resposta
+      // de LISTA de estoque (LLM ou DETERMINÍSTICA: relista/deferral/preço/recuperação/anúncio) vai por
+      // typingOnly (texto íntegro, sem split). + heurística: QUALQUER texto com lista numerada ("\n1. ")
+      // preserva, independente da source. Conversa normal (sem lista) segue humanizada.
+      const _LIST_SOURCES = [
+        "stock_fact_reply", "brain_stock_reply", "brain_stock_fallback",
+        "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback",
+        "denial_without_search_recovered", "category_relisted_deterministic",
+        "wrong_price_relisted_deterministic", "search_deferral_resolved",
+      ];
+      const _looksLikeList = /\n\s*\d+[.)]\s/.test(String(reply.text || ""));
+      const preserveFormatting = _LIST_SOURCES.includes(reply.source) || _looksLikeList;
       sendResult = await sendPedroText(instance, {
         to: remoteJidToPhone(remoteJid),
         text: reply.text,
