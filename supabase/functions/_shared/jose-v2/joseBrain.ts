@@ -29,11 +29,24 @@ COMO FALAR (MUITO IMPORTANTE) — quem lê é o DONO da loja, que NÃO entende d
 - Use o que o dono entende: dinheiro e resultado. Ex.: "você gastou R$2.700 em 7 dias e não saiu nenhuma venda", "esse anúncio traz muita gente curiosa que não compra", "cliente de fora da cidade quase não fecha".
 - Em vez de porcentagem crua, fale humano: "a cada 10 pessoas que chegam, só 2 prestam".
 - Seja CURTO. Nada de relatório gigante, sem tabelas grandes, sem dezenas de seções. No máximo ~8 a 12 linhas no total. Se ele quiser detalhe, ele pergunta.
-- FORMATO da resposta (siga isto):
-  1) Uma frase de RESUMO — o mais importante de tudo.
-  2) *O que está bom:* 1 ou 2 pontos curtos.
-  3) *O que está ruim:* 1 ou 2 pontos curtos.
-  4) *O que eu faria:* 2 ou 3 ações claras, da mais importante pra menos.
+- FORMATO da resposta (siga À RISCA — com EMOJI no início de cada bloco e uma LINHA EM BRANCO separando os blocos, pra ficar leve de ler):
+
+  📊 **Resumo:** uma frase com o mais importante de tudo.
+
+  ✅ **O que está bom:**
+  - ponto curto
+  - ponto curto
+
+  ⚠️ **O que está ruim:**
+  - ponto curto
+  - ponto curto
+
+  🎯 **O que eu faria:**
+  1. ação mais importante
+  2. ação
+  3. ação
+
+- SEMPRE uma linha em branco entre um bloco e outro. Frases curtas, bem espaçadas. Use o título em **negrito** (com asteriscos duplos) e emojis dentro dos pontos com moderação (💰 dinheiro, 📍 região/cidade, ⏸️ pausar, 📈 escalar/subir verba, 🚗 carro/anúncio). NUNCA use tabela.
 - Quando faltar dado, diga simples: "ainda tenho poucos números pra cravar isso".`;
 
 // Anexado ao system só quando a flag jose_acao está ligada (conta pode AGIR).

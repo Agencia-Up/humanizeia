@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   MessageSquare, Send, Loader2, Sparkles, Paperclip, Mic, Square, X, FileText,
   Image as ImageIcon, Check, Target, DollarSign, MessageCircle, CheckCircle2,
@@ -50,6 +52,23 @@ function blobToBase64(blob: Blob): Promise<string> {
     r.onerror = reject;
     r.readAsDataURL(blob);
   });
+}
+
+// Renderiza a resposta do José em markdown compacto (negrito, listas, espaçamento) —
+// o José responde com emojis + **negrito** + listas; aqui isso vira formatação de verdade.
+function MarkdownMsg({ text }: { text: string }) {
+  return (
+    <div className="text-xs leading-relaxed
+      [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
+      [&_p]:my-1.5 [&_strong]:font-bold
+      [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:my-1.5 [&_ul]:space-y-1
+      [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:my-1.5 [&_ol]:space-y-1
+      [&_h1]:font-bold [&_h1]:text-sm [&_h1]:my-1.5 [&_h2]:font-bold [&_h2]:my-1.5 [&_h3]:font-bold [&_h3]:my-1.5
+      [&_hr]:my-2 [&_hr]:border-border/40
+      [&_blockquote]:border-l-2 [&_blockquote]:border-amber-500/50 [&_blockquote]:pl-2 [&_blockquote]:my-1.5 [&_blockquote]:opacity-90">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
 }
 
 // Avatar do José (alvo num círculo gradiente indigo→dourado).
@@ -247,7 +266,9 @@ export function JoseChatPanel() {
                   <div className={`flex items-end gap-2.5 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
                     {m.role === 'assistant' && <JoseAvatar />}
                     <div className={`max-w-[85%] ${m.role === 'user' ? 'items-end' : ''}`}>
-                      <div className={`rounded-2xl px-3.5 py-2.5 text-xs whitespace-pre-wrap ${m.role === 'user' ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-muted rounded-tl-sm'}`}>{m.content}</div>
+                      <div className={`rounded-2xl px-3.5 py-2.5 text-xs ${m.role === 'user' ? 'bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap' : 'bg-muted rounded-tl-sm'}`}>
+                        {m.role === 'user' ? m.content : <MarkdownMsg text={m.content} />}
+                      </div>
                       {m.ts && <div className={`text-[10px] text-muted-foreground mt-1 ${m.role === 'user' ? 'text-right' : 'pl-1'}`}>{m.ts}{m.role === 'user' && ' ✓✓'}</div>}
                     </div>
                   </div>
