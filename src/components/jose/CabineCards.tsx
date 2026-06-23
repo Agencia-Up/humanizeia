@@ -78,15 +78,26 @@ function Stat({ icon: Icon, label, value, hint, tint = 'blue' }: { icon: any; la
   );
 }
 
-// Lista (cabeçalho com ícone + linhas nome→valor).
-function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas }: {
+// Cores por bloco (barra + tile do ícone) — strings completas p/ o Tailwind enxergar.
+const BAR: Record<string, { bar: string; tile: string }> = {
+  blue:    { bar: 'bg-blue-500',    tile: 'bg-blue-500/15 text-blue-400 ring-blue-400/25' },
+  cyan:    { bar: 'bg-cyan-500',    tile: 'bg-cyan-500/15 text-cyan-300 ring-cyan-400/25' },
+  violet:  { bar: 'bg-violet-500',  tile: 'bg-violet-500/15 text-violet-300 ring-violet-400/25' },
+  emerald: { bar: 'bg-emerald-500', tile: 'bg-emerald-500/15 text-emerald-400 ring-emerald-400/25' },
+  amber:   { bar: 'bg-amber-500',   tile: 'bg-amber-500/15 text-amber-400 ring-amber-400/25' },
+};
+
+// Lista com BARRA proporcional (mini-gráfico: bate o olho e vê quem é maior).
+function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue' }: {
   titulo: string; ajuda: string; icon: any; vazio: string;
-  linhas: Array<{ nome: string; valor: string }>; verTodas?: string;
+  linhas: Array<{ nome: string; valor: string; peso?: number }>; verTodas?: string; cor?: string;
 }) {
+  const c = BAR[cor] || BAR.blue;
+  const max = Math.max(1, ...linhas.map((l) => Number(l.peso) || 0));
   return (
     <Panel className="p-4 flex flex-col">
-      <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"><Icon className="h-4 w-4" /></div>
+      <div className="flex items-center gap-2.5">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${c.tile}`}><Icon className="h-4 w-4" /></div>
         <div className="min-w-0">
           <div className="text-sm font-semibold leading-tight">{titulo}</div>
           <div className="text-[11px] text-muted-foreground leading-tight">{ajuda}</div>
@@ -95,17 +106,24 @@ function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas }: {
       {linhas.length === 0
         ? <p className="text-xs text-muted-foreground py-3">{vazio}</p>
         : (
-          <div className="mt-3 space-y-2 flex-1">
+          <div className="mt-3.5 space-y-2.5 flex-1">
             {linhas.map((l, i) => (
-              <div key={i} className="flex justify-between gap-3 text-xs">
-                <span className="truncate text-foreground/90">{l.nome}</span>
-                <span className="text-muted-foreground shrink-0 tabular-nums font-medium">{l.valor}</span>
+              <div key={i} className="space-y-1">
+                <div className="flex justify-between gap-3 text-xs">
+                  <span className="truncate font-medium text-foreground">{l.nome}</span>
+                  <span className="shrink-0 tabular-nums font-semibold text-foreground">{l.valor}</span>
+                </div>
+                {l.peso != null && (
+                  <div className="h-1.5 rounded-full bg-muted/50 overflow-hidden">
+                    <div className={`h-full rounded-full ${c.bar}`} style={{ width: `${Math.max(5, Math.round(100 * (Number(l.peso) || 0) / max))}%` }} />
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       {verTodas && linhas.length > 0 && (
-        <div className="mt-3 pt-2 border-t border-border/40 text-[11px] text-primary/80">{verTodas}</div>
+        <button type="button" className="mt-3 pt-2.5 border-t border-border/40 text-[11px] font-medium text-primary hover:text-primary/80 text-left transition-colors">{verTodas}</button>
       )}
     </Panel>
   );
@@ -345,12 +363,12 @@ export function CabineCards() {
             <p className="text-[11px] text-muted-foreground mb-2.5">Quais conjuntos (públicos) e quais anúncios trouxeram mais conversas e onde foi a verba. A qualidade do lead por público/criativo entra quando a conta usar o WhatsApp oficial da Meta.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Lista
-                icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período."
-                linhas={cards.por_publico.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}` }))}
+                icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período." cor="violet"
+                linhas={cards.por_publico.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
               />
               <Lista
-                icon={Award} titulo="Por anúncio / criativo" ajuda="cada anúncio (a peça/criativo)" vazio="Sem dados no período."
-                linhas={cards.por_criativo.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}` }))}
+                icon={Award} titulo="Por anúncio / criativo" ajuda="cada anúncio (a peça/criativo)" vazio="Sem dados no período." cor="amber"
+                linhas={cards.por_criativo.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
               />
             </div>
           </div>
@@ -360,16 +378,16 @@ export function CabineCards() {
             <h3 className="text-sm font-semibold mb-2.5 flex items-center gap-1.5"><Users className="h-4 w-4" /> Quem está vendo e quem está chamando</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Lista
-                icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período." verTodas="Ver todas as regiões →"
-                linhas={cards.regiao_entrega.slice(0, 6).map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto) }))}
+                icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período." verTodas="Ver todas as regiões →" cor="blue"
+                linhas={cards.regiao_entrega.slice(0, 6).map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
               />
               <Lista
-                icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda." verTodas="Ver todas as cidades →"
-                linhas={cards.regiao_origem.slice(0, 6).map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads` }))}
+                icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda." verTodas="Ver todas as cidades →" cor="emerald"
+                linhas={cards.regiao_origem.slice(0, 6).map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads`, peso: r.leads }))}
               />
               <Lista
-                icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período." verTodas="Ver todas as idades →"
-                linhas={cards.idade.slice(0, 6).map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto) }))}
+                icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período." verTodas="Ver todas as idades →" cor="cyan"
+                linhas={cards.idade.slice(0, 6).map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
               />
             </div>
           </div>
