@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
-  Wallet, ShoppingCart, UserCheck,
+  Wallet, ShoppingCart, UserCheck, Sparkles,
 } from 'lucide-react';
 
 // ── Bloco A — Cabine de Comando (cards fixos). Lê tudo do edge jose-dashboard (mesma
@@ -53,6 +53,64 @@ function money(moeda: string, v: number | null | undefined) {
   return v == null ? '—' : `${moeda} ${n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 function int(v: number | null | undefined) { return n(v).toLocaleString('pt-BR'); }
+
+// Card da galeria de criativos: a arte + números + qualidade do Pedro, com botão pra
+// o José OLHAR a arte (visão on-demand: só roda IA quando o dono clica -> custo controlado).
+function CreativeCard({ c, moeda }: { c: any; moeda: string }) {
+  const [analise, setAnalise] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const analisar = async () => {
+    if (!c.thumbnail_url) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('jose-dashboard', {
+        body: { action: 'analisar_criativo', image_url: c.thumbnail_url },
+      });
+      if (error || (data as any)?.error) throw new Error((data as any)?.error || error?.message || 'falha');
+      setAnalise((data as any).analise);
+    } catch {
+      toast.error('Não consegui analisar essa arte agora.');
+    } finally { setLoading(false); }
+  };
+  return (
+    <div className="rounded-xl border border-border/60 bg-card overflow-hidden shadow-sm shadow-black/20">
+      {c.thumbnail_url ? (
+        <img src={c.thumbnail_url} alt={c.nome} loading="lazy" className="w-full h-28 object-cover bg-muted" />
+      ) : (
+        <div className="w-full h-28 bg-muted flex items-center justify-center text-[11px] text-muted-foreground">sem arte</div>
+      )}
+      <div className="p-2.5">
+        <p className="text-xs font-medium truncate" title={c.nome}>{c.nome}</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5">{int(c.conversas)} conv · {money(moeda, c.gasto)}</p>
+        {(c.leads_bom != null || c.leads_ruim != null) && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px]">
+            {c.pct_bom != null && <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">{c.pct_bom}% bom</span>}
+            {c.leads_bom != null && c.leads_bom > 0 && <span className="text-emerald-400">{c.leads_bom} bom</span>}
+            {c.leads_ruim != null && c.leads_ruim > 0 && <span className="text-rose-400">{c.leads_ruim} ruim</span>}
+          </div>
+        )}
+        {c.por_que_ruim && <p className="text-[10px] text-rose-300/80 mt-1 leading-tight">⚠ {c.por_que_ruim}</p>}
+        {analise ? (
+          <div className="mt-2 pt-2 border-t border-border/50 space-y-1">
+            {analise.nota_geral != null && <p className="text-[11px] font-semibold text-amber-400">Nota do José: {analise.nota_geral}/10</p>}
+            {analise.observacao && <p className="text-[10px] text-foreground/80 leading-snug">{analise.observacao}</p>}
+            {Array.isArray(analise.tags) && analise.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {analise.tags.slice(0, 5).map((t: string, k: number) => <span key={k} className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{t}</span>)}
+              </div>
+            )}
+          </div>
+        ) : c.thumbnail_url ? (
+          <button onClick={analisar} disabled={loading}
+            className="mt-2 w-full flex items-center justify-center gap-1.5 text-[10px] font-medium text-amber-400 border border-amber-500/30 rounded-lg py-1.5 hover:bg-amber-500/10 disabled:opacity-50">
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            {loading ? 'Olhando a arte...' : 'Analisar arte com IA'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 function nomeRegiao(r: string) { return !r || r.toLowerCase() === 'unknown' ? 'Não identificado' : r; }
 
 // Card-base premium (cantos, borda e sombra do padrão da marca).
@@ -385,25 +443,7 @@ export function CabineCards() {
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {cards.por_criativo.map((c, i) => (
-                  <div key={i} className="rounded-xl border border-border/60 bg-card overflow-hidden shadow-sm shadow-black/20">
-                    {c.thumbnail_url ? (
-                      <img src={c.thumbnail_url} alt={c.nome} loading="lazy" className="w-full h-28 object-cover bg-muted" />
-                    ) : (
-                      <div className="w-full h-28 bg-muted flex items-center justify-center text-[11px] text-muted-foreground">sem arte</div>
-                    )}
-                    <div className="p-2.5">
-                      <p className="text-xs font-medium truncate" title={c.nome}>{c.nome}</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">{int(c.conversas)} conv · {money(cards.moeda, c.gasto)}</p>
-                      {(c.leads_bom != null || c.leads_ruim != null) && (
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px]">
-                          {c.pct_bom != null && <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">{c.pct_bom}% bom</span>}
-                          {c.leads_bom != null && c.leads_bom > 0 && <span className="text-emerald-400">{c.leads_bom} bom</span>}
-                          {c.leads_ruim != null && c.leads_ruim > 0 && <span className="text-rose-400">{c.leads_ruim} ruim</span>}
-                        </div>
-                      )}
-                      {c.por_que_ruim && <p className="text-[10px] text-rose-300/80 mt-1 leading-tight">⚠ {c.por_que_ruim}</p>}
-                    </div>
-                  </div>
+                  <CreativeCard key={i} c={c} moeda={cards.moeda} />
                 ))}
               </div>
             )}

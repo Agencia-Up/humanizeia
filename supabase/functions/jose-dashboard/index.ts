@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getDashboardCards } from "../_shared/jose-v2/dashboardQueries.ts";
 import { isFeatureEnabled } from "../_shared/jose-v2/flags.ts";
+import { analyzeCreativeImage } from "../_shared/jose-v2/visionAnalysis.ts";
 
 /**
  * jose-dashboard — José Cabine de Comando / Bloco A (cards Power BI).
@@ -50,6 +51,21 @@ Deno.serve(async (req) => {
     // Flag desligado => não calcula nada (fail-safe).
     if (!(await isFeatureEnabled(admin, userId!, "cabine_cards"))) {
       return json({ enabled: false, reason: "flag_off" });
+    }
+
+    // Ação: o José OLHA a arte de UM criativo (botão "Analisar arte" na galeria).
+    // On-demand (só quando o dono clica) -> custo de IA controlado. Reusa o visionAnalysis.
+    if (body?.action === "analisar_criativo") {
+      const imageUrl = String(body?.image_url || "");
+      if (!imageUrl) return json({ error: "image_url obrigatório" }, 400);
+      let nicho = "generico";
+      try {
+        const { data: acc } = await admin.from("ad_accounts").select("nicho").eq("user_id", userId!).eq("is_active", true).limit(1).maybeSingle();
+        if (acc?.nicho) nicho = acc.nicho;
+      } catch (_e) { /* nicho default */ }
+      const res = await analyzeCreativeImage(admin, { user_id: userId!, nicho, image_url: imageUrl });
+      if (!res.ok || !res.analise) return json({ error: res.error || "falha_analise" }, 502);
+      return json({ analise: res.analise });
     }
 
     const cards = await getDashboardCards(admin, userId!, {

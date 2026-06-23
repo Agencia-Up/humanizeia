@@ -92,7 +92,7 @@ async function fetchAdThumbnails(
 ): Promise<Map<string, string>> {
   const url = new URL(`${META_GRAPH_URL}/${acc.accountId}/ads`);
   url.searchParams.set("access_token", acc.accessToken);
-  url.searchParams.set("fields", "id,name,creative{thumbnail_url}");
+  url.searchParams.set("fields", "id,name,creative{thumbnail_url,image_url}");
   if (opts.timeRange?.since && opts.timeRange?.until) {
     url.searchParams.set("time_range", JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until }));
   } else {
@@ -106,7 +106,8 @@ async function fetchAdThumbnails(
     if (data?.error) { console.warn("[dashboardQueries] ads thumb erro:", data.error?.message); return map; }
     for (const ad of (data?.data || [])) {
       const nome = String(ad?.name || "").trim().toLowerCase();
-      const thumb = ad?.creative?.thumbnail_url;
+      // image_url (cheia) é melhor p/ exibir e p/ a visão do José; vídeo cai no thumbnail.
+      const thumb = ad?.creative?.image_url || ad?.creative?.thumbnail_url;
       if (nome && thumb && !map.has(nome)) map.set(nome, String(thumb));
     }
   } catch (e) { console.warn("[dashboardQueries] ads thumb fetch falhou:", e); }
