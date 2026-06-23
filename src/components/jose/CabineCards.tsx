@@ -27,7 +27,7 @@ interface Cards {
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
-  por_criativo: Array<{ nome: string; gasto: number; conversas: number; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -134,6 +134,9 @@ function CreativeCard({ c, moeda }: { c: any; moeda: string }) {
       <div className="p-2.5">
         <p className="text-xs font-medium truncate" title={c.nome}>{c.nome}</p>
         <p className="text-[11px] text-muted-foreground mt-0.5">{int(c.conversas)} conv · {money(moeda, c.gasto)}</p>
+        <p className="text-[10px] text-muted-foreground/80">
+          {c.custo_conversa != null ? `${money(moeda, c.custo_conversa)}/conversa` : 'sem conversa'}{c.cpm ? ` · CPM ${money(moeda, c.cpm)}` : ''}
+        </p>
         {(c.leads_bom != null || c.leads_ruim != null) && (
           <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px]">
             {c.pct_bom != null && <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">{c.pct_bom}% bom</span>}

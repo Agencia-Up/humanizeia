@@ -83,35 +83,38 @@ async function fetchInsights(
   } catch (e) { console.warn("[dashboardQueries] insights fetch falhou:", e); return []; }
 }
 
-// Puxa a ARTE (thumbnail) de cada anúncio direto da Meta (/ads?fields=creative{thumbnail_url}),
-// indexada pelo nome do anúncio normalizado — pra Cabine virar GALERIA (ver a peça, não só o
-// número). Padrão reusado do jose-agent. Best-effort: falhou -> mapa vazio (cai pro texto).
-async function fetchAdThumbnails(
+// Limpa o nome do anúncio pra exibir: tira ** e extensão de arquivo (.png/.jpg) e _ —
+// o lojista costuma nomear o anúncio com o nome do arquivo do criativo.
+function cleanAdName(name: string): string {
+  return String(name || "—")
+    .replace(/\*\*/g, "")
+    .replace(/\.(png|jpe?g|mp4|gif|webp)$/i, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "—";
+}
+
+// Galeria correta: UMA chamada que já traz, por anúncio ATIVO, a arte (creative) + as
+// métricas (insights: gasto/conversas/CPM) JUNTAS, keyed por anúncio. Acaba com o bug de
+// casar arte x gasto por NOME (que deixava metade "sem arte"). Best-effort.
+async function fetchActiveAdsWithInsights(
   acc: MetaAccount,
   opts: { datePreset?: string; timeRange?: { since: string; until: string } },
-): Promise<Map<string, string>> {
+): Promise<any[]> {
+  const insSpec = (opts.timeRange?.since && opts.timeRange?.until)
+    ? `insights.time_range(${JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until })})`
+    : `insights.date_preset(${opts.datePreset || "last_7d"})`;
   const url = new URL(`${META_GRAPH_URL}/${acc.accountId}/ads`);
   url.searchParams.set("access_token", acc.accessToken);
-  url.searchParams.set("fields", "id,name,creative{thumbnail_url,image_url}");
-  if (opts.timeRange?.since && opts.timeRange?.until) {
-    url.searchParams.set("time_range", JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until }));
-  } else {
-    url.searchParams.set("date_preset", opts.datePreset || "last_7d");
-  }
+  url.searchParams.set("fields", `id,name,effective_status,creative{thumbnail_url,image_url},${insSpec}{spend,impressions,actions,cpm}`);
+  url.searchParams.set("filtering", JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]));
   url.searchParams.set("limit", "200");
-  const map = new Map<string, string>();
   try {
     const res = await fetch(url.toString());
     const data = await res.json();
-    if (data?.error) { console.warn("[dashboardQueries] ads thumb erro:", data.error?.message); return map; }
-    for (const ad of (data?.data || [])) {
-      const nome = String(ad?.name || "").trim().toLowerCase();
-      // image_url (cheia) é melhor p/ exibir e p/ a visão do José; vídeo cai no thumbnail.
-      const thumb = ad?.creative?.image_url || ad?.creative?.thumbnail_url;
-      if (nome && thumb && !map.has(nome)) map.set(nome, String(thumb));
-    }
-  } catch (e) { console.warn("[dashboardQueries] ads thumb fetch falhou:", e); }
-  return map;
+    if (data?.error) { console.warn("[dashboardQueries] active ads erro:", data.error?.message); return []; }
+    return Array.isArray(data?.data) ? data.data : [];
+  } catch (e) { console.warn("[dashboardQueries] active ads fetch falhou:", e); return []; }
 }
 
 // De onde os leads REALMENTE vieram (cidade declarada) + quantos bons por cidade.
@@ -157,7 +160,7 @@ export interface DashboardCards {
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
-  por_criativo: Array<{ nome: string; gasto: number; conversas: number; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -215,11 +218,10 @@ export async function getDashboardCards(
 
   // 1) Vitrine — base + idade + região, em paralelo
   const fi = (breakdowns?: string) => fetchInsights(acc, { datePreset, timeRange, breakdowns });
-  const [base, byAge, byRegion, byAdset, byAd, thumbs] = await Promise.all([
+  const [base, byAge, byRegion, byAdset, activeAds] = await Promise.all([
     fi(), fi("age"), fi("region"),
     fetchInsights(acc, { datePreset, timeRange, level: "adset" }),
-    fetchInsights(acc, { datePreset, timeRange, level: "ad" }),
-    fetchAdThumbnails(acc, { datePreset, timeRange }),
+    fetchActiveAdsWithInsights(acc, { datePreset, timeRange }),
   ]);
 
   const b0 = base[0] || {};
@@ -268,20 +270,26 @@ export async function getDashboardCards(
   const por_publico = byAdset.map((r: any) => ({
     nome: String(r.adset_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
   })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
-  const por_criativo = byAd.map((r: any) => {
-    const nome = String(r.ad_name || "—");
-    const key = nome.trim().toLowerCase();
+  const por_criativo = activeAds.map((ad: any) => {
+    const ins = ad.insights?.data?.[0] || {};
+    const gasto = num(ins.spend);
+    const conversas = conversasFromActions(ins.actions);
+    const key = String(ad.name || "").trim().toLowerCase(); // casa qualidade pelo nome ORIGINAL (~título)
     const q = lqByName.get(key);
     const mv = q?.ad_key ? motivos.get(q.ad_key) : null;
     return {
-      nome, gasto: num(r.spend), conversas: conversasFromActions(r.actions),
-      thumbnail_url: thumbs.get(key) || null,           // a ARTE da peça (galeria)
-      leads_bom: q ? num(q.leads_bom) : null,           // verdade do Pedro (por título)
+      nome: cleanAdName(ad.name),                          // nome limpo (sem ** / .png)
+      gasto, conversas,
+      cpm: num(ins.cpm),                                   // CPM da peça
+      custo_conversa: conversas > 0 ? gasto / conversas : null, // custo por conversa
+      status: ad.effective_status || null,
+      thumbnail_url: ad.creative?.image_url || ad.creative?.thumbnail_url || null, // arte na MESMA chamada -> some o "sem arte" à toa
+      leads_bom: q ? num(q.leads_bom) : null,
       leads_ruim: q ? num(q.leads_ruim) : null,
       pct_bom: q ? q.pct_bom : null,
-      por_que_ruim: mv ? formatMotivos(mv.ruim) : null, // o porquê dos ruins dessa peça
+      por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
     };
-  }).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 12);
+  }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)).slice(0, 24);
 
   // 6) Anúncios por QUALIDADE REAL (não CTR)
   const anuncios = lq
