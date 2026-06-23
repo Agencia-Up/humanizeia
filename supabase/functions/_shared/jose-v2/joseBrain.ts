@@ -10,6 +10,7 @@
 import { callAiGateway } from "./aiGateway.ts";
 import { getJoseTools, executeJoseTool } from "./joseTools.ts";
 import { isFeatureEnabled } from "./flags.ts";
+import { JOSE_EXPERTISE } from "./joseExpertise.ts";
 
 const SYSTEM = `Você é o José, gestor de tráfego de IA de uma concessionária/revenda de veículos. Você é um GESTOR DE VERDADE: analisa, cruza os dados e recomenda — não é um chatbot que só bate papo.
 
@@ -93,7 +94,8 @@ export async function joseChatTurn(admin: any, opts: {
       + `====== FIM DOS DADOS ======`;
   } catch (_e) { /* sem dados: responde com o que tem */ }
 
-  const system = (canAct ? SYSTEM + ACTION_GUIDE : SYSTEM) + dados;
+  // Persona + (ação) + CÉREBRO DE DOMÍNIO (como um gestor de tráfego pensa) + dados reais.
+  const system = (canAct ? SYSTEM + ACTION_GUIDE : SYSTEM) + "\n\n" + JOSE_EXPERTISE + dados;
 
   await persist(admin, opts, "user", opts.userMessage, null);
 
