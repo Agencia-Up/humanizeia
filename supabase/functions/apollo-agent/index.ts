@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
+import { leadQualityByAd, leadMotivosByAd, formatMotivos } from "../_shared/jose-v2/leadQuality.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2392,6 +2393,29 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     ? `Ontem o Meta marcou ${int(yRes.results)} ${M.noun} e ${int(yLogos)} viraram lead no seu painel — custo real por lead: ${money(yLogosCost)}.`
     : `Ontem você investiu ${money(ySpend)} e nenhum lead entrou no painel ainda.`;
 
+  // ── A VERDADE (o diferencial do José): qual anúncio traz lead bom/ruim e POR QUÊ ──
+  // Aditivo e best-effort: se faltar dado/qualidade, verdadeLines fica vazio e o relatório
+  // segue só com a vitrine. Mesma camada do chat/galeria (leadQualityByAd + motivos do Pedro).
+  const verdadeLines: string[] = [];
+  try {
+    const [lqRep, motivosRep] = await Promise.all([
+      leadQualityByAd(admin, userId, { minLeads: 2 }),
+      leadMotivosByAd(admin, userId),
+    ]);
+    const pior = lqRep.filter((r) => Number(r.leads_ruim) > 0)
+      .sort((a, b) => Number(b.leads_ruim) - Number(a.leads_ruim))[0];
+    const melhor = lqRep.filter((r) => Number(r.leads_bom) > 0)
+      .sort((a, b) => (Number(b.pct_bom) - Number(a.pct_bom)) || (Number(b.leads_bom) - Number(a.leads_bom)))[0];
+    if (pior) {
+      const mv = pior.ad_key ? motivosRep.get(pior.ad_key) : null;
+      const pq = mv ? formatMotivos(mv.ruim) : null;
+      verdadeLines.push(`⚠️ "${pior.ad_name}" trouxe ${Number(pior.leads_ruim)} lead(s) ruim${pq ? ` (${pq})` : ""}${Number(pior.leads_bom) === 0 ? " e nenhum bom ainda" : ""}.`);
+    }
+    if (melhor && melhor.ad_name !== pior?.ad_name) {
+      verdadeLines.push(`🏆 "${melhor.ad_name}" é a melhor peça: ${Number(melhor.leads_bom)} lead(s) bom(ns)${melhor.pct_bom != null ? ` (${melhor.pct_bom}% de qualidade)` : ""}.`);
+    }
+  } catch { /* sem verdade -> relatório segue só com a vitrine */ }
+
   const lines: string[] = [
     `📊 *José — Relatório de ontem* (${ontem})`,
     acc.account_name ? `🏢 ${acc.account_name}` : "",
@@ -2410,6 +2434,7 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     `📅 *Últimos 7 dias:*`,
     `   Meta: ${int(wRes.results)} ${M.noun} · ${wRes.results > 0 ? `${money(wRes.cost)} cada` : "—"}`,
     `   Painel: ${int(wLogos)} leads · ${wLogos > 0 ? `${money(wLogosCost)} cada` : "—"} · ${money(wSpend)} investidos`,
+    ...(verdadeLines.length ? ["", "🎯 *A verdade — quem traz cliente que presta:*", ...verdadeLines] : []),
     ``,
     `💡 ${resumo}`,
     ``,
