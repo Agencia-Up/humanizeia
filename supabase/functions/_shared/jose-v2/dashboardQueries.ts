@@ -104,17 +104,27 @@ async function fetchActiveAdsWithInsights(
   const insSpec = (opts.timeRange?.since && opts.timeRange?.until)
     ? `insights.time_range(${JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until })})`
     : `insights.date_preset(${opts.datePreset || "last_7d"})`;
-  const url = new URL(`${META_GRAPH_URL}/${acc.accountId}/ads`);
-  url.searchParams.set("access_token", acc.accessToken);
-  url.searchParams.set("fields", `id,name,effective_status,creative{thumbnail_url,image_url},${insSpec}{spend,impressions,actions,cpm}`);
-  url.searchParams.set("filtering", JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]));
-  url.searchParams.set("limit", "200");
+  const first = new URL(`${META_GRAPH_URL}/${acc.accountId}/ads`);
+  first.searchParams.set("access_token", acc.accessToken);
+  first.searchParams.set("fields", `id,name,effective_status,creative{thumbnail_url,image_url},${insSpec}{spend,impressions,actions,cpm}`);
+  first.searchParams.set("filtering", JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]));
+  first.searchParams.set("limit", "100");
+  // PAGINA até acabar (segue paging.next) -> pega TODOS os anúncios ATIVOS que a Meta tiver
+  // (a conta diz o número real, ex. 68), sem teto chutado. guard só pra não rodar pra sempre.
+  let next: string | null = first.toString();
+  const out: any[] = [];
+  let guard = 0;
   try {
-    const res = await fetch(url.toString());
-    const data = await res.json();
-    if (data?.error) { console.warn("[dashboardQueries] active ads erro:", data.error?.message); return []; }
-    return Array.isArray(data?.data) ? data.data : [];
-  } catch (e) { console.warn("[dashboardQueries] active ads fetch falhou:", e); return []; }
+    while (next && guard < 30) {
+      guard++;
+      const res = await fetch(next);
+      const data = await res.json();
+      if (data?.error) { console.warn("[dashboardQueries] active ads erro:", data.error?.message); break; }
+      if (Array.isArray(data?.data)) out.push(...data.data);
+      next = data?.paging?.next || null;
+    }
+  } catch (e) { console.warn("[dashboardQueries] active ads fetch falhou:", e); }
+  return out;
 }
 
 // De onde os leads REALMENTE vieram (cidade declarada) + quantos bons por cidade.
@@ -289,7 +299,7 @@ export async function getDashboardCards(
       pct_bom: q ? q.pct_bom : null,
       por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
     };
-  }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)).slice(0, 200);
+  }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)); // todos os ativos (sem corte)
 
   // 6) Anúncios por QUALIDADE REAL (não CTR)
   const anuncios = lq
