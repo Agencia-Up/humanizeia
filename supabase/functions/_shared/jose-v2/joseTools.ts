@@ -12,7 +12,7 @@
  */
 
 import { getDashboardCards, resolveMetaAccount, type MetaAccount } from "./dashboardQueries.ts";
-import { leadQualityByAd } from "./leadQuality.ts";
+import { leadQualityByAd, leadMotivosByAd, formatMotivos } from "./leadQuality.ts";
 import { checkGuardrails } from "./guardrails.ts";
 import { sendApprovalWhatsApp } from "./approvalGate.ts";
 
@@ -182,14 +182,24 @@ export async function executeJoseTool(
   }
 
   if (name === "consultar_qualidade_por_anuncio") {
-    const rows = await leadQualityByAd(admin, userId, { minLeads: 1 });
+    // contagens (quantos bons/ruins) + o PORQUÊ (motivos do Pedro) por anúncio.
+    const [rows, motivos] = await Promise.all([
+      leadQualityByAd(admin, userId, { minLeads: 1 }),
+      leadMotivosByAd(admin, userId),
+    ]);
     return {
       total_anuncios: rows.length,
-      anuncios: rows.slice(0, 20).map((r) => ({
-        anuncio: r.ad_name, origem: r.ad_key_kind,
-        leads: r.leads_total, bons: r.leads_bom, medios: r.leads_medio, ruins: r.leads_ruim,
-        vendas: (r as any).vendas, sem_classificacao: r.leads_sem_classificacao, pct_bom: r.pct_bom,
-      })),
+      anuncios: rows.slice(0, 20).map((r) => {
+        const mv = r.ad_key ? motivos.get(r.ad_key) : null;
+        return {
+          anuncio: r.ad_name, origem: r.ad_key_kind,
+          leads: r.leads_total, bons: r.leads_bom, medios: r.leads_medio, ruins: r.leads_ruim,
+          vendas: (r as any).vendas, sem_classificacao: r.leads_sem_classificacao, pct_bom: r.pct_bom,
+          // O "porquê" em linguagem de gente (top motivos do Pedro). null = ainda sem motivo registrado.
+          por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
+          por_que_bom: mv ? formatMotivos(mv.bom) : null,
+        };
+      }),
     };
   }
 
