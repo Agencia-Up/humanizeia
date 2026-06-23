@@ -413,6 +413,14 @@ export function buildPhotoReplyText(target: PhotoTarget, vehicle: any, message: 
   return pickPhrase(`${vehicleKey(vehicle)} ${target} ${message} ${label}`, phrases[target]);
 }
 
+// Lead quer ver TODOS os veículos ("manda todos", "os dois", "ambos", "as duas"). Caso real lead
+// 98287-4078: o agente perguntou "de qual você quer ver?" 4x e travou — até quando o lead disse "manda
+// todos" ele perguntou de novo. Aqui o fluxo de foto NUNCA re-pergunta: manda as fotos de todos.
+export function leadRequestsAllVehiclePhotos(message?: string | null): boolean {
+  const t = String(message || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  return /\b(todos|todas|os dois|as duas|os 2|as 2|ambos|ambas|manda tudo|manda td|todos eles|todas elas|os tres|as tres)\b/.test(t);
+}
+
 export function buildVehiclePhotoReply(memory: any, message: string, topicAnchor?: any) {
   const vehicles = Array.isArray(memory?.veiculos_apresentados) ? memory.veiculos_apresentados : [];
   if (vehicles.length === 0) {
@@ -422,6 +430,36 @@ export function buildVehiclePhotoReply(memory: any, message: string, topicAnchor
       source: "vehicle_photos_need_reference",
       media: [],
     };
+  }
+
+  // LEAD QUER TODOS: manda as fotos de TODOS os veículos distintos (top 5 cada) num álbum só, com
+  // legenda por veículo — NUNCA re-pergunta "de qual?". Resolve o caso do lead 98287-4078.
+  const _distinct: any[] = [];
+  for (const v of vehicles) if (!_distinct.some((d) => vehicleKey(d) === vehicleKey(v))) _distinct.push(v);
+  if (leadRequestsAllVehiclePhotos(message) && _distinct.length >= 2) {
+    const media: any[] = [];
+    let order = 1;
+    const labels: string[] = [];
+    for (const v of _distinct.slice(0, 3)) {
+      const top = (selectVehiclePhotos(v, "", []).photos || []).filter(Boolean).slice(0, 5);
+      if (top.length === 0) continue;
+      const lbl = cleanVehicleLabel(v) || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" ");
+      labels.push(lbl);
+      top.forEach((file: string, i: number) => media.push({ file, type: "image", caption: i === 0 ? lbl : "", order: order++ }));
+    }
+    if (media.length > 0) {
+      return {
+        ok: true,
+        text: `Perfeito! Vou te mandar as fotos das ${labels.length} opções pra você comparar 😊`,
+        source: "vehicle_photos_reply",
+        vehicle: _distinct[0],
+        selected_index: 0,
+        selected_vehicle_key: vehicleKey(_distinct[0]),
+        selected_vehicle_label: labels.join(" e "),
+        selected_vehicle_reason: "all_vehicles_requested",
+        media,
+      };
+    }
   }
 
   const reference = pickReferencedVehicle(message, memory, vehicles, topicAnchor);

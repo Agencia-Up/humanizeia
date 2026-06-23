@@ -50,6 +50,7 @@ import {
   pickReferencedVehicle,
   buildVehiclePhotoReply,
   sameVehicleModel,
+  leadRequestsAllVehiclePhotos,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
@@ -234,6 +235,18 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("fotos", "reescreve: tira a oferta de foto", _ph.changed === true && !/quer ver fotos/i.test(_ph.text));
   check("fotos", "reescreve: mantém o carro + oferece detalhes/visita", /civic/i.test(_ph.text) && /(detalhes|visita)/i.test(_ph.text));
   check("fotos", "sem oferta de foto -> NÃO mexe", rewriteUnavailablePhotoOffer("Temos o Civic 2014 por R$ 73.990.").changed === false);
+
+  // ── "MANDA TODOS" -> envia fotos de TODOS (não re-pergunta "de qual?") — lead 98287-4078 ──
+  check("fotos", "detecta 'manda todos'", leadRequestsAllVehiclePhotos("Manda todos\nFotos") === true);
+  check("fotos", "detecta 'os dois'", leadRequestsAllVehiclePhotos("quero ver os dois") === true);
+  check("fotos", "NÃO é todos: 'quero o branco'", leadRequestsAllVehiclePhotos("quero o branco") === false);
+  const _v1 = { marca: "Chevrolet", modelo: "Onix Sedan", versao: "LT 1.0 MEC", ano: 2025, cor: "Branco", preco: 79990, images_count: 3, fotos: ["a1.jpg", "a2.jpg", "a3.jpg"] };
+  const _v2 = { marca: "Chevrolet", modelo: "Onix Sedan", versao: "LTZ 1.0 AUT", ano: 2025, cor: "Preto", preco: 97990, images_count: 2, fotos: ["b1.jpg", "b2.jpg"] };
+  const _allReply = buildVehiclePhotoReply({ veiculos_apresentados: [_v1, _v2] }, "manda todos");
+  check("fotos", "'manda todos' -> envia fotos (não pick_which)", _allReply.source === "vehicle_photos_reply" && (_allReply.media || []).length >= 4);
+  check("fotos", "'manda todos' -> reason all_vehicles_requested", _allReply.selected_vehicle_reason === "all_vehicles_requested");
+  const _pickReply = buildVehiclePhotoReply({ veiculos_apresentados: [_v1, _v2] }, "foto");
+  check("fotos", "pedido vago (não 'todos') com 2 distintos -> ainda pergunta qual", _pickReply.source === "vehicle_photos_pick_which");
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
