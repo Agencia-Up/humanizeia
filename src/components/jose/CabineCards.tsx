@@ -60,22 +60,22 @@ function GaleriaCriativos({ criativos, moeda }: { criativos: any[]; moeda: strin
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> Galeria de criativos — qual peça vende</h3>
+      <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> Anúncios ativos — qual vende</h3>
       <p className="text-[11px] text-muted-foreground mb-2.5">Todos os anúncios <strong className="text-foreground/80">ativos</strong> com a arte, gasto, custo por conversa, CPM e a qualidade real (Pedro). Abre num pop-up pra não poluir o painel.</p>
       <button onClick={() => setOpen(true)} disabled={!criativos.length}
         className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">
-        <Award className="h-3.5 w-3.5" /> Ver criativos ativos ({criativos.length})
+        <Award className="h-3.5 w-3.5" /> Ver anúncios ativos ({criativos.length})
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={() => setOpen(false)}>
           <div className="my-8 w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 flex items-center justify-between rounded-t-2xl border-b border-border/60 bg-card px-5 py-3">
-              <h3 className="flex items-center gap-1.5 text-sm font-bold"><Award className="h-4 w-4 text-amber-400" /> Criativos ativos ({criativos.length})</h3>
+              <h3 className="flex items-center gap-1.5 text-sm font-bold"><Award className="h-4 w-4 text-amber-400" /> Anúncios ativos ({criativos.length})</h3>
               <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="p-5">
               {criativos.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Sem criativos ativos no período.</p>
+                <p className="text-xs text-muted-foreground">Sem anúncios ativos no período.</p>
               ) : (
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
                   {criativos.map((c, i) => <CreativeCard key={i} c={c} moeda={moeda} />)}

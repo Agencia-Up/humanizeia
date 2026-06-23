@@ -289,7 +289,7 @@ export async function getDashboardCards(
       pct_bom: q ? q.pct_bom : null,
       por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
     };
-  }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)).slice(0, 24);
+  }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)).slice(0, 200);
 
   // 6) Anúncios por QUALIDADE REAL (não CTR)
   const anuncios = lq
