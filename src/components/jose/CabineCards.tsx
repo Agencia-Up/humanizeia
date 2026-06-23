@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
-  Wallet, ShoppingCart, UserCheck, Sparkles,
+  Wallet, ShoppingCart, UserCheck, Sparkles, Car,
 } from 'lucide-react';
 
 // ── Bloco A — Cabine de Comando (cards fixos). Lê tudo do edge jose-dashboard (mesma
@@ -53,6 +53,58 @@ function money(moeda: string, v: number | null | undefined) {
   return v == null ? '—' : `${moeda} ${n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 function int(v: number | null | undefined) { return n(v).toLocaleString('pt-BR'); }
+
+// Guardião do estoque: o José compara anúncio ativo x estoque (BNDV) e lista o carro que já
+// saiu do estoque mas continua anunciado. Fatia 1: só DETECTA (não pausa) — o dono valida antes.
+function StockGuard() {
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<any>(null);
+  const verificar = async () => {
+    setLoading(true);
+    try {
+      const { data: res, error } = await supabase.functions.invoke('jose-stock-guard', { body: {} });
+      if (error || (res as any)?.error) throw new Error((res as any)?.error || error?.message || 'falha');
+      setData(res);
+    } catch {
+      toast.error('Não consegui verificar o estoque agora.');
+    } finally { setLoading(false); }
+  };
+  return (
+    <div>
+      <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Car className="h-4 w-4" /> Guardião do estoque — carro vendido ainda no ar</h3>
+      <p className="text-[11px] text-muted-foreground mb-2.5">O José compara cada anúncio ativo com o estoque. Se o carro já saiu do estoque mas o anúncio continua rodando, ele aparece aqui pra você pausar e parar de queimar verba.</p>
+      <button onClick={verificar} disabled={loading}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">
+        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Car className="h-3.5 w-3.5" />}
+        {loading ? 'Comparando com o estoque…' : 'Verificar carros vendidos'}
+      </button>
+      {data && (
+        <div className="mt-3">
+          <p className="text-[11px] text-muted-foreground mb-2">
+            <b className="text-rose-400">{data.resumo?.vendidos ?? 0} vendido(s) ainda no ar</b> · {data.resumo?.disponiveis ?? 0} ok · {data.resumo?.ignorados ?? 0} genéricos (de {data.total_ativos ?? 0} ativos)
+          </p>
+          {(data.vendidos || []).length === 0 ? (
+            <p className="text-xs text-emerald-400">Nenhum carro vendido sendo anunciado. Tudo certo.</p>
+          ) : (
+            <div className="space-y-2">
+              {(data.vendidos || []).map((v: any, i: number) => (
+                <div key={i} className="flex items-start gap-3 rounded-xl border border-rose-500/25 bg-rose-500/5 p-2.5">
+                  {v.thumbnail_url && <img src={v.thumbnail_url} alt="" className="h-14 w-14 rounded-lg object-cover bg-muted shrink-0" loading="lazy" />}
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-foreground truncate">{v.ad_name}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Anúncio: {String(v.extraido?.modelo || '—').slice(0, 60)}{v.extraido?.ano ? ` · ${v.extraido.ano}` : ''}{v.extraido?.preco ? ` · R$ ${Number(v.extraido.preco).toLocaleString('pt-BR')}` : ''}</p>
+                    <p className="text-[11px] text-rose-300/90 mt-0.5">⚠ {v.motivo}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground mt-2 italic">Por enquanto só detecta — não pausa nada. Valide se está certo; depois ligo a desativação com sua aprovação.</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Card da galeria de criativos: a arte + números + qualidade do Pedro, com botão pra
 // o José OLHAR a arte (visão on-demand: só roda IA quando o dono clica -> custo controlado).
@@ -431,6 +483,9 @@ export function CabineCards() {
               linhas={cards.por_publico.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
             />
           </div>
+
+          {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
+          <StockGuard />
 
           {/* GALERIA DE CRIATIVOS — a arte de cada peça + a verdade do Pedro */}
           <div>
