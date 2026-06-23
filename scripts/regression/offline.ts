@@ -43,7 +43,7 @@ import {
   leadComplainsPhotoWrongOrMissing,
   messageIsTooVagueToAct,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -216,6 +216,15 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("ficha", "neutraliza: tira a frase do km/l", _neut.neutralized === true && !/13\s*km\/l/i.test(_neut.text));
   check("ficha", "neutraliza: mantém oferta + pergunta de foto", /onix/i.test(_neut.text) && /fotos/i.test(_neut.text) && /confirmar/i.test(_neut.text));
   check("ficha", "sem spec -> NÃO mexe na resposta", neutralizeUngroundedSpecs("Temos o Onix 2020 por R$ 65 mil, quer ver?", "").neutralized === false);
+
+  // ── AFIRMAÇÕES NÃO-ATERRADAS NO PROMPT (garantia de fábrica / laudo) — lead 98861-9201 ──
+  const _promptIcom = "garantia nos veículos de até 3 meses, não existe garantia superior a isso!";
+  check("ficha", "laudo cautelar (não no prompt) -> detecta", detectUngroundedClaims("Sim, temos laudo cautelar disponível para o Polo.", _promptIcom).includes("laudo"));
+  check("ficha", "garantia de fábrica (prompt diz 3 meses) -> detecta", detectUngroundedClaims("Sim, o Polo 2025 está na garantia de fábrica.", _promptIcom).includes("garantia_fabrica"));
+  check("ficha", "garantia '3 meses' (do prompt) -> NÃO é invenção", detectUngroundedClaims("A garantia é de 3 meses, tá?", _promptIcom).length === 0);
+  check("ficha", "loja COM laudo no prompt -> afirmar laudo é OK (não detecta)", detectUngroundedClaims("Sim, temos laudo cautelar.", "oferecemos laudo cautelar em todos os veículos").length === 0);
+  const _nc = neutralizeUngroundedClaims("Sim, temos laudo cautelar disponível para o Polo.", _promptIcom);
+  check("ficha", "neutraliza laudo inventado -> 'confirmar com a equipe'", _nc.neutralized === true && /confirmar/i.test(_nc.text) && !/temos laudo/i.test(_nc.text));
 
   // ── R6: PREÇO INVENTADO (caso GRAVE dos prints: Civic 73.990 -> 50.000, S10 91.990 -> 59.000) ──
   const _civic = [{ marca: "Honda", modelo: "Civic", ano: 2014, preco: 73990 }];

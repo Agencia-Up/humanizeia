@@ -137,3 +137,41 @@ export function neutralizeUngroundedSpecs(replyText?: string | null, factsText?:
   const text = `${kept.join(" ").replace(/\s+/g, " ").trim()} ${confirm}`.trim();
   return { text, neutralized: true, hits };
 }
+
+// ── AFIRMAÇÕES NÃO-ATERRADAS NO PROMPT (garantia de fábrica, laudo cautelar, etc.) ──────────────────
+// Decisão do dono: o agente SÓ pode afirmar o que está no PROMPT da loja (ou stock.facts); pra dúvidas
+// sem resposta ali, NUNCA inventa nem nega — diz que confirma com a equipe (e a dúvida vai pro briefing).
+// Caso real (lead 98861-9201): afirmou "garantia de FÁBRICA" (o prompt diz "até 3 meses, não superior")
+// e "temos LAUDO cautelar" (nada no prompt). PROMPT-AWARE: se o prompt da loja MENCIONA o termo, libera
+// (loja que tem laudo no prompt pode afirmar); se NÃO menciona, é invenção -> neutraliza. Extensível.
+export function detectUngroundedClaims(replyText?: string | null, agentPrompt?: string | null): string[] {
+  const t = normalizePlannerText(replyText);
+  const p = normalizePlannerText(agentPrompt);
+  if (!t) return [];
+  const out: string[] = [];
+  // LAUDO/VISTORIA cautelar: qualquer afirmação sobre laudo que o prompt da loja NÃO menciona.
+  if (/\b(laudo|cautelar|vistoria|vistoriad[oa])\b/.test(t) && !/\b(laudo|cautelar|vistoria)\b/.test(p)) out.push("laudo");
+  // GARANTIA DE FÁBRICA/FABRICANTE/MONTADORA: só pode afirmar se o prompt mencionar (senão a garantia da
+  // loja é a do prompt — ex.: "3 meses" — e "de fábrica" é invenção que extrapola a política).
+  if (/\bgarantia\b/.test(t) && /\b(fabrica|fabricante|montadora|de fabrica|do fabricante)\b/.test(t) && !/\b(fabrica|fabricante|montadora)\b/.test(p)) out.push("garantia_fabrica");
+  return out;
+}
+
+const _CLAIM_LABEL: Record<string, string> = {
+  laudo: "o laudo/vistoria do veículo",
+  garantia_fabrica: "a garantia",
+};
+
+// Tira a(s) frase(s) com afirmação não-aterrada e troca por "vou confirmar com a equipe de vendas"
+// (comportamento que o dono pediu: não inventa, não nega, encaminha a dúvida). PURO -> offline.
+export function neutralizeUngroundedClaims(replyText?: string | null, agentPrompt?: string | null): { text: string; neutralized: boolean; hits: string[] } {
+  const raw = String(replyText || "");
+  const hits = detectUngroundedClaims(raw, agentPrompt);
+  if (hits.length === 0 || !raw.trim()) return { text: raw, neutralized: false, hits };
+  const parts = raw.split(/(?<=[.!?\n])/);
+  const kept = parts.filter((p) => detectUngroundedClaims(p, agentPrompt).length === 0 && p.trim().length > 0);
+  const label = Array.from(new Set(hits.map((h) => _CLAIM_LABEL[h] || "essa informação"))).join(" e ");
+  const confirm = `Sobre ${label}, vou confirmar certinho com a nossa equipe de vendas pra te passar a informação correta, tá? 😊`;
+  const text = `${kept.join(" ").replace(/\s+/g, " ").trim()} ${confirm}`.trim();
+  return { text, neutralized: true, hits };
+}

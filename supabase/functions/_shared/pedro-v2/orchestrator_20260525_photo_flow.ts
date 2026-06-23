@@ -47,7 +47,7 @@ import {
   photoRequestTargetModel,
   messageIsTooVagueToAct,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2003,6 +2003,16 @@ export async function processPedroV2Turn(
     if (_specNeutral.neutralized) {
       reply = { ...(reply as any), text: _specNeutral.text };
       log("warn", "pedro_v2_spec_hallucination_neutralized", { lead_id: lead?.id || null, hits: _specNeutral.hits, source: (reply as any)?.source });
+    }
+
+    // AFIRMACAO NAO-ATERRADA NO PROMPT (garantia de fabrica, laudo cautelar): o agente so afirma o que
+    // esta no system_prompt da loja; se inventou (nao esta no prompt) -> "confirmo com a equipe" (decisao
+    // do dono). PROMPT-AWARE: loja que tem laudo/garantia-fabrica no prompt pode afirmar. Caso 98861-9201.
+    const _agentPrompt = (input.agent as any)?.system_prompt || (input.agent as any)?.prompt || "";
+    const _claimNeutral = neutralizeUngroundedClaims((reply as any)?.text || "", _agentPrompt);
+    if (_claimNeutral.neutralized) {
+      reply = { ...(reply as any), text: _claimNeutral.text };
+      log("warn", "pedro_v2_ungrounded_claim_neutralized", { lead_id: lead?.id || null, hits: _claimNeutral.hits, source: (reply as any)?.source });
     }
 
     // PRECO INVENTADO (backstop final — caso GRAVE dos prints: Civic 73.990->50.000, S10 91.990->59.000):
