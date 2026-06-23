@@ -272,6 +272,16 @@ export function leadExpressesVisitOrBuyIntent(message?: string | null): boolean 
   return false;
 }
 
+// ── LEAD RECUSOU EXPLICITAMENTE o atendimento/compra (≠ agradecimento/despedida educada) ─────────────
+// Usado pelo guard "não encerrar lead QUALIFICADO": o silêncio (transferir_silencioso) só se preserva
+// quando o lead REALMENTE recusou. "Grata!"/"obrigado"/"ok" de um lead engajado NÃO é recusa — esse vai
+// pro vendedor ANUNCIANDO. Caso real lead 99603-7979 ("Grata!" → o agente encerrou um lead quente).
+export function leadExplicitlyDeclined(message?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  return /\b(nao quero|nao tenho interesse|nao to interessad|nao estou interessad|desisti|deixa pra la|deixa quieto|so (estava|tava|to) (olhando|pesquisando|vendo|dando uma olhada)|nao precisa|nao vou (querer|levar|comprar|fechar)|mudei de ideia|perdi o interesse|nao da|nao rola|nao curti|nao gostei)\b/.test(t);
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):

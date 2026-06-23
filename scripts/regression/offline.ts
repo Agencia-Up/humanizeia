@@ -43,6 +43,7 @@ import {
   leadComplainsPhotoWrongOrMissing,
   messageIsTooVagueToAct,
   leadExpressesVisitOrBuyIntent,
+  leadExplicitlyDeclined,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
@@ -215,6 +216,13 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("agendamento", "'quero um carro da loja' -> NÃO é visita (é busca)", leadExpressesVisitOrBuyIntent("quero um carro da loja de vocês") === false);
   check("agendamento", "'onde fica a loja?' -> NÃO é visita (pergunta)", leadExpressesVisitOrBuyIntent("onde fica a loja?") === false);
   check("agendamento", "'vou pensar' -> NÃO é visita/compra", leadExpressesVisitOrBuyIntent("vou pensar e te falo") === false);
+
+  // ── NÃO ENCERRAR LEAD QUALIFICADO: recusa explícita vs agradecimento (lead 99603-7979 "Grata!") ──
+  check("agendamento", "'Grata!' -> NÃO é recusa (lead qualificado vai anunciado)", leadExplicitlyDeclined("Grata!") === false);
+  check("agendamento", "'obrigado' -> NÃO é recusa", leadExplicitlyDeclined("obrigado, fico no aguardo") === false);
+  check("agendamento", "'não quero mais' -> recusa (preserva silêncio)", leadExplicitlyDeclined("não quero mais, obrigado") === true);
+  check("agendamento", "'só estava olhando' -> recusa", leadExplicitlyDeclined("na verdade só estava olhando") === true);
+  check("agendamento", "'desisti' -> recusa", leadExplicitlyDeclined("desisti por enquanto") === true);
 
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
   check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);

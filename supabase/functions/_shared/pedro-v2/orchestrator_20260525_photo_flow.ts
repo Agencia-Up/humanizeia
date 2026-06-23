@@ -47,6 +47,7 @@ import {
   photoRequestTargetModel,
   messageIsTooVagueToAct,
   leadExpressesVisitOrBuyIntent,
+  leadExplicitlyDeclined,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
@@ -2492,6 +2493,26 @@ export async function processPedroV2Turn(
   if (reply && (!reply.temperatura || reply.temperatura === "morno")
       && /\b(golpe|fraude|picaret|171|estelionat|vigaris|larap|ladr[aã]o|enganaç|enganando|roubando|me roubar|trapac)\b/.test(String(text || "").toLowerCase())) {
     reply.temperatura = "desqualificado";
+  }
+
+  // GUARD: NUNCA ENCERRAR (silenciar) UM LEAD QUALIFICADO -> transfere ANUNCIANDO com os dados coletados.
+  // Decisao do dono (lead 99603-7979): lead com interesse/contexto + nome e um lead em potencial; vai pro
+  // vendedor com tudo, NUNCA "encerra o atendimento". O LLM as vezes le "Grata!"/"obrigado" de um lead
+  // engajado como fim e marca transferir_silencioso (encerra). So mantemos o silencio quando o lead
+  // REALMENTE recusou (leadExplicitlyDeclined) ou e desqualificado (golpe/hostil). Nao toca finance/troca
+  // (ja anunciam) nem handoff explicito (lead pediu humano -> ja anunciado).
+  if (!ownedLeadAssistantMode && reply?.transferir_silencioso === true && _hasNome && _hasContext
+      && reply?.temperatura !== "desqualificado"
+      && !leadExplicitlyDeclined(text)
+      && contextualIntent?.needs_handoff !== true
+      && reply?.source !== "trade_in_transfer_enforced" && reply?.source !== "finance_transfer_enforced") {
+    const _nm = (_q.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
+    reply.transferir_silencioso = false;
+    reply.pronto_para_transferir = true;
+    reply.text = `Perfeito${_nm ? ", " + _nm : ""}! 😊 Vou passar seu atendimento pro nosso consultor de vendas com tudo o que conversamos — ele já entra em contato com você pra seguir daqui.`;
+    reply.media = [];
+    reply.source = "qualified_lead_announced_transfer";
+    log("info", "pedro_v2_qualified_no_silent_close", { lead_id: lead?.id || null });
   }
 
   // VISITA/COMPRA -> AGENDAR + COLETAR ANTES de transferir (decisao do dono: poupar o vendedor e colher
