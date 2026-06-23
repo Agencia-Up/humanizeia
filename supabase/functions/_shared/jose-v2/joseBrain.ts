@@ -17,15 +17,11 @@ Como você pensa (hierarquia de VERDADE, nunca só a vitrine):
 - Venda fechada > lead BOM (qualificado pelo Pedro no atendimento) > vitrine (CPM/CTR/CPL).
 - "Custo por lead BOM" vale mais que "custo por lead" da Meta. Decida pela verdade.
 
-Suas ferramentas (use de verdade, não anuncie):
-- listar_campanhas: nome/status/verba/gasto/conversas por campanha.
-- consultar_qualidade_por_anuncio: quantos leads BONS/ruins/vendas cada anúncio trouxe (Pedro classifica no atendimento).
-- consultar_cabine: visão geral da conta (CPL, custo por lead bom, custo por venda, funil, idade, região).
+Os DADOS REAIS da conta JÁ vêm prontos no bloco "DADOS REAIS DA CONTA" no FIM destas instruções — campanhas (gasto/verba/status), qualidade do lead por anúncio (Pedro), e a visão geral. Eles são a sua fonte; não precisa "buscar" nada.
 
-REGRA DE OURO — AJA, não anuncie:
-- Quando pedirem pra analisar campanhas, dizer o que vai bem/mal, ou o que pausar/escalar: CHAME as ferramentas NO MESMO TURNO e já responda com o resultado.
-- É PROIBIDO responder "um momento", "vou verificar", "vou listar" sem ter chamado a ferramenta — isso deixa o gestor no vácuo. Chame e entregue.
-- Pra decidir, CRUZE as 3 visões: campanha (gasto/verba) + qualidade do lead por anúncio (Pedro) + a conta. Gasto alto e poucos leads BONS = candidato a pausar; custo por lead bom baixo = candidato a escalar.
+REGRA DE OURO — RESPONDA DIRETO com os dados:
+- Os números JÁ estão no bloco DADOS REAIS abaixo. É PROIBIDO dizer "vou verificar", "vou listar", "um momento" — está tudo aí, responda NA HORA com os números.
+- Pra decidir o que pausar/escalar, CRUZE: campanha (gasto/verba) + qualidade do lead por anúncio (Pedro) + visão geral. Gasto alto e poucos leads BONS = candidato a pausar; custo por lead bom baixo = candidato a escalar.
 
 Como responder:
 - Português claro e direto, sem jargão. Valores em reais (R$). CONCISO — o gestor lê no celular.
@@ -74,25 +70,40 @@ export async function joseChatTurn(admin: any, opts: {
   let finalText = "";
   let proposal: ChatTurnResult["proposal"] = null;
 
-  // Conta pode AGIR? (flag jose_acao). Se sim, libera as ferramentas de ação e o
-  // guia de propor com disciplina. Se não, chat fica 100% consultivo (leitura).
+  // Conta pode AGIR? (flag jose_acao). Só o propor_acao fica como FERRAMENTA — os dados
+  // de LEITURA são injetados direto no prompt (abaixo), pra não depender de tool-calling
+  // (o modelo estava narrando "vou listar" sem chamar nada de verdade).
   const canAct = await isFeatureEnabled(admin, opts.user_id, "jose_acao");
-  const tools = getJoseTools(canAct);
-  const system = canAct ? SYSTEM + ACTION_GUIDE : SYSTEM;
+  const tools = getJoseTools(canAct).filter((t: any) => t.name === "propor_acao");
+
+  // Pré-carrega os dados REAIS e injeta no system (best-effort; em paralelo). Assim o
+  // José SEMPRE tem os números na frente e responde direto.
+  let dados = "";
+  try {
+    const ctx = { ad_account_id: opts.ad_account_id ?? null };
+    const [cabine, campanhas, qualidade] = await Promise.all([
+      executeJoseTool(admin, opts.user_id, "consultar_cabine", { periodo: "last_7d" }, ctx).catch(() => null),
+      executeJoseTool(admin, opts.user_id, "listar_campanhas", {}, ctx).catch(() => null),
+      executeJoseTool(admin, opts.user_id, "consultar_qualidade_por_anuncio", {}, ctx).catch(() => null),
+    ]);
+    dados = `\n\n====== DADOS REAIS DA CONTA (últimos 7 dias) — use ESTES números, NUNCA diga "vou verificar/listar" ======\n`
+      + `VISÃO GERAL DA CONTA: ${JSON.stringify(cabine)}\n`
+      + `CAMPANHAS (gasto/verba/status): ${JSON.stringify(campanhas)}\n`
+      + `QUALIDADE DO LEAD POR ANÚNCIO (classificado pelo Pedro): ${JSON.stringify(qualidade)}\n`
+      + `====== FIM DOS DADOS ======`;
+  } catch (_e) { /* sem dados: responde com o que tem */ }
+
+  const system = (canAct ? SYSTEM + ACTION_GUIDE : SYSTEM) + dados;
 
   await persist(admin, opts, "user", opts.userMessage, null);
 
-  // Até 6 round-trips de ferramenta por turno (trava de segurança contra loop).
-  for (let i = 0; i < 6; i++) {
-    // 1º turno: FORÇA chamar uma ferramenta (tool_choice:any) — o claude-3.5-sonnet
-    // tende a "anunciar" ("vou listar... um momento") e encerrar sem chamar nada.
-    // Forçando, ele puxa o dado de verdade. Nos turnos seguintes, 'auto' deixa ele
-    // sintetizar a resposta final (ou chamar mais ferramentas se precisar).
+  // Loop curto: a leitura já está no prompt; só pode haver round-trip de propor_acao.
+  for (let i = 0; i < 4; i++) {
     const r = await callAiGateway(admin, {
       user_id: opts.user_id,
       ad_account_id: opts.ad_account_id ?? null,
       capability: "llm",
-      input: { system, messages, max_tokens: 1500, tools, tool_choice: i === 0 ? { type: "any" } : { type: "auto" } },
+      input: { system, messages, max_tokens: 1500, ...(tools.length ? { tools, tool_choice: { type: "auto" } } : {}) },
       ref_tipo: "chat",
       ref_id: opts.session_id,
     });
