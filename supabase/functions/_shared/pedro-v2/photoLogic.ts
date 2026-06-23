@@ -499,7 +499,9 @@ export function buildVehiclePhotoReply(memory: any, message: string, topicAnchor
     });
     return {
       ok: true,
-      text: `Tenho mais de uma opção pra te mostrar! De qual você quer ver as fotos?\n${lines.join("\n")}`,
+      // Oferece a SAÍDA "todas" pra NUNCA virar beco sem saída (o lead diz "manda todos" -> envia tudo,
+      // via leadRequestsAllVehiclePhotos). Caso real lead 98287-4078: o "de qual?" repetia sem fim.
+      text: `Tenho mais de uma opção pra te mostrar! De qual você quer ver as fotos?\n${lines.join("\n")}\n\nOu, se preferir, eu te mando as fotos de todas — é só dizer "manda todas" 😊`,
       source: "vehicle_photos_pick_which",
       media: [],
     };

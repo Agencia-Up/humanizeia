@@ -247,6 +247,7 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("fotos", "'manda todos' -> reason all_vehicles_requested", _allReply.selected_vehicle_reason === "all_vehicles_requested");
   const _pickReply = buildVehiclePhotoReply({ veiculos_apresentados: [_v1, _v2] }, "foto");
   check("fotos", "pedido vago (não 'todos') com 2 distintos -> ainda pergunta qual", _pickReply.source === "vehicle_photos_pick_which");
+  check("fotos", "pick_which oferece a saída 'manda todas' (anti-loop)", /todas/i.test(_pickReply.text || ""));
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
