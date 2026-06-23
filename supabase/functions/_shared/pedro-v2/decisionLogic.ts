@@ -21,7 +21,12 @@ export function normalizePlannerText(value?: string | null) {
 export function leadMessageHasExplicitPriceCeiling(message?: string | null) {
   const text = normalizePlannerText(message);
   if (!/\d/.test(text)) return false;
-  return /\b(ate|maximo|maxima|no maximo|orcamento|budget|tenho|tenho ate|procuro ate|quero ate|faixa de|na faixa|valor maximo|limite)\b/.test(text);
+  // "34k" / "34 mil" / "R$ 34.000" são PREÇO por si só, mesmo sem "até" (caso real "Tem algum de 34k?"
+  // = orçamento de 34 mil). Exclui quando é claramente quilometragem ("34 mil km", "34k km/rodados").
+  if (/\b\d{1,3}\s*k\b/.test(text) && !/\b\d{1,3}\s*k\s*(?:km|rodad|de km)/.test(text)) return true;
+  if (/\b\d{1,3}(?:[.,]\d{1,2})?\s*mil\b/.test(text) && !/\bmil\s*(?:km|rodad|de km)/.test(text)) return true;
+  if (/r\$\s*\d/.test(text)) return true;
+  return /\b(ate|maximo|maxima|no maximo|orcamento|budget|tenho|tenho ate|procuro ate|quero ate|faixa de|na faixa|valor maximo|limite|de ate|por ate)\b/.test(text);
 }
 
 // Extrai o VALOR do teto de preço de "até X mil / R$ X / Xk" (provider-independente). O planner LLM
@@ -40,6 +45,17 @@ export function parsePriceCeiling(message?: string | null): number | null {
   const plain = t.match(/\b(\d{4,7})\b/);
   if (plain) { const n = parseInt(plain[1], 10); if (n >= 5000 && n <= 2000000) return n; }
   return null;
+}
+
+// ── "TEM ALGUM DE 34K?": lead quer QUALQUER carro no ORÇAMENTO (não um modelo específico) ────────────
+// Caso real lead 99747-0573: "Tem algum de 34k?" buscava "Zafira" (modelo velho/stale) e ignorava o
+// orçamento. O lead quer QUALQUER carro até ~34 mil. Detecta teto de preço + pista de "qualquer/algum
+// carro" (sem nomear modelo) -> o planner larga o modelo e busca AMPLO filtrado por preço (mais em conta).
+export function leadAsksAnyCarInBudget(message?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  if (parsePriceCeiling(t) === null) return false;
+  return /\b(algum|alguma|algo|qualquer|o que tiver|que tiver|tem de|tem carro|algum carro|carro de|carro por|opcao|opcoes|mais em conta|mais barato|baratinho)\b/.test(t);
 }
 
 export function leadMessageAsksBroadStock(message?: string | null) {

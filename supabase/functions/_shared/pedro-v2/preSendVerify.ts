@@ -57,9 +57,9 @@ export function replyDefersSearch(replyText?: string | null): boolean {
   if (!t) return false;
   const defer = /\b(vou|irei|ja vou|vou ja|deixa eu|vamos)\s+(buscar|procurar|verificar|conferir|checar|pesquisar|consultar|levantar|olhar)\b/.test(t);
   if (!defer) return false;
-  const aboutSearch = /\b(informac|disponib|no estoque|no nosso estoque|as opcoes|sobre o|sobre a|do |da )\b/.test(t)
+  const aboutSearch = /\b(informac|disponib|no estoque|no nosso estoque|opcoes|opcao|na faixa|faixa de|sobre o|sobre a|do |da )\b/.test(t)
     && !/\b(com (a |o )?(equipe|time|consultor|vendedor|especialista)|com (o )?nosso)\b/.test(t);
-  const hasRealData = /(r\$|\bkm\b|\d{4})/.test(t); // se já cita preço/ano, não é mera promessa vazia
+  const hasRealData = /(r\$\s*\d|\bkm\b|\b(19|20)\d{2}\b)/.test(t); // se já cita preço/ano real, não é mera promessa vazia
   return aboutSearch && !hasRealData;
 }
 

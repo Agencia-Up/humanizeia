@@ -411,7 +411,13 @@ export function buildDeterministicStockReply(input: {
   // renderiza — sai link cru, feio). Mostra ATE 5, formato limpo (1 linha por carro), insinua
   // que ha mais e fecha com pergunta que desenrola (padrao SDR). Vale mesmo quando o LLM cai
   // e este fallback assume.
-  const shown = items.slice(0, 5);
+  // ORÇAMENTO (lead 99747-0573 "Tem algum de 34k?"): com teto de preço, MAIS EM CONTA primeiro (preço
+  // crescente) — o lead quer "os mais baratos", organizados. Sem teto, mantém a ordem do ranking.
+  const _ceil = Number((input.plan as any)?.search_filters?.preco_max) || Number((input.plan as any)?.search_filters?.orcamento_max) || 0;
+  const _ordered = _ceil > 0
+    ? [...items].sort((a: any, b: any) => (Number(a.preco) || Infinity) - (Number(b.preco) || Infinity))
+    : items;
+  const shown = _ordered.slice(0, 5);
   const list = shown.map((vehicle) => {
     const det = [
       vehicle.preco_formatado || null,
@@ -435,9 +441,13 @@ export function buildDeterministicStockReply(input: {
   const _reqModelToks = _norm(String(input.plan.search_query || "")).split(/\s+/).filter((w) => w.length >= 3 && !_BRANDS.has(w) && !_TYPES.has(w) && !/^\d+$/.test(w));
   const _hasExact = !input.plan.search_query || _isBroad || _reqModelToks.length === 0
     || _reqModelToks.some((tok) => shown.some((v: any) => _norm(`${v.label || ""} ${v.modelo || ""}`).includes(tok)));
-  const _leadIn = _hasExact
-    ? "Temos sim! Olha algumas opcoes:"
-    : `No momento nao tenho ${input.plan.search_query} exatamente no estoque, mas tenho estas opcoes que podem te interessar:`;
+  // ORÇAMENTO NÃO ATINGIDO: nenhum item cabe no teto -> honesto "não tenho até R$ X, mas os mais em conta são:"
+  const _allAbove = _ceil > 0 && shown.length > 0 && shown.every((v: any) => Number(v.preco) > _ceil);
+  const _leadIn = _allAbove
+    ? `Nao tenho carro ate R$ ${_ceil.toLocaleString("pt-BR")} no momento 😕 Mas os MAIS EM CONTA que tenho sao:`
+    : _hasExact
+      ? "Temos sim! Olha algumas opcoes:"
+      : `No momento nao tenho ${input.plan.search_query} exatamente no estoque, mas tenho estas opcoes que podem te interessar:`;
   return `${_leadIn}\n\n${list}${more}\n\nQuer ver fotos de algum desses ou prefere que eu te mostre mais opcoes?`;
 }
 

@@ -44,6 +44,7 @@ import {
   messageIsTooVagueToAct,
   leadExpressesVisitOrBuyIntent,
   leadExplicitlyDeclined,
+  leadAsksAnyCarInBudget,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -258,6 +259,7 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // ── "VOU BUSCAR..." E SOME (lead 99747-0573 "Palio") ──
   check("ficha", "deferral 'vou verificar a disponibilidade do X' -> detecta", replyDefersSearch("Vou verificar a disponibilidade do Fiat Palio para você.") === true);
   check("ficha", "deferral 'vou buscar informações sobre o X' -> detecta", replyDefersSearch("Vou buscar informações sobre o Fiat Palio para você!") === true);
+  check("ficha", "deferral 'vou buscar opções de veículos na faixa de 34 mil' -> detecta", replyDefersSearch("Vou buscar opções de veículos na faixa de 34 mil para você.") === true);
   check("ficha", "'vou confirmar com a equipe' (dúvida) -> NÃO é deferral de busca", replyDefersSearch("Sobre a garantia, vou confirmar com a nossa equipe de vendas") === false);
   check("ficha", "apresentação com dados (R$) -> NÃO é deferral", replyDefersSearch("Temos o Onix 2020 por R$ 65.990, quer ver?") === false);
   // honestidade do builder determinístico: pediu Palio (não existe) -> NÃO diz "Temos sim", diz "não tenho Palio"
@@ -341,6 +343,22 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("preco", "parse 'tenho 100 mil pra gastar' -> 100000", parsePriceCeiling("tenho 100 mil pra gastar") === 100000);
   check("preco", "parse 'até R$ 48.000' -> 48000", parsePriceCeiling("até R$ 48.000") === 48000, String(parsePriceCeiling("até R$ 48.000")));
   check("preco", "parse 'suv 2020 pra frente' -> null (ano, não teto)", parsePriceCeiling("procuro suv 2020 pra frente") === null, String(parsePriceCeiling("procuro suv 2020 pra frente")));
+  // "34k" / "de X mil" / "por Xk" SEM "até" (caso real lead 99747-0573 "Tem algum de 34k?")
+  check("preco", "parse 'tem algum de 34k?' -> 34000", parsePriceCeiling("tem algum de 34k?") === 34000, String(parsePriceCeiling("tem algum de 34k?")));
+  check("preco", "parse 'algum por 50k' -> 50000", parsePriceCeiling("tem algum por 50k") === 50000, String(parsePriceCeiling("tem algum por 50k")));
+  check("preco", "parse 'tem de 30 mil?' -> 30000", parsePriceCeiling("tem de 30 mil?") === 30000, String(parsePriceCeiling("tem de 30 mil?")));
+  check("preco", "'onix com 80 mil km' -> null (é quilometragem, não preço)", parsePriceCeiling("onix com 80 mil km") === null, String(parsePriceCeiling("onix com 80 mil km")));
+  check("preco", "'34k km rodados' -> null (quilometragem)", parsePriceCeiling("carro com 34k km rodados") === null, String(parsePriceCeiling("carro com 34k km rodados")));
+  // "tem algum de 34k?" = orçamento (qualquer carro), não modelo específico
+  check("preco", "'tem algum de 34k?' -> qualquer-carro-no-orçamento", leadAsksAnyCarInBudget("tem algum de 34k?") === true);
+  check("preco", "'tem de 30 mil?' -> qualquer-carro-no-orçamento", leadAsksAnyCarInBudget("tem de 30 mil?") === true);
+  check("preco", "'corolla até 50 mil' -> NÃO é qualquer-carro (nomeou modelo)", leadAsksAnyCarInBudget("corolla até 50 mil") === false);
+  check("preco", "'tem suv?' -> NÃO (sem preço)", leadAsksAnyCarInBudget("tem suv?") === false);
+  // orçamento não atingido: nada ≤34k -> "não tenho até R$ 34.000" + mais em conta primeiro (Sandero antes do Onix)
+  const _budStock = { success: true, items: [{ marca: "Chevrolet", modelo: "Onix", ano: 2017, preco: 64990 }, { marca: "Renault", modelo: "Sandero", ano: 2021, preco: 53990 }] };
+  const _budReply = buildDeterministicStockReply({ plan: { action: "stock_search", search_query: null, search_filters: { stock_broad: true, preco_max: 34000 } } as any, intent: null as any, stock_result: _budStock });
+  check("preco", "orçamento 34k não atingido -> 'não tenho até R$ 34.000'", /nao tenho carro ate r\$ 34/i.test(_budReply));
+  check("preco", "orçamento -> mais em conta primeiro (Sandero antes do Onix)", _budReply.indexOf("Sandero") < _budReply.indexOf("Onix"));
   // normalizePlan aplica o teto mesmo quando o LLM não setou preco_max.
   const pc = normalizePlan({ action: "stock_search", intent: "stock_lookup", search_query: "Corolla", search_filters: { modelo_desejado: "Corolla" }, confidence: 0.7 }, FALLBACK, { message: "corolla até 50 mil", vehicle_resolution: vr() as any, memory: null, recent_history: [] } as any);
   check("preco", "normalizePlan 'corolla até 50 mil' -> preco_max=50000 + hard", Number(pc.search_filters?.preco_max) === 50000 && pc.search_filters?.hard_price_ceiling === true, `preco_max=${pc.search_filters?.preco_max} hard=${pc.search_filters?.hard_price_ceiling}`);

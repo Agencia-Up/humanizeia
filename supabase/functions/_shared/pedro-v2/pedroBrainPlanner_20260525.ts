@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -622,6 +622,27 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
       plan.search_filters = { ...(plan.search_filters || {}), preco_max: _ceil, hard_price_ceiling: true };
       plan.reason = `enforced_price_ceiling_${_ceil}:${plan.reason || ""}`;
     }
+  }
+
+  // "TEM ALGUM DE 34K?" — pergunta SÓ de ORÇAMENTO (qualquer carro no valor, sem modelo específico): larga
+  // o modelo velho/stale e busca AMPLO filtrado por preço, MAIS EM CONTA primeiro. SEM hard ceiling: se
+  // nada couber no orçamento, o reply mostra os mais baratos disponíveis sendo honesto ("não tenho até X").
+  // Caso real lead 99747-0573: "Tem algum de 34k?" buscava "Zafira" e mostrava carros de 64-76k.
+  if (leadAsksAnyCarInBudget(input.message)) {
+    const _ceil = parsePriceCeiling(input.message);
+    plan.action = "stock_search";
+    if (!plan.intent || plan.intent === "unknown") plan.intent = "price_question";
+    plan.search_query = null;
+    plan.use_memory_vehicle = false;
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      modelo_desejado: null, tipo_veiculo: null, stock_broad: true,
+      preco_max: null, hard_price_ceiling: false,
+      // orcamento_max = DICA pro reply (mostra os mais em conta + "nao tenho ate R$ X"); a BUSCA ignora
+      // (preco_max=null) pra NAO zerar quando nada cabe no teto — senao o lead nao recebe nenhuma opcao.
+      ...(_ceil ? { orcamento_max: _ceil } : {}),
+    };
+    plan.reason = `enforced_any_car_in_budget_${_ceil || "?"}:${plan.reason || ""}`;
   }
 
   const _heurIntent = String(input.heuristic_intent?.intent || "");
