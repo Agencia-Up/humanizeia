@@ -146,6 +146,9 @@ function pickVehicleByModelName(message: string, vehicles: any[]) {
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score);
   if (ranked.length === 0) return null;
+  // Nome do modelo nomeado pelo lead -> manda UMA foto (o melhor match). Mesmo com várias unidades do
+  // mesmo modelo, mandar uma é melhor que travar perguntando (o "automático"/"preto" já discrimina ANTES
+  // disto, no atributo). NÃO transformar empate em pick_which: nomear o modelo = enviar, não re-perguntar.
   return { index: ranked[0].index, reason: "model_name_match", key: vehicleKey(ranked[0].vehicle) };
 }
 
@@ -183,13 +186,9 @@ export function pickReferencedVehicle(message: string, memory: any, vehicles: an
     return { index, explicit: true, reason: "explicit_ordinal", key: vehicleKey(vehicles[index]) };
   }
 
-  // Nome do modelo/marca citado vence tudo (lead nomeou o carro de proposito).
-  const modelMatch = pickVehicleByModelName(message, vehicles);
-  if (modelMatch) {
-    return { ...modelMatch, explicit: true };
-  }
-
-  // Atributo/cor ("manda o preto") SO escolhe DENTRO do modelo do topico (senao manda outro modelo).
+  // ATRIBUTO discriminador (câmbio/cor/ano/tokens) — VEM ANTES do nome do modelo: "onix automático"
+  // tem que casar a UNIDADE certa (a automática), não o 1º "onix" da lista. Escopo no modelo do tópico
+  // (se houver âncora) pra cor não trocar de modelo. (Raiz do foco errado do lead 98287-4078.)
   const attributeScope = topicAnchor
     ? vehicles.filter((v) => sameVehicleModel(v, topicAnchor))
     : vehicles;
@@ -200,19 +199,28 @@ export function pickReferencedVehicle(message: string, memory: any, vehicles: an
     return { ...attributeMatch, index: realIndex >= 0 ? realIndex : attributeMatch.index, explicit: true };
   }
 
-  // Atributo nao casou DENTRO do topico mas ha ancora -> ancora o proprio topico (nao memoria velha).
-  if (topicAnchor) {
-    const anchorIndex = vehicles.findIndex((v) => vehicleKey(v) === vehicleKey(topicAnchor));
-    if (anchorIndex >= 0) {
-      return { index: anchorIndex, explicit: false, reason: "topic_anchor_vehicle", key: vehicleKey(topicAnchor) };
-    }
+  // Nome do modelo/marca citado (lead nomeou o carro). pickVehicleByModelName devolve null em EMPATE
+  // (nome casa em várias unidades) -> aí o pick_which decide, não chuta a 1ª.
+  const modelMatch = pickVehicleByModelName(message, vehicles);
+  if (modelMatch) {
+    return { ...modelMatch, explicit: true };
   }
 
+  // CONTINUAÇÃO: última foto enviada (foco FORTE) — VEM ANTES da âncora-fallback do tópico. A âncora
+  // fraca (1º do pool homogêneo) NÃO pode sequestrar "foto do painel"/"mais fotos" e re-perguntar.
   const lastKey = memory?.ultima_foto?.veiculo_key || memory?.referencia?.ultimo_veiculo_key || null;
   if (lastKey) {
     const keyIndex = vehicles.findIndex((vehicle) => vehicleKey(vehicle) === lastKey);
     if (keyIndex >= 0) {
       return { index: keyIndex, explicit: false, reason: "last_photo_vehicle_key", key: lastKey };
+    }
+  }
+
+  // Âncora do tópico (fallback, só quando NÃO há continuação): ancora no próprio tópico, não memória velha.
+  if (topicAnchor) {
+    const anchorIndex = vehicles.findIndex((v) => vehicleKey(v) === vehicleKey(topicAnchor));
+    if (anchorIndex >= 0) {
+      return { index: anchorIndex, explicit: false, reason: "topic_anchor_vehicle", key: vehicleKey(topicAnchor) };
     }
   }
 

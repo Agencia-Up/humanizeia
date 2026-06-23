@@ -249,6 +249,40 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("fotos", "pedido vago (não 'todos') com 2 distintos -> ainda pergunta qual", _pickReply.source === "vehicle_photos_pick_which");
   check("fotos", "pick_which oferece a saída 'manda todas' (anti-loop)", /todas/i.test(_pickReply.text || ""));
 
+  // ====== HARNESS DE FLUXO DE FOTO — replay da conversa REAL (lead 98287-4078) ======
+  // 2 Onix Sedan, MESMO modelo, unidades diferentes (LT branco MANUAL 79.990 / LTZ preto AUT 97.990),
+  // AMBOS com fotos. Comportamento CORRETO esperado em cada turno (sem remendo, sem adivinhar).
+  const _onixPool = () => [
+    { marca: "Chevrolet", modelo: "Onix Sedan", versao: "PLUS LT 1.0 12V FLEX 4P MEC", ano: 2025, cor: "Branco", preco: 79990, cambio: "Manual", combustivel: "Flex", images_count: 15, fotos: Array.from({ length: 15 }, (_x, i) => `lt-${i}.jpg`) },
+    { marca: "Chevrolet", modelo: "Onix Sedan", versao: "PLUS LTZ 1.0 12V TB FLEX AUT", ano: 2025, cor: "Preto", preco: 97990, cambio: "Automático", combustivel: "Flex", images_count: 16, fotos: Array.from({ length: 16 }, (_x, i) => `ltz-${i}.jpg`) },
+  ];
+  const _phr = (msg: string, extra: any = {}) => buildVehiclePhotoReply({ veiculos_apresentados: _onixPool(), ...extra }, msg);
+  // (b) "esse onix automatico" -> manda o LTZ (automatico/preto), NAO o 1o da lista (LT branco)
+  const f1 = _phr("quero ver esse onix automatico");
+  check("fluxo_foto", "'onix automatico' -> manda o LTZ (aut/preto), não o 1o", f1.source === "vehicle_photos_reply" && /aut/i.test(String(f1.vehicle?.cambio)) && /preto/i.test(String(f1.vehicle?.cor)));
+  // cor explicita "o branco" -> LT branco
+  const f2 = _phr("quero o branco");
+  check("fluxo_foto", "'o branco' -> manda o LT branco", f2.source === "vehicle_photos_reply" && /branco/i.test(String(f2.vehicle?.cor)));
+  // cor explicita "o preto" -> LTZ preto
+  const f3 = _phr("manda o preto");
+  check("fluxo_foto", "'o preto' -> manda o LTZ preto", f3.source === "vehicle_photos_reply" && /preto/i.test(String(f3.vehicle?.cor)));
+  // (ambiguidade real) "o onix" SEM discriminador, 2 unidades -> PERGUNTA qual (não chuta o 1o)
+  const f4 = _phr("quero ver o onix");
+  check("fluxo_foto", "'o onix' (modelo nomeado) -> manda UMA foto (não trava perguntando)", f4.source === "vehicle_photos_reply");
+  // (c) CONTINUAÇÃO: já mostrou o LTZ -> "foto do painel" continua no LTZ (não re-pergunta)
+  const _ltzKey = f3.selected_vehicle_key;
+  const f5 = _phr("foto do painel", { ultima_foto: { veiculo_key: _ltzKey } });
+  check("fluxo_foto", "'foto do painel' após mostrar o LTZ -> continua no LTZ (não re-pergunta)", f5.source === "vehicle_photos_reply" && /preto/i.test(String(f5.vehicle?.cor)));
+  // (c) MESMO com âncora do pool = LT (1o), a CONTINUAÇÃO (ultima_foto=LTZ) deve vencer — bug real prod.
+  const f5b = buildVehiclePhotoReply({ veiculos_apresentados: _onixPool(), ultima_foto: { veiculo_key: _ltzKey } }, "foto do painel", _onixPool()[0]);
+  check("fluxo_foto", "'foto do painel' com âncora=LT mas última-foto=LTZ -> continua no LTZ", f5b.source === "vehicle_photos_reply" && /preto/i.test(String(f5b.vehicle?.cor)));
+  // sem foco + part-request + 2 unidades -> ambíguo, pergunta (correto)
+  const f6 = _phr("foto do painel");
+  check("fluxo_foto", "'foto do painel' SEM foco + 2 unidades -> pergunta qual", f6.source === "vehicle_photos_pick_which");
+  // "manda todos" -> envia todos (v163)
+  const f7 = _phr("manda todos");
+  check("fluxo_foto", "'manda todos' -> envia fotos de todos", f7.source === "vehicle_photos_reply" && (f7.media || []).length >= 4);
+
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));
   check("preco", "parse 'onix até 30 mil' -> 30000", parsePriceCeiling("onix até 30 mil") === 30000);
