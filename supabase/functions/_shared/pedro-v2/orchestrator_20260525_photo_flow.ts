@@ -47,7 +47,7 @@ import {
   photoRequestTargetModel,
   messageIsTooVagueToAct,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs } from "./preSendVerify.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
   vehicleKey,
@@ -1993,6 +1993,17 @@ export async function processPedroV2Turn(
   // presente). Consolida os invariantes espalhados; cada novo "erro bobo" vira +1 check em
   // preSendVerify.ts (com 1 teste offline) em vez de remendo solto no orchestrator.
   try {
+    // ANTI-ALUCINACAO DE FICHA TECNICA (Solucao D Antigravity): o estoque NAO traz consumo/cv/litros; se
+    // o LLM CRAVOU um numero desses que nao esta no texto real do veiculo, troca a frase por "confirmo com
+    // o time" (preserva midia/fotos e o resto da resposta). Aterramento = label/versao/modelo dos veiculos.
+    const _vehText = (arr: any) => (Array.isArray(arr) ? arr : []).map((v: any) => `${v?.label || ""} ${v?.versao || ""} ${v?.modelo || ""} ${v?.descricao || v?.observacoes || v?.titulo || ""}`).join(" | ");
+    const _factsForSpec = `${_vehText(stockResult?.items)} ${_vehText((nextMemory as any)?.veiculos_apresentados)} ${_vehText([(nextMemory as any)?.veiculo_em_foco].filter(Boolean))}`;
+    const _specNeutral = neutralizeUngroundedSpecs((reply as any)?.text || "", _factsForSpec);
+    if (_specNeutral.neutralized) {
+      reply = { ...(reply as any), text: _specNeutral.text };
+      log("warn", "pedro_v2_spec_hallucination_neutralized", { lead_id: lead?.id || null, hits: _specNeutral.hits, source: (reply as any)?.source });
+    }
+
     const _mediaCount = Array.isArray((reply as any)?.media) ? (reply as any).media.length : 0;
     const _violations = verifyReplyText((reply as any)?.text || "", {
       mediaCount: _mediaCount,

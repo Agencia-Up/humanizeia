@@ -43,7 +43,7 @@ import {
   leadComplainsPhotoWrongOrMissing,
   messageIsTooVagueToAct,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
   pickReferencedVehicle,
@@ -202,6 +202,18 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("qualificacao", "'quero um carro até 50 mil' -> NÃO vago (tem preço)", messageIsTooVagueToAct("quero um carro até 50 mil") === false);
   check("qualificacao", "'o que vocês têm?' -> NÃO vago (mostruário, apresenta)", messageIsTooVagueToAct("o que vocês têm?") === false);
   check("qualificacao", "com interesse na memória -> NÃO vago (usa o interesse)", messageIsTooVagueToAct("me ajuda", { interesse: { tipo_veiculo: "suv" } }) === false);
+
+  // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
+  check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);
+  check("ficha", "potência inventada '150cv' -> detecta", detectUngroundedSpecs("Tem 150cv de potência", "").includes("potencia:150"));
+  check("ficha", "porta-malas inventado '470 litros' -> detecta", detectUngroundedSpecs("Porta-malas de 470 litros", "").includes("litros:470"));
+  check("ficha", "potência ATERRADA na versão (116cv) -> NÃO alucina", detectUngroundedSpecs("Tem 116cv", "Chevrolet Onix 1.0 TURBO 116CV 2022").length === 0);
+  check("ficha", "preço/km (R$69.900, 54.000 km) -> NÃO é spec", detectUngroundedSpecs("Custa R$ 69.900 e tem 54.000 km, cor preta", "").length === 0);
+  check("ficha", "motor '1.0' / sem unidade de spec -> NÃO detecta", detectUngroundedSpecs("Tem motor 1.0 e é automático", "").length === 0);
+  const _neut = neutralizeUngroundedSpecs("Temos o Onix 2020, lindo! Ele faz uns 13 km/l na cidade. Quer ver fotos?", "");
+  check("ficha", "neutraliza: tira a frase do km/l", _neut.neutralized === true && !/13\s*km\/l/i.test(_neut.text));
+  check("ficha", "neutraliza: mantém oferta + pergunta de foto", /onix/i.test(_neut.text) && /fotos/i.test(_neut.text) && /confirmar/i.test(_neut.text));
+  check("ficha", "sem spec -> NÃO mexe na resposta", neutralizeUngroundedSpecs("Temos o Onix 2020 por R$ 65 mil, quer ver?", "").neutralized === false);
 
   // ── TETO DE PREÇO determinístico (DeepSeek não extraía "até X mil") ──
   check("preco", "parse 'corolla até 50 mil' -> 50000", parsePriceCeiling("corolla até 50 mil") === 50000, String(parsePriceCeiling("corolla até 50 mil")));

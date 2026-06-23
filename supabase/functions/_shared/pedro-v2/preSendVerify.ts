@@ -62,3 +62,57 @@ export function replyMentionsAnyVehicle(replyText?: string | null, vehicles?: Ar
   }
   return false;
 }
+
+// ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D da análise Antigravity) ──────────────────────────────
+// O estoque (BNDV/RevendaMais) NÃO traz consumo (km/l), potência (cv) nem litros (porta-malas/tanque).
+// A regra "não invente" JÁ existe no prompt, mas o modelo barato (gpt-4.1-mini) às vezes a ignora e
+// CRAVA um número (ex.: "faz 12 km/l", "tem 150cv") — destrói a confiança. Aqui detectamos o número de
+// spec que NÃO está aterrado nos fatos do estoque e o orchestrator neutraliza ("confirmo com o time").
+// PURO -> offline ($0). `factsText` = TEXTO descritivo do(s) veículo(s) real(is) (label/versão): se o
+// número aparece lá (ex.: versão "1.0 TURBO 116CV"), está aterrado e NÃO é alucinação.
+const _SPEC_PATTERNS: Array<{ key: string; re: string }> = [
+  { key: "consumo", re: "(\\d{1,2}(?:[.,]\\d)?)\\s*(?:km\\s*\\/\\s*l|km por litro|km\\/litro|kml)" },
+  { key: "potencia", re: "(\\d{2,3})\\s*(?:cv|cavalos|hp)\\b" },
+  { key: "litros", re: "(\\d{2,3})\\s*litros\\b" },
+];
+
+export function detectUngroundedSpecs(replyText?: string | null, factsText?: string | null): string[] {
+  const t = normalizePlannerText(replyText);
+  const facts = normalizePlannerText(factsText);
+  if (!t) return [];
+  const out: string[] = [];
+  for (const { key, re } of _SPEC_PATTERNS) {
+    const rx = new RegExp(re, "g");
+    let m: RegExpExecArray | null;
+    while ((m = rx.exec(t)) !== null) {
+      const num = m[1];
+      // o número aparece no TEXTO real do veículo (versão/label)? então é dado REAL, não alucinação.
+      // boundary só ANTES + não-seguido-de-dígito: casa "116" em "116CV" e "116 ", mas não em "1160".
+      if (facts && new RegExp(`\\b${escapeRe(num)}(?!\\d)`).test(facts)) continue;
+      out.push(`${key}:${num}`);
+    }
+  }
+  return out;
+}
+
+const _SPEC_LABEL: Record<string, string> = {
+  consumo: "o consumo (km/l)",
+  potencia: "a potência (cavalos)",
+  litros: "a capacidade exata em litros",
+};
+
+// Reescreve a resposta tirando a(s) FRASE(S) com spec inventada e acrescentando uma confirmação
+// graciosa (mantém o resto: oferta, pergunta de foto). Determinístico -> nunca passa número mentiroso.
+export function neutralizeUngroundedSpecs(replyText?: string | null, factsText?: string | null): { text: string; neutralized: boolean; hits: string[] } {
+  const raw = String(replyText || "");
+  const hits = detectUngroundedSpecs(raw, factsText);
+  if (hits.length === 0 || !raw.trim()) return { text: raw, neutralized: false, hits };
+  const kinds = Array.from(new Set(hits.map((h) => h.split(":")[0])));
+  // quebra em frases preservando o delimitador; descarta as que têm spec não-aterrada.
+  const parts = raw.split(/(?<=[.!?\n])/);
+  const kept = parts.filter((p) => detectUngroundedSpecs(p, factsText).length === 0 && p.trim().length > 0);
+  const label = kinds.map((k) => _SPEC_LABEL[k] || "esse dado técnico").join(" e ");
+  const confirm = `Sobre ${label}, deixa eu confirmar certinho com o nosso time pra não te passar nada errado e já te falo! 😊`;
+  const text = `${kept.join(" ").replace(/\s+/g, " ").trim()} ${confirm}`.trim();
+  return { text, neutralized: true, hits };
+}
