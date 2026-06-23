@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import {
   ShieldAlert, Power, SlidersHorizontal, KeyRound, DollarSign, ToggleLeft,
   Loader2, CheckCircle, XCircle, Clock, AlertTriangle,
+  PauseCircle, TrendingUp, TrendingDown, PlusCircle, Image as ImageIcon, Users, MessageCircle, Info,
 } from 'lucide-react';
 
 // ── Governança do José (Fase 0). Tudo escopado por usuário via RLS (auth.uid()).
@@ -34,6 +35,23 @@ const NIVEIS = [
   { key: 'recomendar', label: 'Recomenda (pede SIM/NÃO)' },
   { key: 'executar',   label: 'Executa sozinho (dentro do teto)' },
 ];
+
+// Metadados visuais por ação (ícone + cor + explicação p/ leigo) — padrão do mockup.
+const ACAO_META: Record<string, { icon: any; tile: string; desc: string }> = {
+  pausar_campanha:   { icon: PauseCircle,  tile: 'bg-blue-500/15 text-blue-400 ring-blue-400/25',     desc: 'O José identifica que a campanha está gastando muito e recomenda pausar.' },
+  escalar_orcamento: { icon: TrendingUp,   tile: 'bg-emerald-500/15 text-emerald-400 ring-emerald-400/25', desc: 'O José vê oportunidade de escalar e recomenda aumentar o orçamento.' },
+  reduzir_orcamento: { icon: TrendingDown, tile: 'bg-orange-500/15 text-orange-400 ring-orange-400/25', desc: 'O José identifica que o custo está alto e recomenda reduzir o orçamento.' },
+  criar_campanha:    { icon: PlusCircle,   tile: 'bg-violet-500/15 text-violet-400 ring-violet-400/25', desc: 'O José sugere uma nova campanha com base em dados e objetivos.' },
+  publicar_criativo: { icon: ImageIcon,    tile: 'bg-amber-500/15 text-amber-400 ring-amber-400/25',   desc: 'O José sugere um criativo e recomenda publicar após análise.' },
+  ajustar_publico:   { icon: Users,        tile: 'bg-cyan-500/15 text-cyan-400 ring-cyan-400/25',       desc: 'O José propõe ajustes no público para melhorar resultados.' },
+};
+// O selo "o que significa" derivado do nível escolhido.
+function significaSelo(nivel: string): { label: string; cls: string } {
+  if (nivel === 'executar')  return { label: 'Executa sozinho', cls: 'bg-blue-500/15 text-blue-400 border-blue-500/30' };
+  if (nivel === 'analisar')  return { label: 'Só analisa',       cls: 'bg-slate-500/15 text-slate-300 border-slate-500/30' };
+  if (nivel === 'desligado') return { label: 'Desligado',        cls: 'bg-muted text-muted-foreground border-border' };
+  return { label: 'Pede aprovação', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' };
+}
 const FEATURES: { key: string; label: string; desc: string }[] = [
   { key: 'reasoning_core',      label: 'Núcleo de julgamento', desc: 'Veredito por hierarquia de verdade (venda > lead > vitrine)' },
   { key: 'voz',                 label: 'Voz (áudio)',          desc: 'Responder e entender áudios no WhatsApp' },
@@ -291,20 +309,59 @@ function PermissoesSection({ userId }: { userId: string }) {
   if (loading) return <div className="py-8 text-center"><Loader2 className="h-5 w-5 animate-spin inline" /></div>;
 
   return (
-    <Card>
-      <CardHeader className="pb-3"><CardTitle className="text-base">Nível de autonomia por ação</CardTitle></CardHeader>
-      <CardContent className="space-y-3">
-        {TIPOS_ACAO.map((t) => (
-          <div key={t.key} className="flex items-center justify-between gap-3 border-b border-border/40 pb-3 last:border-0">
-            <span className="text-sm">{t.label}</span>
-            <Select value={map[t.key]?.nivel || 'recomendar'} onValueChange={(v) => setNivel(t.key, v)}>
-              <SelectTrigger className="w-[230px]"><SelectValue /></SelectTrigger>
-              <SelectContent>{NIVEIS.map((n) => <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>)}</SelectContent>
-            </Select>
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-base font-bold flex items-center gap-2"><KeyRound className="h-4 w-4 text-primary" /> Nível de autonomia por ação</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">Escolha como o José deve agir em cada situação. Você mantém o controle final.</p>
+      </div>
+
+      <Card className="border-primary/20">
+        <CardContent className="p-0">
+          {/* Cabeçalho (desktop) */}
+          <div className="hidden md:grid grid-cols-[1.7fr_150px_190px_230px] gap-3 px-4 py-2.5 text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/50">
+            <span>Ação</span><span>O que significa</span><span>Como ele solicita</span><span>Nível de autonomia</span>
           </div>
-        ))}
-      </CardContent>
-    </Card>
+          <div className="divide-y divide-border/40">
+            {TIPOS_ACAO.map((t) => {
+              const meta = ACAO_META[t.key];
+              const nivel = map[t.key]?.nivel || 'recomendar';
+              const selo = significaSelo(nivel);
+              const Icon = meta?.icon || KeyRound;
+              return (
+                <div key={t.key} className="grid grid-cols-1 md:grid-cols-[1.7fr_150px_190px_230px] gap-3 px-4 py-3.5 md:items-center hover:bg-muted/30 transition-colors">
+                  {/* Ação */}
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${meta?.tile || 'bg-muted text-muted-foreground'}`}><Icon className="h-5 w-5" /></div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-tight">{t.label}</p>
+                      <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{meta?.desc}</p>
+                    </div>
+                  </div>
+                  {/* O que significa */}
+                  <div><Badge variant="outline" className={`text-[10px] font-medium ${selo.cls}`}>{selo.label}</Badge></div>
+                  {/* Como ele solicita */}
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                    {nivel === 'recomendar'
+                      ? (<><MessageCircle className="h-3.5 w-3.5 text-emerald-400" /> WhatsApp do responsável</>)
+                      : nivel === 'executar' ? 'Executa direto (com log)'
+                      : nivel === 'analisar' ? 'Só mostra no painel' : '—'}
+                  </div>
+                  {/* Nível de autonomia */}
+                  <div>
+                    <Select value={nivel} onValueChange={(v) => setNivel(t.key, v)}>
+                      <SelectTrigger className="w-full md:w-[220px] h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>{NIVEIS.map((n) => <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <p className="text-[11px] text-muted-foreground flex items-center gap-1.5"><Info className="h-3 w-3" /> Você pode alterar o nível de cada ação a qualquer momento.</p>
+    </div>
   );
 }
 
