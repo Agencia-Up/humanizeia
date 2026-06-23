@@ -1994,6 +1994,11 @@ export async function processPedroV2Turn(
   // corrige a "besteira" mais clara (promessa de foto sem anexar midia -> nunca prometer; oferece no
   // presente). Consolida os invariantes espalhados; cada novo "erro bobo" vira +1 check em
   // preSendVerify.ts (com 1 teste offline) em vez de remendo solto no orchestrator.
+  // DUVIDAS PENDENTES (decisao do dono): quando o agente NAO sabe e adia ("confirmo com a equipe"),
+  // a duvida vai pro BRIEFING do vendedor. Acumula aqui (neste turno) -> persiste no estado -> handoff.
+  const _SPEC_DUVIDA: Record<string, string> = { consumo: "consumo (km/l)", potencia: "potencia (cavalos)", litros: "capacidade em litros (porta-malas/tanque)" };
+  const _CLAIM_DUVIDA: Record<string, string> = { laudo: "laudo cautelar/vistoria", garantia_fabrica: "garantia (confirmar a politica da loja)" };
+  const _duvidasThisTurn: string[] = [];
   try {
     // ANTI-ALUCINACAO DE FICHA TECNICA (Solucao D Antigravity): o estoque NAO traz consumo/cv/litros; se
     // o LLM CRAVOU um numero desses que nao esta no texto real do veiculo, troca a frase por "confirmo com
@@ -2003,6 +2008,7 @@ export async function processPedroV2Turn(
     const _specNeutral = neutralizeUngroundedSpecs((reply as any)?.text || "", _factsForSpec);
     if (_specNeutral.neutralized) {
       reply = { ...(reply as any), text: _specNeutral.text };
+      for (const h of _specNeutral.hits) { const k = String(h).split(":")[0]; if (_SPEC_DUVIDA[k] && !_duvidasThisTurn.includes(_SPEC_DUVIDA[k])) _duvidasThisTurn.push(_SPEC_DUVIDA[k]); }
       log("warn", "pedro_v2_spec_hallucination_neutralized", { lead_id: lead?.id || null, hits: _specNeutral.hits, source: (reply as any)?.source });
     }
 
@@ -2013,6 +2019,7 @@ export async function processPedroV2Turn(
     const _claimNeutral = neutralizeUngroundedClaims((reply as any)?.text || "", _agentPrompt);
     if (_claimNeutral.neutralized) {
       reply = { ...(reply as any), text: _claimNeutral.text };
+      for (const h of _claimNeutral.hits) { if (_CLAIM_DUVIDA[h] && !_duvidasThisTurn.includes(_CLAIM_DUVIDA[h])) _duvidasThisTurn.push(_CLAIM_DUVIDA[h]); }
       log("warn", "pedro_v2_ungrounded_claim_neutralized", { lead_id: lead?.id || null, hits: _claimNeutral.hits, source: (reply as any)?.source });
     }
 
@@ -2125,6 +2132,11 @@ export async function processPedroV2Turn(
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 
   let effectiveMemory = nextMemory;
+  // DUVIDAS PENDENTES acumuladas (estado anterior + as deste turno) -> vao pro handoff/briefing + persistem.
+  const _allDuvidas = Array.from(new Set([
+    ...(Array.isArray((effectiveMemory as any)?.atendimento?.duvidas_pendentes) ? (effectiveMemory as any).atendimento.duvidas_pendentes : []),
+    ..._duvidasThisTurn,
+  ])).filter(Boolean).slice(0, 8) as string[];
   if (stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {
     const indices = Array.isArray((reply as any).presented_vehicle_indices) ? (reply as any).presented_vehicle_indices : [];
     let vehiclesToSave = indices
@@ -2526,7 +2538,7 @@ export async function processPedroV2Turn(
         remote_jid: remoteJid,
         lead_name: _q.nome || lead.lead_name || pushName || null,
         reason: contextualIntent.needs_handoff ? `handoff:${brainPlan?.intent || contextualIntent.intent || "humano"}` : (silentTransfer ? "handoff:desqualificado_silencioso_followup" : "handoff:qualificado_pronto"),
-        qualificacao: _q,
+        qualificacao: { ...(_q as any), duvidas_pendentes: _allDuvidas },
         seller_response_min: _automationRules.transfer.seller_response_min,
         veiculo_interesse: _veiculoInteresse,
         // RECUPERACAO por follow-up: força o MESMO vendedor do 1o atendimento (rule #3),
@@ -2669,8 +2681,12 @@ export async function processPedroV2Turn(
           ...(memToSave.atendimento || {}),
           sabe_localizacao: _b(_qc.sabe_localizacao) ? _qc.sabe_localizacao : memToSave.atendimento?.sabe_localizacao ?? null,
           dia_agendamento: _qc.dia_agendamento || memToSave.atendimento?.dia_agendamento || null,
+          duvidas_pendentes: _allDuvidas.length > 0 ? _allDuvidas : (memToSave.atendimento?.duvidas_pendentes || null),
         },
       };
+    } else if (_allDuvidas.length > 0) {
+      // sem qualificacao nova, mas houve duvida neutralizada neste turno -> persiste mesmo assim.
+      memToSave = { ...memToSave, atendimento: { ...(memToSave.atendimento || {}), duvidas_pendentes: _allDuvidas } };
     }
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,

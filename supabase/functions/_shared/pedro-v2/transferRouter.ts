@@ -232,6 +232,10 @@ async function buildHandoffBriefing(
     if (q?.sabe_localizacao === true) linhas.push("Conhece a loja: sim");
     else if (q?.sabe_localizacao === false) linhas.push("Conhece a loja: nao");
     if (linhas.length > 0) briefing = `${briefing}\n\n*DADOS COLETADOS PELO AGENTE:*\n${linhas.join("\n")}`;
+    // DUVIDAS que o lead perguntou e o agente NAO sabia (adiou "confirmo com a equipe") -> o vendedor
+    // precisa responder isso ao assumir. Decisao do dono (lead 98861-9201: garantia/laudo).
+    const _dv = Array.isArray((q as any)?.duvidas_pendentes) ? (q as any).duvidas_pendentes.filter(Boolean) : [];
+    if (_dv.length > 0) briefing = `${briefing}\n\n*⚠️ DUVIDAS A RESPONDER PRO LEAD (o agente nao tinha a info e disse que confirmaria):*\n- ${_dv.join("\n- ")}`;
   }
   return briefing;
 }
