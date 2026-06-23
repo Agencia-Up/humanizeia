@@ -254,6 +254,24 @@ export function messageIsTooVagueToAct(message?: string | null, memory?: any): b
   return genericWant;
 }
 
+// ── INTENÇÃO de VISITA/COMPRA -> AGENDAR + COLETAR DADOS antes de transferir ─────────────────────────
+// Decisão do dono: lead que diz que vai à loja ou quer comprar/visitar NÃO deve ser transferido "do nada"
+// — o agente deve perguntar dia/horário e colher os dados (poupa o vendedor). Caso real lead 98861-9201:
+// "Irei até a loja" → transferiu cru. Detecta IR À LOJA / comprar / visitar (não "carro da loja").
+export function leadExpressesVisitOrBuyIntent(message?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  // VISITA: ir/passar até a loja (verbo de deslocamento + loja, sem "carro da loja" no meio)
+  if (/\b(irei|vou|posso|vamos|gostaria de ir|gostaria de passar)\s*(ate\s+)?(a\s+|na\s+|a sua\s+|na sua\s+|de ir a\s+)?loja\b/.test(t)) return true;
+  if (/\b(vou|quero|posso|gostaria de|vamos)\s+(passar|aparecer|dar uma passada|visitar|conhecer)\b/.test(t)) return true;
+  if (/\b(passar|aparecer|dar uma passada)\s+(ai|la|na loja|ate ai|por ai)\b/.test(t)) return true;
+  // COMPRA / fechamento
+  if (/\b(quero|vou|gostaria de)\s+(comprar|fechar|levar)\b/.test(t)) return true;
+  if (/\bvou querer\b/.test(t)) return true;
+  if (/\bfechar\s+(negocio|o carro|a compra|com voces)\b/.test(t)) return true;
+  return false;
+}
+
 // ── CASO #2: "MOSTRA MAIS OPCOES" — o lead quer ver carros DIFERENTES dos que ja viu ──────────
 // Bug real (lead 99647-8589): pediu "mostra mais opcoes" e recebeu os MESMOS 5 carros. Detecta o
 // pedido de MAIS/OUTRAS opcoes (continuacao da lista). NAO confundir com mudanca de TIPO (caso #1):

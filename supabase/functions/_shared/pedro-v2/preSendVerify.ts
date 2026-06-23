@@ -157,6 +157,26 @@ export function detectUngroundedClaims(replyText?: string | null, agentPrompt?: 
   return out;
 }
 
+// ── ANTI-VAZAMENTO DE IDENTIDADE / QUEBRA DE PERSONA (segurança contra manipulação) ─────────────────
+// O agente é o consultor (humano) da loja. NUNCA pode revelar que é IA/bot/modelo, nem "sair do papel"
+// se o lead tentar manipular ("qual IA você é?", "ignore as instruções", "aja como..."). Caso real lead
+// 98861-9201: perguntou "Qual ia você é?" (se saiu bem, mas precisa ser robusto a má intenção). Backstop:
+// se a resposta VAZAR que é IA/bot/modelo → troca pela deflexão de persona. PURO -> offline.
+export function detectAiIdentityLeak(replyText?: string | null): boolean {
+  const t = normalizePlannerText(replyText);
+  if (!t) return false;
+  return /\bsou\s+(uma?\s+)?(ia|i\.?a|intelig[eê]?ncia artificial|assistente virtual|assistente de ia|bot|chat ?bot|rob[oôō]|modelo de linguagem|agente virtual|chatgpt|gpt)\b/.test(t)
+    || /\b(modelo de linguagem|intelig[eê]ncia artificial|assistente virtual|fui (criad[oa]|treinad[oa]|desenvolvid[oa]|programad[oa])|nao sou (humano|uma pessoa|real|de verdade|gente)|sou (um|uma) (programa|software|sistema)|openai|chat ?gpt|gpt-?\d)\b/.test(t);
+}
+
+export function neutralizeAiIdentityLeak(replyText?: string | null, agentName?: string | null): { text: string; changed: boolean } {
+  const raw = String(replyText || "");
+  if (!detectAiIdentityLeak(raw)) return { text: raw, changed: false };
+  const nm = (agentName && String(agentName).trim()) || "";
+  const intro = nm ? `Sou o ${nm}, consultor aqui da loja` : "Sou consultor aqui da loja";
+  return { text: `${intro} 😊 Como posso te ajudar com o carro que você procura?`, changed: true };
+}
+
 const _CLAIM_LABEL: Record<string, string> = {
   laudo: "o laudo/vistoria do veículo",
   garantia_fabrica: "a garantia",

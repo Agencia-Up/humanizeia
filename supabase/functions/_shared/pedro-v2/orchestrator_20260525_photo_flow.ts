@@ -46,8 +46,9 @@ import {
   excludeRejeitados,
   photoRequestTargetModel,
   messageIsTooVagueToAct,
+  leadExpressesVisitOrBuyIntent,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2015,6 +2016,14 @@ export async function processPedroV2Turn(
       log("warn", "pedro_v2_ungrounded_claim_neutralized", { lead_id: lead?.id || null, hits: _claimNeutral.hits, source: (reply as any)?.source });
     }
 
+    // ANTI-VAZAMENTO DE IDENTIDADE (segurança contra manipulação): se a resposta vazar que é IA/bot/
+    // modelo, troca pela deflexão de persona (o agente é o consultor da loja). Caso 98861-9201.
+    const _idLeak = neutralizeAiIdentityLeak((reply as any)?.text || "", input.agent?.name || null);
+    if (_idLeak.changed) {
+      reply = { ...(reply as any), text: _idLeak.text, media: [] };
+      log("warn", "pedro_v2_ai_identity_leak_blocked", { lead_id: lead?.id || null, source: (reply as any)?.source });
+    }
+
     // PRECO INVENTADO (backstop final — caso GRAVE dos prints: Civic 73.990->50.000, S10 91.990->59.000):
     // mesmo com o grounding do reply (R6), garante que NENHUM preco fora do estoque saia, por QUALQUER
     // caminho de resposta. Se o texto final cita preco que nao bate com veiculo real (stock+apresentados),
@@ -2464,6 +2473,31 @@ export async function processPedroV2Turn(
   if (reply && (!reply.temperatura || reply.temperatura === "morno")
       && /\b(golpe|fraude|picaret|171|estelionat|vigaris|larap|ladr[aã]o|enganaç|enganando|roubando|me roubar|trapac)\b/.test(String(text || "").toLowerCase())) {
     reply.temperatura = "desqualificado";
+  }
+
+  // VISITA/COMPRA -> AGENDAR + COLETAR ANTES de transferir (decisao do dono: poupar o vendedor e colher
+  // dados; NUNCA transferir "do nada"). Caso 98861-9201: "Irei ate a loja" -> transferiu cru. Pergunta o
+  // dia/horario (+ nome se faltar) ANTES do handoff. Anti-loop: segura SO 1x (marca agendamento_solicitado
+  // na memoria); se ja perguntou e o lead nao deu data, NAO trava -> deixa transferir. Nao toca em
+  // transferencia de financiamento/troca (essas sao handoff legitimo imediato) nem silenciosa.
+  const _visitBuyIntent = leadExpressesVisitOrBuyIntent(text);
+  const _hasSchedule = Boolean((_q as any)?.dia_agendamento || (effectiveMemory as any)?.atendimento?.dia_agendamento);
+  const _alreadyAskedSchedule = Boolean((effectiveMemory as any)?.atendimento?.agendamento_solicitado);
+  if (!ownedLeadAssistantMode && _visitBuyIntent && reply?.pronto_para_transferir === true
+      && reply?.transferir_silencioso !== true
+      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced"
+      && contextualIntent?.needs_handoff !== true
+      && !_hasSchedule && !_alreadyAskedSchedule) {
+    const _nm = (_q?.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
+    const _nmValido = Boolean(_nm) && /[a-zà-ÿ]{2,}/i.test(_nm) && !["cliente", "lead"].includes(_nm.toLowerCase());
+    reply.pronto_para_transferir = false;
+    reply.text = _nmValido
+      ? `Que ótimo, ${_nm}! 😊 Pra eu já deixar tudo certinho com o consultor, qual o melhor dia e horário pra você passar na loja?`
+      : `Que ótimo! 😊 Pra eu já deixar tudo certinho com o consultor, me confirma seu nome e qual o melhor dia e horário pra você passar na loja?`;
+    reply.media = [];
+    reply.source = "visit_schedule_qualify";
+    (memoryAfterReply as any).atendimento = { ...((memoryAfterReply as any)?.atendimento || {}), agendamento_solicitado: true };
+    log("info", "pedro_v2_visit_schedule_qualify", { lead_id: lead?.id || null, has_name: _nmValido });
   }
 
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;

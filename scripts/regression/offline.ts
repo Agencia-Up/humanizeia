@@ -42,8 +42,9 @@ import {
   photoRequestTargetModel,
   leadComplainsPhotoWrongOrMissing,
   messageIsTooVagueToAct,
+  leadExpressesVisitOrBuyIntent,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -205,6 +206,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("qualificacao", "'o que vocês têm?' -> NÃO vago (mostruário, apresenta)", messageIsTooVagueToAct("o que vocês têm?") === false);
   check("qualificacao", "com interesse na memória -> NÃO vago (usa o interesse)", messageIsTooVagueToAct("me ajuda", { interesse: { tipo_veiculo: "suv" } }) === false);
 
+  // ── VISITA/COMPRA -> agendar+coletar antes de transferir (lead 98861-9201) ──
+  check("agendamento", "'Irei até a loja' -> intenção de visita", leadExpressesVisitOrBuyIntent("Irei até a loja") === true);
+  check("agendamento", "'vou na loja amanhã' -> visita", leadExpressesVisitOrBuyIntent("vou na loja amanhã") === true);
+  check("agendamento", "'quero comprar o onix' -> compra", leadExpressesVisitOrBuyIntent("quero comprar o onix") === true);
+  check("agendamento", "'quero visitar' -> visita", leadExpressesVisitOrBuyIntent("quero visitar pra ver de perto") === true);
+  check("agendamento", "'vou querer' -> compra", leadExpressesVisitOrBuyIntent("acho que vou querer") === true);
+  check("agendamento", "'quero um carro da loja' -> NÃO é visita (é busca)", leadExpressesVisitOrBuyIntent("quero um carro da loja de vocês") === false);
+  check("agendamento", "'onde fica a loja?' -> NÃO é visita (pergunta)", leadExpressesVisitOrBuyIntent("onde fica a loja?") === false);
+  check("agendamento", "'vou pensar' -> NÃO é visita/compra", leadExpressesVisitOrBuyIntent("vou pensar e te falo") === false);
+
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
   check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);
   check("ficha", "potência inventada '150cv' -> detecta", detectUngroundedSpecs("Tem 150cv de potência", "").includes("potencia:150"));
@@ -225,6 +236,15 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("ficha", "loja COM laudo no prompt -> afirmar laudo é OK (não detecta)", detectUngroundedClaims("Sim, temos laudo cautelar.", "oferecemos laudo cautelar em todos os veículos").length === 0);
   const _nc = neutralizeUngroundedClaims("Sim, temos laudo cautelar disponível para o Polo.", _promptIcom);
   check("ficha", "neutraliza laudo inventado -> 'confirmar com a equipe'", _nc.neutralized === true && /confirmar/i.test(_nc.text) && !/temos laudo/i.test(_nc.text));
+
+  // ── ANTI-VAZAMENTO DE IDENTIDADE / QUEBRA DE PERSONA (segurança) ──
+  check("identidade", "'sou uma IA' -> detecta vazamento", detectAiIdentityLeak("Na verdade sou uma IA da Icom") === true);
+  check("identidade", "'sou um assistente virtual' -> detecta", detectAiIdentityLeak("Sou um assistente virtual treinado pela OpenAI") === true);
+  check("identidade", "'modelo de linguagem' -> detecta", detectAiIdentityLeak("Sou um modelo de linguagem, não uma pessoa") === true);
+  check("identidade", "'Sou o Carvalho, consultor' -> NÃO vaza (persona OK)", detectAiIdentityLeak("Sou o Carvalho, consultor aqui da Icom Motors 😊") === false);
+  check("identidade", "resposta normal de venda -> NÃO falso-positivo", detectAiIdentityLeak("Posso te ajudar com o Onix, quer ver as fotos?") === false);
+  const _id = neutralizeAiIdentityLeak("Sou uma IA treinada pela OpenAI, mas posso ajudar!", "Carvalho");
+  check("identidade", "neutraliza vazamento -> deflexão de persona (Carvalho)", _id.changed === true && /carvalho/i.test(_id.text) && !/\bia\b|openai/i.test(_id.text));
 
   // ── R6: PREÇO INVENTADO (caso GRAVE dos prints: Civic 73.990 -> 50.000, S10 91.990 -> 59.000) ──
   const _civic = [{ marca: "Honda", modelo: "Civic", ano: 2014, preco: 73990 }];
