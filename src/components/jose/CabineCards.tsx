@@ -27,7 +27,7 @@ interface Cards {
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
-  por_criativo: Array<{ nome: string; gasto: number; conversas: number }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -362,23 +362,51 @@ export function CabineCards() {
             </Panel>
           </div>
 
-          {/* Por público (adset) e por criativo (anúncio) — vitrine da Meta */}
+          {/* Por público (adset) — vitrine da Meta */}
           <div>
-            <h3 className="text-sm font-semibold mb-1">Por público e por criativo</h3>
+            <h3 className="text-sm font-semibold mb-1">Por público (conjunto)</h3>
             <p className="text-[11px] text-muted-foreground mb-2.5">
-              <strong className="text-foreground/80">Público</strong> = o grupo de pessoas que a Meta mira (o conjunto). <strong className="text-foreground/80">Criativo</strong> = a peça do anúncio (imagem/vídeo).
-              A <strong className="text-foreground/80">barra</strong> mostra quem trouxe mais conversas; o número ao lado é conversas e quanto foi investido (R$).
+              <strong className="text-foreground/80">Público</strong> = o grupo de pessoas que a Meta mira. A barra mostra quem trouxe mais conversas; ao lado, conversas e quanto foi investido (R$).
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Lista
-                icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período." cor="violet"
-                linhas={cards.por_publico.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
-              />
-              <Lista
-                icon={Award} titulo="Por anúncio / criativo" ajuda="cada anúncio (a peça/criativo)" vazio="Sem dados no período." cor="amber"
-                linhas={cards.por_criativo.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
-              />
-            </div>
+            <Lista
+              icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período." cor="violet"
+              linhas={cards.por_publico.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
+            />
+          </div>
+
+          {/* GALERIA DE CRIATIVOS — a arte de cada peça + a verdade do Pedro */}
+          <div>
+            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> Galeria de criativos — qual peça vende</h3>
+            <p className="text-[11px] text-muted-foreground mb-2.5">
+              A <strong className="text-foreground/80">arte</strong> de cada anúncio + quanto gastou, quantas conversas e a <strong className="text-foreground/80">qualidade real</strong> (lead bom/ruim do Pedro, quando o título bate). Verdade &gt; vitrine.
+            </p>
+            {cards.por_criativo.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Sem criativos no período.</p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {cards.por_criativo.map((c, i) => (
+                  <div key={i} className="rounded-xl border border-border/60 bg-card overflow-hidden shadow-sm shadow-black/20">
+                    {c.thumbnail_url ? (
+                      <img src={c.thumbnail_url} alt={c.nome} loading="lazy" className="w-full h-28 object-cover bg-muted" />
+                    ) : (
+                      <div className="w-full h-28 bg-muted flex items-center justify-center text-[11px] text-muted-foreground">sem arte</div>
+                    )}
+                    <div className="p-2.5">
+                      <p className="text-xs font-medium truncate" title={c.nome}>{c.nome}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{int(c.conversas)} conv · {money(cards.moeda, c.gasto)}</p>
+                      {(c.leads_bom != null || c.leads_ruim != null) && (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px]">
+                          {c.pct_bom != null && <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-semibold">{c.pct_bom}% bom</span>}
+                          {c.leads_bom != null && c.leads_bom > 0 && <span className="text-emerald-400">{c.leads_bom} bom</span>}
+                          {c.leads_ruim != null && c.leads_ruim > 0 && <span className="text-rose-400">{c.leads_ruim} ruim</span>}
+                        </div>
+                      )}
+                      {c.por_que_ruim && <p className="text-[10px] text-rose-300/80 mt-1 leading-tight">⚠ {c.por_que_ruim}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Público: região (alvo x real) + idade */}

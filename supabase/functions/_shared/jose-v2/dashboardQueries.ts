@@ -9,7 +9,7 @@
  * VERDADE (lead_quality_by_ad: custo por lead BOM, anúncios por qualidade real).
  */
 
-import { leadQualityByAd, type LeadQualityByAdRow } from "./leadQuality.ts";
+import { leadQualityByAd, leadMotivosByAd, formatMotivos, type LeadQualityByAdRow } from "./leadQuality.ts";
 
 const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
 const CURRENCY_SYMBOL: Record<string, string> = { BRL: "R$", USD: "$", EUR: "€" };
@@ -83,6 +83,36 @@ async function fetchInsights(
   } catch (e) { console.warn("[dashboardQueries] insights fetch falhou:", e); return []; }
 }
 
+// Puxa a ARTE (thumbnail) de cada anúncio direto da Meta (/ads?fields=creative{thumbnail_url}),
+// indexada pelo nome do anúncio normalizado — pra Cabine virar GALERIA (ver a peça, não só o
+// número). Padrão reusado do jose-agent. Best-effort: falhou -> mapa vazio (cai pro texto).
+async function fetchAdThumbnails(
+  acc: MetaAccount,
+  opts: { datePreset?: string; timeRange?: { since: string; until: string } },
+): Promise<Map<string, string>> {
+  const url = new URL(`${META_GRAPH_URL}/${acc.accountId}/ads`);
+  url.searchParams.set("access_token", acc.accessToken);
+  url.searchParams.set("fields", "id,name,creative{thumbnail_url}");
+  if (opts.timeRange?.since && opts.timeRange?.until) {
+    url.searchParams.set("time_range", JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until }));
+  } else {
+    url.searchParams.set("date_preset", opts.datePreset || "last_7d");
+  }
+  url.searchParams.set("limit", "200");
+  const map = new Map<string, string>();
+  try {
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    if (data?.error) { console.warn("[dashboardQueries] ads thumb erro:", data.error?.message); return map; }
+    for (const ad of (data?.data || [])) {
+      const nome = String(ad?.name || "").trim().toLowerCase();
+      const thumb = ad?.creative?.thumbnail_url;
+      if (nome && thumb && !map.has(nome)) map.set(nome, String(thumb));
+    }
+  } catch (e) { console.warn("[dashboardQueries] ads thumb fetch falhou:", e); }
+  return map;
+}
+
 // De onde os leads REALMENTE vieram (cidade declarada) + quantos bons por cidade.
 async function leadOriginByCity(
   admin: any,
@@ -126,7 +156,7 @@ export interface DashboardCards {
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
-  por_criativo: Array<{ nome: string; gasto: number; conversas: number }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -184,10 +214,11 @@ export async function getDashboardCards(
 
   // 1) Vitrine — base + idade + região, em paralelo
   const fi = (breakdowns?: string) => fetchInsights(acc, { datePreset, timeRange, breakdowns });
-  const [base, byAge, byRegion, byAdset, byAd] = await Promise.all([
+  const [base, byAge, byRegion, byAdset, byAd, thumbs] = await Promise.all([
     fi(), fi("age"), fi("region"),
     fetchInsights(acc, { datePreset, timeRange, level: "adset" }),
     fetchInsights(acc, { datePreset, timeRange, level: "ad" }),
+    fetchAdThumbnails(acc, { datePreset, timeRange }),
   ]);
 
   const b0 = base[0] || {};
@@ -197,6 +228,10 @@ export async function getDashboardCards(
 
   // 2) Verdade — qualidade por anúncio (DB)
   const lq: LeadQualityByAdRow[] = await leadQualityByAd(admin, userId, { minLeads: 1 });
+  // motivos (porquê) + índice por título normalizado, pra ligar o criativo à qualidade real.
+  const motivos = await leadMotivosByAd(admin, userId);
+  const lqByName = new Map<string, LeadQualityByAdRow>();
+  for (const r of lq) { if (r.ad_name) lqByName.set(String(r.ad_name).trim().toLowerCase(), r); }
   let leads_classif = 0;
   const atrib = { por_ad_id: 0, por_titulo: 0, sem_origem: 0 };
   for (const r of lq) {
@@ -232,9 +267,20 @@ export async function getDashboardCards(
   const por_publico = byAdset.map((r: any) => ({
     nome: String(r.adset_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
   })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
-  const por_criativo = byAd.map((r: any) => ({
-    nome: String(r.ad_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
-  })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
+  const por_criativo = byAd.map((r: any) => {
+    const nome = String(r.ad_name || "—");
+    const key = nome.trim().toLowerCase();
+    const q = lqByName.get(key);
+    const mv = q?.ad_key ? motivos.get(q.ad_key) : null;
+    return {
+      nome, gasto: num(r.spend), conversas: conversasFromActions(r.actions),
+      thumbnail_url: thumbs.get(key) || null,           // a ARTE da peça (galeria)
+      leads_bom: q ? num(q.leads_bom) : null,           // verdade do Pedro (por título)
+      leads_ruim: q ? num(q.leads_ruim) : null,
+      pct_bom: q ? q.pct_bom : null,
+      por_que_ruim: mv ? formatMotivos(mv.ruim) : null, // o porquê dos ruins dessa peça
+    };
+  }).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 12);
 
   // 6) Anúncios por QUALIDADE REAL (não CTR)
   const anuncios = lq
