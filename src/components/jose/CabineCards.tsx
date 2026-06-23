@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
-  Wallet, ShoppingCart, UserCheck, Sparkles, Car,
+  Wallet, ShoppingCart, UserCheck, Sparkles, Car, X,
 } from 'lucide-react';
 
 // ── Bloco A — Cabine de Comando (cards fixos). Lê tudo do edge jose-dashboard (mesma
@@ -53,6 +53,41 @@ function money(moeda: string, v: number | null | undefined) {
   return v == null ? '—' : `${moeda} ${n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 function int(v: number | null | undefined) { return n(v).toLocaleString('pt-BR'); }
+
+// Galeria de criativos num POP-UP (botão abre/fecha) — não polui o painel com dezenas de
+// anúncios um do lado do outro. Mostra todos os ativos com arte + gasto + custo/conversa + CPM.
+function GaleriaCriativos({ criativos, moeda }: { criativos: any[]; moeda: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> Galeria de criativos — qual peça vende</h3>
+      <p className="text-[11px] text-muted-foreground mb-2.5">Todos os anúncios <strong className="text-foreground/80">ativos</strong> com a arte, gasto, custo por conversa, CPM e a qualidade real (Pedro). Abre num pop-up pra não poluir o painel.</p>
+      <button onClick={() => setOpen(true)} disabled={!criativos.length}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">
+        <Award className="h-3.5 w-3.5" /> Ver criativos ativos ({criativos.length})
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={() => setOpen(false)}>
+          <div className="my-8 w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 flex items-center justify-between rounded-t-2xl border-b border-border/60 bg-card px-5 py-3">
+              <h3 className="flex items-center gap-1.5 text-sm font-bold"><Award className="h-4 w-4 text-amber-400" /> Criativos ativos ({criativos.length})</h3>
+              <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Fechar"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-5">
+              {criativos.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sem criativos ativos no período.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+                  {criativos.map((c, i) => <CreativeCard key={i} c={c} moeda={moeda} />)}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Guardião do estoque: o José compara anúncio ativo x estoque (BNDV) e lista o carro que já
 // saiu do estoque mas continua anunciado. Fatia 1: só DETECTA (não pausa) — o dono valida antes.
@@ -490,22 +525,8 @@ export function CabineCards() {
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
           <StockGuard />
 
-          {/* GALERIA DE CRIATIVOS — a arte de cada peça + a verdade do Pedro */}
-          <div>
-            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> Galeria de criativos — qual peça vende</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">
-              A <strong className="text-foreground/80">arte</strong> de cada anúncio + quanto gastou, quantas conversas e a <strong className="text-foreground/80">qualidade real</strong> (lead bom/ruim do Pedro, quando o título bate). Verdade &gt; vitrine.
-            </p>
-            {cards.por_criativo.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Sem criativos no período.</p>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                {cards.por_criativo.map((c, i) => (
-                  <CreativeCard key={i} c={c} moeda={cards.moeda} />
-                ))}
-              </div>
-            )}
-          </div>
+          {/* GALERIA DE CRIATIVOS — num pop-up (não polui o painel) */}
+          <GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} />
 
           {/* Público: região (alvo x real) + idade */}
           <div>
