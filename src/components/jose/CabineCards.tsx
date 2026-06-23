@@ -87,13 +87,16 @@ const BAR: Record<string, { bar: string; tile: string }> = {
   amber:   { bar: 'bg-amber-500',   tile: 'bg-amber-500/15 text-amber-400 ring-amber-400/25' },
 };
 
-// Lista com BARRA proporcional (mini-gráfico: bate o olho e vê quem é maior).
+// Lista com BARRA proporcional (mini-gráfico) + "Ver todas" que EXPANDE de verdade.
 function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue' }: {
   titulo: string; ajuda: string; icon: any; vazio: string;
   linhas: Array<{ nome: string; valor: string; peso?: number }>; verTodas?: string; cor?: string;
 }) {
+  const [aberto, setAberto] = useState(false);
   const c = BAR[cor] || BAR.blue;
+  const LIM = 6;
   const max = Math.max(1, ...linhas.map((l) => Number(l.peso) || 0));
+  const visiveis = aberto ? linhas : linhas.slice(0, LIM);
   return (
     <Panel className="p-4 flex flex-col">
       <div className="flex items-center gap-2.5">
@@ -107,7 +110,7 @@ function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue
         ? <p className="text-xs text-muted-foreground py-3">{vazio}</p>
         : (
           <div className="mt-3.5 space-y-2.5 flex-1">
-            {linhas.map((l, i) => (
+            {visiveis.map((l, i) => (
               <div key={i} className="space-y-1">
                 <div className="flex justify-between gap-3 text-xs">
                   <span className="truncate font-medium text-foreground">{l.nome}</span>
@@ -122,8 +125,10 @@ function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue
             ))}
           </div>
         )}
-      {verTodas && linhas.length > 0 && (
-        <button type="button" className="mt-3 pt-2.5 border-t border-border/40 text-[11px] font-medium text-primary hover:text-primary/80 text-left transition-colors">{verTodas}</button>
+      {linhas.length > LIM && (
+        <button type="button" onClick={() => setAberto((a) => !a)} className="mt-3 pt-2.5 border-t border-border/40 text-[11px] font-semibold text-primary hover:text-primary/80 text-left transition-colors">
+          {aberto ? '↑ Ver menos' : `${verTodas || 'Ver todas'} (${linhas.length})`}
+        </button>
       )}
     </Panel>
   );
@@ -360,15 +365,18 @@ export function CabineCards() {
           {/* Por público (adset) e por criativo (anúncio) — vitrine da Meta */}
           <div>
             <h3 className="text-sm font-semibold mb-1">Por público e por criativo</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">Quais conjuntos (públicos) e quais anúncios trouxeram mais conversas e onde foi a verba. A qualidade do lead por público/criativo entra quando a conta usar o WhatsApp oficial da Meta.</p>
+            <p className="text-[11px] text-muted-foreground mb-2.5">
+              <strong className="text-foreground/80">Público</strong> = o grupo de pessoas que a Meta mira (o conjunto). <strong className="text-foreground/80">Criativo</strong> = a peça do anúncio (imagem/vídeo).
+              A <strong className="text-foreground/80">barra</strong> mostra quem trouxe mais conversas; o número ao lado é conversas e quanto foi investido (R$).
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Lista
                 icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período." cor="violet"
-                linhas={cards.por_publico.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
+                linhas={cards.por_publico.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
               />
               <Lista
                 icon={Award} titulo="Por anúncio / criativo" ajuda="cada anúncio (a peça/criativo)" vazio="Sem dados no período." cor="amber"
-                linhas={cards.por_criativo.slice(0, 6).map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
+                linhas={cards.por_criativo.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
               />
             </div>
           </div>
@@ -379,15 +387,15 @@ export function CabineCards() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Lista
                 icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período." verTodas="Ver todas as regiões →" cor="blue"
-                linhas={cards.regiao_entrega.slice(0, 6).map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
+                linhas={cards.regiao_entrega.map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
               />
               <Lista
                 icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda." verTodas="Ver todas as cidades →" cor="emerald"
-                linhas={cards.regiao_origem.slice(0, 6).map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads`, peso: r.leads }))}
+                linhas={cards.regiao_origem.map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads`, peso: r.leads }))}
               />
               <Lista
                 icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período." verTodas="Ver todas as idades →" cor="cyan"
-                linhas={cards.idade.slice(0, 6).map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
+                linhas={cards.idade.map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
               />
             </div>
           </div>
