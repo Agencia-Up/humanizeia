@@ -45,7 +45,8 @@ import {
   leadExpressesVisitOrBuyIntent,
   leadExplicitlyDeclined,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
 import {
@@ -253,6 +254,20 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("identidade", "resposta normal de venda -> NÃO falso-positivo", detectAiIdentityLeak("Posso te ajudar com o Onix, quer ver as fotos?") === false);
   const _id = neutralizeAiIdentityLeak("Sou uma IA treinada pela OpenAI, mas posso ajudar!", "Carvalho");
   check("identidade", "neutraliza vazamento -> deflexão de persona (Carvalho)", _id.changed === true && /carvalho/i.test(_id.text) && !/\bia\b|openai/i.test(_id.text));
+
+  // ── "VOU BUSCAR..." E SOME (lead 99747-0573 "Palio") ──
+  check("ficha", "deferral 'vou verificar a disponibilidade do X' -> detecta", replyDefersSearch("Vou verificar a disponibilidade do Fiat Palio para você.") === true);
+  check("ficha", "deferral 'vou buscar informações sobre o X' -> detecta", replyDefersSearch("Vou buscar informações sobre o Fiat Palio para você!") === true);
+  check("ficha", "'vou confirmar com a equipe' (dúvida) -> NÃO é deferral de busca", replyDefersSearch("Sobre a garantia, vou confirmar com a nossa equipe de vendas") === false);
+  check("ficha", "apresentação com dados (R$) -> NÃO é deferral", replyDefersSearch("Temos o Onix 2020 por R$ 65.990, quer ver?") === false);
+  // honestidade do builder determinístico: pediu Palio (não existe) -> NÃO diz "Temos sim", diz "não tenho Palio"
+  const _palioStock = { success: true, items: [{ marca: "Fiat", modelo: "Cronos", versao: "Drive 1.0", ano: 2025, preco: 82990 }, { marca: "Fiat", modelo: "Pulse", ano: 2023, preco: 97990 }] };
+  const _palioReply = buildDeterministicStockReply({ plan: { action: "stock_search", search_query: "Fiat Palio", search_filters: {} } as any, intent: null as any, stock_result: _palioStock });
+  check("ficha", "Palio inexistente -> 'não tenho Palio' (não 'Temos sim')", /nao tenho|não tenho/i.test(_palioReply) && !/temos sim/i.test(_palioReply) && /palio/i.test(_palioReply));
+  const _onixReply = buildDeterministicStockReply({ plan: { action: "stock_search", search_query: "Onix", search_filters: {} } as any, intent: null as any, stock_result: { success: true, items: [{ marca: "Chevrolet", modelo: "Onix Sedan", ano: 2025, preco: 97990 }] } });
+  check("ficha", "Onix existente -> 'Temos sim'", /temos sim/i.test(_onixReply));
+  const _suvReply = buildDeterministicStockReply({ plan: { action: "stock_search", search_query: "suv", search_filters: { stock_broad: true } } as any, intent: null as any, stock_result: { success: true, items: [{ marca: "Chevrolet", modelo: "Tracker", ano: 2023, preco: 111990 }] } });
+  check("ficha", "busca AMPLA 'suv' -> 'Temos sim' (não quebra a relista)", /temos sim/i.test(_suvReply));
 
   // ── R6: PREÇO INVENTADO (caso GRAVE dos prints: Civic 73.990 -> 50.000, S10 91.990 -> 59.000) ──
   const _civic = [{ marca: "Honda", modelo: "Civic", ano: 2014, preco: 73990 }];

@@ -48,6 +48,21 @@ export function verifyReplyText(replyText?: string | null, ctx?: {
 
 function escapeRe(s: string): string { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
+// ── "VOU BUSCAR..." E SOME: deferir a busca que JÁ rodou neste turno (lead 99747-0573 "Palio") ───────
+// O agente respondeu "Vou buscar/verificar a disponibilidade do X pra você" e NÃO apresentou nada — o
+// resultado da busca já existe AGORA, nunca há "depois". Backstop: troca pela apresentação real (ou
+// "não tenho X, mas tenho parecidos"). NÃO casa "vou confirmar com a equipe" (deferral LEGÍTIMO de dúvida).
+export function replyDefersSearch(replyText?: string | null): boolean {
+  const t = normalizePlannerText(replyText);
+  if (!t) return false;
+  const defer = /\b(vou|irei|ja vou|vou ja|deixa eu|vamos)\s+(buscar|procurar|verificar|conferir|checar|pesquisar|consultar|levantar|olhar)\b/.test(t);
+  if (!defer) return false;
+  const aboutSearch = /\b(informac|disponib|no estoque|no nosso estoque|as opcoes|sobre o|sobre a|do |da )\b/.test(t)
+    && !/\b(com (a |o )?(equipe|time|consultor|vendedor|especialista)|com (o )?nosso)\b/.test(t);
+  const hasRealData = /(r\$|\bkm\b|\d{4})/.test(t); // se já cita preço/ano, não é mera promessa vazia
+  return aboutSearch && !hasRealData;
+}
+
 // O reply cita ao menos UM dos veículos achados? Usado na apresentação de CATEGORIA: o modelo barato
 // (gpt-4.1-mini) às vezes só saúda/pergunta rapport e IGNORA a lista — aí o orchestrator relista de
 // forma determinística (decisão do dono v134: pediu TIPO + há vários => APRESENTA). PURO -> offline.

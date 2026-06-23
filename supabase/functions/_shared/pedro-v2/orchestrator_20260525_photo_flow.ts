@@ -49,7 +49,7 @@ import {
   leadExpressesVisitOrBuyIntent,
   leadExplicitlyDeclined,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2032,6 +2032,33 @@ export async function processPedroV2Turn(
       log("warn", "pedro_v2_ai_identity_leak_blocked", { lead_id: lead?.id || null, source: (reply as any)?.source });
     }
 
+    // "VOU BUSCAR..." E SOME (lead 99747-0573 "Palio"): o reply DEFERIU a busca que JA rodou neste turno
+    // -> apresenta o resultado REAL agora (buildDeterministicStockReply ja e HONESTO: "Temos sim" so se o
+    // modelo existe, senao "nao tenho X, mas tenho parecidos"). Recupera a busca se o stockResult faltou.
+    if (replyDefersSearch((reply as any)?.text || "")) {
+      let _defStock: any = stockResult;
+      if (!(_defStock?.success && Array.isArray(_defStock.items) && _defStock.items.length > 0)) {
+        const _defQuery = (vehicleResolution as any)?.query || (brainPlan as any)?.search_query || (stockFilters as any)?.modelo_desejado || null;
+        if (_defQuery) {
+          try {
+            _defStock = await searchPedroStock(supabase, {
+              user_id: input.agent.user_id, query: _defQuery, limit: 6, sells_motorcycles: _sellsMotos,
+              match_engine: dryRun ? ((input.payload as any)?.match_engine ?? null) : null, stock_feed_url: _stockFeedOverride,
+            } as any);
+          } catch { /* best-effort: nunca derruba o turno */ }
+        }
+      }
+      const _defHasItems = Boolean(_defStock?.success && Array.isArray(_defStock.items) && _defStock.items.length > 0);
+      if (_defHasItems) stockResult = _defStock;
+      reply = {
+        ok: true,
+        text: buildDeterministicStockReply({ memory: nextMemory, plan: { ...(brainPlan as any), action: "stock_search" } as any, intent: contextualIntent as any, stock_result: _defHasItems ? _defStock : { success: true, items: [] } }),
+        source: "search_deferral_resolved",
+        media: [],
+      } as any;
+      log("warn", "pedro_v2_search_deferral_resolved", { lead_id: lead?.id || null, found: _defHasItems ? _defStock.items.length : 0 });
+    }
+
     // PRECO INVENTADO (backstop final — caso GRAVE dos prints: Civic 73.990->50.000, S10 91.990->59.000):
     // mesmo com o grounding do reply (R6), garante que NENHUM preco fora do estoque saia, por QUALQUER
     // caminho de resposta. Se o texto final cita preco que nao bate com veiculo real (stock+apresentados),
@@ -2144,7 +2171,7 @@ export async function processPedroV2Turn(
       .map((idx: number) => stockResult.items[idx - 1])
       .filter(Boolean);
 
-    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic", "wrong_price_relisted_deterministic"].includes(reply.source)) {
+    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic", "wrong_price_relisted_deterministic", "search_deferral_resolved"].includes(reply.source)) {
       vehiclesToSave = stockResult.items;
     }
 

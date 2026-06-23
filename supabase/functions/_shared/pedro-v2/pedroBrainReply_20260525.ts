@@ -424,7 +424,21 @@ export function buildDeterministicStockReply(input: {
   const more = items.length > shown.length
     ? `\n\nEsses sao alguns dos nossos modelos — tenho mais opcoes tambem.`
     : "";
-  return `Temos sim! Olha algumas opcoes:\n\n${list}${more}\n\nQuer ver fotos de algum desses ou prefere que eu te mostre mais opcoes?`;
+  // HONESTIDADE (lead 99747-0573 "Palio"): a busca RELAXA e traz parecidos de outra familia/marca quando
+  // o modelo pedido nao existe. NUNCA dizer "Temos sim!" mostrando carros que NAO sao o que o lead pediu.
+  // Se o MODELO pedido (token nao-marca/nao-tipo) NAO aparece em nenhum item, abre HONESTO ("nao tenho X,
+  // mas tenho parecidos"). Em busca AMPLA (tipo/categoria) nao se aplica (os itens SAO o tipo pedido).
+  const _norm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const _BRANDS = new Set(["fiat", "chevrolet", "gm", "volkswagen", "vw", "toyota", "honda", "hyundai", "jeep", "renault", "ford", "nissan", "peugeot", "citroen", "mitsubishi", "caoa", "chery", "kia", "bmw", "audi", "mercedes"]);
+  const _TYPES = new Set(["suv", "sedan", "seda", "hatch", "hatchback", "picape", "pickup", "caminhonete", "utilitario", "carro", "veiculo", "automovel"]);
+  const _isBroad = Boolean((input.plan as any)?.search_filters?.stock_broad);
+  const _reqModelToks = _norm(String(input.plan.search_query || "")).split(/\s+/).filter((w) => w.length >= 3 && !_BRANDS.has(w) && !_TYPES.has(w) && !/^\d+$/.test(w));
+  const _hasExact = !input.plan.search_query || _isBroad || _reqModelToks.length === 0
+    || _reqModelToks.some((tok) => shown.some((v: any) => _norm(`${v.label || ""} ${v.modelo || ""}`).includes(tok)));
+  const _leadIn = _hasExact
+    ? "Temos sim! Olha algumas opcoes:"
+    : `No momento nao tenho ${input.plan.search_query} exatamente no estoque, mas tenho estas opcoes que podem te interessar:`;
+  return `${_leadIn}\n\n${list}${more}\n\nQuer ver fotos de algum desses ou prefere que eu te mostre mais opcoes?`;
 }
 
 // Limpa MARKDOWN/URLs que o WhatsApp NAO renderiza (saiam crus pro cliente, feio):
