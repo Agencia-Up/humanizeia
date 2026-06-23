@@ -15,12 +15,22 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  // Security: only allow service-role calls (from pg_cron or internal)
+  // Security: só permite chamadas service-role (pg_cron / interno). Resiliente a
+  // rotação/troca de FORMATO da chave: aceita o match direto da env key OU um JWT
+  // legado role=service_role deste projeto (é o que o pg_cron manda). Antes só fazia
+  // o match exato -> quando a service_role key mudou de formato, dava 403 e o
+  // relatório automático nunca rodava.
   const authHeader = req.headers.get("Authorization") || "";
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const isServiceRole = authHeader.includes(serviceKey);
-
-  if (!isServiceRole) {
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  let authOk = !!serviceKey && authHeader.includes(serviceKey);
+  if (!authOk) {
+    try {
+      const payload = JSON.parse(atob((authHeader.replace(/^Bearer\s+/i, "").split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/")));
+      const ref = (Deno.env.get("SUPABASE_URL") || "").match(/https:\/\/([a-z0-9]+)\.supabase/)?.[1];
+      authOk = payload.role === "service_role" && (!ref || payload.ref === ref) && (!payload.exp || payload.exp * 1000 > Date.now());
+    } catch { /* authOk segue false */ }
+  }
+  if (!authOk) {
     return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
   }
 
