@@ -26,7 +26,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
-import { Calendar, Clock, DollarSign, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram, Inbox } from 'lucide-react';
+import { Calendar, Clock, DollarSign, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram, Inbox, ChevronUp, ChevronDown, ListOrdered } from 'lucide-react';
 import { CplComparativo } from '@/components/pedro/CplComparativo';
 import { toast } from 'sonner';
 
@@ -329,6 +329,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
   // Vendedores ativos (com last_lead_received_at) pro rodízio do clique-pra-transferir.
   const [queueSellers, setQueueSellers] = useState<any[]>([]);
+  // Reordenação manual da fila (master): edita a ordem -> reescreve last_lead_received_at.
+  const [editingQueue, setEditingQueue] = useState(false);
+  const [queueOrder, setQueueOrder] = useState<any[]>([]);
+  const [savingQueue, setSavingQueue] = useState(false);
   const [agentsList, setAgentsList] = useState<any[]>([]);
   const [transferringId, setTransferringId] = useState<string | null>(null);
   // Tick incrementado a cada evento realtime/poll — passado pros componentes
@@ -1171,6 +1175,52 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
     }));
   }, [agentsList, queueSellers, nextSeller]);
 
+  // Fila editável GERAL: vendedores ativos ÚNICOS (dedup por telefone — a matriz tem 1
+  // linha por agente), na ordem atual do rodízio. Guarda os ids de cada pessoa (todas as
+  // linhas dela) pra reescrever o "recebido por último" de TODAS ao salvar.
+  const queueUnique = useMemo(() => {
+    const byPhone = new Map<string, { name: string; ids: string[]; last: number | null }>();
+    for (const s of (queueSellers || [])) {
+      const key = String(s.whatsapp_number || '').replace(/\D/g, '') || `id:${s.id}`;
+      const last = s.last_lead_received_at ? new Date(s.last_lead_received_at).getTime() : null;
+      const cur = byPhone.get(key);
+      if (cur) { cur.ids.push(s.id); if (last != null && (cur.last == null || last > cur.last)) cur.last = last; }
+      else byPhone.set(key, { name: s.name, ids: [s.id], last });
+    }
+    return Array.from(byPhone.values()).sort((a, b) => {
+      if (a.last == null && b.last != null) return -1;
+      if (a.last != null && b.last == null) return 1;
+      if (a.last == null && b.last == null) return 0;
+      return (a.last as number) - (b.last as number);
+    });
+  }, [queueSellers]);
+
+  const abrirEditarFila = () => { setQueueOrder([...queueUnique]); setEditingQueue(true); };
+  const moverFila = (i: number, dir: -1 | 1) => setQueueOrder((prev) => {
+    const arr = [...prev]; const j = i + dir;
+    if (j < 0 || j >= arr.length) return arr;
+    [arr[i], arr[j]] = [arr[j], arr[i]]; return arr;
+  });
+  const salvarFila = async () => {
+    setSavingQueue(true);
+    try {
+      const now = Date.now(); const N = queueOrder.length;
+      const ups: Promise<any>[] = [];
+      queueOrder.forEach((p, i) => {
+        const ts = new Date(now - (N - i) * 60000).toISOString(); // topo = mais antigo = próximo a receber
+        for (const id of p.ids) ups.push((supabase as any).from('ai_team_members').update({ last_lead_received_at: ts }).eq('id', id));
+      });
+      await Promise.all(ups);
+      setQueueSellers((prev: any[]) => prev.map((s: any) => {
+        const idx = queueOrder.findIndex((p) => p.ids.includes(s.id));
+        return idx >= 0 ? { ...s, last_lead_received_at: new Date(now - (N - idx) * 60000).toISOString() } : s;
+      }));
+      toast.success('Ordem da fila salva! O do topo recebe o próximo lead.');
+      setEditingQueue(false);
+    } catch { toast.error('Não consegui salvar a ordem agora.'); }
+    finally { setSavingQueue(false); }
+  };
+
   // Transfere o lead pro próximo da fila via manual-transfer (mesma função do
   // CRM). Confirma antes (envia WhatsApp real pro vendedor). Dedup de 30s no back.
   const handleTransferToNext = useCallback(async (lead: LeadNaoTransferido) => {
@@ -1560,10 +1610,44 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
                   {seller ? seller.name : 'sem vendedor ativo'}
                 </span>
               ))}
+              <button
+                type="button"
+                onClick={abrirEditarFila}
+                className="inline-flex items-center gap-1 rounded-full border border-cyan-500/30 bg-cyan-500/5 px-2 py-1 text-[10px] font-bold text-cyan-200 hover:bg-cyan-500/15 shrink-0"
+                title="Reordenar a fila manualmente"
+              >
+                <ListOrdered className="h-3 w-3" /> Editar fila
+              </button>
             </div>
           )}
           <p className="text-[10px] text-slate-500 italic shrink-0">{leadsNaoTransferidos.length} pendente(s) no período</p>
         </div>
+
+        {editingQueue && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => !savingQueue && setEditingQueue(false)}>
+            <div className="w-full max-w-md rounded-2xl border border-cyan-500/30 bg-slate-900 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-sm font-bold text-cyan-100 mb-1">Editar ordem da fila</h3>
+              <p className="text-[11px] text-slate-400 mb-3">O vendedor no <b className="text-cyan-200">topo</b> recebe o próximo lead. Use as setas pra reordenar.</p>
+              <div className="space-y-1.5 max-h-[55vh] overflow-y-auto pr-1">
+                {queueOrder.map((p, i) => (
+                  <div key={p.ids[0]} className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2">
+                    <span className="w-5 text-center text-xs font-bold text-cyan-300">{i + 1}</span>
+                    <span className="flex-1 truncate text-sm font-semibold text-slate-100">{p.name}{i === 0 && <span className="ml-2 text-[10px] text-emerald-400">próximo</span>}</span>
+                    <button disabled={i === 0 || savingQueue} onClick={() => moverFila(i, -1)} className="rounded p-1 text-slate-300 hover:text-cyan-200 disabled:opacity-30"><ChevronUp className="h-4 w-4" /></button>
+                    <button disabled={i === queueOrder.length - 1 || savingQueue} onClick={() => moverFila(i, 1)} className="rounded p-1 text-slate-300 hover:text-cyan-200 disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
+                  </div>
+                ))}
+                {queueOrder.length === 0 && <p className="text-xs text-slate-500">Nenhum vendedor ativo na fila.</p>}
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button disabled={savingQueue} onClick={() => setEditingQueue(false)} className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800">Cancelar</button>
+                <button disabled={savingQueue || queueOrder.length === 0} onClick={salvarFila} className="rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-4 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-50">
+                  {savingQueue ? 'Salvando…' : 'Salvar ordem'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {leadsNaoTransferidos.length === 0 ? (
           <div className="rounded-xl border border-slate-800 bg-slate-900/45 px-4 py-5 text-center text-sm text-slate-500">
