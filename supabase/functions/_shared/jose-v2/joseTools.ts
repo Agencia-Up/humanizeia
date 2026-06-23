@@ -12,7 +12,7 @@
  */
 
 import { getDashboardCards, resolveMetaAccount, type MetaAccount } from "./dashboardQueries.ts";
-import { leadQualityByAd, leadMotivosByAd, formatMotivos } from "./leadQuality.ts";
+import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd } from "./leadQuality.ts";
 import { checkGuardrails } from "./guardrails.ts";
 import { sendApprovalWhatsApp } from "./approvalGate.ts";
 
@@ -182,15 +182,17 @@ export async function executeJoseTool(
   }
 
   if (name === "consultar_qualidade_por_anuncio") {
-    // contagens (quantos bons/ruins) + o PORQUÊ (motivos do Pedro) por anúncio.
-    const [rows, motivos] = await Promise.all([
+    // contagens (IA do Pedro) + PORQUÊ (motivos do Pedro) + FEEDBACK DO VENDEDOR por anúncio.
+    const [rows, motivos, sellerFb] = await Promise.all([
       leadQualityByAd(admin, userId, { minLeads: 1 }),
       leadMotivosByAd(admin, userId),
+      sellerFeedbackByAd(admin, userId),
     ]);
     return {
       total_anuncios: rows.length,
       anuncios: rows.slice(0, 20).map((r) => {
         const mv = r.ad_key ? motivos.get(r.ad_key) : null;
+        const sf = r.ad_key ? sellerFb.get(r.ad_key) : null;
         return {
           anuncio: r.ad_name, origem: r.ad_key_kind,
           leads: r.leads_total, bons: r.leads_bom, medios: r.leads_medio, ruins: r.leads_ruim,
@@ -198,6 +200,8 @@ export async function executeJoseTool(
           // O "porquê" em linguagem de gente (top motivos do Pedro). null = ainda sem motivo registrado.
           por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
           por_que_bom: mv ? formatMotivos(mv.bom) : null,
+          // VERDADE DO VENDEDOR (mais forte que o palpite da IA): quantos ele marcou alta/normal/baixa + o porquê das baixas.
+          feedback_vendedor: sf ? { alta: sf.alta, normal: sf.normal, baixa: sf.baixa, motivos_baixa: sf.reasons } : null,
         };
       }),
     };

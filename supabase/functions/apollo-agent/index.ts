@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
-import { leadQualityByAd, leadMotivosByAd, formatMotivos } from "../_shared/jose-v2/leadQuality.ts";
+import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd } from "../_shared/jose-v2/leadQuality.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2398,9 +2398,10 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
   // segue só com a vitrine. Mesma camada do chat/galeria (leadQualityByAd + motivos do Pedro).
   const verdadeLines: string[] = [];
   try {
-    const [lqRep, motivosRep] = await Promise.all([
+    const [lqRep, motivosRep, sellerFbRep] = await Promise.all([
       leadQualityByAd(admin, userId, { minLeads: 2 }),
       leadMotivosByAd(admin, userId),
+      sellerFeedbackByAd(admin, userId),
     ]);
     const pior = lqRep.filter((r) => Number(r.leads_ruim) > 0)
       .sort((a, b) => Number(b.leads_ruim) - Number(a.leads_ruim))[0];
@@ -2409,7 +2410,9 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     if (pior) {
       const mv = pior.ad_key ? motivosRep.get(pior.ad_key) : null;
       const pq = mv ? formatMotivos(mv.ruim) : null;
-      verdadeLines.push(`⚠️ "${pior.ad_name}" trouxe ${Number(pior.leads_ruim)} lead(s) ruim${pq ? ` (${pq})` : ""}${Number(pior.leads_bom) === 0 ? " e nenhum bom ainda" : ""}.`);
+      const sf = pior.ad_key ? sellerFbRep.get(pior.ad_key) : null;
+      const vend = sf && sf.baixa > 0 ? ` O vendedor reprovou ${sf.baixa}${sf.reasons.length ? ` (${sf.reasons.slice(0, 2).join(", ")})` : ""}.` : "";
+      verdadeLines.push(`⚠️ "${pior.ad_name}" trouxe ${Number(pior.leads_ruim)} lead(s) ruim${pq ? ` (${pq})` : ""}${Number(pior.leads_bom) === 0 ? " e nenhum bom ainda" : ""}.${vend}`);
     }
     if (melhor && melhor.ad_name !== pior?.ad_name) {
       verdadeLines.push(`🏆 "${melhor.ad_name}" é a melhor peça: ${Number(melhor.leads_bom)} lead(s) bom(ns)${melhor.pct_bom != null ? ` (${melhor.pct_bom}% de qualidade)` : ""}.`);

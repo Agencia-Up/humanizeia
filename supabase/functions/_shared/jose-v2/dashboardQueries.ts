@@ -9,7 +9,7 @@
  * VERDADE (lead_quality_by_ad: custo por lead BOM, anúncios por qualidade real).
  */
 
-import { leadQualityByAd, leadMotivosByAd, formatMotivos, type LeadQualityByAdRow } from "./leadQuality.ts";
+import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd, type LeadQualityByAdRow } from "./leadQuality.ts";
 
 const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
 const CURRENCY_SYMBOL: Record<string, string> = { BRL: "R$", USD: "$", EUR: "€" };
@@ -170,7 +170,7 @@ export interface DashboardCards {
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
-  por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null; fb_alta: number | null; fb_baixa: number | null }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -243,6 +243,7 @@ export async function getDashboardCards(
   const lq: LeadQualityByAdRow[] = await leadQualityByAd(admin, userId, { minLeads: 1 });
   // motivos (porquê) + índice por título normalizado, pra ligar o criativo à qualidade real.
   const motivos = await leadMotivosByAd(admin, userId);
+  const sellerFb = await sellerFeedbackByAd(admin, userId); // verdade do vendedor por anúncio
   const lqByName = new Map<string, LeadQualityByAdRow>();
   for (const r of lq) { if (r.ad_name) lqByName.set(String(r.ad_name).trim().toLowerCase(), r); }
   let leads_classif = 0;
@@ -287,6 +288,7 @@ export async function getDashboardCards(
     const key = String(ad.name || "").trim().toLowerCase(); // casa qualidade pelo nome ORIGINAL (~título)
     const q = lqByName.get(key);
     const mv = q?.ad_key ? motivos.get(q.ad_key) : null;
+    const sf = q?.ad_key ? sellerFb.get(q.ad_key) : null;
     return {
       nome: cleanAdName(ad.name),                          // nome limpo (sem ** / .png)
       gasto, conversas,
@@ -298,6 +300,8 @@ export async function getDashboardCards(
       leads_ruim: q ? num(q.leads_ruim) : null,
       pct_bom: q ? q.pct_bom : null,
       por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
+      fb_alta: sf?.alta ?? null,                           // verdade do vendedor: leads marcados ALTA
+      fb_baixa: sf?.baixa ?? null,                         // ... e BAIXA (sinal de anúncio ruim)
     };
   }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)); // todos os ativos (sem corte)
 

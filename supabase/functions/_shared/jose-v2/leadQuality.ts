@@ -127,3 +127,42 @@ export async function leadMotivosByAd(admin: any, userId: string): Promise<Map<s
   }
   return map;
 }
+
+export interface SellerFeedbackAgg { alta: number; normal: number; baixa: number; total: number; reasons: string[]; }
+
+/**
+ * Agrega o FEEDBACK DO VENDEDOR (pedro_manager_feedback) por anúncio — a VERDADE de quem
+ * ATENDEU o lead, mais forte que o palpite da IA do Pedro. priority = high|normal|low (alta/
+ * normal/baixa); reason = o porquê que o vendedor deu (guardamos os das BAIXAS, que é o que o
+ * José precisa pra cortar verba). Pega o ÚLTIMO feedback de cada lead, mapeia lead -> ad_key
+ * (ad_id senão título — mesma chave de leadQualityByAd). Vazio quando não há feedback.
+ */
+export async function sellerFeedbackByAd(admin: any, userId: string): Promise<Map<string, SellerFeedbackAgg>> {
+  const map = new Map<string, SellerFeedbackAgg>();
+  const { data: fbs } = await admin.from("pedro_manager_feedback")
+    .select("lead_id, priority, reason, created_at")
+    .eq("user_id", userId)
+    .not("lead_id", "is", null)
+    .order("created_at", { ascending: false });
+  const latest = new Map<string, { priority: string; reason: string | null }>();
+  for (const f of (fbs || []) as any[]) {
+    if (f.lead_id && !latest.has(f.lead_id)) {
+      latest.set(f.lead_id, { priority: String(f.priority || "").toLowerCase().trim(), reason: f.reason ? String(f.reason) : null });
+    }
+  }
+  if (latest.size === 0) return map;
+  const { data: leads } = await admin.from("ai_crm_leads")
+    .select("id, ad_id, ad_name").eq("user_id", userId).in("id", Array.from(latest.keys()));
+  for (const l of (leads || []) as any[]) {
+    const key = l.ad_id || (l.ad_name ? String(l.ad_name).trim().toLowerCase() : null);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, { alta: 0, normal: 0, baixa: 0, total: 0, reasons: [] });
+    const agg = map.get(key)!;
+    const lf = latest.get(l.id)!;
+    if (lf.priority === "high" || lf.priority === "alta") agg.alta++;
+    else if (lf.priority === "low" || lf.priority === "baixa") { agg.baixa++; if (lf.reason && agg.reasons.length < 5) agg.reasons.push(lf.reason); }
+    else agg.normal++;
+    agg.total++;
+  }
+  return map;
+}

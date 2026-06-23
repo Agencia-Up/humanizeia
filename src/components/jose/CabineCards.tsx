@@ -27,7 +27,7 @@ interface Cards {
   regiao_entrega: Array<{ regiao: string; gasto: number; conversas: number }>;
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
-  por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null }>;
+  por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null; fb_alta: number | null; fb_baixa: number | null }>;
   anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
@@ -180,6 +180,13 @@ function CreativeCard({ c, moeda }: { c: any; moeda: string }) {
           </div>
         )}
         {c.por_que_ruim && <p className="text-[10px] text-rose-300/80 mt-1 leading-tight">⚠ {c.por_que_ruim}</p>}
+        {(c.fb_alta || c.fb_baixa) ? (
+          <p className="text-[10px] mt-0.5"><span className="text-muted-foreground">Vendedor: </span>
+            {c.fb_alta ? <span className="text-emerald-400 font-semibold">{c.fb_alta} alta</span> : null}
+            {c.fb_alta && c.fb_baixa ? <span className="text-muted-foreground"> · </span> : null}
+            {c.fb_baixa ? <span className="text-rose-400 font-semibold">{c.fb_baixa} baixa</span> : null}
+          </p>
+        ) : null}
         {analise ? (
           <div className="mt-2 pt-2 border-t border-border/50 space-y-1">
             {analise.nota_geral != null && <p className="text-[11px] font-semibold text-amber-400">Nota do José: {analise.nota_geral}/10</p>}
