@@ -84,11 +84,15 @@ export async function joseChatTurn(admin: any, opts: {
 
   // Até 6 round-trips de ferramenta por turno (trava de segurança contra loop).
   for (let i = 0; i < 6; i++) {
+    // 1º turno: FORÇA chamar uma ferramenta (tool_choice:any) — o claude-3.5-sonnet
+    // tende a "anunciar" ("vou listar... um momento") e encerrar sem chamar nada.
+    // Forçando, ele puxa o dado de verdade. Nos turnos seguintes, 'auto' deixa ele
+    // sintetizar a resposta final (ou chamar mais ferramentas se precisar).
     const r = await callAiGateway(admin, {
       user_id: opts.user_id,
       ad_account_id: opts.ad_account_id ?? null,
       capability: "llm",
-      input: { system, messages, max_tokens: 1500, tools },
+      input: { system, messages, max_tokens: 1500, tools, tool_choice: i === 0 ? { type: "any" } : { type: "auto" } },
       ref_tipo: "chat",
       ref_id: opts.session_id,
     });
