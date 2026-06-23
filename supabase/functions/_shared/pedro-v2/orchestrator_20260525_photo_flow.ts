@@ -1867,17 +1867,26 @@ export async function processPedroV2Turn(
   const _moreOptions = leadAsksForMoreOptions(text);
   const _seenListedKeys: string[] = Array.isArray((nextMemory as any)?.opcoes_listadas_keys)
     ? (nextMemory as any).opcoes_listadas_keys : [];
+  // NÃO REPETIR LISTAS (decisão do dono: repetir os mesmos carros robotiza a conversa). Deduplica em
+  // "mais opcoes" E em qualquer lista AMPLA/categoria — EXCETO quando o lead pede os MAIS BARATOS/orçamento
+  // (aí pode repetir os mais em conta, ele quer ver os baratos). Lista de modelo ESPECÍFICO não deduplica
+  // (se ele pede "o Onix" de novo, mostra o Onix). Histórico acumula sempre (abaixo), pra saber o que já viu.
+  const _txtLowDedup = String(text || "").toLowerCase();
+  const _isCheapestReq = Boolean((brainPlan as any)?.search_filters?.orcamento_max || (stockFilters as any)?.orcamento_max)
+    || /\b(mais barat|mais em conta|baratinho|menor preco|mais acessivel|de menor valor)\b/.test(_txtLowDedup);
+  const _isBroadList = Boolean((stockFilters as any)?.stock_broad || (brainPlan as any)?.search_filters?.stock_broad);
   let _optionsExhausted = false;
-  if (_moreOptions && _seenListedKeys.length > 0 && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {
+  if ((_moreOptions || _isBroadList) && !_isCheapestReq && _seenListedKeys.length > 0
+      && stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0) {
     const _fresh = excludeAlreadyPresented(stockResult.items, _seenListedKeys);
     if (_fresh.length > 0) {
       stockResult = { ...stockResult, items: _fresh, total: _fresh.length };
     } else {
       _optionsExhausted = true;
     }
-    log("info", "pedro_v2_more_options_dedup", { lead_id: lead?.id || null, seen: _seenListedKeys.length, fresh: _fresh.length, exhausted: _optionsExhausted });
+    log("info", "pedro_v2_list_dedup", { lead_id: lead?.id || null, seen: _seenListedKeys.length, fresh: _fresh.length, exhausted: _optionsExhausted, more: _moreOptions, broad: _isBroadList });
   }
-  const _replyPlanForList = (_moreOptions && _optionsExhausted)
+  const _replyPlanForList = ((_moreOptions || _isBroadList) && _optionsExhausted)
     ? {
         ...ambiguousPhotoPlan,
         response_guidance: `${(ambiguousPhotoPlan as any).response_guidance || ""}\nO lead pediu MAIS opcoes, mas ele JA viu as que batem com esse perfil. NAO repita os mesmos carros: reconheca de forma natural que ja te mostrou esses e ofereca VARIAR o criterio (faixa de preco, cambio, marca, ano) ou pergunte o que e mais importante pra ele, pra voce trazer algo diferente.`.trim(),
@@ -2128,6 +2137,7 @@ export async function processPedroV2Turn(
     if (_broadCategoryBrowse && stockResult?.success && Array.isArray(stockResult.items)
         && stockResult.items.length >= 2
         && !messageIsTooVagueToAct(text, currentMemory)
+        && !_optionsExhausted  // já mostrou todas as opções desse perfil -> NÃO relistar (repetir); o LLM oferece variar
         && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
         && !replyMentionsAnyVehicle((reply as any)?.text || "", stockResult.items)) {
       reply = {
@@ -2183,14 +2193,15 @@ export async function processPedroV2Turn(
     }
 
     if (vehiclesToSave.length > 0) {
-      // CASO #2: acumula as chaves dos carros LISTADOS (top-5 mostrados) p/ "mais opcoes" nao repetir.
-      // _moreOptions => UNIAO com o que ja foi listado; lista nova (outro perfil/pivot) => RESETA.
+      // NÃO REPETIR LISTAS: acumula SEMPRE (união) as chaves dos carros já LISTADOS ao longo da conversa,
+      // pra deduplicar as próximas listas (decisão do dono). Antes resetava em lista nova -> perdia o
+      // histórico e repetia. Cap nas últimas 40 (carros diferentes têm chaves diferentes; não bloqueia pivô).
       const _isListReply = reply.source !== "vehicle_photos_reply";
       const _listedNowKeys = _isListReply
         ? (stockResult.items || []).slice(0, 5).map(vehicleDedupKey).filter(Boolean)
         : [];
       const _newListedKeys = _isListReply
-        ? (_moreOptions ? Array.from(new Set([..._seenListedKeys, ..._listedNowKeys])) : _listedNowKeys)
+        ? Array.from(new Set([..._seenListedKeys, ..._listedNowKeys])).slice(-40)
         : _seenListedKeys;
       effectiveMemory = !dryRun && lead?.id
         ? await savePresentedVehicles(supabase, {
