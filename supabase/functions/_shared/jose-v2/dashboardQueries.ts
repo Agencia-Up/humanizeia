@@ -94,6 +94,25 @@ function cleanAdName(name: string): string {
     .trim() || "—";
 }
 
+// Normaliza nome de anúncio/veículo pra casar a tabela de QUALIDADE (chaveada por veículo/
+// título do lead) com os anúncios ATIVOS da Meta (chaveados pelo nome do anúncio). ALTA
+// PRECISÃO de propósito (igualdade ou substring, NÃO token solto): só marca "ativo" quando
+// tem certeza — nunca rotula um anúncio que roda como "fora do ar" por causa de nome diferente.
+function normAd(s: string | null): string {
+  return String(s || "").toLowerCase()
+    .replace(/\*\*/g, "")
+    .replace(/\.(png|jpe?g|mp4|gif|webp)$/i, " ")
+    .replace(/[^a-z0-9áàâãéêíóôõúüç ]/gi, " ")
+    .replace(/\s+/g, " ").trim();
+}
+// Um anúncio da tabela de qualidade está ATIVO se o nome dele casa (igual/substring) com algum
+// anúncio ativo na Meta. Mínimo de 4 chars dos dois lados pra não casar fragmento à toa.
+function isAtivoNaMeta(rowName: string | null, activeNorms: string[]): boolean {
+  const rn = normAd(rowName);
+  if (rn.length < 4) return false;
+  return activeNorms.some((an) => an === rn || an.includes(rn) || rn.includes(an));
+}
+
 // Galeria correta: UMA chamada que já traz, por anúncio ATIVO, a arte (creative) + as
 // métricas (insights: gasto/conversas/CPM) JUNTAS, keyed por anúncio. Acaba com o bug de
 // casar arte x gasto por NOME (que deixava metade "sem arte"). Best-effort.
@@ -166,7 +185,7 @@ export interface DashboardCards {
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
   por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null; fb_alta: number | null; fb_baixa: number | null }>;
-  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
+  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null; ativo: boolean }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
 }
 
@@ -307,16 +326,23 @@ export async function getDashboardCards(
     };
   }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)); // todos os ativos (sem corte)
 
-  // 6) Anúncios por QUALIDADE REAL (não CTR)
+  // 6) Anúncios por QUALIDADE REAL (não CTR). Marca quem ainda está ATIVO na Meta (casa o
+  //    nome com a lista de ativos) e ordena ATIVOS primeiro — a otimização é feita nos ativos;
+  //    o resto fica como histórico (consulta), não como alvo de ação.
+  const activeNorms = activeAds.map((a: any) => normAd(a?.name)).filter((s: string) => s.length >= 4);
   const anuncios = lqPeriodo
     .filter((r) => r.ad_key_kind !== "sem_origem")
-    .sort((a, b) => (num(b.pct_bom) - num(a.pct_bom)) || (num(b.leads_total) - num(a.leads_total)))
-    .slice(0, 12)
     .map((r) => ({
       ad_name: r.ad_name, ad_key_kind: r.ad_key_kind,
       leads_total: num(r.leads_total), leads_bom: num(r.leads_bom),
       leads_ruim: num(r.leads_ruim), vendas: num((r as any).vendas), pct_bom: r.pct_bom,
-    }));
+      ativo: isAtivoNaMeta(r.ad_name, activeNorms),
+    }))
+    .sort((a, b) => {
+      if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;           // ativos primeiro
+      return (num(b.pct_bom) - num(a.pct_bom)) || (num(b.leads_total) - num(a.leads_total));
+    })
+    .slice(0, 12);
 
   return {
     periodo: timeRange ? `${timeRange.since} a ${timeRange.until}` : (datePreset || "last_7d"), ad_account_id: acc.accountDbId, moeda: acc.moeda,

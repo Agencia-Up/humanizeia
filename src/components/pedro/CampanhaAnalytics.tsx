@@ -31,14 +31,14 @@
 // Fonte de dados: ai_crm_leads + wa_contacts (join por telefone)
 // ============================================================================
 
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   Cell, PieChart, Pie, LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
-  TrendingUp, Users, Target, Filter, Loader2, Info, Award, Download, FileText,
+  TrendingUp, Users, Target, Loader2, Info, Award, Download, FileText,
   Car, CreditCard, MapPin, BarChart3, Zap, Activity,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -70,15 +70,6 @@ interface UtmRecord {
   utm_medium: string | null;
   utm_content: string | null;
 }
-
-type Period = 'today' | '7d' | '30d' | '90d' | 'all';
-const PERIODS: { id: Period; label: string }[] = [
-  { id: 'today', label: 'Hoje' },
-  { id: '7d', label: '7 dias' },
-  { id: '30d', label: '30 dias' },
-  { id: '90d', label: '90 dias' },
-  { id: 'all', label: 'Tudo' },
-];
 
 // ─── Qualificação (3 níveis SDR) ────────────────────────────────────────────
 const QUAL = {
@@ -177,17 +168,6 @@ function phoneKeys(d: string): string[] {
   return keys;
 }
 
-function periodCutoff(period: Period): number {
-  const now = Date.now();
-  switch (period) {
-    case 'today': return new Date(new Date().setHours(0, 0, 0, 0)).getTime();
-    case '7d': return now - 7 * 24 * 60 * 60 * 1000;
-    case '30d': return now - 30 * 24 * 60 * 60 * 1000;
-    case '90d': return now - 90 * 24 * 60 * 60 * 1000;
-    case 'all': return 0;
-  }
-}
-
 function cell(v: string | number): string {
   const s = String(v ?? '');
   return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -220,15 +200,9 @@ interface CityRow { cidade: string; total: number; qualificado: number; pct: num
 interface PaymentRow { metodo: string; total: number; qualificado: number; pct: number; fill: string; }
 interface WeekRow { semana: string; total: number; qualificado: number; pouco_qualificado: number; inativo: number; }
 
-export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUserId: string; periodOverride?: Period }) {
-  const [period, setPeriod] = useState<Period>('all'); // abre em "Tudo": ver a jornada inteira (todos os leads têm data)
-  // Espelha o filtro do painel principal (Cabine): mudou o período lá em cima -> muda aqui.
-  // 1º render mantém "Tudo" (ver tudo junto); depois segue o período escolhido na Cabine.
-  const primeiroSync = useRef(true);
-  useEffect(() => {
-    if (primeiroSync.current) { primeiroSync.current = false; return; }
-    if (periodOverride) setPeriod(periodOverride);
-  }, [periodOverride]);
+// since/until (YYYY-MM-DD, BRT) vêm do FILTRO MESTRE da Cabine — este painel não tem filtro
+// próprio: ele obedece a janela escolhida lá em cima. periodoLabel é só pro título/relatório.
+export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: { masterUserId: string; since: string; until: string; periodoLabel: string }) {
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<RawLead[]>([]);
   const [utmByPhone, setUtmByPhone] = useState<Map<string, UtmRecord>>(new Map());
@@ -286,8 +260,13 @@ export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUser
   };
 
   const data = useMemo(() => {
-    const cutoff = periodCutoff(period);
-    const filtered = leads.filter(l => new Date(l.created_at).getTime() >= cutoff);
+    // Janela do filtro MESTRE (Cabine): [since 00:00, until 23:59] em BRT. Um filtro só governa tudo.
+    const sinceMs = since ? new Date(`${since}T00:00:00-03:00`).getTime() : 0;
+    const untilMs = until ? new Date(`${until}T23:59:59-03:00`).getTime() : Number.MAX_SAFE_INTEGER;
+    const filtered = leads.filter(l => {
+      const t = new Date(l.created_at).getTime();
+      return t >= sinceMs && t <= untilMs;
+    });
 
     // ── KPIs principais ──────────────────────────────────────────────────────
     const totalLeads = filtered.length;
@@ -423,12 +402,12 @@ export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUser
       paymentData, leadsComPagamento,
       weeklyData,
     };
-  }, [leads, utmByPhone, period]);
+  }, [leads, utmByPhone, since, until]);
 
   // ─── Exportar CSV ────────────────────────────────────────────────────────
   function exportCsv() {
     const sep = ';';
-    const periodLabel = PERIODS.find(p => p.id === period)?.label || '';
+    const periodLabel = periodoLabel;
     const lines: string[] = [];
     lines.push(cell('Relatório de Tráfego — Qualificação por Campanha/Origem'));
     lines.push(cell(`Período: ${periodLabel}`));
@@ -460,7 +439,7 @@ export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUser
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `relatorio-trafego-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `relatorio-trafego-${since}_a_${until}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -468,7 +447,7 @@ export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUser
   }
 
   async function exportPdf() {
-    const periodLabel = PERIODS.find(p => p.id === period)?.label || '';
+    const periodLabel = periodoLabel;
     const rows = data.campRows.map(r => {
       const classif = r.qualificado + r.pouco_qualificado + r.inativo;
       const pct = classif > 0 ? `${Math.round((r.qualificado / classif) * 100)}%` : '—';
@@ -479,7 +458,7 @@ export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUser
     await downloadReportPdf({
       title: 'Relatório de Tráfego — Qualidade por Campanha',
       subtitle: `Período: ${periodLabel}`,
-      filename: `relatorio-trafego-${period}-${new Date().toISOString().slice(0, 10)}`,
+      filename: `relatorio-trafego-${since}_a_${until}`,
       accentRgb: [234, 88, 12],
       orientation: 'landscape',
       columns: [
@@ -531,15 +510,10 @@ export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUser
                   </button>
                 </>
               )}
-              <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
-                <Filter className="h-3 w-3 text-muted-foreground ml-1" />
-                {PERIODS.map(p => (
-                  <button key={p.id} onClick={() => setPeriod(p.id)}
-                    className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${period === p.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
+              {/* Sem filtro próprio: este painel obedece o filtro MESTRE da Cabine (chip só informa). */}
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+                <TrendingUp className="h-3 w-3" /> Período: <span className="text-foreground font-semibold">{periodoLabel}</span>
+              </span>
             </div>
           </div>
         </CardHeader>

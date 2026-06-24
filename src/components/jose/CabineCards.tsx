@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
-  Wallet, ShoppingCart, UserCheck, Sparkles, Car, X,
+  Wallet, ShoppingCart, UserCheck, Sparkles, Car, X, CalendarDays, Power,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -30,8 +30,21 @@ interface Cards {
   regiao_origem: Array<{ cidade: string; leads: number; leads_bom: number }>;
   por_publico: Array<{ nome: string; gasto: number; conversas: number }>;
   por_criativo: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null; leads_bom: number | null; leads_ruim: number | null; pct_bom: number | null; por_que_ruim: string | null; fb_alta: number | null; fb_baixa: number | null }>;
-  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null }>;
+  anuncios: Array<{ ad_name: string | null; ad_key_kind: string; leads_total: number; leads_bom: number; leads_ruim: number; vendas: number; pct_bom: number | null; ativo: boolean }>;
   atribuicao: { por_ad_id: number; por_titulo: number; sem_origem: number };
+}
+
+// Data YYYY-MM-DD em BRT (America/Sao_Paulo) com deslocamento de dias — MESMA lógica do server
+// (presetToRange) pra a janela do filtro mestre bater igual nos cards e no painel de tráfego.
+function brtDateStr(offsetDays = 0): string {
+  return new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+function presetRange(preset: string): { since: string; until: string } {
+  const until = brtDateStr(0);
+  if (preset === 'yesterday') { const y = brtDateStr(-1); return { since: y, until: y }; }
+  if (preset === 'last_30d') return { since: brtDateStr(-29), until };
+  if (preset === 'last_7d') return { since: brtDateStr(-6), until };
+  return { since: until, until }; // today
 }
 
 const PRESETS = [
@@ -204,6 +217,9 @@ function CreativeCard({ c, moeda }: { c: any; moeda: string }) {
         <div className="w-full h-28 bg-muted flex items-center justify-center text-[11px] text-muted-foreground">sem arte</div>
       )}
       <div className="p-2.5">
+        {c.status === 'ACTIVE' && (
+          <span className="inline-flex items-center gap-1 mb-1 rounded px-1.5 py-0.5 text-[9px] font-semibold bg-emerald-500/15 text-emerald-400"><Power className="h-2.5 w-2.5" /> Ativo</span>
+        )}
         <p className="text-xs font-medium truncate" title={c.nome}>{c.nome}</p>
         <p className="text-[11px] text-muted-foreground mt-0.5">{int(c.conversas)} conv · {money(moeda, c.gasto)}</p>
         <p className="text-[10px] text-muted-foreground/80">
@@ -348,11 +364,15 @@ export function CabineCards() {
     } finally { setLoading(false); }
   }, []);
 
-  // Presets carregam ao trocar; "Personalizado" carrega no botão Aplicar.
-  useEffect(() => { if (periodo !== 'custom') load({ date_preset: periodo }); }, [periodo, load]);
-  const recarregar = useCallback(() => {
-    load(periodo === 'custom' && desde && ate ? { time_range: { since: desde, until: ate } } : { date_preset: periodo });
-  }, [load, periodo, desde, ate]);
+  // FILTRO MESTRE: o período vira UMA janela {since,until} (BRT) e governa TUDO — manda o mesmo
+  // time_range pro server (cards/anúncios) e desce pro painel de Tráfego. Custom só vale com as 2 datas.
+  const range = useMemo<{ since: string; until: string } | null>(() => {
+    if (periodo === 'custom') return (desde && ate) ? { since: desde, until: ate } : null;
+    return presetRange(periodo);
+  }, [periodo, desde, ate]);
+
+  useEffect(() => { if (range) load({ time_range: range }); }, [range, load]);
+  const recarregar = useCallback(() => { if (range) load({ time_range: range }); }, [load, range]);
 
   // Auto-esconde nas contas sem o recurso ligado.
   if (!loading && (!enabled || !cards)) return null;
@@ -370,39 +390,49 @@ export function CabineCards() {
   return (
     <div className="space-y-6">
       {/* Cabeçalho */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-inset ring-primary/20"><Gauge className="h-5 w-5" /></div>
-            <h2 className="text-2xl font-bold leading-none tracking-tight">Cabine de Comando</h2>
-            <Badge variant="secondary" className="text-[10px]">a verdade por anúncio</Badge>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1.5">Os números que importam, sempre à vista — sem precisar pedir relatório.</p>
+      <div>
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-inset ring-primary/20"><Gauge className="h-5 w-5" /></div>
+          <h2 className="text-2xl font-bold leading-none tracking-tight">Cabine de Comando</h2>
+          <Badge variant="secondary" className="text-[10px]">a verdade por anúncio</Badge>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-card/60 p-1">
-            {PRESETS.map((p) => (
-              <button key={p.value} onClick={() => setPeriodo(p.value)} disabled={loading}
-                className={`h-7 rounded-lg px-3 text-xs font-semibold transition-colors ${periodo === p.value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}>{p.label}</button>
-            ))}
-            <button onClick={() => setPeriodo('custom')} disabled={loading}
-              className={`h-7 rounded-lg px-3 text-xs font-semibold transition-colors ${periodo === 'custom' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}>Personalizado</button>
-          </div>
-          <Button size="sm" variant="outline" className="h-9 w-9 p-0" onClick={recarregar} disabled={loading} title="Atualizar">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          </Button>
-        </div>
+        <p className="text-sm text-muted-foreground mt-1.5">Os números que importam, sempre à vista — sem precisar pedir relatório.</p>
       </div>
 
-      {periodo === 'custom' && (
-        <div className="flex items-center gap-2 flex-wrap text-xs">
-          <span className="text-muted-foreground">De</span>
-          <input type="date" value={desde} max={ate || undefined} onChange={(e) => setDesde(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-xs" />
-          <span className="text-muted-foreground">até</span>
-          <input type="date" value={ate} min={desde || undefined} onChange={(e) => setAte(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-xs" />
-          <Button size="sm" className="h-8 text-xs" disabled={loading || !desde || !ate} onClick={() => load({ time_range: { since: desde, until: ate } })}>Aplicar</Button>
+      {/* FILTRO MESTRE — um só, grande, governa TODO o painel do José (cards, anúncios e tráfego). */}
+      <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-card to-card p-4 shadow-sm shadow-black/10">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-inset ring-primary/25"><CalendarDays className="h-5 w-5" /></div>
+            <div>
+              <div className="text-sm font-bold leading-tight">Período da campanha</div>
+              <div className="text-[11px] text-muted-foreground leading-tight">Um filtro só — vale pra tudo: métricas, anúncios e tráfego pago, juntos.</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-background/70 p-1">
+              {PRESETS.map((p) => (
+                <button key={p.value} onClick={() => setPeriodo(p.value)} disabled={loading}
+                  className={`h-9 rounded-lg px-4 text-sm font-semibold transition-colors ${periodo === p.value ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}>{p.label}</button>
+              ))}
+              <button onClick={() => setPeriodo('custom')} disabled={loading}
+                className={`h-9 rounded-lg px-4 text-sm font-semibold transition-colors ${periodo === 'custom' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}>Personalizado</button>
+            </div>
+            <Button size="sm" variant="outline" className="h-10 w-10 p-0" onClick={recarregar} disabled={loading} title="Atualizar">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
-      )}
+        {periodo === 'custom' && (
+          <div className="flex items-center gap-2 flex-wrap text-sm mt-3 pt-3 border-t border-border/50">
+            <span className="text-muted-foreground">De</span>
+            <input type="date" value={desde} max={ate || undefined} onChange={(e) => setDesde(e.target.value)} className="h-9 rounded-lg border bg-background px-2.5 text-sm" />
+            <span className="text-muted-foreground">até</span>
+            <input type="date" value={ate} min={desde || undefined} onChange={(e) => setAte(e.target.value)} className="h-9 rounded-lg border bg-background px-2.5 text-sm" />
+            {(!desde || !ate) && <span className="text-[11px] text-muted-foreground">escolha as duas datas pra aplicar</span>}
+          </div>
+        )}
+      </div>
 
       {loading && !cards && (
         <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
@@ -513,7 +543,7 @@ export function CabineCards() {
           {/* Anúncios por qualidade real — com barra de % */}
           <div>
             <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4 text-amber-400" /> De qual anúncio vêm os bons clientes</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">Ranking pela qualidade REAL do lead (não por curtidas nem cliques).</p>
+            <p className="text-[11px] text-muted-foreground mb-2.5">Ranking pela qualidade REAL do lead (não por curtidas nem cliques). Os anúncios <strong className="text-emerald-400/90">ativos</strong> vêm primeiro — a otimização é neles; o resto é histórico pra consulta.</p>
             <Panel className="p-4">
               {cards.anuncios.length === 0
                 ? <p className="text-xs text-muted-foreground">Ainda sem leads classificados por anúncio. Conforme o Pedro atende, os anúncios aparecem aqui ordenados do melhor pro pior.</p>
@@ -531,7 +561,8 @@ export function CabineCards() {
                           <div key={i} className="grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 items-center py-2.5 text-xs">
                             <span className="flex items-center gap-2 min-w-0">
                               <span className={`h-2.5 w-2.5 rounded-full ${dot} shrink-0`} />
-                              <span className="truncate font-medium" title={a.ad_name || ''}>{a.ad_name || '(sem nome)'}</span>
+                              <span className={`truncate font-medium ${a.ativo ? '' : 'text-muted-foreground'}`} title={a.ad_name || ''}>{a.ad_name || '(sem nome)'}</span>
+                              {a.ativo && <Badge className="text-[9px] h-4 px-1 font-semibold shrink-0 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 gap-0.5"><Power className="h-2.5 w-2.5" />Ativo</Badge>}
                               {a.ad_key_kind === 'titulo' && <Badge variant="outline" className="text-[9px] h-4 px-1 font-normal shrink-0">aproximado</Badge>}
                             </span>
                             <span className="text-center tabular-nums text-muted-foreground">{int(a.leads_total)}</span>
@@ -545,8 +576,12 @@ export function CabineCards() {
                         );
                       })}
                     </div>
+                    <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/50 flex items-start gap-1">
+                      <Power className="h-3 w-3 mt-0.5 shrink-0 text-emerald-400" />
+                      <span>O selo <strong className="text-emerald-400/90">Ativo</strong> marca o anúncio que ainda casa com os ativos na Meta — é onde a otimização acontece. Sem o selo = não confirmado ativo (a 2ª via oficial da Meta deixa o casamento exato).</span>
+                    </p>
                     {semPct > 0 && (
-                      <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/50">
+                      <p className="text-[10px] text-muted-foreground mt-2">
                         Atribuição: {int(cards.atribuicao.por_ad_id)} precisos · {int(cards.atribuicao.por_titulo)} por título · {int(cards.atribuicao.sem_origem)} sem origem ({semPct}%). Fica preciso conforme as contas usam o WhatsApp oficial da Meta.
                       </p>
                     )}
@@ -559,14 +594,14 @@ export function CabineCards() {
           <div>
             <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
             <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
-            <CampanhaAnalytics masterUserId={user?.id || ''} periodOverride={periodo === 'today' ? 'today' : periodo === 'last_7d' ? '7d' : periodo === 'last_30d' ? '30d' : undefined} />
+            <CampanhaAnalytics masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel} />
           </div>
 
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
           <StockGuard />
 
           {/* ATRIBUIÇÃO POR VEÍCULO — puxa o carro da conversa pra separar o blob genérico */}
-          <AtribVeiculo onDone={() => load({ date_preset: periodo === 'custom' ? 'last_7d' : periodo })} />
+          <AtribVeiculo onDone={() => load(range ? { time_range: range } : { date_preset: 'last_7d' })} />
 
           {/* GALERIA DE CRIATIVOS — num pop-up (não polui o painel) */}
           <GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} />
