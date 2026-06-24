@@ -13,6 +13,7 @@ import { leadTransferStatusLine, leadTransferStatusText, LeadTransferStatusKey }
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, mapQualificacaoToLeadColumns, classifyLeadSdr } from "../transfer/leadSdrCategory.ts";
 import { remoteJidToPhone } from "./phone.ts";
 import { generatePedroBrainReply, buildDeterministicStockReply } from "./pedroBrainReply_20260525.ts";
+import { fetchPedroKnowledgeContext } from "./knowledgeBase.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
 import { searchPedroStock } from "./stockSearch_20260525_photo_flow.ts";
 import { setSdrLabelOnChat } from "./uazapiLabels.ts";
@@ -1897,6 +1898,19 @@ export async function processPedroV2Turn(
       }
     : ambiguousPhotoPlan;
 
+  // BASE DE CONHECIMENTO (RAG, OPCIONAL): enriquece o reply com a info da LOJA que o cliente cadastrou
+  // (garantia, financiamento, documentação, FAQ — o que o agente hoje não sabe e às vezes inventa). Só
+  // custa quando o agente TEM base ligada (senão retorna "" após 1 query barata). Best-effort: nunca
+  // derruba o turno. Query = a mensagem REAL do lead (não o enriched, p/ não poluir o embedding).
+  const _knowledgeContext = await fetchPedroKnowledgeContext(supabase, {
+    agentId: input.agent.id,
+    userId: input.agent.user_id,
+    agentName: input.agent.name,
+    queryText: text,
+    openaiKey: _openaiKey,
+    auditable: !dryRun,
+  });
+
   let reply = shouldSendVehiclePhotos
     ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: _photoPool }, text, topicAnchorVehicle)
     : await generatePedroBrainReply({
@@ -1912,6 +1926,7 @@ export async function processPedroV2Turn(
         ad_context: adContext,
         media_context: sanitizePedroMediaContext(mediaContext),
         recent_history: recentHistory,
+        knowledge_context: _knowledgeContext,
         usage_sink: usageSink,
         audit: { client: supabase, userId: input.agent.user_id, agentId: input.agent.id, agentName: input.agent.name },
         ai_key_ctx: _aiKeyCtx,

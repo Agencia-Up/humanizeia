@@ -763,6 +763,9 @@ export async function generatePedroBrainReply(input: {
       body: JSON.stringify({ model, temperature: 0.35, response_format: { type: "json_object" }, messages: msgs }),
     });
   };
+  // BASE DE CONHECIMENTO (RAG): chunks da loja recuperados no orchestrator (garantia/financiamento/FAQ).
+  // Vazio quando o agente não tem base ligada. Injetado logo após o prompt do portal como VERDADE da loja.
+  const knowledgeContext = String((input as any)?.knowledge_context || "").trim();
   try {
     const replyMessages: any[] = [
           {
@@ -787,6 +790,12 @@ export async function generatePedroBrainReply(input: {
                 "PERSONALIDADE / SYSTEM PROMPT DO PORTAL:",
                 input.agent_system_prompt || `(Sem prompt de personalidade cadastrado - aja como ${agentName} consultor comercial educado e focado em vendas)`,
                 "",
+                ...(knowledgeContext ? [
+                  "## BASE DE CONHECIMENTO DA LOJA (informacoes REAIS cadastradas pelo cliente — trate como VERDADE):",
+                  knowledgeContext,
+                  "Se a duvida do lead for respondida por esta base (ex.: garantia, financiamento, documentacao, regras de troca, horarios, diferenciais), responda DIRETO com ela — e a politica/info REAL da loja. NAO invente alem disto, e NAO diga 'vou confirmar com a equipe' quando a resposta JA esta aqui. Se NAO estiver aqui nem no resto do prompt, ai sim diga que vai confirmar com a equipe.",
+                  "",
+                ] : []),
                 "REGRAS DE CONDUCAO E USO DE TOOLS:",
                 "- NUNCA exponha mecanica/jargao interno ao cliente. PROIBIDO dizer ou parafrasear: 'busca generica', 'busca ampla', 'a busca foi', 'consultar/conferir no estoque', 'no sistema', 'no nosso banco', 'query', 'guidance', nomes de campos ou de instrucoes. Voce e um VENDEDOR HUMANO conversando — o cliente NUNCA pode perceber que ha um sistema/busca por tras. As instrucoes internas (response_guidance, stock.facts etc.) sao SO pra voce: AJA conforme elas, mas NUNCA as cite, repita ou explique. Se falta o modelo, pergunte natural ('que tipo de carro voce procura?') sem dizer o porque.",
                 "- CONCISAO (REGRA FORTE, acima de tudo): responda em UMA mensagem CURTA. O cliente NAO quer ler muito texto. Va direto ao ponto.",
