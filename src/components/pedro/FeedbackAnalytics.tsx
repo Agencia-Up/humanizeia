@@ -32,7 +32,13 @@ interface Feedback {
   ia_status_crm?: string | null;
 }
 
-interface FeedbackAnalyticsProps { feedbacks: Feedback[]; }
+interface FeedbackAnalyticsProps {
+  feedbacks: Feedback[];
+  // Lista COMPLETA de vendedores (do time) pro dropdown — senão só aparecem os que já deram feedback.
+  sellers?: Array<{ id: string; name: string; memberIds: string[] }>;
+  // No painel do VENDEDOR esconde o filtro de vendedor (ele só vê os dele).
+  hideSellerFilter?: boolean;
+}
 
 type Period = 'today' | 'yesterday' | '7d' | '30d' | 'all' | 'custom';
 const PERIODS: { id: Period; label: string }[] = [
@@ -122,7 +128,7 @@ function fmtDate(s: string): string {
   try { return new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return s; }
 }
 
-export function FeedbackAnalytics({ feedbacks }: FeedbackAnalyticsProps) {
+export function FeedbackAnalytics({ feedbacks, sellers, hideSellerFilter }: FeedbackAnalyticsProps) {
   const [period, setPeriod] = useState<Period>('30d');
   const [customSince, setCustomSince] = useState('');
   const [customUntil, setCustomUntil] = useState('');
@@ -130,12 +136,20 @@ export function FeedbackAnalytics({ feedbacks }: FeedbackAnalyticsProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const toggleExp = (id: string) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  // Vendedores disponíveis (dos feedbacks).
+  // Vendedores do dropdown: o time COMPLETO (prop sellers) — senão deriva dos feedbacks (fallback).
   const sellerOptions = useMemo(() => {
+    if (sellers && sellers.length) return sellers.map((s) => ({ id: s.id, name: s.name })).sort((a, b) => a.name.localeCompare(b.name));
     const m = new Map<string, string>();
     for (const f of feedbacks) if (f.member_id) m.set(f.member_id, f.member?.name || 'Sem nome');
     return Array.from(m.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [feedbacks]);
+  }, [feedbacks, sellers]);
+
+  // ids de membro do vendedor selecionado (mesmo vendedor pode ter vários member_id na matriz de agentes).
+  const selectedMemberIds = useMemo<string[] | null>(() => {
+    if (seller === 'all') return null;
+    if (sellers && sellers.length) return sellers.find((s) => s.id === seller)?.memberIds || [seller];
+    return [seller];
+  }, [seller, sellers]);
 
   // Recorte por PERÍODO + VENDEDOR (governa tudo abaixo).
   const filtered = useMemo(() => {
@@ -144,11 +158,11 @@ export function FeedbackAnalytics({ feedbacks }: FeedbackAnalyticsProps) {
       .filter((f) => {
         const t = new Date(f.created_at).getTime();
         if (t < since || t > until) return false;
-        if (seller !== 'all' && f.member_id !== seller) return false;
+        if (selectedMemberIds && !selectedMemberIds.includes(f.member_id || '')) return false;
         return true;
       })
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [feedbacks, period, customSince, customUntil, seller]);
+  }, [feedbacks, period, customSince, customUntil, selectedMemberIds]);
 
   const metrics = useMemo(() => {
     const total = filtered.length;
@@ -208,12 +222,14 @@ export function FeedbackAnalytics({ feedbacks }: FeedbackAnalyticsProps) {
             <CardDescription className="text-xs mt-1">Feedback completo de cada vendedor, comparado com a classificação da IA — filtre por vendedor e período</CardDescription>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Filtro de VENDEDOR */}
-            <select value={seller} onChange={(e) => setSeller(e.target.value)}
-              className="h-8 rounded-lg border border-border/60 bg-background/70 px-2.5 text-[11px] font-medium text-foreground">
-              <option value="all">Todos os vendedores</option>
-              {sellerOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            {/* Filtro de VENDEDOR (escondido no painel do próprio vendedor) */}
+            {!hideSellerFilter && (
+              <select value={seller} onChange={(e) => setSeller(e.target.value)}
+                className="h-8 rounded-lg border border-border/60 bg-background/70 px-2.5 text-[11px] font-medium text-foreground">
+                <option value="all">Todos os vendedores</option>
+                {sellerOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
             {/* Filtro de PERÍODO */}
             <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
               <Filter className="h-3 w-3 text-muted-foreground ml-1" />

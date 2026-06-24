@@ -1539,12 +1539,17 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         leadsQuery,
         // M5: feedbacks vêm de Pedro (lead_id → ai_crm_leads) E Marcos (crm_lead_id → crm_leads).
         // Buscamos sem JOIN e hidratamos `lead.lead_name` em JS a partir de 2 lookups.
-        (supabase as any)
-          .from('pedro_manager_feedback')
-          .select('id, lead_id, crm_lead_id, member_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
-          .eq('user_id', isSeller ? userId : effectiveUserId)
-          .order('created_at', { ascending: false })
-          .limit(2000), // antes era 50 (travava o painel em "50 no período"); 2000 cobre o volume real e o filtro de período é feito no cliente
+        (() => {
+          let q = (supabase as any)
+            .from('pedro_manager_feedback')
+            .select('id, lead_id, crm_lead_id, member_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
+            .order('created_at', { ascending: false })
+            .limit(2000); // 2000 cobre o volume real; o filtro de período é feito no cliente
+          // Master vê os feedbacks da conta; VENDEDOR vê só os DELE (RLS seller_manage_feedback por member_id).
+          if (isSeller && memberIds.length > 0) q = q.in('member_id', memberIds);
+          else q = q.eq('user_id', effectiveUserId);
+          return q;
+        })(),
         // Follow-up: vendedor usa apenas a instância DELE; master usa apenas
         // as próprias dele (seller_member_id IS NULL). Master NÃO usa
         // instâncias de vendedores mesmo enxergando-as em outras telas.
@@ -4163,10 +4168,12 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             ...(!isMarcosCrm ? [
               { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
             ] : []),
-            // Feedbacks e ferramenta do dono (gerente): so master ve. Vendedor
-            // nao acompanha o painel de feedbacks (decisao do produto).
-            ...(!isSeller && !isMarcosCrm ? [
+            // Feedbacks: master E vendedor (o vendedor vê só os DELE, pra bater com o master).
+            ...(!isMarcosCrm ? [
               { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
+            ] : []),
+            // Diagnóstico e Vendedores: ferramentas do gerente — só master.
+            ...(!isSeller && !isMarcosCrm ? [
               { id: 'diagnostico', label: 'Diagnóstico', icon: AlertTriangle, badge: semVendedorTotal },
               { id: 'sellers', label: 'Vendedores', icon: Users,      badge: 0 },
             ] : []),
@@ -5066,21 +5073,26 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         </DialogContent>
       </Dialog>
 
-      {/* ── Feedbacks List (gerente) — so master (vendedor nao ve) ──────── */}
-      {view === 'feedbacks' && !isSeller && (
+      {/* ── Feedbacks ── Master: todos + comparação + filtro por vendedor. Vendedor: SÓ os DELE. */}
+      {view === 'feedbacks' && (
         <div className="space-y-3">
-          {/* Resumo da qualificação de TODOS os leads pela IA (apenas master) */}
+          {/* Resumo da qualificação de TODOS os leads pela IA — só master */}
           {!isSeller && (
             <QualificacaoResumo masterUserId={effectiveUserIdState || userId || ''} />
           )}
-          {/* Dashboard analítico (apenas master + se houver feedbacks) */}
-          {!isSeller && feedbacks.length > 0 && (
-            <FeedbackAnalytics feedbacks={feedbacks as any} />
+          {/* Dashboard analítico: feedback do vendedor x IA. Master vê todos (e filtra por vendedor);
+              vendedor vê só os DELE (hideSellerFilter), pra conferir o que chegou no master. */}
+          {feedbacks.length > 0 && (
+            <FeedbackAnalytics
+              feedbacks={feedbacks as any}
+              hideSellerFilter={isSeller}
+              sellers={isSeller ? undefined : teamMembers.map((m: any) => ({ id: m.id, name: m.name, memberIds: m._allIds || [m.id] }))}
+            />
           )}
           {feedbacks.length === 0 && (
             <div className="text-center py-16 text-muted-foreground text-sm">
               <BellRing className="h-8 w-8 mx-auto mb-3 opacity-30" />
-              Nenhum feedback recebido ainda.
+              {isSeller ? 'Você ainda não deu nenhum feedback.' : 'Nenhum feedback recebido ainda.'}
             </div>
           )}
           {feedbacks.map(fb => {
