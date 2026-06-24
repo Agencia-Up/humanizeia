@@ -544,6 +544,19 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
           {/* CHAT DO JOSÉ + CONFIGURAÇÕES — logo abaixo do funil (ordem que o dono pediu no print). */}
           {middleSlot}
 
+          {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
+          <StockGuard />
+
+          {/* ATRIBUIÇÃO POR VEÍCULO — puxa o carro da conversa pra separar o blob genérico */}
+          <AtribVeiculo onDone={() => load(range ? { time_range: range } : { date_preset: 'last_7d' })} />
+
+          {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José) */}
+          <div>
+            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
+            <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
+            <CampanhaAnalytics masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel} />
+          </div>
+
           {/* Anúncios por qualidade real — com barra de % */}
           <div>
             <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4 text-amber-400" /> De qual anúncio vêm os bons clientes</h3>
@@ -593,19 +606,6 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
                 )}
             </Panel>
           </div>
-
-          {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José) */}
-          <div>
-            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
-            <CampanhaAnalytics masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel} />
-          </div>
-
-          {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
-          <StockGuard />
-
-          {/* ATRIBUIÇÃO POR VEÍCULO — puxa o carro da conversa pra separar o blob genérico */}
-          <AtribVeiculo onDone={() => load(range ? { time_range: range } : { date_preset: 'last_7d' })} />
 
           {/* GALERIA DE CRIATIVOS — num pop-up (não polui o painel) */}
           <GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} />
