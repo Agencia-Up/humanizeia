@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { MarketingHeader } from '@/components/marketing/MarketingHeader';
@@ -57,6 +57,7 @@ const COST_ROWS: [string, string, string][] = [
 const PLANS = [
   {
     id: 'basico',
+    checkout: '/checkout?plano=basico&ciclo=mensal',
     badge: 'Plano de entrada',
     nome: 'Básico',
     tagline: 'Comece com o Pedro atendendo e qualificando seus leads no WhatsApp.',
@@ -78,6 +79,7 @@ const PLANS = [
   },
   {
     id: 'pro',
+    checkout: '/checkout?plano=pro&ciclo=mensal',
     badge: 'Mais popular',
     nome: 'Pro',
     tagline: 'Pedro qualifica, Marcos organiza e José mostra onde seu tráfego está perdendo dinheiro.',
@@ -102,6 +104,7 @@ const PLANS = [
   },
   {
     id: 'promax',
+    checkout: '/checkout?plano=enterprise&ciclo=mensal', // Pro Max = enterprise no checkout
     badge: 'Operação completa',
     nome: 'Pro Max',
     tagline: 'Tudo do Pro, dimensionado para empresas com mais clientes e mais operação.',
@@ -127,6 +130,7 @@ const PLANS = [
 
 export default function LandingPage() {
   const { user, loading } = useAuth();
+  const navigate = useNavigate();
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadOrigem, setLeadOrigem] = useState('home');
   const openLead = (origem: string) => { setLeadOrigem(origem); setLeadOpen(true); };
@@ -365,7 +369,7 @@ export default function LandingPage() {
 
                 <Button
                   size="lg"
-                  onClick={() => openLead(`plano_${p.id}`)}
+                  onClick={() => navigate(p.checkout)}
                   className={p.featured
                     ? 'w-full text-base'
                     : 'w-full bg-primary text-primary-foreground hover:bg-primary/90'}
