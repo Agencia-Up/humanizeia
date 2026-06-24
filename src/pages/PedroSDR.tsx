@@ -1018,7 +1018,9 @@ interface Feedback {
   read_at: string | null;
   created_at: string;
   member?: { name: string } | null;
+  member_id?: string | null;
   lead?: { lead_name: string } | null;
+  ia_status_crm?: string | null;       // status_crm do lead = classificação da IA (compara com o feedback do vendedor)
 }
 
 // Feedback da IA gerado no momento da transferência (ai_lead_transfers.notes)
@@ -1539,7 +1541,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         // Buscamos sem JOIN e hidratamos `lead.lead_name` em JS a partir de 2 lookups.
         (supabase as any)
           .from('pedro_manager_feedback')
-          .select('id, lead_id, crm_lead_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
+          .select('id, lead_id, crm_lead_id, member_id, content, city, reason, observations, priority, read_at, created_at, member:ai_team_members(name)')
           .eq('user_id', isSeller ? userId : effectiveUserId)
           .order('created_at', { ascending: false })
           .limit(2000), // antes era 50 (travava o painel em "50 no período"); 2000 cobre o volume real e o filtro de período é feito no cliente
@@ -1663,18 +1665,20 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
       const marcosLeadIds = Array.from(new Set(rawFeedbacks.filter(f => f.crm_lead_id).map(f => f.crm_lead_id))) as string[];
       const [pedroNames, marcosNames] = await Promise.all([
         pedroLeadIds.length > 0
-          ? (supabase as any).from('ai_crm_leads').select('id, lead_name').in('id', pedroLeadIds)
+          ? (supabase as any).from('ai_crm_leads').select('id, lead_name, status_crm').in('id', pedroLeadIds)
           : Promise.resolve({ data: [] }),
         marcosLeadIds.length > 0
-          ? (supabase as any).from('crm_leads').select('id, name').in('id', marcosLeadIds)
+          ? (supabase as any).from('crm_leads').select('id, name, status').in('id', marcosLeadIds)
           : Promise.resolve({ data: [] }),
       ]);
       const nameMap = new Map<string, string>();
-      (pedroNames.data  || []).forEach((l: any) => nameMap.set(l.id, l.lead_name || 'Lead'));
-      (marcosNames.data || []).forEach((l: any) => nameMap.set(l.id, l.name      || 'Lead'));
+      const statusMap = new Map<string, string>(); // status_crm do lead = classificação da IA (compara c/ vendedor)
+      (pedroNames.data  || []).forEach((l: any) => { nameMap.set(l.id, l.lead_name || 'Lead'); if (l.status_crm) statusMap.set(l.id, l.status_crm); });
+      (marcosNames.data || []).forEach((l: any) => { nameMap.set(l.id, l.name || 'Lead'); if (l.status) statusMap.set(l.id, l.status); });
       const hydratedFeedbacks: Feedback[] = rawFeedbacks.map((f: any) => ({
         ...f,
         lead: { lead_name: nameMap.get(f.lead_id || f.crm_lead_id || '') ?? 'Lead' },
+        ia_status_crm: statusMap.get(f.lead_id || f.crm_lead_id || '') ?? null,
       }));
       setFeedbacks(hydratedFeedbacks);
       const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected');
