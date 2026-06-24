@@ -137,7 +137,11 @@ function resolveAttribution(lead: RawLead, utm: UtmRecord | null): Attribution {
   // Lead do Pedro (WhatsApp via clique no anúncio/CTWA) SEM origem explícita = veio do tráfego
   // pago, só não trouxe QUAL anúncio -> conta como Tráfego Pago, não "Sem origem"/"Outros".
   // (A loja roda tráfego pago; origem orgânica/porta/indicação vem marcada e é respeitada.)
-  if (!lead.origem && !lead.origem_outros) {
+  // origem='outros' (catch-all do Pedro) / null / vazia = lead do WhatsApp via anúncio, só sem
+  // o anúncio identificado -> Tráfego Pago, não "Outros". (582 leads da Icom caíam aqui.) Se o
+  // dono digitou um "outros" específico (origem_outros), respeita esse.
+  const oLow = (lead.origem || '').toLowerCase().trim();
+  if (!lead.origem_outros && (oLow === '' || oLow === 'outros' || oLow === 'outro')) {
     return { kind: 'campanha', key: 'ad|sem_anuncio', label: 'Tráfego Pago (anúncio não identificado)', sub: 'Tráfego Pago' };
   }
   const o = origemLabel(lead.origem, lead.origem_outros);
@@ -217,7 +221,7 @@ interface PaymentRow { metodo: string; total: number; qualificado: number; pct: 
 interface WeekRow { semana: string; total: number; qualificado: number; pouco_qualificado: number; inativo: number; }
 
 export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
-  const [period, setPeriod] = useState<Period>('30d');
+  const [period, setPeriod] = useState<Period>('all'); // abre em "Tudo": ver a jornada inteira (todos os leads têm data)
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<RawLead[]>([]);
   const [utmByPhone, setUtmByPhone] = useState<Map<string, UtmRecord>>(new Map());
