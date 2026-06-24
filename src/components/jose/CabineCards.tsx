@@ -556,17 +556,10 @@ export function CabineCards({ chat, configActions }: { chat?: ReactNode; configA
             </div>
           </div>
 
-          {/* CONFIGURAÇÕES DO JOSÉ — chat no topo + UMA fileira de botões padrão (config + ferramentas:
-              anúncios ativos, guardião do estoque, atribuição), logo abaixo do funil (pedido do dono). */}
-          <ConfigToolsCard chat={chat} configActions={configActions} cards={cards} reload={recarregar} />
-
-          {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José).
-              Tudo virou SEÇÃO recolhível (clica abre/fecha), incluindo "De qual anúncio vêm os bons
-              clientes" (passado como extraSection). O gráfico "Evolução Semanal" foi removido. */}
-          <div>
-            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads com a <strong className="text-foreground/80">qualidade real</strong>: veículo, pagamento, cidade, canal — e de qual anúncio vêm os bons clientes. Clique em cada seção pra abrir.</p>
-            <CampanhaAnalytics
+          {/* INTELIGÊNCIA DE TRÁFEGO & LEADS — fica ACIMA do chat/config (pedido do dono). Card único
+              (funil + top cidade/veículo + seções recolhíveis), na mesma identidade visual do painel.
+              O próprio card já se intitula, então sem h3 extra. */}
+          <CampanhaAnalytics
               masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel}
               extraSections={[{
                 key: 'anuncios',
@@ -639,7 +632,10 @@ export function CabineCards({ chat, configActions }: { chat?: ReactNode; configA
               }]}
               funil={{ leads_recebidos: cards.leads_recebidos, leads_bom: cards.leads_bom, vendas: cards.vendas }}
             />
-          </div>
+
+          {/* CONFIGURAÇÕES DO JOSÉ — chat + fileira de botões padrão (config + ferramentas).
+              Agora ABAIXO da inteligência de tráfego (pedido do dono). */}
+          <ConfigToolsCard chat={chat} configActions={configActions} cards={cards} reload={recarregar} />
         </>
       )}
     </div>

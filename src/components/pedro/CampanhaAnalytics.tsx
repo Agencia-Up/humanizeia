@@ -503,25 +503,25 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel, fu
   return (
     <div className="space-y-4">
       {/* ─── Header + Filtros ─────────────────────────────────────────────── */}
-      <Card className="border-orange-500/20 bg-gradient-to-br from-orange-500/5 to-amber-500/5">
+      <Card className="border-border/60 bg-card/60 shadow-sm shadow-black/20">
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <CardTitle className="text-base flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-orange-400" />
-                Inteligência de Tráfego & Leads
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-inset ring-primary/20"><TrendingUp className="h-4 w-4" /></span>
+                Inteligência de tráfego & leads
               </CardTitle>
               <CardDescription className="text-xs mt-1">
-                Análise completa: veículos, cidades, pagamentos e campanhas cruzados com qualificação da IA
+                Do tráfego pago até a venda — veículos, cidades, pagamentos e anúncios cruzados com a qualidade real do Pedro
               </CardDescription>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {data.totalLeads > 0 && (
                 <>
-                  <button onClick={exportCsv} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-orange-500/15 text-orange-300 hover:bg-orange-500/25 border border-orange-500/25 transition-colors">
+                  <button onClick={exportCsv} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/60 transition-colors">
                     <Download className="h-3 w-3" /> Exportar CSV
                   </button>
-                  <button onClick={exportPdf} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-red-500/15 text-red-300 hover:bg-red-500/25 border border-red-500/25 transition-colors">
+                  <button onClick={exportPdf} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground border border-border/60 transition-colors">
                     <FileText className="h-3 w-3" /> Exportar PDF
                   </button>
                 </>
