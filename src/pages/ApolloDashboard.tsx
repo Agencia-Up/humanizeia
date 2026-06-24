@@ -21,6 +21,7 @@ import { JoseJulgamento } from '@/components/jose/JoseJulgamento';
 import { JoseCriarCampanha } from '@/components/jose/JoseCriarCampanha';
 import { CabineCards } from '@/components/jose/CabineCards';
 import { JoseChatPanel } from '@/components/jose/JoseChatPanel';
+import { JoseStatusBadge } from '@/components/jose/JoseStatusBadge';
 import { useMetaConnection } from '@/hooks/useMetaConnection';
 import {
   useApolloAgent, useApolloHistory, useApolloCronConfig,
@@ -1540,9 +1541,13 @@ export default function ApolloDashboard() {
                 <p className="text-xs text-muted-foreground mt-0.5">Gestor de Tráfego IA</p>
               </div>
             </div>
-            <Badge variant="outline" className="gap-1.5 text-xs h-7 px-2.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" /> Conectado às suas contas
-            </Badge>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Status CLARO de José ligado/parado + botão direto (sem a inversão do kill-switch). */}
+              <JoseStatusBadge />
+              <Badge variant="outline" className="gap-1.5 text-xs h-7 px-2.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" /> Conectado às suas contas
+              </Badge>
+            </div>
           </div>
         )}
 
