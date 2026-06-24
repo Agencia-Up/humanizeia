@@ -312,29 +312,48 @@ export async function getDashboardCards(
   const por_publico = byAdset.map((r: any) => ({
     nome: String(r.adset_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
   })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
-  const por_criativo = activeAds.map((ad: any) => {
+  // AGRUPA por CRIATIVO (nome do anúncio): a Meta cria MUITAS cópias do mesmo anúncio em adsets
+  // diferentes -> ~349 ids ATIVOS para só ~54 criativos distintos. O dono quer ver os CRIATIVOS,
+  // não as cópias. Soma gasto/conversas/impressões das cópias e mostra 1 card por criativo.
+  const critByName = new Map<string, any>();
+  for (const ad of activeAds) {
+    const key = String(ad?.name || "").trim().toLowerCase(); // casa qualidade pelo nome ORIGINAL (~título)
+    if (!key) continue;
     const ins = insByAdId.get(String(ad.id)) || {};
-    const gasto = num(ins.spend);
-    const conversas = conversasFromActions(ins.actions);
-    const key = String(ad.name || "").trim().toLowerCase(); // casa qualidade pelo nome ORIGINAL (~título)
-    const q = lqByName.get(key);
-    const mv = q?.ad_key ? motivos.get(q.ad_key) : null;
-    const sf = q?.ad_key ? sellerFb.get(q.ad_key) : null;
-    return {
-      nome: cleanAdName(ad.name),                          // nome limpo (sem ** / .png)
-      gasto, conversas,
-      cpm: num(ins.cpm),                                   // CPM da peça
-      custo_conversa: conversas > 0 ? gasto / conversas : null, // custo por conversa
-      status: ad.effective_status || null,
-      thumbnail_url: ad.creative?.image_url || ad.creative?.thumbnail_url || null, // arte na MESMA chamada -> some o "sem arte" à toa
-      leads_bom: q ? num(q.leads_bom) : null,
-      leads_ruim: q ? num(q.leads_ruim) : null,
-      pct_bom: q ? q.pct_bom : null,
-      por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
-      fb_alta: sf?.alta ?? null,                           // verdade do vendedor: leads marcados ALTA
-      fb_baixa: sf?.baixa ?? null,                         // ... e BAIXA (sinal de anúncio ruim)
-    };
-  }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)); // todos os ativos (sem corte)
+    let g = critByName.get(key);
+    if (!g) {
+      const q = lqByName.get(key);
+      const mv = q?.ad_key ? motivos.get(q.ad_key) : null;
+      const sf = q?.ad_key ? sellerFb.get(q.ad_key) : null;
+      g = {
+        nome: cleanAdName(ad.name),                          // nome limpo (sem ** / .png)
+        gasto: 0, conversas: 0, impressoes: 0,
+        status: ad.effective_status || null,
+        thumbnail_url: ad.creative?.image_url || ad.creative?.thumbnail_url || null, // arte na MESMA chamada
+        leads_bom: q ? num(q.leads_bom) : null,
+        leads_ruim: q ? num(q.leads_ruim) : null,
+        pct_bom: q ? q.pct_bom : null,
+        por_que_ruim: mv ? formatMotivos(mv.ruim) : null,
+        fb_alta: sf?.alta ?? null,                           // verdade do vendedor: leads ALTA
+        fb_baixa: sf?.baixa ?? null,                         // ... e BAIXA (sinal de anúncio ruim)
+      };
+      critByName.set(key, g);
+    }
+    g.gasto += num(ins.spend);
+    g.conversas += conversasFromActions(ins.actions);
+    g.impressoes += num(ins.impressions);
+    if (!g.thumbnail_url) g.thumbnail_url = ad.creative?.image_url || ad.creative?.thumbnail_url || null;
+  }
+  const por_criativo = Array.from(critByName.values())
+    .map((g: any) => ({
+      nome: g.nome, gasto: g.gasto, conversas: g.conversas,
+      cpm: g.impressoes > 0 ? (g.gasto / g.impressoes) * 1000 : 0, // CPM do criativo (do total somado)
+      custo_conversa: g.conversas > 0 ? g.gasto / g.conversas : null,
+      status: g.status, thumbnail_url: g.thumbnail_url,
+      leads_bom: g.leads_bom, leads_ruim: g.leads_ruim, pct_bom: g.pct_bom,
+      por_que_ruim: g.por_que_ruim, fb_alta: g.fb_alta, fb_baixa: g.fb_baixa,
+    }))
+    .sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)); // 1 card por criativo distinto
 
   // 6) Anúncios por QUALIDADE REAL (não CTR). Marca quem ainda está ATIVO na Meta (casa o
   //    nome com a lista de ativos) e ordena ATIVOS primeiro — a otimização é feita nos ativos;
