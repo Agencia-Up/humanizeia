@@ -39,7 +39,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
   TrendingUp, Users, Target, Loader2, Info, Award, Download, FileText,
-  Car, CreditCard, MapPin, BarChart3, ChevronDown,
+  Car, CreditCard, MapPin, BarChart3, ChevronDown, UserCheck, ShoppingCart, ChevronRight,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { downloadReportPdf } from './reportPdf';
@@ -202,10 +202,13 @@ interface WeekRow { semana: string; total: number; qualificado: number; pouco_qu
 
 // since/until (YYYY-MM-DD, BRT) vêm do FILTRO MESTRE da Cabine — este painel não tem filtro
 // próprio: ele obedece a janela escolhida lá em cima. periodoLabel é só pro título/relatório.
-export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel, extraSections }: {
+export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel, funil, extraSections }: {
   masterUserId: string; since: string; until: string; periodoLabel: string;
-  // Seções recolhíveis extras (ex.: "De qual anúncio vêm os bons clientes") montadas pela Cabine
-  // e exibidas DENTRO de "Inteligência de Tráfego & Leads" no mesmo padrão de acordeão.
+  // Funil canônico (cards da Cabine): leads chegaram -> qualificados -> vendas. Mostrado no topo
+  // do card, no lugar dos KPIs duplicados (Leads/% Qualificados que repetiam o funil antigo).
+  funil?: { leads_recebidos: number; leads_bom: number; vendas: number };
+  // Seções recolhíveis extras (ex.: "De qual anúncio", "Quem está vendo e quem está chamando")
+  // montadas pela Cabine e exibidas DENTRO de "Inteligência de Tráfego & Leads" no mesmo acordeão.
   extraSections?: Array<{ key: string; title: string; subtitle?: string; icon?: any; node: ReactNode }>;
 }) {
   const [loading, setLoading] = useState(true);
@@ -532,10 +535,37 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel, ex
         </CardHeader>
 
         <CardContent>
-          {/* KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <KpiCard icon={Users} label="Leads no período" value={data.totalLeads} color="text-blue-400" bg="bg-blue-500/10 border-blue-500/20" />
-            <KpiCard icon={Award} label="% Qualificados" value={`${data.pctQualificado}%`} color="text-emerald-400" bg="bg-emerald-500/10 border-emerald-500/20" />
+          {/* FUNIL (fonte canônica = cards da Cabine): chegaram -> qualificados -> vendas. Substitui os
+              KPIs "Leads no período" e "% Qualificados" que duplicavam o funil que existia solto. */}
+          {funil && (
+            <>
+              <div className="flex items-stretch gap-2">
+                <div className="flex-1 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-blue-400 shrink-0" />
+                    <div><div className="text-xl font-bold tabular-nums leading-none">{funil.leads_recebidos.toLocaleString('pt-BR')}</div><div className="text-[11px] text-muted-foreground">leads chegaram</div></div>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 self-center text-muted-foreground shrink-0" />
+                <div className="flex-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <UserCheck className="h-5 w-5 text-emerald-400 shrink-0" />
+                    <div><div className="text-xl font-bold tabular-nums leading-none text-emerald-500">{funil.leads_bom.toLocaleString('pt-BR')}</div><div className="text-[11px] text-muted-foreground">qualificados{funil.leads_recebidos > 0 ? ` · ${Math.round(100 * funil.leads_bom / funil.leads_recebidos)}%` : ''}</div></div>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 self-center text-muted-foreground shrink-0" />
+                <div className="flex-1 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="h-5 w-5 text-amber-400 shrink-0" />
+                    <div><div className="text-xl font-bold tabular-nums leading-none text-amber-500">{funil.vendas.toLocaleString('pt-BR')}</div><div className="text-[11px] text-muted-foreground">vendas{funil.leads_recebidos > 0 ? ` · ${Math.round(100 * funil.vendas / funil.leads_recebidos)}%` : ''}</div></div>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-2 mb-3 text-center">Dos leads do período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
+            </>
+          )}
+          {/* Úteis que NÃO repetem o funil: top cidade e top veículo. */}
+          <div className="grid grid-cols-2 gap-2">
             <KpiCard icon={MapPin} label="Top cidade" value={data.topCity} color="text-violet-400" bg="bg-violet-500/10 border-violet-500/20" small />
             <KpiCard icon={Car} label="Top veículo" value={data.topVehicles[0]?.veiculo || '—'} color="text-orange-400" bg="bg-orange-500/10 border-orange-500/20" small />
           </div>

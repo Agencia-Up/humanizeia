@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
-  Wallet, ShoppingCart, UserCheck, Sparkles, Car, X, CalendarDays, Power, Settings,
+  Wallet, Sparkles, Car, X, CalendarDays, Power, Settings,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -435,12 +435,6 @@ export function CabineCards({ chat, configActions }: { chat?: ReactNode; configA
   const totalAtrib = cards ? n(cards.atribuicao.por_ad_id) + n(cards.atribuicao.por_titulo) + n(cards.atribuicao.sem_origem) : 0;
   const semPct = cards && totalAtrib > 0 ? Math.round(100 * n(cards.atribuicao.sem_origem) / totalAtrib) : 0;
 
-  // Setas do funil (clip-path) — encaixam uma na outra (chegaram → qualificados → vendas).
-  const arrow = (pos: 'first' | 'mid' | 'last') =>
-    pos === 'first' ? 'polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%)'
-    : pos === 'last' ? 'polygon(0 0, 100% 0, 100% 100%, 0 100%, 20px 50%)'
-    : 'polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%, 20px 50%)';
-
   return (
     <div className="space-y-6">
       {/* Cabeçalho */}
@@ -562,38 +556,6 @@ export function CabineCards({ chat, configActions }: { chat?: ReactNode; configA
             </div>
           </div>
 
-          {/* Funil do tráfego: chegaram -> qualificados -> vendas (setas encaixadas) */}
-          <div>
-            <h3 className="text-sm font-semibold mb-2.5">Funil do tráfego ({periodoLabel})</h3>
-            <div className="flex items-stretch">
-              {/* chegaram */}
-              <div className="relative flex-1 bg-gradient-to-r from-blue-600/25 to-blue-500/10 border-y border-l border-blue-500/30 py-4 pl-5 pr-7"
-                   style={{ clipPath: arrow('first') }}>
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.blue}`}><Users className="h-5 w-5" /></div>
-                  <div><div className="text-2xl font-bold tabular-nums leading-none">{int(cards.leads_recebidos)}</div><div className="text-[11px] text-muted-foreground mt-1">leads chegaram</div></div>
-                </div>
-              </div>
-              {/* qualificados */}
-              <div className="relative flex-1 -ml-3 bg-gradient-to-r from-emerald-600/25 to-emerald-500/10 border-y border-emerald-500/30 py-4 pl-7 pr-7"
-                   style={{ clipPath: arrow('mid') }}>
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.emerald}`}><UserCheck className="h-5 w-5" /></div>
-                  <div><div className="text-2xl font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-300">{int(cards.leads_bom)}</div><div className="text-[11px] text-muted-foreground mt-1">qualificado{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.leads_bom / cards.leads_recebidos)}%` : ''}</div></div>
-                </div>
-              </div>
-              {/* vendas */}
-              <div className="relative flex-1 -ml-3 bg-gradient-to-r from-amber-600/25 to-amber-500/10 border-y border-r border-amber-500/30 py-4 pl-7 pr-5"
-                   style={{ clipPath: arrow('last') }}>
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset ${TILE.amber}`}><ShoppingCart className="h-5 w-5" /></div>
-                  <div><div className="text-2xl font-bold tabular-nums leading-none text-amber-600 dark:text-amber-300">{int(cards.vendas)}</div><div className="text-[11px] text-muted-foreground mt-1">vendas{cards.leads_recebidos > 0 ? ` · ${Math.round(100 * cards.vendas / cards.leads_recebidos)}%` : ''}</div></div>
-                </div>
-              </div>
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-2.5 text-center">Dos leads que entraram no período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
-          </div>
-
           {/* CONFIGURAÇÕES DO JOSÉ — chat no topo + UMA fileira de botões padrão (config + ferramentas:
               anúncios ativos, guardião do estoque, atribuição), logo abaixo do funil (pedido do dono). */}
           <ConfigToolsCard chat={chat} configActions={configActions} cards={cards} reload={recarregar} />
@@ -653,27 +615,30 @@ export function CabineCards({ chat, configActions }: { chat?: ReactNode; configA
                       )}
                     </div>
                   ),
+              }, {
+                key: 'publico',
+                title: 'Quem está vendo e quem está chamando',
+                subtitle: 'Região que a Meta mostra (o alvo), de onde os leads realmente vêm e por idade.',
+                icon: Users,
+                node: (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <Lista
+                      icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período." verTodas="Ver todas as regiões →" cor="blue"
+                      linhas={cards.regiao_entrega.map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
+                    />
+                    <Lista
+                      icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda." verTodas="Ver todas as cidades →" cor="emerald"
+                      linhas={cards.regiao_origem.map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads`, peso: r.leads }))}
+                    />
+                    <Lista
+                      icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período." verTodas="Ver todas as idades →" cor="cyan"
+                      linhas={cards.idade.map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
+                    />
+                  </div>
+                ),
               }]}
+              funil={{ leads_recebidos: cards.leads_recebidos, leads_bom: cards.leads_bom, vendas: cards.vendas }}
             />
-          </div>
-
-          {/* Público: região (alvo x real) + idade */}
-          <div>
-            <h3 className="text-sm font-semibold mb-2.5 flex items-center gap-1.5"><Users className="h-4 w-4" /> Quem está vendo e quem está chamando</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <Lista
-                icon={Target} titulo="Onde o anúncio aparece" ajuda="região que a Meta está mostrando (o alvo)" vazio="Sem dados no período." verTodas="Ver todas as regiões →" cor="blue"
-                linhas={cards.regiao_entrega.map((r) => ({ nome: nomeRegiao(r.regiao), valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
-              />
-              <Lista
-                icon={MapPin} titulo="De onde os leads vêm" ajuda="cidade que o cliente realmente informou" vazio="Nenhum cliente informou a cidade ainda." verTodas="Ver todas as cidades →" cor="emerald"
-                linhas={cards.regiao_origem.map((r) => ({ nome: r.cidade, valor: `${int(r.leads)} leads`, peso: r.leads }))}
-              />
-              <Lista
-                icon={Users} titulo="Por idade" ajuda="onde a verba foi gasta por faixa etária" vazio="Sem dados no período." verTodas="Ver todas as idades →" cor="cyan"
-                linhas={cards.idade.map((r) => ({ nome: r.faixa, valor: money(cards.moeda, r.gasto), peso: r.gasto }))}
-              />
-            </div>
           </div>
         </>
       )}
