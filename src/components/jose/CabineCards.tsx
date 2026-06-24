@@ -8,6 +8,8 @@ import {
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
   Wallet, ShoppingCart, UserCheck, Sparkles, Car, X,
 } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
 
 // ── Bloco A — Cabine de Comando (cards fixos). Lê tudo do edge jose-dashboard (mesma
 // camada de dados do chat -> nunca divergem). Foco: QUALQUER LEIGO entender de relance.
@@ -327,6 +329,7 @@ function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue
 export function CabineCards() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(true);
+  const { user } = useAuth();
   const [cards, setCards] = useState<Cards | null>(null);
   const [periodo, setPeriodo] = useState('last_7d');
   const [desde, setDesde] = useState('');
@@ -552,16 +555,11 @@ export function CabineCards() {
             </Panel>
           </div>
 
-          {/* Por público (adset) — vitrine da Meta */}
+          {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José) */}
           <div>
-            <h3 className="text-sm font-semibold mb-1">Por público (conjunto)</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">
-              <strong className="text-foreground/80">Público</strong> = o grupo de pessoas que a Meta mira. A barra mostra quem trouxe mais conversas; ao lado, conversas e quanto foi investido (R$).
-            </p>
-            <Lista
-              icon={Users} titulo="Por público (conjunto)" ajuda="o conjunto de anúncios = o público-alvo" vazio="Sem dados no período." cor="violet"
-              linhas={cards.por_publico.map((r) => ({ nome: r.nome, valor: `${int(r.conversas)} conv · ${money(cards.moeda, r.gasto)}`, peso: r.conversas }))}
-            />
+            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
+            <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
+            <CampanhaAnalytics masterUserId={user?.id || ''} />
           </div>
 
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
