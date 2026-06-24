@@ -210,3 +210,35 @@ export function neutralizeUngroundedClaims(replyText?: string | null, agentPromp
   const text = `${kept.join(" ").replace(/\s+/g, " ").trim()} ${confirm}`.trim();
   return { text, neutralized: true, hits };
 }
+
+// ── APRESENTAÇÃO no 1º contato (BLOCO 3 do funil) ────────────────────────────────────────────────
+// O dono reclamou que o agente NÃO se apresenta — varredura confirmou: TODA 1ª resposta de anúncio pula
+// a apresentação e vai direto no carro. A regra JÁ existe no prompt (pedroBrainReply linha ~814) mas o
+// LLM ignora -> backstop determinístico (lição: regra ignorada = código, não mais prompt). Estilo escolhido
+// pelo dono: HÍBRIDO (apresenta + carro + 1 pergunta na MESMA 1ª mensagem).
+export function replyHasSelfIntroduction(text?: string | null): boolean {
+  const t = normalizePlannerText(text);
+  if (!t) return false;
+  return /\b(sou o |sou a |aqui (?:e|é) o |aqui (?:e|é) a |aqui quem fala|meu nome (?:e|é)|sou (?:seu |a sua )?consultor|consultor[ae]? (?:aqui )?(?:d[ae]|na |no ))\b/i.test(t)
+    || /\bme chamo\b/i.test(String(text || ""));
+}
+
+// Insere a auto-apresentação ("Aqui é o {nome}, consultor da {empresa} 😊") quando falta. Se a resposta
+// já abre com saudação (Bom dia/Boa tarde/.../Olá/Oi [+ nome]), insere logo APÓS a saudação; senão prepõe
+// "{saudação}! {apresentação}". Preserva o resto (lista/carro) intacto. PURO -> offline.
+export function ensureSelfIntroduction(replyText: string, opts: { agentName?: string | null; companyName?: string | null; greeting?: string | null }): { text: string; added: boolean } {
+  const t = String(replyText || "");
+  if (!t.trim()) return { text: t, added: false };
+  if (replyHasSelfIntroduction(t)) return { text: t, added: false };
+  const name = String(opts?.agentName || "").trim().split(/\s+/)[0] || "consultor";
+  const company = String(opts?.companyName || "").trim();
+  const greeting = String(opts?.greeting || "Olá").trim() || "Olá";
+  const intro = company ? `Aqui é o ${name}, consultor da ${company} 😊` : `Aqui é o ${name}, seu consultor 😊`;
+  const m = t.match(/^\s*(bom dia|boa tarde|boa noite|ol[áa]|oi|e a[ií])\b[,!.\s]*([\p{L}]+\b[,!.\s]*)?/iu);
+  if (m && m[0].trim().length > 0) {
+    const prefix = t.slice(0, m[0].length).replace(/\s+$/, "");
+    const rest = t.slice(m[0].length);
+    return { text: `${prefix} ${intro} ${rest}`.replace(/[ \t]{2,}/g, " ").trim(), added: true };
+  }
+  return { text: `${greeting}! ${intro}\n\n${t}`, added: true };
+}

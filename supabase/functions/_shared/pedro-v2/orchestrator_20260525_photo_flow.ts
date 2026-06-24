@@ -50,7 +50,7 @@ import {
   leadExplicitlyDeclined,
   leadProvidingTradeDetails,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2183,6 +2183,40 @@ export async function processPedroV2Turn(
           media: [],
         } as any;
         log("warn", "pedro_v2_qualify_vague", { lead_id: lead?.id || null });
+      }
+    }
+
+    // APRESENTAÇÃO no 1º CONTATO (BLOCO 3 do funil, estilo HÍBRIDO escolhido pelo dono): se é a PRIMEIRA
+    // resposta do agente (nenhum turno anterior dele) e o texto NÃO traz auto-apresentação, insere "Aqui é
+    // o {nome}, consultor da {empresa} 😊" (logo após a saudação, se houver). Backstop determinístico — o
+    // prompt JÁ manda apresentar (pedroBrainReply ~814) mas o LLM ignora e vai direto no carro (varredura
+    // confirmou). Última transformação do texto. Não toca em transferência silenciosa.
+    const _priorAgentTurns = (Array.isArray(recentHistory) ? recentHistory : []).filter((h: any) => {
+      const r = String(h?.role || h?.direction || "").toLowerCase();
+      return r === "assistant" || r === "agent" || r === "ai" || r === "bot" || r === "out" || r === "outbound";
+    }).length;
+    if (_priorAgentTurns === 0 && (reply as any)?.transferir_silencioso !== true
+        && String((reply as any)?.text || "").trim().length > 0) {
+      let _hr = 12;
+      try { _hr = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", hour: "2-digit", hour12: false }).format(new Date())); } catch { /* fallback */ }
+      if (!Number.isFinite(_hr)) _hr = 12;
+      const _greet = _hr < 12 ? "Bom dia" : _hr < 18 ? "Boa tarde" : "Boa noite";
+      const _intro = ensureSelfIntroduction(String((reply as any).text || ""), {
+        agentName: (input.agent as any)?.name,
+        companyName: (input.agent as any)?.company_name,
+        greeting: _greet,
+      });
+      let _introText = _intro.added ? _intro.text : String((reply as any).text || "");
+      // HÍBRIDO = apresenta + carro + 1 PERGUNTA. Se a 1ª resposta não tem NENHUMA pergunta (o agente
+      // só despejou o carro), acrescenta a pergunta de conexão do BLOCO 3 (qualificação, não filler).
+      // Não faz se for transferência (pronto_para_transferir) nem se já houver "?".
+      if ((reply as any)?.pronto_para_transferir !== true && !/\?/.test(_introText)) {
+        _introText = `${_introText.replace(/\s+$/, "")}\n\nVocê já conhece a nossa loja?`;
+        _intro.added = true;
+      }
+      if (_intro.added) {
+        reply = { ...(reply as any), text: _introText };
+        log("info", "pedro_v2_self_intro_added", { lead_id: lead?.id || null, source: (reply as any)?.source });
       }
     }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }

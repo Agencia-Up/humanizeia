@@ -18,6 +18,7 @@ import {
 import { normalizePlan } from "../../supabase/functions/_shared/pedro-v2/pedroBrainPlanner_20260525.ts";
 import { ensureStockReplyFormatting, leadFirstName } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
 import { isGenericFleetQuery } from "../../supabase/functions/_shared/pedro-v2/adContext_20260525.ts";
+import { ensureSelfIntroduction, replyHasSelfIntroduction } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import {
   buildStockFilters,
   leadMessageAsksBroadStock,
@@ -246,6 +247,19 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("anuncio", "'Onix LT' -> veículo REAL (não zera)", isGenericFleetQuery("Chevrolet Onix LT") === false);
   check("anuncio", "'VW Gol' -> veículo REAL (não zera)", isGenericFleetQuery("VW Gol") === false);
   check("anuncio", "'Corolla 2009' -> veículo REAL (não zera)", isGenericFleetQuery("Corolla 2009") === false);
+
+  // ── APRESENTAÇÃO no 1º contato (BLOCO 3, híbrido) — lead 98109-7851 / Creta etc. ──
+  {
+    const _opts = { agentName: "Carvalho", companyName: "Icom Motors", greeting: "Boa tarde" };
+    const _r1 = ensureSelfIntroduction("Temos um Hyundai Creta 2025 disponível!", _opts);
+    check("apresentacao", "carro sem saudação -> prepõe saudação + apresentação", _r1.added === true && /Aqui é o Carvalho, consultor da Icom Motors/.test(_r1.text) && /Temos um Hyundai Creta/.test(_r1.text));
+    const _r2 = ensureSelfIntroduction("Boa tarde, Sérgio! Temos um Creta.", _opts);
+    check("apresentacao", "saudação já existe -> insere apresentação após a saudação", _r2.added === true && /^Boa tarde, Sérgio! Aqui é o Carvalho/.test(_r2.text) && /Temos um Creta\./.test(_r2.text));
+    const _r3 = ensureSelfIntroduction("Sou o Carvalho da Icom Motors. Temos um Creta.", _opts);
+    check("apresentacao", "já se apresentou -> NÃO duplica", _r3.added === false);
+    check("apresentacao", "replyHasSelfIntroduction reconhece 'Aqui é o ...'", replyHasSelfIntroduction("Aqui é o Carvalho, consultor da Icom Motors 😊") === true);
+    check("apresentacao", "replyHasSelfIntroduction falso em apresentação de carro", replyHasSelfIntroduction("Temos um Creta 2025 disponível!") === false);
+  }
 
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
   check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);
