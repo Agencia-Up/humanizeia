@@ -15,7 +15,8 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import {
-  Activity, Coins, DollarSign, Users, RefreshCcw, Info, AlertTriangle, ScanSearch, Siren,
+  Coins, DollarSign, RefreshCcw, Info, AlertTriangle, ScanSearch, Siren,
+  CalendarRange, TrendingUp, TrendingDown,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -201,6 +202,24 @@ export default function AdminAuditoriaTab() {
     ? 'Todos os agentes'
     : (agentesList.find((a) => String(a.agent_id) === agenteSel)?.agente ?? 'Agente');
 
+  // ── MÉTRICAS DE CUSTO (frontend, derivadas do overview) ──────────────────────
+  const custoTotal = nf(t.custo_brl);
+  const custoUsd = nf(t.custo_usd);
+  const turnosTot = nf(t.turnos ?? t.operacoes);
+  const tokensTot = nf(t.tokens);
+  const custoPorTurno = turnosTot > 0 ? custoTotal / turnosTot : 0;
+  const somaCusto = (arr: SerieDia[]) => arr.reduce((s, d) => s + nf(d.custo_brl), 0);
+  // Ritmo ATUAL = média dos últimos dias COM consumo (até 7) -> projeção do mês realista.
+  const ult = serie.slice(-Math.min(7, serie.length));
+  const rateRecente = ult.length ? somaCusto(ult) / ult.length : (dias > 0 ? custoTotal / dias : 0);
+  const projecaoMes = rateRecente * 30;
+  // Tendência: média diária da 2ª metade vs 1ª metade do período (subindo = mais caro = ruim).
+  const meio = Math.floor(serie.length / 2);
+  const avg1 = meio > 0 ? somaCusto(serie.slice(0, meio)) / meio : 0;
+  const avg2 = (serie.length - meio) > 0 ? somaCusto(serie.slice(meio)) / (serie.length - meio) : 0;
+  const tendPct = avg1 > 0 ? ((avg2 - avg1) / avg1) * 100 : (avg2 > 0 ? 100 : 0);
+  const temVariosClientes = (ov?.por_cliente ?? []).length > 1;
+
   return (
     <div className="space-y-6">
 
@@ -242,19 +261,22 @@ export default function AdminAuditoriaTab() {
         </Alert>
       )}
 
-      {/* Cards de totais */}
+      {/* Cards de CUSTO (foco em dinheiro: total, projeção, custo/turno, tendência) */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <TotalCard icon={Activity} cor="text-sky-500" titulo="Turnos"
-          valor={loading ? null : int(t.turnos ?? t.operacoes)}
-          sub={loading ? '' : `${int(t.chamadas)} chamadas IA · ${int(t.n_agentes)} agentes`} />
-        <TotalCard icon={Coins} cor="text-violet-500" titulo="Tokens"
-          valor={loading ? null : int(t.tokens)}
-          sub={loading ? '' : `entrada ${int(t.input_tokens)} / saída ${int(t.output_tokens)}`} />
-        <TotalCard icon={DollarSign} cor="text-amber-500" titulo="Custo (USD)"
-          valor={loading ? null : usd(t.custo_usd)} sub={`${int(t.n_clientes)} clientes · ${dias}d`} />
-        <TotalCard icon={Users} cor="text-emerald-500" titulo="Custo (R$)"
-          valor={loading ? null : brl(t.custo_brl, 2)}
-          sub={loading ? '' : `câmbio ${brl(ov?.config?.cambio_usd_brl, 4)}`} />
+        <TotalCard icon={DollarSign} cor="text-emerald-500" titulo={`Custo no período · ${dias}d`}
+          valor={loading ? null : brl(custoTotal, 2)}
+          sub={loading ? '' : `${usd(custoUsd)} · câmbio ${brl(ov?.config?.cambio_usd_brl, 2)}`} />
+        <TotalCard icon={CalendarRange} cor="text-sky-500" titulo="Projeção do mês"
+          valor={loading ? null : brl(projecaoMes, 0)}
+          sub={loading ? '' : `~${brl(rateRecente, 2)}/dia no ritmo atual`} />
+        <TotalCard icon={Coins} cor="text-violet-500" titulo="Custo médio / turno"
+          valor={loading ? null : brl(custoPorTurno, 3)}
+          sub={loading ? '' : `${int(turnosTot)} turnos · ${int(tokensTot)} tokens`} />
+        <TotalCard icon={tendPct > 0.5 ? TrendingUp : TrendingDown}
+          cor={tendPct > 0.5 ? 'text-rose-500' : 'text-emerald-500'} titulo="Tendência de custo"
+          valor={loading ? null : `${tendPct >= 0 ? '+' : ''}${tendPct.toFixed(0)}%`}
+          valueClass={tendPct > 0.5 ? 'text-rose-500' : tendPct < -0.5 ? 'text-emerald-500' : ''}
+          sub={loading ? '' : 'fim vs início do período'} />
       </div>
 
       <Alert>
@@ -315,7 +337,14 @@ export default function AdminAuditoriaTab() {
                       <TableCell className="text-right tabular-nums"><ChTurno v={a.chamadas_por_turno} /></TableCell>
                       <TableCell className="text-right tabular-nums">{int(a.input_tokens)}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{int(a.output_tokens)}</TableCell>
-                      <TableCell className="text-right font-medium tabular-nums">{brl(a.custo_brl, 2)}</TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {brl(a.custo_brl, 2)}
+                        {custoTotal > 0 && (
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                            {Math.round((nf(a.custo_brl) / custoTotal) * 100)}%
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{nf(a.turnos) > 0 ? brl(nf(a.custo_brl) / nf(a.turnos), 3) : '—'}</TableCell>
                     </TableRow>
                   ))
@@ -450,8 +479,9 @@ export default function AdminAuditoriaTab() {
         </CardContent>
       </Card>
 
-      {/* Por cliente + por disparo */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Onde o dinheiro vai: tipo de disparo (driver de custo) + clientes (só quando há 2+ clientes) */}
+      <div className={`grid gap-4 ${temVariosClientes ? 'lg:grid-cols-2' : ''}`}>
+        {temVariosClientes && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Top clientes</CardTitle></CardHeader>
           <CardContent className="px-0">
@@ -491,9 +521,10 @@ export default function AdminAuditoriaTab() {
             </div>
           </CardContent>
         </Card>
+        )}
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Por tipo de disparo</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Custo por tipo de disparo</CardTitle></CardHeader>
           <CardContent className="px-0">
             <div className="overflow-x-auto">
               <Table>
@@ -522,7 +553,10 @@ export default function AdminAuditoriaTab() {
                         <TableCell className="font-medium">{DISPARO_LABEL[d.disparo_tipo] ?? d.disparo_tipo}</TableCell>
                         <TableCell className="text-right tabular-nums">{int(d.operacoes)}</TableCell>
                         <TableCell className="text-right tabular-nums">{int(d.tokens)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{brl(d.custo_brl, 2)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {brl(d.custo_brl, 2)}
+                          {custoTotal > 0 && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{Math.round((nf(d.custo_brl) / custoTotal) * 100)}%</span>}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -656,10 +690,10 @@ function SeverityBadge({ sev }: { sev: string }) {
 }
 
 function TotalCard({
-  icon: Icon, cor, titulo, valor, sub,
+  icon: Icon, cor, titulo, valor, sub, valueClass,
 }: {
   icon: React.ComponentType<{ className?: string }>;
-  cor: string; titulo: string; valor: string | null; sub?: string;
+  cor: string; titulo: string; valor: string | null; sub?: string; valueClass?: string;
 }) {
   return (
     <Card>
@@ -670,7 +704,7 @@ function TotalCard({
         </div>
         {valor === null
           ? <Skeleton className="mt-2 h-7 w-28" />
-          : <p className="mt-1 text-2xl font-bold text-foreground">{valor}</p>}
+          : <p className={`mt-1 text-2xl font-bold ${valueClass || 'text-foreground'}`}>{valor}</p>}
         {sub && <p className="mt-0.5 text-[11px] text-muted-foreground">{sub}</p>}
       </CardContent>
     </Card>
