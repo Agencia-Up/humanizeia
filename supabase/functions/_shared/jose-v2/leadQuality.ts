@@ -166,3 +166,44 @@ export async function sellerFeedbackByAd(admin: any, userId: string): Promise<Ma
   }
   return map;
 }
+
+/**
+ * Qualidade por anúncio FILTRADA POR PERÍODO (created_at na janela) — pra a tabela "De qual
+ * anúncio vêm os bons clientes" respeitar o filtro geral da Cabine. Anúncio sem lead no período
+ * some da lista (aproxima "só os anúncios ativos": ativo traz lead recente; pausado para).
+ * Mesma agregação da view, mas só do recorte. vendas=0 (a tabela não mostra vendas). BRT (-03:00).
+ */
+export async function leadQualityByAdPeriod(
+  admin: any, userId: string, since: string, until: string,
+): Promise<LeadQualityByAdRow[]> {
+  const { data, error } = await admin.from("ai_crm_leads")
+    .select("ad_id, ad_name, qualidade_lead")
+    .eq("user_id", userId)
+    .gte("created_at", `${since}T00:00:00-03:00`)
+    .lte("created_at", `${until}T23:59:59-03:00`);
+  if (error || !data) return [];
+  const map = new Map<string, LeadQualityByAdRow>();
+  for (const l of data as any[]) {
+    const adId = l.ad_id ? String(l.ad_id) : null;
+    const adName = l.ad_name ? String(l.ad_name) : null;
+    const key = adId || (adName ? adName.trim().toLowerCase() : null);
+    const kind: "ad_id" | "titulo" | "sem_origem" = adId ? "ad_id" : (adName ? "titulo" : "sem_origem");
+    const rk = key || "__sem_origem__";
+    if (!map.has(rk)) {
+      map.set(rk, { ad_key: key, ad_key_kind: kind, ad_id: adId, ad_name: adName, leads_total: 0, leads_bom: 0, leads_medio: 0, leads_ruim: 0, vendas: 0, leads_sem_classificacao: 0, pct_bom: null });
+    }
+    const r = map.get(rk)!;
+    r.leads_total += 1;
+    const q = String(l.qualidade_lead || "");
+    if (q === "bom") r.leads_bom += 1;
+    else if (q === "medio") r.leads_medio += 1;
+    else if (q === "ruim") r.leads_ruim += 1;
+    else r.leads_sem_classificacao += 1;
+  }
+  const rows = Array.from(map.values());
+  for (const r of rows) {
+    const classif = r.leads_bom + r.leads_medio + r.leads_ruim;
+    r.pct_bom = classif > 0 ? Math.round((r.leads_bom / classif) * 100) : null;
+  }
+  return rows.sort((a, b) => Number(b.leads_ruim) - Number(a.leads_ruim));
+}

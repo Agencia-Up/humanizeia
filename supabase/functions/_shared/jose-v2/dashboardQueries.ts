@@ -9,7 +9,7 @@
  * VERDADE (lead_quality_by_ad: custo por lead BOM, anúncios por qualidade real).
  */
 
-import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd, type LeadQualityByAdRow } from "./leadQuality.ts";
+import { leadQualityByAd, leadQualityByAdPeriod, leadMotivosByAd, formatMotivos, sellerFeedbackByAd, type LeadQualityByAdRow } from "./leadQuality.ts";
 
 const META_GRAPH_URL = "https://graph.facebook.com/v21.0";
 const CURRENCY_SYMBOL: Record<string, string> = { BRL: "R$", USD: "$", EUR: "€" };
@@ -245,18 +245,21 @@ export async function getDashboardCards(
   const sellerFb = await sellerFeedbackByAd(admin, userId); // verdade do vendedor por anúncio
   const lqByName = new Map<string, LeadQualityByAdRow>();
   for (const r of lq) { if (r.ad_name) lqByName.set(String(r.ad_name).trim().toLowerCase(), r); }
+  // Hero (custo por lead BOM / por VENDA): conta os leads NO MESMO período do gasto
+  // (created_at na janela) — senão dividiria gasto-do-período por leads-de-sempre.
+  const range = timeRange ?? presetToRange(datePreset || "last_7d");
+  const pq = await periodLeadQuality(admin, userId, range.since, range.until);
+  // Qualidade por anúncio NO PERÍODO -> a tabela ANÚNCIO e a atribuição respeitam o filtro
+  // geral; anúncio sem lead no período some (aproxima "só os anúncios ativos").
+  const lqPeriodo = await leadQualityByAdPeriod(admin, userId, range.since, range.until);
   let leads_classif = 0;
   const atrib = { por_ad_id: 0, por_titulo: 0, sem_origem: 0 };
-  for (const r of lq) {
+  for (const r of lqPeriodo) {
     leads_classif += num(r.leads_bom) + num(r.leads_medio) + num(r.leads_ruim);
     if (r.ad_key_kind === "ad_id") atrib.por_ad_id += num(r.leads_total);
     else if (r.ad_key_kind === "titulo") atrib.por_titulo += num(r.leads_total);
     else atrib.sem_origem += num(r.leads_total);
   }
-  // Hero (custo por lead BOM / por VENDA): conta os leads NO MESMO período do gasto
-  // (created_at na janela) — senão dividiria gasto-do-período por leads-de-sempre.
-  const range = timeRange ?? presetToRange(datePreset || "last_7d");
-  const pq = await periodLeadQuality(admin, userId, range.since, range.until);
   const leads_bom = pq.leads_bom;
   const vendas = pq.vendas;
   const custo_por_lead_bom = leads_bom > 0 ? gasto / leads_bom : null;
@@ -305,7 +308,7 @@ export async function getDashboardCards(
   }).sort((a, b) => (b.gasto - a.gasto) || (b.conversas - a.conversas)); // todos os ativos (sem corte)
 
   // 6) Anúncios por QUALIDADE REAL (não CTR)
-  const anuncios = lq
+  const anuncios = lqPeriodo
     .filter((r) => r.ad_key_kind !== "sem_origem")
     .sort((a, b) => (num(b.pct_bom) - num(a.pct_bom)) || (num(b.leads_total) - num(a.leads_total)))
     .slice(0, 12)
