@@ -48,6 +48,8 @@ import {
   leadExplicitlyDeclined,
   leadAsksAnyCarInBudget,
   leadProvidingTradeDetails,
+  nextFunnelQuestion,
+  replyAsksFunnelQuestion,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -259,6 +261,20 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("apresentacao", "já se apresentou -> NÃO duplica", _r3.added === false);
     check("apresentacao", "replyHasSelfIntroduction reconhece 'Aqui é o ...'", replyHasSelfIntroduction("Aqui é o Carvalho, consultor da Icom Motors 😊") === true);
     check("apresentacao", "replyHasSelfIntroduction falso em apresentação de carro", replyHasSelfIntroduction("Temos um Creta 2025 disponível!") === false);
+  }
+
+  // ── FUNIL FORÇADO: próxima pergunta obrigatória do funil do cliente (agent_funnel_config.bloco4) ──
+  {
+    const _b4 = { questions: ["Qual e seu nome?", "Tem algum carro para dar de troca?", "Tem valor para dar de entrada?", "Você sabe onde fica a nossa loja?"] };
+    check("funil", "sem nada respondido + sem nome -> pergunta o nome", nextFunnelQuestion(_b4, {}, { hasName: false }) === "Qual e seu nome?");
+    check("funil", "nome conhecido (pushName) -> pula p/ troca", nextFunnelQuestion(_b4, {}, { hasName: true }) === "Tem algum carro para dar de troca?");
+    check("funil", "nome+troca resp. -> pergunta entrada", nextFunnelQuestion(_b4, { tem_troca: false }, { hasName: true }) === "Tem valor para dar de entrada?");
+    check("funil", "tudo respondido -> null", nextFunnelQuestion(_b4, { nome: "João", tem_troca: true, valor_entrada: "10 mil", sabe_localizacao: true }, { hasName: true }) === null);
+    check("funil", "sem bloco4 -> null", nextFunnelQuestion(undefined, {}, { hasName: false }) === null);
+    check("funil", "reply 'qual quer ver fotos?' NÃO é pergunta de funil", replyAsksFunnelQuestion("Qual desses você quer ver fotos?") === false);
+    check("funil", "reply 'qual seu nome?' É pergunta de funil", replyAsksFunnelQuestion("E qual é o seu nome?") === true);
+    check("funil", "reply 'conhece a nossa loja?' É pergunta de funil", replyAsksFunnelQuestion("Você já conhece a nossa loja?") === true);
+    check("funil", "reply sem '?' não conta", replyAsksFunnelQuestion("Temos um Onix disponível.") === false);
   }
 
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──

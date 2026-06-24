@@ -49,6 +49,8 @@ import {
   leadExpressesVisitOrBuyIntent,
   leadExplicitlyDeclined,
   leadProvidingTradeDetails,
+  nextFunnelQuestion,
+  replyAsksFunnelQuestion,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
@@ -2217,6 +2219,30 @@ export async function processPedroV2Turn(
       if (_intro.added) {
         reply = { ...(reply as any), text: _introText };
         log("info", "pedro_v2_self_intro_added", { lead_id: lead?.id || null, source: (reply as any)?.source });
+      }
+    }
+
+    // FUNIL FORÇADO (decisão do dono: "o prompt manda seguir os passos e ele não faz — temos que forçar"):
+    // lê o funil ESTRUTURADO do cliente (agent_funnel_config.bloco4) e, num lead ENGAJADO (já tem interesse
+    // ou viu carro) em turno NÃO-inicial (o 1º contato é da apresentação/v178), se o agente NÃO conduziu
+    // NENHUMA pergunta do funil, ACRESCENTA a próxima pergunta obrigatória ainda não respondida (na ordem
+    // do cliente, texto dele). Não força em transferência/desqualificado nem repete o que já foi respondido.
+    const _b4 = (input.agent as any)?.funnel_bloco4;
+    const _funnelEngaged = Boolean((nextMemory as any)?.interesse?.modelo_desejado)
+      || (Array.isArray((nextMemory as any)?.veiculos_apresentados) && (nextMemory as any).veiculos_apresentados.length > 0)
+      || Boolean(stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0);
+    if (_b4 && _priorAgentTurns > 0 && _funnelEngaged
+        && (reply as any)?.pronto_para_transferir !== true && (reply as any)?.transferir_silencioso !== true
+        && (reply as any)?.temperatura !== "desqualificado"
+        && !["vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
+        && !replyAsksFunnelQuestion((reply as any)?.text || "")) {
+      const _fq = { ...((reply as any)?.qualificacao_coletada || {}) };
+      const _hasNm = Boolean(_fq.nome || lead?.lead_name || (pushName && /\p{L}{2,}/u.test(String(pushName))));
+      const _fqMerged = { ..._fq, carro_troca: _fq.carro_troca || (nextMemory as any)?.negociacao?.carro_troca || null };
+      const _nextQ = nextFunnelQuestion(_b4, _fqMerged, { hasName: _hasNm });
+      if (_nextQ && String((reply as any)?.text || "").trim().length > 0) {
+        reply = { ...(reply as any), text: `${String((reply as any).text).replace(/\s+$/, "")}\n\n${_nextQ}` };
+        log("info", "pedro_v2_funnel_question_forced", { lead_id: lead?.id || null });
       }
     }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }

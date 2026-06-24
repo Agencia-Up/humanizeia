@@ -11,7 +11,7 @@ import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-24-funnel-questions-required-v179";
+const PEDRO_V2_BUILD = "2026-06-24-funnel-force-structured-v180";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -328,6 +328,15 @@ Deno.serve(async (req) => {
       sofiaResult.ok ? 200 : 400,
     );
   }
+
+  // FUNIL ESTRUTURADO do cliente (agent_funnel_config.bloco4) -> usado pra FORCAR as perguntas
+  // obrigatorias do funil quando o LLM nao conduz (decisao do dono: "o prompt manda seguir os passos
+  // e ele nao faz, temos que forcar"). Best-effort: sem config, o funil fica so no prompt.
+  try {
+    const { data: _fc } = await supabase.from("agent_funnel_config")
+      .select("bloco4_qualificacao").eq("agent_id", agent.id).maybeSingle();
+    if (_fc?.bloco4_qualificacao) (agent as any).funnel_bloco4 = _fc.bloco4_qualificacao;
+  } catch (_fcErr) { /* funil estruturado é opcional */ }
 
   const _dryRun = payload?.dry_run === true || !isPedroV2MutationEnabled();
   const _turnInput = { payload, agent, wa_instance: waInstance, dry_run: _dryRun };

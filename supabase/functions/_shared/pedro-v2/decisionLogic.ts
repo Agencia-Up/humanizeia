@@ -288,6 +288,48 @@ export function leadExpressesVisitOrBuyIntent(message?: string | null): boolean 
   return false;
 }
 
+// ── FUNIL FORÇADO: próxima pergunta obrigatória do funil do CLIENTE ainda não respondida ─────────────
+// O dono pediu pra FORÇAR o funil que está no prompt do cliente (o LLM barato não conduz sozinho). Lemos
+// o funil ESTRUTURADO (agent_funnel_config.bloco4_qualificacao.questions, na ordem do cliente), mapeamos
+// cada pergunta a um campo de qualificação e devolvemos a 1ª NÃO respondida (texto exato do cliente).
+// Perguntas que não mapeamos (não dá pra saber se foram respondidas) são puladas — nunca forçamos o que
+// não sabemos rastrear (evita loop). Genérico: cada cliente tem o seu bloco4.
+export function nextFunnelQuestion(bloco4?: any, qual?: any, opts?: { hasName?: boolean }): string | null {
+  const questions: string[] = Array.isArray(bloco4?.questions)
+    ? bloco4.questions.filter((q: any) => typeof q === "string" && q.trim().length > 1)
+    : [];
+  if (questions.length === 0) return null;
+  const q = qual || {};
+  const filled = (v: any) => v !== null && v !== undefined && String(v).trim() !== "";
+  const boolSet = (v: any) => v === true || v === false;
+  for (const question of questions) {
+    const n = normalizePlannerText(question);
+    let mappable = false, answered = false;
+    if (/\bnome\b/.test(n)) { mappable = true; answered = filled(q.nome) || Boolean(opts?.hasName); }
+    else if (/troca/.test(n)) { mappable = true; answered = boolSet(q.tem_troca) || filled(q.carro_troca); }
+    else if (/entrada/.test(n)) { mappable = true; answered = filled(q.valor_entrada); }
+    else if (/pagament|financ|a vista|parcel/.test(n)) { mappable = true; answered = filled(q.forma_pagamento); }
+    else if (/loja|onde fica|localiza|conhece/.test(n)) { mappable = true; answered = boolSet(q.sabe_localizacao); }
+    else if (/agendar|visita|test|\bdia\b|horario/.test(n)) { mappable = true; answered = filled(q.dia_agendamento); }
+    else if (/\bcpf\b/.test(n)) { mappable = true; answered = filled(q.cpf); }
+    if (mappable && !answered) return question.trim();
+  }
+  return null;
+}
+
+// A resposta JÁ pergunta algo do funil (nome/troca/entrada/pagamento/loja/agendar)? Se sim, não anexamos
+// outra pergunta do funil (o agente já está conduzindo). PURO.
+export function replyAsksFunnelQuestion(text?: string | null): boolean {
+  const t = normalizePlannerText(text);
+  if (!t || !t.includes("?")) return false;
+  return /\bnome\b/.test(t)
+    || /\btroca\b|de troca|na troca/.test(t)
+    || /de entrada|valor de entrada|tem entrada/.test(t)
+    || /\bfinanc|a vista|forma de pagament|parcel/.test(t)
+    || /conhece (a |nossa )?loja|onde fica|sabe onde|nossa loja|ja foi.*loja/.test(t)
+    || /agendar|marcar.*(visita|horario)|test ?drive|vir (a|na) loja|passar (aqui|na loja|la)/.test(t);
+}
+
 // ── LEAD ESTÁ DESCREVENDO O CARRO DA TROCA (km/estado/itens) — COLETA crucial, NÃO transferir no meio ──
 // Caso real lead 99628-7178: ofereceu Onix 2015 + agente pediu detalhes; o lead mandou "17500 km",
 // "Revisado", "Embreagem, Correia dentada, freio", "Tudo ok", fotos — e o agente JÁ tinha transferido
