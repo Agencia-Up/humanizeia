@@ -242,3 +242,23 @@ export function ensureSelfIntroduction(replyText: string, opts: { agentName?: st
   }
   return { text: `${greeting}! ${intro}\n\n${t}`, added: true };
 }
+
+// ── CLAREZA da TRANSFERÊNCIA (lead 98198-7661) ───────────────────────────────────────────────────────
+// Dono: a msg de transferência ("Vou chamar nosso consultor agora 👌 Ele já vai ter tudo que você me
+// contou") não deixa CLARO que o CONSULTOR vai entrar em contato com o LEAD. O certo é despedir + dizer
+// que ele VAI TE CHAMAR + agradecer. A msg vem do BLOCO 7 do prompt do cliente (varia) → garantimos a
+// clareza em CÓDIGO: se a msg de transferência não diz que o consultor entra em contato com o lead,
+// acrescenta esse fecho. PURO -> offline.
+export function transferMessageIsClear(text?: string | null): boolean {
+  const t = normalizePlannerText(text);
+  if (!t) return false;
+  return /(vai|ja vai|ira|vao)\s+(te\s+|lhe\s+)?(chamar|contatar|procurar)|entra(r|ra)? em contato (com voce|contigo)|ja te chama|te chama (ja|em seguida|em breve|ja ja)|vai falar com voce|te liga/.test(t);
+}
+
+export function ensureTransferContactClarity(text?: string | null): { text: string; changed: boolean } {
+  const raw = String(text || "");
+  const closing = "Ele já vai entrar em contato com você. Muito obrigado! 🙏";
+  if (!raw.trim()) return { text: `Perfeito! Vou passar seus dados pro nosso consultor agora 👌 ${closing}`, changed: true };
+  if (transferMessageIsClear(raw)) return { text: raw, changed: false };
+  return { text: `${raw.replace(/\s+$/, "")} ${closing}`, changed: true };
+}

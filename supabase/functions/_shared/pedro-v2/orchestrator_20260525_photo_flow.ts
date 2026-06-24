@@ -52,8 +52,9 @@ import {
   leadProvidingTradeDetails,
   nextFunnelQuestion,
   replyAsksFunnelQuestion,
+  leadAffirmsSchedulingQuestion,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2671,7 +2672,12 @@ export async function processPedroV2Turn(
   // dia/horario (+ nome se faltar) ANTES do handoff. Anti-loop: segura SO 1x (marca agendamento_solicitado
   // na memoria); se ja perguntou e o lead nao deu data, NAO trava -> deixa transferir. Nao toca em
   // transferencia de financiamento/troca (essas sao handoff legitimo imediato) nem silenciosa.
-  const _visitBuyIntent = leadExpressesVisitOrBuyIntent(text);
+  // A última mensagem do AGENTE (pra detectar "Sim" confirmando uma pergunta de agendamento).
+  const _lastAgentMsg = (Array.isArray(recentHistory) ? recentHistory : [])
+    .filter((h: any) => { const r = String(h?.role || h?.direction || "").toLowerCase(); return r === "assistant" || r === "agent" || r === "ai" || r === "bot"; })
+    .map((h: any) => String(h?.content || h?.text || h?.message || ""))
+    .pop() || "";
+  const _visitBuyIntent = leadExpressesVisitOrBuyIntent(text) || leadAffirmsSchedulingQuestion(text, _lastAgentMsg);
   const _hasSchedule = Boolean((_q as any)?.dia_agendamento || (effectiveMemory as any)?.atendimento?.dia_agendamento);
   const _alreadyAskedSchedule = Boolean((effectiveMemory as any)?.atendimento?.agendamento_solicitado);
   if (!ownedLeadAssistantMode && _visitBuyIntent && reply?.pronto_para_transferir === true
@@ -2719,6 +2725,16 @@ export async function processPedroV2Turn(
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
   // despedida gentil, sem dizer que vai transferir). NUNCA encerramos sem encaminhar.
   const silentTransfer = reply?.transferir_silencioso === true && _hasNome && !brainReadyToTransfer && !contextualIntent.needs_handoff;
+  // CLAREZA da transferência ANUNCIADA (lead 98198-7661): a msg do BLOCO 7 do cliente nem sempre deixa
+  // claro que o CONSULTOR vai entrar em contato com o LEAD. Garante o fecho ("ele já vai entrar em contato
+  // com você. Obrigado!") quando falta. Só na anunciada (a silenciosa é despedida gentil sem anunciar).
+  if ((brainReadyToTransfer || contextualIntent.needs_handoff === true) && !silentTransfer && reply?.transferir_silencioso !== true) {
+    const _tc = ensureTransferContactClarity((reply as any)?.text || "");
+    if (_tc.changed) {
+      reply = { ...(reply as any), text: _tc.text };
+      log("info", "pedro_v2_transfer_clarity_added", { lead_id: lead?.id || null });
+    }
+  }
   // Transferencia automatica (qualificacao/silenciosa) respeita a regra do agente:
   // se o gerente desligou a transferencia, o agente NAO repassa (atende sozinho).
   const _automationRules = resolveAutomationRules(input.agent?.automation_rules);

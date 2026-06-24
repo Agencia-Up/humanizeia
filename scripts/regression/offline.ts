@@ -50,8 +50,9 @@ import {
   leadProvidingTradeDetails,
   nextFunnelQuestion,
   replyAsksFunnelQuestion,
+  leadAffirmsSchedulingQuestion,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
@@ -275,6 +276,21 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("funil", "reply 'qual seu nome?' É pergunta de funil", replyAsksFunnelQuestion("E qual é o seu nome?") === true);
     check("funil", "reply 'conhece a nossa loja?' É pergunta de funil", replyAsksFunnelQuestion("Você já conhece a nossa loja?") === true);
     check("funil", "reply sem '?' não conta", replyAsksFunnelQuestion("Temos um Onix disponível.") === false);
+  }
+
+  // ── VISITA: lead confirma a pergunta de agendamento -> colher dia/hora (lead 98198-7661) ──
+  check("visita", "'Sim' após 'quer agendar visita?' -> é confirmação", leadAffirmsSchedulingQuestion("Sim", "Você tem interesse em agendar uma visita para ver o carro?") === true);
+  check("visita", "'Sim' após pergunta de foto -> NÃO é agendamento", leadAffirmsSchedulingQuestion("Sim", "O Tracker está R$ 72.990. Quer ver fotos dele?") === false);
+  check("visita", "'não' após 'quer agendar?' -> NÃO confirma", leadAffirmsSchedulingQuestion("não", "Quer agendar uma visita?") === false);
+  check("visita", "'agendar visita' sem '?' (aviso) -> NÃO conta", leadAffirmsSchedulingQuestion("Sim", "Se quiser agendar uma visita é só avisar!") === false);
+
+  // ── CLAREZA da transferência (lead 98198-7661) ──
+  check("transfer", "'ele vai te chamar' é claro", transferMessageIsClear("Já passei pro consultor, ele vai te chamar!") === true);
+  check("transfer", "'ele já vai ter tudo que me contou' NÃO é claro", transferMessageIsClear("Vou chamar nosso consultor agora. Ele já vai ter tudo que você me contou.") === false);
+  {
+    const _t = ensureTransferContactClarity("Vou chamar nosso consultor agora 👌 Ele já vai ter tudo que você me contou.");
+    check("transfer", "msg vaga -> acrescenta 'entrar em contato'", _t.changed === true && /entrar em contato com você/.test(_t.text));
+    check("transfer", "msg já clara -> não mexe", ensureTransferContactClarity("Pronto, o consultor vai entrar em contato com você!").changed === false);
   }
 
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──

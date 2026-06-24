@@ -288,6 +288,21 @@ export function leadExpressesVisitOrBuyIntent(message?: string | null): boolean 
   return false;
 }
 
+// ── LEAD CONFIRMOU a pergunta de AGENDAMENTO do agente ("Sim" depois de "quer agendar uma visita?") ──
+// Caso real lead 98198-7661: o agente perguntou "tem interesse em agendar uma visita?", o lead disse
+// "Sim" e o agente TRANSFERIU sem colher dia/hora. O hold de visita (v167) só olhava a MENSAGEM do lead
+// (leadExpressesVisitOrBuyIntent) — "Sim" não casa. Aqui detectamos a CONFIRMAÇÃO: a última msg do AGENTE
+// perguntou sobre agendar/visita E o lead afirmou (sem ainda dar a data) → é contexto de visita → COLHER.
+export function leadAffirmsSchedulingQuestion(leadText?: string | null, lastAgentText?: string | null): boolean {
+  const a = normalizePlannerText(lastAgentText);
+  if (!a || !a.includes("?")) return false;
+  const agentAskedSchedule = /\bagendar\b|\bmarcar\b|\bvisita\b|test ?drive|passar (na|aqui|la|em|no)|vir (a|na|ate|no)|melhor dia|que dia|qual dia|dia e horario|qual horario/.test(a);
+  if (!agentAskedSchedule) return false;
+  const t = normalizePlannerText(leadText);
+  if (!t) return false;
+  return /^(sim|isso|claro|quero|pode ser|pode sim|pode|bora|vamos|com certeza|aceito|ok|okay|blz|beleza|por mim|perfeito|fechado|tranquilo|uhum|aham|isso mesmo|gostaria|quero sim|sim quero|quero agendar|vamos agendar)\b/.test(t);
+}
+
 // ── FUNIL FORÇADO: próxima pergunta obrigatória do funil do CLIENTE ainda não respondida ─────────────
 // O dono pediu pra FORÇAR o funil que está no prompt do cliente (o LLM barato não conduz sozinho). Lemos
 // o funil ESTRUTURADO (agent_funnel_config.bloco4_qualificacao.questions, na ordem do cliente), mapeamos
