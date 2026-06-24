@@ -70,7 +70,7 @@ async function fetchInsights(
   } else {
     url.searchParams.set("date_preset", opts.datePreset || "last_7d");
   }
-  const nameField = opts.level === "adset" ? ",adset_name" : opts.level === "ad" ? ",ad_name" : "";
+  const nameField = opts.level === "adset" ? ",adset_name" : opts.level === "ad" ? ",ad_name,ad_id" : "";
   url.searchParams.set("fields", "spend,cpm,cpc,ctr,impressions,clicks,reach,actions" + nameField);
   if (opts.level) url.searchParams.set("level", opts.level);
   if (opts.breakdowns) url.searchParams.set("breakdowns", opts.breakdowns);
@@ -97,25 +97,20 @@ function cleanAdName(name: string): string {
 // Galeria correta: UMA chamada que já traz, por anúncio ATIVO, a arte (creative) + as
 // métricas (insights: gasto/conversas/CPM) JUNTAS, keyed por anúncio. Acaba com o bug de
 // casar arte x gasto por NOME (que deixava metade "sem arte"). Best-effort.
-async function fetchActiveAdsWithInsights(
-  acc: MetaAccount,
-  opts: { datePreset?: string; timeRange?: { since: string; until: string } },
-): Promise<any[]> {
-  const insSpec = (opts.timeRange?.since && opts.timeRange?.until)
-    ? `insights.time_range(${JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until })})`
-    : `insights.date_preset(${opts.datePreset || "last_7d"})`;
+// Lista LEVE dos anúncios ATIVOS (só id/nome/status/arte — SEM insights, senão a Meta encolhe
+// a página e a paginação fica lenta e incompleta -> era a causa de "os anúncios sumiram"). As
+// métricas vêm de fetchInsights(level:"ad") e a gente junta por ad_id. Leve = página cheia = rápido.
+async function fetchActiveAds(acc: MetaAccount): Promise<any[]> {
   const first = new URL(`${META_GRAPH_URL}/${acc.accountId}/ads`);
   first.searchParams.set("access_token", acc.accessToken);
-  first.searchParams.set("fields", `id,name,effective_status,creative{thumbnail_url,image_url},${insSpec}{spend,impressions,actions,cpm}`);
+  first.searchParams.set("fields", "id,name,effective_status,creative{thumbnail_url,image_url}");
   first.searchParams.set("filtering", JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]));
-  first.searchParams.set("limit", "100");
-  // PAGINA até acabar (segue paging.next) -> pega TODOS os anúncios ATIVOS que a Meta tiver
-  // (a conta diz o número real, ex. 68), sem teto chutado. guard só pra não rodar pra sempre.
+  first.searchParams.set("limit", "200");
   let next: string | null = first.toString();
   const out: any[] = [];
   let guard = 0;
   try {
-    while (next && guard < 30) {
+    while (next && guard < 20) {
       guard++;
       const res = await fetch(next);
       const data = await res.json();
@@ -228,11 +223,15 @@ export async function getDashboardCards(
 
   // 1) Vitrine — base + idade + região, em paralelo
   const fi = (breakdowns?: string) => fetchInsights(acc, { datePreset, timeRange, breakdowns });
-  const [base, byAge, byRegion, byAdset, activeAds] = await Promise.all([
+  const [base, byAge, byRegion, byAdset, byAd, activeAds] = await Promise.all([
     fi(), fi("age"), fi("region"),
     fetchInsights(acc, { datePreset, timeRange, level: "adset" }),
-    fetchActiveAdsWithInsights(acc, { datePreset, timeRange }),
+    fetchInsights(acc, { datePreset, timeRange, level: "ad" }),
+    fetchActiveAds(acc),
   ]);
+  // métricas por anúncio (insights level=ad) indexadas por ad_id -> junta com a lista LEVE de ativos.
+  const insByAdId = new Map<string, any>();
+  for (const r of byAd) { if (r.ad_id) insByAdId.set(String(r.ad_id), r); }
 
   const b0 = base[0] || {};
   const gasto = num(b0.spend), impressoes = num(b0.impressions), cliques = num(b0.clicks);
@@ -282,7 +281,7 @@ export async function getDashboardCards(
     nome: String(r.adset_name || "—"), gasto: num(r.spend), conversas: conversasFromActions(r.actions),
   })).sort((a, b) => (b.conversas - a.conversas) || (b.gasto - a.gasto)).slice(0, 8);
   const por_criativo = activeAds.map((ad: any) => {
-    const ins = ad.insights?.data?.[0] || {};
+    const ins = insByAdId.get(String(ad.id)) || {};
     const gasto = num(ins.spend);
     const conversas = conversasFromActions(ins.actions);
     const key = String(ad.name || "").trim().toLowerCase(); // casa qualidade pelo nome ORIGINAL (~título)
