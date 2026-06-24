@@ -45,6 +45,7 @@ import {
   leadExpressesVisitOrBuyIntent,
   leadExplicitlyDeclined,
   leadAsksAnyCarInBudget,
+  leadProvidingTradeDetails,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -225,6 +226,14 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("agendamento", "'não quero mais' -> recusa (preserva silêncio)", leadExplicitlyDeclined("não quero mais, obrigado") === true);
   check("agendamento", "'só estava olhando' -> recusa", leadExplicitlyDeclined("na verdade só estava olhando") === true);
   check("agendamento", "'desisti' -> recusa", leadExplicitlyDeclined("desisti por enquanto") === true);
+
+  // ── TROCA: lead descrevendo o carro -> COLETA (não transferir no meio) — lead 99628-7178 ──
+  check("troca", "'17500 km' -> descrevendo a troca", leadProvidingTradeDetails("17500 km") === true);
+  check("troca", "'Revisado' -> descrevendo a troca", leadProvidingTradeDetails("Revisado") === true);
+  check("troca", "'Embreagem, Correia dentada, freio' -> descrevendo a troca", leadProvidingTradeDetails("Embreagem, Correia dentada, freio") === true);
+  check("troca", "'Tudo ok' -> descrevendo a troca", leadProvidingTradeDetails("Tudo ok") === true);
+  check("troca", "'Quero o Hilux' -> NÃO é descrição de troca", leadProvidingTradeDetails("Quero o Hilux") === false);
+  check("troca", "'quanto fica?' -> NÃO é descrição de troca", leadProvidingTradeDetails("quanto fica?") === false);
 
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
   check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);

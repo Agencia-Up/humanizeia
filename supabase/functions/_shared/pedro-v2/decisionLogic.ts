@@ -288,6 +288,21 @@ export function leadExpressesVisitOrBuyIntent(message?: string | null): boolean 
   return false;
 }
 
+// ── LEAD ESTÁ DESCREVENDO O CARRO DA TROCA (km/estado/itens) — COLETA crucial, NÃO transferir no meio ──
+// Caso real lead 99628-7178: ofereceu Onix 2015 + agente pediu detalhes; o lead mandou "17500 km",
+// "Revisado", "Embreagem, Correia dentada, freio", "Tudo ok", fotos — e o agente JÁ tinha transferido
+// (silêncio), perdendo TODA a coleta. Enquanto o lead está descrevendo o carro da troca, o agente deve
+// COLHER (não encaminhar). Detecta km/estado/itens revisados/condição.
+export function leadProvidingTradeDetails(message?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  if (/\b\d{1,3}\s*mil\s*km\b|\b\d{2,7}\s*km\b|\bkm\b|\bquilometragem\b/.test(t)) return true;
+  if (/\b(revisad|revisao|otimo estado|bom estado|estado de novo|impecavel|conservad|tudo ok|tudo certo|sem detalhe|nada a fazer|zerad|sem batida|nunca bateu|original de fabrica)/.test(t)) return true;
+  if (/\b(embreagem|correia|freio|pneu|suspensao|oleo|bateria|amortecedor|motor|cambio|troquei|trocada|trocado)\b/.test(t)) return true;
+  if (/\b(unico dono|um dono|primeira dona|todas as revisoes|nota fiscal|manual e chave|chave reserva|ipva pago|quitado|sem multa)\b/.test(t)) return true;
+  return false;
+}
+
 // ── LEAD RECUSOU EXPLICITAMENTE o atendimento/compra (≠ agradecimento/despedida educada) ─────────────
 // Usado pelo guard "não encerrar lead QUALIFICADO": o silêncio (transferir_silencioso) só se preserva
 // quando o lead REALMENTE recusou. "Grata!"/"obrigado"/"ok" de um lead engajado NÃO é recusa — esse vai

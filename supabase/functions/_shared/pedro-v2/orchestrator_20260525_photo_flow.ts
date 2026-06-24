@@ -48,6 +48,7 @@ import {
   messageIsTooVagueToAct,
   leadExpressesVisitOrBuyIntent,
   leadExplicitlyDeclined,
+  leadProvidingTradeDetails,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
@@ -2521,11 +2522,19 @@ export async function processPedroV2Turn(
   const _tradeVehicleName = lead?.trade_in_vehicle || (effectiveMemory?.interesse as any)?.trade_in_vehicle
     || _q.carro_troca || _q.veiculo_troca || (effectiveMemory as any)?.negociacao?.carro_troca || null;
   const _hasTradeVehicle = Boolean(_tradeVehicleName);
-  // TROCA = lead QUENTE -> SEMPRE transfere ANUNCIANDO, NUNCA encerra/silencia. Decisao do dono: lead que
-  // oferece carro na troca e um lead em potencial obvio (era pra transferir + colher dados). Basta
-  // intencao de troca + veiculo de troca + nome (interesse de compra NAO e mais obrigatorio — o consultor
-  // ajuda a escolher). O SDR NAO avalia troca nem promete proposta: quem avalia/traz a proposta e o consultor.
+  // COLETA da TROCA é etapa CRUCIAL (lead 99628-7178): o agente NÃO pode transferir no MEIO da coleta. Só
+  // encaminha DEPOIS de colher os detalhes do carro do lead. Não transfere quando: (a) o lead está
+  // DESCREVENDO o carro da troca (km/estado/itens), (b) mandou FOTO/VÍDEO da troca, (c) é o turno da OFERTA
+  // (carro de troca citado AGORA pela 1ª vez, ainda sem nada coletado na memória) -> aí o agente PEDE os
+  // detalhes. Quando a coleta avança e o lead segue (pergunta de compra / "vamos fechar") -> aí transfere.
+  const _leadDescrevendoTroca = leadProvidingTradeDetails(text);
+  const _tradeMidiaTurn = mediaContext?.kind === "image" || mediaContext?.kind === "video";
+  const _ofertaTrocaFresca = Boolean(_q.carro_troca) && !Boolean((currentMemory as any)?.negociacao?.carro_troca);
+  // TROCA = lead QUENTE -> transfere ANUNCIANDO (NUNCA encerra/silencia), MAS só DEPOIS da coleta. O SDR NÃO
+  // avalia troca nem promete proposta: quem avalia/traz a proposta é o consultor. (Encerrar troca = barrado
+  // pelo v170 "não encerrar lead qualificado".)
   if (!ownedLeadAssistantMode && _tradeIntent && _hasTradeVehicle && _hasNome
+      && !_leadDescrevendoTroca && !_tradeMidiaTurn && !_ofertaTrocaFresca
       && contextualIntent.needs_handoff !== true
       && reply?.source !== "finance_transfer_enforced") {
     const _nm = (_q.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
@@ -2588,6 +2597,22 @@ export async function processPedroV2Turn(
     reply.source = "visit_schedule_qualify";
     (memoryAfterReply as any).atendimento = { ...((memoryAfterReply as any)?.atendimento || {}), agendamento_solicitado: true };
     log("info", "pedro_v2_visit_schedule_qualify", { lead_id: lead?.id || null, has_name: _nmValido });
+  }
+
+  // COLETA DA TROCA EM ANDAMENTO -> NÃO transferir nem encerrar AGORA (último guard antes do handoff). O
+  // lead está DESCREVENDO o carro (km/estado/itens) ou mandou FOTO/VÍDEO dele: o agente acolhe e SEGUE
+  // colhendo (caso 99628-7178: transferiu no meio e perdeu km/estado/fotos). Cobre o LLM/qualquer
+  // enforcement que tenha marcado transferir/encerrar no meio da coleta. Não toca em handoff explícito
+  // (lead pediu humano) nem em lead JÁ atribuído (assistant mode).
+  if (!ownedLeadAssistantMode && contextualIntent?.needs_handoff !== true
+      && (_tradeIntent || _hasTradeVehicle) && (_leadDescrevendoTroca || _tradeMidiaTurn)
+      && (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true)) {
+    reply.pronto_para_transferir = false;
+    reply.transferir_silencioso = false;
+    reply.text = `Show, anotei tudo do seu carro! 🙌 Pra eu já adiantar pro nosso consultor que avalia a troca, me confirma: qual veículo nosso te interessou${(effectiveMemory as any)?.interesse?.modelo_desejado ? ` (vi que você curtiu o ${(effectiveMemory as any).interesse.modelo_desejado})` : ""}? E como é o seu nome? 😊`;
+    reply.media = [];
+    reply.source = "trade_collecting";
+    log("info", "pedro_v2_trade_collecting_no_transfer", { lead_id: lead?.id || null });
   }
 
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
