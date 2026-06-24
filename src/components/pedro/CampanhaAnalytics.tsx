@@ -31,15 +31,15 @@
 // Fonte de dados: ai_crm_leads + wa_contacts (join por telefone)
 // ============================================================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  Cell, PieChart, Pie, LineChart, Line, AreaChart, Area,
+  Cell, PieChart, Pie,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
   TrendingUp, Users, Target, Loader2, Info, Award, Download, FileText,
-  Car, CreditCard, MapPin, BarChart3, Zap, Activity,
+  Car, CreditCard, MapPin, BarChart3, ChevronDown,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { downloadReportPdf } from './reportPdf';
@@ -202,8 +202,21 @@ interface WeekRow { semana: string; total: number; qualificado: number; pouco_qu
 
 // since/until (YYYY-MM-DD, BRT) vêm do FILTRO MESTRE da Cabine — este painel não tem filtro
 // próprio: ele obedece a janela escolhida lá em cima. periodoLabel é só pro título/relatório.
-export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: { masterUserId: string; since: string; until: string; periodoLabel: string }) {
+export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel, extraSections }: {
+  masterUserId: string; since: string; until: string; periodoLabel: string;
+  // Seções recolhíveis extras (ex.: "De qual anúncio vêm os bons clientes") montadas pela Cabine
+  // e exibidas DENTRO de "Inteligência de Tráfego & Leads" no mesmo padrão de acordeão.
+  extraSections?: Array<{ key: string; title: string; subtitle?: string; icon?: any; node: ReactNode }>;
+}) {
   const [loading, setLoading] = useState(true);
+  // Acordeão: cada seção é um botão que abre/fecha. Começa tudo FECHADO (painel enxuto).
+  const [openSec, setOpenSec] = useState<Set<string>>(() => new Set());
+  const isOpen = (k: string) => openSec.has(k);
+  const toggleSec = (k: string) => setOpenSec((prev) => {
+    const n = new Set(prev);
+    n.has(k) ? n.delete(k) : n.add(k);
+    return n;
+  });
   const [leads, setLeads] = useState<RawLead[]>([]);
   const [utmByPhone, setUtmByPhone] = useState<Map<string, UtmRecord>>(new Map());
 
@@ -529,13 +542,12 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
         </CardContent>
       </Card>
 
-      {data.totalLeads === 0 ? (
-        <div className="text-center py-12 text-muted-foreground text-xs">
-          Nenhum lead no período selecionado.
-        </div>
-      ) : (
-        <>
-          {/* ─── Linha 1: Veículos de Interesse ──────────────────────────────── */}
+      {/* Seções recolhíveis — clica abre/fecha. Tudo dentro de "Inteligência de Tráfego & Leads". */}
+      <div className="space-y-3">
+        {data.totalLeads === 0 && (extraSections?.length ?? 0) === 0 && (
+          <div className="text-center py-12 text-muted-foreground text-xs">Nenhum lead no período selecionado.</div>
+        )}
+          {/* ─── Veículos de Interesse ─── */}
           {data.topVehicles.length > 0 && (
             <ChartCard
               icon={Car}
@@ -543,6 +555,7 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
               subtitle={`${data.leadsComVeiculo} leads revelaram o veículo desejado durante a conversa com o agente`}
               color="text-blue-400"
               badge={data.topVehicleByQual ? `🏆 Mais qualificado: ${data.topVehicleByQual.veiculo}` : undefined}
+              open={isOpen('veiculos')} onToggle={() => toggleSec('veiculos')}
             >
               <ResponsiveContainer width="100%" height={Math.max(220, data.topVehicles.length * 36)}>
                 <BarChart data={data.topVehicles} layout="vertical" margin={{ left: 8, right: 48, top: 4, bottom: 4 }}>
@@ -582,11 +595,9 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
             </ChartCard>
           )}
 
-          {/* ─── Linha 2: Pagamento + Cidades ────────────────────────────────── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Forma de Pagamento */}
-            {data.paymentData.length > 0 && (
-              <ChartCard icon={CreditCard} title="Forma de Pagamento" subtitle={`${data.leadsComPagamento} leads informaram como pretendem pagar`} color="text-violet-400">
+          {/* ─── Forma de Pagamento ─── */}
+          {data.paymentData.length > 0 && (
+            <ChartCard icon={CreditCard} title="Forma de Pagamento" subtitle={`${data.leadsComPagamento} leads informaram como pretendem pagar`} color="text-violet-400" open={isOpen('pagamento')} onToggle={() => toggleSec('pagamento')}>
                 <div className="flex items-stretch gap-3">
                   <div className="flex-1 min-w-0">
                     <ResponsiveContainer width="100%" height={180}>
@@ -634,9 +645,9 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
               </ChartCard>
             )}
 
-            {/* Cidades */}
-            {data.topCitiesByVolume.length > 0 && (
-              <ChartCard icon={MapPin} title="Cidades de Maior Volume" subtitle="Onde estão os leads — cruzado com qualificação da IA" color="text-violet-400">
+          {/* ─── Cidades de Maior Volume ─── */}
+          {data.topCitiesByVolume.length > 0 && (
+            <ChartCard icon={MapPin} title="Cidades de Maior Volume" subtitle="Onde estão os leads — cruzado com qualificação da IA" color="text-violet-400" open={isOpen('cidades')} onToggle={() => toggleSec('cidades')}>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={data.topCitiesByVolume} margin={{ left: 4, right: 8, top: 4, bottom: 36 }}>
                     <defs>
@@ -663,42 +674,10 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
-            )}
-          </div>
-
-          {/* ─── Linha 3: Evolução Temporal ──────────────────────────────────── */}
-          {data.weeklyData.length > 1 && (
-            <ChartCard icon={Activity} title="Evolução Semanal de Leads" subtitle="Volume e qualificação ao longo das semanas" color="text-blue-400">
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={data.weeklyData} margin={{ left: 4, right: 8, top: 4, bottom: 4 }}>
-                  <defs>
-                    <linearGradient id="areaQ" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34d399" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#34d399" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="areaP" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#fbbf24" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="areaI" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.08} vertical={false} />
-                  <XAxis dataKey="semana" stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="inativo" name="Inativo" stackId="1" stroke="#94a3b8" fill="url(#areaI)" strokeWidth={1.5} />
-                  <Area type="monotone" dataKey="pouco_qualificado" name="Pouco qualificado" stackId="1" stroke="#fbbf24" fill="url(#areaP)" strokeWidth={1.5} />
-                  <Area type="monotone" dataKey="qualificado" name="Qualificado" stackId="1" stroke="#34d399" fill="url(#areaQ)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </ChartCard>
           )}
 
-          {/* ─── Linha 4: Campanha/UTM × Qualificação ────────────────────────── */}
-          <ChartCard icon={Target} title="Qualificação por Campanha / Origem" subtitle="Top 8 por volume — cruzado com qualificação da IA" color="text-orange-400">
+          {/* ─── Qualificação por Campanha / Origem ─── (gráfico "Evolução Semanal" removido a pedido do dono) */}
+          <ChartCard icon={Target} title="Qualificação por Campanha / Origem" subtitle="Top 8 por volume — cruzado com qualificação da IA" color="text-orange-400" open={isOpen('qualificacao')} onToggle={() => toggleSec('qualificacao')}>
             <ResponsiveContainer width="100%" height={Math.max(220, data.campChart.length * 44)}>
               <BarChart data={data.campChart} layout="vertical" margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.08} horizontal={false} />
@@ -720,15 +699,9 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
             </div>
           </ChartCard>
 
-          {/* ─── Tabela detalhada de campanhas ───────────────────────────────── */}
-          <div className="bg-background/40 border border-border/40 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-border/40">
-              <p className="text-xs font-semibold text-foreground flex items-center gap-2">
-                <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
-                Detalhamento por Campanha / Origem
-              </p>
-            </div>
-            <div className="overflow-x-auto">
+          {/* ─── Detalhamento por Campanha / Origem ─── */}
+          <ChartCard icon={BarChart3} title="Detalhamento por Campanha / Origem" color="text-muted-foreground" open={isOpen('detalhamento')} onToggle={() => toggleSec('detalhamento')}>
+            <div className="overflow-x-auto -mx-1">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border/30 text-muted-foreground bg-muted/20">
@@ -785,20 +758,29 @@ export function CampanhaAnalytics({ masterUserId, since, until, periodoLabel }: 
                 </tbody>
               </table>
             </div>
-          </div>
+          </ChartCard>
 
-          {/* ─── Nota informativa ────────────────────────────────────────────── */}
-          <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-muted/20 border border-border/30 rounded-xl px-3 py-2.5">
-            <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-400" />
-            <span>
-              <strong>{data.comUtm}</strong> de {data.totalLeads} leads vieram com UTM rastreável (anúncios Click-to-WhatsApp via Meta Cloud API).{' '}
-              <strong>{data.leadsComVeiculo}</strong> leads revelaram o veículo de interesse durante a conversa com o agente.{' '}
-              <strong>{data.leadsComPagamento}</strong> leads informaram a forma de pagamento.{' '}
-              Os demais leads são agrupados pela <strong>origem</strong> cadastrada. A qualificação é feita automaticamente pela IA.
-            </span>
-          </div>
-        </>
-      )}
+          {/* ─── Seções EXTRAS montadas pela Cabine (ex.: "De qual anúncio vêm os bons clientes"),
+              exibidas no mesmo padrão de acordeão, dentro de "Inteligência de Tráfego & Leads". ─── */}
+          {(extraSections || []).map((s) => (
+            <ChartCard key={s.key} icon={s.icon || Award} title={s.title} subtitle={s.subtitle} color="text-amber-400" open={isOpen(s.key)} onToggle={() => toggleSec(s.key)}>
+              {s.node}
+            </ChartCard>
+          ))}
+
+          {/* ─── Nota informativa ─── */}
+          {data.totalLeads > 0 && (
+            <div className="flex items-start gap-2 text-[10px] text-muted-foreground bg-muted/20 border border-border/30 rounded-xl px-3 py-2.5">
+              <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-400" />
+              <span>
+                <strong>{data.comUtm}</strong> de {data.totalLeads} leads vieram com UTM rastreável (anúncios Click-to-WhatsApp via Meta Cloud API).{' '}
+                <strong>{data.leadsComVeiculo}</strong> leads revelaram o veículo de interesse durante a conversa com o agente.{' '}
+                <strong>{data.leadsComPagamento}</strong> leads informaram a forma de pagamento.{' '}
+                Os demais leads são agrupados pela <strong>origem</strong> cadastrada. A qualificação é feita automaticamente pela IA.
+              </span>
+            </div>
+          )}
+        </div>
     </div>
   );
 }
@@ -818,26 +800,38 @@ function KpiCard({ icon: Icon, label, value, color, bg, small = false }: { icon:
   );
 }
 
-function ChartCard({ icon: Icon, title, subtitle, children, color, badge }: {
-  icon: any; title: string; subtitle?: string; children: React.ReactNode; color?: string; badge?: string;
+// ChartCard agora é RECOLHÍVEL quando recebe open/onToggle: o cabeçalho vira um botão com
+// chevron e o conteúdo só aparece aberto. Sem open/onToggle, comporta como antes (sempre visível).
+function ChartCard({ icon: Icon, title, subtitle, children, color, badge, open, onToggle }: {
+  icon: any; title: string; subtitle?: string; children: ReactNode; color?: string; badge?: string;
+  open?: boolean; onToggle?: () => void;
 }) {
-  return (
-    <div className="bg-background/40 border border-border/40 rounded-xl p-4">
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-            <Icon className={`h-3.5 w-3.5 ${color || 'text-muted-foreground'}`} />
-            {title}
-          </p>
-          {subtitle && <p className="text-[10px] text-muted-foreground mt-0.5">{subtitle}</p>}
-        </div>
+  const collapsible = typeof open === 'boolean' && !!onToggle;
+  const head = (
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+          <Icon className={`h-3.5 w-3.5 shrink-0 ${color || 'text-muted-foreground'}`} />
+          <span className="truncate">{title}</span>
+        </p>
+        {subtitle && <p className="text-[10px] text-muted-foreground mt-0.5">{subtitle}</p>}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
         {badge && (
-          <span className="text-[9px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 px-2 py-0.5 rounded-full shrink-0">
+          <span className="text-[9px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 px-2 py-0.5 rounded-full">
             {badge}
           </span>
         )}
+        {collapsible && <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />}
       </div>
-      {children}
+    </div>
+  );
+  return (
+    <div className="bg-background/40 border border-border/40 rounded-xl p-4">
+      {collapsible
+        ? <button type="button" onClick={onToggle} className="w-full text-left">{head}</button>
+        : <div className="mb-3">{head}</div>}
+      {(!collapsible || open) && <div className={collapsible ? 'mt-3' : ''}>{children}</div>}
     </div>
   );
 }

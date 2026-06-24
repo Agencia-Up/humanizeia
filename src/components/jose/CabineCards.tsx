@@ -598,61 +598,63 @@ export function CabineCards({ chat, configActions }: { chat?: ReactNode; configA
               anúncios ativos, guardião do estoque, atribuição), logo abaixo do funil (pedido do dono). */}
           <ConfigToolsCard chat={chat} configActions={configActions} cards={cards} reload={recarregar} />
 
-          {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José) */}
+          {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José).
+              Tudo virou SEÇÃO recolhível (clica abre/fecha), incluindo "De qual anúncio vêm os bons
+              clientes" (passado como extraSection). O gráfico "Evolução Semanal" foi removido. */}
           <div>
             <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
-            <CampanhaAnalytics masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel} />
-          </div>
-
-          {/* Anúncios por qualidade real — com barra de % */}
-          <div>
-            <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4 text-amber-400" /> De qual anúncio vêm os bons clientes</h3>
-            <p className="text-[11px] text-muted-foreground mb-2.5">Ranking pela qualidade REAL do lead (não por curtidas nem cliques). Os anúncios <strong className="text-emerald-400/90">ativos</strong> vêm primeiro — a otimização é neles; o resto é histórico pra consulta.</p>
-            <Panel className="p-4">
-              {cards.anuncios.length === 0
-                ? <p className="text-xs text-muted-foreground">Ainda sem leads classificados por anúncio. Conforme o Pedro atende, os anúncios aparecem aqui ordenados do melhor pro pior.</p>
-                : (
-                  <div>
-                    <div className="hidden sm:grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground pb-2 border-b border-border/50">
-                      <span>Anúncio</span><span className="text-center">Leads</span><span className="text-center text-emerald-500">Bons</span><span className="text-center text-rose-500">Ruins</span><span className="text-right">% Bons</span>
-                    </div>
-                    <div className="divide-y divide-border/40">
-                      {cards.anuncios.map((a, i) => {
-                        const pct = n(a.pct_bom);
-                        const cor = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-rose-500';
-                        const dot = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-rose-500';
-                        return (
-                          <div key={i} className="grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 items-center py-2.5 text-xs">
-                            <span className="flex items-center gap-2 min-w-0">
-                              <span className={`h-2.5 w-2.5 rounded-full ${dot} shrink-0`} />
-                              <span className={`truncate font-medium ${a.ativo ? '' : 'text-muted-foreground'}`} title={a.ad_name || ''}>{a.ad_name || '(sem nome)'}</span>
-                              {a.ativo && <Badge className="text-[9px] h-4 px-1 font-semibold shrink-0 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 gap-0.5"><Power className="h-2.5 w-2.5" />Ativo</Badge>}
-                              {a.ad_key_kind === 'titulo' && <Badge variant="outline" className="text-[9px] h-4 px-1 font-normal shrink-0">aproximado</Badge>}
-                            </span>
-                            <span className="text-center tabular-nums text-muted-foreground">{int(a.leads_total)}</span>
-                            <span className="text-center tabular-nums text-emerald-600 dark:text-emerald-400 font-medium">{int(a.leads_bom)}</span>
-                            <span className="text-center tabular-nums text-rose-600 dark:text-rose-400">{int(a.leads_ruim)}</span>
-                            <span className="flex items-center gap-2 justify-end">
-                              <span className="font-bold tabular-nums w-11 text-right">{a.pct_bom == null ? '—' : `${a.pct_bom}%`}</span>
-                              <span className="h-1.5 w-12 rounded-full bg-muted overflow-hidden hidden sm:block"><span className={`block h-full rounded-full ${cor}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></span>
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/50 flex items-start gap-1">
-                      <Power className="h-3 w-3 mt-0.5 shrink-0 text-emerald-400" />
-                      <span>O selo <strong className="text-emerald-400/90">Ativo</strong> marca o anúncio que ainda casa com os ativos na Meta — é onde a otimização acontece. Sem o selo = não confirmado ativo (a 2ª via oficial da Meta deixa o casamento exato).</span>
-                    </p>
-                    {semPct > 0 && (
-                      <p className="text-[10px] text-muted-foreground mt-2">
-                        Atribuição: {int(cards.atribuicao.por_ad_id)} precisos · {int(cards.atribuicao.por_titulo)} por título · {int(cards.atribuicao.sem_origem)} sem origem ({semPct}%). Fica preciso conforme as contas usam o WhatsApp oficial da Meta.
+            <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads com a <strong className="text-foreground/80">qualidade real</strong>: veículo, pagamento, cidade, canal — e de qual anúncio vêm os bons clientes. Clique em cada seção pra abrir.</p>
+            <CampanhaAnalytics
+              masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel}
+              extraSections={[{
+                key: 'anuncios',
+                title: 'De qual anúncio vêm os bons clientes',
+                subtitle: 'Qualidade REAL do lead (não curtidas nem cliques). Ativos primeiro — a otimização é neles.',
+                icon: Award,
+                node: cards.anuncios.length === 0
+                  ? <p className="text-xs text-muted-foreground">Ainda sem leads classificados por anúncio. Conforme o Pedro atende, os anúncios aparecem aqui ordenados do melhor pro pior.</p>
+                  : (
+                    <div>
+                      <div className="hidden sm:grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground pb-2 border-b border-border/50">
+                        <span>Anúncio</span><span className="text-center">Leads</span><span className="text-center text-emerald-500">Bons</span><span className="text-center text-rose-500">Ruins</span><span className="text-right">% Bons</span>
+                      </div>
+                      <div className="divide-y divide-border/40">
+                        {cards.anuncios.map((a, i) => {
+                          const pct = n(a.pct_bom);
+                          const cor = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-rose-500';
+                          const dot = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-rose-500';
+                          return (
+                            <div key={i} className="grid grid-cols-[1fr_60px_60px_60px_120px] gap-2 items-center py-2.5 text-xs">
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span className={`h-2.5 w-2.5 rounded-full ${dot} shrink-0`} />
+                                <span className={`truncate font-medium ${a.ativo ? '' : 'text-muted-foreground'}`} title={a.ad_name || ''}>{a.ad_name || '(sem nome)'}</span>
+                                {a.ativo && <Badge className="text-[9px] h-4 px-1 font-semibold shrink-0 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 gap-0.5"><Power className="h-2.5 w-2.5" />Ativo</Badge>}
+                                {a.ad_key_kind === 'titulo' && <Badge variant="outline" className="text-[9px] h-4 px-1 font-normal shrink-0">aproximado</Badge>}
+                              </span>
+                              <span className="text-center tabular-nums text-muted-foreground">{int(a.leads_total)}</span>
+                              <span className="text-center tabular-nums text-emerald-600 dark:text-emerald-400 font-medium">{int(a.leads_bom)}</span>
+                              <span className="text-center tabular-nums text-rose-600 dark:text-rose-400">{int(a.leads_ruim)}</span>
+                              <span className="flex items-center gap-2 justify-end">
+                                <span className="font-bold tabular-nums w-11 text-right">{a.pct_bom == null ? '—' : `${a.pct_bom}%`}</span>
+                                <span className="h-1.5 w-12 rounded-full bg-muted overflow-hidden hidden sm:block"><span className={`block h-full rounded-full ${cor}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></span>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/50 flex items-start gap-1">
+                        <Power className="h-3 w-3 mt-0.5 shrink-0 text-emerald-400" />
+                        <span>O selo <strong className="text-emerald-400/90">Ativo</strong> marca o anúncio que ainda casa com os ativos na Meta — é onde a otimização acontece. Sem o selo = não confirmado ativo (a 2ª via oficial da Meta deixa o casamento exato).</span>
                       </p>
-                    )}
-                  </div>
-                )}
-            </Panel>
+                      {semPct > 0 && (
+                        <p className="text-[10px] text-muted-foreground mt-2">
+                          Atribuição: {int(cards.atribuicao.por_ad_id)} precisos · {int(cards.atribuicao.por_titulo)} por título · {int(cards.atribuicao.sem_origem)} sem origem ({semPct}%). Fica preciso conforme as contas usam o WhatsApp oficial da Meta.
+                        </p>
+                      )}
+                    </div>
+                  ),
+              }]}
+            />
           </div>
 
           {/* Público: região (alvo x real) + idade */}
