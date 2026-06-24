@@ -14,8 +14,9 @@ import { useToast } from '@/hooks/use-toast';
 import {
   BookOpen, Plus, Loader2, Trash2, FileText, Link, HelpCircle,
   CheckCircle2, AlertCircle, Clock, ChevronDown, ChevronUp, Database,
-  RefreshCw, Info, Zap,
+  RefreshCw, Info, Zap, Upload,
 } from 'lucide-react';
+import { extractFileText } from './extractFileText';
 
 interface KnowledgeSource {
   id: string;
@@ -150,13 +151,38 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
   const [ragRestricted, setRagRestricted] = useState(false);
 
   // Form: nova fonte
-  const [sourceTab, setSourceTab] = useState<'text' | 'qa' | 'url'>('text');
+  const [sourceTab, setSourceTab] = useState<'text' | 'qa' | 'url' | 'file'>('text');
   const [sourceName, setSourceName] = useState('');
   const [sourceContent, setSourceContent] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
   const [qaQuestion, setQaQuestion] = useState('');
   const [qaAnswer, setQaAnswer] = useState('');
   const [showAddSource, setShowAddSource] = useState(false);
+  // Aba "Arquivo": extrai o TEXTO do arquivo no navegador (pdf/docx/xlsx/txt/csv...).
+  const [fileName, setFileName] = useState('');
+  const [fileText, setFileText] = useState('');
+  const [fileExtracting, setFileExtracting] = useState(false);
+  const [fileError, setFileError] = useState('');
+
+  const handleFilePick = async (file: File | null) => {
+    setFileError(''); setFileText(''); setFileName('');
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) { setFileError('Arquivo muito grande (máx. 25MB).'); return; }
+    setFileName(file.name);
+    setFileExtracting(true);
+    try {
+      const res = await extractFileText(file);
+      if (res.error) { setFileError(res.error); return; }
+      if (!res.supported) { setFileError('Esse tipo de arquivo não tem texto pra IA aprender. Para imagens/vídeos, descreva o conteúdo na aba Texto.'); return; }
+      if (!res.text.trim()) { setFileError('Não encontrei texto nesse arquivo (pode ser um PDF só de imagem/escaneado).'); return; }
+      setFileText(res.text);
+      if (!sourceName.trim()) setSourceName(file.name);
+    } catch (e: any) {
+      setFileError(e?.message || 'Falha ao ler o arquivo.');
+    } finally {
+      setFileExtracting(false);
+    }
+  };
 
   const fetchKbs = useCallback(async () => {
     setLoading(true);
@@ -295,6 +321,11 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
       content = `[Conteúdo da URL será extraído automaticamente]\n${sourceUrl.trim()}`;
       if (!name.trim()) name = sourceUrl.trim();
       metadata = { url: sourceUrl.trim() };
+    } else if (sourceTab === 'file') {
+      if (!fileText.trim()) { toast({ title: 'Selecione um arquivo com texto', variant: 'destructive' }); return; }
+      content = fileText;
+      if (!name.trim()) name = fileName || `Arquivo ${new Date().toLocaleDateString('pt-BR')}`;
+      metadata = { filename: fileName, kind: 'file' };
     }
 
     const tokens = estimateTokens(content);
@@ -306,7 +337,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
         .insert({
           kb_id: selectedKbId,
           user_id: userId,
-          type: sourceTab,
+          type: sourceTab === 'file' ? 'text' : sourceTab, // arquivo extraído vira texto (o embed só usa content)
           name,
           content,
           metadata,
@@ -325,6 +356,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
       setSourceUrl('');
       setQaQuestion('');
       setQaAnswer('');
+      setFileText(''); setFileName(''); setFileError('');
       setShowAddSource(false);
       await fetchSources();
 
@@ -591,6 +623,9 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
                   <TabsTrigger value="url" className="text-xs gap-1 h-6">
                     <Link className="h-3 w-3" /> URL
                   </TabsTrigger>
+                  <TabsTrigger value="file" className="text-xs gap-1 h-6">
+                    <Upload className="h-3 w-3" /> Arquivo
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="text" className="space-y-2 mt-3">
@@ -653,6 +688,31 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
                   <p className="text-[10px] text-muted-foreground">
                     ℹ️ O conteúdo da página será salvo para o Pedro consultar
                   </p>
+                </TabsContent>
+
+                <TabsContent value="file" className="space-y-2 mt-3">
+                  <Input
+                    placeholder="Nome (opcional — usa o nome do arquivo)"
+                    value={sourceName}
+                    onChange={e => setSourceName(e.target.value)}
+                    className="text-xs h-8"
+                  />
+                  <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/60 bg-background/40 px-3 py-6 cursor-pointer hover:bg-muted/30 transition-colors">
+                    <input type="file" className="hidden"
+                      accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.json,.html,.xml,.tsv,.yml,.yaml,.rtf,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      onChange={(e) => { handleFilePick(e.target.files?.[0] || null); e.currentTarget.value = ''; }} />
+                    {fileExtracting
+                      ? <><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /><span className="text-[11px] text-muted-foreground">Lendo o arquivo…</span></>
+                      : <><Upload className="h-5 w-5 text-muted-foreground" /><span className="text-[11px] text-muted-foreground text-center">{fileName || 'Clique pra escolher um arquivo (PDF, Word, Excel, CSV, texto...)'}</span></>}
+                  </label>
+                  {fileError && <p className="text-[10px] text-red-400 flex items-start gap-1"><AlertCircle className="h-3 w-3 shrink-0 mt-0.5" /> {fileError}</p>}
+                  {fileText && !fileError && (
+                    <div className="rounded-lg bg-muted/30 p-2 space-y-1">
+                      <p className="text-[10px] text-emerald-400 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Texto extraído · ~{estimateTokens(fileText).toLocaleString()} tokens</p>
+                      <p className="text-[10px] text-muted-foreground whitespace-pre-wrap line-clamp-3">{fileText.slice(0, 280)}{fileText.length > 280 ? '…' : ''}</p>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground">PDF, Word (.docx), Excel/CSV e textos. Imagem/vídeo não têm texto pra IA aprender.</p>
                 </TabsContent>
               </Tabs>
 
