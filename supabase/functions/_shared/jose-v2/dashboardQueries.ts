@@ -127,6 +127,7 @@ async function fetchActiveAds(acc: MetaAccount): Promise<any[]> {
   first.searchParams.set("limit", "200");
   let next: string | null = first.toString();
   const out: any[] = [];
+  const seen = new Set<string>();
   let guard = 0;
   try {
     while (next && guard < 20) {
@@ -134,7 +135,16 @@ async function fetchActiveAds(acc: MetaAccount): Promise<any[]> {
       const res = await fetch(next);
       const data = await res.json();
       if (data?.error) { console.warn("[dashboardQueries] active ads erro:", data.error?.message); break; }
-      if (Array.isArray(data?.data)) out.push(...data.data);
+      // BLINDAGEM (definitiva): a paginação da Meta REPETE anúncios entre páginas e às vezes
+      // PERDE o filtro (devolve não-ativo) -> contava 174 quando havia ~54 ativos de verdade.
+      // Dedupe por id + exige effective_status ACTIVE no nosso lado; não confia só no filtro da Meta.
+      for (const ad of (Array.isArray(data?.data) ? data.data : [])) {
+        const id = String(ad?.id || "");
+        if (!id || seen.has(id)) continue;
+        if (ad?.effective_status !== "ACTIVE") continue;
+        seen.add(id);
+        out.push(ad);
+      }
       next = data?.paging?.next || null;
     }
   } catch (e) { console.warn("[dashboardQueries] active ads fetch falhou:", e); }
