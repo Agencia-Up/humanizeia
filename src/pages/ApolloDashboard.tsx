@@ -1551,46 +1551,51 @@ export default function ApolloDashboard() {
             principal. O componente se auto-esconde (null) se o flag estiver off. */}
         {!isLoadingAccount && accountId && (
           <div className="mt-4 space-y-4">
-            <CabineCards />
-            <JoseChatPanel />
+            {/* Ordem pedida pelo dono: o chat do José + as configurações entram NO MEIO da Cabine
+                (logo após o tráfego pago, antes do guardião do estoque) — via o middleSlot. */}
+            <CabineCards middleSlot={
+              <>
+                <JoseChatPanel />
 
-            {/* Ações e configurações — telas que o redesign tinha escondido, agora
-                acessíveis por botões claros (sem a barra de abas cheia de jargão). */}
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <div>
-                  <div className="text-sm font-semibold">Ações e configurações do José</div>
-                  <p className="text-[11px] text-muted-foreground">Adicione o número do responsável, configure o relatório ou crie uma campanha.</p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant={painelJose === 'config' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'config' ? null : 'config')}>
-                    <Settings className="h-3.5 w-3.5" /> Número do responsável e limites
-                  </Button>
-                  <Button variant={painelJose === 'agenda' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'agenda' ? null : 'agenda')}>
-                    <Clock className="h-3.5 w-3.5" /> Relatório automático
-                  </Button>
-                  <Button variant={painelJose === 'criar' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'criar' ? null : 'criar')}>
-                    <Sparkles className="h-3.5 w-3.5" /> Criar campanha
-                  </Button>
-                </div>
-                {painelJose === 'config' && (
-                  <div className="pt-3 border-t">
-                    <p className="text-[11px] text-muted-foreground mb-2">O número do responsável fica na aba <b>Limites</b> (campo "WhatsApp para aprovação"). É pra onde o José manda o "Responda SIM/NÃO" antes de agir.</p>
-                    <JoseGovernanca />
-                  </div>
-                )}
-                {painelJose === 'agenda' && (
-                  <div className="pt-3 border-t max-w-md">
-                    <CronSettings />
-                  </div>
-                )}
-                {painelJose === 'criar' && (
-                  <div className="pt-3 border-t">
-                    <JoseCriarCampanha />
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                {/* Ações e configurações — telas que o redesign tinha escondido, agora
+                    acessíveis por botões claros (sem a barra de abas cheia de jargão). */}
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <div>
+                      <div className="text-sm font-semibold">Ações e configurações do José</div>
+                      <p className="text-[11px] text-muted-foreground">Adicione o número do responsável, configure o relatório ou crie uma campanha.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant={painelJose === 'config' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'config' ? null : 'config')}>
+                        <Settings className="h-3.5 w-3.5" /> Número do responsável e limites
+                      </Button>
+                      <Button variant={painelJose === 'agenda' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'agenda' ? null : 'agenda')}>
+                        <Clock className="h-3.5 w-3.5" /> Relatório automático
+                      </Button>
+                      <Button variant={painelJose === 'criar' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'criar' ? null : 'criar')}>
+                        <Sparkles className="h-3.5 w-3.5" /> Criar campanha
+                      </Button>
+                    </div>
+                    {painelJose === 'config' && (
+                      <div className="pt-3 border-t">
+                        <p className="text-[11px] text-muted-foreground mb-2">O número do responsável fica na aba <b>Limites</b> (campo "WhatsApp para aprovação"). É pra onde o José manda o "Responda SIM/NÃO" antes de agir.</p>
+                        <JoseGovernanca />
+                      </div>
+                    )}
+                    {painelJose === 'agenda' && (
+                      <div className="pt-3 border-t max-w-md">
+                        <CronSettings />
+                      </div>
+                    )}
+                    {painelJose === 'criar' && (
+                      <div className="pt-3 border-t">
+                        <JoseCriarCampanha />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            } />
           </div>
         )}
 

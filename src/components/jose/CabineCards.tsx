@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -342,7 +342,7 @@ function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue
   );
 }
 
-export function CabineCards() {
+export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(true);
   const { user } = useAuth();
@@ -374,8 +374,9 @@ export function CabineCards() {
   useEffect(() => { if (range) load({ time_range: range }); }, [range, load]);
   const recarregar = useCallback(() => { if (range) load({ time_range: range }); }, [load, range]);
 
-  // Auto-esconde nas contas sem o recurso ligado.
-  if (!loading && (!enabled || !cards)) return null;
+  // Auto-esconde os CARDS nas contas sem o recurso ligado — mas o chat/config (middleSlot)
+  // continua aparecendo, porque não depende do flag da Cabine.
+  if (!loading && (!enabled || !cards)) return middleSlot ? <div className="space-y-6">{middleSlot}</div> : null;
 
   const periodoLabel = periodo === 'custom' ? 'período escolhido' : (PRESETS.find((p) => p.value === periodo)?.label || '7 dias');
   const totalAtrib = cards ? n(cards.atribuicao.por_ad_id) + n(cards.atribuicao.por_titulo) + n(cards.atribuicao.sem_origem) : 0;
@@ -596,6 +597,10 @@ export function CabineCards() {
             <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
             <CampanhaAnalytics masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel} />
           </div>
+
+          {/* CHAT DO JOSÉ + CONFIGURAÇÕES — injetados aqui pelo ApolloDashboard (logo após o
+              tráfego pago, antes do guardião do estoque): a ordem que o dono pediu. */}
+          {middleSlot}
 
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
           <StockGuard />
