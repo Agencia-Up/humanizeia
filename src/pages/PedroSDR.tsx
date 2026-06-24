@@ -2763,6 +2763,9 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                 color: '#a78bfa', // roxo neutro pra origens personalizadas
                 // coluna criada por vendedor pertence SO a ele (master = null)
                 seller_auth_id: isSeller ? userId : null,
+                // origem personalizada criada no add-lead não entra sozinha no
+                // Painel ao Vivo — o dono liga no botão do olho se quiser.
+                show_in_live: false,
               })
               .select('id')
               .single();

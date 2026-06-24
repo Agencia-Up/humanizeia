@@ -667,6 +667,9 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .from('crm_pipeline_stages')
           .select('id, name, color, position, tipo, ativo, show_in_live')
           .eq('user_id', effectiveUserId)
+          // Painel ao Vivo é a TV COMPARTILHADA da conta: só origens de nível conta
+          // (seller_auth_id null). Coluna privada de vendedor nunca aparece aqui.
+          .is('seller_auth_id', null)
           .order('position', { ascending: true });
 
         const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, poolRes, agentsRes, stagesRes] = await Promise.all([

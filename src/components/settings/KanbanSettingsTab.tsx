@@ -160,9 +160,10 @@ export function KanbanSettingsTab() {
       id: `new-${++tempCounter}`,
       name: '', color: '#64748b', position: maxPos + 1,
       tipo: '', ativo: true, responsavel_padrao_id: '', is_default: false,
-      // Vendedor cria coluna FORA do Painel ao Vivo (só master decide o que entra lá)
-      // — e assim o vendedor consegue nomear a coluna que ele mesmo criou.
-      show_in_live: !isSeller,
+      // Coluna NOVA nunca entra sozinha no Painel ao Vivo (nem a do master): o dono
+      // liga manualmente no botão do olho. Sem isso, toda coluna criada poluía o
+      // painel da loja inteira automaticamente. (Vendedor também cria FORA do painel.)
+      show_in_live: false,
       // coluna criada por vendedor pertence SO a ele; master cria coluna da conta (null)
       seller_auth_id: isSeller ? (user?.id ?? null) : null,
       leads_count: 0, _isNew: true,

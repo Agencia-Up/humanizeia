@@ -175,8 +175,9 @@ export function KanbanPedroSettingsTab() {
       status_key: key,
       name: '', color: '#64748b', position: maxPos + 1,
       tipo: '', ativo: true, responsavel_padrao_id: '',
-      // vendedor cria FORA do Painel ao Vivo (e assim consegue nomear a propria coluna)
-      show_in_live: !isSeller,
+      // Coluna NOVA nunca entra sozinha no Painel ao Vivo (nem a do master): o dono
+      // liga manualmente no botão do olho. (Vendedor também cria FORA do painel.)
+      show_in_live: false,
       is_engine: false,
       // coluna criada por vendedor pertence SO a ele; master cria coluna da conta (null)
       seller_auth_id: isSeller ? (user?.id ?? null) : null,
