@@ -33,7 +33,7 @@ import {
   Loader2, Minus, Pause, Play, Radar, Settings, Sparkles,
   ThumbsDown, TrendingDown, TrendingUp, Zap, Sun, BarChart3,
   Flame, Gauge, PieChart, RefreshCw, MessageCircle, Phone, Shield,
-  Image as ImageIcon, Film, DollarSign, ShieldCheck, Target,
+  Image as ImageIcon, Film, DollarSign, ShieldCheck, Target, X,
 } from 'lucide-react';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1189,6 +1189,7 @@ export default function ApolloDashboard() {
   const { session, isAnalyzing, isLoadingSession, pendingActions, executedActions, analyze, loadSavedSession, hydrateSession, executeAction, getAdSets, getAds, dismissAction, testConnection } = useApolloAgent();
   const [diagResult, setDiagResult] = useState<string | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [chatJoseOpen, setChatJoseOpen] = useState(false);
   const { data: history, isLoading: isLoadingHistory } = useApolloHistory(connectedAccount?.account_id);
 
   const [datePreset, setDatePreset] = useState<ApolloDatePreset>('last_30d');
@@ -1542,6 +1543,10 @@ export default function ApolloDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Botão CHAMATIVO que abre o chat do José num modal (pedido do dono). */}
+              <Button onClick={() => setChatJoseOpen(true)} className="gap-1.5 bg-gradient-to-r from-primary to-indigo-500 text-primary-foreground hover:opacity-90 shadow-md shadow-primary/25 font-semibold">
+                <MessageCircle className="h-4 w-4" /> Conversar com o José
+              </Button>
               {/* Status CLARO de José ligado/parado + botão direto (sem a inversão do kill-switch). */}
               <JoseStatusBadge />
               <Badge variant="outline" className="gap-1.5 text-xs h-7 px-2.5">
@@ -1551,14 +1556,26 @@ export default function ApolloDashboard() {
           </div>
         )}
 
+        {/* Chat do José — abre num MODAL pelo botão chamativo do header. */}
+        {chatJoseOpen && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={() => setChatJoseOpen(false)}>
+            <div className="my-8 w-full max-w-2xl rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-2xl border-b border-border/60 bg-card px-5 py-3">
+                <h3 className="flex items-center gap-1.5 text-sm font-bold"><MessageCircle className="h-4 w-4 text-primary" /> Converse com o José</h3>
+                <button onClick={() => setChatJoseOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Fechar"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="p-4"><JoseChatPanel /></div>
+            </div>
+          </div>
+        )}
+
         {/* Cabine de Comando (Bloco A) — cards fixos, sempre visíveis na tela
             principal. O componente se auto-esconde (null) se o flag estiver off. */}
         {!isLoadingAccount && accountId && (
           <div className="mt-4 space-y-4">
-            {/* O card "Configurações do José" (chat + fileira de botões padrão: config + ferramentas)
-                é montado DENTRO da CabineCards. Aqui só passamos o chat e as ações de configuração. */}
+            {/* Os botões de config + ferramentas ficam DENTRO do card "Período da campanha" (na
+                CabineCards). O chat virou o botão chamativo do header (modal acima). */}
             <CabineCards
-              chat={<JoseChatPanel />}
               configActions={[
                 {
                   key: 'config',
