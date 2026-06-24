@@ -541,6 +541,9 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
             <p className="text-[10px] text-muted-foreground mt-2.5 text-center">Dos leads que entraram no período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
           </div>
 
+          {/* CHAT DO JOSÉ + CONFIGURAÇÕES — logo abaixo do funil (ordem que o dono pediu no print). */}
+          {middleSlot}
+
           {/* Anúncios por qualidade real — com barra de % */}
           <div>
             <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4 text-amber-400" /> De qual anúncio vêm os bons clientes</h3>
@@ -597,10 +600,6 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
             <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
             <CampanhaAnalytics masterUserId={user?.id || ''} since={range?.since || ''} until={range?.until || ''} periodoLabel={periodoLabel} />
           </div>
-
-          {/* CHAT DO JOSÉ + CONFIGURAÇÕES — injetados aqui pelo ApolloDashboard (logo após o
-              tráfego pago, antes do guardião do estoque): a ordem que o dono pediu. */}
-          {middleSlot}
 
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
           <StockGuard />
