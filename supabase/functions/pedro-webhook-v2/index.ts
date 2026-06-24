@@ -11,7 +11,7 @@ import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-23-preserve-list-formatting-v174";
+const PEDRO_V2_BUILD = "2026-06-24-waituntil-anti-drop-v175";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -329,20 +329,11 @@ Deno.serve(async (req) => {
     );
   }
 
-  let result;
-  try {
-    result = await processPedroV2Turn(supabase, {
-      payload,
-      agent,
-      wa_instance: waInstance,
-      dry_run: payload?.dry_run === true || !isPedroV2MutationEnabled(),
-    });
-  } catch (turnErr) {
-    // ── SAFETY NET: um turno que LANCA nunca pode sumir silenciosamente ───────────────────────
-    // Sem isto, uma excecao em processPedroV2Turn (ex.: enriquecimento de anuncio) sobe sem
-    // tratamento -> 500, NENHUM registro em pedro_v2_turn_logs, lead sem resposta e bug invisivel
-    // (caso real Maria Rosa, anuncio Onix). Aqui registramos o erro (pra diagnostico) e respondemos
-    // 200 (evita retry-storm do uazapi). best-effort: o log NUNCA derruba a resposta.
+  const _dryRun = payload?.dry_run === true || !isPedroV2MutationEnabled();
+  const _turnInput = { payload, agent, wa_instance: waInstance, dry_run: _dryRun };
+
+  // SAFETY NET (Maria Rosa): um turno que LANCA nunca pode sumir — registra turn_uncaught_error.
+  const _logTurnError = async (turnErr: unknown) => {
     const _msg = pickIncomingMessage(payload);
     try {
       await supabase.from("pedro_v2_turn_logs").insert({
@@ -358,6 +349,25 @@ Deno.serve(async (req) => {
       });
     } catch (_logErr) { /* nunca derruba */ }
     console.error("[pedro-webhook-v2] turn_uncaught_error", turnErr);
+  };
+
+  // ⚠️ ANTI-DROP DE MENSAGEM (lead Gilda 99175-5700 + ~20% dos leads não respondidos): o webhook AWAITAVA
+  // o turno inteiro (incl. debounce de ATÉ 45s + LLM). Se o uazapi (caller) dava TIMEOUT e desconectava
+  // nesse meio-tempo, o Supabase MATAVA a function -> msg salva mas turno NÃO completava, lead SEM resposta
+  // (a function MORTA não dispara o safety-net acima, que só pega exceção JS). FIX=responder 200 RÁPIDO e
+  // processar em EdgeRuntime.waitUntil (o Supabase mantém a function viva após o 200) -> sem timeout do
+  // uazapi, sem desconexão, o turno SEMPRE completa. Dry-run segue awaited (o teste precisa do resultado).
+  const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
+  if (!_dryRun && typeof _waitUntil === "function") {
+    _waitUntil(processPedroV2Turn(supabase, _turnInput).catch(_logTurnError));
+    return jsonResponse({ ok: true, accepted: true, build: PEDRO_V2_BUILD });
+  }
+
+  let result;
+  try {
+    result = await processPedroV2Turn(supabase, _turnInput);
+  } catch (turnErr) {
+    await _logTurnError(turnErr);
     return jsonResponse({ ok: false, error: "turn_failed", build: PEDRO_V2_BUILD }, 200);
   }
 
