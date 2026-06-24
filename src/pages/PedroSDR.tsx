@@ -4164,7 +4164,6 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
             ...(!isSeller && !isMarcosCrm ? [
               { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
               { id: 'diagnostico', label: 'Diagnóstico', icon: AlertTriangle, badge: semVendedorTotal },
-              { id: 'trafego', label: 'Tráfego',    icon: TrendingUp, badge: 0 },
               { id: 'sellers', label: 'Vendedores', icon: Users,      badge: 0 },
             ] : []),
           ].map(v => (

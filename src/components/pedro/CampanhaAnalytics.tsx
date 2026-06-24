@@ -134,6 +134,12 @@ function resolveAttribution(lead: RawLead, utm: UtmRecord | null): Attribution {
     const src = utm.utm_source || '—';
     return { kind: 'utm', key: `utm|${src}|${c}`, label: c, sub: `UTM · ${src}` };
   }
+  // Lead do Pedro (WhatsApp via clique no anúncio/CTWA) SEM origem explícita = veio do tráfego
+  // pago, só não trouxe QUAL anúncio -> conta como Tráfego Pago, não "Sem origem"/"Outros".
+  // (A loja roda tráfego pago; origem orgânica/porta/indicação vem marcada e é respeitada.)
+  if (!lead.origem && !lead.origem_outros) {
+    return { kind: 'campanha', key: 'ad|sem_anuncio', label: 'Tráfego Pago (anúncio não identificado)', sub: 'Tráfego Pago' };
+  }
   const o = origemLabel(lead.origem, lead.origem_outros);
   return { kind: 'origem', key: `origem|${o}`, label: o, sub: 'Origem' };
 }
