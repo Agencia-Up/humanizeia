@@ -56,7 +56,7 @@ function int(v: number | null | undefined) { return n(v).toLocaleString('pt-BR')
 
 // Atribuição por VEÍCULO: puxa da conversa (Pedro) qual carro o anúncio mostrava e usa como
 // atribuição -> a tabela ANÚNCIO separa por carro real, não pelo título genérico. Diretriz do dono.
-function AtribVeiculo() {
+function AtribVeiculo({ onDone }: { onDone?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
   const rodar = async () => {
@@ -65,7 +65,8 @@ function AtribVeiculo() {
       const { data: res, error } = await supabase.functions.invoke('jose-attrib-veiculo', { body: {} });
       if (error || (res as any)?.error) throw new Error((res as any)?.error || error?.message || 'falha');
       setData(res);
-      toast.success('Atribuição por veículo atualizada!');
+      toast.success(`${(res as any)?.ad_name_atualizados ?? 0} anúncios atribuídos por carro. Atualizando a tabela…`);
+      setTimeout(() => onDone?.(), 600); // recarrega a Cabine -> a tabela ANÚNCIO passa a mostrar os carros
     } catch {
       toast.error('Não consegui atualizar a atribuição agora.');
     } finally { setLoading(false); }
@@ -567,7 +568,7 @@ export function CabineCards() {
           <StockGuard />
 
           {/* ATRIBUIÇÃO POR VEÍCULO — puxa o carro da conversa pra separar o blob genérico */}
-          <AtribVeiculo />
+          <AtribVeiculo onDone={() => load({ date_preset: periodo === 'custom' ? 'last_7d' : periodo })} />
 
           {/* GALERIA DE CRIATIVOS — num pop-up (não polui o painel) */}
           <GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} />
