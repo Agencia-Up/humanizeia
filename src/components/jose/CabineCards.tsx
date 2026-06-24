@@ -544,11 +544,16 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
           {/* CHAT DO JOSÉ + CONFIGURAÇÕES — logo abaixo do funil (ordem que o dono pediu no print). */}
           {middleSlot}
 
-          {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
-          <StockGuard />
-
-          {/* ATRIBUIÇÃO POR VEÍCULO — puxa o carro da conversa pra separar o blob genérico */}
-          <AtribVeiculo onDone={() => load(range ? { time_range: range } : { date_preset: 'last_7d' })} />
+          {/* FERRAMENTAS DO JOSÉ — galeria, guardião do estoque e atribuição JUNTOS, compactos
+              (3 colunas no desktop), pra otimizar espaço (pedido do dono). */}
+          <div>
+            <h3 className="text-sm font-semibold mb-2.5 flex items-center gap-1.5"><Sparkles className="h-4 w-4" /> Ferramentas do José</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+              <Panel className="p-4"><GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} /></Panel>
+              <Panel className="p-4"><StockGuard /></Panel>
+              <Panel className="p-4"><AtribVeiculo onDone={() => load(range ? { time_range: range } : { date_preset: 'last_7d' })} /></Panel>
+            </div>
+          </div>
 
           {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José) */}
           <div>
@@ -606,9 +611,6 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
                 )}
             </Panel>
           </div>
-
-          {/* GALERIA DE CRIATIVOS — num pop-up (não polui o painel) */}
-          <GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} />
 
           {/* Público: região (alvo x real) + idade */}
           <div>

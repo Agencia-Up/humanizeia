@@ -1551,20 +1551,19 @@ export default function ApolloDashboard() {
             principal. O componente se auto-esconde (null) se o flag estiver off. */}
         {!isLoadingAccount && accountId && (
           <div className="mt-4 space-y-4">
-            {/* Ordem pedida pelo dono: o chat do José + as configurações entram NO MEIO da Cabine
-                (logo após o tráfego pago, antes do guardião do estoque) — via o middleSlot. */}
+            {/* Ordem pedida pelo dono: logo após o funil entra o card "Configurações do José",
+                e o CHAT do José vive DENTRO desse card (no topo). Tudo via o middleSlot. */}
             <CabineCards middleSlot={
-              <>
-                <JoseChatPanel />
+              <Card>
+                <CardContent className="p-4 space-y-4">
+                  <div className="text-sm font-semibold flex items-center gap-1.5"><Settings className="h-4 w-4" /> Configurações do José</div>
 
-                {/* Ações e configurações — telas que o redesign tinha escondido, agora
-                    acessíveis por botões claros (sem a barra de abas cheia de jargão). */}
-                <Card>
-                  <CardContent className="p-4 space-y-3">
-                    <div>
-                      <div className="text-sm font-semibold">Ações e configurações do José</div>
-                      <p className="text-[11px] text-muted-foreground">Adicione o número do responsável, configure o relatório ou crie uma campanha.</p>
-                    </div>
+                  {/* Chat do José — agora DENTRO das configurações (pedido do dono). */}
+                  <JoseChatPanel />
+
+                  {/* Ações e configurações — número do responsável, relatório, criar campanha. */}
+                  <div className="border-t pt-3 space-y-3">
+                    <p className="text-[11px] text-muted-foreground">Adicione o número do responsável, configure o relatório ou crie uma campanha.</p>
                     <div className="flex flex-wrap gap-2">
                       <Button variant={painelJose === 'config' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'config' ? null : 'config')}>
                         <Settings className="h-3.5 w-3.5" /> Número do responsável e limites
@@ -1592,9 +1591,9 @@ export default function ApolloDashboard() {
                         <JoseCriarCampanha />
                       </div>
                     )}
-                  </CardContent>
-                </Card>
-              </>
+                  </div>
+                </CardContent>
+              </Card>
             } />
           </div>
         )}
