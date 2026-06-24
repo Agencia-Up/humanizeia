@@ -2609,7 +2609,14 @@ export async function processPedroV2Turn(
       && (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true)) {
     reply.pronto_para_transferir = false;
     reply.transferir_silencioso = false;
-    reply.text = `Show, anotei tudo do seu carro! 🙌 Pra eu já adiantar pro nosso consultor que avalia a troca, me confirma: qual veículo nosso te interessou${(effectiveMemory as any)?.interesse?.modelo_desejado ? ` (vi que você curtiu o ${(effectiveMemory as any).interesse.modelo_desejado})` : ""}? E como é o seu nome? 😊`;
+    // Acolhe + pergunta SÓ o que ainda falta (não re-pergunta interesse/nome que já temos).
+    const _temInteresse = Boolean((effectiveMemory as any)?.interesse?.modelo_desejado || _q?.interesse);
+    const _temNomeReal = Boolean(_q?.nome || lead?.lead_name || (pushName && /\p{L}{2,}/u.test(String(pushName))));
+    let _pede = " Pode mandar mais detalhes ou fotos do seu carro, se quiser. 😊";
+    if (!_temInteresse && !_temNomeReal) _pede = " E me confirma: qual veículo nosso te interessou e como é o seu nome? 😊";
+    else if (!_temInteresse) _pede = " E qual veículo nosso te interessou? 😊";
+    else if (!_temNomeReal) _pede = " E como é o seu nome? 😊";
+    reply.text = `Show, anotei tudo do seu carro! 🙌 Pra eu já adiantar pro nosso consultor que avalia a troca:${_pede}`;
     reply.media = [];
     reply.source = "trade_collecting";
     log("info", "pedro_v2_trade_collecting_no_transfer", { lead_id: lead?.id || null });
