@@ -17,6 +17,7 @@ import {
 } from "../../supabase/functions/_shared/pedro-v2/stockSearch_20260525_photo_flow.ts";
 import { normalizePlan } from "../../supabase/functions/_shared/pedro-v2/pedroBrainPlanner_20260525.ts";
 import { ensureStockReplyFormatting, leadFirstName } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
+import { isGenericFleetQuery } from "../../supabase/functions/_shared/pedro-v2/adContext_20260525.ts";
 import {
   buildStockFilters,
   leadMessageAsksBroadStock,
@@ -234,6 +235,17 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("troca", "'Tudo ok' -> descrevendo a troca", leadProvidingTradeDetails("Tudo ok") === true);
   check("troca", "'Quero o Hilux' -> NÃO é descrição de troca", leadProvidingTradeDetails("Quero o Hilux") === false);
   check("troca", "'quanto fica?' -> NÃO é descrição de troca", leadProvidingTradeDetails("quanto fica?") === false);
+
+  // ── ANÚNCIO de FROTA genérico -> vehicle_query falso é zerado (lead 98109-7851) ──
+  check("anuncio", "'veículos revisados e prontos para você' -> genérico", isGenericFleetQuery("veículos revisados e prontos para você") === true);
+  check("anuncio", "'diversos modelos disponíveis' -> genérico", isGenericFleetQuery("diversos modelos disponíveis") === true);
+  check("anuncio", "'confira nossas ofertas' -> genérico", isGenericFleetQuery("confira nossas ofertas") === true);
+  check("anuncio", "'fale com um consultor' -> genérico", isGenericFleetQuery("fale com um de nossos consultores") === true);
+  check("anuncio", "'seminovos' -> genérico", isGenericFleetQuery("seminovos com procedência") === true);
+  check("anuncio", "'Jeep Renegade 2020' -> veículo REAL (não zera)", isGenericFleetQuery("Jeep Renegade 2020") === false);
+  check("anuncio", "'Onix LT' -> veículo REAL (não zera)", isGenericFleetQuery("Chevrolet Onix LT") === false);
+  check("anuncio", "'VW Gol' -> veículo REAL (não zera)", isGenericFleetQuery("VW Gol") === false);
+  check("anuncio", "'Corolla 2009' -> veículo REAL (não zera)", isGenericFleetQuery("Corolla 2009") === false);
 
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
   check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);

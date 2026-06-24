@@ -619,6 +619,21 @@ function inferVehicleFromText(text: string): Pick<PedroV2AdContext, "vehicle_que
   return { vehicle_query: model, vehicle_type: type, confidence: 0.78 };
 }
 
+// SANIDADE do vehicle_query (anuncio de FROTA genérico). Anuncios "🚗 Veiculos revisados / diversos
+// modelos / confira as opcoes / fale com um consultor" NAO tem veiculo, mas a visao (foto-padrao do
+// anuncio) ou o LLM as vezes vazam uma FRASE generica como vehicle_query → o agente "busca" a frase e
+// DEFERE ("vou buscar os veiculos revisados... um momento") e SOME, em vez de ABORDAR+qualificar (caso
+// real lead 98109-7851). Se o query NAO tem ano NEM modelo conhecido NEM marca, E bate em palavra de
+// frota generica → NAO e veiculo: zera (vira adNeedsVehicleConfirmation → agente faz a abordagem).
+export function isGenericFleetQuery(q?: string | null): boolean {
+  const n = normalizeText(String(q || ""));
+  if (!n) return false;
+  if (/\b(19|20)\d{2}\b/.test(n)) return false;                 // tem ano → é veículo real
+  if (inferVehicleFromText(n).vehicle_query) return false;       // tem modelo conhecido → real
+  if (/\b(chevrolet|gm|fiat|volkswagen|vw|ford|toyota|honda|hyundai|renault|jeep|nissan|peugeot|citroen|mitsubishi|kia|bmw|mercedes|audi|caoa|chery|byd|ram|dodge|mini|land\s*rover|volvo|suzuki|gol|polo|virtus|jetta|golf|fox|voyage|saveiro|up|hr-v|hrv|wr-v|wrv|city|fit|fiesta|ka|focus|cronos|pulse|fastback|sandero|logan|sentra|versa|kicks|march|frontier|l200|pajero|sportage|cerato|spin|cobalt|prisma|polo|nivus|taos|tiguan|c3|c4)\b/.test(n)) return false; // marca/modelo extra → real
+  return /\b(veiculo|diversos|varios|varias|opcoe|opcao|ofert|consultor|revisad|seminovo|semi novo|novidade|estoque|promocao|melhores preco|custo beneficio|confira|disponive|prontos para voce|melhor custo)/.test(n);
+}
+
 // Extrai o veiculo da SAUDACAO AUTOMATICA do CTWA ("Ola! Quer saber mais sobre a Ranger XLT
 // TD 3.2 2016?"). Essa string e a fonte AUTORITATIVA (vem do anuncio real), entao captura o
 // veiculo COMPLETO (marca/modelo/versao/ANO) com confianca alta — vence a visao da imagem,
@@ -938,13 +953,16 @@ export async function resolvePedroAdContext(payload: any, messageText: string, o
       ? imageInference
       : textInference;
 
+  // Zera o veículo se for FRASE de anúncio de frota genérico (sem ano/modelo/marca) — assim o anúncio
+  // genérico cai em adNeedsVehicleConfirmation e o agente ABORDA+qualifica, em vez de "buscar" a frase.
+  const _bestQueryClean = isGenericFleetQuery(best.vehicle_query) ? null : (best.vehicle_query || null);
   return {
     ...textual,
     has_ad_context: true,
     title: pageMetadata?.title || textual.title || null,
     description: pageMetadata?.description || textual.description || null,
-    vehicle_query: best.vehicle_query || null,
-    vehicle_type: best.vehicle_type || null,
+    vehicle_query: _bestQueryClean,
+    vehicle_type: _bestQueryClean ? (best.vehicle_type || null) : null,
     summary: best.summary || metadataText || textual.raw_text || null,
     confidence: Number(best.confidence || 0),
     diagnostics: {

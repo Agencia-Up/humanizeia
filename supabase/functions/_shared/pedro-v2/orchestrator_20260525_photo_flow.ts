@@ -2042,10 +2042,27 @@ export async function processPedroV2Turn(
       log("warn", "pedro_v2_ai_identity_leak_blocked", { lead_id: lead?.id || null, source: (reply as any)?.source });
     }
 
+    // ANÚNCIO GENÉRICO (de frota, sem veículo específico — lead 98109-7851): o agente reconheceu o anúncio
+    // mas não há carro pra apresentar; o LLM às vezes DEFERE ("vou buscar os veículos revisados... um
+    // momento") e SOME. Em vez de deferir/buscar uma frase genérica, faz a ABORDAGEM (ETAPA 1 do funil):
+    // cumprimenta, se apresenta (nome do agente) e QUALIFICA o que o cliente procura. Roda ANTES do
+    // backstop de defer (que tentaria buscar/relistar — aqui não há veículo). Só quando NÃO há veículo do
+    // anúncio (adNeedsVehicleConfirmation) e o reply deferiu.
+    if (adNeedsVehicleConfirmation && replyDefersSearch((reply as any)?.text || "")) {
+      const _agName = (input.agent?.name || "").toString().trim().split(/\s+/)[0] || "";
+      reply = {
+        ok: true,
+        text: `Oi! Aqui é o ${_agName || "consultor"} 😊 Pra te indicar certinho: você já tem algum modelo em mente, ou prefere que eu te ajude a escolher pela sua necessidade — tipo de carro e a faixa de valor que você pensa?`,
+        source: "ad_generic_abordagem",
+        media: [],
+      } as any;
+      log("info", "pedro_v2_ad_generic_abordagem", { lead_id: lead?.id || null });
+    }
+
     // "VOU BUSCAR..." E SOME (lead 99747-0573 "Palio"): o reply DEFERIU a busca que JA rodou neste turno
     // -> apresenta o resultado REAL agora (buildDeterministicStockReply ja e HONESTO: "Temos sim" so se o
     // modelo existe, senao "nao tenho X, mas tenho parecidos"). Recupera a busca se o stockResult faltou.
-    if (replyDefersSearch((reply as any)?.text || "")) {
+    else if (replyDefersSearch((reply as any)?.text || "")) {
       let _defStock: any = stockResult;
       if (!(_defStock?.success && Array.isArray(_defStock.items) && _defStock.items.length > 0)) {
         const _defQuery = (vehicleResolution as any)?.query || (brainPlan as any)?.search_query || (stockFilters as any)?.modelo_desejado || null;
