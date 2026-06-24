@@ -54,6 +54,40 @@ function money(moeda: string, v: number | null | undefined) {
 }
 function int(v: number | null | undefined) { return n(v).toLocaleString('pt-BR'); }
 
+// Atribuição por VEÍCULO: puxa da conversa (Pedro) qual carro o anúncio mostrava e usa como
+// atribuição -> a tabela ANÚNCIO separa por carro real, não pelo título genérico. Diretriz do dono.
+function AtribVeiculo() {
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<any>(null);
+  const rodar = async () => {
+    setLoading(true);
+    try {
+      const { data: res, error } = await supabase.functions.invoke('jose-attrib-veiculo', { body: {} });
+      if (error || (res as any)?.error) throw new Error((res as any)?.error || error?.message || 'falha');
+      setData(res);
+      toast.success('Atribuição por veículo atualizada!');
+    } catch {
+      toast.error('Não consegui atualizar a atribuição agora.');
+    } finally { setLoading(false); }
+  };
+  return (
+    <div>
+      <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Target className="h-4 w-4" /> Atribuição por veículo do anúncio</h3>
+      <p className="text-[11px] text-muted-foreground mb-2.5">Puxa da conversa qual <strong className="text-foreground/80">carro</strong> o anúncio mostrava (ex.: "Creta 2025", "Toro Diesel") e usa como atribuição — aí a tabela de anúncio separa por carro real, não pelo título genérico "Fale com consultor".</p>
+      <button onClick={rodar} disabled={loading}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs font-bold text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-50">
+        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Target className="h-3.5 w-3.5" />}
+        {loading ? 'Puxando da conversa…' : 'Atualizar atribuição por veículo'}
+      </button>
+      {data && (
+        <p className="text-[11px] text-muted-foreground mt-2">
+          {data.leads_com_veiculo_extraido ?? 0} leads com carro identificado · <b className="text-emerald-400">{data.ad_name_atualizados ?? 0} atribuídos por veículo agora</b> (de {data.conversas_com_anuncio ?? 0} conversas com anúncio).
+        </p>
+      )}
+    </div>
+  );
+}
+
 // Galeria de criativos num POP-UP (botão abre/fecha) — não polui o painel com dezenas de
 // anúncios um do lado do outro. Mostra todos os ativos com arte + gasto + custo/conversa + CPM.
 function GaleriaCriativos({ criativos, moeda }: { criativos: any[]; moeda: string }) {
@@ -531,6 +565,9 @@ export function CabineCards() {
 
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
           <StockGuard />
+
+          {/* ATRIBUIÇÃO POR VEÍCULO — puxa o carro da conversa pra separar o blob genérico */}
+          <AtribVeiculo />
 
           {/* GALERIA DE CRIATIVOS — num pop-up (não polui o painel) */}
           <GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} />
