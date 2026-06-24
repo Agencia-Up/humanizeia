@@ -2419,9 +2419,12 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     }
   } catch { /* sem verdade -> relatório segue só com a vitrine */ }
 
-  const lines: string[] = [
+  // null = linha condicional que não existe (some); "" = espaçamento DE PROPÓSITO (vira linha
+  // em branco entre as seções). O filtro tira só os null -> o respiro entre seções é preservado
+  // (antes um .filter(l!=="") apagava TODO espaçamento e o relatório chegava como um paredão).
+  const lines: Array<string | null> = [
     `📊 *José — Relatório de ontem* (${ontem})`,
-    acc.account_name ? `🏢 ${acc.account_name}` : "",
+    acc.account_name ? `🏢 ${acc.account_name}` : null,
     ``,
     `💰 *Investido ontem:* ${money(ySpend)}`,
     `👁️ *Pessoas alcançadas:* ${int(yReach)}`,
@@ -2432,7 +2435,7 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     ``,
     `✅ *No painel da Logos (ontem):*`,
     `   ${int(yLogos)} leads que chegaram de verdade · ${yLogos > 0 ? `${money(yLogosCost)} cada` : "—"}`,
-    diffNote,
+    diffNote || null,
     ``,
     `📅 *Últimos 7 dias:*`,
     `   Meta: ${int(wRes.results)} ${M.noun} · ${wRes.results > 0 ? `${money(wRes.cost)} cada` : "—"}`,
@@ -2442,7 +2445,7 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
     `💡 ${resumo}`,
     ``,
     `🤖 _Gerado automaticamente pelo José — LogosIA_`,
-  ].filter((l) => l !== "");
+  ].filter((l) => l !== null);
 
   // ── Instância que ENVIA: a escolhida pelo usuário; senão a primeira conectada ──
   let inst: any = null;
