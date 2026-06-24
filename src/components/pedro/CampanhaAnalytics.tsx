@@ -31,7 +31,7 @@
 // Fonte de dados: ai_crm_leads + wa_contacts (join por telefone)
 // ============================================================================
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   Cell, PieChart, Pie, LineChart, Line, AreaChart, Area,
@@ -220,8 +220,15 @@ interface CityRow { cidade: string; total: number; qualificado: number; pct: num
 interface PaymentRow { metodo: string; total: number; qualificado: number; pct: number; fill: string; }
 interface WeekRow { semana: string; total: number; qualificado: number; pouco_qualificado: number; inativo: number; }
 
-export function CampanhaAnalytics({ masterUserId }: { masterUserId: string }) {
+export function CampanhaAnalytics({ masterUserId, periodOverride }: { masterUserId: string; periodOverride?: Period }) {
   const [period, setPeriod] = useState<Period>('all'); // abre em "Tudo": ver a jornada inteira (todos os leads têm data)
+  // Espelha o filtro do painel principal (Cabine): mudou o período lá em cima -> muda aqui.
+  // 1º render mantém "Tudo" (ver tudo junto); depois segue o período escolhido na Cabine.
+  const primeiroSync = useRef(true);
+  useEffect(() => {
+    if (primeiroSync.current) { primeiroSync.current = false; return; }
+    if (periodOverride) setPeriod(periodOverride);
+  }, [periodOverride]);
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<RawLead[]>([]);
   const [utmByPhone, setUtmByPhone] = useState<Map<string, UtmRecord>>(new Map());

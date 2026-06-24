@@ -559,7 +559,7 @@ export function CabineCards() {
           <div>
             <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Tráfego pago — de onde vêm os bons clientes</h3>
             <p className="text-[11px] text-muted-foreground mb-2.5">Cruza os leads que chegaram com a <strong className="text-foreground/80">qualidade real</strong>: por veículo de interesse, forma de pagamento, cidade, canal e evolução no tempo. A verdade do Pedro, não a vitrine.</p>
-            <CampanhaAnalytics masterUserId={user?.id || ''} />
+            <CampanhaAnalytics masterUserId={user?.id || ''} periodOverride={periodo === 'today' ? 'today' : periodo === 'last_7d' ? '7d' : periodo === 'last_30d' ? '30d' : undefined} />
           </div>
 
           {/* GUARDIÃO DO ESTOQUE — carro vendido ainda anunciado */}
