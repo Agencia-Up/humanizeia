@@ -52,14 +52,16 @@ const COST_ROWS: [string, string, string][] = [
   ['Férias, falta, rotatividade', 'Sim', 'Nunca'],
 ];
 
-// Planos sem preço — só features. Botão abre o formulário de lead; o Wander entra
-// em contato pelo WhatsApp pra marcar reunião.
+// Planos COM preço (repostos 24/06 — valores do último estado com preço, commit 86c3b02).
+// Botão abre o formulário de lead; o Wander fecha condições/pagamento pelo WhatsApp.
 const PLANS = [
   {
     id: 'basico',
     badge: 'Plano de entrada',
     nome: 'Básico',
     tagline: 'Comece com o Pedro atendendo e qualificando seus leads no WhatsApp.',
+    price: '497', cents: ',00',
+    priceNote: '+ R$ 1.500 de implementação (pagamento único)',
     destaque: '1 agente incluso',
     destaqueSub: 'Pedro SDR no atendimento com IA',
     features: [
@@ -79,6 +81,9 @@ const PLANS = [
     badge: 'Mais popular',
     nome: 'Pro',
     tagline: 'Pedro qualifica, Marcos organiza e José mostra onde seu tráfego está perdendo dinheiro.',
+    price: '497', cents: ',90',
+    priceNote: 'Promoção fundador por 3 meses. Depois, R$ 797,90/mês.',
+    setupNote: 'Implementação: R$ 1.997,90 por R$ 1.497,90 (única)',
     destaque: '3 agentes inclusos',
     destaqueSub: 'Pedro + Marcos + José trabalhando juntos',
     features: [
@@ -100,6 +105,9 @@ const PLANS = [
     badge: 'Operação completa',
     nome: 'Pro Max',
     tagline: 'Tudo do Pro, dimensionado para empresas com mais clientes e mais operação.',
+    price: '797', cents: ',90',
+    priceNote: 'Promoção fundador por 3 meses. Depois, R$ 1.297,90/mês.',
+    setupNote: 'Implementação: R$ 1.997,90 por R$ 1.497,90 (única)',
     destaque: 'Todos os agentes liberados',
     destaqueSub: 'inclui José e a operação completa',
     features: [
@@ -328,7 +336,18 @@ export default function LandingPage() {
                 )}
 
                 <h3 className="text-2xl font-extrabold mb-1" style={DISPLAY}>{p.nome}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed mb-5">{p.tagline}</p>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-4">{p.tagline}</p>
+
+                <div className="mb-5">
+                  <div className="flex items-end gap-0.5">
+                    <span className="text-sm font-semibold text-muted-foreground pb-1.5">R$</span>
+                    <span className="text-4xl font-extrabold text-foreground" style={DISPLAY}>{p.price}</span>
+                    <span className="text-2xl font-extrabold text-foreground" style={DISPLAY}>{p.cents}</span>
+                    <span className="text-sm font-semibold text-muted-foreground pb-1.5 ml-1">/mês</span>
+                  </div>
+                  {p.priceNote && <p className="text-xs text-muted-foreground mt-1.5 leading-snug">{p.priceNote}</p>}
+                  {p.setupNote && <p className="text-xs text-muted-foreground/80 mt-1 leading-snug">{p.setupNote}</p>}
+                </div>
 
                 <div className="rounded-xl border border-foreground/10 bg-background/60 p-3 mb-5">
                   <p className="text-sm font-bold text-foreground" style={DISPLAY}>{p.destaque}</p>
@@ -359,7 +378,7 @@ export default function LandingPage() {
           </div>
 
           <p className="text-center text-xs text-muted-foreground mt-8">
-            Falamos sobre valores e condições direto no WhatsApp, alinhados ao seu cenário.
+            Condições finais e formas de pagamento a gente alinha direto no WhatsApp, ajustado ao seu cenário.
           </p>
         </div>
       </section>
