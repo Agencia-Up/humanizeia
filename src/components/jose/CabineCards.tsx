@@ -2,11 +2,12 @@ import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, DollarSign, Target, MapPin, Users, Award,
   TrendingUp, MousePointerClick, MessageCircle, Gauge, CheckCircle2, Info,
-  Wallet, ShoppingCart, UserCheck, Sparkles, Car, X, CalendarDays, Power,
+  Wallet, ShoppingCart, UserCheck, Sparkles, Car, X, CalendarDays, Power, Settings,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -104,24 +105,18 @@ function AtribVeiculo({ onDone }: { onDone?: () => void }) {
   );
 }
 
-// Galeria de criativos num POP-UP (botão abre/fecha) — não polui o painel com dezenas de
-// anúncios um do lado do outro. Mostra todos os ativos com arte + gasto + custo/conversa + CPM.
-function GaleriaCriativos({ criativos, moeda }: { criativos: any[]; moeda: string }) {
-  const [open, setOpen] = useState(false);
+// Galeria de criativos num POP-UP CONTROLADO (o botão fica na fileira de Configurações). Mostra
+// todos os anúncios ativos com arte + gasto + custo/conversa + CPM + qualidade real (Pedro).
+function GaleriaPopup({ open, onClose, criativos, moeda }: { open: boolean; onClose: () => void; criativos: any[]; moeda: string }) {
+  if (!open) return null;
   return (
     <div>
-      <h3 className="text-sm font-semibold mb-1 flex items-center gap-1.5"><Award className="h-4 w-4" /> Anúncios ativos — qual vende</h3>
-      <p className="text-[11px] text-muted-foreground mb-2.5">Todos os anúncios <strong className="text-foreground/80">ativos</strong> com a arte, gasto, custo por conversa, CPM e a qualidade real (Pedro). Abre num pop-up pra não poluir o painel.</p>
-      <button onClick={() => setOpen(true)} disabled={!criativos.length}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">
-        <Award className="h-3.5 w-3.5" /> Ver anúncios ativos ({criativos.length})
-      </button>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4" onClick={onClose}>
           <div className="my-8 w-full max-w-5xl rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 flex items-center justify-between rounded-t-2xl border-b border-border/60 bg-card px-5 py-3">
               <h3 className="flex items-center gap-1.5 text-sm font-bold"><Award className="h-4 w-4 text-amber-400" /> Anúncios ativos ({criativos.length})</h3>
-              <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Fechar"><X className="h-4 w-4" /></button>
+              <button onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="p-5">
               {criativos.length === 0 ? (
@@ -342,7 +337,59 @@ function Lista({ titulo, ajuda, icon: Icon, vazio, linhas, verTodas, cor = 'blue
   );
 }
 
-export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
+// Card "Configurações do José": chat no topo + UMA fileira de botões PADRÃO (config + ferramentas)
+// e a área do botão ativo embaixo. Galeria abre pop-up; estoque/atribuição abrem painel inline.
+// Tudo no mesmo grupo (pedido do dono: ferramentas = botão padrão, junto da config).
+function ConfigToolsCard({ chat, configActions, cards, reload }: {
+  chat?: ReactNode;
+  configActions?: Array<{ key: string; label: string; icon: ReactNode; content: ReactNode }>;
+  cards: Cards | null;
+  reload: () => void;
+}) {
+  const [painel, setPainel] = useState<string | null>(null);
+  const [galeriaOpen, setGaleriaOpen] = useState(false);
+  const toggle = (k: string) => setPainel((p) => (p === k ? null : k));
+  const activeCfg = (configActions || []).find((a) => a.key === painel) || null;
+  const criativos = cards?.por_criativo || [];
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-4">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><Settings className="h-4 w-4" /> Configurações do José</div>
+
+        {/* Chat do José — no topo do card de configurações. */}
+        {chat}
+
+        <div className="border-t pt-3 space-y-3">
+          <p className="text-[11px] text-muted-foreground">Converse com o José, configure e use as ferramentas — tudo num lugar só.</p>
+          <div className="flex flex-wrap gap-2">
+            {(configActions || []).map((a) => (
+              <Button key={a.key} variant={painel === a.key ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => toggle(a.key)}>{a.icon}{a.label}</Button>
+            ))}
+            {cards && (
+              <>
+                <Button variant="outline" size="sm" className="gap-1.5" disabled={!criativos.length} onClick={() => setGaleriaOpen(true)}>
+                  <Award className="h-3.5 w-3.5" /> Anúncios ativos ({criativos.length})
+                </Button>
+                <Button variant={painel === 'estoque' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => toggle('estoque')}>
+                  <Car className="h-3.5 w-3.5" /> Guardião do estoque
+                </Button>
+                <Button variant={painel === 'atrib' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => toggle('atrib')}>
+                  <Target className="h-3.5 w-3.5" /> Atribuição por veículo
+                </Button>
+              </>
+            )}
+          </div>
+          {activeCfg && <div className="pt-3 border-t">{activeCfg.content}</div>}
+          {painel === 'estoque' && cards && <div className="pt-3 border-t"><StockGuard /></div>}
+          {painel === 'atrib' && cards && <div className="pt-3 border-t"><AtribVeiculo onDone={reload} /></div>}
+        </div>
+      </CardContent>
+      <GaleriaPopup open={galeriaOpen} onClose={() => setGaleriaOpen(false)} criativos={criativos} moeda={cards?.moeda || ''} />
+    </Card>
+  );
+}
+
+export function CabineCards({ chat, configActions }: { chat?: ReactNode; configActions?: Array<{ key: string; label: string; icon: ReactNode; content: ReactNode }> } = {}) {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(true);
   const { user } = useAuth();
@@ -374,9 +421,15 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
   useEffect(() => { if (range) load({ time_range: range }); }, [range, load]);
   const recarregar = useCallback(() => { if (range) load({ time_range: range }); }, [load, range]);
 
-  // Auto-esconde os CARDS nas contas sem o recurso ligado — mas o chat/config (middleSlot)
-  // continua aparecendo, porque não depende do flag da Cabine.
-  if (!loading && (!enabled || !cards)) return middleSlot ? <div className="space-y-6">{middleSlot}</div> : null;
+  // Auto-esconde os CARDS nas contas sem o recurso ligado — mas o card de Configurações (chat +
+  // botões) continua aparecendo, porque não depende do flag da Cabine. Sem cards = sem ferramentas.
+  if (!loading && (!enabled || !cards)) {
+    return (
+      <div className="space-y-6">
+        <ConfigToolsCard chat={chat} configActions={configActions} cards={null} reload={recarregar} />
+      </div>
+    );
+  }
 
   const periodoLabel = periodo === 'custom' ? 'período escolhido' : (PRESETS.find((p) => p.value === periodo)?.label || '7 dias');
   const totalAtrib = cards ? n(cards.atribuicao.por_ad_id) + n(cards.atribuicao.por_titulo) + n(cards.atribuicao.sem_origem) : 0;
@@ -541,19 +594,9 @@ export function CabineCards({ middleSlot }: { middleSlot?: ReactNode } = {}) {
             <p className="text-[10px] text-muted-foreground mt-2.5 text-center">Dos leads que entraram no período: quantos avançaram (negociação, qualificado ou venda) e quantos fecharam.</p>
           </div>
 
-          {/* CHAT DO JOSÉ + CONFIGURAÇÕES — logo abaixo do funil (ordem que o dono pediu no print). */}
-          {middleSlot}
-
-          {/* FERRAMENTAS DO JOSÉ — galeria, guardião do estoque e atribuição JUNTOS, compactos
-              (3 colunas no desktop), pra otimizar espaço (pedido do dono). */}
-          <div>
-            <h3 className="text-sm font-semibold mb-2.5 flex items-center gap-1.5"><Sparkles className="h-4 w-4" /> Ferramentas do José</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
-              <Panel className="p-4"><GaleriaCriativos criativos={cards.por_criativo} moeda={cards.moeda} /></Panel>
-              <Panel className="p-4"><StockGuard /></Panel>
-              <Panel className="p-4"><AtribVeiculo onDone={() => load(range ? { time_range: range } : { date_preset: 'last_7d' })} /></Panel>
-            </div>
-          </div>
+          {/* CONFIGURAÇÕES DO JOSÉ — chat no topo + UMA fileira de botões padrão (config + ferramentas:
+              anúncios ativos, guardião do estoque, atribuição), logo abaixo do funil (pedido do dono). */}
+          <ConfigToolsCard chat={chat} configActions={configActions} cards={cards} reload={recarregar} />
 
           {/* TRÁFEGO PAGO — inteligência de leads (a aba "Tráfego" do Pedro, agora aqui no José) */}
           <div>

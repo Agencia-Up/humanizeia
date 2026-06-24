@@ -1210,7 +1210,6 @@ export default function ApolloDashboard() {
     });
   }, [cronCfg, saveCronCfg]);
   const [activeTab, setActiveTab] = useState('campaigns');
-  const [painelJose, setPainelJose] = useState<string | null>(null);
   const [adsetCache, setAdsetCache] = useState<Record<string, any[]>>({});
   const [loadingAdsets, setLoadingAdsets] = useState<Record<string, boolean>>({});
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -1551,50 +1550,36 @@ export default function ApolloDashboard() {
             principal. O componente se auto-esconde (null) se o flag estiver off. */}
         {!isLoadingAccount && accountId && (
           <div className="mt-4 space-y-4">
-            {/* Ordem pedida pelo dono: logo após o funil entra o card "Configurações do José",
-                e o CHAT do José vive DENTRO desse card (no topo). Tudo via o middleSlot. */}
-            <CabineCards middleSlot={
-              <Card>
-                <CardContent className="p-4 space-y-4">
-                  <div className="text-sm font-semibold flex items-center gap-1.5"><Settings className="h-4 w-4" /> Configurações do José</div>
-
-                  {/* Chat do José — agora DENTRO das configurações (pedido do dono). */}
-                  <JoseChatPanel />
-
-                  {/* Ações e configurações — número do responsável, relatório, criar campanha. */}
-                  <div className="border-t pt-3 space-y-3">
-                    <p className="text-[11px] text-muted-foreground">Adicione o número do responsável, configure o relatório ou crie uma campanha.</p>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant={painelJose === 'config' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'config' ? null : 'config')}>
-                        <Settings className="h-3.5 w-3.5" /> Número do responsável e limites
-                      </Button>
-                      <Button variant={painelJose === 'agenda' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'agenda' ? null : 'agenda')}>
-                        <Clock className="h-3.5 w-3.5" /> Relatório automático
-                      </Button>
-                      <Button variant={painelJose === 'criar' ? 'default' : 'outline'} size="sm" className="gap-1.5" onClick={() => setPainelJose(painelJose === 'criar' ? null : 'criar')}>
-                        <Sparkles className="h-3.5 w-3.5" /> Criar campanha
-                      </Button>
-                    </div>
-                    {painelJose === 'config' && (
-                      <div className="pt-3 border-t">
-                        <p className="text-[11px] text-muted-foreground mb-2">O número do responsável fica na aba <b>Limites</b> (campo "WhatsApp para aprovação"). É pra onde o José manda o "Responda SIM/NÃO" antes de agir.</p>
-                        <JoseGovernanca />
-                      </div>
-                    )}
-                    {painelJose === 'agenda' && (
-                      <div className="pt-3 border-t max-w-md">
-                        <CronSettings />
-                      </div>
-                    )}
-                    {painelJose === 'criar' && (
-                      <div className="pt-3 border-t">
-                        <JoseCriarCampanha />
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            } />
+            {/* O card "Configurações do José" (chat + fileira de botões padrão: config + ferramentas)
+                é montado DENTRO da CabineCards. Aqui só passamos o chat e as ações de configuração. */}
+            <CabineCards
+              chat={<JoseChatPanel />}
+              configActions={[
+                {
+                  key: 'config',
+                  label: 'Número do responsável e limites',
+                  icon: <Settings className="h-3.5 w-3.5" />,
+                  content: (
+                    <>
+                      <p className="text-[11px] text-muted-foreground mb-2">O número do responsável fica na aba <b>Limites</b> (campo "WhatsApp para aprovação"). É pra onde o José manda o "Responda SIM/NÃO" antes de agir.</p>
+                      <JoseGovernanca />
+                    </>
+                  ),
+                },
+                {
+                  key: 'agenda',
+                  label: 'Relatório automático',
+                  icon: <Clock className="h-3.5 w-3.5" />,
+                  content: <div className="max-w-md"><CronSettings /></div>,
+                },
+                {
+                  key: 'criar',
+                  label: 'Criar campanha',
+                  icon: <Sparkles className="h-3.5 w-3.5" />,
+                  content: <JoseCriarCampanha />,
+                },
+              ]}
+            />
           </div>
         )}
 
