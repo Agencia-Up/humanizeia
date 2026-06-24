@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
@@ -87,6 +90,7 @@ interface PorModelo {
   tokens: number; input_tokens: number; output_tokens: number; custo_brl: number;
 }
 interface SerieDia { dia: string; operacoes: number; tokens: number; custo_brl: number; }
+interface SerieDiaAgente { dia: string; agent_id: string | null; agente: string; tokens: number; custo_brl: number; }
 interface Overview {
   periodo_dias: number;
   config: { cambio_usd_brl?: number; gpt4o_usd_in?: number; gpt4o_usd_out?: number };
@@ -100,6 +104,7 @@ interface Overview {
   por_disparo: PorDisparo[];
   por_modelo: PorModelo[];
   serie_dia: SerieDia[];
+  serie_dia_agente?: SerieDiaAgente[];
   gerado_em?: string;
 }
 interface Flag {
@@ -122,6 +127,9 @@ export default function AdminAuditoriaTab() {
   const [loading, setLoading] = useState(true);
   const [rodando, setRodando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Grafico: agente selecionado ('todos' = visao global) + metrica exibida (tokens | custo R$).
+  const [agenteSel, setAgenteSel] = useState<string>('todos');
+  const [metrica, setMetrica] = useState<'tokens' | 'custo'>('tokens');
 
   const carregar = useCallback(async (periodo: number) => {
     setLoading(true);
@@ -165,6 +173,33 @@ export default function AdminAuditoriaTab() {
 
   const t = ov?.totais ?? {};
   const serie = ov?.serie_dia ?? [];
+
+  // Agentes disponíveis no dropdown (só os com id, em ordem de consumo).
+  const agentesList = useMemo(
+    () => (ov?.por_agente ?? []).filter((a) => a.agent_id),
+    [ov?.por_agente],
+  );
+  // A RPC precisa devolver `serie_dia_agente` (migration 20260624) pro filtro por agente funcionar.
+  const temSerieAgente = (ov?.serie_dia_agente ?? []).length > 0;
+  // Série do gráfico: 'todos' usa a global; um agente filtra a série por agente, ALINHADA ao eixo de
+  // dias global (preenche 0 nos dias sem consumo daquele agente) pra o eixo X ficar consistente.
+  const chartData = useMemo(() => {
+    if (agenteSel === 'todos' || !temSerieAgente) {
+      return serie.map((d) => ({ dia: d.dia, tokens: nf(d.tokens), custo_brl: nf(d.custo_brl) }));
+    }
+    const byDay = new Map<string, { tokens: number; custo_brl: number }>();
+    for (const r of ov?.serie_dia_agente ?? []) {
+      if (String(r.agent_id) !== agenteSel) continue;
+      byDay.set(String(r.dia), { tokens: nf(r.tokens), custo_brl: nf(r.custo_brl) });
+    }
+    return serie.map((d) => {
+      const v = byDay.get(String(d.dia));
+      return { dia: d.dia, tokens: v?.tokens ?? 0, custo_brl: v?.custo_brl ?? 0 };
+    });
+  }, [agenteSel, serie, ov?.serie_dia_agente, temSerieAgente]);
+  const agenteNome = agenteSel === 'todos'
+    ? 'Todos os agentes'
+    : (agentesList.find((a) => String(a.agent_id) === agenteSel)?.agente ?? 'Agente');
 
   return (
     <div className="space-y-6">
@@ -252,20 +287,21 @@ export default function AdminAuditoriaTab() {
                   <TableHead className="text-right">Entrada</TableHead>
                   <TableHead className="text-right">Saída</TableHead>
                   <TableHead className="text-right">Custo R$</TableHead>
+                  <TableHead className="text-right">R$/turno</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   Array.from({ length: 4 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 8 }).map((__, j) => (
+                      {Array.from({ length: 9 }).map((__, j) => (
                         <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : (ov?.por_agente ?? []).length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                       Sem dados ainda — enche conforme o Pedro atende.
                     </TableCell>
                   </TableRow>
@@ -280,6 +316,7 @@ export default function AdminAuditoriaTab() {
                       <TableCell className="text-right tabular-nums">{int(a.input_tokens)}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{int(a.output_tokens)}</TableCell>
                       <TableCell className="text-right font-medium tabular-nums">{brl(a.custo_brl, 2)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{nf(a.turnos) > 0 ? brl(nf(a.custo_brl) / nf(a.turnos), 3) : '—'}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -289,27 +326,67 @@ export default function AdminAuditoriaTab() {
         </CardContent>
       </Card>
 
-      {/* Grafico: tokens por dia */}
+      {/* Grafico: tokens/custo por dia — filtravel por agente, tooltip com tokens + R$ */}
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Tokens por dia</CardTitle>
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">
+              {metrica === 'tokens' ? 'Tokens por dia' : 'Custo por dia (R$)'}
+            </CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Toggle: Tokens / Custo R$ */}
+              <div className="flex rounded-md border border-border">
+                {(['tokens', 'custo'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMetrica(m)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      metrica === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    {m === 'tokens' ? 'Tokens' : 'Custo R$'}
+                  </button>
+                ))}
+              </div>
+              {/* Dropdown: filtrar por agente */}
+              <Select value={agenteSel} onValueChange={setAgenteSel}>
+                <SelectTrigger className="h-8 w-[190px] text-xs">
+                  <SelectValue placeholder="Todos os agentes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos os agentes</SelectItem>
+                  {agentesList.map((a) => (
+                    <SelectItem key={String(a.agent_id)} value={String(a.agent_id)}>
+                      {a.agente}{a.cliente_nome && a.cliente_nome !== '—' ? ` · ${a.cliente_nome}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {agenteSel !== 'todos' && !temSerieAgente && (
+            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+              Filtro por agente fica disponível após aplicar a atualização do banco (serie_dia_agente).
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {loading ? (
             <Skeleton className="h-[260px] w-full" />
-          ) : serie.length === 0 ? (
+          ) : chartData.length === 0 ? (
             <p className="py-12 text-center text-sm text-muted-foreground">Sem consumo registrado no período.</p>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={serie} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+              <BarChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="dia" tickFormatter={diaCurto} tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => int(v)} width={64} />
-                <Tooltip
-                  formatter={(v: any, name: any) => [int(v), name === 'tokens' ? 'Tokens' : name]}
-                  labelFormatter={(l) => diaCurto(l)}
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => (metrica === 'tokens' ? int(v) : brl(v, 0))}
+                  width={metrica === 'tokens' ? 64 : 72}
                 />
-                <Bar dataKey="tokens" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                <Tooltip cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} content={<ChartTooltip nomeAgente={agenteNome} />} />
+                <Bar dataKey={metrica === 'tokens' ? 'tokens' : 'custo_brl'} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -539,6 +616,27 @@ export default function AdminAuditoriaTab() {
       {ov?.gerado_em && !loading && (
         <p className="text-right text-[11px] text-muted-foreground">Gerado em {dataHora(ov.gerado_em)}</p>
       )}
+    </div>
+  );
+}
+
+// Tooltip do gráfico: mostra SEMPRE tokens E o valor em R$ correspondente (pedido do dono), mesmo
+// quando a barra está em "Custo" — pra cruzar quantidade de tokens × custo de relance.
+function ChartTooltip({ active, payload, label, nomeAgente }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload ?? {};
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
+      <p className="font-medium text-foreground">{diaCurto(label)}</p>
+      {nomeAgente && nomeAgente !== 'Todos os agentes' && (
+        <p className="mb-1 text-[10px] text-muted-foreground">{nomeAgente}</p>
+      )}
+      <p className="text-muted-foreground">
+        Tokens: <span className="font-medium text-foreground">{int(d.tokens)}</span>
+      </p>
+      <p className="text-muted-foreground">
+        Custo: <span className="font-medium text-emerald-600 dark:text-emerald-400">{brl(d.custo_brl, 2)}</span>
+      </p>
     </div>
   );
 }
