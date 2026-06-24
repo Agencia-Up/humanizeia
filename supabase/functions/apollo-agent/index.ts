@@ -2403,9 +2403,9 @@ async function sendDailyReport(admin: any, userId: string, force = false): Promi
       leadMotivosByAd(admin, userId),
       sellerFeedbackByAd(admin, userId),
     ]);
-    const pior = lqRep.filter((r) => Number(r.leads_ruim) > 0)
+    const pior = lqRep.filter((r) => Number(r.leads_ruim) > 0 && r.ad_key_kind !== "sem_origem")
       .sort((a, b) => Number(b.leads_ruim) - Number(a.leads_ruim))[0];
-    const melhor = lqRep.filter((r) => Number(r.leads_bom) > 0)
+    const melhor = lqRep.filter((r) => Number(r.leads_bom) > 0 && r.ad_key_kind !== "sem_origem")
       .sort((a, b) => (Number(b.pct_bom) - Number(a.pct_bom)) || (Number(b.leads_bom) - Number(a.leads_bom)))[0];
     if (pior) {
       const mv = pior.ad_key ? motivosRep.get(pior.ad_key) : null;

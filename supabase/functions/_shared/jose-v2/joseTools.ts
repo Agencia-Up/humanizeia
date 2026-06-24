@@ -188,9 +188,13 @@ export async function executeJoseTool(
       leadMotivosByAd(admin, userId),
       sellerFeedbackByAd(admin, userId),
     ]);
+    // Só conta o que TEM origem (anúncio conhecido). Os "sem_origem" ficam de fora — amostra
+    // menor, mas honesta: mostra o cenário real de quais anúncios trazem cliente bom.
+    const comOrigem = rows.filter((r) => r.ad_key_kind !== "sem_origem");
     return {
-      total_anuncios: rows.length,
-      anuncios: rows.slice(0, 20).map((r) => {
+      total_anuncios: comOrigem.length,
+      nota_amostra: `${comOrigem.reduce((s, r) => s + Number(r.leads_total), 0)} leads com anúncio conhecido (o resto chegou sem origem e não entra na conta).`,
+      anuncios: comOrigem.slice(0, 20).map((r) => {
         const mv = r.ad_key ? motivos.get(r.ad_key) : null;
         const sf = r.ad_key ? sellerFb.get(r.ad_key) : null;
         return {
