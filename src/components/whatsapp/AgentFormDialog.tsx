@@ -265,6 +265,8 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   // Feedback do gerente na transferência: false = resumido (atual), true = completo
   // (o MESMO briefing do vendedor + qual vendedor está atendendo).
   const [gerenteFeedbackCompleto, setGerenteFeedbackCompleto] = useState(false);
+  // Enviar as mensagens de transferência (vendedor/gerente) SEM emojis (texto limpo).
+  const [mensagensSemEmoji, setMensagensSemEmoji] = useState(false);
 
   // ── Regras de automacao (Pedro v2): follow-up + transferencia ──
   // NULL no banco = comportamento legado (5/8/12, transfere, 10min, janela fixa).
@@ -662,6 +664,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setCustomGerenteMsg(!!tplG.trim());
       setTemplateGerenteMsg(tplG.trim() ? tplG : DEFAULT_MSG_GERENTE);
       setGerenteFeedbackCompleto((agent as any).gerente_feedback_completo === true);
+      setMensagensSemEmoji((agent as any).mensagens_sem_emoji === true);
       // Regras de automacao (default = comportamento legado se nao houver nada salvo)
       const ar: any = (agent as any).automation_rules || {};
       const arF: any = ar.followup || {}; const arT: any = ar.transfer || {};
@@ -745,6 +748,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     briefing_template_vendedor: customVendedorMsg ? (templateVendedorMsg.trim() || null) : null,
     briefing_template_gerente: customGerenteMsg ? (templateGerenteMsg.trim() || null) : null,
     gerente_feedback_completo: gerenteFeedbackCompleto,
+    mensagens_sem_emoji: mensagensSemEmoji,
     automation_rules: (() => {
       const t1 = Math.max(1, Math.round(Number(ruT1)) || 5);
       const t2 = Math.max(t1 + 1, Math.round(Number(ruT2)) || 8);
@@ -980,6 +984,15 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
               <p className="text-xs text-muted-foreground">
                 Personalize o texto que o Pedro envia ao <b>vendedor</b> (na transferência do lead) e ao <b>gerente</b> (relatório). Deixe desligado para usar a mensagem automática do sistema.
               </p>
+
+              {/* Com / sem emojis — vale pras mensagens de vendedor E gerente */}
+              <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 p-4">
+                <div className="pr-3">
+                  <p className="text-sm font-medium">Enviar mensagens sem emojis</p>
+                  <p className="text-[11px] text-muted-foreground">Ligado: as mensagens do Pedro pro <b>vendedor e gerente</b> vão em texto limpo, sem emojis. Desligado: com emojis (padrão).</p>
+                </div>
+                <Switch checked={mensagensSemEmoji} onCheckedChange={setMensagensSemEmoji} />
+              </div>
 
               {/* Ajuda: etiquetas */}
               <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-3">

@@ -116,3 +116,24 @@ export function buildEtiquetas(state: any, opts: {
   };
  }
 }
+
+/** Remove emojis/pictogramas e linhas decorativas (━ ─) da mensagem, deixando texto
+ *  limpo. Tidy: tira o espaço que o emoji deixava no começo da linha e linhas vazias
+ *  sobrando. String puro — não quebra. */
+export function stripEmojis(text: string): string {
+  let t = String(text || "");
+  // emojis, símbolos pictográficos, setas decorativas, bandeiras, variation selectors
+  t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{2122}\u{2139}\u{1F1E6}-\u{1F1FF}]/gu, "");
+  // linhas/caixas decorativas (box-drawing: ━ ─ │ etc.)
+  t = t.replace(/[─-╿]+/g, "");
+  // limpa: por linha, tira espaço sobrando no começo (deixado pelo emoji) e duplicado
+  t = t.split("\n").map((l) => l.replace(/\s{2,}/g, " ").replace(/^\s+/, "").replace(/\s+$/, "")).join("\n");
+  return t.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Aplica stripEmojis SÓ se o agente pediu "sem emojis". Blindado: na dúvida devolve
+ *  o texto original (nunca quebra a transferência). */
+export function maybeStripEmojis(agent: any, text: string): string {
+  if (agent?.mensagens_sem_emoji !== true) return text;
+  try { return stripEmojis(text); } catch { return text; }
+}
