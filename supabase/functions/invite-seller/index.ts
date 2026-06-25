@@ -314,7 +314,7 @@ Deno.serve(async (req) => {
     // Verify member belongs to this master
     const { data: member, error: memberErr } = await supabase
       .from('ai_team_members')
-      .select('id,name,email,auth_user_id')
+      .select('id,name,email,auth_user_id,whatsapp_number')
       .eq('id', memberId)
       .eq('user_id', masterUserId)
       .single();
@@ -408,6 +408,23 @@ Deno.serve(async (req) => {
     // com URL quebrada e vendedor caia em "Falha na confirmação — Link inválido ou expirado".
     if (!authUserId) {
       throw new Error('Falha ao identificar usuário criado/existente');
+    }
+
+    // FIX 25/06 (split de vendedor): propaga o auth_user_id pra TODAS as linhas
+    // dessa pessoa (a matriz tem 1 linha por agente, mesmo whatsapp). Sem isso o
+    // login ficava so na linha clicada, e os leads atribuidos as linhas do agente
+    // (que ficavam sem auth) sumiam do painel do vendedor — o useSellerProfile le
+    // os member rows por auth_user_id. Agora todas as linhas da pessoa apontam pro login.
+    if (member.whatsapp_number) {
+      try {
+        await supabase.from('ai_team_members')
+          .update({ auth_user_id: authUserId })
+          .eq('user_id', masterUserId)
+          .eq('whatsapp_number', member.whatsapp_number);
+        console.log(`[invite-seller] auth_user_id propagado p/ todas as linhas do whatsapp ${member.whatsapp_number}`);
+      } catch (propErr: any) {
+        console.warn('[invite-seller] Falha ao propagar auth_user_id (nao bloqueante):', propErr?.message);
+      }
     }
 
     // Detecta se user já confirmou email
