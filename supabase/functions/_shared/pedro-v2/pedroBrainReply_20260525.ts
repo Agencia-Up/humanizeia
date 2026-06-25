@@ -21,6 +21,8 @@ function stripFillerClosers(text: string): string {
     /posso (te |lhe )?ajudar (com|em|a)?\s*(mais )?(alguma coisa|algo|mais alguma)/i,
     /gostaria de saber mais/i,
     /tem (mais )?alguma (d[uú]vida|pergunta)/i,
+    /(precisa|deseja|quer|gostaria) de (mais )?(alguma )?(informa[cç][aã]o|informa[cç][oõ]es|ajuda)/i,
+    /(alguma|mais alguma) (outra )?(informa[cç][aã]o|d[uú]vida|pergunta)\b/i,
     /(estou|fico|estarei|sigo|seguimos)\s+(à |a )?(sua )?disposi[cç][aã]o/i,
     /(estou|fico)\s+(aqui|por aqui)( (se|caso) precisar)?/i,
     /se precisar (de (mais )?(informa[cç][oõ]es|ajuda|algo)|de qualquer coisa)/i,

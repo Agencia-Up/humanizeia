@@ -50,9 +50,11 @@ import {
   leadProvidingTradeDetails,
   nextFunnelQuestion,
   replyAsksFunnelQuestion,
+  replyHasMeaningfulQuestion,
+  replyIsGracefulClose,
   leadAffirmsSchedulingQuestion,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
@@ -276,6 +278,29 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("funil", "reply 'qual seu nome?' É pergunta de funil", replyAsksFunnelQuestion("E qual é o seu nome?") === true);
     check("funil", "reply 'conhece a nossa loja?' É pergunta de funil", replyAsksFunnelQuestion("Você já conhece a nossa loja?") === true);
     check("funil", "reply sem '?' não conta", replyAsksFunnelQuestion("Temos um Onix disponível.") === false);
+  }
+
+  // ── SDR PROATIVO: responde + qualifica; isca não conta como pergunta; "o que procura?" mapeada (Avant) ──
+  {
+    const _avant = { questions: ["Qual é o seu nome?", "O que você está procurando?"] };
+    // "O que você está procurando?" agora é MAPEÁVEL (interesse): sem interesse -> é a próxima pergunta
+    check("sdr", "Avant: nome conhecido + sem interesse -> 'O que você está procurando?'", nextFunnelQuestion(_avant, {}, { hasName: true }) === "O que você está procurando?");
+    check("sdr", "Avant: com interesse -> null (tudo respondido)", nextFunnelQuestion(_avant, { interesse: "onix" }, { hasName: true }) === null);
+    check("sdr", "Avant: hasInterest=true -> null", nextFunnelQuestion(_avant, {}, { hasName: true, hasInterest: true }) === null);
+    // isca NÃO é pergunta significativa -> SDR-force deve disparar
+    check("sdr", "'...Precisa de mais alguma informação?' NÃO é pergunta significativa", replyHasMeaningfulQuestion("Nossa loja fica em Taubaté. Precisa de mais alguma informação?") === false);
+    check("sdr", "'Quer ver fotos do Onix?' É significativa", replyHasMeaningfulQuestion("Temos o Onix. Quer ver fotos do Onix?") === true);
+    check("sdr", "'O que você está procurando?' É significativa", replyHasMeaningfulQuestion("Beleza! O que você está procurando?") === true);
+    check("sdr", "'Tem carro pra troca?' É significativa", replyHasMeaningfulQuestion("Tem algum carro pra dar de troca?") === true);
+    check("sdr", "sem '?' não é significativa", replyHasMeaningfulQuestion("Nossa loja fica em Taubaté.") === false);
+    // strip da isca
+    check("sdr", "strip: tira 'Precisa de mais alguma informação?'", stripTrailingFillerQuestion("Nossa loja fica em Taubaté. Precisa de mais alguma informação?").trim() === "Nossa loja fica em Taubaté.");
+    check("sdr", "strip: tira 'Posso ajudar em mais alguma coisa?'", /Posso ajudar/i.test(stripTrailingFillerQuestion("Endereço é Av X, 25. Posso ajudar em mais alguma coisa?")) === false);
+    check("sdr", "strip: NÃO tira pergunta de venda ('Quer ver fotos?')", /Quer ver fotos/i.test(stripTrailingFillerQuestion("Temos o Onix. Quer ver fotos?")) === true);
+    // não puxa funil em cima de despedida
+    check("sdr", "fechamento gracioso -> detectado (não qualificar)", replyIsGracefulClose("Tranquilo, Wander! Não vou tomar seu tempo. Qualquer coisa é só me chamar. 👍") === true);
+    check("sdr", "'fico à disposição' -> fechamento", replyIsGracefulClose("Obrigado! Fico à disposição.") === true);
+    check("sdr", "resposta normal NÃO é fechamento", replyIsGracefulClose("Nossa loja fica em Taubaté.") === false);
   }
 
   // ── VISITA: lead confirma a pergunta de agendamento -> colher dia/hora (lead 98198-7661) ──

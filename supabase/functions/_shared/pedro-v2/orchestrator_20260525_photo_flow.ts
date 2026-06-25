@@ -51,9 +51,11 @@ import {
   leadExplicitlyDeclined,
   leadProvidingTradeDetails,
   nextFunnelQuestion,
+  replyHasMeaningfulQuestion,
+  replyIsGracefulClose,
   leadAffirmsSchedulingQuestion,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2257,28 +2259,31 @@ export async function processPedroV2Turn(
       }
     }
 
-    // FUNIL FORÇADO (decisão do dono: "o prompt manda seguir os passos e ele não faz — temos que forçar"):
-    // lê o funil ESTRUTURADO do cliente (agent_funnel_config.bloco4) e, num lead ENGAJADO (já tem interesse
-    // ou viu carro) em turno NÃO-inicial, ACRESCENTA a próxima pergunta obrigatória ainda não respondida.
-    // ⚠️SUAVIZADO (lead 99223-8447 "ta complicado"): só acrescenta quando a resposta NÃO tem NENHUMA "?" —
-    // 1 PERGUNTA POR MENSAGEM. Antes empilhava ("Quer ver fotos? + Tem carro na troca?") = poluído. O funil
-    // avança nos turnos em que o agente não perguntou nada; quando ele já pergunta algo (funil ou foto),
-    // deixamos quieto pra não acumular. (O prompt rebalanceado v179 já induz o LLM a perguntar do funil.)
+    // SDR PROATIVO / FUNIL FORÇADO (decisão do dono: "ele tá preguiçoso — se o lead pergunta as coisas, ele
+    // precisa tentar QUALIFICAR; ele só precisa ser mais esperto, sem quebrar a intenção"): lê o funil
+    // ESTRUTURADO do cliente (agent_funnel_config.bloco4) e, em turno NÃO-inicial, se o agente respondeu de
+    // forma PASSIVA (sem nenhuma pergunta SIGNIFICATIVA — isca vazia tipo "Precisa de mais alguma informação?"
+    // NÃO conta), tira a isca e ACRESCENTA a próxima pergunta de qualificação ainda não respondida.
+    // Caso real (Avant): lead "onde fica a loja?" -> agente respondeu o endereço + isca, e PAROU; agora ele
+    // responde + "O que você está procurando?". Não dispara em despedida/recusa/transferência nem quando o
+    // agente JÁ pergunta algo de venda (foto/modelo/visita...) — pra não empilhar nem virar robô.
     const _b4 = (input.agent as any)?.funnel_bloco4;
-    const _funnelEngaged = Boolean((nextMemory as any)?.interesse?.modelo_desejado)
-      || (Array.isArray((nextMemory as any)?.veiculos_apresentados) && (nextMemory as any).veiculos_apresentados.length > 0)
-      || Boolean(stockResult?.success && Array.isArray(stockResult.items) && stockResult.items.length > 0);
-    if (_b4 && _priorAgentTurns > 0 && _funnelEngaged
+    if (_b4 && _priorAgentTurns > 0
         && (reply as any)?.pronto_para_transferir !== true && (reply as any)?.transferir_silencioso !== true
         && (reply as any)?.temperatura !== "desqualificado"
-        && !["vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
-        && !/\?/.test(String((reply as any)?.text || ""))) {
+        && !leadExplicitlyDeclined(text)
+        && !replyIsGracefulClose((reply as any)?.text || "")
+        && !["vehicle_photos_pick_which", "presend_fixed_no_photo_promise", "ad_generic_abordagem",
+             "trade_collecting", "visit_schedule_qualify", "visit_cpf_qualify", "lone_emoji_no_transfer"].includes((reply as any)?.source)
+        && !replyHasMeaningfulQuestion((reply as any)?.text || "")) {
       const _fq = { ...((reply as any)?.qualificacao_coletada || {}) };
       const _hasNm = Boolean(_fq.nome || lead?.lead_name || (pushName && /\p{L}{2,}/u.test(String(pushName))));
+      const _hasInt = Boolean(_fq.interesse || (nextMemory as any)?.interesse?.modelo_desejado || (nextMemory as any)?.interesse?.tipo_veiculo);
       const _fqMerged = { ..._fq, carro_troca: _fq.carro_troca || (nextMemory as any)?.negociacao?.carro_troca || null };
-      const _nextQ = nextFunnelQuestion(_b4, _fqMerged, { hasName: _hasNm });
+      const _nextQ = nextFunnelQuestion(_b4, _fqMerged, { hasName: _hasNm, hasInterest: _hasInt });
       if (_nextQ && String((reply as any)?.text || "").trim().length > 0) {
-        reply = { ...(reply as any), text: `${String((reply as any).text).replace(/\s+$/, "")}\n\n${_nextQ}` };
+        const _cleaned = stripTrailingFillerQuestion((reply as any).text); // tira a isca pra dar lugar à qualificação
+        reply = { ...(reply as any), text: `${String(_cleaned).replace(/\s+$/, "")}\n\n${_nextQ}` };
         log("info", "pedro_v2_funnel_question_forced", { lead_id: lead?.id || null });
       }
     }

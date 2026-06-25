@@ -309,7 +309,7 @@ export function leadAffirmsSchedulingQuestion(leadText?: string | null, lastAgen
 // cada pergunta a um campo de qualificação e devolvemos a 1ª NÃO respondida (texto exato do cliente).
 // Perguntas que não mapeamos (não dá pra saber se foram respondidas) são puladas — nunca forçamos o que
 // não sabemos rastrear (evita loop). Genérico: cada cliente tem o seu bloco4.
-export function nextFunnelQuestion(bloco4?: any, qual?: any, opts?: { hasName?: boolean }): string | null {
+export function nextFunnelQuestion(bloco4?: any, qual?: any, opts?: { hasName?: boolean; hasInterest?: boolean }): string | null {
   const questions: string[] = Array.isArray(bloco4?.questions)
     ? bloco4.questions.filter((q: any) => typeof q === "string" && q.trim().length > 1)
     : [];
@@ -327,6 +327,12 @@ export function nextFunnelQuestion(bloco4?: any, qual?: any, opts?: { hasName?: 
     else if (/loja|onde fica|localiza|conhece/.test(n)) { mappable = true; answered = boolSet(q.sabe_localizacao); }
     else if (/agendar|visita|test|\bdia\b|horario/.test(n)) { mappable = true; answered = filled(q.dia_agendamento); }
     else if (/\bcpf\b/.test(n)) { mappable = true; answered = filled(q.cpf); }
+    // INTERESSE ("O que você está procurando?", "que tipo de carro?", "qual modelo?") — a pergunta-chave de
+    // qualificação. Respondida quando há interesse (modelo/tipo) na conversa. Antes era unmappable -> a Avant
+    // (bloco4 = nome + "o que procura?") perdia a pergunta MAIS importante do funil.
+    else if (/procura|procurando|\binteresse\b|interessou|o que (voce|vc) (esta|ta|busca|quer)|que (tipo de )?carro|qual (carro|modelo|veiculo)|esta buscando/.test(n)) {
+      mappable = true; answered = filled(q.interesse) || Boolean(opts?.hasInterest);
+    }
     if (mappable && !answered) return question.trim();
   }
   return null;
@@ -343,6 +349,33 @@ export function replyAsksFunnelQuestion(text?: string | null): boolean {
     || /\bfinanc|a vista|forma de pagament|parcel/.test(t)
     || /conhece (a |nossa )?loja|onde fica|sabe onde|nossa loja|ja foi.*loja/.test(t)
     || /agendar|marcar.*(visita|horario)|test ?drive|vir (a|na) loja|passar (aqui|na loja|la)/.test(t);
+}
+
+// A resposta tem uma pergunta que AVANÇA a conversa (funil OU engajamento de venda: foto/vídeo/visita/
+// modelo/tipo/valor/o-que-procura/...)? Uma pergunta-ISCA vazia ("precisa de mais alguma informação?",
+// "posso ajudar?", "alguma dúvida?") NÃO conta. Usado pelo SDR-force: se a resposta NÃO tem pergunta
+// significativa, o agente está sendo PASSIVO -> puxa a próxima pergunta do funil. PURO.
+export function replyHasMeaningfulQuestion(text?: string | null): boolean {
+  const raw = String(text || "");
+  if (!raw.includes("?")) return false;
+  // Olha SÓ as frases que de fato CONTÊM "?" (uma afirmação como "Nossa loja fica em X" não vira pergunta
+  // só porque o texto tem "?" em outra frase de isca). Em cada frase-pergunta, checa funil OU venda.
+  const qSentences = raw.split(/(?<=[.!?…])\s+/).filter((s) => s.includes("?"));
+  for (const s of qSentences) {
+    const t = normalizePlannerText(s);
+    if (replyAsksFunnelQuestion(t)) return true;
+    if (/\b(foto|fotos|video|videos|procura|procurando|interesse|interessou|tipo de carro|que carro|qual carro|qual modelo|qual veiculo|modelo|valor|preco|parcela|financ|simul|km|\bano\b|\bcor\b|cambio|combustivel|qual desses|algum desses|gostaria de ver|quer ver|te mostr|mostrar|opcoe|op[cç]ao)\b/.test(t)) return true;
+  }
+  return false;
+}
+
+// A resposta é uma DESPEDIDA/FECHAMENTO gracioso ("qualquer coisa é só me chamar", "fico à disposição",
+// "não vou tomar seu tempo", "até mais")? Se sim, o SDR-force NÃO acrescenta pergunta (não puxa funil em
+// cima de um tchau). Blindagem caso o LLM feche sem marcar transferir_silencioso. PURO.
+export function replyIsGracefulClose(text?: string | null): boolean {
+  const t = normalizePlannerText(text);
+  if (!t) return false;
+  return /qualquer (coisa|d[uú]vida).{0,25}(chamar|chama|disposi|aqui)|n[aã]o vou (tomar|atrapalhar|te tomar)|fico (a|à) disposi|estou (a|à) disposi|(e|é) s[oó] (me )?chamar|qualquer (coisa|d[uú]vida) (e|é) s[oó]|at[eé] (mais|logo|breve|a proxima|mais ver)|tenha (um[a]? )?(bom|boa|[oó]tim)|nao tomo seu tempo/.test(t);
 }
 
 // ── LEAD ESTÁ DESCREVENDO O CARRO DA TROCA (km/estado/itens) — COLETA crucial, NÃO transferir no meio ──

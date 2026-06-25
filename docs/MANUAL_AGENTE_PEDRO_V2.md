@@ -373,4 +373,5 @@ O detalhe de CADA build (a raiz e o fix de cada caso real) está nas **mensagens
 ## CHANGELOG (mantenha vivo — 1 linha por mudança relevante)
 
 - 2026-06-25 — v190 — Recuperador anti-drop (`pedro-recover-dropped`) + flag `recovery` no orquestrador. Manual criado.
+- 2026-06-25 — v191 — SDR PROATIVO: o funil-force agora dispara quando o reply não tem pergunta SIGNIFICATIVA (isca "Precisa de mais alguma informação?" não conta — `replyHasMeaningfulQuestion` sentença-aware), tira a isca (`stripTrailingFillerQuestion`) e puxa a próxima qualificação. `nextFunnelQuestion` passou a mapear "O que você está procurando?" (interesse) — a Avant perdia essa. Guards: não puxa em despedida (`replyIsGracefulClose`)/recusa/transferência. Caso Avant: lead "onde fica a loja?" → responde + "O que você está procurando?".
 - (Antigravity: adicione suas mudanças aqui, no formato `data — vNNN — o que + lead/caso`.)

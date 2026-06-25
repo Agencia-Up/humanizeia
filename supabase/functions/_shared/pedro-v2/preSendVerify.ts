@@ -262,3 +262,21 @@ export function ensureTransferContactClarity(text?: string | null): { text: stri
   if (transferMessageIsClear(raw)) return { text: raw, changed: false };
   return { text: `${raw.replace(/\s+$/, "")} ${closing}`, changed: true };
 }
+
+// ── SDR PROATIVO: tira a pergunta-ISCA do fim pra dar lugar à pergunta de qualificação ───────────────
+// O agente "preguiçoso" responde a dúvida e fecha com isca vazia ("Precisa de mais alguma informação?").
+// Isso ocupa o lugar da pergunta de QUALIFICAÇÃO. Antes de o SDR-force anexar a próxima pergunta do funil,
+// removemos a última frase se ela for SÓ uma isca (com "?" + padrão de isca + SEM palavra de venda). PURO.
+export function stripTrailingFillerQuestion(text?: string | null): string {
+  const raw = String(text || "");
+  if (!raw.trim()) return raw;
+  const fillerRe = /(precisa|deseja|quer|gostaria) de (mais )?(alguma )?(informa[cç][aã]o|informa[cç][oõ]es|ajuda)|posso (te |lhe )?ajudar|tem (mais )?alguma (d[uú]vida|pergunta)|alguma (outra )?(d[uú]vida|pergunta|informa[cç][aã]o)|o que (voc[eê]|vc) ach/i;
+  const salesRe = /(foto|v[ií]deo|visita|valor|pre[cç]o|modelo|tipo|\bkm\b|\bano\b|\bcor\b|financ|parcel|agendar|test|procura|interesse|op[cç][aã]o|op[cç][oõ]es|nome|troca|entrada)/i;
+  const parts = raw.split(/(?<=[.!?…])\s+/);
+  while (parts.length > 1) {
+    const last = parts[parts.length - 1];
+    if (/\?/.test(last) && fillerRe.test(last) && !salesRe.test(last)) { parts.pop(); continue; }
+    break;
+  }
+  return parts.join(" ").trim() || raw;
+}
