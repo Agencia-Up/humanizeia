@@ -76,6 +76,14 @@ export function MainLayout({ children }: MainLayoutProps) {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
+                    // Funil do Agente (/agente/:id/funil): "Voltar" SEMPRE volta pra
+                    // DENTRO do Pedro (aba Agente IA), nunca pro AgentHub. Antes, sem
+                    // histórico (refresh/entrada direta) o navigate(-1) caía no
+                    // fallback /tela-inicial (AgentHub) e o usuário "saía do agente".
+                    if (location.pathname.startsWith('/agente/')) {
+                      navigate('/pedro?tab=agente');
+                      return;
+                    }
                     const canGoBack = (window.history.state?.idx ?? 0) > 0;
                     if (canGoBack) {
                       navigate(-1);
