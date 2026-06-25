@@ -2071,7 +2071,16 @@ export async function processPedroV2Turn(
     const _adNamedBudget = /(\b\d{1,3}\s*(mil|k)\b|r\$\s*\d|at[eé]\s+\d|faixa de)/.test(_adVagueText);
     const _adLeadVague = !(vehicleResolution as any)?.canonical_model && !_adNamedType && !_adNamedBudget
       && !Boolean((currentMemory as any)?.interesse?.modelo_desejado);
-    if (adNeedsVehicleConfirmation && (replyDefersSearch((reply as any)?.text || "") || _adLeadVague)) {
+    // 1º CONTATO (nenhum turno anterior do agente) e SEM veículo do anúncio resolvido. O dono: no 1º
+    // contato com lead VAGO ("tenho interesse"), NUNCA despejar lista — perguntar. Cobre tbm o anúncio
+    // que NÃO foi identificado (has_ad mas sem vehicle_query, OU sem ad_context nenhum).
+    const _adFirstContact = (Array.isArray(recentHistory) ? recentHistory : []).filter((h: any) => {
+      const r = String(h?.role || h?.direction || "").toLowerCase();
+      return r === "assistant" || r === "agent" || r === "ai" || r === "bot";
+    }).length === 0;
+    const _noAdVehicle = !(adContext as any)?.vehicle_query;
+    if ((adNeedsVehicleConfirmation && (replyDefersSearch((reply as any)?.text || "") || _adLeadVague))
+        || (_adFirstContact && _adLeadVague && _noAdVehicle)) {
       const _agName = (input.agent?.name || "").toString().trim().split(/\s+/)[0] || "";
       reply = {
         ok: true,
@@ -2179,7 +2188,7 @@ export async function processPedroV2Turn(
         && stockResult.items.length >= 2
         && !messageIsTooVagueToAct(text, currentMemory)
         && !_optionsExhausted  // já mostrou todas as opções desse perfil -> NÃO relistar (repetir); o LLM oferece variar
-        && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
+        && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise", "ad_generic_abordagem"].includes((reply as any)?.source)
         && !replyMentionsAnyVehicle((reply as any)?.text || "", stockResult.items)) {
       reply = {
         ok: true,
