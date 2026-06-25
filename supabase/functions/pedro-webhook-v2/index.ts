@@ -11,7 +11,7 @@ import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-25-generic-ad-qualify-first-v185";
+const PEDRO_V2_BUILD = "2026-06-25-ignore-reactions-v186";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -22,6 +22,24 @@ function pickIncomingMessage(payload: any): any {
 function isOutgoingMessage(payload: any): boolean {
   const message = pickIncomingMessage(payload);
   return message?.fromMe === true || message?.key?.fromMe === true || payload?.fromMe === true;
+}
+
+// REAÇÃO do WhatsApp (👍/❤️/😂 numa mensagem) NÃO é uma mensagem do lead — é só um "ack". O uazapi V6 manda
+// como messageType "ReactionMessage" e o emoji vira "text"; tratar como texto fazia o agente ler "👍" como
+// "sim" e AGIR (caso real 99146-6876: o lead reagiu e o agente TRANSFERIU). Detecta por messageType (em
+// qualquer nível do payload) ou pelo objeto reaction/reactionMessage.
+function isReactionMessage(payload: any): boolean {
+  const m = pickIncomingMessage(payload);
+  const typeStr = [
+    m?.messageType, m?.type, m?.message?.messageType,
+    payload?.messageType, payload?.type,
+    payload?.data?.messageType, payload?.data?.type, payload?.data?.message?.messageType,
+  ].map((v) => String(v || "").toLowerCase()).join(" ");
+  if (typeStr.includes("reaction")) return true;
+  return Boolean(
+    m?.reaction || m?.message?.reactionMessage || payload?.reaction ||
+    payload?.message?.reactionMessage || payload?.data?.reaction || payload?.data?.message?.reactionMessage,
+  );
 }
 
 // ── Connection/status event helpers ──────────────────────────────────────────
@@ -134,6 +152,14 @@ Deno.serve(async (req) => {
       );
     }
     return jsonResponse({ ok: true, event: "connection", state: state || null });
+  }
+
+  // ── REAÇÃO (👍/❤️ etc.) -> IGNORAR (sem turno, sem resposta) ──────────────────────────────────────
+  // Decisão do dono (caso 99146-6876): reação NÃO pode disparar ação. É só um "ack" do lead numa mensagem
+  // nossa — não é pergunta nem pedido. Tratar como texto fazia o agente ler "👍" como "sim" e transferir.
+  if (isReactionMessage(payload)) {
+    console.log(`[pedro-webhook-v2] reaction ignored (no turn)`);
+    return jsonResponse({ ok: true, ignored: "reaction" });
   }
 
   // NÃO descartar fromMe aqui — instâncias de VENDEDOR precisam capturar o que o

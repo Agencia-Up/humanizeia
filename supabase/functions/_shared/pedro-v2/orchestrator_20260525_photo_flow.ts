@@ -2743,6 +2743,23 @@ export async function processPedroV2Turn(
     log("info", "pedro_v2_trade_collecting_no_transfer", { lead_id: lead?.id || null });
   }
 
+  // SALVAGUARDA reação/emoji solto (caso 99146-6876): um LONE EMOJI/ack ("👍","👌","❤️", sem letras/dígitos)
+  // NUNCA justifica TRANSFERIR — é no máximo um "sim" pra uma pergunta pendente, jamais "me transfere". A 1ª
+  // defesa é IGNORAR a reação no webhook; isto cobre uma reação que escape da detecção OU um emoji ENVIADO.
+  const _loneAck = String(text || "").trim().length > 0 && !/[\p{L}\d]/u.test(String(text || ""));
+  if (_loneAck && (reply?.pronto_para_transferir === true
+      || ["trade_in_transfer_enforced", "finance_transfer_enforced"].includes((reply as any)?.source))) {
+    reply.pronto_para_transferir = false;
+    reply.transferir_silencioso = false;
+    const _focoEmoji = (effectiveMemory as any)?.interesse?.modelo_desejado || null;
+    reply.text = _focoEmoji
+      ? `😊 Quer seguir com o ${_focoEmoji} então? Posso te passar mais detalhes ou já agendar sua visita.`
+      : `😊 Me conta o que prefere: te passo mais detalhes de algum carro ou já agendamos uma visita?`;
+    reply.media = [];
+    reply.source = "lone_emoji_no_transfer";
+    log("info", "pedro_v2_lone_emoji_no_transfer", { lead_id: lead?.id || null });
+  }
+
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
   // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
