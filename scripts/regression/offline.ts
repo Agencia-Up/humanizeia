@@ -293,6 +293,18 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("transfer", "msg já clara -> não mexe", ensureTransferContactClarity("Pronto, o consultor vai entrar em contato com você!").changed === false);
   }
 
+  // ── MOTO: aparece SÓ quando o lead quer moto; não vaza em carro/genérico (Avant — decisão do dono) ──
+  {
+    const moto: any = { markName: "HONDA", modelName: "CB 500", versionName: "", category: "MOTO" };
+    const carro: any = { markName: "FIAT", modelName: "ARGO", versionName: "DRIVE", category: "AUTOMOVEL" };
+    check("moto", "moto PASSA em busca de moto ('moto')", passesRequestedVehicleType(moto, { query: "moto" }, false) === true);
+    check("moto", "moto PASSA em 'quero uma moto'", passesRequestedVehicleType(moto, { query: "quero uma moto" }, false) === true);
+    check("moto", "moto NÃO passa em busca de SUV", passesRequestedVehicleType(moto, { query: "suv" }, false) === false);
+    check("moto", "moto NÃO passa em browse genérico (vazio, sem modelo)", passesRequestedVehicleType(moto, { query: "" }, false) === false);
+    check("moto", "moto PASSA quando NOMEADA (hasModelQuery)", passesRequestedVehicleType(moto, { query: "honda cb 500" }, true) === true);
+    check("moto", "carro NÃO passa em busca de moto", passesRequestedVehicleType(carro, { query: "moto" }, false) === false);
+  }
+
   // ── ANTI-ALUCINAÇÃO DE FICHA TÉCNICA (Solução D) ──
   check("ficha", "consumo inventado '13 km/l' (sem nos fatos) -> detecta", detectUngroundedSpecs("Esse Onix faz uns 13 km/l na cidade", "") .length > 0);
   check("ficha", "potência inventada '150cv' -> detecta", detectUngroundedSpecs("Tem 150cv de potência", "").includes("potencia:150"));

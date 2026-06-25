@@ -106,6 +106,11 @@ const WEAK_WORDS = new Set([
   "entrada", "entradas", "pagamento", "financiamento", "financiar", "parcela", "parcelas",
   "troca", "trocar", "tambem", "interessa", "interesse", "informacao", "informacoes",
   "cidade", "loja", "endereco", "qual", "outro", "outra", "opcao", "opcoes",
+  // TIPO moto: e palavra de TIPO (tratada em inferRequestedVehicleType), NUNCA modelo. Como WEAK,
+  // numa busca "moto"/"quero uma moto" o hasSearch fica false -> cai no early-return que devolve os
+  // veiculos do TIPO pedido (as motos) sem exigir score>0 (a moto nao tem bonus de body_type como o
+  // SUV, entao no caminho de scoring ela zerava e sumia: "nao temos moto" tendo moto no estoque).
+  "moto", "motos", "motocicleta", "motocicletas", "scooter",
 ]);
 
 // TOKENS DE ATRIBUTO/RUIDO: descrevem cor, carroceria, estado de conservacao ou ANO —
@@ -119,8 +124,11 @@ const ATTRIBUTE_NOISE_TOKENS = new Set([
   "preto", "preta", "branco", "branca", "prata", "prateado", "prateada", "cinza", "grafite",
   "chumbo", "vermelho", "vermelha", "azul", "verde", "dourado", "dourada", "bege", "marrom",
   "amarelo", "amarela", "laranja", "vinho",
-  // carroceria / categoria
+  // carroceria / categoria (inclui "moto" — palavra de TIPO, NUNCA modelo: sem isto "moto" no
+  // query virava token de busca, não casava o label "Honda CB 500" e ZERAVA a moto -> "não temos
+  // moto" sendo que tinha. O tipo moto já é tratado em inferRequestedVehicleType/passesRequested.)
   "hatch", "hatchback", "sedan", "suv", "picape", "pickup", "perua", "utilitario",
+  "moto", "motos", "motocicleta", "motocicletas", "scooter",
   // estado / adjetivos de venda (ruido)
   "completo", "completa", "novo", "nova", "seminovo", "seminova", "semi", "usado", "usada",
   "conservado", "conservada", "impecavel", "lindo", "linda", "bonito", "bonita", "top",
@@ -357,6 +365,12 @@ export function passesRequestedVehicleType(vehicle: BndvVehicle, filters: Record
   }
   if (requestedType === "carro") {
     if (isLikelyMotorcycle(vehicle)) return false;
+  }
+  // MOTO só aparece quando a pessoa QUER moto (decisão do dono): em busca de TIPO moto
+  // (requestedType="moto", acima) OU quando o lead NOMEIA a moto (hasModelQuery, ex.: "Honda CB 500").
+  // Num browse GENÉRICO (qualquer, sem modelo) a moto NÃO entra — não se mistura a moto com os carros.
+  if (requestedType === "qualquer" && !hasModelQuery && isLikelyMotorcycle(vehicle)) {
+    return false;
   }
 
   // SUBCATEGORIA (hatch/sedan/suv/pickup) so e filtro RIGIDO em busca POR CATEGORIA.
