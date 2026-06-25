@@ -186,6 +186,41 @@ async function testBndv(credentials: { api_token: string }) {
   }
 }
 
+async function testRevendaMais(credentials: { feed_url?: string }) {
+  const url = String(credentials?.feed_url || "").trim();
+  if (!url) return { success: false, message: "Link do feed é obrigatório." };
+  if (!/^https?:\/\//i.test(url)) {
+    return { success: false, message: "O link deve começar com http:// ou https://" };
+  }
+  try {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) {
+      return { success: false, message: `O feed retornou status ${res.status}. Confira se o link está certo e público.` };
+    }
+    const json = await res.json().catch(() => null);
+    const list = Array.isArray(json?.vehicles) ? json.vehicles : (Array.isArray(json) ? json : null);
+    if (!Array.isArray(list)) {
+      return {
+        success: false,
+        message: "O link respondeu, mas não veio uma lista de veículos (esperado um JSON com 'vehicles'). Confirme se é o feed de estoque da RevendaMais.",
+      };
+    }
+    if (list.length === 0) {
+      return { success: true, message: "Feed conectado! Mas nenhum veículo no estoque no momento." };
+    }
+    const sample = (list[0] || {}) as Record<string, unknown>;
+    const looksRight = Boolean(sample.make || sample.model || sample.base_model);
+    return {
+      success: true,
+      message: looksRight
+        ? `Feed conectado! ${list.length} veículo(s) no estoque.`
+        : `Feed conectado (${list.length} itens), mas o formato dos veículos parece diferente do esperado — confirme se é o feed RevendaMais/Carro57.`,
+    };
+  } catch (error: any) {
+    return { success: false, message: `Não foi possível acessar o feed: ${error?.message || "erro de rede"}` };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -287,6 +322,9 @@ Deno.serve(async (req) => {
         break;
       case "bndv":
         result = await testBndv(credentials);
+        break;
+      case "revendamais":
+        result = await testRevendaMais(credentials);
         break;
       case "google_calendar":
         result = await testGoogleCalendar(credentials);

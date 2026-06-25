@@ -48,6 +48,23 @@ const INTEGRATIONS: IntegrationConfig[] = [
     ],
   },
   {
+    id: 'revendamais',
+    name: 'RevendaMais (Estoque)',
+    icon: '🚙',
+    description: 'Estoque via feed da RevendaMais/Carro57 — alternativa ao BNDV. O agente consulta veículos, preço e fotos direto do seu feed',
+    fields: [
+      { key: 'feed_url', label: 'Link do feed (JSON)', placeholder: 'Cole aqui o link do feed de estoque da RevendaMais...' },
+    ],
+    helpText:
+      'Use esta opção se a sua loja expõe o estoque por um feed JSON da RevendaMais/Carro57 (em vez do BNDV). O agente lê os veículos direto desse link — busca, preços e fotos. Conecte apenas UMA fonte de estoque (BNDV ou RevendaMais).',
+    helpSteps: [
+      'No painel do RevendaMais/Carro57, procure a opção de Exportação / Integração / Feed do estoque no formato JSON.',
+      'Copie a URL pública do feed JSON da sua loja (ela costuma terminar em .json ou abrir uma lista de veículos no navegador).',
+      'Cole o link abaixo e clique em "Testar Conexão".',
+      'Se o teste trouxe os veículos, clique em "Conectar e Salvar" para liberar a consulta de estoque no agente.',
+    ],
+  },
+  {
     id: 'google_calendar',
     name: 'Google Agenda',
     icon: '📅',

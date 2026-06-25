@@ -27,7 +27,8 @@ import {
 import { Lock, Crown, Sparkles } from 'lucide-react';
 
 // Integracoes liberadas no plano Basico. Todas as demais exigem Pro+.
-export const BASICO_ALLOWED_INTEGRATIONS = new Set<string>(['bndv', 'webhook']);
+// RevendaMais e fonte de ESTOQUE (alternativa ao BNDV) -> essencial do fluxo automotivo, liberada no basico.
+export const BASICO_ALLOWED_INTEGRATIONS = new Set<string>(['bndv', 'revendamais', 'webhook']);
 
 // Mensagem exata exibida no modal/tooltip de upgrade.
 export const UPGRADE_MESSAGE =
