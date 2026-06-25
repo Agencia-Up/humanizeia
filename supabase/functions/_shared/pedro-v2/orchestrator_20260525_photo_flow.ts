@@ -2059,13 +2059,19 @@ export async function processPedroV2Turn(
       log("warn", "pedro_v2_ai_identity_leak_blocked", { lead_id: lead?.id || null, source: (reply as any)?.source });
     }
 
-    // ANÚNCIO GENÉRICO (de frota, sem veículo específico — lead 98109-7851): o agente reconheceu o anúncio
-    // mas não há carro pra apresentar; o LLM às vezes DEFERE ("vou buscar os veículos revisados... um
-    // momento") e SOME. Em vez de deferir/buscar uma frase genérica, faz a ABORDAGEM (ETAPA 1 do funil):
-    // cumprimenta, se apresenta (nome do agente) e QUALIFICA o que o cliente procura. Roda ANTES do
-    // backstop de defer (que tentaria buscar/relistar — aqui não há veículo). Só quando NÃO há veículo do
-    // anúncio (adNeedsVehicleConfirmation) e o reply deferiu.
-    if (adNeedsVehicleConfirmation && replyDefersSearch((reply as any)?.text || "")) {
+    // ANÚNCIO GENÉRICO (de frota, sem veículo específico — leads 98109-7851 / 99223-8447): o agente
+    // reconheceu o anúncio mas NÃO há carro pra apresentar. Decisão do dono: nesse caso, com o lead VAGO
+    // ("tenho interesse", sem modelo/tipo/orçamento), QUALIFICAR PRIMEIRO — NÃO deferir ("vou buscar... um
+    // momento") NEM despejar uma lista de 5 carros (= "complicado"). Faz a ABORDAGEM (ETAPA 1 do funil):
+    // cumprimenta, se apresenta e pergunta o que procura. Dispara quando o anúncio não tem veículo
+    // (adNeedsVehicleConfirmation) E (o reply deferiu OU o lead chegou vago). Se o lead citou modelo/tipo/
+    // orçamento, NÃO entra aqui (aí mostra o que ele pediu, normal).
+    const _adVagueText = String(text || "").toLowerCase();
+    const _adNamedType = /\b(suv|sedan|seda|hatch|picape|pickup|caminhonete|utilitario|4x4)\b/.test(_adVagueText);
+    const _adNamedBudget = /(\b\d{1,3}\s*(mil|k)\b|r\$\s*\d|at[eé]\s+\d|faixa de)/.test(_adVagueText);
+    const _adLeadVague = !(vehicleResolution as any)?.canonical_model && !_adNamedType && !_adNamedBudget
+      && !Boolean((currentMemory as any)?.interesse?.modelo_desejado);
+    if (adNeedsVehicleConfirmation && (replyDefersSearch((reply as any)?.text || "") || _adLeadVague)) {
       const _agName = (input.agent?.name || "").toString().trim().split(/\s+/)[0] || "";
       reply = {
         ok: true,
@@ -2073,7 +2079,7 @@ export async function processPedroV2Turn(
         source: "ad_generic_abordagem",
         media: [],
       } as any;
-      log("info", "pedro_v2_ad_generic_abordagem", { lead_id: lead?.id || null });
+      log("info", "pedro_v2_ad_generic_abordagem", { lead_id: lead?.id || null, vague: _adLeadVague });
     }
 
     // "VOU BUSCAR..." E SOME (lead 99747-0573 "Palio"): o reply DEFERIU a busca que JA rodou neste turno
