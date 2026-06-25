@@ -80,6 +80,24 @@ export function useAuth() {
       (event, session) => {
         const newUid = session?.user?.id ?? null;
 
+        // ── Definir/Redefinir senha pelo link do email ─────────────────────
+        // Ao clicar no link de "definir senha", o GoTrue cria a sessao e o
+        // client dispara PASSWORD_RECOVERY. Se o redirect cair numa pagina que
+        // NAO trata isso (ex.: home/dashboard, quando o /auth/confirm nao esta
+        // na allowlist de Redirect URLs do Supabase), o vendedor so logava e ia
+        // pro dashboard — NUNCA via a tela de criar senha. Aqui garantimos, de
+        // forma GLOBAL e independente da allowlist, que ele caia em /reset-password.
+        // As paginas que ja tratam senha (/auth/confirm, /criar-senha,
+        // /reset-password) sao excluidas pra nao brigar com o fluxo delas.
+        if (event === 'PASSWORD_RECOVERY') {
+          const path = window.location.pathname;
+          if (path !== '/reset-password' && path !== '/criar-senha' && path !== '/auth/confirm') {
+            window.location.replace('/reset-password');
+            return;
+          }
+          // ja esta numa pagina de senha: deixa o fluxo normal seguir (seta sessao).
+        }
+
         // ── MESMO usuario que JA conheciamos ───────────────────────────────
         // Ao focar a aba / abrir outra guia, o Supabase dispara SIGNED_IN e
         // INITIAL_SESSION (NAO so TOKEN_REFRESHED) com o MESMO usuario. Mexer em
