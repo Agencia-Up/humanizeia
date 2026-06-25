@@ -26,6 +26,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithReauth } from '@/lib/invokeWithReauth';
 import { Calendar, Clock, DollarSign, Loader2, Target, DoorOpen, ShoppingBag, Globe, Users, Phone, Trophy, Maximize2, Minimize2, RefreshCw, Tag, Instagram, Inbox, ChevronUp, ChevronDown, ListOrdered } from 'lucide-react';
 import { CplComparativo } from '@/components/pedro/CplComparativo';
 import { toast } from 'sonner';
@@ -1268,17 +1269,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   const handleAssignPool = useCallback(async (leadId: string, sellerId: string, leadName: string | null) => {
     if (!sellerId) { toast.warning('Escolha um vendedor pra atribuir.'); return; }
     setAssigningPoolId(leadId);
-    const doInvoke = () => supabase.functions.invoke('assign-pool-lead', {
-      body: { lead_id: leadId, to_member_id: sellerId, user_id: effectiveUserId },
-    });
     try {
-      let { data, error } = await doInvoke();
-      // "Token invalido" (401): a sessão do gestor ficou velha (aba parada → o
-      // auto-refresh do Supabase pausa). Revalida a sessão e tenta 1x antes de falhar.
-      if (error && (error as any)?.context?.status === 401) {
-        await supabase.auth.refreshSession().catch(() => {});
-        ({ data, error } = await doInvoke());
-      }
+      // invokeWithReauth: no 401 (sessão do gestor velha) revalida e tenta 1x.
+      const { data, error } = await invokeWithReauth('assign-pool-lead', {
+        body: { lead_id: leadId, to_member_id: sellerId, user_id: effectiveUserId },
+      });
       if (error) {
         let message = error.message || 'Não foi possível atribuir.';
         const ctx = (error as any).context;

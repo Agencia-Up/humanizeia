@@ -5,6 +5,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithReauth } from '@/lib/invokeWithReauth';
 import { useToast } from '@/hooks/use-toast';
 import {
   Users, UserPlus, Phone, Loader2, Trash2, Pencil, Check, X,
@@ -449,7 +450,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     }
     setInvitingId(member.id);
     try {
-      const { data, error } = await supabase.functions.invoke('invite-seller', {
+      const { data, error } = await invokeWithReauth('invite-seller', {
         body: { memberId: member.id, email: email.trim() },
       });
       // Fix 28/05/2026 v2: cliente Supabase JS encapsula erro de edge function
@@ -623,7 +624,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     setRedistPreview(null);
     setRedistLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('redistribute-seller-leads', {
+      const { data, error } = await invokeWithReauth('redistribute-seller-leads', {
         body: { from_member_id: seller.id, dry_run: true },
       });
       if (error) throw new Error((await readFnError(error)) || error.message);
@@ -641,7 +642,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     if (!redistFor) return;
     setRedistRunning(true);
     try {
-      const { data, error } = await supabase.functions.invoke('redistribute-seller-leads', {
+      const { data, error } = await invokeWithReauth('redistribute-seller-leads', {
         body: { from_member_id: redistFor.id, dry_run: false, force: true },
       });
       if (error) throw new Error((await readFnError(error)) || error.message);
