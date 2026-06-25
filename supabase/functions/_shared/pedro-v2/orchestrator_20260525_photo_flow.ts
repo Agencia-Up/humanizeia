@@ -8,6 +8,7 @@ import { routePedroIntent } from "./intentRouter_20260525_sales.ts";
 import { confirmSellerAck, executePedroV2Handoff } from "./transferRouter.ts";
 import { resolveAutomationRules } from "../automation/rules.ts";
 import { managerPhones } from "../transfer/managers.ts";
+import { composeSellerMsg, composeGerenteMsg, buildEtiquetas } from "../transfer/messageTemplates.ts";
 import { pickInterestVehicleFromState } from "../transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText, LeadTransferStatusKey } from "../transfer/leadStatus.ts";
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, mapQualificacaoToLeadColumns, classifyLeadSdr } from "../transfer/leadSdrCategory.ts";
@@ -2870,7 +2871,23 @@ export async function processPedroV2Turn(
         const sellerFooter = isRenotify
           ? `*Atender:* https://wa.me/${leadPhone}`
           : `*Atender:* https://wa.me/${leadPhone}\n\n*Responda "Ok" para assumir este atendimento!*`;
-        const sellerNotif = `${sellerHeader}\n\n${_recoveryTag}*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
+        // Etiquetas pros templates personalizados (vendedor/gerente). Se o agente NAO
+        // tem template salvo, composeSellerMsg/composeGerenteMsg caem no fallback inline
+        // de sempre -> quem nao mexeu NAO muda nada (aditivo, gated, seguro p/ producao).
+        const _msgVars = buildEtiquetas(effectiveMemory, {
+          agentName: input.agent?.name,
+          leadName: lead.lead_name || pushName,
+          leadPhone: leadPhone,
+          sellerName: handoffResult.seller?.name,
+          sellerPhone: handoffResult.seller?.whatsapp_number,
+          temperatura: _temp,
+          interesse: _veiculoInteresse,
+          classificacao: sdrCategoryText(_sdrCat),
+          horario: new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+          resumo: handoffResult.briefing,
+        });
+        const _sellerInline = `${sellerHeader}\n\n${_recoveryTag}*Cliente:* ${lead.lead_name || pushName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${leadPhone}${_veiculoInteresse ? `\n🚗 *Veículo:* ${_veiculoInteresse}` : ""}\n*Agente IA:* ${input.agent?.name || "Agente"}\n\n--------------------\n${handoffResult.briefing}\n--------------------\n\n${sellerFooter}`;
+        const sellerNotif = composeSellerMsg(input.agent, _msgVars, _sellerInline);
         await sendPedroText(handoffInstance, { to: handoffResult.seller.whatsapp_number, text: sellerNotif });
         // ETIQUETA SDR no WhatsApp Business (UAZAPI): marca o chat com a categoria do lead
         // (🎯 Qualificado / 🧊 Pouco qualificado / 💤 Inativo) NO MOMENTO da transferencia.
@@ -2888,7 +2905,7 @@ export async function processPedroV2Turn(
           const _mgrNum = String(handoffResult.seller?.whatsapp_number || "").replace(/\D/g, "");
           const _mgrMsg = (input.agent?.gerente_feedback_completo === true)
             ? `📊 *RELATÓRIO COMPLETO — ${input.agent?.name || "Agente"}*\n\n${_recoveryTag}🧑‍💼 *Vendedor atribuído:* ${handoffResult.seller?.name || "Vendedor"}${_mgrNum ? ` — wa.me/${_mgrNum}` : ""}\n🕐 ${_hora}\n\n━━━━━━━━━━━━━━━━━━━━\n${handoffResult.briefing}\n━━━━━━━━━━━━━━━━━━━━\n_Relatório completo (mesmo briefing do vendedor) — Pedro SDR_`
-            : `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n${_recoveryTag}🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+            : composeGerenteMsg(input.agent, _msgVars, `📊 *RELATÓRIO DE LEAD — ${input.agent?.name || "Agente"}*\n\n${_recoveryTag}🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${lead.lead_name || pushName || "Desconhecido"}\n📱 *Telefone:* +${leadPhone}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${_veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${_veiculoInteresse}` : ""}\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${handoffResult.seller?.name || "Vendedor"}\n📲 *WhatsApp vendedor:* ${handoffResult.seller?.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`);
           for (const gp of _gerentes) {
             try { await sendPedroText(handoffInstance, { to: gp, text: _mgrMsg }); } catch (_e) { /* nao bloqueante */ }
           }
