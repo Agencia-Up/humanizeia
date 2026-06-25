@@ -289,8 +289,8 @@ export function ComercialSection({
                                 onChange={e => setMetaInput(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter') saveMeta(r.sellerId, parseInt(metaInput, 10) || 0); if (e.key === 'Escape') setEditMetaFor(null); }}
                                 className="h-7 w-16 rounded border border-border/50 bg-background px-1 text-center text-sm" />
-                              <button disabled={savingMeta} onClick={() => saveMeta(r.sellerId, parseInt(metaInput, 10) || 0)} className="text-emerald-400" title="Salvar"><Check className="h-3.5 w-3.5" /></button>
-                              <button onClick={() => setEditMetaFor(null)} className="text-muted-foreground" title="Cancelar"><X className="h-3.5 w-3.5" /></button>
+                              <button disabled={savingMeta} onClick={() => saveMeta(r.sellerId, parseInt(metaInput, 10) || 0)} className="inline-flex items-center gap-1 font-semibold text-emerald-400" title="Salvar"><Check className="h-3.5 w-3.5" /> Salvar</button>
+                              <button onClick={() => setEditMetaFor(null)} className="inline-flex items-center gap-1 text-muted-foreground" title="Cancelar"><X className="h-3.5 w-3.5" /> Cancelar</button>
                             </span>
                           ) : (
                             <button onClick={() => { setMetaInput(String(r.meta || '')); setEditMetaFor(r.sellerId); }}

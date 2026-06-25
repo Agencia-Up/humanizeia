@@ -450,21 +450,23 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
                       />
                       <Button
                         size="sm"
-                        className="h-8 w-8 p-0 bg-green-600 hover:bg-green-700 shrink-0"
+                        className="h-8 px-3 gap-1.5 bg-green-600 hover:bg-green-700 shrink-0"
                         onClick={() => handleSaveEdit()}
                         disabled={savingEdit}
                         title="Salvar"
                       >
                         {savingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        Salvar
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground shrink-0"
+                        className="h-8 px-3 gap-1.5 text-muted-foreground hover:text-foreground shrink-0"
                         onClick={handleCancelEdit}
                         title="Cancelar"
                       >
                         <X className="h-3.5 w-3.5" />
+                        Cancelar
                       </Button>
                     </div>
                   ) : (

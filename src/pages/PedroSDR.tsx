@@ -3313,11 +3313,13 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
                       className="h-8 text-sm max-w-[160px]"
                     />
                   </div>
-                  <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 w-8 p-0 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
+                  <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 px-3 gap-1.5 font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    Salvar
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingLead(false)} className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+                  <Button variant="ghost" size="sm" onClick={() => setEditingLead(false)} className="h-8 px-3 gap-1.5 text-muted-foreground hover:text-foreground">
                     <X className="h-3.5 w-3.5" />
+                    Cancelar
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}</p>

@@ -825,12 +825,14 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
                       <Input value={editPhone} onChange={e => setEditPhone(e.target.value)}
                         placeholder="WhatsApp" className="h-8 text-xs flex-1 font-mono"
                         onKeyDown={e => e.key === 'Enter' && handleSaveEdit(s.id)} />
-                      <Button size="sm" className="h-8 w-8 p-0 bg-green-600 hover:bg-green-700"
+                      <Button size="sm" className="h-8 px-3 gap-1.5 bg-green-600 hover:bg-green-700"
                         onClick={() => handleSaveEdit(s.id)} disabled={savingEdit}>
                         {savingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        Salvar
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={handleCancelEdit}>
+                      <Button size="sm" variant="ghost" className="h-8 px-3 gap-1.5" onClick={handleCancelEdit}>
                         <X className="h-3.5 w-3.5" />
+                        Cancelar
                       </Button>
                     </div>
                   ) : (
