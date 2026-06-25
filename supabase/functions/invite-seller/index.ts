@@ -328,6 +328,9 @@ Deno.serve(async (req) => {
 
     const origin = req.headers.get('origin') || 'https://logosiabrasil.com';
     const redirectTo = `${origin}/auth/confirm`;
+    // Dominio canonico do app (Site URL allowlisted). O link do e-mail SEMPRE
+    // aponta pra ca, onde mora o ConfirmEmail — independente da origem do master.
+    const APP_BASE_URL = 'https://logosiabrasil.com';
 
     // Step 1: Create user via Admin API (does NOT send default Supabase email)
     const userMetadata = { full_name: member.name, role: 'seller', master_user_id: masterUserId };
@@ -489,10 +492,24 @@ Deno.serve(async (req) => {
         linkPreview: sanitizedLink || null,
         errorMsg: linkErr?.message,
       });
+      // FIX DEFINITIVO 25/06: NAO usar o action_link (endpoint /auth/v1/verify do
+      // servidor) — ele e consumido na hora, inclusive por scanner de antivirus/
+      // Gmail que pre-abre o link, virando "Email link is invalid or has expired".
+      // Em vez disso montamos um link com token_hash verificado NO NAVEGADOR
+      // (ConfirmEmail -> supabase.auth.verifyOtp). Um GET de scanner so pega o HTML
+      // estatico e NAO roda o JS, entao NAO consome o token. So o clique real consome.
+      const hashedToken = (linkData?.hashed_token || rawResponse?.hashed_token || '') as string;
+      if (hashedToken) {
+        actionLink = `${APP_BASE_URL}/auth/confirm?token_hash=${encodeURIComponent(hashedToken)}&type=${linkType}`;
+        usedType = linkType;
+        console.log(`[invite-seller] Link token_hash '${linkType}' gerado para ${email} (alreadyConfirmed=${alreadyConfirmed})`);
+        break;
+      }
+      // Fallback raro: GoTrue nao devolveu hashed_token mas o action_link tem token.
       if (hasValidToken) {
         actionLink = candidateLink;
         usedType = linkType;
-        console.log(`[invite-seller] Link '${linkType}' gerado OK para ${email} (alreadyConfirmed=${alreadyConfirmed})`);
+        console.log(`[invite-seller] Fallback action_link '${linkType}' para ${email} (sem hashed_token)`);
         break;
       }
       lastErr = linkErr;

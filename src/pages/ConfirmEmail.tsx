@@ -11,7 +11,15 @@ export default function ConfirmEmail() {
   const [successMsg, setSuccessMsg] = useState('Redirecionando para o dashboard...');
 
   /** Verifica se o usuário é seller e decide para onde redirecionar */
-  const redirectAfterConfirm = async () => {
+  const redirectAfterConfirm = async (type?: string | null) => {
+    // Recuperação de senha: SEMPRE manda redefinir a senha (master OU vendedor),
+    // nunca direto pro dashboard. (invite/signup seguem o fluxo por role abaixo.)
+    if (type === 'recovery') {
+      setSuccessMsg('Verificado! Redirecionando para redefinir sua senha...');
+      setStatus('success');
+      setTimeout(() => navigate('/reset-password'), 1200);
+      return;
+    }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { navigate('/dashboard'); return; }
 
@@ -37,14 +45,15 @@ export default function ConfirmEmail() {
       try {
         const url = new URL(window.location.href);
         const tokenHash = url.searchParams.get('token_hash');
-        const type = url.searchParams.get('type') as any;
+        const hashParams = new URLSearchParams((url.hash || '').replace(/^#/, ''));
+        const type = (url.searchParams.get('type') || hashParams.get('type')) as any;
         const code = url.searchParams.get('code');
 
         // 1. PKCE code flow (invite, magiclink, signup, recovery)
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
-          await redirectAfterConfirm();
+          await redirectAfterConfirm(type);
           return;
         }
 
@@ -52,7 +61,7 @@ export default function ConfirmEmail() {
         if (tokenHash && type) {
           const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
           if (error) throw error;
-          await redirectAfterConfirm();
+          await redirectAfterConfirm(type);
           return;
         }
 
@@ -62,7 +71,7 @@ export default function ConfirmEmail() {
           await new Promise(resolve => setTimeout(resolve, 1500));
           const { data: { session } } = await supabase.auth.getSession();
           if (session) {
-            await redirectAfterConfirm();
+            await redirectAfterConfirm(type);
             return;
           }
         }
@@ -70,7 +79,7 @@ export default function ConfirmEmail() {
         // 4. Fallback: sessão já criada pelo onAuthStateChange
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          await redirectAfterConfirm();
+          await redirectAfterConfirm(type);
           return;
         }
 
