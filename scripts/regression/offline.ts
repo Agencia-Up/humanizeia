@@ -41,6 +41,7 @@ import {
   clearRejeitadoOnRequest,
   buildConversationState,
   excludeRejeitados,
+  escapeRegExp,
   photoRequestTargetModel,
   leadComplainsPhotoWrongOrMissing,
   messageIsTooVagueToAct,
@@ -570,6 +571,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("foto", "alvo: 'fts do 2008 2021' (interesse Peugeot 2008) -> Peugeot 2008", photoRequestTargetModel("quero ver as fts do 2008 2021", memBarbara, null) === "Peugeot 2008 2021");
   check("foto", "alvo: 'fotos desse' (sem referência) -> fallback (âncora)", photoRequestTargetModel("manda fotos desse", { interesse: { modelo_desejado: "Onix" } }, null) === null);
   check("foto", "alvo: 'foto do compass' (interesse Onix) -> usa o nomeado (fallback search_query)", photoRequestTargetModel("manda foto do compass", { interesse: { modelo_desejado: "Onix" } }, "Compass") === "Compass");
+  // ⭐CRASH (lead 99755-8112): interesse com parênteses "(cab. simples)" -> token "(cab." derrubava o turno
+  // (new RegExp inválida). Agora escapa: NÃO lança + casa o modelo normalmente.
+  {
+    const memHilux = { interesse: { modelo_desejado: "Toyota Hilux Cabine Simples Hilux STD 4 x 4 2.5 (cab. simples)" } };
+    let threw = false, res: any = null;
+    try { res = photoRequestTargetModel("quero ver fotos da hilux", memHilux, null); } catch { threw = true; }
+    check("regex-escape", "photoRequestTargetModel NÃO lança com '(cab. simples)' no interesse", threw === false);
+    check("regex-escape", "casa 'hilux' -> retorna o interesse (modelo do Hilux)", res === "Toyota Hilux Cabine Simples Hilux STD 4 x 4 2.5 (cab. simples)");
+    check("regex-escape", "escapeRegExp escapa parênteses e ponto", escapeRegExp("(cab. simples)") === "\\(cab\\. simples\\)");
+  }
 
   // "promete e não cumpre": reclamação de foto errada/faltando -> deve re-disparar (não prometer).
   check("foto", "reclama: 'essas fts n são peugeot' -> reclamação", leadComplainsPhotoWrongOrMissing("Essas fts n são peugeot\nSão de uma Tracker") === true);

@@ -18,6 +18,15 @@ export function normalizePlannerText(value?: string | null) {
     .trim();
 }
 
+// Escapa metacaracteres de regex. CRÍTICO: modelos/versões vêm com parênteses ("(cab. simples)"), pontos
+// ("2.5"), etc. — interpolados CRUS em `new RegExp(\`\\b${tok}\\b\`)` geram regex INVÁLIDA que LANÇA e
+// DERRUBA o turno inteiro (turn_failed silencioso, lead 99755-8112 Toyota Hilux "(cab. simples)" no pedido
+// de foto -> sem resposta). normalizePlannerText NÃO tira pontuação (de propósito, p/ detectar "?"), então
+// todo `new RegExp(\`\\b${token}\\b\`)` com token vindo de modelo/interesse/rejeitado PRECISA escapar. PURO.
+export function escapeRegExp(value?: string | null): string {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function leadMessageHasExplicitPriceCeiling(message?: string | null) {
   const text = normalizePlannerText(message);
   if (!/\d/.test(text)) return false;
@@ -85,7 +94,7 @@ export function detectLeadDirectionChange(message?: string | null, priorOrAdVehi
   const current_type = typeWord ? _DIRECTION_TYPES[typeWord] : null;
   // tokens do MODELO anterior (anúncio/interesse): ignora ano e palavras de tipo.
   const priorTokens = prior.split(/\s+/).filter((t) => t.length >= 3 && !/^(?:19|20)\d{2}$/.test(t) && !_DIRECTION_TYPES[t]);
-  const named_prior = priorTokens.length > 0 && priorTokens.some((t) => new RegExp(`\\b${t}\\b`).test(m));
+  const named_prior = priorTokens.length > 0 && priorTokens.some((t) => new RegExp(`\\b${escapeRegExp(t)}\\b`).test(m));
   // demonstrativo OU pergunta de característica/preço SOBRE aquele carro -> NÃO é mudança de direção.
   const about_that_car = /\b(esse|este|essa|esta|nesse|neste|nessa|nesta|desse|deste|dessa|desta|dele|dela|o mesmo|esse ai|esse carro|este carro)\b/.test(m)
     || /\b(teto solar|teto|cor|cores|km|quilometr|motor|consumo|completo|cambio|porta malas|porta-malas|aceita troca|financi|parcel|entrada|de quanto|qual o valor|qual valor|quanto custa|quanto sai|quanto fica|quanto ta|quanto esta|interi|na cor)\b/.test(m);
@@ -145,7 +154,7 @@ export function updateRejeitados(message: string, presentedVehicles: any[], prio
   const newModels: string[] = [];
   for (const v of apres) {
     const mk = _rejectionModelToken(v);
-    if (mk && new RegExp(`\\b${mk}\\b`).test(m)) newModels.push(mk);
+    if (mk && new RegExp(`\\b${escapeRegExp(mk)}\\b`).test(m)) newModels.push(mk);
   }
   if (rej.rejects_focus && newModels.length === 0 && apres.length > 0) {
     const mk = _rejectionModelToken(apres[apres.length - 1]);
@@ -165,8 +174,8 @@ export function clearRejeitadoOnRequest(rejeitados: { modelos?: string[]; tipos?
   const q = normalizePlannerText(searchQuery);
   if (!q) return base;
   return {
-    modelos: base.modelos.filter((mk) => !new RegExp(`\\b${mk}\\b`).test(q)),
-    tipos: base.tipos.filter((tp) => !new RegExp(`\\b${tp}\\b`).test(q)),
+    modelos: base.modelos.filter((mk) => !new RegExp(`\\b${escapeRegExp(mk)}\\b`).test(q)),
+    tipos: base.tipos.filter((tp) => !new RegExp(`\\b${escapeRegExp(tp)}\\b`).test(q)),
   };
 }
 
@@ -209,7 +218,7 @@ export function excludeRejeitados(items: any[], rejeitados?: { modelos?: string[
   if (modelos.length === 0) return items;
   return items.filter((v) => {
     const vm = normalizePlannerText(v?.modelo || "");
-    return !modelos.some((mk) => new RegExp(`\\b${mk}\\b`).test(vm));
+    return !modelos.some((mk) => new RegExp(`\\b${escapeRegExp(mk)}\\b`).test(vm));
   });
 }
 
@@ -225,7 +234,7 @@ export function photoRequestTargetModel(message?: string | null, memory?: any, f
   const interest = normalizePlannerText(interestRaw);
   if (t && interest) {
     const interestTokens = interest.split(/\s+/).filter((w) => w.length >= 3);
-    if (interestTokens.some((tok) => new RegExp(`\\b${tok}\\b`).test(t))) return interestRaw;
+    if (interestTokens.some((tok) => new RegExp(`\\b${escapeRegExp(tok)}\\b`).test(t))) return interestRaw;
   }
   return (fallbackQuery && String(fallbackQuery).trim()) || null;
 }
