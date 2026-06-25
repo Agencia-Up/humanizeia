@@ -53,6 +53,7 @@ import {
   nextFunnelQuestion,
   replyHasMeaningfulQuestion,
   replyIsGracefulClose,
+  leadAsksInfoQuestion,
   leadAffirmsSchedulingQuestion,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
@@ -2267,13 +2268,21 @@ export async function processPedroV2Turn(
     // Caso real (Avant): lead "onde fica a loja?" -> agente respondeu o endereço + isca, e PAROU; agora ele
     // responde + "O que você está procurando?". Não dispara em despedida/recusa/transferência nem quando o
     // agente JÁ pergunta algo de venda (foto/modelo/visita...) — pra não empilhar nem virar robô.
+    // Última msg do AGENTE (anti-repetição: não empilhar pergunta se ele JÁ perguntou algo no turno anterior).
+    const _sdrLastAgent = (Array.isArray(recentHistory) ? recentHistory : [])
+      .filter((h: any) => { const r = String(h?.role || h?.direction || "").toLowerCase(); return r === "assistant" || r === "agent" || r === "ai" || r === "bot"; })
+      .map((h: any) => String(h?.content || h?.text || h?.message || ""))
+      .pop() || "";
     const _b4 = (input.agent as any)?.funnel_bloco4;
     if (_b4 && _priorAgentTurns > 0
+        && leadAsksInfoQuestion(text)                                  // ⭐GATILHO: só qualifica quando o LEAD PERGUNTA algo (não em pedido de foto/resposta curta — lead 99742-3129)
+        && !replyHasMeaningfulQuestion(_sdrLastAgent)                  // ⭐ANTI-REPETIÇÃO: o agente NÃO acabou de perguntar algo (não empilha turno após turno)
         && (reply as any)?.pronto_para_transferir !== true && (reply as any)?.transferir_silencioso !== true
         && (reply as any)?.temperatura !== "desqualificado"
         && !leadExplicitlyDeclined(text)
         && !replyIsGracefulClose((reply as any)?.text || "")
-        && !["vehicle_photos_pick_which", "presend_fixed_no_photo_promise", "ad_generic_abordagem",
+        && !["vehicle_photos_pick_which", "vehicle_photos_need_reference", "vehicle_photos_reply", "vehicle_photos_album",
+             "presend_fixed_no_photo_promise", "ad_generic_abordagem",
              "trade_collecting", "visit_schedule_qualify", "visit_cpf_qualify", "lone_emoji_no_transfer"].includes((reply as any)?.source)
         && !replyHasMeaningfulQuestion((reply as any)?.text || "")) {
       const _fq = { ...((reply as any)?.qualificacao_coletada || {}) };

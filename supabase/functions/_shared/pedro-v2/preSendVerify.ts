@@ -234,7 +234,10 @@ export function ensureSelfIntroduction(replyText: string, opts: { agentName?: st
   const company = String(opts?.companyName || "").trim();
   const greeting = String(opts?.greeting || "Olá").trim() || "Olá";
   const intro = company ? `Aqui é o ${name}, consultor da ${company} 😊` : `Aqui é o ${name}, seu consultor 😊`;
-  const m = t.match(/^\s*(bom dia|boa tarde|boa noite|ol[áa]|oi|e a[ií])\b[,!.\s]*([\p{L}]+\b[,!.\s]*)?/iu);
+  // O nome após a saudação ("Oi João!", "Boa tarde, Maria!") SÓ conta se vier seguido de pontuação de
+  // nome (, ! .) — antes `[,!.\s]*` capturava QUALQUER palavra seguida de espaço (ex.: "Boa tarde! Temos
+  // várias opções" capturava "Temos") e enfiava a apresentação NO MEIO da frase ("Temos Aqui é o Manu...").
+  const m = t.match(/^\s*(bom dia|boa tarde|boa noite|ol[áa]|oi|e a[ií])\b[\s,!.…]*([\p{L}]{2,}[,!.])?\s*/iu);
   if (m && m[0].trim().length > 0) {
     const prefix = t.slice(0, m[0].length).replace(/\s+$/, "");
     const rest = t.slice(m[0].length);

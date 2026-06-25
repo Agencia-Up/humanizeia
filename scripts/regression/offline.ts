@@ -52,6 +52,7 @@ import {
   replyAsksFunnelQuestion,
   replyHasMeaningfulQuestion,
   replyIsGracefulClose,
+  leadAsksInfoQuestion,
   leadAffirmsSchedulingQuestion,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
@@ -262,6 +263,9 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("apresentacao", "saudação já existe -> insere apresentação após a saudação", _r2.added === true && /^Boa tarde, Sérgio! Aqui é o Carvalho/.test(_r2.text) && /Temos um Creta\./.test(_r2.text));
     const _r3 = ensureSelfIntroduction("Sou o Carvalho da Icom Motors. Temos um Creta.", _opts);
     check("apresentacao", "já se apresentou -> NÃO duplica", _r3.added === false);
+    // ⭐splice (Avant Manu): saudação SEM nome -> NÃO enfia a apresentação no meio ("Temos Aqui é o Manu...")
+    const _r4 = ensureSelfIntroduction("Boa tarde! Temos várias opções de SUVs.", _opts);
+    check("apresentacao", "saudação sem nome -> apresentação após a saudação (não no meio de 'Temos')", _r4.added === true && /^Boa tarde! Aqui é o Carvalho/.test(_r4.text) && !/Temos Aqui é/.test(_r4.text) && /Temos várias opções de SUVs/.test(_r4.text));
     check("apresentacao", "replyHasSelfIntroduction reconhece 'Aqui é o ...'", replyHasSelfIntroduction("Aqui é o Carvalho, consultor da Icom Motors 😊") === true);
     check("apresentacao", "replyHasSelfIntroduction falso em apresentação de carro", replyHasSelfIntroduction("Temos um Creta 2025 disponível!") === false);
   }
@@ -301,6 +305,15 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("sdr", "fechamento gracioso -> detectado (não qualificar)", replyIsGracefulClose("Tranquilo, Wander! Não vou tomar seu tempo. Qualquer coisa é só me chamar. 👍") === true);
     check("sdr", "'fico à disposição' -> fechamento", replyIsGracefulClose("Obrigado! Fico à disposição.") === true);
     check("sdr", "resposta normal NÃO é fechamento", replyIsGracefulClose("Nossa loja fica em Taubaté.") === false);
+    // ⭐GATILHO: só qualifica quando o LEAD PERGUNTA (não em pedido de foto / resposta curta) — lead 99742-3129
+    check("sdr", "'me manda fotos do Ford Ka' NÃO é pergunta (pedido)", leadAsksInfoQuestion("me manda fotos do Ford Ka") === false);
+    check("sdr", "'ford ka' NÃO é pergunta (resposta curta)", leadAsksInfoQuestion("ford ka") === false);
+    check("sdr", "'sim' NÃO é pergunta", leadAsksInfoQuestion("sim") === false);
+    check("sdr", "'tenho um gol pra troca' NÃO é pergunta (afirmação)", leadAsksInfoQuestion("tenho um gol pra troca") === false);
+    check("sdr", "'onde fica a loja?' É pergunta", leadAsksInfoQuestion("onde fica a loja?") === true);
+    check("sdr", "'vcs tem carro pra negativado' É pergunta (casual sem ?)", leadAsksInfoQuestion("vcs tem carro pra negativado dando entrada") === true);
+    check("sdr", "'qual o valor do onix' É pergunta", leadAsksInfoQuestion("qual o valor do onix") === true);
+    check("sdr", "'vcs financiam?' É pergunta", leadAsksInfoQuestion("vcs financiam?") === true);
   }
 
   // ── VISITA: lead confirma a pergunta de agendamento -> colher dia/hora (lead 98198-7661) ──

@@ -378,6 +378,22 @@ export function replyIsGracefulClose(text?: string | null): boolean {
   return /qualquer (coisa|d[uú]vida).{0,25}(chamar|chama|disposi|aqui)|n[aã]o vou (tomar|atrapalhar|te tomar)|fico (a|à) disposi|estou (a|à) disposi|(e|é) s[oó] (me )?chamar|qualquer (coisa|d[uú]vida) (e|é) s[oó]|at[eé] (mais|logo|breve|a proxima|mais ver)|tenha (um[a]? )?(bom|boa|[oó]tim)|nao tomo seu tempo/.test(t);
 }
 
+// O LEAD está de fato PERGUNTANDO algo (info/dúvida)? É o GATILHO do SDR-force ("se o lead PERGUNTA as
+// coisas, qualifica"). Um PEDIDO ("me manda fotos do Ka"), uma RESPOSTA curta ("ford ka", "sim", "esse")
+// ou uma AFIRMAÇÃO ("tenho um gol pra troca") NÃO é pergunta -> NÃO força qualificação (evita empilhar
+// "tem troca?" em cima de pedido de foto, que deixou o agente robótico/repetitivo — lead 99742-3129). PURO.
+export function leadAsksInfoQuestion(text?: string | null): boolean {
+  const t = normalizePlannerText(text);
+  if (!t) return false;
+  // pedido/comando explicito (sem "?") NAO e pergunta de info
+  if (!t.includes("?") && /\b(me )?(manda|mande|envia|envie|mostra|mostre|quero ver|queria ver|ver as? fotos?|manda as? fotos?|\bfotos?\b|\bvideos?\b)\b/.test(t)) return false;
+  if (t.includes("?")) return true;
+  // perguntas casuais sem "?" (texting): "vcs tem...", "qual o valor", "onde fica", "aceita financiamento"
+  return /\b(voce|voces|vcs|vc)\s+(tem|teem|aceita|trabalha|financia|parcela|fica|abre|funciona|fazem|faz)\b/.test(t)
+    || /\b(quanto|qual|quais|onde|quando|que horas|hor[aá]rio|aceita|financi|parcel|condic|garantia|documenta|consorcio)\b/.test(t)
+    || /\btem\b[^?]*\b(carro|veiculo|suv|sedan|hatch|picape|moto|plano|financ|entrada|desconto|garantia)\b/.test(t);
+}
+
 // ── LEAD ESTÁ DESCREVENDO O CARRO DA TROCA (km/estado/itens) — COLETA crucial, NÃO transferir no meio ──
 // Caso real lead 99628-7178: ofereceu Onix 2015 + agente pediu detalhes; o lead mandou "17500 km",
 // "Revisado", "Embreagem, Correia dentada, freio", "Tudo ok", fotos — e o agente JÁ tinha transferido
