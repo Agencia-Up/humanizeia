@@ -4,6 +4,7 @@ import { managerPhones } from "../_shared/transfer/managers.ts";
 import { resolveLeadInterestVehicle } from "../_shared/transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText } from "../_shared/transfer/leadStatus.ts";
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, classifyLeadSdr } from "../_shared/transfer/leadSdrCategory.ts";
+import { composeSellerMsg, composeGerenteMsg, buildEtiquetas, maybeStripEmojis } from "../_shared/transfer/messageTemplates.ts";
 import { setSdrLabelOnChat } from "../_shared/pedro-v2/uazapiLabels.ts";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 
@@ -443,7 +444,7 @@ async function handleV2Followup(supabase: any, ctx: {
 
   // Regras configuraveis por agente (NULL = legado 5/8/12, transfere, 10min, janela fixa).
   const { data: agentRulesRow } = await supabase
-    .from("wa_ai_agents").select("automation_rules, gerente_phone, gerente_phone_2").eq("id", agentId).maybeSingle();
+    .from("wa_ai_agents").select("automation_rules, gerente_phone, gerente_phone_2, gerente_feedback_completo, mensagens_sem_emoji, briefing_template_vendedor, briefing_template_gerente").eq("id", agentId).maybeSingle();
   const rules = resolveAutomationRules(agentRulesRow?.automation_rules);
   if (!rules.followup.enabled) return;              // gerente desligou o follow-up
   if (elapsedMin < rules.followup.t1_min) return;   // ainda nao chegou no 1o tempo
@@ -587,10 +588,12 @@ async function handleV2Followup(supabase: any, ctx: {
       // POUCO QUALIFICADO (deu CPF/troca/financiamento e sumiu). Persiste status_crm pro
       // dashboard, sem sobrescrever movimento do vendedor. Best-effort: nunca derruba a transferencia.
       let _sdrCat: "inativo" | "pouco_qualificado" | "qualificado" = "inativo";
+      let _leadCols: any = null;
       try {
         const { data: _lf } = await supabase.from("ai_crm_leads")
           .select("client_name, vehicle_interest, payment_method, budget, client_city, visit_scheduled, trade_in_vehicle, down_payment, cpf, status_crm")
           .eq("id", lead.id).maybeSingle();
+        _leadCols = _lf;
         const _fields = { ...(_lf || {}), vehicle_interest: (_lf?.vehicle_interest || veiculoInteresse || null) };
         _sdrCat = classifyLeadSdrCategory(_fields, { by_inactivity: true });
         const _persist = classifyLeadSdr(_fields, { by_inactivity: true });
@@ -598,16 +601,40 @@ async function handleV2Followup(supabase: any, ctx: {
           await supabase.from("ai_crm_leads").update({ status_crm: _persist }).eq("id", lead.id);
         }
       } catch (_e) { /* classificacao/persistencia best-effort */ }
+
+      // Etiquetas pros templates personalizados (vendedor/gerente). Se o agente NAO tem
+      // template/flag, composeX/maybeStripEmojis caem no comportamento de SEMPRE -> quem
+      // nao mexeu NAO muda nada (aditivo + gated, mesma regra do orchestrator).
+      const _hora = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      const _tradeIn = _leadCols?.trade_in_vehicle || null;
+      const _msgVars = buildEtiquetas({
+        lead: { cidade: _leadCols?.client_city, telefone: phoneNumber },
+        interesse: { modelo_desejado: veiculoInteresse },
+        negociacao: { forma_pagamento: _leadCols?.payment_method, valor_entrada: _leadCols?.down_payment,
+          tem_troca: !!_tradeIn, carro_troca: _tradeIn ? { modelo: _tradeIn } : null },
+      }, {
+        agentName, leadName, leadPhone: phoneNumber,
+        sellerName: seller.name, sellerPhone: seller.whatsapp_number,
+        interesse: veiculoInteresse, classificacao: sdrCategoryText(_sdrCat),
+        horario: _hora, resumo: summary,
+      });
+
       if (seller.whatsapp_number) {
         const cleanSellerNum = String(seller.whatsapp_number).replace(/\D/g, "");
-        const notif = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const _notifInline = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+        const notif = maybeStripEmojis(agentRulesRow, composeSellerMsg(agentRulesRow, _msgVars, _notifInline));
         await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notif);
       }
       // Relatorio automatico ao(s) gerente(s) — ate 2.
       const _gerentes = managerPhones(agentRulesRow);
       if (_gerentes.length > 0) {
-        const _hora = now.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-        const _mgrMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+        const _mgrNum = String(seller.whatsapp_number || "").replace(/\D/g, "");
+        const _mgrInline = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
+        const _mgrCompleto = `📊 *RELATÓRIO COMPLETO — ${agentName}*\n\n🧑‍💼 *Vendedor atribuído:* ${seller.name}${_mgrNum ? ` — wa.me/${_mgrNum}` : ""}\n🕐 ${_hora}\n\n━━━━━━━━━━━━━━━━━━━━\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n*ANALISE DO LEAD PELA IA:*\n${summary}\n━━━━━━━━━━━━━━━━━━━━\n_Relatório completo (mesmo briefing do vendedor) — Pedro SDR_`;
+        const _mgrBase = (agentRulesRow?.gerente_feedback_completo === true)
+          ? _mgrCompleto
+          : composeGerenteMsg(agentRulesRow, _msgVars, _mgrInline);
+        const _mgrMsg = maybeStripEmojis(agentRulesRow, _mgrBase);
         for (const gp of _gerentes) {
           try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
         }
