@@ -2513,8 +2513,18 @@ export async function processPedroV2Turn(
         "denial_without_search_recovered", "category_relisted_deterministic",
         "wrong_price_relisted_deterministic", "search_deferral_resolved",
       ];
+      // RESPOSTAS DETERMINÍSTICAS dos guards têm wording INTENCIONAL — a humanização (LLM que reflui) pode
+      // INVERTER o sentido. Caso real 99230-7003 (TROCA): o guard `trade_collecting` gerou "Show, anotei tudo
+      // do seu carro, pode mandar fotos quando puder" e a humanização reescreveu pra "Tranquilo, não vou tomar
+      // seu tempo, qualquer coisa me chama" -> FECHOU no meio da negociação (lead respondeu "aqui agora não",
+      // não se despediu). Essas vão VERBATIM (sem humanizar), igual às listas.
+      const _VERBATIM_SOURCES = [
+        "trade_collecting", "visit_schedule_qualify", "visit_cpf_qualify", "ad_generic_abordagem",
+        "vehicle_photos_pick_which", "vehicle_photos_need_reference", "vehicle_photos_ambiguous_model",
+        "lone_emoji_no_transfer", "presend_fixed_no_photo_promise",
+      ];
       const _looksLikeList = /\n\s*\d+[.)]\s/.test(String(reply.text || ""));
-      const preserveFormatting = _LIST_SOURCES.includes(reply.source) || _looksLikeList;
+      const preserveFormatting = _LIST_SOURCES.includes(reply.source) || _VERBATIM_SOURCES.includes(reply.source) || _looksLikeList;
       sendResult = await sendPedroText(instance, {
         to: remoteJidToPhone(remoteJid),
         text: reply.text,
