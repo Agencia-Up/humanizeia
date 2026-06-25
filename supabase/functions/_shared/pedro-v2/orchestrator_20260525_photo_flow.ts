@@ -856,10 +856,15 @@ export async function processPedroV2Turn(
     }
   }
 
+  // RECUPERADOR (anti-sumiço): quando o cron `pedro-recover-dropped` reprocessa uma mensagem que ficou
+  // sem resposta (turno original morto no debounce em background), ela JÁ está salva no histórico e o lead
+  // JÁ parou de digitar — então PULA o save (não duplica a msg) e, como myUserMsgId fica null, o debounce
+  // se auto-pula (processa direto). O resto do turno roda normal (planner/reply/envio/log).
+  const _recovery = (input as any)?.recovery === true;
   // Salvar mensagem do usuário no histórico (transferências/CRM/debounce). Captura o id.
   let myUserMsgId: string | null = null;
   let myUserMsgCreatedAt: string | null = null;
-  if (!dryRun && lead?.id && text) {
+  if (!dryRun && !_recovery && lead?.id && text) {
     try {
       // CTWA: guarda o anuncio (podado) no metadata p/ recuperar no turno final do burst (ver helpers).
       const _ctwaAd = pruneCtwaAd(deepFindExternalAdReply(input.payload));
