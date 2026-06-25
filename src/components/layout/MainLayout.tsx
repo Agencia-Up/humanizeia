@@ -84,6 +84,13 @@ export function MainLayout({ children }: MainLayoutProps) {
                       navigate('/pedro?tab=agente');
                       return;
                     }
+                    // Painel de agente (Pedro/Marcos/José): "Voltar" SEMPRE vai pra a
+                    // home dos agentes (/tela-inicial), nunca o history-back (que caía
+                    // em qualquer lugar de onde o usuário veio).
+                    if (['/pedro', '/marcos', '/jose'].includes(location.pathname)) {
+                      navigate('/tela-inicial');
+                      return;
+                    }
                     const canGoBack = (window.history.state?.idx ?? 0) > 0;
                     if (canGoBack) {
                       navigate(-1);
