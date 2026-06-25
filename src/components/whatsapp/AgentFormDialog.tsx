@@ -262,6 +262,9 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [templateVendedorMsg, setTemplateVendedorMsg] = useState(DEFAULT_MSG_VENDEDOR);
   const [customGerenteMsg, setCustomGerenteMsg] = useState(false);
   const [templateGerenteMsg, setTemplateGerenteMsg] = useState(DEFAULT_MSG_GERENTE);
+  // Feedback do gerente na transferência: false = resumido (atual), true = completo
+  // (o MESMO briefing do vendedor + qual vendedor está atendendo).
+  const [gerenteFeedbackCompleto, setGerenteFeedbackCompleto] = useState(false);
 
   // ── Regras de automacao (Pedro v2): follow-up + transferencia ──
   // NULL no banco = comportamento legado (5/8/12, transfere, 10min, janela fixa).
@@ -658,6 +661,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       const tplG = (agent as any).briefing_template_gerente || '';
       setCustomGerenteMsg(!!tplG.trim());
       setTemplateGerenteMsg(tplG.trim() ? tplG : DEFAULT_MSG_GERENTE);
+      setGerenteFeedbackCompleto((agent as any).gerente_feedback_completo === true);
       // Regras de automacao (default = comportamento legado se nao houver nada salvo)
       const ar: any = (agent as any).automation_rules || {};
       const arF: any = ar.followup || {}; const arT: any = ar.transfer || {};
@@ -740,6 +744,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     qualification_questions: qualificationStr.split('\n').map(q => q.trim()).filter(Boolean),
     briefing_template_vendedor: customVendedorMsg ? (templateVendedorMsg.trim() || null) : null,
     briefing_template_gerente: customGerenteMsg ? (templateGerenteMsg.trim() || null) : null,
+    gerente_feedback_completo: gerenteFeedbackCompleto,
     automation_rules: (() => {
       const t1 = Math.max(1, Math.round(Number(ruT1)) || 5);
       const t2 = Math.max(t1 + 1, Math.round(Number(ruT2)) || 8);
@@ -1019,12 +1024,20 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
 
               {/* Mensagem do gerente */}
               <div className="rounded-lg border p-4 space-y-3">
+                {/* Resumido (atual) x Completo (mesmo briefing do vendedor + qual vendedor atende) */}
+                <div className="flex items-center justify-between rounded-md border border-border/50 bg-muted/30 px-3 py-2">
+                  <div className="pr-3">
+                    <p className="text-sm font-medium">Feedback completo para o gerente</p>
+                    <p className="text-[11px] text-muted-foreground">Ligado: o gerente recebe o <b>mesmo briefing do vendedor</b> + qual vendedor está atendendo. Desligado: o resumo curto (atual).</p>
+                  </div>
+                  <Switch checked={gerenteFeedbackCompleto} onCheckedChange={setGerenteFeedbackCompleto} />
+                </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-semibold flex items-center gap-2"><Shield className="h-4 w-4" /> Relatório para o gerente</h3>
-                    <p className="text-xs text-muted-foreground">O resumo que o gerente recebe a cada lead transferido.</p>
+                    <p className="text-xs text-muted-foreground">{gerenteFeedbackCompleto ? 'No modo completo, o texto personalizado abaixo é ignorado.' : 'O resumo que o gerente recebe a cada lead transferido.'}</p>
                   </div>
-                  <Switch checked={customGerenteMsg} onCheckedChange={setCustomGerenteMsg} />
+                  <Switch checked={customGerenteMsg} onCheckedChange={setCustomGerenteMsg} disabled={gerenteFeedbackCompleto} />
                 </div>
                 {customGerenteMsg ? (
                   <div className="space-y-2">

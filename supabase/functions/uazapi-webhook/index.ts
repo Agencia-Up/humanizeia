@@ -4077,30 +4077,46 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                     let gerenteNum = String(agent.gerente_phone).replace(/\D/g, '');
                     if (gerenteNum.length === 10 || gerenteNum.length === 11) gerenteNum = `55${gerenteNum}`;
 
-                    const gerenteMsg = composeGerenteMsg(agent, buildEtiquetas({
-                      state: conversationState,
-                      agentName: agent.name || 'Pedro SDR',
-                      leadName: pushName || conversationState?.lead?.nome || 'Lead',
-                      leadPhone: phoneNumber,
-                      sellerName: chosenSeller.name,
-                      sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
-                      resumo: transferArgs.resumo_breve,
-                      classificacao: crmStage,
-                      horario: transferredAt,
-                      motivo: transferArgs.motivo,
-                      urgencia: transferArgs.urgencia,
-                    }), buildGerenteReport({
-                      state: conversationState,
-                      agentName: agent.name || 'Pedro SDR',
-                      leadName: pushName || conversationState?.lead?.nome || 'Lead',
-                      leadPhone: phoneNumber,
-                      classificacao: crmStage,
-                      resumo: transferArgs.resumo_breve,
-                      sellerName: chosenSeller.name,
-                      sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
-                      transferredAt,
-                      kind: 'novo',
-                    }));
+                    // Feedback do gerente: COMPLETO (mesmo briefing do vendedor +
+                    // qual vendedor atende) quando o agente liga gerente_feedback_completo;
+                    // senao o RESUMIDO de sempre. Default false = comportamento atual.
+                    const _gSellerNum = String(chosenSeller.whatsapp_number || '').replace(/\D/g, '');
+                    const gerenteMsg = (agent.gerente_feedback_completo === true)
+                      ? [
+                          `📊 *RELATÓRIO COMPLETO — ${agent.name || 'Pedro SDR'}*`,
+                          ``,
+                          `🧑‍💼 *Vendedor atribuído:* ${chosenSeller.name}${_gSellerNum ? ` — wa.me/${_gSellerNum}` : ''}`,
+                          `🕐 ${transferredAt}`,
+                          ``,
+                          `━━━━━━━━━━━━━━━━━━━━`,
+                          briefing,
+                          `━━━━━━━━━━━━━━━━━━━━`,
+                          `_Relatório completo (mesmo briefing do vendedor) — Pedro SDR_`,
+                        ].join('\n')
+                      : composeGerenteMsg(agent, buildEtiquetas({
+                          state: conversationState,
+                          agentName: agent.name || 'Pedro SDR',
+                          leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                          leadPhone: phoneNumber,
+                          sellerName: chosenSeller.name,
+                          sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
+                          resumo: transferArgs.resumo_breve,
+                          classificacao: crmStage,
+                          horario: transferredAt,
+                          motivo: transferArgs.motivo,
+                          urgencia: transferArgs.urgencia,
+                        }), buildGerenteReport({
+                          state: conversationState,
+                          agentName: agent.name || 'Pedro SDR',
+                          leadName: pushName || conversationState?.lead?.nome || 'Lead',
+                          leadPhone: phoneNumber,
+                          classificacao: crmStage,
+                          resumo: transferArgs.resumo_breve,
+                          sellerName: chosenSeller.name,
+                          sellerPhone: chosenSeller.whatsapp_number || 'sem numero',
+                          transferredAt,
+                          kind: 'novo',
+                        }));
 
                     const gerenteRes = await fetch(`${baseUrl}/send/text`, {
                       method: 'POST',
