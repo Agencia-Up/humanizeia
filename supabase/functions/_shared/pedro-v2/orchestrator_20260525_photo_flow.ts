@@ -56,6 +56,7 @@ import {
   replyIsGracefulClose,
   leadAsksInfoQuestion,
   leadAffirmsSchedulingQuestion,
+  leadAffirmsPresenceToFollowupPing,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
@@ -1766,12 +1767,21 @@ export async function processPedroV2Turn(
   // mesmo que messageAsksForPhotos de falso-positivo (o texto enriquecido do anuncio pode casar "ver").
   // So liberamos foto numa busca ampla se o lead pediu foto de um MODELO especifico (que ai nao e ampla).
   const _broadCategoryBrowse = Boolean((stockFilters as any)?.stock_broad);
+  // "SIM" a um PING DE FOLLOW-UP ("ainda está por aí?" / "conseguiu dar uma olhada?") é confirmação de
+  // PRESENÇA, NÃO aceite de foto (lead 3199-6370: follow-up perguntou presença, lead disse "Sim" e o agente
+  // RE-DESPEJOU 5 fotos). O planner marca esse "Sim" como photo_request. Bloqueia a foto (a não ser que o
+  // lead tenha pedido foto EXPLÍCITA na mesma msg) e deixa re-engajar. Aceitar OFERTA DE FOTO segue normal.
+  const _lastAgentMsgForPhoto = (Array.isArray(recentHistory) ? recentHistory : [])
+    .filter((h: any) => { const r = String(h?.role || h?.direction || "").toLowerCase(); return r === "assistant" || r === "agent" || r === "ai" || r === "bot"; })
+    .map((h: any) => String(h?.content || h?.text || h?.message || ""))
+    .pop() || "";
+  const _affirmFollowupPing = !leadAskedPhotosExplicitly && leadAffirmsPresenceToFollowupPing(text, _lastAgentMsgForPhoto);
   // Modo assistente NUNCA envia fotos (roteia pro vendedor dono) — vale ate quando o lead
   // pede fotos explicitamente. E NUNCA envia quando o topico e ambiguo (pool velho
   // heterogeneo + pedido so por cor): pedir esclarecimento e mais seguro que chutar
   // um modelo errado. E NUNCA quando o lead claramente quer OUTRA coisa (_blockPhotoOffTopic).
   const shouldSendVehiclePhotos = !ownedLeadAssistantMode && !topicIsAmbiguous && !_blockPhotoOffTopic
-    && !_broadCategoryBrowse
+    && !_broadCategoryBrowse && !_affirmFollowupPing
     && (brainPlan.action === "photo_request"
     || (leadAskedPhotosExplicitly && photoVehiclesPool.length > 0 && !_genericPhotoBlast));
 
@@ -1942,6 +1952,17 @@ export async function processPedroV2Turn(
         reply_provider_override: dryRun ? ((input.payload as any)?.reply_provider ?? null) : null,
         reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
       });
+
+  // "SIM" a um PING DE FOLLOW-UP de presença -> RE-ENGAJA, nunca re-despeja foto (ver _affirmFollowupPing).
+  if (_affirmFollowupPing) {
+    reply = {
+      ok: true,
+      text: "Que bom que está por aí! 😊 Quer que eu te passe mais detalhes de algum dos carros que te mandei, ou prefere que eu te mostre outras opções?",
+      source: "followup_ping_reengage",
+      media: [],
+    } as any;
+    log("info", "pedro_v2_followup_ping_affirm_reengage", { lead_id: lead?.id || null });
+  }
 
   if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
     // PICK EXPLÍCITO POR ORDINAL ("foto do 3") é AUTORITATIVO — o lead escolheu pela POSIÇÃO na lista, não há
@@ -2526,7 +2547,7 @@ export async function processPedroV2Turn(
       const _VERBATIM_SOURCES = [
         "trade_collecting", "visit_schedule_qualify", "visit_cpf_qualify", "ad_generic_abordagem",
         "vehicle_photos_pick_which", "vehicle_photos_need_reference", "vehicle_photos_ambiguous_model",
-        "lone_emoji_no_transfer", "presend_fixed_no_photo_promise",
+        "lone_emoji_no_transfer", "presend_fixed_no_photo_promise", "followup_ping_reengage",
       ];
       const _looksLikeList = /\n\s*\d+[.)]\s/.test(String(reply.text || ""));
       const preserveFormatting = _LIST_SOURCES.includes(reply.source) || _VERBATIM_SOURCES.includes(reply.source) || _looksLikeList;

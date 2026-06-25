@@ -55,6 +55,7 @@ import {
   replyIsGracefulClose,
   leadAsksInfoQuestion,
   leadAffirmsSchedulingQuestion,
+  leadAffirmsPresenceToFollowupPing,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -315,6 +316,11 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("sdr", "'vcs tem carro pra negativado' É pergunta (casual sem ?)", leadAsksInfoQuestion("vcs tem carro pra negativado dando entrada") === true);
     check("sdr", "'qual o valor do onix' É pergunta", leadAsksInfoQuestion("qual o valor do onix") === true);
     check("sdr", "'vcs financiam?' É pergunta", leadAsksInfoQuestion("vcs financiam?") === true);
+    // ⭐"SIM" a PING DE FOLLOW-UP = presença, NÃO foto (lead 3199-6370: "ainda está por aí?"→"Sim"→5 fotos)
+    check("sdr", "'Sim' a 'Ainda está por aí?' = presença (não foto)", leadAffirmsPresenceToFollowupPing("Sim", "Ainda está por aí?") === true);
+    check("sdr", "'to aqui' a 'Conseguiu dar uma olhada?' = presença", leadAffirmsPresenceToFollowupPing("to aqui", "Conseguiu dar uma olhada nas opções que mandei?") === true);
+    check("sdr", "'Sim, manda as fotos' a ping NÃO é só presença (pediu foto)", leadAffirmsPresenceToFollowupPing("Sim, manda as fotos", "Ainda está por aí?") === false);
+    check("sdr", "'Sim' a OFERTA DE FOTO ('quer ver fotos?') NÃO é ping de presença", leadAffirmsPresenceToFollowupPing("Sim", "Quer ver fotos de algum desses?") === false);
   }
 
   // ── VISITA: lead confirma a pergunta de agendamento -> colher dia/hora (lead 98198-7661) ──

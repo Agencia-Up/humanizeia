@@ -312,6 +312,22 @@ export function leadAffirmsSchedulingQuestion(leadText?: string | null, lastAgen
   return /^(sim|isso|claro|quero|pode ser|pode sim|pode|bora|vamos|com certeza|aceito|ok|okay|blz|beleza|por mim|perfeito|fechado|tranquilo|uhum|aham|isso mesmo|gostaria|quero sim|sim quero|quero agendar|vamos agendar)\b/.test(t);
 }
 
+// "Sim"/"ok"/"to aqui" respondendo a um PING DE FOLLOW-UP ("Ainda está por aí?", "Conseguiu dar uma olhada?")
+// é confirmação de PRESENÇA — NÃO é aceite de foto/oferta. O planner às vezes marca esse "Sim" como
+// action=photo_request e o agente RE-DESPEJA o álbum (lead 3199-6370: follow-up "ainda está por aí?" → lead
+// "Sim" → 5 fotos de novo). Diferente de aceitar uma OFERTA DE FOTO ("quer ver fotos?"→"sim"), que segue
+// normal. Só dispara em msg CURTA de presença/afirmação, sem pedir foto/preço/outro carro. PURO.
+export function leadAffirmsPresenceToFollowupPing(leadText?: string | null, lastAgentText?: string | null): boolean {
+  const a = normalizePlannerText(lastAgentText);
+  const t = normalizePlannerText(leadText);
+  if (!a || !t) return false;
+  const lastIsFollowupPing = /ainda esta por ai|conseguiu dar uma olhada|ainda tem interesse|ainda posso (te )?ajudar|posso (te )?ajudar com mais|ainda esta ai|^e ai|o que (voce |vc )?achou|continua interessad/.test(a);
+  if (!lastIsFollowupPing) return false;
+  if (t.length > 26) return false;                                  // afirmação CURTA de presença
+  if (/\b(foto|fotos|imagem|imagens|manda|mandar|envia|enviar|mostra|ver|preco|valor|quanto|outr|mais opc|model|agend|visit)\b/.test(t)) return false;
+  return /^(sim|isso|claro|ok|okay|aham|uhum|positivo|certo|to aqui|estou aqui|estou|to|sigo aqui|sigo|aqui|presente|continuo|to sim|estou sim|sim sim|ainda estou|ainda to|opa|oi)\b/.test(t);
+}
+
 // ── FUNIL FORÇADO: próxima pergunta obrigatória do funil do CLIENTE ainda não respondida ─────────────
 // O dono pediu pra FORÇAR o funil que está no prompt do cliente (o LLM barato não conduz sozinho). Lemos
 // o funil ESTRUTURADO (agent_funnel_config.bloco4_qualificacao.questions, na ordem do cliente), mapeamos
