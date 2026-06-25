@@ -1944,7 +1944,12 @@ export async function processPedroV2Turn(
       });
 
   if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
-    const requestedPhotoQuery = requestedVehicleQueryForMediaGuard(brainPlan, vehicleResolution, stockFilters);
+    // PICK EXPLÍCITO POR ORDINAL ("foto do 3") é AUTORITATIVO — o lead escolheu pela POSIÇÃO na lista, não há
+    // MODELO a "casar". O requestedPhotoQuery (que o planner às vezes resolve pro carro ERRADO, ex.: o #1)
+    // fazia o guard BLOQUEAR o pick correto E AINDA CITAR o carro errado (lead 3199-6370: "foto do 3" = Onix
+    // virou "vou confirmar as fotos do Ford Focus" e não mandou nada). Num pick por ordinal, confia e manda.
+    const _explicitOrdinalPick = (reply as any).selected_vehicle_reason === "explicit_ordinal";
+    const requestedPhotoQuery = _explicitOrdinalPick ? null : requestedVehicleQueryForMediaGuard(brainPlan, vehicleResolution, stockFilters);
     if (requestedPhotoQuery && !vehicleMatchesRequestedQuery((reply as any).vehicle, requestedPhotoQuery)) {
       log("warn", "pedro_v2_media_vehicle_mismatch_blocked", {
         lead_id: lead?.id || null,

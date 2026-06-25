@@ -448,6 +448,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // (c) MESMO com âncora do pool = LT (1o), a CONTINUAÇÃO (ultima_foto=LTZ) deve vencer — bug real prod.
   const f5b = buildVehiclePhotoReply({ veiculos_apresentados: _onixPool(), ultima_foto: { veiculo_key: _ltzKey } }, "foto do painel", _onixPool()[0]);
   check("fluxo_foto", "'foto do painel' com âncora=LT mas última-foto=LTZ -> continua no LTZ", f5b.source === "vehicle_photos_reply" && /preto/i.test(String(f5b.vehicle?.cor)));
+  // ⭐ORDINAL "foto do 3" (lead 3199-6370: pediu o #3=Onix, agente foi confirmar o #1=Ford Focus e não mandou):
+  // 3 sedans distintos -> manda o 3o (Onix) por ordinal, com reason 'explicit_ordinal' (o que o guard de
+  // mismatch usa pra NÃO bloquear o pick por posição).
+  const _sedanPool = [
+    { marca: "Ford", modelo: "Focus", ano: 2017, fotos: ["fo-1.jpg", "fo-2.jpg"] },
+    { marca: "Ford", modelo: "Ka Sedan", ano: 2019, fotos: ["ka-1.jpg"] },
+    { marca: "Chevrolet", modelo: "Onix Sedan", ano: 2025, fotos: ["on-1.jpg", "on-2.jpg"] },
+  ];
+  const fOrd = buildVehiclePhotoReply({ veiculos_apresentados: _sedanPool }, "Quero foto do 3");
+  check("fluxo_foto", "'foto do 3' -> 3o veículo (Onix) por ordinal + reason explicit_ordinal", fOrd.source === "vehicle_photos_reply" && /onix/i.test(String(fOrd.vehicle?.modelo)) && fOrd.selected_vehicle_reason === "explicit_ordinal");
   // sem foco + part-request + 2 unidades -> ambíguo, pergunta (correto)
   const f6 = _phr("foto do painel");
   check("fluxo_foto", "'foto do painel' SEM foco + 2 unidades -> pergunta qual", f6.source === "vehicle_photos_pick_which");
