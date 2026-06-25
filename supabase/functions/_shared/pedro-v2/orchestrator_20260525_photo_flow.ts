@@ -2678,13 +2678,21 @@ export async function processPedroV2Turn(
     .map((h: any) => String(h?.content || h?.text || h?.message || ""))
     .pop() || "";
   const _visitBuyIntent = leadExpressesVisitOrBuyIntent(text) || leadAffirmsSchedulingQuestion(text, _lastAgentMsg);
+  // VISITA = COLETA EM 2 ETAPAS antes de transferir (decisão do dono: dia + hora + nome + CPF). Cada etapa
+  // intercepta a transferência prematura; só LIBERA o handoff quando tem agendamento E CPF. Anti-loop: cada
+  // etapa pergunta SÓ 1x (marca *_solicitado); se o lead não der, na 2ª vez deixa transferir (não trava).
   const _hasSchedule = Boolean((_q as any)?.dia_agendamento || (effectiveMemory as any)?.atendimento?.dia_agendamento);
-  const _alreadyAskedSchedule = Boolean((effectiveMemory as any)?.atendimento?.agendamento_solicitado);
-  if (!ownedLeadAssistantMode && _visitBuyIntent && reply?.pronto_para_transferir === true
+  const _hasCpf = Boolean((_q as any)?.cpf || (effectiveMemory as any)?.qualificacao?.cpf);
+  const _askedSchedule = Boolean((effectiveMemory as any)?.atendimento?.agendamento_solicitado);
+  const _askedCpf = Boolean((effectiveMemory as any)?.atendimento?.cpf_solicitado);
+  // Em fluxo de visita = o lead expressou/confirmou agendar OU já começamos a colher (perguntamos o dia).
+  const _inVisitFlow = _visitBuyIntent || _askedSchedule;
+  const _visitFlowActive = !ownedLeadAssistantMode && _inVisitFlow && reply?.pronto_para_transferir === true
       && reply?.transferir_silencioso !== true
       && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced"
-      && contextualIntent?.needs_handoff !== true
-      && !_hasSchedule && !_alreadyAskedSchedule) {
+      && contextualIntent?.needs_handoff !== true;
+  if (_visitFlowActive && !_hasSchedule && !_askedSchedule) {
+    // ETAPA 1 — dia/hora (+ nome se faltar)
     const _nm = (_q?.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
     const _nmValido = Boolean(_nm) && /[a-zà-ÿ]{2,}/i.test(_nm) && !["cliente", "lead"].includes(_nm.toLowerCase());
     reply.pronto_para_transferir = false;
@@ -2695,6 +2703,14 @@ export async function processPedroV2Turn(
     reply.source = "visit_schedule_qualify";
     (memoryAfterReply as any).atendimento = { ...((memoryAfterReply as any)?.atendimento || {}), agendamento_solicitado: true };
     log("info", "pedro_v2_visit_schedule_qualify", { lead_id: lead?.id || null, has_name: _nmValido });
+  } else if (_visitFlowActive && _hasSchedule && !_hasCpf && !_askedCpf) {
+    // ETAPA 2 — CPF (decisão do dono: deixar o cadastro pronto pro vendedor agilizar a visita)
+    reply.pronto_para_transferir = false;
+    reply.text = `Show, já anotei seu horário! 😊 Por último, me passa seu CPF? É só pra eu já deixar seu cadastro pronto pro consultor — assim ele agiliza tudo na sua visita.`;
+    reply.media = [];
+    reply.source = "visit_cpf_qualify";
+    (memoryAfterReply as any).atendimento = { ...((memoryAfterReply as any)?.atendimento || {}), cpf_solicitado: true };
+    log("info", "pedro_v2_visit_cpf_qualify", { lead_id: lead?.id || null });
   }
 
   // COLETA DA TROCA EM ANDAMENTO -> NÃO transferir nem encerrar AGORA (último guard antes do handoff). O
