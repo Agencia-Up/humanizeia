@@ -485,6 +485,18 @@ async function transcribeAudioMedia(audioData?: string | null, openaiKey?: strin
     form.append("model", "whisper-1");
     form.append("language", "pt");
     form.append("response_format", "json");
+    // PROMPT de domínio: enviesa o Whisper pros TERMOS de loja de carros. Sem isto, "Hilux" virava
+    // "Array Lux"/"Reilux", "Toro" virava "touro", etc. (caso real 99742-3538: o agente não entendia que
+    // o lead queria uma Hilux). Listar marcas/modelos/jargão melhora MUITO o reconhecimento desses nomes.
+    form.append(
+      "prompt",
+      "Áudio de um cliente numa loja de carros seminovos no Brasil. Modelos e marcas comuns: Toyota Hilux, "
+        + "Fiat Toro, Fiat Strada, Fiat Pulse, Fiat Argo, Fiat Cronos, Fiat Mobi, Chevrolet Onix, Onix Plus, "
+        + "Tracker, S10, Spin, Hyundai HB20, Creta, Jeep Renegade, Compass, Volkswagen Gol, Polo, Virtus, T-Cross, "
+        + "Nivus, Saveiro, Renault Duster, Kwid, Sandero, Oroch, Toyota Corolla, Honda Civic, HR-V, Ford Ranger, Ka, "
+        + "Peugeot 208, 2008, Nissan Kicks, Frontier, Mitsubishi L200, Pajero. Ele fala de picape, caminhonete, SUV, "
+        + "sedã, hatch, câmbio automático, financiamento, entrada, troca, quilometragem, tabela FIPE, ano e modelo.",
+    );
     form.append("file", blob, "audio.ogg");
 
     const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
