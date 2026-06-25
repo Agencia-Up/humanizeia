@@ -507,6 +507,21 @@ async function handleV2Followup(supabase: any, ctx: {
   // transferencia estiver ativa. Senao: manda SO a despedida e para (lead fica
   // sem vendedor). `stage < 3` evita reenviar a despedida a cada ciclo do cron.
   if (elapsedMin >= rules.followup.t3_min && stage < 3) {
+    // ── GATE DE CONECTIVIDADE (fix transferencia-fantasma) ───────────────────────
+    // Manda a despedida ao LEAD PRIMEIRO e so prossegue se ela foi ENTREGUE. Se o envio
+    // falhar (WhatsApp da loja offline / "session not reconnectable"), ADIA tudo: nao
+    // transfere no CRM, nao grava historico, nao avanca o stage -> a proxima rodada tenta
+    // de novo quando reconectar. Antes: T3 transferia o lead + gravava a despedida MESMO
+    // com o envio falhando (enquanto T1/T2 validavam o envio e ficavam presos no stage 0),
+    // entao o catch-up pulava direto pra ca e movia o lead no CRM sem ninguem ser avisado.
+    const { text: bye, usage: byeUsage } = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
+    await logFollowupAi(byeUsage);
+    if (!(await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, bye))) {
+      console.warn(`[CronFollowup] T3 lead ${lead.id}: despedida NAO enviada (WhatsApp provavelmente offline). Adiando transferencia — CRM/historico intocados.`);
+      return;
+    }
+    await logChat(bye);
+
     const doTransfer = rules.followup.t3_transfers && rules.transfer.enabled;
     if (doTransfer) {
     const { data: updatedRows } = await supabase.from("ai_crm_leads")
@@ -603,10 +618,6 @@ async function handleV2Followup(supabase: any, ctx: {
       try { await setSdrLabelOnChat({ api_url: baseUrl, api_key_encrypted: instKey }, phoneNumber, _sdrCat); } catch (_e) { /* nao bloqueante */ }
     }
     } // fim do if (doTransfer)
-    const { text: bye, usage: byeUsage } = await generateFollowupText({ kind: "farewell", agentName, companyName, persona, leadName, recentTurns });
-    await logFollowupAi(byeUsage);
-    await sendUazapiTextMessage(baseUrl, instKey, instanceName, phoneNumber, remoteJid, bye);
-    await logChat(bye);
     await saveStage(3);
     return;
   }
@@ -857,37 +868,19 @@ Deno.serve(async (req) => {
           const nextSeller = availableSellers[0];
           console.log(`[Cron] Repassando lead ${lead.id} de ${expiredSeller?.name || currentSellerId} para ${nextSeller.name} (nao respondeu em 10min).`);
 
-          // Atualizar lead com novo vendedor
-          await supabase.from('ai_crm_leads').update({
-            assigned_to_id: null,
-            status: 'transferido',
-          }).eq('id', lead.id).in('status', ['qualificado', 'transferido']);
-
-          // Atualizar timestamp do novo vendedor
-          await supabase.from('ai_team_members').update({
-            last_lead_received_at: now.toISOString(),
-          }).eq('id', nextSeller.id);
-
-          // Criar nova transferencia para o proximo vendedor
-          await supabase.from('ai_lead_transfers').insert({
-            user_id: lead.user_id,
-            lead_id: lead.id,
-            from_member_id: currentSellerId,
-            to_member_id: nextSeller.id,
-            transfer_reason: 'Rodizio por Inatividade do Vendedor (10min)',
-            notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em 10 minutos`,
-            transfer_status: 'pending',
-            is_confirmed: false,
-            confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
-          });
-
-          // Notificar proximo vendedor
+          // ── NOTIFICA O PROXIMO VENDEDOR PRIMEIRO (gate anti-repasse-fantasma, #2) ──────
+          // So reatribui o lead no CRM se conseguir AVISAR o proximo vendedor. Se o envio
+          // falhar (instancia da loja offline), NAO reatribui: devolve a transferencia atual
+          // pra pending e tenta de novo na proxima rodada. Antes: reatribuia no CRM e a
+          // notificacao (sem validacao) se perdia -> o proximo vendedor nunca sabia do lead.
           const agentData = lead.wa_ai_agents;
           let targetInstanceId = agentData?.instance_id;
           if (!targetInstanceId && agentData?.instance_ids?.length > 0) targetInstanceId = agentData.instance_ids[0];
           const instance = allInstances?.find((i: any) => i.id === targetInstanceId);
 
-          if (instance && nextSeller.whatsapp_number) {
+          let nextNotified = false;
+          const nextHasNumber = Boolean(instance && nextSeller.whatsapp_number);
+          if (nextHasNumber) {
             const baseUrl = instance.api_url?.replace(/\/$/, '');
             const instKey = instance.api_key_encrypted || instance.api_key;
             const cleanSellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
@@ -935,9 +928,50 @@ Deno.serve(async (req) => {
 
             const notificationMsg = `*LEAD REPASSADO (Vendedor anterior nao respondeu em 10min)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n${leadTransferStatusLine("repassado")}\n*Numero:* +${phoneNumber}${veiculoInteresseRep ? `\n🚗 *Veículo:* ${veiculoInteresseRep}` : ""}\n*Agente IA:* ${agentData?.name || 'Assistente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
-            await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
-            console.log(`[Cron] Notificacao enviada para ${nextSeller.name}.`);
+            nextNotified = await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
+            if (nextNotified) console.log(`[Cron] Notificacao enviada para ${nextSeller.name}.`);
           }
+
+          // Instancia offline (tinha numero mas o envio falhou) -> NAO reatribui. Devolve a
+          // transferencia atual pra pending (retry na proxima rodada) e loga a falha. Sem
+          // numero = problema de config (nao e desconexao) -> segue o fluxo pra nao travar.
+          if (nextHasNumber && !nextNotified) {
+            console.warn(`[Cron] Lead ${lead.id}: falha ao notificar ${nextSeller.name} (WhatsApp da loja offline?). Revertendo expire pra pending — reatribuicao adiada.`);
+            await supabase.from('ai_lead_transfers').update({ transfer_status: 'pending' }).eq('id', transfer.id);
+            await logTransferFailure({
+              user_id: lead.user_id, reason_code: 'notificacao_falhou', mode: 'pedro',
+              lead_id: lead.id, agent_id: agentId, member_id: nextSeller.id,
+              lead_name: lead.lead_name, remote_jid: lead.remote_jid, attempted_transfer: true,
+              source: 'cron-lead-followup',
+              reason_detail: 'Rodizio: envio da notificacao ao proximo vendedor falhou (instancia provavelmente offline). Reatribuicao adiada.',
+            });
+            continue;
+          }
+
+          // Notificado (ou sem numero) -> COMMIT a reatribuicao no CRM:
+          // Atualizar lead com novo vendedor
+          await supabase.from('ai_crm_leads').update({
+            assigned_to_id: null,
+            status: 'transferido',
+          }).eq('id', lead.id).in('status', ['qualificado', 'transferido']);
+
+          // Atualizar timestamp do novo vendedor
+          await supabase.from('ai_team_members').update({
+            last_lead_received_at: now.toISOString(),
+          }).eq('id', nextSeller.id);
+
+          // Criar nova transferencia para o proximo vendedor
+          await supabase.from('ai_lead_transfers').insert({
+            user_id: lead.user_id,
+            lead_id: lead.id,
+            from_member_id: currentSellerId,
+            to_member_id: nextSeller.id,
+            transfer_reason: 'Rodizio por Inatividade do Vendedor (10min)',
+            notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em 10 minutos`,
+            transfer_status: 'pending',
+            is_confirmed: false,
+            confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
+          });
         }
       } else {
         console.log('[Cron] Nenhuma transferencia pendente com timeout.');
