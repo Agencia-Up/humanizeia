@@ -531,7 +531,13 @@ export function buildStockFilters(intent: any, memory: any, text: string, brainP
   // marca pedida EXPLICITAMENTE (marca_required, Pilar B) NAO e busca ampla — senao o broadStock
   // APAGA a marca abaixo e "so se for Honda" vira sedan generico de qualquer marca (lead 99627-7728).
   const _marcaRequired = Boolean(brainPlan?.search_filters?.marca_required);
-  const broadStock = !_marcaRequired && Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
+  // MODELO NOMEADO vence a heurística de "busca ampla" (lead 99758-5303): o lead pediu "Onix plus sedan",
+  // o planner extraiu modelo_desejado="Chevrolet Onix" certinho, MAS leadMessageAsksBroadStock viu a palavra
+  // "sedan" e marcou broad -> as linhas abaixo APAGAVAM o modelo -> devolvia sedans aleatórios (Focus/Ka/
+  // Cronos) com "Temos sim!". Se há MODELO nomeado (plano/intent), NÃO é busca ampla de tipo. O stock_broad
+  // EXPLÍCITO do planner (categoria, v134) já vem com modelo_desejado=null -> não é afetado por este guard.
+  const _hasNamedModel = Boolean(brainPlan?.search_query || brainPlan?.search_filters?.modelo_desejado || intent?.extracted?.interesse?.modelo_desejado);
+  const broadStock = !_marcaRequired && !_hasNamedModel && Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
   // MEM-1: NAO herdar filtros VELHOS do interesse (preco/tipo/cambio/cor/modelo) quando o turno
   // ATUAL nomeia um MODELO novo. Sem isso, um interesse de uma busca ANTERIOR (ex.: suv ate 80k)
   // contaminava a busca nova (ex.: "tem hilux?" herdava preco_max:80000) e filtrava/zerava errado.

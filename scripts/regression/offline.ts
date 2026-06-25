@@ -702,6 +702,15 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     { lead_message: "tem hilux?" },
   );
   check("filtros", "MEM-1: não herda preço velho em modelo novo", !(Number(f4.preco_max) > 0), `preco_max=${f4.preco_max}`);
+
+  // ⭐MODELO NOMEADO + palavra de tipo ("Onix plus sedan", lead 99758-5303): leadMessageAsksBroadStock vê
+  // "sedan" e marcaria broad, MAS há modelo -> NÃO apaga o Onix (era: "Temos sim!" + Focus/Ka/Cronos errados).
+  const f5 = buildStockFilters(
+    { extracted: { interesse: { modelo_desejado: "Chevrolet Onix" } } }, {}, "gostaria de um onix plus sedan",
+    { search_query: "Chevrolet Onix", search_filters: { modelo_desejado: "Chevrolet Onix", tipo_veiculo: "sedan" } }, {},
+    { lead_message: "gostaria de um onix plus sedan" },
+  );
+  check("filtros", "modelo nomeado + 'sedan' NÃO vira busca ampla (mantém Onix)", f5.stock_broad !== true && /onix/i.test(String(f5.query || "")), `broad=${f5.stock_broad} query=${JSON.stringify(f5.query)}`);
 }
 
 // ── DETECTORES (extraídos) — regex de decisão que dispararam bugs ───────────────────────────
