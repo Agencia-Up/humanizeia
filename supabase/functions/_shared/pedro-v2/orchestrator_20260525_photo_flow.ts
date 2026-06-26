@@ -286,6 +286,33 @@ function pruneCtwaAd(ear: any): Record<string, any> | null {
 function payloadWithRecoveredAd(basePayload: any, prunedEar: Record<string, any>): any {
   return { ...(basePayload && typeof basePayload === "object" ? basePayload : {}), externalAdReply: prunedEar };
 }
+// Procura a 1a URL de imagem de ANUNCIO (fb/ig CDN) em qualquer lugar do payload. A foto do anuncio
+// costuma vir como MEDIA da msg; restringir ao CDN de anuncios (fbcdn/scontent/cdninstagram/ads-image)
+// evita pescar selfie/foto de perfil do lead (pps.whatsapp.net) e tratar como "carro do anuncio".
+function _firstAdImageUrl(value: any, depth = 0): string | null {
+  if (!value || depth > 8) return null;
+  if (typeof value === "string") {
+    return /^https?:\/\//i.test(value) && /(?:fbcdn|scontent|cdninstagram|\/ads\/image)/i.test(value) ? value : null;
+  }
+  if (Array.isArray(value)) {
+    for (const it of value) { const f = _firstAdImageUrl(it, depth + 1); if (f) return f; }
+    return null;
+  }
+  if (typeof value === "object") {
+    for (const v of Object.values(value)) { const f = _firstAdImageUrl(v, depth + 1); if (f) return f; }
+  }
+  return null;
+}
+// Injeta a imagem do anuncio em externalAdReply.thumbnailUrl (campo que resolvePedroAdContext varre)
+// p/ a VISAO (gpt-4o le o carro DA IMAGEM) rodar. Preserva os campos do anuncio ja presentes e nao
+// sobrescreve thumbnail/media existente (texto do anuncio com veiculo continua vencendo a visao).
+function withAdImageThumbnail(payload: any, imageUrl: string): any {
+  const ear = (deepFindExternalAdReply(payload)
+    || (payload && typeof payload === "object" ? payload.externalAdReply : null)
+    || {}) as Record<string, any>;
+  if (ear.thumbnailUrl || ear.mediaUrl || ear.thumbnail) return payload; // ja tem imagem -> nao mexe
+  return { ...(payload && typeof payload === "object" ? payload : {}), externalAdReply: { ...ear, thumbnailUrl: imageUrl } };
+}
 
 function mergeBrainPlanIntoIntent(intent: any, brainPlan: any, vehicleResolution: any) {
   const interestPatch = vehicleResolution?.query
@@ -1138,7 +1165,15 @@ export async function processPedroV2Turn(
   // o ultimo turno do agente). Sem isso, "Ola tenho interesse"+"Bom dia"+"Quantos km" perdia o
   // veiculo do anuncio (bug real lead Pulse Audace).
   let _adResolvePayload = input.payload;
-  if (!deepFindExternalAdReply(input.payload) && lead?.id) {
+  // A IMAGEM do anuncio (fb/ig CDN) chega como MEDIA da msg (metadata.media), SEPARADA do TEXTO do
+  // anuncio (ctwa_ad — pruneCtwaAd descarta o thumbnail ao salvar). A VISAO do adContext (gpt-4o le o
+  // carro DA IMAGEM) so roda se a imagem chegar ao resolvePedroAdContext. Em anuncio de TEXTO GENERICO
+  // ("Veiculos revisados") + imagem de um carro ESPECIFICO (ex.: foto de uma Hilux branca), sem a
+  // imagem o agente NUNCA identifica o veiculo do anuncio e despeja lista generica (lead real 9742-6008).
+  // Recupera a imagem (do payload atual OU do burst) e injeta no payload p/ a visao identificar o veiculo.
+  let _adImageUrl: string | null = _firstAdImageUrl(input.payload);
+  const _inlineAd = deepFindExternalAdReply(input.payload);
+  if (lead?.id && (!_inlineAd || !_adImageUrl)) {
     try {
       const { data: _recent } = await supabase
         .from("wa_chat_history")
@@ -1147,14 +1182,22 @@ export async function processPedroV2Turn(
         .order("created_at", { ascending: false }).limit(12);
       for (const row of _recent || []) {
         if (String(row?.role) === "assistant") break; // so o burst atual (nao anuncio de conversa ja respondida)
-        const _savedAd = (row?.metadata as any)?.ctwa_ad;
-        if (_savedAd) {
-          _adResolvePayload = payloadWithRecoveredAd(input.payload, _savedAd);
+        const _md = (row?.metadata as any) || {};
+        if (!_adImageUrl) {
+          const _u = _md?.media?.[0]?.url;
+          if (typeof _u === "string" && /(?:fbcdn|scontent|cdninstagram|\/ads\/image)/i.test(_u)) _adImageUrl = _u;
+        }
+        if (!_inlineAd && _md?.ctwa_ad) {
+          _adResolvePayload = payloadWithRecoveredAd(input.payload, _md.ctwa_ad);
           log("info", "pedro_v2_ctwa_ad_recovered_from_burst", { lead_id: lead.id });
-          break;
+          break; // ctwa_ad + imagem ficam na MESMA msg (1a do burst); a imagem ja foi capturada acima
         }
       }
     } catch (_e) { /* recuperacao best-effort: nunca derruba o turno */ }
+  }
+  // Garante que a imagem do anuncio chegue ao adContext (thumbnailUrl) p/ a visao rodar no anuncio generico+imagem.
+  if (_adImageUrl && deepFindExternalAdReply(_adResolvePayload)) {
+    _adResolvePayload = withAdImageThumbnail(_adResolvePayload, _adImageUrl);
   }
   // BLINDAGEM: o enriquecimento do anuncio (fetch da pagina FB + inferencia LLM) e OPCIONAL — se
   // lancar, NUNCA pode derrubar o turno (lead de anuncio ficaria SEM resposta, caso real Maria Rosa/
