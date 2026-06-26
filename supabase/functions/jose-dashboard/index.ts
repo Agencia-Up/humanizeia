@@ -21,6 +21,22 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-jose-cron, x-user-id",
 };
 
+function isServiceRoleRequest(authHeader: string, serviceKey: string): boolean {
+  if (!authHeader) return false;
+  if (serviceKey && authHeader.includes(serviceKey)) return true;
+  try {
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const payloadPart = token.split(".")[1] || "";
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
+    const payload = JSON.parse(atob(padded));
+    const ref = (Deno.env.get("SUPABASE_URL") || "").match(/https:\/\/([a-z0-9]+)\.supabase/)?.[1];
+    return payload.role === "service_role" && (!ref || payload.ref === ref) && (!payload.exp || payload.exp * 1000 > Date.now());
+  } catch (_e) {
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "content-type": "application/json" } });
@@ -32,7 +48,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({} as any));
 
     // Resolve o tenant: cron (service role) confia no x-user-id; senão valida o JWT.
-    const isCron = req.headers.get("x-jose-cron") === "true" && authHeader.includes(serviceKey);
+    const isCron = req.headers.get("x-jose-cron") === "true" && isServiceRoleRequest(authHeader, serviceKey);
     let userId: string | undefined;
     if (isCron) {
       userId = req.headers.get("x-user-id") || body?.user_id;

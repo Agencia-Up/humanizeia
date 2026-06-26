@@ -18,6 +18,11 @@ import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
 // DADOS são os mesmos; mudou só a apresentação.
 const db = supabase as any;
 
+interface CabineCardsProps {
+  configActions?: Array<{ key: string; label: string; icon: ReactNode; content: ReactNode }>;
+  adAccountId?: string | null;
+}
+
 interface Cards {
   periodo: string; moeda: string;
   gasto: number; impressoes: number; cliques: number;
@@ -378,7 +383,25 @@ function JoseToolsButtons({ configActions, cards, reload }: {
   );
 }
 
-export function CabineCards({ configActions }: { configActions?: Array<{ key: string; label: string; icon: ReactNode; content: ReactNode }> } = {}) {
+async function edgeErrorMessage(error: any) {
+  const fallback = error?.message || String(error || 'erro desconhecido');
+  const context = error?.context;
+  try {
+    if (context?.json) {
+      const body = await context.json();
+      return body?.error || body?.message || fallback;
+    }
+    if (context?.text) {
+      const text = await context.text();
+      return text || fallback;
+    }
+  } catch (_e) {
+    return fallback;
+  }
+  return fallback;
+}
+
+export function CabineCards({ configActions, adAccountId }: CabineCardsProps = {}) {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(true);
   const { user } = useAuth();
@@ -387,18 +410,45 @@ export function CabineCards({ configActions }: { configActions?: Array<{ key: st
   const [desde, setDesde] = useState('');
   const [ate, setAte] = useState('');
 
+  const loadSnapshotFallback = useCallback(async () => {
+    try {
+      let query = db
+        .from('jose_dashboard_snapshots')
+        .select('payload, computed_at')
+        .order('computed_at', { ascending: false })
+        .limit(1);
+
+      if (adAccountId) query = query.eq('ad_account_id', adAccountId);
+
+      const { data, error } = await query.maybeSingle();
+      if (error || !data?.payload) return false;
+
+      setEnabled(true);
+      setCards(data.payload as Cards);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }, [adAccountId]);
+
   const load = useCallback(async (body: { date_preset?: string; time_range?: { since: string; until: string } }) => {
     setLoading(true);
     try {
-      const { data, error } = await db.functions.invoke('jose-dashboard', { body });
+      const requestBody = adAccountId ? { ...body, ad_account_id: adAccountId } : body;
+      const { data, error } = await db.functions.invoke('jose-dashboard', { body: requestBody });
       if (error) throw error;
       setEnabled(data?.enabled !== false);
       setCards(data?.cards || null);
     } catch (e: any) {
-      toast.error('Não consegui carregar a Cabine: ' + (e?.message || e));
-      setCards(null);
+      const recovered = await loadSnapshotFallback();
+      if (recovered) {
+        toast.warning('Cabine ao vivo indisponivel; mostrei o ultimo relatorio salvo.');
+      } else {
+        toast.error('Não consegui carregar a Cabine: ' + await edgeErrorMessage(e));
+        setCards(null);
+      }
     } finally { setLoading(false); }
-  }, []);
+  }, [adAccountId, loadSnapshotFallback]);
 
   // FILTRO MESTRE: o período vira UMA janela {since,until} (BRT) e governa TUDO — manda o mesmo
   // time_range pro server (cards/anúncios) e desce pro painel de Tráfego. Custom só vale com as 2 datas.

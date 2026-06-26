@@ -1227,6 +1227,7 @@ export default function ApolloDashboard() {
   const prevIsAnalyzing = useRef(false);
 
   const accountId = connectedAccount?.account_id;
+  const accountDbId = connectedAccount?.id;
 
   // ── Restaura o estado no mount: cache LOCAL primeiro (instantâneo, ZERO chamada
   //    à Meta), senão a última sessão salva no BANCO. NUNCA dispara analyze. ──
@@ -1576,6 +1577,7 @@ export default function ApolloDashboard() {
             {/* Os botões de config + ferramentas ficam DENTRO do card "Período da campanha" (na
                 CabineCards). O chat virou o botão chamativo do header (modal acima). */}
             <CabineCards
+              adAccountId={accountDbId}
               configActions={[
                 {
                   key: 'config',
@@ -2177,7 +2179,7 @@ export default function ApolloDashboard() {
             </TabsContent>
 
             <TabsContent value="cabine" className="mt-4">
-              <CabineCards />
+              <CabineCards adAccountId={accountDbId} />
             </TabsContent>
           </Tabs>
         )}
