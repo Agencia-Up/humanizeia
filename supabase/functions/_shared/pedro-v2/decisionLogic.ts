@@ -186,14 +186,22 @@ export function clearRejeitadoOnRequest(rejeitados: { modelos?: string[]; tipos?
 export function buildConversationState(memory?: any, adContext?: any) {
   const m = memory || {};
   const int = m.interesse || {};
+  const neg = m.negociacao || {};        // ⭐shape REAL salvo pelo agente (lead.nome/negociacao/atendimento)
+  const at = m.atendimento || {};        // ⭐
+  const lead = m.lead || {};             // ⭐
   const apres = Array.isArray(m.veiculos_apresentados) ? m.veiculos_apresentados : [];
   const rej = m.rejeitados || { modelos: [], tipos: [] };
-  const nome = m.lead_name || int.nome || null;
-  const troca = int.trade_in_vehicle || m.trade_in_vehicle || int.carro_troca || null;
-  const pagamento = int.forma_pagamento || int.pagamento || null;
-  const agendamento = int.dia_agendamento || int.agendamento || null;
+  // CANÔNICO primeiro (lead.nome / negociacao.* / atendimento.*) + fallback nos campos antigos (compat).
+  // Sem isto (Codex) o cérebro recebia qualificação VAZIA: lia interesse.*/lead_name, que NINGUÉM preenche
+  // (o save grava em lead.nome/negociacao/atendimento) -> o planner achava que não sabia nada e RE-PERGUNTAVA
+  // nome/troca/pagamento/agendamento já coletados (= "repete pergunta / perde contexto").
+  const nome = lead.nome || m.lead_name || int.nome || null;
+  const troca = neg.carro_troca || int.carro_troca || int.trade_in_vehicle || m.trade_in_vehicle || null;
+  const pagamento = neg.forma_pagamento || int.forma_pagamento || int.pagamento || null;
+  const entrada = neg.valor_entrada || int.valor_entrada || null;
+  const agendamento = at.dia_agendamento || int.dia_agendamento || int.agendamento || null;
   const temInteresse = Boolean(int.modelo_desejado || int.tipo_veiculo);
-  const qualificado = Boolean(nome && temInteresse && (troca || pagamento || agendamento));
+  const qualificado = Boolean(nome && temInteresse && (troca || pagamento || entrada || agendamento));
   let etapa = "descobrindo";
   if (agendamento) etapa = "agendando";
   else if (qualificado) etapa = "decidindo";
@@ -204,7 +212,7 @@ export function buildConversationState(memory?: any, adContext?: any) {
     interesse: { tipo: int.tipo_veiculo || null, modelo: int.modelo_desejado || null, preco_max: int.preco_max || null, cambio: int.cambio || null, cor: int.cor || null },
     rejeitou: { modelos: rej.modelos || [], tipos: rej.tipos || [] },
     ja_viu_qtd: apres.length,
-    qualificacao: { nome, troca, pagamento, agendamento },
+    qualificacao: { nome, troca, pagamento, entrada, agendamento, tem_troca: (neg.tem_troca ?? null) },
     etapa,
   };
 }

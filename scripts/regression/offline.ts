@@ -589,6 +589,19 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("decisao", "estado: com apresentados -> etapa 'comparando'", buildConversationState({ interesse: { modelo_desejado: "Onix" }, veiculos_apresentados: [{}, {}, {}] }).etapa === "comparando");
   check("decisao", "estado: nome+interesse+agendamento -> etapa 'agendando'", buildConversationState({ lead_name: "Ana", interesse: { modelo_desejado: "Onix", dia_agendamento: "sexta" } }).etapa === "agendando");
   check("decisao", "estado: lê rejeitados", buildConversationState({ rejeitados: { modelos: ["onix"], tipos: [] } }).rejeitou.modelos.includes("onix"));
+  // ⭐SHAPE REAL salvo pelo agente (Codex): o filme TEM que ler lead.nome / negociacao.* / atendimento.* —
+  // antes lia interesse.*/lead_name (vazios) e a qualificação saía TODA nula -> cérebro RE-perguntava tudo.
+  const _estReal = buildConversationState({
+    lead: { nome: "João" },
+    interesse: { modelo_desejado: "Onix" },
+    negociacao: { carro_troca: "Gol 2015", forma_pagamento: "financiamento", valor_entrada: "10 mil", tem_troca: true },
+    atendimento: { dia_agendamento: "sábado 10h" },
+  });
+  check("decisao", "estado REAL: lê lead.nome (não some)", _estReal.qualificacao.nome === "João");
+  check("decisao", "estado REAL: lê negociacao.carro_troca", _estReal.qualificacao.troca === "Gol 2015");
+  check("decisao", "estado REAL: lê negociacao.forma_pagamento", _estReal.qualificacao.pagamento === "financiamento");
+  check("decisao", "estado REAL: lê atendimento.dia_agendamento", _estReal.qualificacao.agendamento === "sábado 10h");
+  check("decisao", "estado REAL: qualificado -> etapa 'agendando'", _estReal.etapa === "agendando");
   // exclusão determinística por modelo rejeitado.
   const poolRej = [{ modelo: "Onix" }, { modelo: "Compass" }, { modelo: "Tracker" }];
   const semOnix = excludeRejeitados(poolRej, { modelos: ["onix"] });

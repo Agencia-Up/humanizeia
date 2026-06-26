@@ -1175,12 +1175,16 @@ export async function planPedroTurn(input: {
     vehicles_shown: _apres.slice(0, 8)
       .map((v: any) => v?.label || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" "))
       .filter(Boolean),
+    // CANÔNICO (lead.nome / negociacao.* / atendimento.*) + fallback nos campos antigos. Sem isto este
+    // decision_context.qualification (o que o prompt manda "NÃO repergunte") saía VAZIO -> re-perguntava tudo.
     qualification: {
-      nome: _mem.lead_name || _int.nome || null,
+      nome: _mem.lead?.nome || _mem.lead_name || _int.nome || null,
       interesse: _int.modelo_desejado || _int.tipo_veiculo || null,
-      troca: _int.trade_in_vehicle || _mem.trade_in_vehicle || null,
-      pagamento: _int.forma_pagamento || _int.pagamento || null,
-      agendamento: _int.dia_agendamento || _int.agendamento || null,
+      troca: _mem.negociacao?.carro_troca || _int.carro_troca || _int.trade_in_vehicle || _mem.trade_in_vehicle || null,
+      pagamento: _mem.negociacao?.forma_pagamento || _int.forma_pagamento || _int.pagamento || null,
+      entrada: _mem.negociacao?.valor_entrada || _int.valor_entrada || null,
+      agendamento: _mem.atendimento?.dia_agendamento || _int.dia_agendamento || _int.agendamento || null,
+      tem_troca: _mem.negociacao?.tem_troca ?? null,
     },
     // Fonte da verdade = mensagem ATUAL. prior_vehicle é HISTÓRICO (anúncio/interesse), nunca trava.
     lead_direction: {
