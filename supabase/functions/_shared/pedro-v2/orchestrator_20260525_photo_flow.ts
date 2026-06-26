@@ -2836,6 +2836,40 @@ export async function processPedroV2Turn(
     log("info", "pedro_v2_lone_emoji_no_transfer", { lead_id: lead?.id || null });
   }
 
+  // FUNIL ANTES DO HANDOFF: interesse curto ("Gostei", "Quero esse") nao basta para transferir.
+  // Se o cerebro marcou pronto, mas ainda existe pergunta obrigatoria do bloco4 sem resposta,
+  // segura o handoff e conduz a proxima pergunta do SDR. Nao bloqueia pedido explicito de humano,
+  // nem os enforcements deterministas de financiamento/troca ja qualificados.
+  if (!ownedLeadAssistantMode
+      && contextualIntent?.needs_handoff !== true
+      && reply?.temperatura !== "desqualificado"
+      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced"
+      && (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true)) {
+    const _b4Handoff = (input.agent as any)?.funnel_bloco4;
+    const _fqHandoff: any = {
+      ..._q,
+      nome: _q.nome || lead?.lead_name || pushName || null,
+      interesse: _q.interesse || (effectiveMemory as any)?.interesse?.modelo_desejado || (effectiveMemory as any)?.interesse?.tipo_veiculo || null,
+      tem_troca: _q.tem_troca ?? (effectiveMemory as any)?.negociacao?.tem_troca ?? null,
+      carro_troca: _q.carro_troca || _q.veiculo_troca || (effectiveMemory as any)?.negociacao?.carro_troca || null,
+      valor_entrada: _q.valor_entrada || (effectiveMemory as any)?.negociacao?.valor_entrada || null,
+      forma_pagamento: _q.forma_pagamento || (effectiveMemory as any)?.negociacao?.forma_pagamento || null,
+      sabe_localizacao: _q.sabe_localizacao ?? (effectiveMemory as any)?.atendimento?.sabe_localizacao ?? null,
+      dia_agendamento: _q.dia_agendamento || (effectiveMemory as any)?.atendimento?.dia_agendamento || null,
+      cpf: _q.cpf || (effectiveMemory as any)?.qualificacao?.cpf || null,
+    };
+    const _hasInterestFunnel = Boolean(_fqHandoff.interesse)
+      || (Array.isArray((effectiveMemory as any)?.veiculos_apresentados) && (effectiveMemory as any).veiculos_apresentados.length > 0);
+    const _nextFunnelBeforeHandoff = nextFunnelQuestion(_b4Handoff, _fqHandoff, { hasName: _hasNome, hasInterest: _hasInterestFunnel });
+    if (_nextFunnelBeforeHandoff) {
+      reply.pronto_para_transferir = false;
+      reply.transferir_silencioso = false;
+      reply.media = [];
+      reply.source = "handoff_blocked_pending_funnel";
+      reply.text = `Perfeito! Antes de eu te encaminhar para o consultor, preciso completar rapidinho seu atendimento.\n\n${_nextFunnelBeforeHandoff}`;
+      log("info", "pedro_v2_handoff_blocked_pending_funnel", { lead_id: lead?.id || null, question: _nextFunnelBeforeHandoff });
+    }
+  }
   const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
   // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma

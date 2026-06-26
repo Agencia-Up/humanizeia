@@ -286,6 +286,7 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("funil", "sem nada respondido + sem nome -> pergunta o nome", nextFunnelQuestion(_b4, {}, { hasName: false }) === "Qual e seu nome?");
     check("funil", "nome conhecido (pushName) -> pula p/ troca", nextFunnelQuestion(_b4, {}, { hasName: true }) === "Tem algum carro para dar de troca?");
     check("funil", "nome+troca resp. -> pergunta entrada", nextFunnelQuestion(_b4, { tem_troca: false }, { hasName: true }) === "Tem valor para dar de entrada?");
+    check("funil", "lead gostou mas falta troca -> pergunta antes de transferir", nextFunnelQuestion(_b4, { interesse: "SUV ate 80k" }, { hasName: true, hasInterest: true }) === "Tem algum carro para dar de troca?");
     check("funil", "tudo respondido -> null", nextFunnelQuestion(_b4, { nome: "João", tem_troca: true, valor_entrada: "10 mil", sabe_localizacao: true }, { hasName: true }) === null);
     check("funil", "sem bloco4 -> null", nextFunnelQuestion(undefined, {}, { hasName: false }) === null);
     check("funil", "reply 'qual quer ver fotos?' NÃO é pergunta de funil", replyAsksFunnelQuestion("Qual desses você quer ver fotos?") === false);
@@ -543,6 +544,7 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     { index: 1, marca: "Chevrolet", modelo: "Onix Sedan", ano: 2025, preco: 79990 },
   ] } });
   check("preco", "fallback renumera lista ordenada 1-2-3", /1\. \*Ford Focus[\s\S]*2\. \*Ford Ka Sedan[\s\S]*3\. \*Chevrolet Onix Sedan/.test(_orderedReply), _orderedReply);
+  check("preco", "fallback nao usa separador corrompido", !/[?]{2,}/.test(_orderedReply), _orderedReply);
   // normalizePlan aplica o teto mesmo quando o LLM não setou preco_max.
   const pc = normalizePlan({ action: "stock_search", intent: "stock_lookup", search_query: "Corolla", search_filters: { modelo_desejado: "Corolla" }, confidence: 0.7 }, FALLBACK, { message: "corolla até 50 mil", vehicle_resolution: vr() as any, memory: null, recent_history: [] } as any);
   check("preco", "normalizePlan 'corolla até 50 mil' -> preco_max=50000 + hard", Number(pc.search_filters?.preco_max) === 50000 && pc.search_filters?.hard_price_ceiling === true, `preco_max=${pc.search_filters?.preco_max} hard=${pc.search_filters?.hard_price_ceiling}`);

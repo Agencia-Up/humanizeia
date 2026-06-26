@@ -426,8 +426,8 @@ export function buildDeterministicStockReply(input: {
       vehicle.km_formatado || null,
       vehicle.cambio || null,
       vehicle.cor || null,
-    ].filter(Boolean).join(" ?? ");
-    return `${index + 1}. *${vehicle.label}*${det ? ` ??? ${det}` : ""}`;
+    ].filter(Boolean).join(" - ");
+    return `${index + 1}. *${vehicle.label}*${det ? ` - ${det}` : ""}`;
   }).join("\n");
   const more = items.length > shown.length
     ? `\n\nEsses sao alguns dos nossos modelos — tenho mais opcoes tambem.`
