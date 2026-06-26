@@ -1168,6 +1168,7 @@ export function CrmAvancadoTab({
   const [filterStatus, setFilterStatus]   = useState<string>('all');
   const [filterSeller, setFilterSeller]   = useState<string>('all');
   const [searchTerm,   setSearchTerm]     = useState('');
+  const searchFetchKeyRef = useRef<string>('');
   // filtro de data dos leads (barra superior — Pedro e Marcos)
   const [dateFilter, setDateFilter]       = useState<LeadDatePreset>('all');
   const [dateFrom,   setDateFrom]         = useState('');
@@ -1732,6 +1733,115 @@ export function CrmAvancadoTab({
   };
 
   useEffect(() => { fetchData(); }, [userId, isSeller, memberIds.length]);
+
+  const leadMatchesSearch = useCallback((lead: Pick<CrmLead, 'lead_name' | 'remote_jid'>, rawTerm: string) => {
+    const term = rawTerm.toLowerCase().trim();
+    if (!term) return true;
+
+    const termDigits = term.replace(/\D/g, '');
+    const jid = (lead.remote_jid || '').toLowerCase();
+    const phoneMatch = termDigits.length >= 4 && jid.replace(/\D/g, '').includes(termDigits);
+
+    return (
+      (lead.lead_name || '').toLowerCase().includes(term) ||
+      jid.includes(term) ||
+      phoneMatch
+    );
+  }, []);
+
+  useEffect(() => {
+    if (isMarcosCrm) return;
+    const ownerId = effectiveUserIdState || (isSeller ? masterUserIdProp : userId);
+    if (!ownerId) return;
+
+    const term = searchTerm.trim();
+    const termDigits = term.replace(/\D/g, '');
+    if (!term || (term.length < 3 && termDigits.length < 4)) {
+      searchFetchKeyRef.current = '';
+      return;
+    }
+
+    if (leads.some(lead => leadMatchesSearch(lead, term))) return;
+
+    const key = `${ownerId}|${isSeller ? memberIds.join(',') : 'master'}|${term.toLowerCase()}`;
+    if (searchFetchKeyRef.current === key) return;
+    searchFetchKeyRef.current = key;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const selectFields = 'id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, arrived_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at';
+        const queries: any[] = [];
+
+        if (termDigits.length >= 4) {
+          let q = (supabase as any)
+            .from('ai_crm_leads')
+            .select(selectFields)
+            .eq('user_id', ownerId)
+            .ilike('remote_jid', `%${termDigits}%`)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (isSeller && memberIds.length > 0) q = q.in('assigned_to_id', memberIds);
+          queries.push(q);
+        }
+
+        if (term.length >= 3 && !/^\+?[\d\s().-]+$/.test(term)) {
+          let q = (supabase as any)
+            .from('ai_crm_leads')
+            .select(selectFields)
+            .eq('user_id', ownerId)
+            .ilike('lead_name', `%${term}%`)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (isSeller && memberIds.length > 0) q = q.in('assigned_to_id', memberIds);
+          queries.push(q);
+        }
+
+        if (queries.length === 0) return;
+        const results = await Promise.all(queries);
+        if (cancelled) return;
+
+        const rows = results.flatMap(res => Array.isArray(res?.data) ? res.data : []);
+        if (rows.length === 0) return;
+
+        const teamById = new Map(teamMembers.map(m => [m.id, { id: m.id, name: m.name }]));
+        const extraLeads: CrmLead[] = rows.map((row: any) => ({
+          ...row,
+          status_crm: row.status_crm || 'novo',
+          next_followup_at: row.next_followup_at || null,
+          seller_notes_count: row.seller_notes_count ?? 0,
+          member: row.assigned_to_id ? (teamById.get(row.assigned_to_id) ?? null) : null,
+          agent: null,
+          reactivation_status: null,
+        }));
+
+        setLeads(prev => {
+          const byId = new Map(prev.map(lead => [lead.id, lead]));
+          for (const lead of extraLeads) {
+            if (!byId.has(lead.id)) byId.set(lead.id, lead);
+          }
+          return Array.from(byId.values()).sort(
+            (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
+          );
+        });
+      } catch (err) {
+        console.warn('[Pedro CRM] erro na busca complementar de lead', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [
+    searchTerm,
+    effectiveUserIdState,
+    isSeller,
+    isMarcosCrm,
+    memberIds,
+    masterUserIdProp,
+    userId,
+    leads,
+    teamMembers,
+    leadMatchesSearch,
+  ]);
 
   const resolveCurrentSellerForMarcos = async () => {
     if (!isMarcosCrm || !isSeller || !memberId) return null;
