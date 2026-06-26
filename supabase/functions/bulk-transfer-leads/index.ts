@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { managerPhones } from "../_shared/transfer/managers.ts";
+import { composeSellerMsg, composeGerenteMsg, buildEtiquetas, maybeStripEmojis } from "../_shared/transfer/messageTemplates.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -163,14 +164,14 @@ Deno.serve(async (req) => {
 
     // 3b. Busca gerentes (ate 2) dos agentes presentes nos leads (cache por agent_id)
     const uniqueAgentIds = [...new Set((unassigned || []).map((l: any) => l.agent_id).filter(Boolean))];
-    const agentGerenteMap = new Map<string, string[]>();
+    const agentMap = new Map<string, any>();
     if (uniqueAgentIds.length > 0) {
       const { data: agentsData } = await supabase
         .from("wa_ai_agents")
-        .select("id, gerente_phone, gerente_phone_2, name")
+        .select("id, gerente_phone, gerente_phone_2, name, gerente_feedback_completo, mensagens_sem_emoji, briefing_template_vendedor, briefing_template_gerente")
         .in("id", uniqueAgentIds);
       for (const ag of agentsData || []) {
-        agentGerenteMap.set(ag.id, managerPhones(ag));
+        agentMap.set(ag.id, ag);
       }
     }
 
@@ -222,25 +223,33 @@ Deno.serve(async (req) => {
           total_leads_received: (seller.total_leads_received || 0) + 1,
         };
 
-        // 4d. Notifica vendedor via WhatsApp
+        // 4d. Notifica vendedor via WhatsApp (respeita template/sem-emoji do agente)
         const phone = lead.remote_jid.replace(/\D/g, "");
+        const _ag = lead.agent_id ? agentMap.get(lead.agent_id) : null;
+        const _hora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+        const _msgVars = buildEtiquetas({ lead: { telefone: phone } }, {
+          agentName: _ag?.name, leadName: lead.lead_name, leadPhone: phone,
+          sellerName: seller.name, sellerPhone: seller.whatsapp_number,
+          resumo: lead.summary, horario: _hora,
+        });
         if (instance && seller.whatsapp_number) {
-          const msg =
+          const _msgInline =
             `🚨 *LEAD QUALIFICADO — REDISTRIBUIÇÃO*\n\n` +
             `👤 *Nome:* ${lead.lead_name || "Sem nome"}\n` +
             `📱 *Contato:* wa.me/${phone}\n` +
             `${lead.summary ? `📝 *Resumo:* ${lead.summary.substring(0, 300)}\n` : ""}` +
             `\n⚡ *Atenda agora:* https://wa.me/${phone}`;
+          const msg = maybeStripEmojis(_ag, composeSellerMsg(_ag, _msgVars, _msgInline));
           await sendWAMessage(instance, seller.whatsapp_number, msg);
         }
 
-        // 4e. Notifica Gerente(s) via WhatsApp (ate 2)
-        const gerentes = lead.agent_id ? (agentGerenteMap.get(lead.agent_id) || []) : [];
+        // 4e. Notifica Gerente(s) via WhatsApp (ate 2) — completo/template/sem-emoji
+        const gerentes = managerPhones(_ag);
         if (instance && gerentes.length > 0) {
-          const transferredAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-          const gerenteMsg =
+          const _gNum = String(seller.whatsapp_number || "").replace(/\D/g, "");
+          const _gerenteInline =
             `📊 *RELATÓRIO DE LEAD — REDISTRIBUIÇÃO*\n\n` +
-            `🕐 *Horário:* ${transferredAt}\n\n` +
+            `🕐 *Horário:* ${_hora}\n\n` +
             `👤 *Lead:* ${lead.lead_name || "Sem nome"}\n` +
             `📱 *Telefone:* wa.me/${phone}\n` +
             `${lead.summary ? `📝 *Resumo:* ${lead.summary.substring(0, 300)}\n` : ""}` +
@@ -249,6 +258,20 @@ Deno.serve(async (req) => {
             `📲 *WhatsApp vendedor:* ${seller.whatsapp_number}\n` +
             `\n━━━━━━━━━━━━━━━━━━━━\n` +
             `_Gerado automaticamente pelo Pedro SDR (redistribuição em massa)_`;
+          const _gerenteCompleto =
+            `📊 *RELATÓRIO COMPLETO — REDISTRIBUIÇÃO*\n\n` +
+            `🧑‍💼 *Vendedor atribuído:* ${seller.name}${_gNum ? ` — wa.me/${_gNum}` : ""}\n` +
+            `🕐 ${_hora}\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `👤 *Lead:* ${lead.lead_name || "Sem nome"}\n` +
+            `📱 *Contato:* wa.me/${phone}\n` +
+            `${lead.summary ? `📝 *Resumo:* ${lead.summary.substring(0, 300)}\n` : ""}` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `_Relatório completo (mesmo briefing do vendedor) — Pedro SDR_`;
+          const _gerenteBase = (_ag?.gerente_feedback_completo === true)
+            ? _gerenteCompleto
+            : composeGerenteMsg(_ag, _msgVars, _gerenteInline);
+          const gerenteMsg = maybeStripEmojis(_ag, _gerenteBase);
           for (const gerentePhone of gerentes) {
             await sendWAMessage(instance, gerentePhone, gerenteMsg);
           }
