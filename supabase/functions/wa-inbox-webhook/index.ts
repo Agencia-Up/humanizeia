@@ -1464,14 +1464,27 @@ async function handleAIAgentReply(
   try {
     const mediaFallbackReply = getMediaFallbackReply(content);
 
-    // Find active AI agent for this instance or user
+    // Find AI agents for this user
     // Supports multi-instance assignment via instance_ids array
-    const { data: agents } = await supabase
+    const { data: allAgents } = await supabase
       .from("wa_ai_agents")
       .select("*")
-      .eq("user_id", instance.user_id)
-      .eq("is_active", true);
+      .eq("user_id", instance.user_id);
 
+    const agentsList = Array.isArray(allAgents) ? allAgents : [];
+
+    // Se a instância estiver vinculada a um agente INATIVO, ignoramos para respeitar a desativação no painel
+    const inactiveAgents = agentsList.filter((a) => !a.is_active);
+    const usedByInactive = inactiveAgents.find((a: any) => {
+      const ids = a.instance_ids || [];
+      return (Array.isArray(ids) && ids.includes(instance.id)) || a.instance_id === instance.id;
+    });
+    if (usedByInactive) {
+      console.log(`[ai-agent] Instância ${instance.id} vinculada ao agente desativado "${usedByInactive.name}" — ignorando auto-resposta`);
+      return;
+    }
+
+    const agents = agentsList.filter((a) => a.is_active);
     if (!agents || agents.length === 0) return;
 
     // Find the best matching agent:

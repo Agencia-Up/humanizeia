@@ -1089,12 +1089,28 @@ interface LeadMetrics {
 
 type CrmMode = 'pedro' | 'marcos';
 
-export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | undefined; mode?: CrmMode }) {
+interface CrmAvancadoTabProps {
+  userId: string | undefined;
+  mode?: CrmMode;
+  isSellerProp?: boolean;
+  memberIdsProp?: string[];
+  masterUserIdProp?: string | null;
+  memberIdProp?: string | null;
+}
+
+export function CrmAvancadoTab({
+  userId,
+  mode = 'pedro',
+  isSellerProp,
+  memberIdsProp,
+  masterUserIdProp,
+  memberIdProp
+}: CrmAvancadoTabProps) {
   const { toast } = useToast();
   const isMarcosCrm = mode === 'marcos';
-  const [isSeller, setIsSeller] = useState(false);
-  const [memberId, setMemberId] = useState<string | null>(null);
-  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [isSeller, setIsSeller] = useState(isSellerProp ?? false);
+  const [memberId, setMemberId] = useState<string | null>(memberIdProp ?? null);
+  const [memberIds, setMemberIds] = useState<string[]>(memberIdsProp ?? []);
   // Fase 6.4 hotfix: effectiveUserId no escopo do componente (era local em fns,
   // causava ReferenceError no JSX do DynamicSelect e quebrava a pagina toda)
   const [effectiveUserIdState, setEffectiveUserIdState] = useState<string | null>(null);
@@ -1242,6 +1258,10 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
 
   // detect seller vs gerente (vendedor pode ter múltiplos registros em agentes diferentes)
   useEffect(() => {
+    if (isSellerProp !== undefined) {
+      setIsSeller(isSellerProp);
+      return;
+    }
     if (!userId) return;
     (async () => {
       const { data } = await (supabase as any)
@@ -1257,7 +1277,19 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
         setMemberIds(rows.map((r: any) => r.id));
       }
     })();
-  }, [userId]);
+  }, [userId, isSellerProp]);
+
+  useEffect(() => {
+    if (memberIdsProp !== undefined) {
+      setMemberIds(memberIdsProp);
+    }
+  }, [memberIdsProp]);
+
+  useEffect(() => {
+    if (memberIdProp !== undefined) {
+      setMemberId(memberIdProp);
+    }
+  }, [memberIdProp]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1320,7 +1352,7 @@ export function CrmAvancadoTab({ userId, mode = 'pedro' }: { userId: string | un
     else setRefreshing(true);
     try {
       const effectiveUserId = isSeller
-        ? (await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId
+        ? (masterUserIdProp || ((await (supabase as any).from('ai_team_members').select('user_id').eq('auth_user_id', userId).limit(1)).data?.[0]?.user_id ?? userId))
         : userId;
       // Fase 6.4 hotfix: expõe pro escopo do componente pra DynamicSelect usar
       if (effectiveUserId && effectiveUserId !== effectiveUserIdState) {
@@ -5589,7 +5621,6 @@ const ALL_SELLER_TABS = [
   { id: 'inbox-ia',    label: 'Conversas IA', icon: Inbox,         emoji: '📨', featureKey: 'tab_inbox_ia' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
-  { id: 'inbox',       label: 'Conversas',    icon: MessageSquare, emoji: '💬', featureKey: 'tab_inbox' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
 
 export default function PedroSDR() {
@@ -5694,7 +5725,13 @@ export default function PedroSDR() {
 
             {/* CRM / Meus Leads */}
             <TabsContent value="crm" className="mt-0">
-              <CrmAvancadoTab userId={user?.id} />
+              <CrmAvancadoTab
+                userId={user?.id}
+                isSellerProp={isSeller}
+                memberIdsProp={memberIds}
+                masterUserIdProp={masterUserId}
+                memberIdProp={seller?.id}
+              />
             </TabsContent>
 
             {/* Conversas IA — conversas do agente com pause/resume */}

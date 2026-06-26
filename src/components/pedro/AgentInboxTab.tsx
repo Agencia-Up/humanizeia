@@ -153,7 +153,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   // Agents
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(ALL_AGENTS);
   // Filtro por vendedor (só master): acompanhar os leads/conversas de um vendedor.
   const [sellers, setSellers] = useState<{ key: string; name: string; memberIds: string[] }[]>([]);
   const [sellerFilter, setSellerFilter] = useState<string>(ALL_SELLERS);

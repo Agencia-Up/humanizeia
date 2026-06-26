@@ -29,10 +29,20 @@ export function agentLooksLikePedro(agent: any): boolean {
 
 // Mesma prioridade do pedro-webhook-v2: agente vinculado a esta instancia ->
 // agente que "parece o Pedro" -> primeiro ativo.
-export function selectActiveAgent(agents: any[], instanceId: string): any | null {
-  const list = Array.isArray(agents) ? agents : [];
-  return list.find((a) => agentUsesInstance(a, instanceId)) ||
-    list.find(agentLooksLikePedro) ||
-    list[0] ||
+export function selectActiveAgent(allAgents: any[], instanceId: string): any | null {
+  const list = Array.isArray(allAgents) ? allAgents : [];
+
+  // Se a instância estiver vinculada a um agente INATIVO, ignoramos para respeitar a desativação no painel
+  const inactiveAgents = list.filter((a) => !a.is_active);
+  if (inactiveAgents.some((a) => agentUsesInstance(a, instanceId))) {
+    console.log(`[selectActiveAgent] Instância ${instanceId} vinculada a um agente inativo — ignorando roteamento`);
+    return null;
+  }
+
+  const activeAgents = list.filter((a) => a.is_active);
+  return activeAgents.find((a) => agentUsesInstance(a, instanceId)) ||
+    activeAgents.find(agentLooksLikePedro) ||
+    activeAgents[0] ||
     null;
 }
+

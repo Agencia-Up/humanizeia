@@ -204,12 +204,11 @@ async function handleInbound(supabase: any, value: any) {
       continue;
     }
 
-    const { data: agents } = await supabase
+    const { data: allAgents } = await supabase
       .from("wa_ai_agents")
       .select("*")
-      .eq("user_id", waInstance.user_id)
-      .eq("is_active", true);
-    const agent = selectActiveAgent(agents || [], waInstance.id);
+      .eq("user_id", waInstance.user_id);
+    const agent = selectActiveAgent(allAgents || [], waInstance.id);
     if (!agent) {
       console.log("[meta-webhook] nenhum agente ativo p/ user:", waInstance.user_id);
       continue;

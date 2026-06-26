@@ -1930,6 +1930,16 @@ export async function processPedroV2Turn(
     auditable: !dryRun,
   });
 
+  // CÉREBRO/FOCO DA CONVERSA: garante o VEÍCULO EM FOCO (o carro que a conversa discute) no pool de fotos —
+  // com isso "fotos dele / mais detalhes" resolve NELE (pickReferencedVehicle ancora no foco), em vez de
+  // perguntar "de qual?" e listar carros aleatórios (lead 3199-6370: "Do yaris" → "fotos dele" virava lista).
+  // Só prepende se o foco TEM fotos e NÃO está no pool; o pivô (lead nomeia outro modelo/ordinal) ainda vence.
+  const _focoAtual = (nextMemory as any)?.veiculo_em_foco;
+  if (shouldSendVehiclePhotos && _focoAtual?.key && Array.isArray(_focoAtual?.fotos) && _focoAtual.fotos.length > 0
+      && !(_photoPool || []).some((v: any) => vehicleKey(v) === _focoAtual.key)) {
+    _photoPool = [_focoAtual, ...(_photoPool || [])];
+  }
+
   let reply = shouldSendVehiclePhotos
     ? buildVehiclePhotoReply({ ...nextMemory, veiculos_apresentados: _photoPool }, text, topicAnchorVehicle)
     : await generatePedroBrainReply({
@@ -3031,6 +3041,48 @@ export async function processPedroV2Turn(
     } else if (_allDuvidas.length > 0) {
       // sem qualificacao nova, mas houve duvida neutralizada neste turno -> persiste mesmo assim.
       memToSave = { ...memToSave, atendimento: { ...(memToSave.atendimento || {}), duvidas_pendentes: _allDuvidas } };
+    }
+    // ── CÉREBRO DA CONVERSA: atualiza o VEÍCULO EM FOCO (o carro que a conversa discute) pro PRÓXIMO turno.
+    // SUBSTITUÍVEL: foto enviada / carro resolvido NESTE turno = foco novo (o lead pode PIVOTAR de carro);
+    // o lead AMPLIOU pra um TIPO (categoria) = LIMPA o foco (navegação de lista, sem foco único); senão
+    // MANTÉM o foco anterior. Persiste junto (saveRecentConversationTurn faz ...current). Resolve "fotos
+    // dele / mais detalhes" no carro certo no turno seguinte, sem perder o contexto (decisão do dono).
+    {
+      const _norm = (s: any) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const _snap = (v: any) => {
+        if (!v) return null;
+        const fotos = Array.isArray(v?.fotos) ? v.fotos.filter(Boolean).slice(0, 15) : [];
+        return {
+          key: vehicleKey(v),
+          label: cleanVehicleLabel(v) || [v?.marca, v?.modelo, v?.ano].filter(Boolean).join(" ") || null,
+          marca: v?.marca ?? null, modelo: v?.modelo ?? null, versao: v?.versao ?? null,
+          ano: v?.ano ?? null, preco: v?.preco ?? null, km: v?.km ?? null, cor: v?.cor ?? null,
+          cambio: v?.cambio ?? null, combustivel: v?.combustivel ?? null, fotos,
+          at: new Date().toISOString(),
+        };
+      };
+      let _novoFoco: any = (memToSave as any)?.veiculo_em_foco || null;
+      try {
+        if (_broadCategoryBrowse) {
+          _novoFoco = null;
+        } else if (reply?.source === "vehicle_photos_reply" && (reply as any)?.vehicle) {
+          _novoFoco = _snap((reply as any).vehicle) || _novoFoco;
+        } else {
+          const _rq = _norm((vehicleResolution as any)?.query || (brainPlan as any)?.search_query || "");
+          if (_rq) {
+            const _src = [
+              ...(Array.isArray(stockResult?.items) ? stockResult.items : []),
+              ...(Array.isArray((memToSave as any)?.veiculos_apresentados) ? (memToSave as any).veiculos_apresentados : []),
+            ];
+            const _hit = _src.find((v: any) => {
+              const m = _norm(v?.modelo); const tok = m.split(/\s+/)[0];
+              return (m && _rq.includes(m)) || (tok && tok.length >= 3 && _rq.includes(tok));
+            });
+            if (_hit) _novoFoco = _snap(_hit) || _novoFoco;
+          }
+        }
+      } catch { /* mantém o foco anterior */ }
+      (memToSave as any).veiculo_em_foco = _novoFoco;
     }
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,

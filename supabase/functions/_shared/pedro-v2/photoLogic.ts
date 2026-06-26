@@ -206,6 +206,16 @@ export function pickReferencedVehicle(message: string, memory: any, vehicles: an
     return { ...modelMatch, explicit: true };
   }
 
+  // VEÍCULO EM FOCO (cérebro da conversa): a conversa está discutindo ESTE carro — âncora FORTE pra
+  // "fotos dele / mais detalhes" continuar nele mesmo SEM ter mandado foto antes (lead "Do yaris" → ficha →
+  // "fotos dele" = Yaris, não "de qual?" listando outros). Vem DEPOIS do pivô EXPLÍCITO (ordinal/atributo/
+  // modelo nomeado vencem — lead pode trocar de carro) e é tratada como continuação (não cai em ambiguidade).
+  const focoKey = memory?.veiculo_em_foco?.key || memory?.veiculo_em_foco?.veiculo_key || null;
+  if (focoKey) {
+    const focoIdx = vehicles.findIndex((v) => vehicleKey(v) === focoKey);
+    if (focoIdx >= 0) return { index: focoIdx, explicit: false, reason: "veiculo_em_foco", key: focoKey };
+  }
+
   // CONTINUAÇÃO: última foto enviada (foco FORTE) — VEM ANTES da âncora-fallback do tópico. A âncora
   // fraca (1º do pool homogêneo) NÃO pode sequestrar "foto do painel"/"mais fotos" e re-perguntar.
   const lastKey = memory?.ultima_foto?.veiculo_key || memory?.referencia?.ultimo_veiculo_key || null;
@@ -496,7 +506,8 @@ export function buildVehiclePhotoReply(memory: any, message: string, topicAnchor
   // e PERGUNTA de qual. So dispara sem sinal nenhum (pick nao-explicito, nem continuacao do mesmo carro) E >=2 distintas.
   const _ambiguousPick = !reference.explicit
     && reference.reason !== "last_photo_vehicle_key"
-    && reference.reason !== "last_photo_vehicle_index";
+    && reference.reason !== "last_photo_vehicle_index"
+    && reference.reason !== "veiculo_em_foco";
   const distinctKeyCount = new Set(vehicles.map((v: any) => vehicleKey(v)).filter(Boolean)).size;
   if (_ambiguousPick && distinctKeyCount >= 2) {
     const lines = vehicles.slice(0, 6).map((v: any, i: number) => {

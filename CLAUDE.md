@@ -102,7 +102,7 @@ Só promover após resposta explícita. "Pode subir tudo" sozinho **não é mais
 - **Versão:** `1.0.0`
 - **Supabase Project:** `seyljsqmhlopkcauhlor`
 - **URL Supabase:** `https://seyljsqmhlopkcauhlor.supabase.co`
-- **Branch ativo:** `dev-wander` → merge → `main`
+- **Branch ativo:** `dev-douglas` → merge → `main`
 
 ### Fluxo de Orquestração
 ```
@@ -760,24 +760,24 @@ npx supabase functions deploy func1 func2 --project-ref seyljsqmhlopkcauhlor
 > ⚠️ SEMPRE seguir este fluxo. Nunca fazer push direto na `main`.
 
 ```bash
-# 1. Trabalhar sempre em dev-wander
-git checkout dev-wander
+# 1. Trabalhar sempre em dev-douglas
+git checkout dev-douglas
 
 # 2. Fazer as alterações e commitar
 git add arquivo1 arquivo2
 git commit -m "feat/fix/chore: descrição clara do que foi feito"
 
-# 3. Push no dev-wander
-git push origin dev-wander
+# 3. Push no dev-douglas
+git push origin dev-douglas
 
 # 4. Merge para main
 git checkout main
 git pull origin main
-git merge dev-wander --no-edit
+git merge dev-douglas --no-edit
 git push origin main
 
-# 5. Voltar para dev-wander
-git checkout dev-wander
+# 5. Voltar para dev-douglas
+git checkout dev-douglas
 ```
 
 ### Convenção de Commits
@@ -878,5 +878,5 @@ VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 
 ---
 
-*Última atualização: 26/03/2026 — Sessão Claude Code (dev-wander)*
+*Última atualização: 26/03/2026 — Sessão Claude Code (dev-douglas)*
 *Mantido por: Agencia-Up / Logos IA Team*

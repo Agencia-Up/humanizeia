@@ -122,7 +122,7 @@ function leadKey(raw: string | null | undefined): string {
 export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const { isSeller, seller, masterUserId, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, masterUserId, memberIds, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_inbox && !embedded;
 
   // O userId efetivo para queries: vendedor usa o ID do master
@@ -145,6 +145,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [sendInstanceId, setSendInstanceId]   = useState<string>('');
   const [isMobileChat, setIsMobileChat]       = useState(false);
   const [sellerLeadPhones, setSellerLeadPhones] = useState<Set<string> | null>(null);
+  const [sellerLeads, setSellerLeads]         = useState<any[]>([]);
   // Master: telefones (chave canônica) de TODOS os leads do CRM — usado p/ mostrar só
   // conversas de leads nas instâncias dos vendedores (auditoria sem poluição).
   const [masterLeadPhones, setMasterLeadPhones] = useState<Set<string> | null>(null);
@@ -163,19 +164,36 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   /* ── Fetch phones dos leads atribuídos ao vendedor ────────────── */
   useEffect(() => {
-    if (!isSeller || !seller || !effectiveUserId) return;
+    if (!effectiveUserId) return;
     (async () => {
-      const { data } = await (supabase as any)
+      let query = (supabase as any)
         .from('ai_crm_leads')
-        .select('remote_jid')
-        .eq('user_id', effectiveUserId)
-        .eq('assigned_to_id', seller.id);
-      const phones = new Set<string>(
-        (data || []).map((l: any) => (l.remote_jid || '').split('@')[0]).filter(Boolean)
-      );
-      setSellerLeadPhones(phones);
+        .select('id, remote_jid, lead_name, last_interaction_at, instance_id, summary')
+        .eq('user_id', effectiveUserId);
+      
+      if (isSeller) {
+        if (!seller) return;
+        if (memberIds && memberIds.length > 0) {
+          query = query.in('assigned_to_id', memberIds);
+        } else {
+          query = query.eq('assigned_to_id', seller.id);
+        }
+      }
+
+      const { data } = await query;
+      const leadsList = data || [];
+      setSellerLeads(leadsList);
+
+      const phones = new Set<string>();
+      for (const l of leadsList) {
+        const k = leadKey(l.remote_jid);
+        if (k) phones.add(k);
+      }
+      if (isSeller) {
+        setSellerLeadPhones(phones);
+      }
     })();
-  }, [isSeller, seller, effectiveUserId]);
+  }, [isSeller, seller, effectiveUserId, memberIds]);
 
   /* ── Master: telefones de TODOS os leads do CRM ────────────────────
    * Nas instâncias dos vendedores o inbox mostra SÓ conversas com leads do CRM
@@ -215,7 +233,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       .eq('is_active', true)
       .order('instance_name');
     if (isSeller && seller?.id) {
-      query = query.eq('seller_member_id', seller.id);
+      if (memberIds && memberIds.length > 0) {
+        const memberIdsStr = memberIds.join(',');
+        query = query.or(`seller_member_id.in.(${memberIdsStr}),seller_member_id.is.null`);
+      } else {
+        query = query.or(`seller_member_id.eq.${seller.id},seller_member_id.is.null`);
+      }
     }
     // Master: vê TODAS as instâncias da conta (próprias + as dos vendedores), pra
     // acompanhar as conversas de WhatsApp de cada vendedor. As abas por número
@@ -224,7 +247,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     const all = (data || []) as unknown as WaInstance[];
     setAllInstances(all);
     setInstances(all.filter(i => i.status === 'connected'));
-  }, [effectiveUserId, isSeller, seller]);
+  }, [effectiveUserId, isSeller, seller, memberIds]);
 
   /* ── Fetch conversas agrupadas ─────────────────────────────────── */
   const fetchConversations = useCallback(async (isInitial = false) => {
@@ -238,26 +261,27 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     // Defesa em camadas: limita conversas APENAS às instâncias visíveis ao
     // user logado (vendedor: as dele; master: só as próprias dele, sem dono).
     const visibleInstanceIds = allInstances.map(i => i.id);
-    if (visibleInstanceIds.length === 0) {
-      setConversations([]);
-      if (isInitial) setLoading(false);
-      return;
+    
+    let data: any[] = [];
+    if (visibleInstanceIds.length > 0) {
+      let query = supabase
+        .from('wa_inbox')
+        .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
+        .eq('user_id', effectiveUserId as string)
+        .neq('is_archived', true)
+        .in('instance_id', visibleInstanceIds)
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+      if (activeInstanceTab !== 'all') {
+        query = query.eq('instance_id', activeInstanceTab);
+      }
+
+      const { data: queryData, error } = await query;
+      if (!error && queryData) {
+        data = queryData;
+      }
     }
-
-    let query = supabase
-      .from('wa_inbox')
-      .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
-      .eq('user_id', effectiveUserId as string)
-      .neq('is_archived', true)
-      .in('instance_id', visibleInstanceIds)
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    if (activeInstanceTab !== 'all') {
-      query = query.eq('instance_id', activeInstanceTab);
-    }
-
-    const { data } = await query;
 
     // Agrupar por (phone, instance_id)
     const convMap = new Map<string, Conversation>();
@@ -278,9 +302,37 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
 
     let convList = Array.from(convMap.values());
+
+    // Mesclar os leads do CRM para garantir que apareçam mesmo sem msg no wa_inbox
+    if (sellerLeads.length > 0) {
+      for (const lead of sellerLeads) {
+        const cleanPhoneNum = (lead.remote_jid || '').split('@')[0];
+        if (!cleanPhoneNum) continue;
+        const key = `${cleanPhoneNum}::${lead.instance_id ?? 'null'}`;
+        const existingIdx = convList.findIndex(c => c.key === key);
+        if (existingIdx === -1) {
+          convList.push({
+            key,
+            phone: cleanPhoneNum,
+            instance_id: lead.instance_id,
+            contact_name: lead.lead_name,
+            last_message: lead.summary || 'Conversa com o Agente',
+            last_message_at: lead.last_interaction_at || new Date().toISOString(),
+            unread_count: 0,
+            ai_category: null,
+            has_ai_message: true,
+          });
+        } else {
+          const existing = convList[existingIdx];
+          if (!existing.contact_name && lead.lead_name) existing.contact_name = lead.lead_name;
+          existing.has_ai_message = true;
+        }
+      }
+    }
+
     if (isSeller && sellerLeadPhones) {
-      // Vendedor: só conversas dos leads atribuídos a ele
-      convList = convList.filter(c => sellerLeadPhones.has(c.phone));
+      // Vendedor: só conversas dos leads atribuídos a ele (normalizado via leadKey)
+      convList = convList.filter(c => sellerLeadPhones.has(leadKey(c.phone)));
     } else if (!isSeller && masterLeadPhones) {
       // Master: nas instâncias de VENDEDOR, mostra só conversas com leads do CRM
       // (não os contatos pessoais do vendedor). Instâncias da loja seguem completas.
@@ -294,26 +346,100 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     }
     setConversations(convList);
     if (isInitial) setLoading(false);
-  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones, masterLeadPhones, allInstances]);
+  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones, masterLeadPhones, allInstances, sellerLeads]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
   const fetchMessages = useCallback(async (phone: string, instanceId: string | null) => {
     if (!effectiveUserId) return;
     setLoadingMsgs(true);
 
-    let query = supabase
-      .from('wa_inbox')
-      .select('*')
-      .eq('user_id', effectiveUserId as string)
-      .eq('phone', phone)
-      .order('created_at', { ascending: true })
-      .limit(300);
+    try {
+      // 1. Busca mensagens de wa_inbox
+      let inboxQuery = supabase
+        .from('wa_inbox')
+        .select('*')
+        .eq('user_id', effectiveUserId as string)
+        .eq('phone', phone);
 
-    if (instanceId) query = query.eq('instance_id', instanceId);
+      if (instanceId) inboxQuery = inboxQuery.eq('instance_id', instanceId);
 
-    const { data } = await query;
-    if (data) {
-      setMessages(data as unknown as InboxMessage[]);
+      const { data: inboxData } = await inboxQuery
+        .order('created_at', { ascending: true })
+        .limit(300);
+      const inboxRows: InboxMessage[] = (inboxData || []) as unknown as InboxMessage[];
+
+      // 2. Busca mensagens do histórico do Pedro (wa_chat_history)
+      let historyRows: InboxMessage[] = [];
+      try {
+        const phoneCandidatesList = [
+          phone,
+          phone.startsWith('55') ? phone : `55${phone}`,
+          phone.endsWith('@s.whatsapp.net') ? phone : `${phone}@s.whatsapp.net`,
+          phone.startsWith('55') ? `${phone}@s.whatsapp.net` : `55${phone}@s.whatsapp.net`
+        ];
+        const uniqueCandidates = Array.from(new Set(phoneCandidatesList));
+
+        const { data: histData } = await (supabase as any)
+          .from('wa_chat_history')
+          .select('id, remote_jid, role, content, metadata, created_at')
+          .eq('user_id', effectiveUserId as string)
+          .in('remote_jid', uniqueCandidates)
+          .order('created_at', { ascending: true })
+          .limit(300);
+
+        historyRows = (histData || []).map((r: any): InboxMessage => {
+          const mediaList = r.metadata?.media || null;
+          const firstMedia = mediaList?.[0] || null;
+          return {
+            id: `wch-${r.id}`,
+            user_id: effectiveUserId as string,
+            instance_id: null,
+            phone: phone,
+            contact_name: null,
+            direction: r.role === 'assistant' ? 'outgoing' : 'incoming',
+            message_type: firstMedia ? (firstMedia.type || 'image') : 'text',
+            content: r.content ?? '',
+            media_url: firstMedia ? (firstMedia.file || firstMedia.url) : null,
+            ai_category: null,
+            ai_sentiment: null,
+            is_read: true,
+            created_at: r.created_at,
+          };
+        });
+      } catch (err) {
+        console.error('Erro ao carregar histórico do Pedro:', err);
+      }
+
+      // 3. Mescla e deduplica as mensagens
+      const sameMessage = (a: InboxMessage, b: InboxMessage) => {
+        if (a.direction !== b.direction) return false;
+        if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
+        const aMedia = a.message_type !== 'text';
+        const bMedia = b.message_type !== 'text';
+        if (aMedia && bMedia) return a.message_type === b.message_type;
+        return (a.content || '').trim() === (b.content || '').trim();
+      };
+
+      const merged: InboxMessage[] = [...inboxRows];
+      for (const h of historyRows) {
+        const idx = merged.findIndex(r => sameMessage(r, h));
+        if (idx === -1) {
+          merged.push(h);
+          continue;
+        }
+        // Se a mensagem do histórico tiver mídia renderizável, prefere ela
+        const hasMedia = (m: InboxMessage) => m.media_url && !m.media_url.includes('mmg.whatsapp.net') && !m.media_url.includes('.enc');
+        if (hasMedia(h) && !hasMedia(merged[idx])) {
+          merged[idx] = { ...h, id: merged[idx].id };
+        }
+      }
+
+      const sortedRows = merged.sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+
+      setMessages(sortedRows);
+
       // Marcar como lidas
       await supabase
         .from('wa_inbox')
@@ -321,8 +447,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         .eq('user_id', effectiveUserId as string)
         .eq('phone', phone)
         .eq('is_read', false);
+
+    } catch (err) {
+      console.error('Erro geral no fetchMessages:', err);
+    } finally {
+      setLoadingMsgs(false);
     }
-    setLoadingMsgs(false);
   }, [effectiveUserId]);
 
   /* ── Fetch tags dos contatos ───────────────────────────────────── */

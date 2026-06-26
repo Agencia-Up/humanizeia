@@ -66,6 +66,7 @@ import {
   buildVehiclePhotoReply,
   sameVehicleModel,
   leadRequestsAllVehiclePhotos,
+  vehicleKey,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
@@ -464,6 +465,18 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   ];
   const fOrd = buildVehiclePhotoReply({ veiculos_apresentados: _sedanPool }, "Quero foto do 3");
   check("fluxo_foto", "'foto do 3' -> 3o veículo (Onix) por ordinal + reason explicit_ordinal", fOrd.source === "vehicle_photos_reply" && /onix/i.test(String(fOrd.vehicle?.modelo)) && fOrd.selected_vehicle_reason === "explicit_ordinal");
+  // ⭐VEÍCULO EM FOCO (cérebro da conversa, lead 3199-6370): lead escolheu o Yaris (ficha), depois "fotos dele"
+  // -> manda as do YARIS (não "de qual?" listando outros). E PIVÔ: "fotos do focus" -> manda o Focus.
+  const _focoPool = [
+    { marca: "Ford", modelo: "Focus", ano: 2017, fotos: ["fo1.jpg", "fo2.jpg"] },
+    { marca: "Ford", modelo: "Ka Sedan", ano: 2019, fotos: ["ka1.jpg"] },
+    { marca: "Toyota", modelo: "Yaris Sedan", ano: 2025, fotos: ["ya1.jpg", "ya2.jpg"] },
+  ];
+  const _focoYaris = { key: vehicleKey(_focoPool[2]), modelo: "Yaris Sedan", fotos: _focoPool[2].fotos };
+  const fFoco = buildVehiclePhotoReply({ veiculos_apresentados: _focoPool, veiculo_em_foco: _focoYaris }, "quero fotos dele");
+  check("fluxo_foto", "'fotos dele' com foco=Yaris -> manda o Yaris (não pergunta de qual)", fFoco.source === "vehicle_photos_reply" && /yaris/i.test(String(fFoco.vehicle?.modelo)));
+  const fPivo = buildVehiclePhotoReply({ veiculos_apresentados: _focoPool, veiculo_em_foco: _focoYaris }, "quero fotos do focus");
+  check("fluxo_foto", "pivô: 'fotos do focus' com foco=Yaris -> manda o Focus (pivô vence o foco)", fPivo.source === "vehicle_photos_reply" && /focus/i.test(String(fPivo.vehicle?.modelo)));
   // sem foco + part-request + 2 unidades -> ambíguo, pergunta (correto)
   const f6 = _phr("foto do painel");
   check("fluxo_foto", "'foto do painel' SEM foco + 2 unidades -> pergunta qual", f6.source === "vehicle_photos_pick_which");
