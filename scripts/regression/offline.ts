@@ -729,6 +729,17 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // NÃO quebra preço "64.990" nem prosa normal.
   const prosa = fmt("O Onix 2025 sai por R$ 76.990 e tem 43.900 km. Quer ver?");
   check("formatacao", "não quebra preço/prosa sem lista", prosa.includes("R$ 76.990") && !/\n\d/.test(prosa), JSON.stringify(prosa.slice(0, 40)));
+  // lista separada por ";" (caso real lead 99706-1519, 4.1-mini) -> 1 veículo por linha.
+  const semiList = "Temos Chevrolet Onix hatch 2022 azul, 111.000 km, R$ 66.990; Onix 2025 branco, 43.900 km, R$ 76.990; Onix sedan 2025 preto, automático, 55.000 km, R$ 97.990; e Onix hatch 2025 cinza, automático, 42.000 km, R$ 99.990. Quer fotos de algum deles?";
+  const semiOut = fmt(semiList);
+  const linhasComVeiculo = semiOut.split("\n").filter((l: string) => /R\$/.test(l)).length;
+  check("formatacao", "lista por ';' -> 1 veículo por linha", linhasComVeiculo >= 4, `linhas c/ veículo = ${linhasComVeiculo}`);
+  // ";" em PROSA (financiamento, sem ano/km dos 2 lados) NÃO quebra.
+  const semiProsa = fmt("O Onix custa R$ 66.990; com uma entrada fica bem suave a parcela.");
+  check("formatacao", "';' em prosa não quebra", !semiProsa.includes("\n"), JSON.stringify(semiProsa.slice(0, 50)));
+  // itens começando pelo ANO (não pelo modelo) também quebram (caso real do dry-run 4.1-mini).
+  const semiAno = fmt("Temos Onix: 2022 azul, 111.000 km, R$ 66.990; 2025 branco, 43.900 km, R$ 76.990; 2025 preto, 55.000 km, R$ 97.990. Quer ver?");
+  check("formatacao", "lista ';' começando por ano -> 1/linha", semiAno.split("\n").filter((l: string) => /R\$/.test(l)).length >= 3, JSON.stringify(semiAno.slice(0, 40)));
 }
 
 // ── NOME (leadFirstName) — nome-lixo do WhatsApp vira null (saudação genérica) ───────────────

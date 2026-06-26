@@ -491,6 +491,17 @@ export function ensureStockReplyFormatting(input: {
   if ((text.match(itemRe) || []).length >= 2) {
     text = text.replace(/[ \t]*\n?\s*(\d{1,2})\.\s+(?=[A-Za-zÀ-ÿ])/g, "\n$1. ").trim();
   }
+  // LISTA SEPARADA POR ";" numa linha so (o LLM as vezes faz "Temos X; Y; Z; e W. Quer fotos?" num
+  // paragrafo -> ilegivel no WhatsApp; lead 99706-1519, 4.1-mini). Poe cada VEICULO em sua propria
+  // linha. So dispara quando >=2 trechos separados por ";" parecem VEICULO (tem preco R$ + ano OU km)
+  // -> nunca quebra prosa com ponto-e-virgula (ex.: "custa R$X; com entrada fica suave" nao casa).
+  const segs = text.split(/;\s+/);
+  const isVehSeg = (s: string) => /R\$\s?\d/.test(s) && /(\b(?:19|20)\d{2}\b|\bkm\b)/i.test(s);
+  if (segs.length >= 2 && segs.filter(isVehSeg).length >= 2) {
+    // O guard ja confirmou LISTA de veiculos -> quebra todo "; " (o item pode comecar pelo MODELO
+    // "Onix..." OU pelo ANO "2025 branco..."; por isso nao exige letra apos o ";"). "; e " junta o ultimo.
+    text = text.replace(/;\s+e\s+/g, "\n").replace(/;\s+/g, "\n").trim();
+  }
   return text;
 }
 
