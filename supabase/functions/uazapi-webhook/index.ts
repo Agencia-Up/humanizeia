@@ -12,6 +12,64 @@ const sellerPhoneKey = _sellerPhoneKey;
 const uniqueSellersByPhone = _uniqueSellersByPhone;
 const buildEnrichedBriefing = _buildEnrichedBriefing;
 
+function normalizePtText(value: string | null | undefined): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function detectDefinitiveLostReason(userText: string | null | undefined): string | null {
+  const text = normalizePtText(userText);
+  if (!text) return null;
+
+  const boughtElsewhere =
+    /\bja\s+comprei\b/.test(text) ||
+    /\bcomprei\b.*\b(outro|outra|lugar|loja|carro|veiculo)\b/.test(text) ||
+    /\b(outro|outra)\b.*\b(comprei|fechei|peguei)\b/.test(text) ||
+    /\bja\s+(fechei|resolvi|peguei)\b/.test(text);
+  if (boughtElsewhere) return 'Cliente respondeu ao follow-up informando que ja comprou em outro lugar.';
+
+  const noInterest =
+    /\bnao\s+(tenho|temos)\s+mais\s+interesse\b/.test(text) ||
+    /\bnao\s+quero\s+mais\b/.test(text) ||
+    /\bdesisti\b/.test(text);
+  if (noInterest) return 'Cliente respondeu ao follow-up informando que nao tem mais interesse.';
+
+  return null;
+}
+
+async function recordPedroLostFeedback(supabase: any, lead: any, reasonSummary: string) {
+  if (!lead?.id || !lead?.user_id) return;
+
+  const content = `Lead marcado como perdido pela IA. Motivo: ${reasonSummary}`;
+  try {
+    const { data: existing } = await supabase
+      .from('pedro_manager_feedback')
+      .select('id')
+      .eq('lead_id', lead.id)
+      .eq('reason', 'cliente_perdido_followup_ia')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) return;
+
+    await supabase.from('pedro_manager_feedback').insert({
+      lead_id: lead.id,
+      user_id: lead.user_id,
+      member_id: lead.assigned_to_id || null,
+      content,
+      priority: 'high',
+      reason: 'cliente_perdido_followup_ia',
+      observations: reasonSummary,
+    });
+  } catch (err) {
+    console.error('[LeadPerdido] erro ao registrar feedback IA:', err);
+  }
+}
+
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
   const restBase = `${url}/rest/v1`;
@@ -2677,6 +2735,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // (vendedor-vs-lead, criacao de lead, envio de resposta). Cobre os dois entry
   // paths (messages.upsert e UAZAPI V6) que chamam processMessage.
   remoteJid = resolveRealJid(remoteJid, rawMsgObj);
+  let deterministicLostMotivo: string | null = null;
 
   // Token metering: acumula os tokens gastos pelo cérebro (gpt-4o) neste turno.
   // É descontado de verdade no fim do turno (consumePedroTokensAndAlert), depois
@@ -3001,7 +3060,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     try {
       const { data: leadForReact } = await supabase
         .from('ai_crm_leads')
-        .select('id, status_crm, assigned_to_id, lead_name')
+        .select('id, user_id, status, status_crm, assigned_to_id, lead_name')
         .eq('agent_id', agent.id)
         .eq('remote_jid', remoteJid)
         .maybeSingle();
@@ -3012,20 +3071,39 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           .eq('lead_id', leadForReact.id)
           .maybeSingle();
         if (react?.id && react.status === 'sent') {
+          deterministicLostMotivo = detectDefinitiveLostReason(userText);
           // 1. Fila respondida -> motor nao cutuca mais este lead.
           await supabase.from('pedro_followup_reactivation')
             .update({ status: 'responded', responded_at: new Date().toISOString() })
             .eq('id', react.id);
+
+          if (deterministicLostMotivo) {
+            await supabase.from('ai_crm_leads')
+              .update({
+                status: 'perdido',
+                status_crm: 'perdido',
+                summary: deterministicLostMotivo,
+                last_interaction_at: new Date().toISOString(),
+              })
+              .eq('id', leadForReact.id);
+
+            await supabase.from('pedro_followup_reactivation')
+              .update({ status: 'stopped' })
+              .eq('lead_id', leadForReact.id);
+
+            await recordPedroLostFeedback(supabase, leadForReact, deterministicLostMotivo);
+            console.log(`[PontoC] Lead ${leadForReact.id} respondeu reativacao como perdido -> ${deterministicLostMotivo}`);
+          }
           // 2. Sai da coluna "inativo" pra IA requalificar agora. Se ja tem vendedor,
           // volta como em atendimento para nao sumir do CRM do vendedor/gestor.
-          if (leadForReact.status_crm === 'inativo') {
+          if (!deterministicLostMotivo && leadForReact.status_crm === 'inativo') {
             await supabase.from('ai_crm_leads')
               .update({ status_crm: leadForReact.assigned_to_id ? 'em_atendimento' : 'interessado' })
               .eq('id', leadForReact.id);
           }
-          console.log(`[PontoC] Lead ${leadForReact.id} respondeu a reativacao -> requalificando.`);
+          console.log(`[PontoC] Lead ${leadForReact.id} respondeu a reativacao -> ${deterministicLostMotivo ? 'perdido' : 'requalificando'}.`);
           // 3. Avisa o vendedor DONO: lead recuperado.
-          if (leadForReact.assigned_to_id) {
+          if (!deterministicLostMotivo && leadForReact.assigned_to_id) {
             const { data: owner } = await supabase
               .from('ai_team_members')
               .select('id, name, whatsapp_number')
@@ -3868,8 +3946,8 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
     // handler atualizar_etapa_crm NÃO disparar uma segunda transferência nem
     // sobrescrever o status 'transferido' com a etapa do CRM.
     let transferExecutedThisTurn = false;
-    let leadMarkedLostThisTurn = false;
-    const transferToolCall = aiMessage.tool_calls.find((t: any) => t.function.name === 'transferir_para_vendedor');
+    let leadMarkedLostThisTurn = !!deterministicLostMotivo;
+    const transferToolCall = deterministicLostMotivo ? null : aiMessage.tool_calls.find((t: any) => t.function.name === 'transferir_para_vendedor');
     if (transferToolCall) {
       let transferResult: any = { success: false, error: 'unknown' };
       try {
@@ -4243,7 +4321,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
           })
           .eq('agent_id', agent.id)
           .eq('remote_jid', remoteJid)
-          .select('id')
+          .select('id, user_id, assigned_to_id')
           .maybeSingle();
 
         // Encerra a fila de reativacao deste lead (nao recebe mais follow-up).
@@ -4251,6 +4329,8 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
           await supabase.from('pedro_followup_reactivation')
             .update({ status: 'stopped' })
             .eq('lead_id', lostLead.id);
+
+          await recordPedroLostFeedback(supabase, lostLead, lostMotivo);
         }
 
         console.log(`[LeadPerdido] Lead ${remoteJid} -> Perdido (${lostMotivo}); reativacao encerrada.`);
