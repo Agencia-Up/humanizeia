@@ -51,7 +51,50 @@ export type ConversationCenter = {
     agendamento: string | null;
   };
   vehicles_shown_count: number;
+  current_vehicle_focus: VehicleFocus | null;
+  last_stock_offer: LastStockOffer | null;
 };
+
+// Veículo EM FOCO na conversa (view do `veiculo_em_foco` já persistido — NÃO é estado novo). Pro LLM e
+// pros invariantes saberem "qual carro o lead está falando" (esse/dele/tem laudo/qual valor/mais fotos).
+export type VehicleFocus = {
+  key: string | null;
+  label: string | null;
+  marca: string | null;
+  modelo: string | null;
+  ano: any;
+};
+
+// Última lista de estoque ENVIADA (categoria/faixa/keys/quando) — pra "mais opções" continuar na MESMA
+// categoria (não misturar SUV/sedan/hatch) e não repetir os mesmos carros.
+export type LastStockOffer = {
+  tipo_veiculo: string | null;
+  preco_max: number | null;
+  vehicle_keys: string[];
+  count: number;
+  at: string;
+};
+
+// Chave ESTÁVEL de veículo (marca|modelo|ano) — não depende de preço/km (que mudam no re-fetch). PURO.
+export function stockOfferVehicleKey(vehicle: any): string {
+  return normalizePlannerText([vehicle?.marca, vehicle?.modelo, vehicle?.ano].filter(Boolean).join("|"))
+    .replace(/[^\w]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Monta o registro da última oferta de estoque a partir da lista enviada + filtros usados na busca. PURO.
+export function buildLastStockOffer(vehicles: any[], filters?: Record<string, any> | null): LastStockOffer {
+  const list = Array.isArray(vehicles) ? vehicles : [];
+  const f: any = filters || {};
+  const preco = Number(f.preco_max) > 0 ? Number(f.preco_max)
+    : (Number(f.orcamento_max) > 0 ? Number(f.orcamento_max) : null);
+  return {
+    tipo_veiculo: f.tipo_veiculo || f.body_type || null,
+    preco_max: preco,
+    vehicle_keys: list.map(stockOfferVehicleKey).filter(Boolean).slice(0, 30),
+    count: list.length,
+    at: new Date().toISOString(),
+  };
+}
 
 export type ConversationTrackOverride = {
   action: "reply_only" | "stock_search" | "photo_request";
@@ -165,6 +208,18 @@ export function buildConversationCenter(input: {
       agendamento: atendimento.dia_agendamento || interesse.dia_agendamento || null,
     },
     vehicles_shown_count: Array.isArray(memory.veiculos_apresentados) ? memory.veiculos_apresentados.length : 0,
+    current_vehicle_focus: (memory.veiculo_em_foco && typeof memory.veiculo_em_foco === "object")
+      ? {
+          key: memory.veiculo_em_foco.key ?? null,
+          label: memory.veiculo_em_foco.label ?? null,
+          marca: memory.veiculo_em_foco.marca ?? null,
+          modelo: memory.veiculo_em_foco.modelo ?? null,
+          ano: memory.veiculo_em_foco.ano ?? null,
+        }
+      : null,
+    last_stock_offer: (memory.last_stock_offer && typeof memory.last_stock_offer === "object")
+      ? memory.last_stock_offer
+      : null,
   };
 }
 
@@ -191,13 +246,20 @@ export function conversationTrackOverride(input: {
   }
 
   if (center.lead_reply_relation === "options_acceptance") {
+    // Herda a CATEGORIA/FAIXA da última lista enviada (last_stock_offer) -> "mais opções" continua na
+    // MESMA carroceria/orçamento (não mistura SUV/sedan/hatch). A não-repetição vem do dedup do
+    // orquestrador (opcoes_listadas_keys), que dispara em stock_broad.
+    const _offer = center.last_stock_offer;
+    const _filters: Record<string, any> = { stock_broad: true };
+    if (_offer?.tipo_veiculo) _filters.tipo_veiculo = _offer.tipo_veiculo;
+    if (Number(_offer?.preco_max) > 0) _filters.preco_max = Number(_offer.preco_max);
     return {
       action: "stock_search",
       intent: "stock_lookup",
-      reason: `conversation_center_options_acceptance:${center.pending_question}`,
-      response_guidance: "O lead aceitou ver opcoes/modelos. Consulte o estoque real respeitando o perfil ja salvo e apresente uma lista curta, sem repetir carros ja apresentados.",
+      reason: `conversation_center_options_acceptance:${center.pending_question}${_offer?.tipo_veiculo ? `:cat_${_offer.tipo_veiculo}` : ""}`,
+      response_guidance: "O lead aceitou ver opcoes/modelos. Consulte o estoque real respeitando a MESMA categoria e faixa de preco da ultima lista (NAO misture SUV/sedan/hatch) e apresente uma lista curta, SEM repetir carros ja apresentados.",
       search_query: null,
-      search_filters: { stock_broad: true },
+      search_filters: _filters,
       photo_target: null,
       use_memory_vehicle: true,
     };

@@ -77,7 +77,7 @@ import {
   stableVehicleKey,
   leadAsksForMorePhotos,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
-import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
+import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion, buildLastStockOffer, stockOfferVehicleKey } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -406,6 +406,25 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     const _optionsGuard = conversationTrackOverride({ message: "ok", memory: { pending_question: "ofereceu_opcoes" } as any, recent_history: [], planned_action: "reply_only" });
     check("estado", "centro: aceite de opcoes forca stock_search", _optionsGuard?.action === "stock_search" && _optionsGuard.search_filters?.stock_broad === true, JSON.stringify(_optionsGuard));
     check("estado", "centro: pending persistido e fonte da verdade", inferPendingQuestion({ memory: { pending_question: "perguntou_troca" } as any, recent_history: [{ role: "agent", text: "Quer fotos?" }] }) === "perguntou_troca", "");
+
+    // ── v217: last_stock_offer (continuidade de categoria) + current_vehicle_focus (view) ─────────────
+    const _offerVehs = [
+      { marca: "Jeep", modelo: "Renegade", ano: 2019, preco: 79990 },
+      { marca: "Hyundai", modelo: "Creta", ano: 2020, preco: 86990 },
+    ];
+    const _offer = buildLastStockOffer(_offerVehs, { tipo_veiculo: "suv", preco_max: 90000 });
+    check("estado", "last_stock_offer captura categoria+faixa+keys", _offer.tipo_veiculo === "suv" && _offer.preco_max === 90000 && _offer.vehicle_keys.length === 2 && _offer.count === 2, JSON.stringify(_offer));
+    check("estado", "last_stock_offer key é estável (marca|modelo|ano, ignora preço)", _offer.vehicle_keys[0] === stockOfferVehicleKey({ marca: "Jeep", modelo: "Renegade", ano: 2019, preco: 11111 }), _offer.vehicle_keys[0]);
+    // "mais opções" (options_acceptance) HERDA a categoria/faixa da última oferta -> não mistura carroceria.
+    const _optCat = conversationTrackOverride({ message: "pode mandar", memory: { pending_question: "ofereceu_opcoes", last_stock_offer: _offer } as any, recent_history: [], planned_action: "reply_only" });
+    check("estado", "mais opções herda tipo=suv + teto da última oferta", _optCat?.action === "stock_search" && _optCat.search_filters?.tipo_veiculo === "suv" && Number(_optCat.search_filters?.preco_max) === 90000, JSON.stringify(_optCat));
+    // sem oferta anterior, options_acceptance ainda funciona (busca ampla, não quebra)
+    const _optNoCat = conversationTrackOverride({ message: "ok", memory: { pending_question: "ofereceu_opcoes" } as any, recent_history: [], planned_action: "reply_only" });
+    check("estado", "options_acceptance sem oferta anterior -> busca ampla", _optNoCat?.action === "stock_search" && _optNoCat.search_filters?.stock_broad === true && !_optNoCat.search_filters?.tipo_veiculo, JSON.stringify(_optNoCat));
+    // current_vehicle_focus = view do veiculo_em_foco já persistido
+    const _centerFocus = buildConversationCenter({ message: "tem laudo?", memory: { veiculo_em_foco: { key: "jeep-renegade-2019", label: "Jeep Renegade 2019", marca: "Jeep", modelo: "Renegade", ano: 2019 } } as any, recent_history: [] });
+    check("estado", "current_vehicle_focus reflete veiculo_em_foco", _centerFocus.current_vehicle_focus?.modelo === "Renegade" && _centerFocus.current_vehicle_focus?.ano === 2019, JSON.stringify(_centerFocus.current_vehicle_focus));
+    check("estado", "current_vehicle_focus null quando não há foco", buildConversationCenter({ message: "oi", memory: {} as any, recent_history: [] }).current_vehicle_focus === null, "");
     // ⭐CRÍTICO: foto + qualificação na MESMA fala NÃO vira ofereceu_fotos (a qualificação vence) — assim o
     // "sim/ok" do lead não é lido como pedido de foto quando o agente perguntou troca/pagamento junto.
     check("pending", "'vou separar as fotos. Tem troca?' -> NÃO é ofereceu_fotos", P("Vou separar as fotos. Tem algum carro pra dar de troca?", "brain_reply") !== "ofereceu_fotos");

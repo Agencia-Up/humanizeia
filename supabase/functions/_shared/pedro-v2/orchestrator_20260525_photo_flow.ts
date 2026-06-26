@@ -20,6 +20,7 @@ import { searchPedroStock } from "./stockSearch_20260525_photo_flow.ts";
 import { setSdrLabelOnChat } from "./uazapiLabels.ts";
 import { resolvePedroInstance, sendPedroMedia, sendPedroText } from "./uazapiSender_20260524.ts";
 import { PedroV2TurnInput, PedroV2TurnResult } from "./types.ts";
+import { buildLastStockOffer } from "./conversationState.ts";
 import { isPedroV2SendingEnabled } from "./server.ts";
 import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext_20260525.ts";
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
@@ -568,12 +569,16 @@ async function savePresentedVehicles(supabase: any, input: {
   current: any;
   vehicles: any[];
   listed_keys?: string[];
+  filters?: Record<string, any> | null;
 }) {
   if (!input.lead_id || !Array.isArray(input.vehicles) || input.vehicles.length === 0) return input.current || {};
   const nextState = {
     ...(input.current || {}),
     veiculos_apresentados: input.vehicles.slice(0, 30),
     veiculos_apresentados_at: new Date().toISOString(), // MEM-3: carimbo p/ TTL (nao servir pool velho)
+    // CONVERSATION_CENTER: registra a ULTIMA oferta de estoque (categoria/faixa/keys) pra "mais opcoes"
+    // continuar na MESMA carroceria/orcamento (nao misturar SUV/sedan/hatch). Lido por buildConversationCenter.
+    last_stock_offer: buildLastStockOffer(input.vehicles, input.filters),
     // CASO #2: chaves dos carros JA LISTADOS (acumulado) p/ "mais opcoes" trazer DIFERENTES.
     ...(Array.isArray(input.listed_keys) ? { opcoes_listadas_keys: input.listed_keys.slice(0, 40) } : {}),
     ultima_foto: null, // Limpa referencia de fotos antigas quando novos carros sao apresentados em texto
@@ -2455,6 +2460,7 @@ export async function processPedroV2Turn(
             current: nextMemory,
             vehicles: vehiclesToSave,
             listed_keys: _newListedKeys,
+            filters: stockFilters as any,
           })
         : {
             ...nextMemory,
