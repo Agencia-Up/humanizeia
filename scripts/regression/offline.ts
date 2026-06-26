@@ -177,6 +177,9 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const moreSuv = plan("tem mais opcoes?", { action: "reply_only", intent: "unknown", confidence: 0.6 }, { interesse: { tipo_veiculo: "suv", preco_max: 70000 } });
   check("planner", "mais opcoes herda tipo SUV", moreSuv.action === "stock_search" && moreSuv.search_filters?.tipo_veiculo === "suv" && moreSuv.search_filters?.stock_broad === true, JSON.stringify(moreSuv));
   check("planner", "mais opcoes herda preco anterior", Number(moreSuv.search_filters?.preco_max) === 70000, JSON.stringify(moreSuv));
+
+  const sedanPlural = plan("Queria sedans ate 80k", { action: "stock_search", intent: "stock_lookup", search_query: "sedans", search_filters: { modelo_desejado: "sedans", tipo_veiculo: "sedan", preco_max: 80000 }, confidence: 0.9 });
+  check("planner", "sedans plural vira tipo, nao modelo", sedanPlural.action === "stock_search" && sedanPlural.search_query === null && sedanPlural.search_filters?.stock_broad === true && sedanPlural.search_filters?.modelo_desejado === null && sedanPlural.search_filters?.tipo_veiculo === "sedan", JSON.stringify(sedanPlural));
   // ── CASO Alê: refina VERSÃO/MOTOR de veículo em contexto -> CHECA estoque (nunca nega de cabeça) ──
   const memCompass = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", versao: "LIMITED 2.0", ano: 2019, preco: 107990 }] };
   const r1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Não amigo. Seria o modelo 270 com nova motorização.", vehicle_resolution: vr() as any, memory: memCompass, recent_history: [] } as any);
@@ -534,6 +537,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const _budReply = buildDeterministicStockReply({ plan: { action: "stock_search", search_query: null, search_filters: { stock_broad: true, preco_max: 34000 } } as any, intent: null as any, stock_result: _budStock });
   check("preco", "orçamento 34k não atingido -> 'não tenho até R$ 34.000'", /nao tenho carro ate r\$ 34/i.test(_budReply));
   check("preco", "orçamento -> mais em conta primeiro (Sandero antes do Onix)", _budReply.indexOf("Sandero") < _budReply.indexOf("Onix"));
+  const _orderedReply = buildDeterministicStockReply({ plan: { action: "stock_search", search_query: null, search_filters: { stock_broad: true, preco_max: 80000 } } as any, intent: null as any, stock_result: { success: true, items: [
+    { index: 3, marca: "Ford", modelo: "Focus", ano: 2017, preco: 62990 },
+    { index: 2, marca: "Ford", modelo: "Ka Sedan", ano: 2019, preco: 63990 },
+    { index: 1, marca: "Chevrolet", modelo: "Onix Sedan", ano: 2025, preco: 79990 },
+  ] } });
+  check("preco", "fallback renumera lista ordenada 1-2-3", /1\. \*Ford Focus[\s\S]*2\. \*Ford Ka Sedan[\s\S]*3\. \*Chevrolet Onix Sedan/.test(_orderedReply), _orderedReply);
   // normalizePlan aplica o teto mesmo quando o LLM não setou preco_max.
   const pc = normalizePlan({ action: "stock_search", intent: "stock_lookup", search_query: "Corolla", search_filters: { modelo_desejado: "Corolla" }, confidence: 0.7 }, FALLBACK, { message: "corolla até 50 mil", vehicle_resolution: vr() as any, memory: null, recent_history: [] } as any);
   check("preco", "normalizePlan 'corolla até 50 mil' -> preco_max=50000 + hard", Number(pc.search_filters?.preco_max) === 50000 && pc.search_filters?.hard_price_ceiling === true, `preco_max=${pc.search_filters?.preco_max} hard=${pc.search_filters?.hard_price_ceiling}`);
@@ -792,6 +801,16 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   );
   check("filtros", "mais opcoes mantem SUV do perfil anterior", f6.stock_broad === true && f6.tipo_veiculo === "suv" && f6.body_type === "suv", JSON.stringify(f6));
   check("filtros", "mais opcoes mantem teto anterior mesmo com anuncio", Number(f6.preco_max) === 70000 && !f6.ad_price, JSON.stringify(f6));
+
+  const f7 = buildStockFilters(
+    { extracted: { interesse: {} } },
+    {},
+    "Queria sedans ate 80k",
+    { action: "stock_search", search_query: "sedans", search_filters: { modelo_desejado: "sedans", tipo_veiculo: "sedan", preco_max: 80000 }, use_memory_vehicle: false },
+    {},
+    { lead_message: "Queria sedans ate 80k" },
+  );
+  check("filtros", "sedans plural nao fica como modelo/query", f7.stock_broad === true && f7.tipo_veiculo === "sedan" && f7.query === "" && !f7.modelo_desejado && Number(f7.preco_max) === 80000, JSON.stringify(f7));
 }
 
 // ── DETECTORES (extraídos) — regex de decisão que dispararam bugs ───────────────────────────

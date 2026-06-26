@@ -67,6 +67,19 @@ export function leadAsksAnyCarInBudget(message?: string | null): boolean {
   return /\b(algum|alguma|algo|qualquer|o que tiver|que tiver|tem de|tem carro|algum carro|carro de|carro por|opcao|opcoes|mais em conta|mais barato|baratinho)\b/.test(t);
 }
 
+function vehicleTypeFromTypeWord(value?: string | null) {
+  const t = normalizePlannerText(value);
+  const map: Record<string, string> = {
+    sedan: "sedan", sedans: "sedan", seda: "sedan", sedas: "sedan",
+    hatch: "hatch", hatches: "hatch", hatchback: "hatch",
+    suv: "suv", suvs: "suv",
+    picape: "pickup", picapes: "pickup", pickup: "pickup", pickups: "pickup", caminhonete: "pickup", caminhonetes: "pickup",
+    utilitario: "suv", utilitarios: "suv",
+    moto: "moto", motos: "moto", motocicleta: "moto", motocicletas: "moto",
+  };
+  return map[t] || null;
+}
+
 export function leadMessageAsksBroadStock(message?: string | null) {
   const text = normalizePlannerText(message);
   if (!text) return false;
@@ -591,9 +604,10 @@ export function buildStockFilters(intent: any, memory: any, text: string, brainP
   // "sedan" e marcou broad -> as linhas abaixo APAGAVAM o modelo -> devolvia sedans aleatórios (Focus/Ka/
   // Cronos) com "Temos sim!". Se há MODELO nomeado (plano/intent), NÃO é busca ampla de tipo. O stock_broad
   // EXPLÍCITO do planner (categoria, v134) já vem com modelo_desejado=null -> não é afetado por este guard.
-  const _hasNamedModel = Boolean(brainPlan?.search_query || brainPlan?.search_filters?.modelo_desejado || intent?.extracted?.interesse?.modelo_desejado);
+  const _modelTokenAsType = vehicleTypeFromTypeWord(brainPlan?.search_query || brainPlan?.search_filters?.modelo_desejado || intent?.extracted?.interesse?.modelo_desejado);
+  const _hasNamedModel = !_modelTokenAsType && Boolean(brainPlan?.search_query || brainPlan?.search_filters?.modelo_desejado || intent?.extracted?.interesse?.modelo_desejado);
   const _moreOptionsFollowup = leadAsksForMoreOptions(options?.lead_message);
-  const broadStock = !_marcaRequired && !_hasNamedModel && Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message) || _moreOptionsFollowup);
+  const broadStock = !_marcaRequired && !_hasNamedModel && Boolean(_modelTokenAsType || brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message) || _moreOptionsFollowup);
   // MEM-1: NAO herdar filtros VELHOS do interesse (preco/tipo/cambio/cor/modelo) quando o turno
   // ATUAL nomeia um MODELO novo. Sem isso, um interesse de uma busca ANTERIOR (ex.: suv ate 80k)
   // contaminava a busca nova (ex.: "tem hilux?" herdava preco_max:80000) e filtrava/zerava errado.
@@ -621,6 +635,12 @@ export function buildStockFilters(intent: any, memory: any, text: string, brainP
   };
 
   if (broadStock) {
+    if (_modelTokenAsType) {
+      filters.tipo_veiculo = filters.tipo_veiculo || _modelTokenAsType;
+      if (["suv", "sedan", "hatch", "pickup"].includes(String(filters.tipo_veiculo))) {
+        filters.body_type = filters.body_type || filters.tipo_veiculo;
+      }
+    }
     if (_moreOptionsFollowup) {
       const _memInterest: any = memory?.interesse || {};
       filters.tipo_veiculo = filters.tipo_veiculo || _memInterest.tipo_veiculo || null;

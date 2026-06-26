@@ -420,14 +420,14 @@ export function buildDeterministicStockReply(input: {
     ? [...items].sort((a: any, b: any) => (Number(a.preco) || Infinity) - (Number(b.preco) || Infinity))
     : items;
   const shown = _ordered.slice(0, 5);
-  const list = shown.map((vehicle) => {
+  const list = shown.map((vehicle, index) => {
     const det = [
       vehicle.preco_formatado || null,
       vehicle.km_formatado || null,
       vehicle.cambio || null,
       vehicle.cor || null,
-    ].filter(Boolean).join(" · ");
-    return `${vehicle.index}. *${vehicle.label}*${det ? ` — ${det}` : ""}`;
+    ].filter(Boolean).join(" ?? ");
+    return `${index + 1}. *${vehicle.label}*${det ? ` ??? ${det}` : ""}`;
   }).join("\n");
   const more = items.length > shown.length
     ? `\n\nEsses sao alguns dos nossos modelos — tenho mais opcoes tambem.`
@@ -438,7 +438,7 @@ export function buildDeterministicStockReply(input: {
   // mas tenho parecidos"). Em busca AMPLA (tipo/categoria) nao se aplica (os itens SAO o tipo pedido).
   const _norm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const _BRANDS = new Set(["fiat", "chevrolet", "gm", "volkswagen", "vw", "toyota", "honda", "hyundai", "jeep", "renault", "ford", "nissan", "peugeot", "citroen", "mitsubishi", "caoa", "chery", "kia", "bmw", "audi", "mercedes"]);
-  const _TYPES = new Set(["suv", "sedan", "seda", "hatch", "hatchback", "picape", "pickup", "caminhonete", "utilitario", "carro", "veiculo", "automovel"]);
+  const _TYPES = new Set(["suv", "suvs", "sedan", "sedans", "seda", "sedas", "hatch", "hatches", "hatchback", "picape", "picapes", "pickup", "pickups", "caminhonete", "caminhonetes", "utilitario", "utilitarios", "moto", "motos", "carro", "carros", "veiculo", "veiculos", "automovel", "automoveis"]);
   const _isBroad = Boolean((input.plan as any)?.search_filters?.stock_broad);
   const _reqModelToks = _norm(String(input.plan.search_query || "")).split(/\s+/).filter((w) => w.length >= 3 && !_BRANDS.has(w) && !_TYPES.has(w) && !/^\d+$/.test(w));
   const _hasExact = !input.plan.search_query || _isBroad || _reqModelToks.length === 0

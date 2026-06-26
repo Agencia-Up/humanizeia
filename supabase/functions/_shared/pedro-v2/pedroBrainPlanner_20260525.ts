@@ -579,8 +579,12 @@ const BRAND_ALIASES: Record<string, string> = {
 };
 // "modelo" que e so a CARROCERIA/tipo (nao modelo real) -> vira tipo_veiculo.
 const TYPE_AS_MODEL: Record<string, string> = {
-  sedan: "sedan", seda: "sedan", hatch: "hatch", hatchback: "hatch",
-  suv: "suv", picape: "pickup", pickup: "pickup", caminhonete: "pickup", utilitario: "suv",
+  sedan: "sedan", sedans: "sedan", seda: "sedan", sedas: "sedan",
+  hatch: "hatch", hatches: "hatch", hatchback: "hatch",
+  suv: "suv", suvs: "suv",
+  picape: "pickup", picapes: "pickup", pickup: "pickup", pickups: "pickup", caminhonete: "pickup", caminhonetes: "pickup",
+  utilitario: "suv", utilitarios: "suv",
+  moto: "moto", motos: "moto", motocicleta: "moto", motocicletas: "moto",
 };
 
 export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
@@ -629,6 +633,20 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     }
   }
 
+  // Categoria/carroceria pura nunca e MODELO. O LLM frequentemente devolve search_query/modelo_desejado
+  // como "sedans"/"SUVs"; se isso fica como modelo, o reply diz "nao tenho sedans" mesmo com sedans
+  // reais listados. Converte para busca ampla por tipo, preservando preco/ano/cambio.
+  if (plan.action === "stock_search") {
+    const _f: any = plan.search_filters || {};
+    const _modelText = normalizeText(String(plan.search_query || _f.modelo_desejado || ""));
+    const _typeOnly = TYPE_AS_MODEL[_modelText];
+    if (_typeOnly) {
+      plan.search_query = null;
+      plan.search_filters = { ..._f, stock_broad: true, modelo_desejado: null, tipo_veiculo: _f.tipo_veiculo || _typeOnly };
+      plan.use_memory_vehicle = false;
+      plan.reason = `model_token_is_vehicle_type:${_typeOnly}:${plan.reason || ""}`;
+    }
+  }
   // "TEM ALGUM DE 34K?" — pergunta SÓ de ORÇAMENTO (qualquer carro no valor, sem modelo específico): larga
   // o modelo velho/stale e busca AMPLO filtrado por preço, MAIS EM CONTA primeiro. SEM hard ceiling: se
   // nada couber no orçamento, o reply mostra os mais baratos disponíveis sendo honesto ("não tenho até X").
