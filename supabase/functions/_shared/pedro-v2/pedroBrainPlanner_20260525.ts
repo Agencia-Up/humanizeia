@@ -4,6 +4,7 @@ import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
 import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions, leadAsksBodyType, leadRespondsNoDownPaymentOrInstallmentConcern, leadRespondsTradeValueObjection } from "./decisionLogic.ts";
+import { buildConversationCenter, conversationTrackOverride, getLastAgentText as getConversationLastAgentText, inferPendingQuestion } from "./conversationState.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -626,6 +627,31 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
       ...(plan.search_filters || {}),
       modelo_desejado: plan.search_query,
     };
+  }
+
+  // CAMADA CENTRAL DE ESTADO: antes de aceitar busca/foto/handoff, veja se a fala atual
+  // e resposta ao que o agente acabou de perguntar/oferecer. Isso evita a classe de bugs
+  // "perdeu o trilho": carro da troca vira estoque, nome/CPF vira busca, ping vira foto,
+  // confirmacao de visita vira handoff silencioso. Puro e testado offline em conversationState.ts.
+  {
+    const _track = conversationTrackOverride({
+      message: input.message,
+      memory: input.memory,
+      recent_history: input.recent_history,
+      planned_action: plan.action,
+    });
+    if (_track) {
+      plan.action = _track.action;
+      plan.intent = _track.intent;
+      plan.search_query = _track.search_query ?? null;
+      plan.search_filters = _track.search_filters || {};
+      plan.photo_target = _track.photo_target ?? null;
+      plan.use_memory_vehicle = Boolean(_track.use_memory_vehicle);
+      plan.response_guidance = _track.response_guidance;
+      plan.reason = _track.reason;
+      plan.source = "conversation_center" as any;
+      return plan;
+    }
   }
 
   // ── NÃO PERDER O TRILHO: resposta de FINANCIAMENTO/ENTRADA não vira busca de estoque (Codex Caso H) ──
@@ -1254,8 +1280,8 @@ export async function planPedroTurn(input: {
   // SINAIS DETERMINISTICOS de contexto: o QUE o agente acabou de fazer (pending_question)
   // e o texto da ultima fala dele. Sem isso o LLM nao interpretava respostas curtas/emojis
   // ("👍", "2024", "sim", "pir favor") e caia em intent="unknown".
-  const pendingQuestion = classifyPendingQuestion(input);
-  const lastAgentMessage = getLastAgentText(input).slice(0, 400);
+  const pendingQuestion = inferPendingQuestion(input);
+  const lastAgentMessage = getConversationLastAgentText(input).slice(0, 400);
 
   const systemPrompt = [
     "Voce e o CEREBRO/orquestrador do Pedro v2 (consultor de vendas de carros). Sua tarefa e DECIDIR a proxima acao — NAO escreva a resposta final ao lead.",
@@ -1350,6 +1376,8 @@ export async function planPedroTurn(input: {
     },
     // PLANO B: o FILME da conversa (origem/interesse/rejeitou/etapa) — leia a mensagem ATUAL contra ISTO.
     estado_conversa: buildConversationState(_mem, input.ad_context),
+    // Centro deterministico do turno: pendencia + relacao da fala atual com a ultima fala do agente.
+    conversation_center: buildConversationCenter({ message: input.message, memory: input.memory, recent_history: input.recent_history }),
   };
 
   const userPayload = JSON.stringify({

@@ -77,6 +77,7 @@ import {
   stableVehicleKey,
   leadAsksForMorePhotos,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
+import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -390,6 +391,21 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("pending", "texto: pergunta genérica -> fez_pergunta", P("Posso te ajudar com mais alguma coisa?", "brain_reply") === "fez_pergunta");
     check("pending", "texto: afirmação sem pergunta -> afirmacao", P("Perfeito, vou anotar isso.", "brain_reply") === "afirmacao");
     check("pending", "vazio -> nenhum", P("", "brain_reply") === "nenhum");
+
+    const _centerMem = (pending: string) => ({ pending_question: pending, recent_turns: [{ role: "agent", text: "Qual seu nome para eu registrar seu interesse?", at: "2026-01-01T00:00:00Z" }] });
+    const _centerName = buildConversationCenter({ message: "Francisco Veltri", memory: _centerMem("perguntou_dados") as any, recent_history: [] });
+    check("estado", "centro: nome responde dados (nao estoque)", _centerName.lead_reply_relation === "data_answer" && _centerName.should_hold_track === true, JSON.stringify(_centerName));
+    const _nameGuard = conversationTrackOverride({ message: "Francisco Veltri", memory: _centerMem("perguntou_dados") as any, recent_history: [], planned_action: "stock_search" });
+    check("estado", "centro: bloqueia stock_search quando lead respondeu nome", _nameGuard?.action === "reply_only" && _nameGuard.reason.includes("data_answer"), JSON.stringify(_nameGuard));
+    const _tradeGuard = conversationTrackOverride({ message: "85.000 km bom estado", memory: { pending_question: "perguntou_troca" } as any, recent_history: [{ role: "agent", text: "Pode me passar ano, quilometragem e estado geral?" }], planned_action: "stock_search" });
+    check("estado", "centro: detalhe da troca nao vira busca", _tradeGuard?.action === "reply_only" && _tradeGuard.intent === "trade_in", JSON.stringify(_tradeGuard));
+    const _visitGuard = conversationTrackOverride({ message: "Sim", memory: {} as any, recent_history: [{ role: "agent", text: "Voce tem interesse em agendar uma visita para ver o carro?" }], planned_action: "handoff" });
+    check("estado", "centro: sim para visita nao vira handoff", _visitGuard?.action === "reply_only" && _visitGuard.reason.includes("schedule_affirmation"), JSON.stringify(_visitGuard));
+    const _photoGuard = conversationTrackOverride({ message: "sim, pode mandar", memory: { pending_question: "ofereceu_fotos" } as any, recent_history: [], planned_action: "reply_only" });
+    check("estado", "centro: aceite de foto forca photo_request", _photoGuard?.action === "photo_request", JSON.stringify(_photoGuard));
+    const _optionsGuard = conversationTrackOverride({ message: "ok", memory: { pending_question: "ofereceu_opcoes" } as any, recent_history: [], planned_action: "reply_only" });
+    check("estado", "centro: aceite de opcoes forca stock_search", _optionsGuard?.action === "stock_search" && _optionsGuard.search_filters?.stock_broad === true, JSON.stringify(_optionsGuard));
+    check("estado", "centro: pending persistido e fonte da verdade", inferPendingQuestion({ memory: { pending_question: "perguntou_troca" } as any, recent_history: [{ role: "agent", text: "Quer fotos?" }] }) === "perguntou_troca", "");
     // ⭐CRÍTICO: foto + qualificação na MESMA fala NÃO vira ofereceu_fotos (a qualificação vence) — assim o
     // "sim/ok" do lead não é lido como pedido de foto quando o agente perguntou troca/pagamento junto.
     check("pending", "'vou separar as fotos. Tem troca?' -> NÃO é ofereceu_fotos", P("Vou separar as fotos. Tem algum carro pra dar de troca?", "brain_reply") !== "ofereceu_fotos");

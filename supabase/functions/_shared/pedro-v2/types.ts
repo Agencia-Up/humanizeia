@@ -76,6 +76,15 @@ export type PedroV2LeadMemory = {
   };
   veiculos_apresentados?: any[];
   veiculos_apresentados_at?: string | null;
+  pending_question?: string | null;
+  conversation_center?: {
+    pending_question?: string | null;
+    last_agent_message?: string | null;
+    reply_source?: string | null;
+    current_objective?: string | null;
+    updated_at?: string | null;
+    [key: string]: any;
+  } | null;
   recent_turns?: Array<{
     role: "lead" | "agent";
     text: string;

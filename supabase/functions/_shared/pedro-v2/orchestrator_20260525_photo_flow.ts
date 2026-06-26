@@ -3222,7 +3222,17 @@ export async function processPedroV2Turn(
     // ── PENDING_QUESTION PERSISTIDO (Codex): grava O QUE ESTA RESPOSTA do agente perguntou/ofereceu, pro
     // PRÓXIMO turno interpretar o "sim/ok/👍/2024" do lead a partir do estado (não re-parseando a última
     // fala, que pode vir duplicada/atrasada). O planner (classifyPendingQuestion) PREFERE este valor.
-    try { (memToSave as any).pending_question = classifyAgentReplyPending((reply as any)?.text, (reply as any)?.source); }
+    try {
+      const _pendingSaved = classifyAgentReplyPending((reply as any)?.text, (reply as any)?.source);
+      (memToSave as any).pending_question = _pendingSaved;
+      (memToSave as any).conversation_center = {
+        pending_question: _pendingSaved,
+        last_agent_message: String((reply as any)?.text || "").slice(0, 500),
+        reply_source: (reply as any)?.source || null,
+        current_objective: _pendingSaved === "nenhum" || _pendingSaved === "afirmacao" ? "interpretar_mensagem_atual" : `aguardando_${_pendingSaved}`,
+        updated_at: new Date().toISOString(),
+      };
+    }
     catch { /* best-effort, nunca derruba o turno */ }
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,
