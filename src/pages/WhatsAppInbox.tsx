@@ -308,15 +308,22 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       for (const lead of sellerLeads) {
         const cleanPhoneNum = (lead.remote_jid || '').split('@')[0];
         if (!cleanPhoneNum) continue;
-        const key = `${cleanPhoneNum}::${lead.instance_id ?? 'null'}`;
-        const existingIdx = convList.findIndex(c => c.key === key);
+
+        const canonicalLead = leadKey(cleanPhoneNum);
+        // Comparação usando o leadKey canônico para evitar duplicações por formato do telefone
+        const existingIdx = convList.findIndex(c => 
+          leadKey(c.phone) === canonicalLead && 
+          (c.instance_id === lead.instance_id || !c.instance_id || !lead.instance_id)
+        );
+
         if (existingIdx === -1) {
+          const key = `${cleanPhoneNum}::${lead.instance_id ?? 'null'}`;
           convList.push({
             key,
             phone: cleanPhoneNum,
             instance_id: lead.instance_id,
             contact_name: lead.lead_name,
-            last_message: lead.summary || 'Conversa com o Agente',
+            last_message: lead.summary || 'Conversa iniciada',
             last_message_at: lead.last_interaction_at || new Date().toISOString(),
             unread_count: 0,
             ai_category: null,
@@ -368,77 +375,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         .limit(300);
       const inboxRows: InboxMessage[] = (inboxData || []) as unknown as InboxMessage[];
 
-      // 2. Busca mensagens do histórico do Pedro (wa_chat_history)
-      let historyRows: InboxMessage[] = [];
-      try {
-        const phoneCandidatesList = [
-          phone,
-          phone.startsWith('55') ? phone : `55${phone}`,
-          phone.endsWith('@s.whatsapp.net') ? phone : `${phone}@s.whatsapp.net`,
-          phone.startsWith('55') ? `${phone}@s.whatsapp.net` : `55${phone}@s.whatsapp.net`
-        ];
-        const uniqueCandidates = Array.from(new Set(phoneCandidatesList));
-
-        const { data: histData } = await (supabase as any)
-          .from('wa_chat_history')
-          .select('id, remote_jid, role, content, metadata, created_at')
-          .eq('user_id', effectiveUserId as string)
-          .in('remote_jid', uniqueCandidates)
-          .order('created_at', { ascending: true })
-          .limit(300);
-
-        historyRows = (histData || []).map((r: any): InboxMessage => {
-          const mediaList = r.metadata?.media || null;
-          const firstMedia = mediaList?.[0] || null;
-          return {
-            id: `wch-${r.id}`,
-            user_id: effectiveUserId as string,
-            instance_id: null,
-            phone: phone,
-            contact_name: null,
-            direction: r.role === 'assistant' ? 'outgoing' : 'incoming',
-            message_type: firstMedia ? (firstMedia.type || 'image') : 'text',
-            content: r.content ?? '',
-            media_url: firstMedia ? (firstMedia.file || firstMedia.url) : null,
-            ai_category: null,
-            ai_sentiment: null,
-            is_read: true,
-            created_at: r.created_at,
-          };
-        });
-      } catch (err) {
-        console.error('Erro ao carregar histórico do Pedro:', err);
-      }
-
-      // 3. Mescla e deduplica as mensagens
-      const sameMessage = (a: InboxMessage, b: InboxMessage) => {
-        if (a.direction !== b.direction) return false;
-        if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
-        const aMedia = a.message_type !== 'text';
-        const bMedia = b.message_type !== 'text';
-        if (aMedia && bMedia) return a.message_type === b.message_type;
-        return (a.content || '').trim() === (b.content || '').trim();
-      };
-
-      const merged: InboxMessage[] = [...inboxRows];
-      for (const h of historyRows) {
-        const idx = merged.findIndex(r => sameMessage(r, h));
-        if (idx === -1) {
-          merged.push(h);
-          continue;
-        }
-        // Se a mensagem do histórico tiver mídia renderizável, prefere ela
-        const hasMedia = (m: InboxMessage) => m.media_url && !m.media_url.includes('mmg.whatsapp.net') && !m.media_url.includes('.enc');
-        if (hasMedia(h) && !hasMedia(merged[idx])) {
-          merged[idx] = { ...h, id: merged[idx].id };
-        }
-      }
-
-      const sortedRows = merged.sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      );
-
-      setMessages(sortedRows);
+      setMessages(inboxRows);
 
       // Marcar como lidas
       await supabase
