@@ -88,7 +88,7 @@ const KNOWN_BRANDS = [
 ];
 
 const WEAK_WORDS = new Set([
-  "carro", "carros", "veiculo", "veiculos", "tem", "voces", "voce", "estoque",
+  "carro", "carros", "veiculo", "veiculos", "tem", "voces", "voce", "estoque", "repasse", "repasses",
   "disponivel", "preco", "valor", "anuncio", "instagram", "facebook", "esse",
   "essa", "este", "esta", "sobre", "quero", "queria", "saber", "mais", "de",
   "da", "do", "dos", "das", "um", "uma", "com", "sem", "para", "por", "ate",
@@ -101,7 +101,7 @@ const WEAK_WORDS = new Set([
   "economico", "economica", "economicos", "economicas", "economico(a)",
   "barato", "barata", "baratos", "baratas", "baratinho", "baratinha",
   "popular", "populares", "basico", "basica", "simples", "conta", "em",
-  "barateza", "acessivel", "acessivel", "custo", "beneficio",
+  "barateza", "acessivel", "acessivel", "baixo", "baixa", "custo", "beneficio",
   // conversa/negociacao: nunca sao modelo
   "entrada", "entradas", "pagamento", "financiamento", "financiar", "parcela", "parcelas",
   "troca", "trocar", "tambem", "interessa", "interesse", "informacao", "informacoes",
@@ -132,7 +132,7 @@ const ATTRIBUTE_NOISE_TOKENS = new Set([
   // estado / adjetivos de venda (ruido)
   "completo", "completa", "novo", "nova", "seminovo", "seminova", "semi", "usado", "usada",
   "conservado", "conservada", "impecavel", "lindo", "linda", "bonito", "bonita", "top",
-  "revisado", "revisada", "unico", "particular", "inteiro", "inteira", "bem", "muito", "mto",
+  "revisado", "revisada", "repasse", "repasses", "unico", "particular", "inteiro", "inteira", "bem", "muito", "mto",
   // cambio / combustivel (reforco — ja em WEAK_WORDS, repetido por seguranca)
   "automatico", "automatica", "manual", "flex", "gasolina", "diesel", "turbo", "cvt",
 ]);

@@ -78,7 +78,7 @@ const GENERIC_STOCK_WORDS = new Set([
   "carro", "carros", "veiculo", "veiculos", "automovel", "automoveis", "auto", "autos",
   "mais", "outro", "outros", "outra", "outras", "algum", "alguns", "alguma", "algumas",
   "qualquer", "quaisquer", "opcao", "opcoes", "modelo", "modelos", "disponivel", "disponiveis",
-  "estoque", "novo", "novos", "usado", "usados", "seminovo", "seminovos",
+  "estoque", "novo", "novos", "usado", "usados", "seminovo", "seminovos", "repasse", "repasses",
 ]);
 
 // ELOGIO/COMENTARIO puro sobre carro ("lindo esse carro", "gostei dos carros") NAO e pedido de
@@ -187,9 +187,14 @@ function wantsCheaperVehicle(message?: string | null) {
   return /\b(mais barat[oa]s?|mais em conta|baratinh[oa]|mais economic[oa]s?|mais acessivel|preco menor|menor preco|mais baix[oa] de preco|abaixo dele|abaixo desse|gastar menos|mais conta)\b/.test(n);
 }
 
-// Lead pede explicitamente OUTRO veiculo / nao gostou do em foco. Tambem invalida o
-// aceite de foto (a palavra "queria/quero" no inicio nao pode disparar foto do carro
-// que ele esta justamente recusando).
+// Lead pede segmento barato/de repasse/usado de forma ampla. Isso nao e modelo; deve listar os mais em conta.
+function wantsCheapBroadStock(message?: string | null) {
+  const n = normalizeText(message);
+  if (!n) return false;
+  const hasCheapSegment = /\b(repasse|repasses|carro usado|carros usados|usado barato|usados baratos|seminovo barato|seminovos baratos|barat[oa]s?|baratinh[oa]s?|mais em conta|mais economic[oa]s?|popular|populares|baixo custo|preco baixo|menor preco)\b/.test(n);
+  if (!hasCheapSegment) return false;
+  return /\b(carro|carros|veiculo|veiculos|automovel|automoveis|opcao|opcoes|modelo|modelos|estoque|tem|procuro|quero|queria|busco|mostra|mostrar)\b/.test(n);
+}
 function wantsOtherVehicle(message?: string | null) {
   const n = normalizeText(message);
   if (!n) return false;
@@ -705,6 +710,36 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // o modelo velho/stale e busca AMPLO filtrado por preço, MAIS EM CONTA primeiro. SEM hard ceiling: se
   // nada couber no orçamento, o reply mostra os mais baratos disponíveis sendo honesto ("não tenho até X").
   // Caso real lead 99747-0573: "Tem algum de 34k?" buscava "Zafira" e mostrava carros de 64-76k.
+  // REPASSE / USADO / BARATO sem modelo real = busca ampla pelos mais em conta.
+  // Caso real Avant 92005-3580: audio "carro de repasse/carro usado" herdou S10 do anuncio,
+  // depois buscou modelo_lixo="carro"+tipo_hatch e zerou o estoque; o reply inventou Audi/Land Rover.
+  // Invariante: termo de segmento/preco nao e modelo; a fala atual manda e nao herda anuncio antigo.
+  if (plan.action === "stock_search" && wantsCheapBroadStock(input.message)) {
+    const f = (plan.search_filters || {}) as any;
+    const resolvedModel = normalizeText(String(plan.search_query || f.modelo_desejado || ""));
+    const resolvedTokens = resolvedModel.split(/\s+/).filter(Boolean);
+    const onlyGenericModel = resolvedTokens.length === 0 || resolvedTokens.every((tok) => GENERIC_STOCK_WORDS.has(tok));
+    if (onlyGenericModel) {
+      const msgN = normalizeText(input.message);
+      const explicitType = (msgN.match(/\b(suv|sedan|seda|hatch|picape|pickup|caminhonete|camionete)\b/) || [])[1] || null;
+      const typeMap: Record<string, string> = { seda: "sedan", sedan: "sedan", hatch: "hatch", suv: "suv", picape: "pickup", pickup: "pickup", caminhonete: "pickup", camionete: "pickup" };
+      plan.action = "stock_search";
+      plan.intent = plan.intent === "unknown" || plan.intent === "small_talk" || plan.intent === "trade_in" ? "stock_lookup" : plan.intent;
+      plan.search_query = null;
+      plan.use_memory_vehicle = false;
+      plan.photo_target = null;
+      plan.search_filters = {
+        ...f,
+        stock_broad: true,
+        cheap_broad: true,
+        modelo_desejado: null,
+        query: "",
+        tipo_veiculo: explicitType ? (typeMap[explicitType] || explicitType) : null,
+      };
+      plan.reason = `cheap_broad_stock:${plan.reason || ""}`;
+      plan.response_guidance = "O lead pediu carro de repasse/usado/barato/mais em conta. NAO herde veiculo antigo do anuncio. Consulte o estoque REAL em busca ampla, ordene pelos MAIS BARATOS primeiro, apresente opcoes acessiveis e pergunte qual faixa de valor ou modelo agrada.";
+    }
+  }
   if (leadAsksAnyCarInBudget(input.message)) {
     const _ceil = parsePriceCeiling(input.message);
     plan.action = "stock_search";
@@ -959,7 +994,7 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     const _memModelSpecific = Boolean(_memModelo) && !_genericTok.test(String(_memModelo))
       && !["pickup", "suv", "hatch", "sedan", "moto", "carro"].includes(String(_memModelo).toLowerCase());
     if (plan.action === "stock_search" && _planIsGeneric && _priceOrAvailQ && (_memTypeSpecific || _memModelSpecific)
-        && !wantsOtherVehicle(input.message) && !wantsCheaperVehicle(input.message)) {
+        && !wantsOtherVehicle(input.message) && !wantsCheaperVehicle(input.message) && !wantsCheapBroadStock(input.message)) {
       if (_memModelSpecific) {
         plan.search_query = String(_memModelo);
         plan.search_filters = { ...(plan.search_filters || {}), modelo_desejado: String(_memModelo), ...(_memTypeSpecific ? { tipo_veiculo: _memTipo } : {}) } as any;

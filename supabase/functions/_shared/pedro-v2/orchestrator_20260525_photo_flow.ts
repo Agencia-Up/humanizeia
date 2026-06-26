@@ -1826,7 +1826,8 @@ export async function processPedroV2Turn(
   // Busca AMPLA de categoria = apresentar a LISTA primeiro (narrow), nunca despejar foto de 1 carro —
   // mesmo que messageAsksForPhotos de falso-positivo (o texto enriquecido do anuncio pode casar "ver").
   // So liberamos foto numa busca ampla se o lead pediu foto de um MODELO especifico (que ai nao e ampla).
-  const _broadCategoryBrowse = Boolean((stockFilters as any)?.stock_broad);
+  const _broadCategoryBrowse = Boolean((stockFilters as any)?.stock_broad || (brainPlan as any)?.search_filters?.stock_broad);
+  const _cheapBroadBrowse = Boolean((stockFilters as any)?.cheap_broad || (brainPlan as any)?.search_filters?.cheap_broad);
   // "SIM" a um PING DE FOLLOW-UP ("ainda está por aí?" / "conseguiu dar uma olhada?") é confirmação de
   // PRESENÇA, NÃO aceite de foto (lead 3199-6370: follow-up perguntou presença, lead disse "Sim" e o agente
   // RE-DESPEJOU 5 fotos). O planner marca esse "Sim" como photo_request. Bloqueia a foto (a não ser que o
@@ -2307,9 +2308,10 @@ export async function processPedroV2Turn(
     // ha varios => APRESENTA as opcoes. Relista de forma DETERMINISTICA (provider-independente, sem custo).
     if (_broadCategoryBrowse && stockResult?.success && Array.isArray(stockResult.items)
         && stockResult.items.length >= 2
-        && !messageIsTooVagueToAct(text, currentMemory)
+        && (!messageIsTooVagueToAct(text, currentMemory) || _cheapBroadBrowse)
         && !_optionsExhausted  // já mostrou todas as opções desse perfil -> NÃO relistar (repetir); o LLM oferece variar
-        && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise", "ad_generic_abordagem"].includes((reply as any)?.source)
+        && !["vehicle_photos_reply", "vehicle_photos_pick_which", "presend_fixed_no_photo_promise"].includes((reply as any)?.source)
+        && (_cheapBroadBrowse || (reply as any)?.source !== "ad_generic_abordagem")
         && !replyMentionsAnyVehicle((reply as any)?.text || "", stockResult.items)) {
       reply = {
         ok: true,

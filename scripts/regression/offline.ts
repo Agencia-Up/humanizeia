@@ -146,6 +146,9 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const onix = ranked({ modelo_desejado: "onix", query: "onix" });
   check("busca", "modelo 'onix' -> traz Onix", onix.length > 0 && onix.some((r: any) => /onix/i.test(r.vehicle.modelName)), labels(onix).join(","));
 
+  const repasseBroad = ranked({ query: "carro de repasse", modelo_desejado: "carro" });
+  check("busca", "repasse/usado nao vira modelo obrigatorio", repasseBroad.length > 0 && repasseBroad[0].vehicle.saleValue <= repasseBroad[Math.min(1, repasseBroad.length - 1)].vehicle.saleValue, labels(repasseBroad).join(","));
+
   // passesRequestedVehicleType: moto fora de busca de carro (sanidade do filtro de tipo).
   check("busca", "Creta passa como suv", passesRequestedVehicleType(STOCK[7] as any, { tipo_veiculo: "suv" }, false) === true);
 }
@@ -197,6 +200,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
 
   const sedanPlural = plan("Queria sedans ate 80k", { action: "stock_search", intent: "stock_lookup", search_query: "sedans", search_filters: { modelo_desejado: "sedans", tipo_veiculo: "sedan", preco_max: 80000 }, confidence: 0.9 });
   check("planner", "sedans plural vira tipo, nao modelo", sedanPlural.action === "stock_search" && sedanPlural.search_query === null && sedanPlural.search_filters?.stock_broad === true && sedanPlural.search_filters?.modelo_desejado === null && sedanPlural.search_filters?.tipo_veiculo === "sedan", JSON.stringify(sedanPlural));
+
+  const memS10 = { interesse: { modelo_desejado: "Chevrolet S10", tipo_veiculo: "pickup" } };
+  const repassePlan = plan("Mas eu nao quero carro zero nao, quero carro de repasse, quero carro usado.", { action: "stock_search", intent: "trade_in", search_query: "carro", search_filters: { modelo_desejado: "carro", tipo_veiculo: "hatch" }, confidence: 0.9 }, memS10);
+  check("planner", "repasse/usado vira busca ampla barata sem herdar S10", repassePlan.action === "stock_search" && repassePlan.search_query === null && repassePlan.search_filters?.stock_broad === true && repassePlan.search_filters?.cheap_broad === true && repassePlan.search_filters?.modelo_desejado === null && repassePlan.search_filters?.tipo_veiculo === null && repassePlan.use_memory_vehicle === false, JSON.stringify(repassePlan));
+  const foxRepasse = plan("Quero um Fox de repasse", { action: "stock_search", intent: "stock_lookup", search_query: "Volkswagen Fox", search_filters: { modelo_desejado: "Volkswagen Fox", tipo_veiculo: "hatch" }, confidence: 0.9 });
+  check("planner", "repasse com modelo real preserva o modelo", /fox/i.test(String(foxRepasse.search_query || foxRepasse.search_filters?.modelo_desejado || "")), JSON.stringify(foxRepasse));
   // ── CASO Alê: refina VERSÃO/MOTOR de veículo em contexto -> CHECA estoque (nunca nega de cabeça) ──
   const memCompass = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", versao: "LIMITED 2.0", ano: 2019, preco: 107990 }] };
   const r1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Não amigo. Seria o modelo 270 com nova motorização.", vehicle_resolution: vr() as any, memory: memCompass, recent_history: [] } as any);
