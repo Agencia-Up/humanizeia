@@ -390,12 +390,40 @@ export function classifyAgentReplyPending(replyText?: string | null, replySource
   if (!hasQualWord
       && /\b(posso te mostrar|posso mostrar|quer ver|gostaria de ver|te mostro|vou te mostrar|quer que eu (te )?mostre|posso te indicar|posso te oferecer|mais opcoes|outras opcoes)\b/.test(t)
       && /\b(opcao|opcoes|alternativa|carro|carros|modelo|modelos|hatch|sedan|suv|picape|veiculo|estoque|disponiveis)\b/.test(t)) return "ofereceu_opcoes";
-  if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t) && /\b(pretende|vai|forma|paga|pagar|prefere|quer)\b/.test(t)) return "perguntou_pagamento";
+  // PAGAMENTO/ENTRADA: âncora no substantivo financeiro + um verbo de "pretender/pagar" OU de "perguntar o
+  // valor/entrada" ("preciso saber o valor que você pode dar de entrada" NÃO tinha verbo e escapava → o
+  // pending_question não era setado e o agente reinterpretava a resposta como busca. Caso lead 98123-8305).
+  if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t)
+      && /\b(pretende|vai|forma|paga|pagar|prefere|quer|pode dar|consegue|preciso saber|\bvalor\b|quanto|qual|me diz|me fala|dar de entrada)\b/.test(t)) return "perguntou_pagamento";
   if (/\b(carro na troca|usado na troca|tem (um |algum )?carro (pra|para)? ?(dar de )?troca|algum carro (pra|para) (dar de )?troca|dar de troca|tem troca)\b/.test(t)) return "perguntou_troca";
   if (/\b(seu nome|qual.{0,8}nome|me confirma.{0,10}nome|\bcpf\b|nascimento|telefone|e[ -]?mail|whatsapp|qual.{0,6}dia|que dia|qual horario|melhor dia)\b/.test(t)) return "perguntou_dados";
   if (/\b(qual (carro|modelo|veiculo)|que carro|qual veiculo|esta procurando|o que (voce )?(esta )?(procura|procurando|busca)|tipo de carro|qual seria)\b/.test(t)) return "perguntou_veiculo";
   if (/[?]\s*$/.test(raw.trim())) return "fez_pergunta";
   return "afirmacao";
+}
+
+// ── NÃO PERDER O TRILHO: lead RESPONDENDO a pergunta de ENTRADA/FINANCIAMENTO (sem entrada / foco na parcela)
+// Caso real (lead 98123-8305): o agente perguntou a ENTRADA; o lead respondeu "Não tenho" / "se precisa dar
+// entrada não dá" / "vou pelo valor das parcelas que cabe no bolso" — e o agente DESPEJOU lista de carros
+// (ouviu "valor" e virou stock_search). É RESPOSTA ao funil de financiamento, NÃO nova busca. Contexto =
+// pending 'perguntou_pagamento' OU última fala do agente sobre entrada/financiamento/parcela. PURO.
+export function leadRespondsNoDownPaymentOrInstallmentConcern(message?: string | null, pendingQuestion?: string | null, lastAgentText?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  const a = normalizePlannerText(lastAgentText);
+  const inFinanceContext = pendingQuestion === "perguntou_pagamento"
+    || (!!a && /\b(entrada|financ|parcel|a vista|consorcio|forma de pagam)\b/.test(a));
+  if (!inFinanceContext) return false;
+  // FALSE FRIENDS: "não tenho INTERESSE/PREFERÊNCIA/CARRO na troca/TEMPO/IDEIA" NÃO é sobre entrada.
+  if (/\bnao tenho\b[^.!?]*\b(interesse|preferencia|carro|troca|tempo|pressa|ideia|nada disso)\b/.test(t)) return false;
+  // sem entrada / não consegue dar entrada (em contexto de pagamento, um "não tenho"/"não dá" cru = sem entrada)
+  const noEntrada =
+    /\b(sem entrada|nao tenho entrada|nao tenho como dar|nao consigo dar|nao consigo pagar|nao posso dar|nao vou dar|zero de entrada|nao tenho condi|entrada nao tenho)\b/.test(t)
+    || /\bnao da\b/.test(t)
+    || (pendingQuestion === "perguntou_pagamento" && /^(nao tenho|nao|nao da)\b/.test(t));
+  // foco na PARCELA (vou pela parcela / cabe no bolso / financiar sem entrada)
+  const byParcela = /\b(parcela|parcelas|pela parcela|valor da parcela|valor das parcelas|caber no.{0,8}bolso|cabe no.{0,8}bolso|que caiba|depende da parcela|financiar sem entrada|sem precisar de entrada|sem dar entrada)\b/.test(t);
+  return noEntrada || byParcela;
 }
 
 // ── FUNIL FORÇADO: próxima pergunta obrigatória do funil do CLIENTE ainda não respondida ─────────────

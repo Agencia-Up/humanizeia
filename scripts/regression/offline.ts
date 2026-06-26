@@ -59,6 +59,7 @@ import {
   leadAffirmsPresenceToFollowupPing,
   classifyAgentReplyPending,
   funnelBlocksHandoff,
+  leadRespondsNoDownPaymentOrInstallmentConcern,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -810,6 +811,30 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("conversa", "B-foto: strip não mexe em resposta sem oferta de foto", _rw2.changed === false, _rw2.text);
   const _rw3 = stripPhotoReoffer("Quer ver as fotos?");
   check("conversa", "B-foto: strip fail-safe (resposta = só a oferta) mantém original", _rw3.changed === false, _rw3.text);
+
+  // ── CASO H (Codex) — NÃO PERDER O TRILHO: resposta de financiamento/entrada NÃO vira estoque ──────
+  // Caso real (lead 98123-8305): agente perguntou ENTRADA; lead "Não tenho"/"se precisa dar entrada não
+  // dá"/"vou pelo valor das parcelas que cabe no bolso" -> agente DESPEJOU lista de carros (perdeu o trilho).
+  const _qEntrada = "Para seguir com o financiamento, preciso saber o valor que você pode dar de entrada.";
+  check("conversa", "H: pergunta de ENTRADA vira pending 'perguntou_pagamento'", classifyAgentReplyPending(_qEntrada, "") === "perguntou_pagamento", classifyAgentReplyPending(_qEntrada, ""));
+  for (const msg of ["Não tenho", "Se precisa dar entrada pra mim não dá", "Vou mais pelo valor das parcelas k pode caber no meu bolso"]) {
+    check("conversa", `H: '${msg}' = restrição de financiamento`, leadRespondsNoDownPaymentOrInstallmentConcern(msg, "perguntou_pagamento", _qEntrada) === true, "");
+  }
+  check("conversa", "H: false friend 'não tenho interesse' NÃO é entrada", leadRespondsNoDownPaymentOrInstallmentConcern("não tenho interesse", "perguntou_pagamento", _qEntrada) === false, "");
+  check("conversa", "H: false friend 'não tenho carro na troca' NÃO é entrada", leadRespondsNoDownPaymentOrInstallmentConcern("não tenho carro na troca", "perguntou_pagamento", _qEntrada) === false, "");
+  check("conversa", "H: sem contexto de pagamento NÃO dispara", leadRespondsNoDownPaymentOrInstallmentConcern("vou pela parcela", "nenhum", "Qual modelo você procura?") === false, "");
+  // normalizePlan: a fala de parcela NÃO vira stock_search mesmo o LLM tendo chutado stock_search
+  const _memPay = { pending_question: "perguntou_pagamento" };
+  const _histPay = [{ role: "assistant", text: _qEntrada }];
+  const _pH = (msg: string) => normalizePlan({ action: "stock_search", intent: "stock_lookup", confidence: 0.7, search_filters: {} }, FALLBACK, { message: msg, vehicle_resolution: vr() as any, memory: _memPay as any, recent_history: _histPay } as any);
+  const planH = _pH("Vou mais pelo valor das parcelas k pode caber no meu bolso");
+  check("conversa", "H: 'valor das parcelas' NÃO vira stock_search (reply_only/financing)", planH.action === "reply_only" && planH.intent === "financing" && /finance_constraint/.test(String(planH.reason || "")), `action=${planH.action} intent=${planH.intent} reason=${planH.reason}`);
+  check("conversa", "H: guard não pede foto nem busca", planH.photo_target === null && !planH.search_query, `photo=${planH.photo_target} q=${planH.search_query}`);
+  const planHno = _pH("Não tenho");
+  check("conversa", "H: 'Não tenho' (contexto de entrada) também segura no trilho", planHno.action === "reply_only" && planHno.intent === "financing", `action=${planHno.action}`);
+  // EXCEÇÃO: lead steera nova busca explícita (carroceria + teto) -> deixa buscar (não swallow)
+  const planHsteer = _pH("não tenho entrada, tem algum sedan até 40 mil?");
+  check("conversa", "H: 'sem entrada MAS tem sedan até 40k' segue p/ busca (não swallow)", planHsteer.action === "stock_search", `action=${planHsteer.action}`);
 }
 
 // ── FORMATAÇÃO (ensureStockReplyFormatting) — lista legível no WhatsApp ──────────────────────

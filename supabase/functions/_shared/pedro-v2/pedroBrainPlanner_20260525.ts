@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions, leadAsksBodyType } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions, leadAsksBodyType, leadRespondsNoDownPaymentOrInstallmentConcern } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -319,7 +319,8 @@ function classifyPendingQuestion(input: {
   if (hasRecentPhotoOffer(input)) return "ofereceu_fotos";
   // Oferta de MOSTRAR opcoes/carros: um "ok"/"sim" depois disso = ACEITE (apresentar), nao despedida.
   if (hasRecentOptionsOffer(input)) return "ofereceu_opcoes";
-  if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t) && /\b(pretende|vai|forma|paga|pagar|prefere|quer)\b/.test(t)) return "perguntou_pagamento";
+  if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t)
+      && /\b(pretende|vai|forma|paga|pagar|prefere|quer|pode dar|consegue|preciso saber|\bvalor\b|quanto|qual|me diz|me fala|dar de entrada)\b/.test(t)) return "perguntou_pagamento";
   if (/\b(troca|usado na troca|carro na troca|tem (um )?carro)\b/.test(t)) return "perguntou_troca";
   if (/\b(nome|cpf|nascimento|telefone|e mail|email|whatsapp)\b/.test(t)) return "perguntou_dados";
   if (/\b(qual (carro|modelo|veiculo)|que carro|qual veiculo|esta procurando|procura|tipo de carro|qual seria)\b/.test(t)) return "perguntou_veiculo";
@@ -620,6 +621,35 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
       ...(plan.search_filters || {}),
       modelo_desejado: plan.search_query,
     };
+  }
+
+  // ── NÃO PERDER O TRILHO: resposta de FINANCIAMENTO/ENTRADA não vira busca de estoque (Codex Caso H) ──
+  // Caso real (lead 98123-8305): o agente perguntou a ENTRADA; o lead respondeu "Não tenho" / "se precisa
+  // dar entrada não dá" / "vou pelo valor das parcelas que cabe no bolso" — e o agente DESPEJOU lista de
+  // carros (ouviu "valor" e virou stock_search). Quando há pergunta de pagamento/entrada PENDENTE e o lead
+  // responde com restrição de entrada / foco na parcela, é RESPOSTA ao funil, não nova busca: segura no
+  // trilho de financiamento (reply_only), NUNCA estoque/foto. PRIORIDADE sobre toda a interpretação de
+  // "valor/orçamento" abaixo. EXCEÇÃO: se o lead claramente STEERA uma nova busca (teto explícito, "tem
+  // algum de Xk", carroceria) deixa seguir o fluxo de busca (mudou de assunto de propósito).
+  {
+    const _pendingPay = classifyPendingQuestion(input);
+    const _steersNewSearch = leadAsksAnyCarInBudget(input.message)
+      || Boolean(leadAsksBodyType(input.message))
+      || Boolean(parsePriceCeiling(input.message));
+    if (!_steersNewSearch
+        && leadRespondsNoDownPaymentOrInstallmentConcern(input.message, _pendingPay, getLastAgentText(input))) {
+      plan.action = "reply_only";
+      plan.intent = "financing";
+      plan.search_query = null;
+      plan.search_filters = {};
+      plan.photo_target = null;
+      plan.use_memory_vehicle = false;
+      (plan as any).precisa_qualificar = false;
+      plan.response_guidance = "O lead respondeu a pergunta de ENTRADA/FINANCIAMENTO dizendo que NÃO tem entrada (ou que vai pelo valor da PARCELA que cabe no bolso). NÃO liste carros, NÃO ofereça fotos, NÃO busque estoque. Acolha que dá pra pensar SEM entrada (ou com entrada baixa) pelo valor da parcela e pergunte qual parcela mensal ficaria confortável pra ele — seguindo o funil da loja (se a loja simula com CPF/consultor, encaminhe pra simular). Mantenha o trilho de financiamento.";
+      plan.reason = `finance_constraint_no_stock:${_pendingPay}:${plan.reason || ""}`;
+      plan.source = "finance_constraint_guard";
+      return plan;
+    }
   }
 
   // TETO DE PRECO DETERMINISTICO (provider-independente): o LLM (esp. DeepSeek) as vezes NAO converte
