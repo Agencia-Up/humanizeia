@@ -58,8 +58,9 @@ import {
   leadAffirmsSchedulingQuestion,
   leadAffirmsPresenceToFollowupPing,
   classifyAgentReplyPending,
+  funnelBlocksHandoff,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
@@ -69,6 +70,10 @@ import {
   sameVehicleModel,
   leadRequestsAllVehiclePhotos,
   vehicleKey,
+  photoCtaDecision,
+  photosAlreadySentForVehicle,
+  stableVehicleKey,
+  leadAsksForMorePhotos,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
@@ -726,6 +731,85 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   ];
   const pickComposto = pickRoundRobinSeller(uniqueSellersByPhone(comDuplicado));
   check("transfer", "dedup+rodízio: ignora duplicado e escolhe o novo (null)", pickComposto?.id === "novo", `escolhido=${pickComposto?.id}`);
+}
+
+// ── CONVERSA MULTI-TURNO (Codex A–E) — invariantes de CONVERSA, não respostas isoladas ─────────
+// Cada caso simula uma conversa real e trava um invariante. RED = bug confirmado deterministicamente.
+{
+  const FALLBACK: any = { action: "reply_only", intent: "unknown", confidence: 0.4, search_query: null, search_filters: {}, photo_target: null, use_memory_vehicle: false, response_guidance: "", reason: "", source: "fallback" };
+  const vr = (o: any = {}) => ({ query: null, has_current_vehicle_signal: false, vehicle_type: null, used_memory: false, possible_new_topic: false, ...o });
+  const plan = (msg: string, raw: any, mem: any = null) => normalizePlan(raw, FALLBACK, { message: msg, vehicle_resolution: vr() as any, memory: mem, recent_history: [] } as any);
+  const veh = (modelName: string, versionName = "") => ({ modelName, versionName, brandName: "", year: 2019, price: 70000, km: 60000 });
+
+  // CASO A — "mais opções" HERDA o perfil (SUV + faixa). Não pode trazer hatch/sedan aleatório.
+  const mA = { interesse: { tipo_veiculo: "suv", preco_max: 80000 } };
+  check("conversa", "A: 'tem mais opções?' é detectado", leadAsksForMoreOptions("tem mais opcoes?") === true, "");
+  const pA = plan("tem mais opcoes?", { action: "reply_only", intent: "unknown", confidence: 0.6 }, mA);
+  check("conversa", "A: 'mais opções' mantém tipo=suv (não muda carroceria)", pA.action === "stock_search" && pA.search_filters?.tipo_veiculo === "suv", `action=${pA.action} tipo=${pA.search_filters?.tipo_veiculo}`);
+  check("conversa", "A: 'mais opções' mantém a faixa ≤80k", Number(pA.search_filters?.preco_max) === 80000, `preco=${pA.search_filters?.preco_max}`);
+
+  // CASO C — carroceria pedida = HARD FILTER. Sedan exclui hatch/suv (e vice-versa).
+  check("conversa", "C: 'queria sedans até 80k' roteia p/ tipo sedan", leadAsksBodyType("queria sedans ate 80 mil") === "sedan", String(leadAsksBodyType("queria sedans ate 80 mil")));
+  const onixHatch = veh("Onix", "LT 1.0");
+  const corollaSedan = veh("Corolla", "XEI 2.0");
+  const renegadeSuv = veh("Renegade", "Sport 1.8");
+  check("conversa", "C: hatch (Onix) NÃO passa filtro de sedan", passesRequestedVehicleType(onixHatch as any, { tipo_veiculo: "sedan" }, false) === false, `subcat=${getVehicleSubcategory(onixHatch as any)}`);
+  check("conversa", "C: sedan (Corolla) passa filtro de sedan", passesRequestedVehicleType(corollaSedan as any, { tipo_veiculo: "sedan" }, false) === true, "");
+  check("conversa", "C: hatch (Onix) NÃO passa filtro de suv", passesRequestedVehicleType(onixHatch as any, { tipo_veiculo: "suv" }, false) === false, "");
+  check("conversa", "C: suv (Renegade) passa filtro de suv", passesRequestedVehicleType(renegadeSuv as any, { tipo_veiculo: "suv" }, false) === true, "");
+
+  // CASO E — "mais barato" MANTÉM o perfil/veículo anterior e BUSCA (não reseta a conversa).
+  // (testa o bloco real `enforced_cheaper_followup` do normalizePlan; a 1ª versão mirou a função errada.)
+  const mE = { interesse: { modelo_desejado: "Jeep Renegade", tipo_veiculo: "suv", preco_max: 90000 }, veiculo_em_foco: "Jeep Renegade", veiculos_apresentados: [{ marca: "Jeep", modelo: "Renegade", ano: 2019, preco: 89990 }] };
+  const pE = plan("tem algo mais barato?", { action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, mE);
+  check("conversa", "E: 'mais barato' mantém perfil e BUSCA (não reseta)", pE.action === "stock_search" && /cheaper|barat/i.test(String(pE.reason || "")), `action=${pE.action} reason=${pE.reason}`);
+
+  // CASO B (laudo) — afirmar "100% aprovado" SEM dado estruturado = afirmação NÃO-ATERRADA.
+  const promptSemLaudo = "Voce e o Manu, consultor da Avant Motors. Vendemos seminovos revisados.";
+  const claimsLaudo = detectUngroundedClaims("Sim! Esse carro tem laudo cautelar 100% aprovado, pode confiar.", promptSemLaudo);
+  check("conversa", "B-laudo: 'laudo 100% aprovado' sem dado é flagrado como não-aterrado", claimsLaudo.length > 0, `claims=${JSON.stringify(claimsLaudo)}`);
+
+  // ── INVARIANTES EXTRAÍDOS P/ FUNÇÃO PURA (eram RED runtime-only; agora provados offline) ──────
+  // Wiring no planner/orchestrator + deploy = PRÓXIMO passo. Aqui travamos a LÓGICA pura.
+
+  // CASO D — "gostei" não transfere com funil incompleto. O guard real (orchestrator
+  // handoff_blocked_pending_funnel) reusa nextFunnelQuestion; extraído p/ funnelBlocksHandoff PURO.
+  const b4Avant = { questions: ["Qual seu nome?", "O que você está procurando?", "Tem carro na troca?"] };
+  check("conversa", "D: funil incompleto (só nome) BLOQUEIA handoff", funnelBlocksHandoff(b4Avant, { nome: "Joao" }, { hasName: true, hasInterest: false }) === true, "");
+  check("conversa", "D: funil completo NÃO bloqueia (libera handoff)", funnelBlocksHandoff(b4Avant, { nome: "Joao", interesse: "Onix", tem_troca: false }, { hasName: true, hasInterest: true }) === false, "");
+  check("conversa", "D: loja sem funil configurado não bloqueia (não inventa funil)", funnelBlocksHandoff({}, {}, {}) === false, "");
+
+  // CASO B-foto (dor nº1 do dono) — não re-ofertar foto de veículo cujas fotos JÁ foram enviadas, salvo
+  // pedido do lead. photoCtaDecision cruza o ledger por veículo (chave estável) com o pedido do lead.
+  const focoOnix = { marca: "Chevrolet", modelo: "Onix", ano: 2022, preco: 72990, km: 40000 };
+  const memJaEnviou = { fotos_por_veiculo: { [stableVehicleKey(focoOnix)]: { fotos_enviadas: ["u1", "u2"] } }, veiculo_em_foco: { key: vehicleKey(focoOnix) } };
+  check("conversa", "B-foto: ledger reconhece veículo já fotografado", photosAlreadySentForVehicle(memJaEnviou, focoOnix) === true, "");
+  const ctaSuprime = photoCtaDecision(memJaEnviou, focoOnix, "tem laudo cautelar?");
+  check("conversa", "B-foto: fotos já enviadas + lead não pediu -> SUPRIME re-oferta", ctaSuprime.shouldOfferPhotos === false && ctaSuprime.reason === "already_sent_suppress", JSON.stringify(ctaSuprime));
+  const ctaMais = photoCtaDecision(memJaEnviou, focoOnix, "manda mais fotos dele");
+  check("conversa", "B-foto: lead pedindo MAIS fotos é atendido (não suprime)", ctaMais.shouldOfferPhotos === true && ctaMais.reason === "lead_requested_more", JSON.stringify(ctaMais));
+  const ctaPrimeira = photoCtaDecision({}, focoOnix, "gostei desse");
+  check("conversa", "B-foto: 1ª oferta de foto do veículo em foco é permitida", ctaPrimeira.shouldOfferPhotos === true && ctaPrimeira.reason === "first_offer_ok", JSON.stringify(ctaPrimeira));
+
+  // DESAMBIGUAÇÃO "mais FOTOS" × "mais OPÇÕES/carros" (risco apontado pelo Codex: leadAsksForMorePhotos
+  // casava "manda mais" cego). Pré-requisito do wiring: pedido de CARRO não pode virar pedido de FOTO.
+  check("conversa", "B-foto: 'manda mais fotos' = pedido de foto", leadAsksForMorePhotos("manda mais fotos") === true, "");
+  check("conversa", "B-foto: 'quero ver mais fotos' = pedido de foto", leadAsksForMorePhotos("quero ver mais fotos") === true, "");
+  check("conversa", "B-foto: 'manda mais opções' NÃO é pedido de foto", leadAsksForMorePhotos("manda mais opcoes") === false, "");
+  check("conversa", "B-foto: 'tem mais opções?' NÃO é pedido de foto", leadAsksForMorePhotos("tem mais opcoes?") === false, "");
+  check("conversa", "B-foto: 'mostra mais carros' NÃO é pedido de foto", leadAsksForMorePhotos("mostra mais carros") === false, "");
+  check("conversa", "B-foto: 'tem porta-malas grande?' NÃO é pedido de foto", leadAsksForMorePhotos("tem porta malas grande?") === false, "");
+  // E o combinador respeita: 'mais opções' (não-foto) com fotos já enviadas -> ainda SUPRIME CTA de foto.
+  const ctaMaisOpcoes = photoCtaDecision(memJaEnviou, focoOnix, "tem mais opcoes?");
+  check("conversa", "B-foto: 'mais opções' com fotos já enviadas -> suprime CTA de foto (busca, não re-oferta)", ctaMaisOpcoes.shouldOfferPhotos === false, JSON.stringify(ctaMaisOpcoes));
+
+  // SUPRESSOR DE TEXTO (stripPhotoReoffer): tira só a frase de oferta de foto, preserva a info real; fail-safe.
+  const _rw1 = stripPhotoReoffer("Boa! Esse Onix 2022 está bem conservado. Quer ver as fotos dele?");
+  check("conversa", "B-foto: strip remove a oferta e preserva a info do carro", _rw1.changed === true && /onix 2022/i.test(_rw1.text) && !replyOffersPhotos(_rw1.text), _rw1.text);
+  const _rw2 = stripPhotoReoffer("O Onix tem garantia de 3 meses e revisão em dia.");
+  check("conversa", "B-foto: strip não mexe em resposta sem oferta de foto", _rw2.changed === false, _rw2.text);
+  const _rw3 = stripPhotoReoffer("Quer ver as fotos?");
+  check("conversa", "B-foto: strip fail-safe (resposta = só a oferta) mantém original", _rw3.changed === false, _rw3.text);
 }
 
 // ── FORMATAÇÃO (ensureStockReplyFormatting) — lista legível no WhatsApp ──────────────────────

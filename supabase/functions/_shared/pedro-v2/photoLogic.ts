@@ -6,7 +6,7 @@
 // o match de modelo/atributo e a seleção de fotos. Fonte de vários bugs (#2 ambiguidade, #3 carro errado,
 // "os outros"). Testado em scripts/regression/offline.ts. NÃO adicionar I/O aqui.
 // ============================================================================
-import { PhotoTarget, normalizePhotoText, detectPhotoTarget, queryIsBroadOrGenericVehicle } from "./decisionLogic.ts";
+import { PhotoTarget, normalizePhotoText, detectPhotoTarget, queryIsBroadOrGenericVehicle, messageAsksForPhotos } from "./decisionLogic.ts";
 
 function normalizeVehicleKey(value: string) {
   return normalizePhotoText(value).replace(/[^\w]+/g, "-").replace(/^-+|-+$/g, "");
@@ -62,6 +62,65 @@ function explicitVehicleOrdinal(message: string): number | null {
   if (/\b(quarto|quarta)\b/.test(normalized) || /\b4\b/.test(normalized)) return 3;
   if (/\b(quinto|quinta)\b/.test(normalized) || /\b5\b/.test(normalized)) return 4;
   return null;
+}
+
+// Lead pede MAIS/OUTRAS fotos, ou foto de um ÂNGULO/PARTE específico -> pedido LEGÍTIMO de mais fotos
+// (não é re-oferta indevida; deve enviar fotos diferentes). PURO (offline).
+export function leadAsksForMorePhotos(message?: string | null): boolean {
+  const t = normalizePhotoText(message);
+  if (!t) return false;
+  // (1) Verbos genéricos de "mais/mandar/ver" SÓ viram pedido de foto quando a palavra foto/imagem/vídeo
+  // está na frase. Sem isso, "manda mais OPÇÕES" / "tem mais opções?" / "mostra mais carros" cairiam como
+  // foto (bug apontado pelo Codex: "manda mais" casava cego). O termo de foto é o que ancora a intenção.
+  const hasPhotoWord = /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(t);
+  if (hasPhotoWord && /\b(mais|outra|outras|umas|alguma|de novo|novamente|manda|envia|mostra|quero|ver|posso ver|gostaria de ver)\b/.test(t)) return true;
+  // (2) Foto de um ÂNGULO/PARTE específico (implica foto sem dizer "foto"), mas só com intenção de VER/mandar
+  // — evita falso-positivo tipo "tem porta-malas grande?" (pergunta de espaço, não pedido de imagem).
+  const wantsToSee = /\b(manda|mostra|envia|quero ver|posso ver|deixa eu ver|me mostra|da pra ver|tem como ver)\b/.test(t);
+  if (wantsToSee && /\b(de dentro|por dentro|interna|interno|interior|por fora|da frente|de frente|de tras|por tras|traseira|de lado|lateral|do motor|porta malas|porta-malas|painel|rodas?|angulo|outro angulo)\b/.test(t)) return true;
+  return false;
+}
+
+// Chave ESTÁVEL do veículo p/ idempotência de foto: marca|modelo|ano — SEM preço/km, que mudam no
+// re-fetch do estoque e quebravam o match por key completa (-> re-envio das mesmas fotos). Base do ledger.
+export function stableVehicleKey(vehicle: any): string {
+  return normalizeVehicleKey([vehicle?.marca, vehicle?.modelo, vehicle?.ano].filter(Boolean).join("|"));
+}
+
+// Já enviei foto DESTE veículo? Consulta o ledger por veículo (fotos_por_veiculo, chave estável) +
+// fallback no ultima_foto (por chave estável OU completa). PURO (offline).
+export function photosAlreadySentForVehicle(memory: any, vehicle: any): boolean {
+  if (!vehicle) return false;
+  const sk = stableVehicleKey(vehicle);
+  if (sk && memory?.fotos_por_veiculo && memory.fotos_por_veiculo[sk]) return true;
+  const uf = memory?.ultima_foto;
+  if (uf && Array.isArray(uf.fotos_enviadas) && uf.fotos_enviadas.length > 0) {
+    if (uf.veiculo_stable_key && uf.veiculo_stable_key === sk) return true;
+    if (uf.veiculo_key && uf.veiculo_key === (vehicle.key || vehicleKey(vehicle))) return true;
+  }
+  return false;
+}
+
+// ── CTA DE FOTO (dor nº1 do dono: re-oferecer foto já enviada) ───────────────────────────────────
+// Decide se a RESPOSTA deve oferecer/re-oferecer foto do veículo EM FOCO. Invariante geral: NÃO
+// re-oferecer foto de um veículo cujas fotos já foram enviadas, A MENOS que o lead PEÇA mais/outras
+// fotos (ou peça foto explicitamente). PURO (offline). A ser ligada na geração de resposta no passo de
+// wiring (deploy) — aqui só provada offline; o combinador deixa de existir só na cabeça do orquestrador.
+export type PhotoCtaDecision = {
+  shouldOfferPhotos: boolean;
+  reason: "lead_requested_more" | "lead_requested_photos" | "already_sent_suppress" | "first_offer_ok" | "no_vehicle";
+};
+
+export function photoCtaDecision(memory: any, foco: any, leadMessage?: string | null): PhotoCtaDecision {
+  if (!foco) return { shouldOfferPhotos: false, reason: "no_vehicle" };
+  // Lead pediu MAIS/OUTRAS fotos (ou de um ângulo) -> legítimo, manda fotos diferentes.
+  if (leadAsksForMorePhotos(leadMessage)) return { shouldOfferPhotos: true, reason: "lead_requested_more" };
+  // Lead pediu foto explicitamente ("manda foto do X") -> legítimo mesmo que já tenha mandado antes.
+  if (messageAsksForPhotos(leadMessage)) return { shouldOfferPhotos: true, reason: "lead_requested_photos" };
+  // Já enviei fotos DESTE veículo e o lead NÃO pediu -> SUPRIME a re-oferta (não martela foto).
+  if (photosAlreadySentForVehicle(memory, foco)) return { shouldOfferPhotos: false, reason: "already_sent_suppress" };
+  // 1ª oferta de foto do veículo em foco -> ok.
+  return { shouldOfferPhotos: true, reason: "first_offer_ok" };
 }
 
 function messageVehicleAttributeScore(message: string, vehicle: any) {

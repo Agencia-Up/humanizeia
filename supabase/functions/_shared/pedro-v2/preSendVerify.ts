@@ -131,6 +131,20 @@ export function rewriteUnavailablePhotoOffer(replyText?: string | null): { text:
   return { text, changed: true };
 }
 
+// Já enviei as fotos deste veículo num turno anterior e o lead NÃO está pedindo (mais) foto -> NÃO
+// re-oferecer "quer ver as fotos?" (o "martelo de foto" — dor nº1 do dono). Remove só a(s) frase(s) de
+// OFERTA DE FOTO e mantém o resto (SEM inventar "fotos indisponíveis": elas existem, só já foram enviadas).
+// Fail-safe: se sobrar pouco/nada, devolve o texto original (melhor manter a resposta que virar um toco). PURO.
+export function stripPhotoReoffer(replyText?: string | null): { text: string; changed: boolean } {
+  const raw = String(replyText || "");
+  if (!replyOffersPhotos(raw)) return { text: raw, changed: false };
+  const parts = raw.split(/(?<=[.!?\n])/);
+  const kept = parts.filter((p) => !(/\bfotos?\b/i.test(p) && /\b(quer|posso|gostaria|envio|mando|mandar|enviar|mostrar|ver|veja|manda|envia)\b/i.test(p)) && p.trim().length > 0);
+  const text = kept.join(" ").replace(/\s+/g, " ").trim();
+  if (text.length < 12) return { text: raw, changed: false };
+  return { text, changed: true };
+}
+
 const _SPEC_LABEL: Record<string, string> = {
   consumo: "o consumo (km/l)",
   potencia: "a potência (cavalos)",

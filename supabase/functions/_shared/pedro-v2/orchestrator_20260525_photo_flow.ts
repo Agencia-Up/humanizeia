@@ -59,17 +59,19 @@ import {
   leadAffirmsPresenceToFollowupPing,
   classifyAgentReplyPending,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
   vehicleKey,
+  stableVehicleKey,
   cleanVehicleLabel,
   sameVehicleModel,
   photoRequestIsAttributeOnly,
   buildVehiclePhotoReply,
   vehicleMatchesRequestedQuery,
   buildBlockedWrongVehiclePhotoReply,
+  photoCtaDecision,
 } from "./photoLogic.ts";
 
 async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
@@ -617,11 +619,25 @@ async function savePhotoReference(supabase: any, input: {
     : [];
   const newSent = Array.isArray(input.reply.sent_photo_indexes) ? input.reply.sent_photo_indexes : [];
   const fotosEnviadas = Array.from(new Set([...prevSent, ...newSent].map((n) => Math.round(Number(n))).filter((n) => Number.isFinite(n))));
+  // LEDGER DE FOTOS POR VEÍCULO (chave ESTÁVEL marca|modelo|ano, não depende de preço/km): registra que
+  // ESTE veículo já foi fotografado, pra próximos turnos NÃO re-oferecerem foto dele (dor nº1 do dono).
+  // ADITIVO: preserva o que já existe e NÃO toca em `ultima_foto` (que o fluxo atual usa). Lido por
+  // photoCtaDecision/photosAlreadySentForVehicle (photoLogic).
+  const _stableKey = stableVehicleKey(input.reply.vehicle);
+  const _prevLedger = (input.current?.fotos_por_veiculo && typeof input.current.fotos_por_veiculo === "object")
+    ? input.current.fotos_por_veiculo : {};
   const nextState = {
     ...(input.current || {}),
+    ...(_stableKey ? {
+      fotos_por_veiculo: {
+        ..._prevLedger,
+        [_stableKey]: { fotos_enviadas: fotosEnviadas, last_sent_at: new Date().toISOString() },
+      },
+    } : {}),
     ultima_foto: {
       veiculo_index: selectedIndex,
       veiculo_key: selectedKey,
+      veiculo_stable_key: _stableKey || null,
       veiculo_label: selectedLabel,
       target: input.reply.photo_target || "overview",
       fotos_enviadas: fotosEnviadas,
@@ -2249,6 +2265,15 @@ export async function processPedroV2Turn(
         if (_photoRw.changed) {
           reply = { ...(reply as any), text: _photoRw.text };
           log("warn", "pedro_v2_photo_offer_without_photos", { lead_id: lead?.id || null, source: (reply as any)?.source });
+        }
+      } else if (_focoAtual && photoCtaDecision(nextMemory, _focoAtual, text).reason === "already_sent_suppress") {
+        // LEDGER (dor nº1 do dono): as fotos do veículo EM FOCO já foram enviadas num turno anterior e o lead
+        // NÃO está pedindo (mais) foto -> NÃO re-oferecer "quer ver as fotos?". Strip só a frase de oferta e
+        // mantém o resto da resposta (a info real que o lead perguntou). Não toca em envio real de foto.
+        const _reoff = stripPhotoReoffer((reply as any)?.text || "");
+        if (_reoff.changed) {
+          reply = { ...(reply as any), text: _reoff.text };
+          log("info", "pedro_v2_photo_reoffer_suppressed", { lead_id: lead?.id || null, foco: (_focoAtual as any)?.key || null });
         }
       }
     }

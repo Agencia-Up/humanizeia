@@ -1059,7 +1059,9 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
         plan.intent = "stock_lookup";
         (plan as any).use_memory_vehicle = false;
         (plan as any).precisa_qualificar = false;
-        plan.search_query = _bodyType;
+        // busca AMPLA por categoria: o tipo vai em tipo_veiculo + stock_broad; search_query fica NULL
+        // (pôr "sedan" como query poluiria a busca ampla — mesmo contrato do handler de "sedans plural").
+        plan.search_query = null;
         plan.search_filters = { ..._f, tipo_veiculo: _bodyType, modelo_desejado: null, stock_broad: true };
         plan.reason = `body_type_request_to_search:${_bodyType}:${plan.reason || ""}`;
       }

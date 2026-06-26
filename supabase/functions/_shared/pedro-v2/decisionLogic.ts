@@ -130,7 +130,9 @@ export function leadAsksBodyType(message?: string | null): string | null {
   const m = normalizePlannerText(message);
   if (!m) return null;
   if (/\b(foto|fotos|imagem|imagens|video|videos)\b/.test(m)) return null;
-  const typeWord = Object.keys(_DIRECTION_TYPES).find((t) => new RegExp(`\\b${t}\\b`).test(m));
+  // `s?` no fim casa o PLURAL ("sedans", "suvs", "picapes") — o lead quase sempre pluraliza
+  // ("queria sedans"); sem isso o backstop de carroceria não disparava (caso real Avant).
+  const typeWord = Object.keys(_DIRECTION_TYPES).find((t) => new RegExp(`\\b${t}s?\\b`).test(m));
   if (!typeWord) return null;
   const aboutFocus = /\b(esse|este|essa|esta|nesse|neste|nessa|nesta|desse|deste|dele|dela|o mesmo|esse carro|este carro|gostei|gostou|fico com|vou levar|quero esse|quero este)\b/.test(m)
     || /\b(teto|cor|cores|km|quilometr|motor|consumo|completo|cambio|porta|aceita troca|financi|parcel|entrada|qual o valor|qual valor|quanto custa|quanto sai|quanto fica)\b/.test(m);
@@ -429,6 +431,15 @@ export function nextFunnelQuestion(bloco4?: any, qual?: any, opts?: { hasName?: 
     if (mappable && !answered) return question.trim();
   }
   return null;
+}
+
+// Invariante "FUNIL ANTES DO HANDOFF" (runtime: orchestrator handoff_blocked_pending_funnel) extraído p/
+// função PURA testável: havendo pergunta de funil PENDENTE, o handoff deve ser BLOQUEADO (ex.: lead diz
+// "gostei" mas falta nome/interesse/troca exigidos pelo funil da loja). Reusa nextFunnelQuestion — a MESMA
+// fonte de verdade do guard em runtime — então não inventa política nova. Sem funil configurado -> não
+// bloqueia. A ser ligada no planner/orchestrator no passo de wiring (deploy); aqui só provada offline. PURO.
+export function funnelBlocksHandoff(bloco4?: any, qual?: any, opts?: { hasName?: boolean; hasInterest?: boolean }): boolean {
+  return Boolean(nextFunnelQuestion(bloco4, qual, opts));
 }
 
 // A resposta JÁ pergunta algo do funil (nome/troca/entrada/pagamento/loja/agendar)? Se sim, não anexamos
