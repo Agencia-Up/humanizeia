@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -311,7 +311,7 @@ function classifyPendingQuestion(input: {
   // (classifyAgentReplyPending) -> robusto, não depende de re-parsear a última fala (que pode vir
   // duplicada/atrasada/manual/splitada). Cai na inferência abaixo só sem valor persistido (estado antigo).
   const _persisted = (input.memory as any)?.pending_question;
-  if (_persisted && typeof _persisted === "string" && _persisted !== "nenhum" && _persisted !== "afirmacao") return _persisted;
+  if (_persisted && typeof _persisted === "string") return _persisted;
   const raw = getLastAgentText(input);
   const t = normalizeText(raw);
   if (!t) return "nenhum";
@@ -908,17 +908,27 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
   // lead so afirmou (sem pedir outro carro/foto).
   const _okText = normalizeText(input.message);
   const _isDeclineOrBye = /\b(obrigad|tchau|valeu|flw|falou|depois|mais tarde|outra hora|vou pensar|pensar|nao quero|nao precisa|nao obrigado|deixa|to so olhando|so olhando|agradeco)\b/.test(_okText);
-  if (hasRecentOptionsOffer(input) && isAffirmativeText(input.message) && !_isDeclineOrBye
+  const _asksMoreOptions = leadAsksForMoreOptions(input.message);
+  if (((hasRecentOptionsOffer(input) && isAffirmativeText(input.message)) || _asksMoreOptions) && !_isDeclineOrBye
       && !expressesOtherVehicleWish(input.message) && !isPhotoText(input.message)
-      && (plan.action === "reply_only" || plan.action === "clarify")) {
-    const _prevType = (plan.search_filters as any)?.tipo_veiculo || null;
+      && (plan.action === "reply_only" || plan.action === "clarify" || plan.action === "stock_search")) {
+    const _memInterest: any = input.memory?.interesse || {};
+    const _prevType = (plan.search_filters as any)?.tipo_veiculo || _memInterest.tipo_veiculo || null;
+    const _prevPrice = Number((plan.search_filters as any)?.preco_max) || Number(_memInterest.preco_max) || null;
     plan.action = "stock_search";
     plan.intent = "stock_lookup";
     plan.use_memory_vehicle = false;
     plan.search_query = null;
-    plan.search_filters = { ...(plan.search_filters || {}), stock_broad: true, modelo_desejado: null, tipo_veiculo: _prevType } as any;
-    plan.reason = `accepted_options_offer_to_stock:${plan.reason || ""}`;
-    plan.response_guidance = "O lead ACEITOU sua oferta de ver opcoes (respondeu 'ok'/'sim'). APRESENTE de forma CURTA as opcoes REAIS do estoque (stock.facts) e pergunte qual interessa ou se quer ver fotos. NUNCA se despeca nem trate como desinteresse — ele QUER ver os carros.";
+    plan.search_filters = {
+      ...(plan.search_filters || {}),
+      stock_broad: true,
+      modelo_desejado: null,
+      query: "",
+      ...(String(_prevType || "") ? { tipo_veiculo: _prevType } : {}),
+      ...(_prevPrice ? { preco_max: _prevPrice } : {}),
+    } as any;
+    plan.reason = `${_asksMoreOptions ? "more_options_followup_to_stock" : "accepted_options_offer_to_stock"}:${plan.reason || ""}`;
+    plan.response_guidance = "O lead quer MAIS opções do mesmo perfil que estava vendo. APRESENTE opções REAIS do estoque mantendo o tipo/faixa anterior quando existirem, sem misturar carroceria diferente e sem repetir os já mostrados.";
   }
 
   // FAIXA DE ANO: o planner emite search_filters.ano como STRING ("2013-2018", "2013 a 2018"). O

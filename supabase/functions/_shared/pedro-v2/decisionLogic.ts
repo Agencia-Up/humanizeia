@@ -592,7 +592,8 @@ export function buildStockFilters(intent: any, memory: any, text: string, brainP
   // Cronos) com "Temos sim!". Se há MODELO nomeado (plano/intent), NÃO é busca ampla de tipo. O stock_broad
   // EXPLÍCITO do planner (categoria, v134) já vem com modelo_desejado=null -> não é afetado por este guard.
   const _hasNamedModel = Boolean(brainPlan?.search_query || brainPlan?.search_filters?.modelo_desejado || intent?.extracted?.interesse?.modelo_desejado);
-  const broadStock = !_marcaRequired && !_hasNamedModel && Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message));
+  const _moreOptionsFollowup = leadAsksForMoreOptions(options?.lead_message);
+  const broadStock = !_marcaRequired && !_hasNamedModel && Boolean(brainPlan?.search_filters?.stock_broad || leadMessageAsksBroadStock(options?.lead_message) || _moreOptionsFollowup);
   // MEM-1: NAO herdar filtros VELHOS do interesse (preco/tipo/cambio/cor/modelo) quando o turno
   // ATUAL nomeia um MODELO novo. Sem isso, um interesse de uma busca ANTERIOR (ex.: suv ate 80k)
   // contaminava a busca nova (ex.: "tem hilux?" herdava preco_max:80000) e filtrava/zerava errado.
@@ -620,6 +621,18 @@ export function buildStockFilters(intent: any, memory: any, text: string, brainP
   };
 
   if (broadStock) {
+    if (_moreOptionsFollowup) {
+      const _memInterest: any = memory?.interesse || {};
+      filters.tipo_veiculo = filters.tipo_veiculo || _memInterest.tipo_veiculo || null;
+      filters.preco_max = filters.preco_max || _memInterest.preco_max || null;
+      filters.preco_min = filters.preco_min || _memInterest.preco_min || null;
+      filters.ano_min = filters.ano_min || _memInterest.ano_min || null;
+      filters.ano_max = filters.ano_max || _memInterest.ano_max || null;
+      filters.cambio = filters.cambio || _memInterest.cambio || null;
+      if (filters.tipo_veiculo && ["suv", "sedan", "hatch", "pickup"].includes(String(filters.tipo_veiculo))) {
+        filters.body_type = filters.body_type || filters.tipo_veiculo;
+      }
+    }
     filters.stock_broad = true;
     filters.query = "";
     delete filters.modelo_desejado;
@@ -637,7 +650,7 @@ export function buildStockFilters(intent: any, memory: any, text: string, brainP
 
   const adHasVehicle = Boolean(options?.ad_context?.has_ad_context && options?.ad_context?.vehicle_query);
   const explicitBudget = leadMessageHasExplicitPriceCeiling(options?.lead_message);
-  if (adHasVehicle && filters.preco_max && !explicitBudget) {
+  if (adHasVehicle && filters.preco_max && !explicitBudget && !_moreOptionsFollowup) {
     filters.ad_price = filters.preco_max;
     delete filters.preco_max;
   }

@@ -172,8 +172,11 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("planner", "anúncio Tracker + 'procuro suv' -> busca TIPO suv (não Tracker)", d1.search_filters?.tipo_veiculo === "suv" && !/tracker/i.test(String(d1.search_query || "")) && Boolean(d1.search_filters?.stock_broad), `q=${d1.search_query} tipo=${d1.search_filters?.tipo_veiculo} broad=${d1.search_filters?.stock_broad}`);
   // CONTRA-PROVA: "esse suv tem teto solar?" é sobre O carro do anúncio -> NÃO amplia (mantém Tracker).
   const d2 = planAd("esse suv tem teto solar?", { action: "stock_search", intent: "stock_lookup", search_query: "Chevrolet Tracker", search_filters: { modelo_desejado: "Chevrolet Tracker" }, confidence: 0.7 }, "Chevrolet Tracker Premier 1.2 2023");
-  check("planner", "'esse suv tem teto?' NÃO amplia (é sobre o carro do anúncio)", /tracker/i.test(String(d2.search_query || d2.search_filters?.modelo_desejado || "")), `q=${d2.search_query}`);
+  check("planner", "esse suv tem teto? mantem carro do anuncio", /tracker/i.test(String(d2.search_query || d2.search_filters?.modelo_desejado || "")), `q=${d2.search_query}`);
 
+  const moreSuv = plan("tem mais opcoes?", { action: "reply_only", intent: "unknown", confidence: 0.6 }, { interesse: { tipo_veiculo: "suv", preco_max: 70000 } });
+  check("planner", "mais opcoes herda tipo SUV", moreSuv.action === "stock_search" && moreSuv.search_filters?.tipo_veiculo === "suv" && moreSuv.search_filters?.stock_broad === true, JSON.stringify(moreSuv));
+  check("planner", "mais opcoes herda preco anterior", Number(moreSuv.search_filters?.preco_max) === 70000, JSON.stringify(moreSuv));
   // ── CASO Alê: refina VERSÃO/MOTOR de veículo em contexto -> CHECA estoque (nunca nega de cabeça) ──
   const memCompass = { veiculos_apresentados: [{ marca: "Jeep", modelo: "Compass", versao: "LIMITED 2.0", ano: 2019, preco: 107990 }] };
   const r1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Não amigo. Seria o modelo 270 com nova motorização.", vehicle_resolution: vr() as any, memory: memCompass, recent_history: [] } as any);
@@ -778,6 +781,17 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     { lead_message: "gostaria de um onix plus sedan" },
   );
   check("filtros", "modelo nomeado + 'sedan' NÃO vira busca ampla (mantém Onix)", f5.stock_broad !== true && /onix/i.test(String(f5.query || "")), `broad=${f5.stock_broad} query=${JSON.stringify(f5.query)}`);
+
+  const f6 = buildStockFilters(
+    { extracted: { interesse: {} } },
+    { interesse: { tipo_veiculo: "suv", preco_max: 70000 } },
+    "tem mais opcoes?",
+    { action: "stock_search", search_query: null, search_filters: {}, use_memory_vehicle: false },
+    {},
+    { lead_message: "tem mais opcoes?", ad_context: { has_ad_context: true, vehicle_query: "Chevrolet Tracker" } },
+  );
+  check("filtros", "mais opcoes mantem SUV do perfil anterior", f6.stock_broad === true && f6.tipo_veiculo === "suv" && f6.body_type === "suv", JSON.stringify(f6));
+  check("filtros", "mais opcoes mantem teto anterior mesmo com anuncio", Number(f6.preco_max) === 70000 && !f6.ad_price, JSON.stringify(f6));
 }
 
 // ── DETECTORES (extraídos) — regex de decisão que dispararam bugs ───────────────────────────

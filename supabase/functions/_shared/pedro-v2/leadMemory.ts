@@ -15,6 +15,10 @@ function mergeObjects<T extends Record<string, any>>(base: T, patch: T): T {
   return out as T;
 }
 
+function isRealLeadName(value?: string | null) {
+  const text = String(value || "").trim();
+  return text.length > 0 && /\p{L}{2,}/u.test(text) && !/^(lead|cliente|client|customer|contato|usuario|user)$/i.test(text);
+}
 export async function ensurePedroV2Lead(
   supabase: any,
   input: {
@@ -62,15 +66,11 @@ export async function ensurePedroV2Lead(
   // NOME só MELHORA, nunca regride (Codex): NÃO sobrescrever um nome REAL já salvo por "Lead"/lixo. O
   // pushName some/vem ruim em vários inbounds; sem isto, "João" virava "Lead" no meio do atendimento (some
   // do briefing/saudação). Só atualiza lead_name quando o novo é um NOME de verdade (≥2 letras, não placeholder).
-  const _isRealName = (s?: string | null) => {
-    const t = String(s || "").trim();
-    return t.length > 0 && /\p{L}{2,}/u.test(t) && !/^(lead|cliente|client|customer|contato|usuario|user)$/i.test(t);
-  };
   const { error: updateError } = await supabase
     .from("ai_crm_leads")
     .update({
       instance_id: input.instance_id || null,
-      ...(_isRealName(input.lead_name) ? { lead_name: input.lead_name } : {}),
+      ...(isRealLeadName(input.lead_name) ? { lead_name: input.lead_name } : {}),
       last_user_reply_at: now,
       last_interaction_at: now,
       followup_5min_sent: false,
@@ -140,7 +140,7 @@ export async function updatePedroMemoryFromIntent(
   const patch: PedroV2LeadMemory = {
     lead: {
       telefone: input.lead_phone,
-      nome: input.lead_name || input.current?.lead?.nome || null,
+      nome: isRealLeadName(input.lead_name) ? input.lead_name : input.current?.lead?.nome || null,
     },
     atendimento: {
       etapa: input.intent.needs_stock_search ? "consultando_estoque" : input.current?.atendimento?.etapa || "entendendo_interesse",
