@@ -341,15 +341,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       // Vendedor: só conversas dos leads atribuídos a ele (normalizado via leadKey)
       convList = convList.filter(c => sellerLeadPhones.has(leadKey(c.phone)));
     } else if (!isSeller && masterLeadPhones) {
-      // Master: nas instâncias de VENDEDOR, mostra só conversas com leads do CRM
-      // (não os contatos pessoais do vendedor). Instâncias da loja seguem completas.
-      const sellerInstanceIds = new Set(
-        allInstances.filter(i => i.seller_member_id).map(i => i.id)
-      );
-      convList = convList.filter(c =>
-        !(c.instance_id && sellerInstanceIds.has(c.instance_id))
-        || masterLeadPhones.has(leadKey(c.phone))
-      );
+      // Master: mostra apenas conversas com leads do CRM em qualquer instância, evitando poluição com chats pessoais
+      convList = convList.filter(c => masterLeadPhones.has(leadKey(c.phone)));
     }
     setConversations(convList);
     if (isInitial) setLoading(false);
