@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions, leadAsksBodyType, leadRespondsNoDownPaymentOrInstallmentConcern } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions, leadAsksBodyType, leadRespondsNoDownPaymentOrInstallmentConcern, leadRespondsTradeValueObjection } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -652,6 +652,30 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     }
   }
 
+  // ── NÃO PERDER O TRILHO: objeção de VALOR da TROCA não vira busca de estoque (Codex Caso I) ──
+  // Caso real (Francisco/Hilux): agente perguntou sobre o carro de troca; lead disse que o usado dele
+  // estava em valor maior, e o agente pulou para estoque/fotos. Isso é negociação da troca, não novo
+  // pedido de veículo. EXCEÇÃO: se o lead claramente pedir uma nova busca junto, deixa buscar.
+  {
+    const _pendingTrade = classifyPendingQuestion(input);
+    const _steersNewSearch = leadAsksAnyCarInBudget(input.message)
+      || Boolean(leadAsksBodyType(input.message))
+      || (Boolean(parsePriceCeiling(input.message)) && /\b(tem|teria|quero|procuro|busco|manda|mostra)\b/.test(normalizeText(input.message)));
+    if (!_steersNewSearch
+        && leadRespondsTradeValueObjection(input.message, _pendingTrade, getLastAgentText(input))) {
+      plan.action = "reply_only";
+      plan.intent = "trade_in";
+      plan.search_query = null;
+      plan.search_filters = {};
+      plan.photo_target = null;
+      plan.use_memory_vehicle = true;
+      (plan as any).precisa_qualificar = false;
+      plan.response_guidance = "O lead esta respondendo ao funil de TROCA com uma objecao de VALOR/avaliacao do usado dele. NAO liste carros, NAO ofereca fotos, NAO busque estoque. Acolha a preocupacao, diga que a avaliacao final depende da analise do consultor/loja e pergunte qual valor ele esperava no usado (ou peca para o consultor avaliar), sem prometer valor.";
+      plan.reason = `trade_value_objection_no_stock:${_pendingTrade}:${plan.reason || ""}`;
+      plan.source = "trade_value_objection_guard" as any;
+      return plan;
+    }
+  }
   // TETO DE PRECO DETERMINISTICO (provider-independente): o LLM (esp. DeepSeek) as vezes NAO converte
   // "ate 50 mil" -> preco_max=50000. Parse deterministico garante o teto pros dois provedores (caso real
   // "corolla ate 50 mil" no DeepSeek voltava carros ACIMA de 50k). So seta se o LLM nao tiver setado.

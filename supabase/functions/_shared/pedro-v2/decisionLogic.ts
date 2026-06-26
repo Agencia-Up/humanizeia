@@ -432,6 +432,26 @@ export function leadRespondsNoDownPaymentOrInstallmentConcern(message?: string |
 // cada pergunta a um campo de qualificação e devolvemos a 1ª NÃO respondida (texto exato do cliente).
 // Perguntas que não mapeamos (não dá pra saber se foram respondidas) são puladas — nunca forçamos o que
 // não sabemos rastrear (evita loop). Genérico: cada cliente tem o seu bloco4.
+// NAO PERDER O TRILHO: objecao de VALOR da troca nao vira estoque/foto.
+// Caso real (Francisco/Hilux): agente estava coletando troca; lead disse "acho que o meu carro esta em
+// um valor maior" e o agente pulou para estoque/fotos. Em contexto de troca, isso e objecao/negociacao
+// sobre o usado do lead, nao pedido de carro novo. PURO, com false friends ("quero um carro maior").
+export function leadRespondsTradeValueObjection(message?: string | null, pendingQuestion?: string | null, lastAgentText?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  const a = normalizePlannerText(lastAgentText);
+  const inTradeContext = pendingQuestion === "perguntou_troca"
+    || (!!a && /\b(troca|avaliacao|avaliar|avaliamos|fipe|valor do seu carro|carro para dar de troca|carro pra dar de troca|estado geral)\b/.test(a));
+  if (!inTradeContext) return false;
+  if (/\b(carro|veiculo|suv|sedan|hatch|picape|caminhonete)\s+maior\b/.test(t)) return false;
+  if (/\b(maior porta malas|porta malas maior|mais espaco|espaco maior|familia maior|um maior|uma maior|maiorzinho)\b/.test(t)) return false;
+
+  return /\b(meu carro|minha troca|meu usado|meu veiculo|o meu|ele|ela)\b.{0,40}\b(vale mais|ta valendo mais|esta valendo mais|valor maior|valor mais alto|fipe maior)\b/.test(t)
+    || /\b(acho|creio|acredito)\b.{0,35}\b(valor maior|vale mais|valendo mais|mais alto)\b/.test(t)
+    || /\b(avaliacao|avaliaram|avaliou|valor|fipe|tabela fipe)\b.{0,30}\b(baixa|baixo|menor|maior|mais alto|baixo demais|muito baixo)\b/.test(t)
+    || /\b(nao aceito|nao fecho|nao concordo)\b.{0,25}\b(esse valor|essa avaliacao|essa proposta)\b/.test(t)
+    || /\b(quero|preciso|esperava)\b.{0,25}\b(mais|valor maior|melhor valor)\b.{0,25}\b(nele|nela|no meu|na minha|na troca)\b/.test(t);
+}
 export function nextFunnelQuestion(bloco4?: any, qual?: any, opts?: { hasName?: boolean; hasInterest?: boolean }): string | null {
   const questions: string[] = Array.isArray(bloco4?.questions)
     ? bloco4.questions.filter((q: any) => typeof q === "string" && q.trim().length > 1)

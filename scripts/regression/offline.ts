@@ -60,6 +60,7 @@ import {
   classifyAgentReplyPending,
   funnelBlocksHandoff,
   leadRespondsNoDownPaymentOrInstallmentConcern,
+  leadRespondsTradeValueObjection,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -212,6 +213,14 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const h2 = normalizePlan({ action: "reply_only", intent: "trade_in", confidence: 0.7 }, FALLBACK, { message: "tenho uma hilux 2015 pra dar na troca", vehicle_resolution: vr({ has_current_vehicle_signal: true, query: "Toyota Hilux" }) as any, memory: null, recent_history: [] } as any);
   check("planner", "troca REAL 'tenho uma hilux pra trocar' -> NÃO busca", h2.action !== "stock_search", `action=${h2.action}`);
 
+  // CASO I: resposta de negociacao da TROCA nao pode virar estoque/foto.
+  const _histTroca = [{ role: "assistant", text: "Pode me passar o ano, a quilometragem e o estado geral do Rav4 para avaliarmos a troca?" }];
+  const _memTroca = { pending_question: "perguntou_troca", negociacao: { carro_troca: "Rav4 2018" } };
+  const tObj = normalizePlan({ action: "stock_search", intent: "stock_lookup", search_query: "Toyota Hilux", search_filters: { modelo_desejado: "Toyota Hilux" }, confidence: 0.7 }, FALLBACK, { message: "Acho que o meu carro está em um valor maior", vehicle_resolution: vr({ query: "Toyota Hilux", has_current_vehicle_signal: true }) as any, memory: _memTroca as any, recent_history: _histTroca } as any);
+  check("planner", "troca: objeção de valor NÃO vira stock_search", tObj.action === "reply_only" && tObj.intent === "trade_in" && /trade_value_objection/.test(String(tObj.reason || "")), `action=${tObj.action} intent=${tObj.intent} reason=${tObj.reason}`);
+  check("planner", "troca: objeção de valor não pede foto nem busca", tObj.photo_target === null && !tObj.search_query, `photo=${tObj.photo_target} q=${tObj.search_query}`);
+  const tSteer = normalizePlan({ action: "stock_search", intent: "stock_lookup", search_query: "sedan", search_filters: { tipo_veiculo: "sedan" }, confidence: 0.7 }, FALLBACK, { message: "meu carro vale mais, mas tem algum sedan até 80 mil?", vehicle_resolution: vr() as any, memory: _memTroca as any, recent_history: _histTroca } as any);
+  check("planner", "troca: objeção + nova busca explícita segue para estoque", tSteer.action === "stock_search", `action=${tSteer.action}`);
   // PROMETE E NÃO CUMPRE (foto): reclamação -> força photo_request (não promete).
   const pc1 = normalizePlan({ action: "reply_only", intent: "vehicle_reference", confidence: 0.7 }, FALLBACK, { message: "Essas fts n são peugeot\nVc n mandou do carro certo", vehicle_resolution: vr() as any, memory: { interesse: { modelo_desejado: "Peugeot 2008 2021" } }, recent_history: [] } as any);
   check("planner", "reclamação de foto errada -> força photo_request (não promete)", pc1.action === "photo_request", `action=${pc1.action}`);
@@ -268,7 +277,12 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("troca", "'Tudo ok' -> descrevendo a troca", leadProvidingTradeDetails("Tudo ok") === true);
   check("troca", "'Quero o Hilux' -> NÃO é descrição de troca", leadProvidingTradeDetails("Quero o Hilux") === false);
   check("troca", "'quanto fica?' -> NÃO é descrição de troca", leadProvidingTradeDetails("quanto fica?") === false);
-
+  const _qTroca = "Pode me passar o ano, a quilometragem e o estado geral do Rav4 para avaliarmos a troca?";
+  check("troca", "valor maior do meu carro = objeção de troca", leadRespondsTradeValueObjection("Acho que o meu carro está em um valor maior", "perguntou_troca", _qTroca) === true);
+  check("troca", "meu carro vale mais = objeção de troca", leadRespondsTradeValueObjection("meu carro vale mais que isso", "perguntou_troca", _qTroca) === true);
+  check("troca", "avaliação baixa = objeção de troca", leadRespondsTradeValueObjection("essa avaliação ficou muito baixa", "perguntou_troca", _qTroca) === true);
+  check("troca", "quero um carro maior NÃO é objeção de valor da troca", leadRespondsTradeValueObjection("quero um carro maior", "perguntou_troca", _qTroca) === false);
+  check("troca", "sem contexto de troca NÃO dispara", leadRespondsTradeValueObjection("meu carro vale mais", "nenhum", "Qual modelo você procura?") === false);
   // ── ANÚNCIO de FROTA genérico -> vehicle_query falso é zerado (lead 98109-7851) ──
   check("anuncio", "'veículos revisados e prontos para você' -> genérico", isGenericFleetQuery("veículos revisados e prontos para você") === true);
   check("anuncio", "'diversos modelos disponíveis' -> genérico", isGenericFleetQuery("diversos modelos disponíveis") === true);
