@@ -2128,13 +2128,20 @@ export async function processPedroV2Turn(
     if ((adNeedsVehicleConfirmation && (replyDefersSearch((reply as any)?.text || "") || _adLeadVague))
         || (_adFirstContact && _adLeadVague && _noAdVehicle)) {
       const _agName = (input.agent?.name || "").toString().trim().split(/\s+/)[0] || "";
+      const _agCompany = (input.agent?.company_name || "").toString().trim();
+      const _intro = _agCompany ? `Oi! Aqui é o ${_agName || "consultor"} da ${_agCompany} 😊` : `Oi! Aqui é o ${_agName || "consultor"} 😊`;
       reply = {
         ok: true,
-        text: `Oi! Aqui é o ${_agName || "consultor"} 😊 Pra te indicar certinho: você já tem algum modelo em mente, ou prefere que eu te ajude a escolher pela sua necessidade — tipo de carro e a faixa de valor que você pensa?`,
+        // 1º CONTATO: apresenta + RECONHECE o anúncio (menos neutro/robótico) + qualifica. RE-CONTATO (o agente
+        // JÁ falou antes): NÃO repete a apresentação — só conduz (lead 99178-2158: re-apresentou idêntico = robô,
+        // e o lead já tinha falado). Decide pelo _adFirstContact (há turno anterior do agente no histórico).
+        text: _adFirstContact
+          ? `${_intro} Que bom que você se interessou pelos nossos veículos! Pra eu te indicar certinho: você já tem algum modelo em mente, ou prefere que eu te ajude a escolher pela sua necessidade — tipo de carro e a faixa de valor que você pensa?`
+          : `Me conta rapidinho o que você procura que eu já te trago as melhores opções 😊 Você tem algum modelo em mente, ou prefere por tipo (SUV, sedan, hatch, picape) e faixa de valor?`,
         source: "ad_generic_abordagem",
         media: [],
       } as any;
-      log("info", "pedro_v2_ad_generic_abordagem", { lead_id: lead?.id || null, vague: _adLeadVague });
+      log("info", "pedro_v2_ad_generic_abordagem", { lead_id: lead?.id || null, vague: _adLeadVague, first_contact: _adFirstContact });
     }
 
     // "VOU BUSCAR..." E SOME (lead 99747-0573 "Palio"): o reply DEFERIU a busca que JA rodou neste turno
