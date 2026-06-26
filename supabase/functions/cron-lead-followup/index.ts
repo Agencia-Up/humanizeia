@@ -567,7 +567,7 @@ async function handleV2Followup(supabase: any, ctx: {
           const sres = await fetch("https://api.openai.com/v1/chat/completions", {
             method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiApiKey}` },
             body: JSON.stringify({ model: "gpt-4o-mini", temperature: 0.3, messages: [
-              { role: "system", content: `Voce e um analista de vendas especialista em mercado automotivo. Gere um briefing objetivo para o vendedor humano que vai assumir o atendimento. O cliente parou de responder.\n\nSecoes obrigatorias:\n*VEICULO DE INTERESSE:*\n*ORIGEM DO LEAD:*\n*PERFIL DO CLIENTE:*\n*DICA PARA RETOMADA:*\n\nSeja direto. Nao invente informacoes. Se o "Veiculo de interesse conhecido" for informado abaixo, use-o EXATAMENTE na secao VEICULO DE INTERESSE (e o carro do anuncio/conversa).` },
+              { role: "system", content: `Voce e um analista de vendas do mercado automotivo. Resuma o atendimento de forma objetiva para o vendedor humano que vai assumir (o cliente parou de responder). Use EXATAMENTE este formato e OMITA a linha INTEIRA quando nao houver a informacao (NUNCA invente, NUNCA use emojis):\n\nCidade: <cidade do cliente>\nOperacao: <compra, troca, financiamento, etc.>\nVeiculo de interesse: <modelo/ano — use o "Veiculo de interesse conhecido" se informado>\nMelhor horario: <dia/horario que o cliente indicou>\n\nPontos do atendimento:\n- <fato objetivo do que ocorreu na conversa, um por linha>\n\nObservacoes:\n- <ponto de atencao ou proximo passo, se houver>` },
               { role: "user", content: `Conversa:\n${transcript}\n\nVeiculo de interesse conhecido: ${veiculoInteresse || "nao informado"}\n\nGere o briefing.` },
             ] }),
           });
