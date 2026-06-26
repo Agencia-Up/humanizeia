@@ -242,13 +242,25 @@ const REACT_MIN_QUIET_HOURS = 24;
 // Aplicado na RPC get_next_reactivation_lead (teto + intervalo) e ao marcar 'skipped' no teto.
 const REACT_MAX_ATTEMPTS = 3;
 const REACT_MIN_RESEND_HOURS = 24;
+
+function isEligibleLeadForReactivation(lead: any): boolean {
+  if (!lead) return false;
+  if (String(lead.status_crm || "").toLowerCase() !== "inativo") return false;
+  if (lead.assigned_to_id) return false;
+  const operationalStatus = String(lead.status || "").toLowerCase();
+  if (["em_atendimento", "transferido", "fechado", "vendido", "perdido", "concluido"].includes(operationalStatus)) {
+    return false;
+  }
+  return true;
+}
+
 async function pickEligibleByRecency(supabase: any, rows: any[]): Promise<any> {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   const ids = rows.map((r: any) => r.lead_id).filter(Boolean);
   if (ids.length === 0) return null;
   const { data: leads } = await supabase
     .from("ai_crm_leads")
-    .select("id, last_interaction_at, last_user_reply_at, last_agent_reply_at, created_at")
+    .select("id, status, status_crm, assigned_to_id, last_interaction_at, last_user_reply_at, last_agent_reply_at, created_at")
     .in("id", ids);
   const byId = new Map((leads || []).map((l: any) => [l.id, l]));
   const cutoff = Date.now() - REACT_MIN_QUIET_HOURS * 60 * 60 * 1000;
@@ -256,6 +268,7 @@ async function pickEligibleByRecency(supabase: any, rows: any[]): Promise<any> {
   for (const r of rows) { // rows ja vem na ordem do rodizio
     const l = byId.get(r.lead_id);
     if (!l) continue;
+    if (!isEligibleLeadForReactivation(l)) continue;
     const lastTouch = Math.max(
       ms(l.last_interaction_at), ms(l.last_user_reply_at),
       ms(l.last_agent_reply_at), ms(l.created_at),
@@ -388,11 +401,11 @@ serve(async (req) => {
         if (onlyLeadId) {
           const { data: l } = await supabase
             .from("ai_crm_leads")
-            .select("id, remote_jid, lead_name, agent_id, assigned_to_id, status_crm, user_id")
+            .select("id, remote_jid, lead_name, agent_id, assigned_to_id, status, status_crm, user_id")
             .eq("id", onlyLeadId)
             .eq("user_id", cfg.user_id)
             .maybeSingle();
-          if (l && l.status_crm === "inativo") {
+          if (isEligibleLeadForReactivation(l)) {
             const { data: rr } = await supabase
               .from("pedro_followup_reactivation")
               .select("id, status, send_count")

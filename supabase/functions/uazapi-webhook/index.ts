@@ -3016,10 +3016,11 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           await supabase.from('pedro_followup_reactivation')
             .update({ status: 'responded', responded_at: new Date().toISOString() })
             .eq('id', react.id);
-          // 2. Sai da coluna "inativo" pra IA requalificar agora.
+          // 2. Sai da coluna "inativo" pra IA requalificar agora. Se ja tem vendedor,
+          // volta como em atendimento para nao sumir do CRM do vendedor/gestor.
           if (leadForReact.status_crm === 'inativo') {
             await supabase.from('ai_crm_leads')
-              .update({ status_crm: 'interessado' })
+              .update({ status_crm: leadForReact.assigned_to_id ? 'em_atendimento' : 'interessado' })
               .eq('id', leadForReact.id);
           }
           console.log(`[PontoC] Lead ${leadForReact.id} respondeu a reativacao -> requalificando.`);
