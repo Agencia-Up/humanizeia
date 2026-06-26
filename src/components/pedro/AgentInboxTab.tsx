@@ -64,6 +64,8 @@ interface AgentInboxTabProps {
   // Somente leitura (consulta): esconde pausar IA, compositor e gravacao.
   // O vendedor so visualiza a conversa dos leads atribuidos a ele.
   readOnly?: boolean;
+  // Abre automaticamente a conversa de um lead vindo do CRM.
+  focusLeadId?: string | null;
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -148,8 +150,9 @@ const ALL_AGENTS = '__all__';
 const ALL_SELLERS = '__all_sellers__'; // filtro "todos" do dropdown de vendedor (só master)
 
 /* ── Componente Principal ──────────────────────────────────────────── */
-export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false }: AgentInboxTabProps) {
+export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false, focusLeadId = null }: AgentInboxTabProps) {
   const { toast } = useToast();
+  const lastFocusedLeadRef = useRef<string | null>(null);
 
   // Agents
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -281,6 +284,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  useEffect(() => {
+    if (!focusLeadId || loadingLeads || leads.length === 0) return;
+    if (lastFocusedLeadRef.current === focusLeadId && selectedLead?.id === focusLeadId) return;
+    const lead = leads.find(l => l.id === focusLeadId);
+    if (!lead) return;
+    lastFocusedLeadRef.current = focusLeadId;
+    setSelectedLead(lead);
+    setSearchTerm('');
+  }, [focusLeadId, loadingLeads, leads, selectedLead?.id]);
 
   const selectedLeadId = selectedLead?.id || '';
   const selectedLeadPhone = selectedLead?.remote_jid || '';

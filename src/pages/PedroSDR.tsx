@@ -1107,6 +1107,7 @@ export function CrmAvancadoTab({
   memberIdProp
 }: CrmAvancadoTabProps) {
   const { toast } = useToast();
+  const [, setCrmSearchParams] = useSearchParams();
   const isMarcosCrm = mode === 'marcos';
   const [isSeller, setIsSeller] = useState(isSellerProp ?? false);
   const [memberId, setMemberId] = useState<string | null>(memberIdProp ?? null);
@@ -3393,6 +3394,23 @@ export function CrmAvancadoTab({
     : STATUS_CRM_OPTIONS;
   const canManageLeadStatus = !isMarcosCrm || !isSeller;
   const canReassignLeadSeller = !isSeller && teamMembers.length > 0;
+  const openSelectedLeadConversation = () => {
+    if (!selectedLead) return;
+    setCrmSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', isMarcosCrm ? 'inbox' : 'inbox-ia');
+      next.delete('leadId');
+      next.delete('phone');
+      if (isMarcosCrm) {
+        const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
+        if (phone) next.set('phone', phone);
+      } else {
+        next.set('leadId', selectedLead.id);
+      }
+      return next;
+    }, { replace: true });
+    setSelectedLead(null);
+  };
 
   if (selectedLead) {
     return (
@@ -3467,7 +3485,7 @@ export function CrmAvancadoTab({
                 <p className="text-xs text-muted-foreground">{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}</p>
               </div>
             ) : (
-              <div className="flex items-start gap-1.5">
+              <div className="flex flex-wrap items-start gap-2">
                 <div className="min-w-0">
                   <h2 className="text-base font-semibold text-foreground truncate">{selectedLead.lead_name || selectedLead.remote_jid}</h2>
                   <p className="text-xs text-muted-foreground">
@@ -3485,6 +3503,16 @@ export function CrmAvancadoTab({
                 </div>
                 <Button variant="ghost" size="sm" onClick={startEditLead} className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0 mt-0.5" title="Editar lead">
                   <Pencil className="h-3 w-3" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={openSelectedLeadConversation}
+                  className="h-8 px-4 gap-1.5 bg-emerald-500 text-white hover:bg-emerald-400 shadow-[0_0_18px_rgba(16,185,129,0.28)] shrink-0"
+                  title={isMarcosCrm ? 'Abrir conversa deste lead' : 'Abrir conversa IA deste lead'}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  Conversa
                 </Button>
               </div>
             )}
@@ -5741,6 +5769,7 @@ export default function PedroSDR() {
   const inboxOwnerId = masterUserId || user?.id;
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
+  const leadIdParam = searchParams.get('leadId');
 
   // Seller: filtra tabs por visible_features | Master: todas
   const tabs = isSeller
@@ -5852,6 +5881,7 @@ export default function PedroSDR() {
                   isSeller={isSeller}
                   sellerMemberIds={memberIds}
                   readOnly={isSeller}
+                  focusLeadId={leadIdParam}
                 />
               )}
             </TabsContent>

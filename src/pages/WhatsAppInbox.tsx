@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -122,8 +122,10 @@ function leadKey(raw: string | null | undefined): string {
 export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {}) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
   const { isSeller, seller, masterUserId, memberIds, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const blockSellerAccess = !sellerLoading && isSeller && !visibleFeatures.marcos_inbox && !embedded;
+  const focusPhone = searchParams.get('phone');
 
   // O userId efetivo para queries: vendedor usa o ID do master
   const effectiveUserId = (isSeller && masterUserId) ? masterUserId : user?.id;
@@ -152,6 +154,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [uploadingMedia, setUploadingMedia]   = useState(false);
   const [recording, setRecording]             = useState(false);
   const [recordSeconds, setRecordSeconds]     = useState(0);
+  const lastFocusedPhoneRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
@@ -166,22 +169,38 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   useEffect(() => {
     if (!effectiveUserId) return;
     (async () => {
-      let query = (supabase as any)
+      let pedroQuery = (supabase as any)
         .from('ai_crm_leads')
         .select('id, remote_jid, lead_name, last_interaction_at, instance_id, summary')
+        .eq('user_id', effectiveUserId);
+
+      let marcosQuery = (supabase as any)
+        .from('crm_leads')
+        .select('id, phone, name, notes, created_at, assigned_to')
         .eq('user_id', effectiveUserId);
       
       if (isSeller) {
         if (!seller) return;
         if (memberIds && memberIds.length > 0) {
-          query = query.in('assigned_to_id', memberIds);
+          pedroQuery = pedroQuery.in('assigned_to_id', memberIds);
+          marcosQuery = marcosQuery.in('assigned_to', memberIds);
         } else {
-          query = query.eq('assigned_to_id', seller.id);
+          pedroQuery = pedroQuery.eq('assigned_to_id', seller.id);
+          marcosQuery = marcosQuery.eq('assigned_to', seller.id);
         }
       }
 
-      const { data } = await query;
-      const leadsList = data || [];
+      const [pedroRes, marcosRes] = await Promise.all([pedroQuery, marcosQuery]);
+      const pedroLeads = pedroRes.data || [];
+      const marcosLeads = (marcosRes.data || []).map((lead: any) => ({
+        id: lead.id,
+        remote_jid: lead.phone,
+        lead_name: lead.name || lead.phone || 'Lead',
+        last_interaction_at: lead.created_at,
+        instance_id: null,
+        summary: lead.notes || null,
+      }));
+      const leadsList = [...pedroLeads, ...marcosLeads];
       setSellerLeads(leadsList);
 
       const phones = new Set<string>();
@@ -212,6 +231,16 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
           .range(from, from + PAGE - 1);
         if (error || !data || data.length === 0) break;
         for (const l of data) { const k = leadKey(l.remote_jid); if (k) keys.add(k); }
+        if (data.length < PAGE) break;
+      }
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await (supabase as any)
+          .from('crm_leads')
+          .select('phone')
+          .eq('user_id', effectiveUserId)
+          .range(from, from + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        for (const l of data) { const k = leadKey(l.phone); if (k) keys.add(k); }
         if (data.length < PAGE) break;
       }
       if (!cancelled) setMasterLeadPhones(keys);
@@ -505,6 +534,24 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     if (inst) setSendInstanceId(inst.id);
     else if (instances.length > 0) setSendInstanceId(instances[0].id);
   };
+
+  useEffect(() => {
+    if (!focusPhone || loading || conversations.length === 0) return;
+    const targetKey = leadKey(focusPhone);
+    if (!targetKey) return;
+    if (lastFocusedPhoneRef.current === targetKey && selectedConvKey) return;
+    if (activeInstanceTab !== 'all') {
+      setActiveInstanceTab('all');
+      return;
+    }
+
+    const match = conversations.find(c => leadKey(c.phone) === targetKey);
+    if (!match) return;
+
+    lastFocusedPhoneRef.current = targetKey;
+    setSearchQuery('');
+    selectConversation(match);
+  }, [focusPhone, loading, conversations, selectedConvKey, activeInstanceTab]);
 
   /* ── Enviar mensagem ───────────────────────────────────────────── */
   const handleSend = async () => {
