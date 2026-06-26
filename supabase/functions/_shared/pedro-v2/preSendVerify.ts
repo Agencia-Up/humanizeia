@@ -280,6 +280,14 @@ export function ensureTransferContactClarity(text?: string | null): { text: stri
   return { text: `${raw.replace(/\s+$/, "")} ${closing}`, changed: true };
 }
 
+// Handoff anunciado so pode executar se a mensagem JA ENVIADA ao lead deixou claro que o consultor
+// vai entrar em contato. Protege enforcements que rodam depois do envio: eles podem marcar
+// pronto_para_transferir, mas nao podem transferir em silencio por tras da conversa.
+export function shouldBlockUnannouncedHandoff(sentReplyText?: string | null, opts?: { brainReadyToTransfer?: boolean; needsHandoff?: boolean; silentTransfer?: boolean }): boolean {
+  const wantsAnnouncedHandoff = Boolean(opts?.brainReadyToTransfer || opts?.needsHandoff);
+  if (!wantsAnnouncedHandoff || opts?.silentTransfer === true) return false;
+  return !transferMessageIsClear(sentReplyText);
+}
 // ── SDR PROATIVO: tira a pergunta-ISCA do fim pra dar lugar à pergunta de qualificação ───────────────
 // O agente "preguiçoso" responde a dúvida e fecha com isca vazia ("Precisa de mais alguma informação?").
 // Isso ocupa o lugar da pergunta de QUALIFICAÇÃO. Antes de o SDR-force anexar a próxima pergunta do funil,

@@ -62,7 +62,7 @@ import {
   leadRespondsNoDownPaymentOrInstallmentConcern,
   leadRespondsTradeValueObjection,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, shouldBlockUnannouncedHandoff, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
 import { validateGrounding, extractVehiclePriceClaims } from "../../supabase/functions/_shared/pedro-v2/grounding.ts";
 import { uniqueSellersByPhone } from "../../supabase/functions/_shared/transfer/phoneKey.ts";
@@ -399,6 +399,9 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     const _t = ensureTransferContactClarity("Vou chamar nosso consultor agora 👌 Ele já vai ter tudo que você me contou.");
     check("transfer", "msg vaga -> acrescenta 'entrar em contato'", _t.changed === true && /entrar em contato com você/.test(_t.text));
     check("transfer", "msg já clara -> não mexe", ensureTransferContactClarity("Pronto, o consultor vai entrar em contato com você!").changed === false);
+    check("transfer", "handoff anunciado BLOQUEIA se a msg enviada ainda pergunta parcela", shouldBlockUnannouncedHandoff("Entendi que só tem a Strada para troca e não tem entrada. Qual parcela mensal ficaria confortável para você?", { brainReadyToTransfer: true, silentTransfer: false }) === true);
+    check("transfer", "handoff anunciado libera quando a msg enviada avisa consultor", shouldBlockUnannouncedHandoff("Perfeito! O consultor vai entrar em contato com você para seguir daqui.", { brainReadyToTransfer: true, silentTransfer: false }) === false);
+    check("transfer", "handoff silencioso não exige anúncio ao lead", shouldBlockUnannouncedHandoff("Tranquilo, fico à disposição.", { brainReadyToTransfer: false, silentTransfer: true }) === false);
   }
 
   // ── MOTO: aparece SÓ quando o lead quer moto; não vaza em carro/genérico (Avant — decisão do dono) ──

@@ -59,7 +59,7 @@ import {
   leadAffirmsPresenceToFollowupPing,
   classifyAgentReplyPending,
 } from "./decisionLogic.ts";
-import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
+import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, stripPhotoReoffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, shouldBlockUnannouncedHandoff, stripTrailingFillerQuestion } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
 // FLUXO DE FOTO / VEÍCULO puro (testável offline) -> photoLogic.ts. NÃO redefinir aqui.
 import {
@@ -2713,6 +2713,14 @@ export async function processPedroV2Turn(
     }
   }
 
+  // Snapshot da mensagem que JA foi enviada/salva ao lead. A Etapa C abaixo ainda pode alterar `reply`
+  // para handoff deterministico, mas qualquer handoff anunciado precisa estar coerente com o que o lead
+  // de fato recebeu. Se nao recebeu aviso claro de consultor, bloqueamos o handoff para evitar silencio.
+  const _sentReplyForHandoff = {
+    text: String((reply as any)?.text || ""),
+    source: String((reply as any)?.source || ""),
+    media: Array.isArray((reply as any)?.media) ? [...((reply as any).media)] : (reply as any)?.media,
+  };
   // ETAPA C: lead qualificado / agendou / pediu humano -> transfere para vendedor.
   // Marca status='transferido' (sem mexer no status_crm); com isso o follow-up de
   // inatividade para sozinho (o cron so processa novo/interessado). Gated a v2.
@@ -2945,11 +2953,26 @@ export async function processPedroV2Turn(
       log("info", "pedro_v2_handoff_blocked_pending_funnel", { lead_id: lead?.id || null, question: _nextFunnelBeforeHandoff });
     }
   }
-  const brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
+  let brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
   // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
   // despedida gentil, sem dizer que vai transferir). NUNCA encerramos sem encaminhar.
-  const silentTransfer = reply?.transferir_silencioso === true && _hasNome && !brainReadyToTransfer && !contextualIntent.needs_handoff;
+  let silentTransfer = reply?.transferir_silencioso === true && _hasNome && !brainReadyToTransfer && !contextualIntent.needs_handoff;
+  if (shouldBlockUnannouncedHandoff(_sentReplyForHandoff.text, { brainReadyToTransfer, needsHandoff: contextualIntent.needs_handoff === true, silentTransfer })) {
+    log("warn", "pedro_v2_handoff_blocked_unannounced_sent_reply", {
+      lead_id: lead?.id || null,
+      reply_source_after: (reply as any)?.source || null,
+      sent_source: _sentReplyForHandoff.source || null,
+      sent_text_sample: _sentReplyForHandoff.text.slice(0, 180),
+    });
+    reply.pronto_para_transferir = false;
+    reply.transferir_silencioso = false;
+    reply.text = _sentReplyForHandoff.text;
+    reply.source = _sentReplyForHandoff.source || "handoff_blocked_unannounced_sent_reply";
+    reply.media = Array.isArray(_sentReplyForHandoff.media) ? _sentReplyForHandoff.media : [];
+    brainReadyToTransfer = false;
+    silentTransfer = false;
+  }
   // CLAREZA da transferência ANUNCIADA (lead 98198-7661): a msg do BLOCO 7 do cliente nem sempre deixa
   // claro que o CONSULTOR vai entrar em contato com o LEAD. Garante o fecho ("ele já vai entrar em contato
   // com você. Obrigado!") quando falta. Só na anunciada (a silenciosa é despedida gentil sem anunciar).
