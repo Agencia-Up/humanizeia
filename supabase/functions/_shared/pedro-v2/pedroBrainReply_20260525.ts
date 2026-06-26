@@ -587,9 +587,18 @@ function resolveReplyTarget(agentModel?: string | null): { provider: "openai" | 
     return { provider: "deepseek", model: "deepseek-chat" };
   }
   if (raw.startsWith("openai/") || raw.startsWith("gpt")) {
-    return { provider: "openai", model: raw.includes("mini") ? "gpt-4o-mini" : "gpt-4o" };
+    const m = raw.replace(/^openai\//, "");
+    // Passa o NOME REAL do modelo OpenAI. ANTES colapsava qualquer "*mini" em gpt-4o-mini -> o
+    // agente marcado "openai/gpt-4.1-mini" rodava gpt-4o-mini (o "4.1" era ignorado). Agora 4.1
+    // (mini/full) passa de verdade; gpt-4o(-mini) seguem iguais.
+    if (m.includes("4.1")) return { provider: "openai", model: m.includes("mini") ? "gpt-4.1-mini" : "gpt-4.1" };
+    if (m.includes("mini")) return { provider: "openai", model: "gpt-4o-mini" };
+    return { provider: "openai", model: "gpt-4o" };
   }
-  return { provider: "anthropic", model: "claude-haiku-4-5" };
+  // Default da plataforma (sem modelo / modelo desconhecido) = gpt-4.1-mini (padrao SDR atual; o
+  // caminho Anthropic/Haiku do reply quebra em turnos de estoque). Haiku/Claude EXPLICITO ainda
+  // e respeitado acima (quem escolhe Claude no dropdown continua no Claude).
+  return { provider: "openai", model: "gpt-4.1-mini" };
 }
 
 export async function generatePedroBrainReply(input: {

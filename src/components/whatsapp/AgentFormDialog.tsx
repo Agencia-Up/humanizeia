@@ -98,9 +98,10 @@ Informações do produto/serviço:
 [EDITE AQUI COM AS INFORMAÇÕES DO SEU NEGÓCIO]`;
 
 const MODEL_OPTIONS = [
-  { value: 'anthropic/claude-haiku-4-5', label: '🏆 Claude Haiku 4.5 (Recomendado p/ SDR)' },
-  { value: 'openai/gpt-4o', label: '⭐ GPT-4o (Alta Qualidade)' },
-  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Custo-Beneficio)' },
+  { value: 'openai/gpt-4.1-mini', label: '🏆 GPT-4.1 Mini (Recomendado p/ SDR)' },
+  { value: 'openai/gpt-4o', label: '⭐ GPT-4o (Alta Qualidade — sob demanda)' },
+  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (Custo-Benefício)' },
+  { value: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5' },
 ];
 
 const AGENT_TYPES = [
@@ -237,7 +238,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
   const [agentType, setAgentType] = useState('generic');
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [isActive, setIsActive] = useState(false);
-  const [model, setModel] = useState('anthropic/claude-haiku-4-5');
+  const [model, setModel] = useState('openai/gpt-4.1-mini');
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(500);
   const [replyDelay, setReplyDelay] = useState(3000);
@@ -684,7 +685,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       setAgentType('generic');
       setPrompt(DEFAULT_PROMPT);
       setIsActive(false);
-      setModel('anthropic/claude-haiku-4-5');
+      setModel('openai/gpt-4.1-mini');
       setTemperature(0.7);
       setMaxTokens(500);
       setReplyDelay(3000);
