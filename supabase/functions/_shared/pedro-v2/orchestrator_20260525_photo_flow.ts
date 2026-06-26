@@ -20,7 +20,7 @@ import { searchPedroStock } from "./stockSearch_20260525_photo_flow.ts";
 import { setSdrLabelOnChat } from "./uazapiLabels.ts";
 import { resolvePedroInstance, sendPedroMedia, sendPedroText } from "./uazapiSender_20260524.ts";
 import { PedroV2TurnInput, PedroV2TurnResult } from "./types.ts";
-import { buildLastStockOffer } from "./conversationState.ts";
+import { buildLastStockOffer, resolvePresentedVehicleReference } from "./conversationState.ts";
 import { isPedroV2SendingEnabled } from "./server.ts";
 import { adContextToMemory, buildMessageWithAdContext, resolvePedroAdContext } from "./adContext_20260525.ts";
 import { mediaContextToAdLikeContext, resolvePedroMediaContext, sanitizePedroMediaContext } from "./mediaContext_20260524.ts";
@@ -1263,13 +1263,53 @@ export async function processPedroV2Turn(
   // PLANO A (enriquecer o cérebro): o que o lead REJEITOU. Computa ANTES do planner pra ele NÃO
   // re-oferecer + ler "não, o outro" certo. Mutável em currentMemory -> planner e reply veem neste turno.
   (currentMemory as any).rejeitados = updateRejeitados(text, (currentMemory as any)?.veiculos_apresentados, (currentMemory as any)?.rejeitados);
-  const vehicleResolution = resolvePedroVehicleTurn({
-    message: text,
-    enriched_message: enrichedText,
-    memory: currentMemory,
-    ad_context: adContext,
-    media_context: mediaContext,
+  // CONVERSATION_CENTER: antes do resolver global, casa a fala contra os carros que ESTE lead
+  // acabou de receber. O working set real e o dicionario fuzzy: "gostei do <modelo com typo> / tem
+  // foto?" fixa o carro certo e segue nele, sem relistar o pool. Empate nao chuta: cai no fluxo seguro.
+  const _currentMessageVehicle = resolvePedroVehicleTurn({
+    message: text, enriched_message: text, memory: null, ad_context: null, media_context: null,
   });
+  const _currentMessageNamesVehicle = _currentMessageVehicle.source === "message"
+    && _currentMessageVehicle.has_current_vehicle_signal
+    && Boolean(_currentMessageVehicle.canonical_model);
+  const _presentedReference = _currentMessageNamesVehicle
+    ? { status: "none" as const, vehicle: null, index: null, confidence: 0, reason: "explicit_new_vehicle_wins", candidate_indexes: [] }
+    : resolvePresentedVehicleReference({ message: text, memory: currentMemory });
+  if (_presentedReference.status === "resolved" && _presentedReference.vehicle) {
+    const _v = _presentedReference.vehicle;
+    (currentMemory as any).veiculo_em_foco = {
+      ..._v,
+      key: vehicleKey(_v),
+      label: cleanVehicleLabel(_v) || [_v?.marca, _v?.modelo, _v?.ano].filter(Boolean).join(" ") || null,
+      at: new Date().toISOString(),
+    };
+  }
+  const vehicleResolution = _presentedReference.status === "resolved" && _presentedReference.vehicle
+    ? (() => {
+        const _v = _presentedReference.vehicle;
+        const _query = [_v?.marca ?? _v?.markName, _v?.modelo ?? _v?.modelName].filter(Boolean).join(" ").trim();
+        return {
+          has_current_vehicle_signal: true,
+          query: _query || cleanVehicleLabel(_v),
+          canonical_model: normalizePhotoText(_v?.modelo ?? _v?.modelName ?? "") || null,
+          vehicle_type: (currentMemory as any)?.last_stock_offer?.tipo_veiculo || (currentMemory as any)?.interesse?.tipo_veiculo || null,
+          confidence: _presentedReference.confidence,
+          source: "message" as const,
+          reason: _presentedReference.reason,
+          current_message_overrides_memory: true,
+          used_memory: true,
+          possible_new_topic: false,
+          has_multiple_vehicles: false,
+          all_matched_models: _query ? [_query] : [],
+        };
+      })()
+    : resolvePedroVehicleTurn({
+        message: text,
+        enriched_message: enrichedText,
+        memory: currentMemory,
+        ad_context: adContext,
+        media_context: mediaContext,
+      });
   const brainPlan = await planPedroTurn({
     agent: input.agent,
     message: text,
@@ -1288,7 +1328,17 @@ export async function processPedroV2Turn(
     planner_provider: dryRun ? (input.payload?.planner_provider ?? null) : null,
     planner_model: dryRun ? (input.payload?.planner_model ?? null) : null,
   });
-  if (adContext?.has_ad_context && adContext?.vehicle_query && brainPlan?.search_filters?.preco_max && !leadMessageHasExplicitPriceCeiling(text)) {
+  if (_presentedReference.status === "resolved" && _presentedReference.vehicle && messageAsksForPhotos(text)) {
+    brainPlan.action = "photo_request";
+    brainPlan.intent = "photo_request";
+    brainPlan.search_query = vehicleResolution.query;
+    brainPlan.search_filters = {};
+    brainPlan.use_memory_vehicle = true;
+    brainPlan.response_guidance = "O lead pediu fotos de uma opcao ja apresentada e resolvida com seguranca. Envie as fotos desse veiculo; nao repita a lista.";
+    brainPlan.reason = "conversation_center_presented_vehicle_photo:" + _presentedReference.reason;
+    brainPlan.source = "conversation_center" as any;
+  }
+    if (adContext?.has_ad_context && adContext?.vehicle_query && brainPlan?.search_filters?.preco_max && !leadMessageHasExplicitPriceCeiling(text)) {
     brainPlan.search_filters.ad_price = brainPlan.search_filters.preco_max;
     delete brainPlan.search_filters.preco_max;
   }
@@ -2029,6 +2079,22 @@ export async function processPedroV2Turn(
         reply_model_override: dryRun ? ((input.payload as any)?.reply_model ?? null) : null,
       });
 
+  // Uma lista de estoque deve ter UMA representacao visual, independente do provedor/LLM. Quando ha
+  // varios carros numa busca real, usa o renderer deterministico (numerado, 1 carro por linha, fatos
+  // aterrados). Evita a primeira lista corrida/irregular e a segunda lista "corrigida" sem contexto.
+  if (!_optionsExhausted && brainPlan.action === "stock_search" && stockResult?.success
+      && Array.isArray(stockResult.items) && stockResult.items.length >= 2
+      && !(Array.isArray((reply as any)?.media) && (reply as any).media.length > 0)) {
+    const _shownCount = Math.min(5, stockResult.items.length);
+    reply = {
+      ...(reply as any),
+      text: buildDeterministicStockReply({ memory: nextMemory, plan: brainPlan as any, intent: contextualIntent as any, stock_result: stockResult }),
+      source: "stock_list_deterministic",
+      media: [],
+      presented_vehicle_indices: Array.from({ length: _shownCount }, (_, index) => index + 1),
+    } as any;
+  }
+
   // "SIM" a um PING DE FOLLOW-UP de presença -> RE-ENGAJA, nunca re-despeja foto (ver _affirmFollowupPing).
   if (_affirmFollowupPing) {
     reply = {
@@ -2430,7 +2496,7 @@ export async function processPedroV2Turn(
       .map((idx: number) => stockResult.items[idx - 1])
       .filter(Boolean);
 
-    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic", "wrong_price_relisted_deterministic", "search_deferral_resolved"].includes(reply.source)) {
+    if (vehiclesToSave.length === 0 && ["brain_stock_reply", "stock_fact_reply", "brain_stock_fallback", "brain_ad_vehicle_reply", "brain_ad_vehicle_fallback", "denial_without_search_recovered", "category_relisted_deterministic", "wrong_price_relisted_deterministic", "search_deferral_resolved", "stock_list_deterministic"].includes(reply.source)) {
       vehiclesToSave = stockResult.items;
     }
 

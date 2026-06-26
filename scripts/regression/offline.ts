@@ -77,7 +77,7 @@ import {
   stableVehicleKey,
   leadAsksForMorePhotos,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
-import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion, buildLastStockOffer, stockOfferVehicleKey } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
+import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion, buildLastStockOffer, stockOfferVehicleKey, resolvePresentedVehicleReference } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -425,6 +425,28 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     const _centerFocus = buildConversationCenter({ message: "tem laudo?", memory: { veiculo_em_foco: { key: "jeep-renegade-2019", label: "Jeep Renegade 2019", marca: "Jeep", modelo: "Renegade", ano: 2019 } } as any, recent_history: [] });
     check("estado", "current_vehicle_focus reflete veiculo_em_foco", _centerFocus.current_vehicle_focus?.modelo === "Renegade" && _centerFocus.current_vehicle_focus?.ano === 2019, JSON.stringify(_centerFocus.current_vehicle_focus));
     check("estado", "current_vehicle_focus null quando não há foco", buildConversationCenter({ message: "oi", memory: {} as any, recent_history: [] }).current_vehicle_focus === null, "");
+    const _presentedPrint = [
+      { marca: "CAOA CHERY", modelo: "QQ 1.0 LOOK", ano: 2018, preco: 34990, fotos: ["qq.jpg"] },
+      { marca: "RENAULT", modelo: "SANDERO AUTH 10 1.0", ano: 2018, preco: 44990, fotos: ["sandero.jpg"] },
+      { marca: "PEUGEOT", modelo: "208 ACTIVE PACK 1.4", ano: 2015, preco: 45990, fotos: ["208.jpg"] },
+    ];
+    const _typoFocus = resolvePresentedVehicleReference({ message: "gostei do peujot\ntem foto?", memory: { veiculos_apresentados: _presentedPrint } as any });
+    check("estado", "typo resolve contra ultima oferta e fixa Peugeot", _typoFocus.status === "resolved" && _typoFocus.index === 2 && _typoFocus.vehicle?.marca === "PEUGEOT", JSON.stringify(_typoFocus));
+    const _typoPhoto = buildVehiclePhotoReply({ veiculos_apresentados: _presentedPrint, veiculo_em_foco: { ..._typoFocus.vehicle, key: vehicleKey(_typoFocus.vehicle) } }, "gostei do peujot\ntem foto?");
+    check("estado", "typo + pedido de foto envia o veiculo resolvido, sem relistar", _typoPhoto.source === "vehicle_photos_reply" && _typoPhoto.vehicle?.marca === "PEUGEOT" && _typoPhoto.media.length > 0, JSON.stringify({ source: _typoPhoto.source, vehicle: _typoPhoto.vehicle?.marca, media: _typoPhoto.media?.length }));
+    const _numberFocus = resolvePresentedVehicleReference({ message: "tem foto do 208?", memory: { veiculos_apresentados: _presentedPrint } as any });
+    check("estado", "modelo numerico resolve contra ultima oferta", _numberFocus.status === "resolved" && _numberFocus.index === 2, JSON.stringify(_numberFocus));
+    const _ordinalFocus = resolvePresentedVehicleReference({ message: "gostei do segundo, tem foto?", memory: { veiculos_apresentados: _presentedPrint } as any });
+    check("estado", "ordinal resolve contra ultima oferta", _ordinalFocus.status === "resolved" && _ordinalFocus.index === 1, JSON.stringify(_ordinalFocus));
+    const _noGuessFocus = resolvePresentedVehicleReference({ message: "tem foto?", memory: { veiculos_apresentados: _presentedPrint } as any });
+    check("estado", "pedido sem referencia nao chuta carro da lista", _noGuessFocus.status === "none", JSON.stringify(_noGuessFocus));
+    const _newSameBrand = resolvePresentedVehicleReference({ message: "quero um Renault Duster", memory: { veiculos_apresentados: _presentedPrint } as any });
+    check("estado", "modelo novo da mesma marca vence a memoria", _newSameBrand.status === "none" && _newSameBrand.reason === "presented_match_has_new_vehicle_token", JSON.stringify(_newSameBrand));
+    const _ambiguousFocus = resolvePresentedVehicleReference({ message: "gostei do onix", memory: { veiculos_apresentados: [
+      { marca: "CHEVROLET", modelo: "ONIX LT", ano: 2022 },
+      { marca: "CHEVROLET", modelo: "ONIX PREMIER", ano: 2023 },
+    ] } as any });
+    check("estado", "duas unidades empatadas ficam ambiguas, sem chute", _ambiguousFocus.status === "ambiguous" && _ambiguousFocus.candidate_indexes.length === 2, JSON.stringify(_ambiguousFocus));
     // ⭐CRÍTICO: foto + qualificação na MESMA fala NÃO vira ofereceu_fotos (a qualificação vence) — assim o
     // "sim/ok" do lead não é lido como pedido de foto quando o agente perguntou troca/pagamento junto.
     check("pending", "'vou separar as fotos. Tem troca?' -> NÃO é ofereceu_fotos", P("Vou separar as fotos. Tem algum carro pra dar de troca?", "brain_reply") !== "ofereceu_fotos");

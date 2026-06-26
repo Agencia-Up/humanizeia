@@ -13,6 +13,7 @@ import {
   normalizePlannerText,
   parsePriceCeiling,
 } from "./decisionLogic.ts";
+import { NON_MODEL_WORDS, normVehText, rankVehiclesV2, tokenSim } from "./vehicleMatch.ts";
 
 export type PendingQuestionType =
   | "nenhum"
@@ -75,6 +76,15 @@ export type LastStockOffer = {
   at: string;
 };
 
+export type PresentedVehicleResolution = {
+  status: "resolved" | "ambiguous" | "none";
+  vehicle: any | null;
+  index: number | null;
+  confidence: number;
+  reason: string;
+  candidate_indexes: number[];
+};
+
 // Chave ESTÁVEL de veículo (marca|modelo|ano) — não depende de preço/km (que mudam no re-fetch). PURO.
 export function stockOfferVehicleKey(vehicle: any): string {
   return normalizePlannerText([vehicle?.marca, vehicle?.modelo, vehicle?.ano].filter(Boolean).join("|"))
@@ -93,6 +103,133 @@ export function buildLastStockOffer(vehicles: any[], filters?: Record<string, an
     vehicle_keys: list.map(stockOfferVehicleKey).filter(Boolean).slice(0, 30),
     count: list.length,
     at: new Date().toISOString(),
+  };
+}
+
+function presentedVehicleOrdinal(message: string): number | null {
+  const text = normVehText(message);
+  const named: Array<[RegExp, number]> = [
+    [/\b(primeiro|primeira)\b/, 0],
+    [/\b(segundo|segunda)\b/, 1],
+    [/\b(terceiro|terceira)\b/, 2],
+    [/\b(quarto|quarta)\b/, 3],
+    [/\b(quinto|quinta)\b/, 4],
+  ];
+  for (const [pattern, index] of named) if (pattern.test(text)) return index;
+  const digit = text.match(/(?:\b(?:o|a|opcao|numero|n)\s*|#)([1-5])\b/);
+  return digit ? Number(digit[1]) - 1 : null;
+}
+
+function presentedVehicleModelNumber(vehicle: any): string[] {
+  return normVehText([vehicle?.modelo, vehicle?.modelName].filter(Boolean).join(" "))
+    .split(/\s+/)
+    .filter((token) => /^\d{2,4}$/.test(token));
+}
+
+// Resolve o carro citado SOMENTE contra o working set que o agente realmente mostrou ao lead.
+// O inventario apresentado vira o dicionario fuzzy, entao erros de digitacao/transcricao funcionam
+// sem aliases por frase. Se dois carros empatam, retorna ambiguous: nunca chuta foto de carro errado.
+export function resolvePresentedVehicleReference(input: {
+  message: string;
+  memory?: PedroV2LeadMemory | null;
+  vehicles?: any[];
+}): PresentedVehicleResolution {
+  const memory: any = input.memory || {};
+  const vehicles = (Array.isArray(input.vehicles) ? input.vehicles : memory.veiculos_apresentados) || [];
+  if (vehicles.length === 0) {
+    return { status: "none", vehicle: null, index: null, confidence: 0, reason: "no_presented_vehicles", candidate_indexes: [] };
+  }
+
+  const presentedAt = memory.veiculos_apresentados_at ? Date.parse(memory.veiculos_apresentados_at) : 0;
+  if (presentedAt && Date.now() - presentedAt >= 7 * 24 * 60 * 60 * 1000) {
+    return { status: "none", vehicle: null, index: null, confidence: 0, reason: "presented_vehicles_expired", candidate_indexes: [] };
+  }
+
+  const ordinal = presentedVehicleOrdinal(input.message);
+  if (ordinal !== null && vehicles[ordinal]) {
+    return { status: "resolved", vehicle: vehicles[ordinal], index: ordinal, confidence: 1, reason: "presented_ordinal", candidate_indexes: [ordinal] };
+  }
+
+  const messageNumbers = normVehText(input.message).split(/\s+/).filter((token) => /^\d{2,4}$/.test(token));
+  const numericIndexes = vehicles
+    .map((vehicle: any, index: number) => ({ index, numbers: presentedVehicleModelNumber(vehicle) }))
+    .filter((item: any) => item.numbers.some((number: string) => messageNumbers.includes(number)))
+    .map((item: any) => item.index);
+  if (numericIndexes.length === 1) {
+    const index = numericIndexes[0];
+    return { status: "resolved", vehicle: vehicles[index], index, confidence: 0.98, reason: "presented_model_number", candidate_indexes: [index] };
+  }
+  if (numericIndexes.length > 1) {
+    return { status: "ambiguous", vehicle: null, index: null, confidence: 0.6, reason: "presented_model_number_ambiguous", candidate_indexes: numericIndexes };
+  }
+
+  const indexed = vehicles.map((vehicle: any, index: number) => ({
+    ...vehicle,
+    __presented_index: index,
+    markName: vehicle?.markName ?? vehicle?.marca ?? null,
+    modelName: vehicle?.modelName ?? vehicle?.modelo ?? null,
+    versionName: vehicle?.versionName ?? vehicle?.versao ?? null,
+    year: vehicle?.year ?? vehicle?.ano ?? null,
+    saleValue: vehicle?.saleValue ?? vehicle?.preco ?? null,
+  }));
+  const nonIdentityTokens = new Set(["foto", "fotos", "imagem", "imagens", "video", "videos", "laudo", "detalhe", "detalhes"]);
+  const identityQueryTokens = normVehText(input.message).split(/\s+/)
+    .filter((token) => token.length >= 3 && !NON_MODEL_WORDS.has(token) && !nonIdentityTokens.has(token));
+  const presentedIdentityTokens = new Set(indexed.flatMap((vehicle: any) =>
+    normVehText([vehicle.markName, vehicle.modelName].filter(Boolean).join(" ")).split(/\s+/).filter((token) => token.length >= 3)
+  ));
+  const unmatchedIdentity = identityQueryTokens.some((queryToken) =>
+    !Array.from(presentedIdentityTokens).some((vehicleToken) => tokenSim(queryToken, vehicleToken) >= 0.68)
+  );
+  const ranked = rankVehiclesV2(indexed, { query: input.message })
+    .filter((result) => result.matchedTokens.length > 0);
+  // Se a fala contem outro identificador que nao existe no working set (ex.: Renault Duster depois
+  // de mostrar Sandero), e topico novo. A marca compartilhada nao pode sequestrar o modelo novo.
+  if (ranked.length > 0 && unmatchedIdentity) {
+    return { status: "none", vehicle: null, index: null, confidence: 0, reason: "presented_match_has_new_vehicle_token", candidate_indexes: [] };
+  }
+  if (ranked.length === 0) {
+    // Working set pequeno e contextual: aceita typo um pouco abaixo do limiar global SOMENTE quando
+    // existe um vencedor unico com margem clara. Nao reduz a seguranca da busca no estoque inteiro.
+    const messageTokens = normVehText(input.message).split(/\s+/)
+      .filter((token) => token.length >= 4 && !NON_MODEL_WORDS.has(token));
+    const contextual = vehicles.map((vehicle: any, index: number) => {
+      const vehicleTokens = normVehText([
+        vehicle?.marca ?? vehicle?.markName,
+        vehicle?.modelo ?? vehicle?.modelName,
+      ].filter(Boolean).join(" ")).split(/\s+/).filter((token) => token.length >= 3);
+      let score = 0;
+      for (const queryToken of messageTokens) {
+        for (const vehicleToken of vehicleTokens) score = Math.max(score, tokenSim(queryToken, vehicleToken));
+      }
+      return { index, score };
+    }).filter((item) => item.score >= 0.68).sort((left, right) => right.score - left.score);
+    if (contextual.length === 1 || (contextual[0] && contextual[0].score - Number(contextual[1]?.score || 0) >= 0.08)) {
+      const index = contextual[0].index;
+      return { status: "resolved", vehicle: vehicles[index], index, confidence: contextual[0].score, reason: "presented_inventory_fuzzy_contextual", candidate_indexes: [index] };
+    }
+    if (contextual.length > 1) {
+      return { status: "ambiguous", vehicle: null, index: null, confidence: contextual[0].score, reason: "presented_fuzzy_contextual_ambiguous", candidate_indexes: contextual.map((item) => item.index) };
+    }
+    return { status: "none", vehicle: null, index: null, confidence: 0, reason: "no_presented_match", candidate_indexes: [] };
+  }
+
+  const bestScore = ranked[0].score;
+  const best = ranked.filter((result) => result.score === bestScore);
+  const indexes = best.map((result: any) => Number(result.vehicle.__presented_index));
+  if (best.length !== 1) {
+    return { status: "ambiguous", vehicle: null, index: null, confidence: 0.65, reason: "presented_fuzzy_ambiguous", candidate_indexes: indexes };
+  }
+
+  const index = indexes[0];
+  const margin = bestScore - Number(ranked[1]?.score || 0);
+  return {
+    status: "resolved",
+    vehicle: vehicles[index],
+    index,
+    confidence: Math.min(0.97, 0.76 + Math.max(0, margin) / 100),
+    reason: "presented_inventory_fuzzy",
+    candidate_indexes: [index],
   };
 }
 
