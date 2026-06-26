@@ -232,15 +232,16 @@ Deno.serve(async (req) => {
           sellerName: seller.name, sellerPhone: seller.whatsapp_number,
           resumo: lead.summary, horario: _hora,
         });
+        const _msgInline =
+          `🚨 *LEAD QUALIFICADO — REDISTRIBUIÇÃO*\n\n` +
+          `👤 *Nome:* ${lead.lead_name || "Sem nome"}\n` +
+          `📱 *Contato:* wa.me/${phone}\n` +
+          `${lead.summary ? `📝 *Resumo:* ${lead.summary.substring(0, 300)}\n` : ""}` +
+          `\n⚡ *Atenda agora:* https://wa.me/${phone}`;
+        // Mensagem do vendedor (com template se houver). A MESMA vai pro gerente no completo.
+        const _sellerFinal = composeSellerMsg(_ag, _msgVars, _msgInline);
         if (instance && seller.whatsapp_number) {
-          const _msgInline =
-            `🚨 *LEAD QUALIFICADO — REDISTRIBUIÇÃO*\n\n` +
-            `👤 *Nome:* ${lead.lead_name || "Sem nome"}\n` +
-            `📱 *Contato:* wa.me/${phone}\n` +
-            `${lead.summary ? `📝 *Resumo:* ${lead.summary.substring(0, 300)}\n` : ""}` +
-            `\n⚡ *Atenda agora:* https://wa.me/${phone}`;
-          const msg = maybeStripEmojis(_ag, composeSellerMsg(_ag, _msgVars, _msgInline));
-          await sendWAMessage(instance, seller.whatsapp_number, msg);
+          await sendWAMessage(instance, seller.whatsapp_number, maybeStripEmojis(_ag, _sellerFinal));
         }
 
         // 4e. Notifica Gerente(s) via WhatsApp (ate 2) — completo/template/sem-emoji
@@ -258,16 +259,10 @@ Deno.serve(async (req) => {
             `📲 *WhatsApp vendedor:* ${seller.whatsapp_number}\n` +
             `\n━━━━━━━━━━━━━━━━━━━━\n` +
             `_Gerado automaticamente pelo Pedro SDR (redistribuição em massa)_`;
+          // COMPLETO = a MESMA mensagem que foi pro vendedor + so a linha de qual vendedor recebeu.
           const _gerenteCompleto =
-            `📊 *RELATÓRIO COMPLETO — REDISTRIBUIÇÃO*\n\n` +
-            `🧑‍💼 *Vendedor atribuído:* ${seller.name}${_gNum ? ` — wa.me/${_gNum}` : ""}\n` +
-            `🕐 ${_hora}\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━\n` +
-            `👤 *Lead:* ${lead.lead_name || "Sem nome"}\n` +
-            `📱 *Contato:* wa.me/${phone}\n` +
-            `${lead.summary ? `📝 *Resumo:* ${lead.summary.substring(0, 300)}\n` : ""}` +
-            `━━━━━━━━━━━━━━━━━━━━\n` +
-            `_Relatório completo (mesmo briefing do vendedor) — Pedro SDR_`;
+            `🧑‍💼 *Vendedor atribuído:* ${seller.name}${_gNum ? ` — wa.me/${_gNum}` : ""}\n\n` +
+            _sellerFinal;
           const _gerenteBase = (_ag?.gerente_feedback_completo === true)
             ? _gerenteCompleto
             : composeGerenteMsg(_ag, _msgVars, _gerenteInline);

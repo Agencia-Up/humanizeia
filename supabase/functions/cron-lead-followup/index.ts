@@ -619,18 +619,19 @@ async function handleV2Followup(supabase: any, ctx: {
         horario: _hora, resumo: summary,
       });
 
+      const cleanSellerNum = String(seller.whatsapp_number || "").replace(/\D/g, "");
+      // Mensagem do vendedor (com template se houver). A MESMA vai pro gerente no completo.
+      const _notifInline = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+      const _sellerFinal = composeSellerMsg(agentRulesRow, _msgVars, _notifInline);
       if (seller.whatsapp_number) {
-        const cleanSellerNum = String(seller.whatsapp_number).replace(/\D/g, "");
-        const _notifInline = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
-        const notif = maybeStripEmojis(agentRulesRow, composeSellerMsg(agentRulesRow, _msgVars, _notifInline));
-        await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notif);
+        await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, maybeStripEmojis(agentRulesRow, _sellerFinal));
       }
       // Relatorio automatico ao(s) gerente(s) — ate 2.
       const _gerentes = managerPhones(agentRulesRow);
       if (_gerentes.length > 0) {
-        const _mgrNum = String(seller.whatsapp_number || "").replace(/\D/g, "");
         const _mgrInline = `📊 *RELATÓRIO DE LEAD — ${agentName}*\n\n🕐 *Horário:* ${_hora}\n\n👤 *Lead:* ${leadName || "Desconhecido"}\n📱 *Telefone:* +${phoneNumber}\n🏷️ *Status:* ${sdrCategoryText(_sdrCat)}${veiculoInteresse ? `\n🚗 *Veículo de interesse:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n━━━━━━━━━━━━━━━━━━━━\n\n🎯 *Enviado para:* ${seller.name}\n📲 *WhatsApp vendedor:* ${seller.whatsapp_number || ""}\n\n━━━━━━━━━━━━━━━━━━━━\n_Gerado automaticamente pelo Pedro SDR_`;
-        const _mgrCompleto = `📊 *RELATÓRIO COMPLETO — ${agentName}*\n\n🧑‍💼 *Vendedor atribuído:* ${seller.name}${_mgrNum ? ` — wa.me/${_mgrNum}` : ""}\n🕐 ${_hora}\n\n━━━━━━━━━━━━━━━━━━━━\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n📊 *Motivo:* inatividade (${rules.followup.t3_min}min)\n\n*ANALISE DO LEAD PELA IA:*\n${summary}\n━━━━━━━━━━━━━━━━━━━━\n_Relatório completo (mesmo briefing do vendedor) — Pedro SDR_`;
+        // COMPLETO = a MESMA mensagem que foi pro vendedor + so a linha de qual vendedor recebeu.
+        const _mgrCompleto = `🧑‍💼 *Vendedor atribuído:* ${seller.name}${cleanSellerNum ? ` — wa.me/${cleanSellerNum}` : ""}\n\n${_sellerFinal}`;
         const _mgrBase = (agentRulesRow?.gerente_feedback_completo === true)
           ? _mgrCompleto
           : composeGerenteMsg(agentRulesRow, _msgVars, _mgrInline);
