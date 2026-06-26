@@ -57,6 +57,7 @@ import {
   leadAsksInfoQuestion,
   leadAffirmsSchedulingQuestion,
   leadAffirmsPresenceToFollowupPing,
+  classifyAgentReplyPending,
 } from "./decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, neutralizeUngroundedClaims, neutralizeAiIdentityLeak, replyDefersSearch, ensureSelfIntroduction, ensureTransferContactClarity, stripTrailingFillerQuestion } from "./preSendVerify.ts";
 import { validateGrounding } from "./grounding.ts";
@@ -3084,6 +3085,11 @@ export async function processPedroV2Turn(
       } catch { /* mantém o foco anterior */ }
       (memToSave as any).veiculo_em_foco = _novoFoco;
     }
+    // ── PENDING_QUESTION PERSISTIDO (Codex): grava O QUE ESTA RESPOSTA do agente perguntou/ofereceu, pro
+    // PRÓXIMO turno interpretar o "sim/ok/👍/2024" do lead a partir do estado (não re-parseando a última
+    // fala, que pode vir duplicada/atrasada). O planner (classifyPendingQuestion) PREFERE este valor.
+    try { (memToSave as any).pending_question = classifyAgentReplyPending((reply as any)?.text, (reply as any)?.source); }
+    catch { /* best-effort, nunca derruba o turno */ }
     memoryAfterReply = await saveRecentConversationTurn(supabase, {
       lead_id: lead.id,
       agent_id: input.agent.id,

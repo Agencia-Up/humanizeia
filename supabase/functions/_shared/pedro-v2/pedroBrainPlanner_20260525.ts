@@ -307,6 +307,11 @@ function classifyPendingQuestion(input: {
   memory?: PedroV2LeadMemory | null;
   recent_history?: any[];
 }): string {
+  // PERSISTIDO (Codex) tem PRIORIDADE: setado a partir da RESPOSTA REAL do agente no turno anterior
+  // (classifyAgentReplyPending) -> robusto, não depende de re-parsear a última fala (que pode vir
+  // duplicada/atrasada/manual/splitada). Cai na inferência abaixo só sem valor persistido (estado antigo).
+  const _persisted = (input.memory as any)?.pending_question;
+  if (_persisted && typeof _persisted === "string" && _persisted !== "nenhum" && _persisted !== "afirmacao") return _persisted;
   const raw = getLastAgentText(input);
   const t = normalizeText(raw);
   if (!t) return "nenhum";

@@ -336,6 +336,37 @@ export function leadAffirmsPresenceToFollowupPing(leadText?: string | null, last
   return /^(sim|isso|claro|ok|okay|aham|uhum|positivo|certo|to aqui|estou aqui|estou|to|sigo aqui|sigo|aqui|presente|continuo|to sim|estou sim|sim sim|ainda estou|ainda to|opa|oi)\b/.test(t);
 }
 
+// ── PENDING_QUESTION PERSISTIDO (análise Codex): classifica O QUE A RESPOSTA DO AGENTE perguntou/ofereceu,
+// pra SALVAR no estado e o PRÓXIMO turno interpretar o "sim/ok/2024/o preto/👍" do lead SEM re-parsear a
+// última fala (que pode vir duplicada/atrasada/manual/splitada). Mais robusto que inferir do histórico.
+// Categorias iguais às do classifyPendingQuestion do planner (ofereceu_fotos/ofereceu_opcoes/perguntou_*).
+// O SOURCE (determinístico, setado pelo orquestrador) é mais forte que o texto. PURO -> testável offline.
+export function classifyAgentReplyPending(replyText?: string | null, replySource?: string | null): string {
+  const src = String(replySource || "");
+  if (["vehicle_photos_pick_which", "vehicle_photos_need_reference", "vehicle_photos_ambiguous_model"].includes(src)) return "ofereceu_fotos";
+  if (src === "trade_collecting") return "perguntou_troca";
+  if (src === "visit_schedule_qualify" || src === "visit_cpf_qualify") return "perguntou_dados";
+  if (src === "ad_generic_abordagem") return "perguntou_veiculo";
+  if (src === "followup_ping_reengage") return "ofereceu_opcoes";
+  const raw = String(replyText || "");
+  const t = normalizePlannerText(raw);
+  if (!t) return "nenhum";
+  // Palavra de QUALIFICAÇÃO/agendamento na fala -> NÃO é oferta de foto (um "tem troca?" não é foto).
+  const hasQualWord = /\b(troca|entrada|pagamento|financ|cpf|nascimento|nome|loja|visita|test ?drive|orcamento|parcela|\bvalor\b|\bdia\b|horario|agendar)\b/.test(t);
+  if (!hasQualWord
+      && /\b(quer|posso|gostaria|deseja|te mando|vou (mandar|enviar|separar|te mandar)|consigo (te )?mandar|te envio|separar as fotos|qual.{0,18}(ver|foto))\b/.test(t)
+      && /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(t)) return "ofereceu_fotos";
+  if (!hasQualWord
+      && /\b(posso te mostrar|posso mostrar|quer ver|gostaria de ver|te mostro|vou te mostrar|quer que eu (te )?mostre|posso te indicar|posso te oferecer|mais opcoes|outras opcoes)\b/.test(t)
+      && /\b(opcao|opcoes|alternativa|carro|carros|modelo|modelos|hatch|sedan|suv|picape|veiculo|estoque|disponiveis)\b/.test(t)) return "ofereceu_opcoes";
+  if (/\b(a vista|financ|parcel|entrada|consorcio)\b/.test(t) && /\b(pretende|vai|forma|paga|pagar|prefere|quer)\b/.test(t)) return "perguntou_pagamento";
+  if (/\b(carro na troca|usado na troca|tem (um |algum )?carro (pra|para)? ?(dar de )?troca|algum carro (pra|para) (dar de )?troca|dar de troca|tem troca)\b/.test(t)) return "perguntou_troca";
+  if (/\b(seu nome|qual.{0,8}nome|me confirma.{0,10}nome|\bcpf\b|nascimento|telefone|e[ -]?mail|whatsapp|qual.{0,6}dia|que dia|qual horario|melhor dia)\b/.test(t)) return "perguntou_dados";
+  if (/\b(qual (carro|modelo|veiculo)|que carro|qual veiculo|esta procurando|o que (voce )?(esta )?(procura|procurando|busca)|tipo de carro|qual seria)\b/.test(t)) return "perguntou_veiculo";
+  if (/[?]\s*$/.test(raw.trim())) return "fez_pergunta";
+  return "afirmacao";
+}
+
 // ── FUNIL FORÇADO: próxima pergunta obrigatória do funil do CLIENTE ainda não respondida ─────────────
 // O dono pediu pra FORÇAR o funil que está no prompt do cliente (o LLM barato não conduz sozinho). Lemos
 // o funil ESTRUTURADO (agent_funnel_config.bloco4_qualificacao.questions, na ordem do cliente), mapeamos

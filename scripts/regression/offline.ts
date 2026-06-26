@@ -56,6 +56,7 @@ import {
   leadAsksInfoQuestion,
   leadAffirmsSchedulingQuestion,
   leadAffirmsPresenceToFollowupPing,
+  classifyAgentReplyPending,
 } from "../../supabase/functions/_shared/pedro-v2/decisionLogic.ts";
 import { verifyReplyText, replyMentionsAnyVehicle, detectUngroundedSpecs, neutralizeUngroundedSpecs, replyOffersPhotos, rewriteUnavailablePhotoOffer, detectUngroundedClaims, neutralizeUngroundedClaims, detectAiIdentityLeak, neutralizeAiIdentityLeak, replyDefersSearch, transferMessageIsClear, ensureTransferContactClarity, stripTrailingFillerQuestion } from "../../supabase/functions/_shared/pedro-v2/preSendVerify.ts";
 import { buildDeterministicStockReply } from "../../supabase/functions/_shared/pedro-v2/pedroBrainReply_20260525.ts";
@@ -322,6 +323,30 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
     check("sdr", "'to aqui' a 'Conseguiu dar uma olhada?' = presença", leadAffirmsPresenceToFollowupPing("to aqui", "Conseguiu dar uma olhada nas opções que mandei?") === true);
     check("sdr", "'Sim, manda as fotos' a ping NÃO é só presença (pediu foto)", leadAffirmsPresenceToFollowupPing("Sim, manda as fotos", "Ainda está por aí?") === false);
     check("sdr", "'Sim' a OFERTA DE FOTO ('quer ver fotos?') NÃO é ping de presença", leadAffirmsPresenceToFollowupPing("Sim", "Quer ver fotos de algum desses?") === false);
+  }
+
+  // ── PENDING_QUESTION PERSISTIDO (Codex): classifica o que a RESPOSTA do agente perguntou/ofereceu ──
+  {
+    const P = classifyAgentReplyPending;
+    // SOURCE determinístico (mais forte que o texto):
+    check("pending", "source pick_which -> ofereceu_fotos", P("De qual você quer ver?", "vehicle_photos_pick_which") === "ofereceu_fotos");
+    check("pending", "source trade_collecting -> perguntou_troca", P("Show, anotei tudo do seu carro!", "trade_collecting") === "perguntou_troca");
+    check("pending", "source visit_cpf_qualify -> perguntou_dados", P("Me passa seu CPF?", "visit_cpf_qualify") === "perguntou_dados");
+    check("pending", "source ad_generic_abordagem -> perguntou_veiculo", P("Aqui é o Carvalho. O que você procura?", "ad_generic_abordagem") === "perguntou_veiculo");
+    check("pending", "source followup_ping_reengage -> ofereceu_opcoes", P("Que bom que está por aí! Quer ver outras opções?", "followup_ping_reengage") === "ofereceu_opcoes");
+    // TEXTO (resposta do LLM brain_reply, onde o source não diz):
+    check("pending", "texto: oferta de foto -> ofereceu_fotos", P("Quer ver fotos de algum desses?", "brain_stock_reply") === "ofereceu_fotos");
+    check("pending", "texto: oferta de opções -> ofereceu_opcoes", P("Posso te mostrar outras opções de hatch?", "brain_reply") === "ofereceu_opcoes");
+    check("pending", "texto: pergunta de troca -> perguntou_troca", P("Tem algum carro para dar de troca?", "brain_reply") === "perguntou_troca");
+    check("pending", "texto: pergunta de pagamento -> perguntou_pagamento", P("Você pretende pagar à vista ou financiado?", "brain_reply") === "perguntou_pagamento");
+    check("pending", "texto: pergunta de nome -> perguntou_dados", P("Qual é o seu nome?", "brain_reply") === "perguntou_dados");
+    check("pending", "texto: pergunta de veículo -> perguntou_veiculo", P("Qual carro você está procurando?", "brain_reply") === "perguntou_veiculo");
+    check("pending", "texto: pergunta genérica -> fez_pergunta", P("Posso te ajudar com mais alguma coisa?", "brain_reply") === "fez_pergunta");
+    check("pending", "texto: afirmação sem pergunta -> afirmacao", P("Perfeito, vou anotar isso.", "brain_reply") === "afirmacao");
+    check("pending", "vazio -> nenhum", P("", "brain_reply") === "nenhum");
+    // ⭐CRÍTICO: foto + qualificação na MESMA fala NÃO vira ofereceu_fotos (a qualificação vence) — assim o
+    // "sim/ok" do lead não é lido como pedido de foto quando o agente perguntou troca/pagamento junto.
+    check("pending", "'vou separar as fotos. Tem troca?' -> NÃO é ofereceu_fotos", P("Vou separar as fotos. Tem algum carro pra dar de troca?", "brain_reply") !== "ofereceu_fotos");
   }
 
   // ── VISITA: lead confirma a pergunta de agendamento -> colher dia/hora (lead 98198-7661) ──
