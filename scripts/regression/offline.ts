@@ -28,6 +28,7 @@ import {
   queryIsBroadOrGenericVehicle,
   isValidName,
   detectLeadDirectionChange,
+  leadAsksBodyType,
   leadAsksForMoreOptions,
   vehicleDedupKey,
   excludeAlreadyPresented,
@@ -163,6 +164,15 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   // CONTRA-PROVA: "trocar meu corsa POR UM onix" QUER o Onix (não é só troca).
   const p4 = plan("quero trocar meu corsa por um onix", { action: "stock_search", intent: "trade_in", search_query: "Chevrolet Onix", search_filters: { modelo_desejado: "Chevrolet Onix" }, confidence: 0.7 });
   check("planner", "'trocar por um onix' busca o Onix", /onix/i.test(String(p4.search_query || p4.search_filters?.modelo_desejado || "")), `q=${p4.search_query}`);
+
+  // ── BACKSTOP CARROCERIA: lead pede um TIPO -> busca, nunca photo_request (bug Avant "um sedan") ──
+  check("planner", "leadAsksBodyType 'Quero um sedan você teria ai?' -> sedan", leadAsksBodyType("Quero um sedan você teria ai?") === "sedan", String(leadAsksBodyType("Quero um sedan você teria ai?")));
+  check("planner", "leadAsksBodyType 'manda foto do sedan' -> null (photo)", leadAsksBodyType("manda foto do sedan") === null, String(leadAsksBodyType("manda foto do sedan")));
+  check("planner", "leadAsksBodyType 'esse sedan tem teto?' -> null (foco)", leadAsksBodyType("esse sedan tem teto solar?") === null, String(leadAsksBodyType("esse sedan tem teto solar?")));
+  check("planner", "leadAsksBodyType 'tem suv?' -> suv", leadAsksBodyType("tem suv?") === "suv", String(leadAsksBodyType("tem suv?")));
+  // planner marcou photo_request (após oferecer fotos + "quero") -> backstop reverte pra busca de carroceria.
+  const pBody = plan("Quero um sedan você teria ai?", { action: "photo_request", intent: "photo_request", use_memory_vehicle: true, confidence: 0.7 });
+  check("planner", "photo_request + 'um sedan' -> stock_search por carroceria", pBody.action === "stock_search" && /sedan/.test(String(pBody.search_filters?.tipo_veiculo || "")), `action=${pBody.action} tipo=${pBody.search_filters?.tipo_veiculo}`);
 
   // ── CASO #1: LEAD MUDOU DE DIREÇÃO depois do anúncio (backstop + detector) ──
   const planAd = (msg: string, raw: any, adVeh: string) =>

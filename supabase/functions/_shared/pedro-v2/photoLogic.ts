@@ -53,11 +53,14 @@ function clampVehicleIndex(index: number, vehicles: any[]) {
 
 function explicitVehicleOrdinal(message: string): number | null {
   const normalized = normalizePhotoText(message);
-  if (/\b(primeiro|primeira|1|um|uma)\b/.test(normalized)) return 0;
-  if (/\b(segundo|segunda|2|dois|duas)\b/.test(normalized)) return 1;
-  if (/\b(terceiro|terceira|3|tres)\b/.test(normalized)) return 2;
-  if (/\b(quarto|quarta|4)\b/.test(normalized)) return 3;
-  if (/\b(quinto|quinta|5)\b/.test(normalized)) return 4;
+  // NÃO inclui cardinais por extenso "um/uma/dois/duas/tres": são ARTIGO/quantidade ("quero UM sedan",
+  // "TRES anos de uso") e davam falso ordinal (lead pediu "um sedan" -> pegava o carro #1, mandava o
+  // errado). Posição real vem como ORDINAL por extenso (primeiro/segundo...) ou DÍGITO ("o 1", "manda o 2").
+  if (/\b(primeiro|primeira)\b/.test(normalized) || /\b1\b/.test(normalized)) return 0;
+  if (/\b(segundo|segunda)\b/.test(normalized) || /\b2\b/.test(normalized)) return 1;
+  if (/\b(terceiro|terceira)\b/.test(normalized) || /\b3\b/.test(normalized)) return 2;
+  if (/\b(quarto|quarta)\b/.test(normalized) || /\b4\b/.test(normalized)) return 3;
+  if (/\b(quinto|quinta)\b/.test(normalized) || /\b5\b/.test(normalized)) return 4;
   return null;
 }
 

@@ -3,7 +3,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions } from "./decisionLogic.ts";
+import { detectLeadDirectionChange, leadRefinesVehicleNeedsSearch, contextVehicleModel, parsePriceCeiling, buildConversationState, leadComplainsPhotoWrongOrMissing, messageIsTooVagueToAct, leadAsksAnyCarInBudget, leadAsksForMoreOptions, leadAsksBodyType } from "./decisionLogic.ts";
 
 export type PedroBrainAction =
   | "reply_only"
@@ -1037,6 +1037,33 @@ export function normalizePlan(raw: any, fallback: PedroBrainPlan, input: {
     plan.use_memory_vehicle = false;
     (plan as any).precisa_qualificar = true;
     plan.reason = `enforced_qualify_vague:${plan.reason || ""}`;
+  }
+
+  // ── BACKSTOP CARROCERIA (palavra FINAL): lead pede um TIPO (sedan/hatch/suv/picape) = BUSCA, nunca ──
+  // photo_request/ordinal. Bug real Avant (lead "Quero um sedan você teria ai?"): o planner marcou
+  // photo_request (tinha oferecido fotos + "quero") e o "um" virou ordinal #1 -> mandou foto de um HATCH
+  // (CAOA QQ) afirmando ser "um sedan". Invariante: nomear uma carroceria é pedido de BUSCA por tipo.
+  // FICA NO FIM (depois do bloco "vago" e da recuperação de marca) pra ninguém zerar o tipo. leadAsksBodyType
+  // já exclui pedido de FOTO ("manda foto do sedan") e pergunta sobre o carro EM FOCO. Puro -> testado offline.
+  {
+    const _bodyType = leadAsksBodyType(input.message);
+    if (_bodyType) {
+      // NÃO atropela busca por MODELO real que o lead nomeou ("tem civic sedan?" busca Civic, não sedan
+      // genérico). Só age quando o plano não tem modelo de verdade (modelo vazio ou é a própria palavra-tipo).
+      const _f = (plan.search_filters || {}) as any;
+      const _modelo = normalizeText(String(_f.modelo_desejado || ""));
+      const _hasRealModel = Boolean(_modelo) && !Object.prototype.hasOwnProperty.call(TYPE_AS_MODEL, _modelo)
+        && !["sedan", "seda", "hatch", "hatchback", "suv", "pickup", "picape"].includes(_modelo);
+      if (!_hasRealModel) {
+        plan.action = "stock_search";
+        plan.intent = "stock_lookup";
+        (plan as any).use_memory_vehicle = false;
+        (plan as any).precisa_qualificar = false;
+        plan.search_query = _bodyType;
+        plan.search_filters = { ..._f, tipo_veiculo: _bodyType, modelo_desejado: null, stock_broad: true };
+        plan.reason = `body_type_request_to_search:${_bodyType}:${plan.reason || ""}`;
+      }
+    }
   }
 
   return plan;

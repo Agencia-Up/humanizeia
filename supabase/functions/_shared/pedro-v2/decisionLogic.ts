@@ -121,6 +121,22 @@ export function detectLeadDirectionChange(message?: string | null, priorOrAdVehi
   };
 }
 
+// Lead pede uma CARROCERIA (sedan/hatch/suv/picape) como pedido NOVO -> retorna o tipo canônico, senão
+// null. Bug real (Avant, lead "Quero um sedan você teria ai?"): o planner marcou photo_request (tinha
+// oferecido fotos + "quero") e o "um" virou ordinal #1 -> mandou foto de um HATCH dizendo ser "sedan".
+// PURO (offline). NÃO dispara quando: (a) pede FOTO/vídeo do tipo ("manda foto do sedan" = photo_request);
+// (b) é sobre o carro EM FOCO (demonstrativo, característica, elogio "gostei/fico com").
+export function leadAsksBodyType(message?: string | null): string | null {
+  const m = normalizePlannerText(message);
+  if (!m) return null;
+  if (/\b(foto|fotos|imagem|imagens|video|videos)\b/.test(m)) return null;
+  const typeWord = Object.keys(_DIRECTION_TYPES).find((t) => new RegExp(`\\b${t}\\b`).test(m));
+  if (!typeWord) return null;
+  const aboutFocus = /\b(esse|este|essa|esta|nesse|neste|nessa|nesta|desse|deste|dele|dela|o mesmo|esse carro|este carro|gostei|gostou|fico com|vou levar|quero esse|quero este)\b/.test(m)
+    || /\b(teto|cor|cores|km|quilometr|motor|consumo|completo|cambio|porta|aceita troca|financi|parcel|entrada|qual o valor|qual valor|quanto custa|quanto sai|quanto fica)\b/.test(m);
+  return aboutFocus ? null : _DIRECTION_TYPES[typeWord];
+}
+
 // ── PLANO A (enriquecer o cérebro): o que o lead REJEITOU ─────────────────────────────────────
 // O cérebro re-oferecia carro/tipo que o lead JÁ recusou, e lia mal "não, o outro". Detector PURO
 // (offline) do sinal LINGUÍSTICO de recusa de veículo: "não quero/gostei/curti X", "esse não",
