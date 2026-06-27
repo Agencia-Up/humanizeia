@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
 import { resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
 import { managerPhones } from "../_shared/transfer/managers.ts";
+import { buildEtiquetas, composeGerenteMsg, composeSellerMsg, maybeStripEmojis } from "../_shared/transfer/messageTemplates.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -128,6 +129,17 @@ async function canAccessLeadOwner(supabase: any, userId: string, effectiveUserId
 
 function digitsOnly(value: any) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function brDateTime() {
+  return new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+
+function templateAgent(agent: any, fallbackName: string) {
+  return {
+    ...(agent || {}),
+    name: agent?.name || fallbackName,
+  };
 }
 
 function maybeLeadIdLooksLikePhone(value: any) {
@@ -334,6 +346,18 @@ async function handleMarcosTransfer(
     });
   }
 
+  // Usa o mesmo padrao configurado no agente tambem no manual do Marcos.
+  // Sem template salvo, os helpers devolvem o texto automatico atual.
+  const { data: marcosTemplateAgent } = await supabase
+    .from("wa_ai_agents")
+    .select("name, briefing_template_vendedor, briefing_template_gerente, gerente_feedback_completo, mensagens_sem_emoji")
+    .eq("user_id", lead.user_id)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const marcosAgent = templateAgent(marcosTemplateAgent, "Marcos");
+
   // 4. Montar briefing pra vendedor (usa helper compartilhado)
   const briefing = buildMarcosBriefing({
     name: lead.name,
@@ -346,11 +370,24 @@ async function handleMarcosTransfer(
     custom_fields: lead.custom_fields,
   });
 
-  const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD MARCOS*
+  const msgVars = buildEtiquetas({ lead: { telefone: lead.phone, nome: lead.name, cidade: lead.client_city } }, {
+    agentName: marcosAgent.name,
+    leadName: lead.name,
+    leadPhone: lead.phone,
+    sellerName: member.name,
+    sellerPhone: member.whatsapp_number,
+    interesse: lead.vehicle_interest,
+    classificacao: "atribuido_manualmente",
+    horario: brDateTime(),
+    resumo: briefing,
+  });
+
+  const sellerFallback = `🚨 *TRANSFERÊNCIA DE LEAD MARCOS*
 
 ${briefing}
 ${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ? `\n💬 *Observação do master:* ${notes}\n` : ""}
 ⚡ O cliente está aguardando seu contato!`;
+  const sellerMsg = maybeStripEmojis(marcosAgent, composeSellerMsg(marcosAgent, msgVars, sellerFallback));
 
   await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
 
@@ -363,7 +400,7 @@ ${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ?
 
   const gerentePhone = feedbackCfg?.gerente_phone_marcos || null;
   if (gerentePhone) {
-    const managerReport = buildManagerReport({
+    const managerFallback = buildManagerReport({
       leadName: lead.name || "Sem nome",
       leadPhone: lead.phone || "",
       status: "atribuido_manualmente",
@@ -374,6 +411,13 @@ ${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ?
       source: "marcos",
       transferredBy: operatorName || null,
     });
+    const sellerPhoneDigits = digitsOnly(member.whatsapp_number);
+    const managerReport = maybeStripEmojis(
+      marcosAgent,
+      marcosAgent?.gerente_feedback_completo === true
+        ? `🧑‍💼 *Vendedor atribuído:* ${member.name || "Vendedor"}${sellerPhoneDigits ? ` — wa.me/${sellerPhoneDigits}` : ""}\n\n${sellerMsg}`
+        : composeGerenteMsg(marcosAgent, msgVars, managerFallback),
+    );
     try {
       await sendWAMessage(instance, gerentePhone, managerReport);
     } catch (err) {
@@ -688,9 +732,10 @@ Deno.serve(async (req) => {
     // 3. Fetch agent config (for gerente_phone + instance_ids)
     const { data: agentConfig } = await supabase
       .from("wa_ai_agents")
-      .select("gerente_phone, gerente_phone_2, name, instance_ids, instance_id")
+      .select("gerente_phone, gerente_phone_2, name, instance_ids, instance_id, briefing_template_vendedor, briefing_template_gerente, gerente_feedback_completo, mensagens_sem_emoji")
       .eq("id", lead.agent_id)
       .maybeSingle();
+    const agentForTemplate = templateAgent({ ...(lead.agent || {}), ...(agentConfig || {}) }, "Pedro");
 
     // 4. Fetch WhatsApp instance — prioriza a instância do agente
     let instance: any = null;
@@ -728,12 +773,22 @@ Deno.serve(async (req) => {
 
     const phone = lead.remote_jid.replace(/\D/g, "");
     const pushName = lead.lead_name || "Não informado";
-    const agentName = agentConfig?.name || lead.agent?.name || "Pedro";
-    const transferredAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const agentName = agentForTemplate.name || "Pedro";
+    const transferredAt = brDateTime();
     const conversationBriefing = await buildConversationBriefing(supabase, lead);
+    const msgVars = buildEtiquetas({ lead: { telefone: phone, nome: pushName } }, {
+      agentName,
+      leadName: pushName,
+      leadPhone: phone,
+      sellerName: member.name,
+      sellerPhone: member.whatsapp_number,
+      classificacao: lead.status || "qualificado",
+      horario: transferredAt,
+      resumo: conversationBriefing,
+    });
 
     // 5. Send WhatsApp to SELLER (mensagem completa com resumo da conversa)
-    const sellerMsg = `🚨 *TRANSFERÊNCIA DE LEAD*
+    const sellerFallback = `🚨 *TRANSFERÊNCIA DE LEAD*
 
 👤 *Nome do Cliente:* ${pushName}
 📱 *Contato:* ${phone}
@@ -751,13 +806,14 @@ ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━�
 
 ⚡ O cliente está aguardando seu contato!
 ⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
+    const sellerMsg = maybeStripEmojis(agentForTemplate, composeSellerMsg(agentForTemplate, msgVars, sellerFallback));
 
     await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
 
     // 6. Send WhatsApp REPORT to MANAGER(s) (gerentes — ate 2)
-    const gerentes = managerPhones(agentConfig);
+    const gerentes = managerPhones(agentForTemplate);
     if (gerentes.length > 0) {
-      const gerenteMsg = `📊 *RELATÓRIO DE LEAD — ${agentName}*
+      const gerenteFallback = `📊 *RELATÓRIO DE LEAD — ${agentName}*
 
 🕐 *Horário:* ${transferredAt}
 
@@ -775,6 +831,13 @@ ${notes ? `\n💬 *Observação:* ${notes}` : ""}
 
 ━━━━━━━━━━━━━━━━━━━━
 _Gerado automaticamente pelo Pedro SDR_`;
+      const sellerPhoneDigits = digitsOnly(member.whatsapp_number);
+      const gerenteMsg = maybeStripEmojis(
+        agentForTemplate,
+        agentForTemplate?.gerente_feedback_completo === true
+          ? `🧑‍💼 *Vendedor atribuído:* ${member.name || "Vendedor"}${sellerPhoneDigits ? ` — wa.me/${sellerPhoneDigits}` : ""}\n\n${sellerMsg}`
+          : composeGerenteMsg(agentForTemplate, msgVars, gerenteFallback),
+      );
 
       for (const gerentePhone of gerentes) {
         try {
