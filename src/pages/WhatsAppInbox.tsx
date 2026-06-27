@@ -15,7 +15,8 @@ import {
   Search, Send, Loader2, CheckCheck, Check,
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
   Wifi, WifiOff, ChevronDown, MoreVertical, Smile,
-  Paperclip, Tag, UserCheck, Mic, FileText, Download, Trash2
+  Paperclip, Tag, UserCheck, Mic, FileText, Download, Trash2,
+  CalendarDays, X
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
@@ -55,6 +56,8 @@ interface Conversation {
   contact_name: string | null;
   last_message: string | null;
   last_message_at: string;
+  lead_arrived_at: string | null;
+  lead_created_at: string | null;
   unread_count: number;
   ai_category: string | null;
   has_ai_message: boolean;
@@ -104,6 +107,27 @@ function formatTime(dateStr: string) {
   return format(d, 'dd/MM', { locale: ptBR });
 }
 
+function dateInputValue(value: string | null | undefined) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function conversationArrivalIso(conv: Pick<Conversation, 'lead_arrived_at' | 'lead_created_at' | 'last_message_at'>) {
+  return conv.lead_arrived_at || conv.lead_created_at || conv.last_message_at;
+}
+
+function formatArrivalDate(value: string | null | undefined) {
+  if (!value) return 'sem data';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return 'sem data';
+  return format(d, 'dd/MM/yyyy', { locale: ptBR });
+}
+
 function initials(name: string) {
   const parts = name.trim().split(' ');
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
@@ -137,6 +161,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [messages, setMessages]               = useState<InboxMessage[]>([]);
   const [selectedConvKey, setSelectedConvKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery]         = useState('');
+  const [arrivalDateFilter, setArrivalDateFilter] = useState('');
   const [replyText, setReplyText]             = useState('');
   const [sending, setSending]                 = useState(false);
   const [loading, setLoading]                 = useState(true);
@@ -171,12 +196,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     (async () => {
       let pedroQuery = (supabase as any)
         .from('ai_crm_leads')
-        .select('id, remote_jid, lead_name, last_interaction_at, instance_id, summary')
+        .select('id, remote_jid, lead_name, created_at, arrived_at, last_interaction_at, instance_id, summary')
         .eq('user_id', effectiveUserId);
 
       let marcosQuery = (supabase as any)
         .from('crm_leads')
-        .select('id, phone, name, notes, created_at, assigned_to')
+        .select('id, phone, name, notes, created_at, arrived_at, assigned_to')
         .eq('user_id', effectiveUserId);
       
       if (isSeller) {
@@ -196,6 +221,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         id: lead.id,
         remote_jid: lead.phone,
         lead_name: lead.name || lead.phone || 'Lead',
+        created_at: lead.created_at,
+        arrived_at: lead.arrived_at || null,
         last_interaction_at: lead.created_at,
         instance_id: null,
         summary: lead.notes || null,
@@ -320,7 +347,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         convMap.set(key, {
           key, phone: msg.phone, instance_id: msg.instance_id,
           contact_name: msg.contact_name, last_message: msg.content,
-          last_message_at: msg.created_at, unread_count: 0,
+          last_message_at: msg.created_at, lead_arrived_at: null,
+          lead_created_at: null, unread_count: 0,
           ai_category: msg.ai_category, has_ai_message: false,
         });
       }
@@ -347,6 +375,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
         if (existingIdx === -1) {
           const key = `${cleanPhoneNum}::${lead.instance_id ?? 'null'}`;
+          const arrivedAt = lead.arrived_at || lead.created_at || lead.last_interaction_at || null;
           convList.push({
             key,
             phone: cleanPhoneNum,
@@ -354,6 +383,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             contact_name: lead.lead_name,
             last_message: lead.summary || 'Conversa iniciada',
             last_message_at: lead.last_interaction_at || new Date().toISOString(),
+            lead_arrived_at: arrivedAt,
+            lead_created_at: lead.created_at || null,
             unread_count: 0,
             ai_category: null,
             has_ai_message: true,
@@ -361,6 +392,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         } else {
           const existing = convList[existingIdx];
           if (!existing.contact_name && lead.lead_name) existing.contact_name = lead.lead_name;
+          existing.lead_arrived_at = existing.lead_arrived_at || lead.arrived_at || lead.created_at || lead.last_interaction_at || null;
+          existing.lead_created_at = existing.lead_created_at || lead.created_at || null;
           existing.has_ai_message = true;
         }
       }
@@ -801,6 +834,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       const cTags = contactTags[c.phone] || [];
       if (!filterTags.some(ft => cTags.includes(ft))) return false;
     }
+    if (arrivalDateFilter && dateInputValue(conversationArrivalIso(c)) !== arrivalDateFilter) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return c.phone.includes(q) || c.contact_name?.toLowerCase().includes(q) || c.last_message?.toLowerCase().includes(q);
@@ -921,6 +955,35 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                   onChange={e => setSearchQuery(e.target.value)}
                 />
               </div>
+              <div className="flex items-center gap-2">
+                <div className="flex flex-1 items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
+                  <CalendarDays className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">Chegou em</span>
+                  <Input
+                    type="date"
+                    value={arrivalDateFilter}
+                    onChange={e => setArrivalDateFilter(e.target.value)}
+                    className="h-7 min-w-0 border-0 bg-transparent p-0 text-xs focus-visible:ring-0"
+                  />
+                </div>
+                {arrivalDateFilter && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 text-muted-foreground"
+                    onClick={() => setArrivalDateFilter('')}
+                    title="Limpar data"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {arrivalDateFilter && (
+                <p className="text-[11px] text-muted-foreground">
+                  Mostrando {filteredConversations.length} de {conversations.length} conversa{conversations.length !== 1 ? 's' : ''}.
+                </p>
+              )}
               <TagFilter activeTags={filterTags} onFilterChange={setFilterTags} />
             </div>
 
@@ -991,6 +1054,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                             </div>
 
                             {/* Linha 3: instância + categoria + tags */}
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              Chegou: {formatArrivalDate(conversationArrivalIso(conv))}
+                            </p>
                             <div className="flex flex-wrap items-center gap-1 mt-1.5">
                               {sellerForInstance(conv.instance_id) ? (
                                 <span className="flex items-center gap-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full" title="Atendimento do vendedor (auditoria)">

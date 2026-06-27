@@ -36,6 +36,8 @@ interface Lead {
   instance_id: string | null;
   agent_id: string;
   message_count: number;
+  created_at: string | null;
+  arrived_at: string | null;
   last_interaction_at: string | null;
   summary: string | null;
 }
@@ -95,6 +97,27 @@ function phoneCandidates(value: string | null | undefined) {
 
 function displayPhone(value: string | null | undefined) {
   return cleanPhone(value) || value || '';
+}
+
+function dateInputValue(value: string | null | undefined) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function leadArrivalIso(lead: Pick<Lead, 'arrived_at' | 'created_at' | 'last_interaction_at'>) {
+  return lead.arrived_at || lead.created_at || lead.last_interaction_at;
+}
+
+function formatArrivalDate(value: string | null | undefined) {
+  if (!value) return 'sem data';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return 'sem data';
+  return format(d, 'dd/MM/yyyy', { locale: ptBR });
 }
 
 function mediaTypeFromMime(mime: string): 'image' | 'audio' | 'video' | 'document' {
@@ -166,6 +189,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [arrivalDateFilter, setArrivalDateFilter] = useState('');
 
   // Chat
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -254,7 +278,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       .from('ai_crm_leads')
       // message_count NÃO está no SELECT porque a coluna não existe em ai_crm_leads.
       // O valor é calculado dinamicamente abaixo via wa_chat_history (useEffect).
-      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, last_interaction_at, summary')
+      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, created_at, arrived_at, last_interaction_at, summary')
       .eq('user_id', userId);
     // Filtra por agente so quando um agente especifico esta selecionado. No modo
     // "Todos os agentes" escopa apenas por user_id (igual ao CRM, que funciona).
@@ -762,6 +786,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   /* ── Filtro de busca ──────────────────────────────────────────────── */
   const filteredLeads = leads.filter(l => {
+    if (arrivalDateFilter && dateInputValue(leadArrivalIso(l)) !== arrivalDateFilter) return false;
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (l.lead_name || '').toLowerCase().includes(term)
@@ -859,7 +884,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           </Select>
         )}
         <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] shrink-0">
-          {leads.length} conversa{leads.length !== 1 ? 's' : ''}
+          {arrivalDateFilter ? `${filteredLeads.length}/${leads.length}` : leads.length} conversa{leads.length !== 1 ? 's' : ''}
         </Badge>
       </div>
 
@@ -876,6 +901,30 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                 onChange={e => setSearchTerm(e.target.value)}
                 className="h-9 pl-9 text-sm"
               />
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <div className="flex flex-1 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">Chegou em</span>
+                <Input
+                  type="date"
+                  value={arrivalDateFilter}
+                  onChange={e => setArrivalDateFilter(e.target.value)}
+                  className="h-7 min-w-0 border-0 bg-transparent p-0 text-xs focus-visible:ring-0"
+                />
+              </div>
+              {arrivalDateFilter && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 text-muted-foreground"
+                  onClick={() => setArrivalDateFilter('')}
+                  title="Limpar data"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
           </div>
 
@@ -935,6 +984,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             </span>
                           )}
                         </div>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Chegou: {formatArrivalDate(leadArrivalIso(lead))}
+                        </p>
                         {lead.summary && (
                           <p className="text-xs text-muted-foreground mt-1 truncate block whitespace-nowrap overflow-hidden text-ellipsis w-full" title={lead.summary}>
                             {lead.summary.replace(/\r?\n|\r/g, ' ')}

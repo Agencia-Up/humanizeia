@@ -754,6 +754,23 @@ function phoneToBrJid(phone: string | null | undefined): string {
   return `${e164}@s.whatsapp.net`;
 }
 
+function normalizeBulkText(value: string | null | undefined): string {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function bulkRowIsValid(row: Omit<BulkLeadRow, 'valid'>): boolean {
+  const phoneLength = row.phone.replace(/\D/g, '').length;
+  return row.name.trim().length >= 2
+    && phoneLength >= 10
+    && phoneLength <= 15
+    && !row.origemError
+    && !row.sellerError;
+}
+
 // ─── Origem do Lead (Prompt 1.1) ───────────────────────────────────────────
 // Bate com CHECK constraint da migration 20260516120000_lead_origem
 // Usado pelo PEDRO. Marcos tem lista propria abaixo (MARCOS_ORIGEM_OPTIONS).
@@ -1085,6 +1102,17 @@ interface LeadMetrics {
   today: number;
   week: number;
   month: number;
+}
+
+interface BulkLeadRow {
+  name: string;
+  phone: string;
+  valid: boolean;
+  origem?: string | null;
+  origemError?: string;
+  sellerId?: string | null;
+  sellerName?: string | null;
+  sellerError?: string;
 }
 
 type CrmMode = 'pedro' | 'marcos';
@@ -2665,12 +2693,60 @@ export function CrmAvancadoTab({
   // ── Bulk upload states ──
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   // Prompt 1.1: bulkLeads agora carrega origem opcional (validada contra LEAD_ORIGEM_VALUES)
-  const [bulkLeads, setBulkLeads] = useState<{ name: string; phone: string; valid: boolean; origem?: string | null; origemError?: string }[]>([]);
+  const [bulkLeads, setBulkLeads] = useState<BulkLeadRow[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
   const [bulkArrived, setBulkArrived] = useState<string>(''); // data de chegada aplicada a TODOS os leads do lote (porta/manual)
   const bulkFileRef = useRef<HTMLInputElement>(null);
+
+  const activeBulkSellers = useMemo(
+    () => teamMembers.filter(m => m.active_in_system !== false),
+    [teamMembers],
+  );
+
+  const findBulkSeller = useCallback((value: string | null | undefined): TeamMember | null => {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const normalized = normalizeBulkText(raw);
+    const digits = raw.replace(/\D/g, '');
+    return activeBulkSellers.find(s => {
+      const sellerDigits = String(s.whatsapp_number || '').replace(/\D/g, '');
+      const sellerName = normalizeBulkText(s.name);
+      return s.id === raw
+        || sellerName === normalized
+        || sellerName.includes(normalized)
+        || normalized.includes(sellerName)
+        || (!!digits && !!sellerDigits && (sellerDigits.endsWith(digits) || digits.endsWith(sellerDigits)));
+    }) || null;
+  }, [activeBulkSellers]);
+
+  const updateBulkLeadSeller = useCallback((rowIndex: number, sellerId: string) => {
+    setBulkLeads(prev => prev.map((row, index) => {
+      if (index !== rowIndex) return row;
+      const seller = sellerId === 'unassigned' ? null : activeBulkSellers.find(s => s.id === sellerId) || null;
+      const next: Omit<BulkLeadRow, 'valid'> = {
+        ...row,
+        sellerId: seller?.id || null,
+        sellerName: seller?.name || null,
+        sellerError: undefined,
+      };
+      return { ...next, valid: bulkRowIsValid(next) };
+    }));
+  }, [activeBulkSellers]);
+
+  const applyBulkSellerToAll = useCallback((sellerId: string) => {
+    const seller = sellerId === 'unassigned' ? null : activeBulkSellers.find(s => s.id === sellerId) || null;
+    setBulkLeads(prev => prev.map(row => {
+      const next: Omit<BulkLeadRow, 'valid'> = {
+        ...row,
+        sellerId: seller?.id || null,
+        sellerName: seller?.name || null,
+        sellerError: undefined,
+      };
+      return { ...next, valid: bulkRowIsValid(next) };
+    }));
+  }, [activeBulkSellers]);
 
   const handleBulkFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2687,19 +2763,21 @@ export function CrmAvancadoTab({
         let nameCol = -1;
         let phoneCol = -1;
         let origemCol = -1;
+        let sellerCol = -1;
         const headerRow = (rows[0] || []).map((h: any) => String(h || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
         headerRow.forEach((h: string, i: number) => {
           if (nameCol === -1 && (h.includes('nome') || h.includes('name') || h.includes('cliente') || h.includes('lead'))) nameCol = i;
           if (phoneCol === -1 && (h.includes('telefone') || h.includes('phone') || h.includes('whatsapp') || h.includes('celular') || h.includes('numero') || h.includes('fone'))) phoneCol = i;
           if (origemCol === -1 && (h === 'origem' || h === 'source' || h === 'canal' || h === 'origin')) origemCol = i;
+          if (sellerCol === -1 && (h === 'vendedor' || h === 'responsavel' || h === 'consultor' || h === 'atendente' || h === 'seller')) sellerCol = i;
         });
         // Fallback: first col = name, second col = phone
         if (nameCol === -1) nameCol = 0;
         if (phoneCol === -1) phoneCol = nameCol === 0 ? 1 : 0;
 
-        const startRow = headerRow.some((h: string) => h.includes('nome') || h.includes('name') || h.includes('telefone') || h.includes('phone') || h.includes('whatsapp') || h === 'origem') ? 1 : 0;
+        const startRow = headerRow.some((h: string) => h.includes('nome') || h.includes('name') || h.includes('telefone') || h.includes('phone') || h.includes('whatsapp') || h === 'origem' || h === 'vendedor' || h === 'responsavel' || h === 'consultor' || h === 'atendente') ? 1 : 0;
 
-        const parsed: { name: string; phone: string; valid: boolean; origem?: string | null; origemError?: string }[] = [];
+        const parsed: BulkLeadRow[] = [];
         for (let i = startRow; i < rows.length; i++) {
           const row = rows[i];
           if (!row || row.length === 0) continue;
@@ -2720,7 +2798,23 @@ export function CrmAvancadoTab({
               }
             }
           }
-          parsed.push({ name: rawName, phone: rawPhone, valid: valid && !origemError, origem, origemError });
+          let sellerId: string | null = null;
+          let sellerName: string | null = null;
+          let sellerError: string | undefined;
+          if (isMarcosCrm && !isSeller && sellerCol >= 0 && activeBulkSellers.length > 0) {
+            const rawSeller = String(row[sellerCol] || '').trim();
+            if (rawSeller) {
+              const matchedSeller = findBulkSeller(rawSeller);
+              if (matchedSeller) {
+                sellerId = matchedSeller.id;
+                sellerName = matchedSeller.name;
+              } else {
+                sellerError = `Vendedor nÃ£o encontrado: "${rawSeller}".`;
+              }
+            }
+          }
+          const parsedRow: Omit<BulkLeadRow, 'valid'> = { name: rawName, phone: rawPhone, origem, origemError, sellerId, sellerName, sellerError };
+          parsed.push({ ...parsedRow, valid: valid && bulkRowIsValid(parsedRow) });
         }
         setBulkLeads(parsed);
         setBulkResult(null);
@@ -2752,13 +2846,7 @@ export function CrmAvancadoTab({
       if (isMarcosCrm) {
         const firstStageId = await resolveFirstMarcosStageId(effectiveUserId);
         const currentSeller = await resolveCurrentSellerForMarcos();
-        const sellerCustomFields = currentSeller ? {
-          seller_member_id: currentSeller.id,
-          seller_name: currentSeller.name,
-          created_by_auth_user_id: userId,
-        } : {
-          created_by_auth_user_id: userId,
-        };
+        const sellerById = new Map(activeBulkSellers.map(s => [s.id, s]));
         const { data: maxPosRow } = await (supabase as any)
           .from('crm_leads')
           .select('position')
@@ -2770,23 +2858,31 @@ export function CrmAvancadoTab({
         let nextPosition = (maxPosRow?.position ?? -1) + 1;
         const batchSize = 50;
         for (let i = 0; i < validLeads.length; i += batchSize) {
-          const batch = validLeads.slice(i, i + batchSize).map(l => ({
-            user_id: effectiveUserId,
-            stage_id: firstStageId,
-            name: l.name,
-            phone: l.phone,
-            source: l.origem || 'importacao',
-            notes: null,
-            tags: ['Marcos Manual', 'Importado'],
-            value: 0,
-            currency: 'BRL',
-            priority: 'medium',
-            position: nextPosition++,
-            assigned_to: currentSeller?.id || null,
-            custom_fields: { crm_owner: 'marcos', input_mode: 'import', ...sellerCustomFields },
-            // Data real de chegada do lote (porta/dia passado). Vazio = null -> usa created_at.
-            arrived_at: bulkArrived ? new Date(bulkArrived + 'T12:00:00').toISOString() : null,
-          }));
+          const batch = validLeads.slice(i, i + batchSize).map(l => {
+            const selectedSeller = currentSeller || (l.sellerId ? sellerById.get(l.sellerId) || null : null);
+            return {
+              user_id: effectiveUserId,
+              stage_id: firstStageId,
+              name: l.name,
+              phone: l.phone,
+              source: l.origem || 'importacao',
+              notes: null,
+              tags: ['Marcos Manual', 'Importado'],
+              value: 0,
+              currency: 'BRL',
+              priority: 'medium',
+              position: nextPosition++,
+              assigned_to: selectedSeller?.id || null,
+              custom_fields: {
+                crm_owner: 'marcos',
+                input_mode: 'import',
+                created_by_auth_user_id: userId,
+                ...(selectedSeller ? { seller_member_id: selectedSeller.id, seller_name: selectedSeller.name } : {}),
+              },
+              // Data real de chegada do lote (porta/dia passado). Vazio = null -> usa created_at.
+              arrived_at: bulkArrived ? new Date(bulkArrived + 'T12:00:00').toISOString() : null,
+            };
+          });
           const { error } = await (supabase as any).from('crm_leads').insert(batch);
           if (error) failed += batch.length;
           else success += batch.length;
@@ -5636,6 +5732,24 @@ export function CrmAvancadoTab({
             </div>
           </div>
 
+          {isMarcosCrm && !isSeller && activeBulkSellers.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pb-2">
+              <label className="text-xs text-muted-foreground font-medium">Vendedor dos leads:</label>
+              <Select onValueChange={applyBulkSellerToAll}>
+                <SelectTrigger className="h-8 text-xs w-56">
+                  <SelectValue placeholder="Aplicar vendedor para todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned" className="text-xs">Sem vendedor</SelectItem>
+                  {activeBulkSellers.map(s => (
+                    <SelectItem key={s.id} value={s.id} className="text-xs">{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-[10px] text-muted-foreground">TambÃ©m aceito coluna "Vendedor" na planilha.</span>
+            </div>
+          )}
+
           {/* Data de chegada do lote (porta/dia passado). Aplica a TODOS os leads. */}
           <div className="flex flex-wrap items-center gap-2 pb-2">
             <label className="text-xs text-muted-foreground font-medium">📆 Data que estes leads chegaram (opcional):</label>
@@ -5657,6 +5771,9 @@ export function CrmAvancadoTab({
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium w-8">#</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Nome</th>
                   <th className="text-left px-3 py-2 text-muted-foreground font-medium">Telefone</th>
+                  {isMarcosCrm && !isSeller && activeBulkSellers.length > 0 && (
+                    <th className="text-left px-3 py-2 text-muted-foreground font-medium w-48">Vendedor</th>
+                  )}
                   <th className="text-center px-3 py-2 text-muted-foreground font-medium w-16">Status</th>
                 </tr>
               </thead>
@@ -5666,6 +5783,24 @@ export function CrmAvancadoTab({
                     <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
                     <td className="px-3 py-2 text-foreground">{row.name || <span className="text-red-400 italic">vazio</span>}</td>
                     <td className="px-3 py-2 text-foreground font-mono">{row.phone || <span className="text-red-400 italic">vazio</span>}</td>
+                    {isMarcosCrm && !isSeller && activeBulkSellers.length > 0 && (
+                      <td className="px-3 py-2">
+                        <Select value={row.sellerId || 'unassigned'} onValueChange={value => updateBulkLeadSeller(i, value)}>
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Sem vendedor" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="unassigned" className="text-xs">Sem vendedor</SelectItem>
+                            {activeBulkSellers.map(s => (
+                              <SelectItem key={s.id} value={s.id} className="text-xs">{s.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {row.sellerError && (
+                          <p className="mt-1 text-[10px] text-red-400">{row.sellerError}</p>
+                        )}
+                      </td>
+                    )}
                     <td className="px-3 py-2 text-center">
                       {row.valid ? (
                         <CheckCircle className="h-3.5 w-3.5 text-emerald-400 mx-auto" />
