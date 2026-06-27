@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,26 +20,49 @@ interface FileImportDialogProps {
   onSuccess: () => void;
   /** Quando vendedor importa: vincula a lista criada a ele (senão some da visão dele). */
   isSeller?: boolean;
-  seller?: { id: string } | null;
+  seller?: { id: string; name?: string | null } | null;
+  teamMembers?: ImportSeller[];
+}
+
+interface ImportSeller {
+  id: string;
+  name: string | null;
+  whatsapp_number?: string | null;
+  active_in_system?: boolean | null;
 }
 
 interface ParsedContact {
   phone: string;
   name: string | null;
   original: string;
+  phoneValid: boolean;
   valid: boolean;
+  sellerRaw?: string | null;
+  sellerId?: string | null;
+  sellerName?: string | null;
+  sellerError?: string | null;
 }
 
 const PHONE_HEADERS = ['telefone', 'phone', 'numero', 'número', 'celular', 'whatsapp', 'fone', 'tel', 'mobile', 'number'];
 const NAME_HEADERS = ['nome', 'name', 'contato', 'contact', 'cliente', 'customer'];
+const SELLER_HEADERS = ['vendedor', 'responsavel', 'responsavel', 'responsavel', 'consultor', 'atendente', 'seller'];
 
-function detectColumns(headers: string[]): { phoneIdx: number; nameIdx: number } {
-  const lower = headers.map(h => h.toLowerCase().trim());
+function normalizeText(raw: string): string {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function detectColumns(headers: string[]): { phoneIdx: number; nameIdx: number; sellerIdx: number } {
+  const lower = headers.map(normalizeText);
   let phoneIdx = lower.findIndex(h => PHONE_HEADERS.some(ph => h.includes(ph)));
   let nameIdx = lower.findIndex(h => NAME_HEADERS.some(nh => h.includes(nh)));
+  let sellerIdx = lower.findIndex(h => SELLER_HEADERS.some(sh => h.includes(normalizeText(sh))));
   if (phoneIdx === -1) phoneIdx = 0;
   if (nameIdx === -1 && headers.length > 1) nameIdx = phoneIdx === 0 ? 1 : 0;
-  return { phoneIdx, nameIdx };
+  return { phoneIdx, nameIdx, sellerIdx };
 }
 
 function detectSeparator(firstLine: string): string {
@@ -72,9 +95,9 @@ function parseCSVTXT(text: string): ParsedContact[] {
   const firstRow = lines[0].split(sep);
   const hasHeader = firstRow.some(cell => PHONE_HEADERS.some(ph => cell.toLowerCase().trim().includes(ph)));
 
-  const { phoneIdx, nameIdx } = hasHeader
+  const { phoneIdx, nameIdx, sellerIdx } = hasHeader
     ? detectColumns(firstRow)
-    : { phoneIdx: 0, nameIdx: firstRow.length > 1 ? 1 : -1 };
+    : { phoneIdx: 0, nameIdx: firstRow.length > 1 ? 1 : -1, sellerIdx: -1 };
 
   const dataLines = hasHeader ? lines.slice(1) : lines;
   const seen = new Set<string>();
@@ -91,7 +114,9 @@ function parseCSVTXT(text: string): ParsedContact[] {
       phone: normalized || rawPhone,
       name: nameIdx >= 0 ? cols[nameIdx] || null : null,
       original: rawPhone,
+      phoneValid: !!normalized,
       valid: !!normalized,
+      sellerRaw: sellerIdx >= 0 ? cols[sellerIdx] || null : null,
     });
   }
   return results;
@@ -105,7 +130,9 @@ function parseXLSX(buffer: ArrayBuffer): ParsedContact[] {
 
   const firstRow = rows[0].map(String);
   const hasHeader = firstRow.some(cell => PHONE_HEADERS.some(ph => cell.toLowerCase().trim().includes(ph)));
-  const { phoneIdx, nameIdx } = hasHeader ? detectColumns(firstRow) : { phoneIdx: 0, nameIdx: firstRow.length > 1 ? 1 : -1 };
+  const { phoneIdx, nameIdx, sellerIdx } = hasHeader
+    ? detectColumns(firstRow)
+    : { phoneIdx: 0, nameIdx: firstRow.length > 1 ? 1 : -1, sellerIdx: -1 };
 
   const dataRows = hasHeader ? rows.slice(1) : rows;
   const seen = new Set<string>();
@@ -121,13 +148,15 @@ function parseXLSX(buffer: ArrayBuffer): ParsedContact[] {
       phone: normalized || rawPhone,
       name: nameIdx >= 0 ? String(row[nameIdx] || '').trim() || null : null,
       original: rawPhone,
+      phoneValid: !!normalized,
       valid: !!normalized,
+      sellerRaw: sellerIdx >= 0 ? String(row[sellerIdx] || '').trim() || null : null,
     });
   }
   return results;
 }
 
-export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess, isSeller, seller }: FileImportDialogProps) {
+export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess, isSeller, seller, teamMembers = [] }: FileImportDialogProps) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -138,6 +167,67 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
   const [newListName, setNewListName] = useState('');
   const [targetListId, setTargetListId] = useState('');
   const [progress, setProgress] = useState(0);
+
+  const availableSellers = useMemo(
+    () => teamMembers.filter(m => m.active_in_system !== false && m.id),
+    [teamMembers]
+  );
+  const canAssignSeller = !isSeller && availableSellers.length > 0;
+
+  const findSellerByText = useCallback((raw?: string | null) => {
+    const needle = normalizeText(raw || '');
+    if (!needle) return null;
+    return availableSellers.find(s => {
+      const name = normalizeText(s.name || '');
+      const phone = String(s.whatsapp_number || '').replace(/\D/g, '');
+      return name === needle || name.includes(needle) || needle.includes(name) || (!!phone && needle.includes(phone));
+    }) || null;
+  }, [availableSellers]);
+
+  const hydrateSellers = useCallback((contacts: ParsedContact[]) => {
+    if (!canAssignSeller) return contacts;
+    return contacts.map(c => {
+      if (!c.sellerRaw) return { ...c, sellerId: null, sellerName: null, sellerError: null };
+      const matched = findSellerByText(c.sellerRaw);
+      const sellerError = matched ? null : `Vendedor nao encontrado: ${c.sellerRaw}`;
+      return {
+        ...c,
+        sellerId: matched?.id || null,
+        sellerName: matched?.name || null,
+        sellerError,
+        valid: c.phoneValid && !sellerError,
+      };
+    });
+  }, [canAssignSeller, findSellerByText]);
+
+  const applySellerToAll = useCallback((sellerId: string) => {
+    const selected = sellerId === 'unassigned'
+      ? null
+      : availableSellers.find(s => s.id === sellerId) || null;
+    setParsed(prev => prev.map(c => ({
+      ...c,
+      sellerId: selected?.id || null,
+      sellerName: selected?.name || null,
+      sellerError: null,
+      valid: c.phoneValid,
+    })));
+  }, [availableSellers]);
+
+  const updateContactSeller = useCallback((index: number, sellerId: string) => {
+    const selected = sellerId === 'unassigned'
+      ? null
+      : availableSellers.find(s => s.id === sellerId) || null;
+    setParsed(prev => prev.map((c, i) => i === index
+      ? {
+          ...c,
+          sellerId: selected?.id || null,
+          sellerName: selected?.name || null,
+          sellerError: null,
+          valid: c.phoneValid,
+        }
+      : c
+    ));
+  }, [availableSellers]);
 
   const reset = () => {
     setStep('upload'); setParsed([]); setFileName(''); setProgress(0);
@@ -163,12 +253,12 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
         toast({ title: 'Arquivo vazio', description: 'Nenhum contato encontrado no arquivo.', variant: 'destructive' });
         return;
       }
-      setParsed(contacts);
+      setParsed(hydrateSellers(contacts));
       setStep('preview');
     } catch (err: any) {
       toast({ title: 'Erro ao ler arquivo', description: err.message, variant: 'destructive' });
     }
-  }, [toast]);
+  }, [hydrateSellers, toast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false);
@@ -184,12 +274,123 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
   const validCount = parsed.filter(c => c.valid).length;
   const invalidCount = parsed.filter(c => !c.valid).length;
 
+  const crmPhoneFromContact = (phone: string) => {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.startsWith('55')) {
+      const national = digits.slice(2);
+      if (national.length === 10 || national.length === 11) return national;
+    }
+    return digits;
+  };
+
+  const crmPhoneCandidates = (phone: string) => {
+    const national = crmPhoneFromContact(phone);
+    const withCountry = national.startsWith('55') ? national : `55${national}`;
+    return Array.from(new Set([national, withCountry].filter(Boolean)));
+  };
+
+  const resolveFirstMarcosStageId = async () => {
+    const { data, error } = await (supabase as any)
+      .from('crm_pipeline_stages')
+      .select('id')
+      .eq('user_id', userId)
+      .order('position', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.id) throw new Error('Nenhuma etapa do CRM do Marcos foi encontrada para esta conta.');
+    return data.id as string;
+  };
+
+  const createAssignedCrmLeads = async (listId: string) => {
+    const assignedContacts = parsed
+      .filter(c => c.valid)
+      .map(c => {
+        const selectedSellerId = c.sellerId || ((isSeller && seller?.id) ? seller.id : null);
+        if (!selectedSellerId) return null;
+        const selectedSeller = availableSellers.find(s => s.id === selectedSellerId) || null;
+        return {
+          contact: c,
+          sellerId: selectedSellerId,
+          sellerName: selectedSeller?.name || c.sellerName || seller?.name || 'Vendedor',
+          phone: crmPhoneFromContact(c.phone),
+        };
+      })
+      .filter(Boolean) as Array<{ contact: ParsedContact; sellerId: string; sellerName: string; phone: string }>;
+
+    if (assignedContacts.length === 0) return 0;
+
+    const allCandidatePhones = Array.from(new Set(assignedContacts.flatMap(item => crmPhoneCandidates(item.contact.phone))));
+    const existingPhones = new Set<string>();
+    for (let i = 0; i < allCandidatePhones.length; i += 100) {
+      const chunk = allCandidatePhones.slice(i, i + 100);
+      const { data, error } = await (supabase as any)
+        .from('crm_leads')
+        .select('phone')
+        .eq('user_id', userId)
+        .in('phone', chunk);
+      if (error) throw error;
+      for (const row of (data || [])) {
+        for (const candidate of crmPhoneCandidates(row.phone)) existingPhones.add(candidate);
+      }
+    }
+
+    const firstStageId = await resolveFirstMarcosStageId();
+    const { data: maxPosRow } = await (supabase as any)
+      .from('crm_leads')
+      .select('position')
+      .eq('user_id', userId)
+      .eq('stage_id', firstStageId)
+      .order('position', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let nextPosition = (maxPosRow?.position ?? -1) + 1;
+
+    const rows = assignedContacts
+      .filter(item => !crmPhoneCandidates(item.contact.phone).some(candidate => existingPhones.has(candidate)))
+      .map(item => ({
+        user_id: userId,
+        stage_id: firstStageId,
+        name: item.contact.name || item.contact.phone,
+        phone: item.phone,
+        source: 'importacao_contatos',
+        origem: 'outros',
+        notes: null,
+        tags: ['Marcos Contatos', 'Importado'],
+        value: 0,
+        currency: 'BRL',
+        priority: 'medium',
+        position: nextPosition++,
+        assigned_to: item.sellerId,
+        custom_fields: {
+          crm_owner: 'marcos',
+          input_mode: 'contacts_import',
+          list_id: listId,
+          seller_member_id: item.sellerId,
+          seller_name: item.sellerName,
+        },
+      }));
+
+    if (rows.length === 0) return 0;
+    for (let i = 0; i < rows.length; i += 50) {
+      const { error } = await (supabase as any).from('crm_leads').insert(rows.slice(i, i + 50));
+      if (error) throw error;
+    }
+    return rows.length;
+  };
+
   const handleImport = async () => {
     if (validCount === 0) return;
     setStep('importing'); setProgress(10);
 
     try {
       let listId = targetListId;
+      const selectedSellerIds = new Set(parsed.filter(c => c.valid && c.sellerId).map(c => c.sellerId as string));
+      const listSellerId = (isSeller && seller?.id)
+        ? seller.id
+        : selectedSellerIds.size === 1
+          ? Array.from(selectedSellerIds)[0]
+          : null;
 
       if (listMode === 'new') {
         const name = newListName.trim() || fileName.replace(/\.[^.]+$/, '');
@@ -201,7 +402,7 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
             source: 'import',
             contact_count: 0,
             // vendedor importando -> lista vinculada a ele (senão fica invisível na visão dele).
-            seller_member_id: (isSeller && seller?.id) ? seller.id : null,
+            seller_member_id: listSellerId,
           } as any)
           .select('id').single();
         if (error) throw error;
@@ -230,11 +431,13 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Erro ao importar');
 
+      const crmCreated = await createAssignedCrmLeads(listId);
+
       setProgress(100);
       const stats = data.stats;
       toast({
         title: 'Importação concluída! ✅',
-        description: `${stats.total_valid} contatos importados • ${stats.duplicates_in_db} duplicados ignorados • ${stats.invalid_phones} inválidos`,
+        description: `${stats.total_valid} contatos importados • ${stats.duplicates_in_db} duplicados ignorados • ${stats.invalid_phones} inválidos${crmCreated ? ` • ${crmCreated} lead(s) no CRM` : ''}`,
       });
 
       onSuccess();
@@ -316,13 +519,34 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
               </div>
             </div>
 
+            {canAssignSeller && (
+              <div className="space-y-2 rounded-lg border border-green-500/30 bg-green-500/10 p-3">
+                <Label>Vendedor no CRM</Label>
+                <Select onValueChange={applySellerToAll}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Aplicar vendedor para todos os contatos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Sem vendedor</SelectItem>
+                    {availableSellers.map(s => (
+                      <SelectItem key={s.id} value={s.id}>{s.name || 'Vendedor'}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Se a planilha tiver uma coluna "Vendedor", ela sera lida automaticamente. Voce tambem pode ajustar por linha antes de importar.
+                </p>
+              </div>
+            )}
+
             {/* Preview table */}
-            <div className="max-h-48 overflow-y-auto border rounded-lg">
+            <div className="max-h-64 overflow-y-auto border rounded-lg">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Telefone</TableHead>
                     <TableHead>Nome</TableHead>
+                    {canAssignSeller && <TableHead>Vendedor</TableHead>}
                     <TableHead className="w-20">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -331,6 +555,22 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
                     <TableRow key={i}>
                       <TableCell className="font-mono text-sm">{c.phone}</TableCell>
                       <TableCell className="text-sm">{c.name || '—'}</TableCell>
+                      {canAssignSeller && (
+                        <TableCell className="min-w-48">
+                          <Select value={c.sellerId || 'unassigned'} onValueChange={(value) => updateContactSeller(i, value)}>
+                            <SelectTrigger className="h-8">
+                              <SelectValue placeholder="Sem vendedor" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="unassigned">Sem vendedor</SelectItem>
+                              {availableSellers.map(s => (
+                                <SelectItem key={s.id} value={s.id}>{s.name || 'Vendedor'}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {c.sellerError && <p className="mt-1 text-[11px] text-red-500">{c.sellerError}</p>}
+                        </TableCell>
+                      )}
                       <TableCell>
                         {c.valid ? (
                           <CheckCircle className="h-4 w-4 text-green-500" />

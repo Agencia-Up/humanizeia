@@ -61,6 +61,13 @@ interface WAContact {
   metadata?: Record<string, any>;
 }
 
+interface ImportSeller {
+  id: string;
+  name: string | null;
+  whatsapp_number?: string | null;
+  active_in_system?: boolean | null;
+}
+
 const sourceLabels: Record<string, { label: string; icon: typeof Phone }> = {
   manual: { label: 'Manual', icon: Phone },
   whatsapp_group: { label: 'Grupo WhatsApp', icon: MessageCircle },
@@ -68,6 +75,14 @@ const sourceLabels: Record<string, { label: string; icon: typeof Phone }> = {
   google_maps: { label: 'Google Maps', icon: MapPin },
   import: { label: 'Importação', icon: FolderOpen },
 };
+
+function normalizeSellerKey(raw: string): string {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
 
 // TAREFA 3 (29/05/2026): componente GroupTable removido junto com as abas
 // "Meus Grupos" e "Grupos Externos". A pagina Contatos passa a ter so "Listas".
@@ -90,6 +105,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
   const [lists, setLists] = useState<ContactList[]>([]);
   // nome do vendedor por seller_member_id (pra mostrar "quem subiu" na conta master)
   const [sellerNames, setSellerNames] = useState<Record<string, string>>({});
+  const [importSellers, setImportSellers] = useState<ImportSeller[]>([]);
   const [contacts, setContacts] = useState<WAContact[]>([]);
   const [selectedList, setSelectedList] = useState<ContactList | null>(null);
   const [listSelectionMode, setListSelectionMode] = useState(false);
@@ -197,7 +213,42 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
     }
   }, [effectiveUserId, toast]);
 
+  const fetchImportSellers = useCallback(async () => {
+    if (!effectiveUserId || isSeller) {
+      setImportSellers([]);
+      return;
+    }
+    try {
+      const { data, error } = await (supabase as any)
+        .from('ai_team_members')
+        .select('id, name, whatsapp_number, active_in_system, is_active')
+        .eq('user_id', effectiveUserId)
+        .order('name', { ascending: true });
+      if (error) throw error;
+
+      const byKey = new Map<string, ImportSeller>();
+      for (const row of ((data || []) as Array<ImportSeller & { is_active?: boolean | null }>)) {
+        if (row.active_in_system === false) continue;
+        const key = String(row.whatsapp_number || row.name || row.id).replace(/\D/g, '') || normalizeSellerKey(row.name || row.id);
+        const existing = byKey.get(key);
+        if (!existing || existing.active_in_system === false) {
+          byKey.set(key, {
+            id: row.id,
+            name: row.name || 'Vendedor',
+            whatsapp_number: row.whatsapp_number || null,
+            active_in_system: row.active_in_system,
+          });
+        }
+      }
+      setImportSellers(Array.from(byKey.values()));
+    } catch (err: any) {
+      setImportSellers([]);
+      toast({ title: 'Erro ao carregar vendedores', description: err.message, variant: 'destructive' });
+    }
+  }, [effectiveUserId, isSeller, toast]);
+
   useEffect(() => { fetchLists(); }, [fetchLists]);
+  useEffect(() => { fetchImportSellers(); }, [fetchImportSellers]);
   useEffect(() => {
     if (selectedList) fetchContacts(selectedList.id);
     else setContacts([]);
@@ -1132,6 +1183,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         onSuccess={fetchLists}
         isSeller={isSeller}
         seller={seller}
+        teamMembers={importSellers}
       />
     </>
   );
