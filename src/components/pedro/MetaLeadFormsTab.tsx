@@ -40,6 +40,7 @@ type MetaForm = { id: string; name: string; status?: string; leads_count?: numbe
 type MetaPage = {
   ad_account_id: string;
   ad_account_name: string | null;
+  account_id?: string | null;
   page_id: string;
   page_name: string;
   page_picture?: string | null;
@@ -205,14 +206,75 @@ export function MetaLeadFormsTab({ userId }: { userId: string }) {
         description: 'Escolha quais formularios entram no Pedro.',
       });
     } catch (error: any) {
-      toast({
-        title: 'Erro ao buscar formularios na Meta',
-        description: error?.message || 'Verifique se a conta Meta esta conectada com leads_retrieval.',
-        variant: 'destructive',
-      });
+      try {
+        const fallbackPages = await loadMetaFormsViaExistingApi();
+        setPages(fallbackPages);
+        toast({
+          title: 'Formularios carregados',
+          description: 'Busca feita pela integracao Meta existente. O webhook automatico depende do deploy da funcao meta-leadgen.',
+        });
+      } catch (fallbackError: any) {
+        toast({
+          title: 'Erro ao buscar formularios na Meta',
+          description: fallbackError?.message || error?.message || 'Verifique se a conta Meta esta conectada com leads_retrieval.',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setMetaLoading(false);
     }
+  };
+
+  const loadMetaFormsViaExistingApi = async (): Promise<MetaPage[]> => {
+    const { data: accounts, error: accountsError } = await (supabase as any)
+      .from('ad_accounts')
+      .select('id, account_id, account_name')
+      .eq('user_id', userId)
+      .eq('platform', 'meta')
+      .eq('is_active', true);
+    if (accountsError) throw accountsError;
+    if (!accounts?.length) {
+      throw new Error('Nenhuma conta Meta ativa encontrada. Reconecte a Meta nas configuracoes.');
+    }
+
+    const nextPages: MetaPage[] = [];
+    for (const account of accounts) {
+      const pagesRes = await supabase.functions.invoke('meta-api', {
+        body: {
+          endpoint: 'me/accounts',
+          targetAccountId: account.account_id,
+          params: {
+            fields: 'id,name,category,picture{url}',
+            limit: 200,
+          },
+        },
+      });
+      if (pagesRes.error) throw pagesRes.error;
+
+      for (const page of pagesRes.data?.data || []) {
+        const formsRes = await supabase.functions.invoke('meta-api', {
+          body: {
+            endpoint: `${page.id}/leadgen_forms`,
+            targetAccountId: account.account_id,
+            params: {
+              fields: 'id,name,status,leads_count,created_time',
+              limit: 100,
+            },
+          },
+        });
+
+        nextPages.push({
+          ad_account_id: account.id,
+          account_id: account.account_id,
+          ad_account_name: account.account_name || account.account_id,
+          page_id: page.id,
+          page_name: page.name,
+          page_picture: page.picture?.data?.url || null,
+          forms: formsRes.error ? [] : (formsRes.data?.data || []),
+        });
+      }
+    }
+    return nextPages;
   };
 
   const saveForm = async (page: MetaPage, form: MetaForm) => {
@@ -244,11 +306,38 @@ export function MetaLeadFormsTab({ userId }: { userId: string }) {
           : 'Formulario salvo. Confira a assinatura do webhook no app Meta se necessario.',
       });
     } catch (error: any) {
-      toast({
-        title: 'Erro ao salvar formulario',
-        description: error?.message || 'Nao foi possivel salvar a configuracao.',
-        variant: 'destructive',
-      });
+      try {
+        const { error: upsertError } = await (supabase as any)
+          .from('meta_lead_form_configs')
+          .upsert({
+            user_id: userId,
+            ad_account_id: page.ad_account_id,
+            page_id: page.page_id,
+            page_name: page.page_name,
+            form_id: form.id,
+            form_name: form.name,
+            agent_id: formSettings?.agent_id === '__none' ? null : formSettings?.agent_id,
+            instance_id: formSettings?.instance_id === '__none' ? null : formSettings?.instance_id,
+            is_active: true,
+            auto_contact_enabled: formSettings?.auto_contact_enabled === true,
+            initial_message_template: formSettings?.initial_message_template || DEFAULT_TEMPLATE,
+            processing_mode: 'pedro_qualifica',
+            raw_form: form,
+            last_sync_at: new Date().toISOString(),
+          }, { onConflict: 'user_id,form_id' });
+        if (upsertError) throw upsertError;
+        await loadLocalData();
+        toast({
+          title: 'Formulario salvo',
+          description: 'Configuracao salva. O envio automatico depende do deploy da funcao meta-leadgen no Supabase.',
+        });
+      } catch (fallbackError: any) {
+        toast({
+          title: 'Erro ao salvar formulario',
+          description: fallbackError?.message || error?.message || 'Nao foi possivel salvar a configuracao.',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setSavingKey(null);
     }
