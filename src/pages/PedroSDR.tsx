@@ -47,6 +47,7 @@ import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackCon
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
 import { QualificacaoResumo } from '@/components/pedro/QualificacaoResumo';
 import { AgentInboxTab } from '@/components/pedro/AgentInboxTab';
+import { MetaLeadFormsTab } from '@/components/pedro/MetaLeadFormsTab';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { usePendingTransfers, formatPendingAge } from '@/hooks/usePendingTransfers';
 import { FEATURES } from '@/config/features';
@@ -5881,6 +5882,7 @@ const MASTER_TABS = [
   { id: 'performance',  label: 'Performance',  icon: BarChart3,     emoji: '📊' },
   // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
+  { id: 'meta-forms',   label: 'Formulários Meta', icon: FileSpreadsheet, emoji: '📋' },
   { id: 'inbox-ia',     label: 'Conversas IA', icon: Inbox,         emoji: '📨' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
@@ -6009,6 +6011,12 @@ export default function PedroSDR() {
             </TabsContent>
 
             {/* Conversas IA — conversas do agente com pause/resume */}
+            {!isSeller && (
+              <TabsContent value="meta-forms" className="mt-0">
+                {user?.id && <MetaLeadFormsTab userId={user.id} />}
+              </TabsContent>
+            )}
+
             <TabsContent value="inbox-ia" className="mt-0 h-full">
               {inboxOwnerId && (
                 <AgentInboxTab
