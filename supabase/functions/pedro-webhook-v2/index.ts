@@ -9,9 +9,10 @@ import {
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
+import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-26-contextual-vehicle-focus-v218";
+const PEDRO_V2_BUILD = "2026-06-28-pedro-v3-pilot-gate-v219";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -337,6 +338,16 @@ Deno.serve(async (req) => {
     console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${waInstance.id} (Carvalho copia)`);
     return jsonResponse({ ok: true, ignored: "agent_not_found_or_inactive", instance: instanceName });
   }
+  const pedroV3Pilot = evaluatePedroV3PilotAgent(agent, waInstance, Deno.env.get("PEDRO_V3_PILOT_MODE"));
+  if (pedroV3Pilot.enabled) {
+    console.log(
+      `[pedro-v3-pilot] matched tenant=${agent.user_id} agent=${agent.id} mode=${pedroV3Pilot.mode}`,
+    );
+    if (pedroV3Pilot.mode === "active") {
+      console.warn("[pedro-v3-pilot] active mode requested, but active v3 handler is not wired yet; falling back to Pedro v2");
+    }
+  }
+
 
   // ── Roteamento por tipo de agente ──────────────────────────────────────────
   // "SDR - Geral" (agent_type='sdr_geral') usa o cérebro da SOFIA (qualifica +

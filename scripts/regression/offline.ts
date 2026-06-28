@@ -78,6 +78,7 @@ import {
   leadAsksForMorePhotos,
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion, buildLastStockOffer, stockOfferVehicleKey, resolvePresentedVehicleReference } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
+import { evaluatePedroV3Pilot, normalizePedroV3PilotMode, PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../../supabase/functions/_shared/pedro-v2/pedroV3PilotGate.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -113,6 +114,25 @@ const labels = (rk: any[]) => rk.map((r) => `${r.vehicle.markName} ${r.vehicle.m
 const models = (rk: any[]) => new Set(rk.map((r) => String(r.vehicle.modelName).toLowerCase().split(" ")[0]));
 
 console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
+// Pedro v3 pilot gate: antes de ligar qualquer handler real, provar que o acesso
+// e exclusivamente por tenant+agent exatos. Email/nome/instancia nunca autorizam.
+{
+  check("v3-gate", "modo invalido cai para off", normalizePedroV3PilotMode("production") === "off");
+  const shadow = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "shadow" });
+  check("v3-gate", "tenant+agent exatos habilitam shadow", shadow.enabled && shadow.mode === "shadow", JSON.stringify(shadow));
+
+  const active = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active" });
+  check("v3-gate", "tenant+agent exatos habilitam active", active.enabled && active.mode === "active", JSON.stringify(active));
+
+  const wrongAgent = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: "outro-agent", mode: "active" });
+  check("v3-gate", "tenant certo + agent errado NAO habilita", !wrongAgent.enabled && wrongAgent.reason === "not_pilot_identity", JSON.stringify(wrongAgent));
+
+  const wrongTenant = evaluatePedroV3Pilot({ tenantId: "outro-tenant", agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active" });
+  check("v3-gate", "agent certo + tenant errado NAO habilita", !wrongTenant.enabled && wrongTenant.reason === "not_pilot_identity", JSON.stringify(wrongTenant));
+
+  const off = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "off" });
+  check("v3-gate", "identidade piloto com mode off fica desligada", !off.enabled && off.reason === "pilot_disabled", JSON.stringify(off));
+}
 
 // ── BUSCA (rankVehicles) — onde mais nasceram bugs ──────────────────────────
 {
