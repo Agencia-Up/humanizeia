@@ -732,3 +732,21 @@ resposta + WhatsApp recebe do v3. Backlog de 6 eventos do conversation `wa:8ed1.
 Handoff `handoffs/2026-06-29-claude-f2.6n-fix-double-encoding-claim.md`.
 
 Resultado: **F2.6N no ar pelo auto-deploy — provavel destravamento do piloto.** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.6O (enriquecer HTTP_FAILURE do gateway) - 2026-06-29
+
+Pos-F2.6N: o "claimed inbox record missing" SUMIU (fix do encoding pegou), mas o turno agora avanca e
+falha em `Error: HTTP_FAILURE` (uma chamada ao gateway Supabase retornou nao-2xx — provavel `load`
+de v3_conversation_state OU o `commit` v3_commit_turn, que NUNCA eram exercitados antes pq o get() quebrava).
+Os logs da API (get_logs) sao dominados por v2/portal/crons e nao isolam a chamada do servico v3.
+
+Fix F2.6O: `SupabaseServiceGatewayError` ganha `detail` e o throw de `!response.ok` agora inclui
+**metodo + rota + status** (ex.: "HTTP_FAILURE POST /rest/v1/rpc/v3_commit_turn 400") — sem query/segredo.
+Assim o `v3_inbox.last_error` (via F2.6M) vai dizer EXATAMENTE qual chamada falhou e o status.
+Teste `run-gateway-filter.ts` (+2 checks: inclui status/rota/metodo; nao vaza service-role-key). Gates:
+test:all EXIT=0, tsc limpo, offline v2 418.
+
+Proximo: auto-deploy -> dono manda "tem onix" -> leio o `last_error` enriquecido -> corrijo a chamada exata.
+
+Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.

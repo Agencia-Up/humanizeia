@@ -59,6 +59,8 @@ class RealGatewayHttpTransport implements GatewayHttpTransport {
 }
 
 export class SupabaseServiceGatewayError extends Error {
+  // `detail` (F2.6O) inclui metodo + rota + status no message, p/ o HTTP_FAILURE dizer QUAL chamada
+  // falhou (ex.: "HTTP_FAILURE POST /rest/v1/rpc/v3_commit_turn 400"). Nunca inclui query/segredo.
   constructor(public readonly code:
     | "CONFIG_INVALID"
     | "HOST_NOT_ALLOWED"
@@ -66,10 +68,14 @@ export class SupabaseServiceGatewayError extends Error {
     | "HTTP_FAILURE"
     | "RESPONSE_INVALID"
     | "RESPONSE_TOO_LARGE"
-    | "TIMEOUT") {
-    super(code);
+    | "TIMEOUT", detail?: string) {
+    super(detail ? `${code} ${detail}` : code);
     this.name = "SupabaseServiceGatewayError";
   }
+}
+
+function pathOnly(url: string): string {
+  try { return new URL(url).pathname; } catch { return "?"; }
 }
 
 function encodeFilter(value: JsonValue): string {
@@ -302,7 +308,9 @@ export class SupabaseServiceGateway implements V3DatabaseGateway {
         redirect: "error",
         signal: controller.signal,
       });
-      if (!response.ok) throw new SupabaseServiceGatewayError("HTTP_FAILURE");
+      if (!response.ok) {
+        throw new SupabaseServiceGatewayError("HTTP_FAILURE", `${init.method ?? "GET"} ${pathOnly(url)} ${response.status}`);
+      }
       const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
       if (!contentType.includes("application/json")) {
         throw new SupabaseServiceGatewayError("RESPONSE_INVALID");

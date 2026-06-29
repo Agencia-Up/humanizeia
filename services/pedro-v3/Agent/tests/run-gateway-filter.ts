@@ -47,6 +47,17 @@ async function main(): Promise<void> {
   await gw(cap3).selectMany("v3_inbox", { status: "pending" }, { limit: 1 });
   check("valor simples (pending) intacto", !!cap3.url && cap3.url.includes("status=eq.pending"), cap3.url);
 
+  // F2.6O: HTTP_FAILURE inclui metodo + rota + status (diagnostico), sem query/segredo.
+  const failGw = new SupabaseServiceGateway(
+    { url: "https://proj.supabase.co", serviceRoleKey: "service-role-key", allowedHosts: ["proj.supabase.co"] },
+    { async fetch(): Promise<Response> { return new Response("boom", { status: 400, headers: { "content-type": "application/json" } }); } },
+  );
+  let httpErr: unknown = null;
+  try { await failGw.rpc("v3_commit_turn", { x: 1 }); } catch (e) { httpErr = e; }
+  const msg = httpErr instanceof Error ? httpErr.message : String(httpErr);
+  check("HTTP_FAILURE inclui status+rota+metodo", /HTTP_FAILURE/.test(msg) && /\b400\b/.test(msg) && /rpc\/v3_commit_turn/.test(msg) && /POST/.test(msg), msg);
+  check("HTTP_FAILURE nao vaza service-role-key", !msg.includes("service-role-key"), msg);
+
   console.log(`=== GATEWAY FILTER: ${ok} OK | ${failed} FALHA ===`);
   if (failed > 0) process.exit(1);
 }
