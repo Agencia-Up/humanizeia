@@ -147,7 +147,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     }
 
     try {
-      return await root.runTurn({
+      const result = await root.runTurn({
         persistence,
         conversationId: payload.conversationId,
         to: payload.to,
@@ -165,6 +165,21 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         },
         maxValidationAttempts: 2,
       });
+      // F2.6M: o engine falha GRACIOSAMENTE (status commit_failed) SEM lancar — o motivo so vinha no
+      // retorno (engine.reason), invisivel no log e no banco. Aqui surfacamos: loga (EasyPanel) + grava
+      // em v3_inbox.last_error (banco) p/ diagnosticar a raiz. Sanitizado; best-effort no banco.
+      if (result.status === "commit_failed" && result.engine.status === "commit_failed") {
+        const reason = sanitizeTurnError(result.engine.reason);
+        console.error(JSON.stringify({ event: "pedro_v3_turn_commit_failed", turnId: payload.turnId, reason }));
+        try {
+          await gateway.rpc("v3_record_inbox_error", {
+            p_tenant_id: payload.tenantId,
+            p_event_id: payload.eventId,
+            p_error: reason,
+          });
+        } catch { /* best-effort: nao mascara o resultado */ }
+      }
+      return result;
     } catch (error) {
       let ingested: boolean | "unknown" = "unknown";
       try {

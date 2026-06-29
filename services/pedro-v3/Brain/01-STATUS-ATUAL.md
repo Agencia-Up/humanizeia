@@ -692,3 +692,21 @@ raiz -> corrijo. (Alternativa: colar o log do servico v3 no EasyPanel.) Handoff
 `handoffs/2026-06-29-claude-f2.6l-observabilidade-falha-turno.md`.
 
 Resultado: **F2.6L entregue para auditoria do Codex.** `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.
+---
+
+## Atualizacao Claude - F2.6M (surfacar commit_failed do engine) - 2026-06-29
+
+Diagnostico avancou: log do servico v3 (EasyPanel) mostrava SO `pedro_v3_service_started` (3 deploys),
+sem turno e sem erro; `v3_inbox.last_error` vazio mesmo apos o F2.6L. **Raiz da invisibilidade**: o
+`conversation-engine.ts` (catch ~214) **falha GRACIOSAMENTE** — libera o claim e RETORNA
+`{status:"commit_failed", reason:<msg do erro>}` SEM lancar e SEM logar. Logo o `catch` do server.ts (F2.6L)
+nunca dispara, e o `reason` so vivia no retorno.
+
+Fix F2.6M (server.ts, fora do engine puro): apos `root.runTurn`, se `result.status==="commit_failed"`,
+**loga** `pedro_v3_turn_commit_failed` (console.error -> EasyPanel) + **grava** o reason sanitizado em
+`v3_inbox.last_error` (RPC F2.6L). Agora a falha aparece NO LOG e NO BANCO. Sanitizado; best-effort no banco.
+
+Gates: test:all EXIT=0; tsc limpo; offline v2 418 OK. EasyPanel faz auto-deploy no push.
+Proximo: dono manda 1 "tem onix" apos o auto-deploy -> leio `v3_inbox.last_error` (ou o log) -> corrijo a raiz real.
+
+Resultado: **F2.6M no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` segue active (piloto); sem db push/rotacao.
