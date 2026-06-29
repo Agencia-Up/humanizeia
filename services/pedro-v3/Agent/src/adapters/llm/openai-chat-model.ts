@@ -93,23 +93,51 @@ function parseJson(text: string): unknown {
 function operationInstructions(operation: OpenAiChatOperation): string {
   if (operation === "interpret") {
     return [
-      "Return one JSON object matching TurnInterpretation.",
-      "Allowed relation values: answers_pending, direction_change, continues_offer, asks_vehicle_detail, ambiguous, unrelated.",
-      "Do not decide actions, do not call tools, do not compose a customer reply.",
-    ].join(" ");
+      "Return ONE JSON object (TurnInterpretation) with this exact shape:",
+      '{"relation": <one of: answers_pending | direction_change | continues_offer | asks_vehicle_detail | ambiguous | unrelated>,',
+      ' "intentSummary"?: string, "extractedEntities"?: {"model"?: string, "price"?: number}}',
+      "Only classify the lead's last message relative to the conversation. Do NOT decide actions, call tools, or write a reply.",
+      'Example: {"relation":"unrelated","intentSummary":"Cliente pergunta se tem um modelo."}',
+    ].join("\n");
   }
   if (operation === "propose") {
     return [
-      "Return one JSON object matching DecisionStep.",
-      "Use kind=query only when a read-only tool is needed; otherwise use kind=final with one ProposedDecision.",
-      "Do not fabricate stock, prices, photos, CRM facts, or delivery outcomes.",
-    ].join(" ");
+      "Return ONE JSON object that is a DecisionStep. EXACTLY one of two shapes:",
+      "",
+      "(A) Fetch read-only data BEFORE deciding (only when you still lack data you need):",
+      '{"kind":"query","call":{"tool":<T>,"input":{...}}}  where:',
+      '  - tool="stock_search", input:{ "tipo"?: "suv"|"sedan"|"hatch"|"pickup"|"unknown", "precoMax"?: number>0, "modelo"?: string, "broad"?: boolean, "excludeKeys"?: string[] }',
+      '  - tool="vehicle_details", input:{ "vehicleKey": string }',
+      '  - tool="vehicle_photos_resolve", input:{ "vehicleRef":{ "kind":"vehicle", "key": string } }',
+      '  - tool="crm_read", input:{ "leadId": string }',
+      "  Query ONLY for data you do not already have in the provided facts/state. Never query the same thing twice. Never invent stock/prices/photos.",
+      "",
+      "(B) Finish the turn:",
+      '{"kind":"final","proposal":{',
+      '  "proposedAction": <one of: reply | clarify | collect_slot | search_stock | send_photos | answer_vehicle_question | schedule_visit | handoff | close | no_op>,',
+      '  "facts": [],',
+      '  "proposedEffects": [ ... ],',
+      '  "responsePlan": { "guidance": <plain-language description, in pt-BR, of the message to send> },',
+      '  "reasonCode": <short_snake_case string>, "reasonSummary": <one short sentence>, "confidence": <number 0..1> }}',
+      "",
+      "RULES for the final proposal:",
+      '  - To actually send a WhatsApp reply you MUST include a send_message effect in proposedEffects: {"kind":"send_message","planId":"reply","order":0,"onSuccess":[]}. Without it NO message is sent. Do NOT put the message text here — it is written in a later step from responsePlan.guidance.',
+      '  - Keep "facts": [] (do not emit state mutations) unless you are certain of the exact schema.',
+      '  - Use proposedEffects:[] with proposedAction:"no_op" ONLY when nothing should be sent.',
+      "  - Do not fabricate stock, prices, photos, CRM facts, or delivery outcomes; use a query to get real data first.",
+      "",
+      'Example (reply needing no extra data): {"kind":"final","proposal":{"proposedAction":"reply","facts":[],"proposedEffects":[{"kind":"send_message","planId":"reply","order":0,"onSuccess":[]}],"responsePlan":{"guidance":"Cumprimentar o cliente e perguntar que tipo de veiculo ele procura."},"reasonCode":"greeting","reasonSummary":"Saudar e abrir a descoberta.","confidence":0.8}}',
+    ].join("\n");
   }
   return [
-    "Return one JSON object matching ResponseDraft.",
-    "For vehicle facts use vehicle_ref parts; for money use money_ref parts.",
-    "Do not place vehicle names or prices as free commercial claims inside plain text.",
-  ].join(" ");
+    "Return ONE JSON object that is a ResponseDraft with this exact shape: {\"parts\": [ ... ]}.",
+    "Each part is EXACTLY one of:",
+    '  {"type":"text","content": <string, the message text in pt-BR>}',
+    '  {"type":"vehicle_ref","vehicleKey": <string>, "field":"marca"|"modelo"|"ano"}',
+    '  {"type":"money_ref","role":"vehicle_price"|"down_payment"|"installment"|"budget","source": {"kind":"vehicle_fact","vehicleKey":<string>} | {"kind":"slot_value","slotName":<string>}}',
+    "Write the actual customer message as text parts, following responsePlan.guidance. For specific vehicle facts (marca/modelo/ano) use vehicle_ref parts; for monetary values use money_ref parts. Never write vehicle names or prices as free commercial claims inside plain text.",
+    'Example: {"parts":[{"type":"text","content":"Oi! Tudo bem? Me conta: que tipo de carro voce procura?"}]}',
+  ].join("\n");
 }
 
 function systemMessageFor(operation: OpenAiChatOperation, prompt: string): string {

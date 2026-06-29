@@ -792,5 +792,32 @@ Pendencias p/ revisitar: resolve-throw deveria ser failed+retryable (nao uncerta
 Handoff `handoffs/2026-06-29-claude-f2.6q-fix-uazapi-send.md`.
 
 Resultado: **F2.6Q no ar pelo auto-deploy — provavel ultimo tijolo do envio.** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.6R (alinhar prompt ao contrato de decisao — fim do loop) - 2026-06-29
+
+⭐ **MARCO: o Pedro v3 responde de PONTA A PONTA no WhatsApp do Aloan** (recebe->decide->commita->envia->chega).
+As 3 travas de infra cairam (F2.6N encoding, F2.6P CPF, F2.6Q coluna do token). Mas respondia sempre a MESMA
+frase de fallback ("Desculpe a lentidao temporaria...") = loop. Causa: `v3_decisions` mostrava
+`MODEL_DECISION_INVALID` no `propose`.
+
+Raiz: `operationInstructions("propose")` (openai-chat-model.ts) dizia "return JSON matching DecisionStep/
+ProposedDecision" mas **NUNCA descrevia o envelope** -> o modelo nao tinha como produzir -> rejeitado ->
+`emitErrorTerminalSafe` (finalizer:309) -> safe-terminal. (Os testes usam modelo FAKE com envelope ja certo.)
+Achado: no finalizer, `effectPlan = proposal.proposedEffects` — sem auto-send_message; o modelo PRECISA emitir
+o efeito send_message para responder.
+
+Fix: reescrevi `operationInstructions` dos 3 passos (interpret/propose/compose) com o envelope EXATO + exemplos +
+a regra do send_message; conservador (`facts:[]`, sem mutacoes de estado neste corte — slot/objetivo e a proxima
+iteracao). Observabilidade: `ModelOutputError` ganha `detail` (campo que falhou, ex.: `MODEL_DECISION_INVALID:
+proposedEffects`) -> aparece em `v3_decisions.reason_summary`. Teste +1 (run-model-adapter 27 OK). Gates: test:all
+EXIT=0, tsc limpo, offline 418, secret scan limpo. **Fix de prompt — validacao real e AO VIVO** (sem SQL).
+
+Proximo: auto-deploy -> dono manda "tem onix" -> leio `v3_decisions`: `action` real (nao error/terminal_safe) +
+resposta REAL no WhatsApp. Se falhar, o reason_summary aponta o campo -> itero (pode levar 1-2 rodadas).
+Pendencias: facts ricos (slots/objetivos); CPF/telefone (F2.6P); resolve-throw=>uncertain (F2.6Q); avaliar json_schema.
+Handoff `handoffs/2026-06-29-claude-f2.6r-decision-envelope-prompt.md`.
+
+Resultado: **F2.6R no ar pelo auto-deploy — deve dar respostas REAIS (fim do loop).** `PEDRO_V3_PILOT_MODE` active.
 
 Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.

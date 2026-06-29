@@ -4,7 +4,7 @@
 // independente. SEM chamada real de rede, SEM provider real, SEM efeito externo.
 
 import { StructuredJsonConversationModel, type ModelHttpRequest, type ModelHttpResponse, type ModelHttpTransport } from "../src/adapters/llm/structured-json-model.ts";
-import { PromptBoundConversationAdapter } from "../src/adapters/llm/prompt-bound-conversation.ts";
+import { PromptBoundConversationAdapter, ModelOutputError } from "../src/adapters/llm/prompt-bound-conversation.ts";
 import { CompositeClaimExtractor, LexiconAutomotiveClaimExtractor } from "../src/engine/automotive-claim-extractor.ts";
 import { CatalogClaimExtractor, ConversationTurnContextPreparer, type TenantCatalogSource } from "../src/engine/turn-context-preparer.ts";
 import { PolicyEngine } from "../src/engine/policy-engine.ts";
@@ -177,6 +177,16 @@ async function main(): Promise<void> {
     const adapter = new PromptBoundConversationAdapter(runtimeConfig, model(transport));
     const step = await adapter.proposeNextQueryOrFinal(turnContext(new CatalogClaimExtractor({ entries: [] })), []);
     check("StructuredJsonConversationModel integra com PromptBound decoder", step.kind === "final" && step.proposal.reasonCode === "OK");
+  }
+
+  {
+    // F2.6R: proposta final SEM proposedEffects -> decoder rejeita E aponta o campo (observabilidade).
+    const transport = new RecordingModelTransport();
+    transport.response = { status: 200, contentType: "application/json", bodyText: JSON.stringify({ output: { kind: "final", proposal: { proposedAction: "reply", facts: [], responsePlan: { guidance: "x" }, reasonCode: "OK", reasonSummary: "ok", confidence: 0.5 } } }) };
+    const adapter = new PromptBoundConversationAdapter(runtimeConfig, model(transport));
+    let err: unknown = null;
+    try { await adapter.proposeNextQueryOrFinal(turnContext(new CatalogClaimExtractor({ entries: [] })), []); } catch (e) { err = e; }
+    check("F2.6R: decoder aponta o campo invalido (proposedEffects)", err instanceof ModelOutputError && err.code === "MODEL_DECISION_INVALID" && err.detail === "proposedEffects", String(err));
   }
 
   {

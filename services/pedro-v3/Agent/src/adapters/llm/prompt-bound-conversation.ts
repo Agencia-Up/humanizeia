@@ -75,10 +75,14 @@ function immutableCopy<T>(value: T): T {
 }
 
 export class ModelOutputError extends Error {
+  // `detail` (F2.6R) nomeia QUAL campo do envelope falhou (ex.: "proposedEffects", "responsePlan.guidance"),
+  // p/ diagnosticar o desalinhamento prompt<->contrato pelo banco (v3_decisions.reason_summary). So nome de
+  // campo/checagem — nunca dado do modelo. Diagnostico, nao muda o controle de fluxo (segue terminal-safe).
   constructor(public readonly code:
     | "MODEL_INTERPRETATION_INVALID" | "MODEL_DECISION_INVALID" | "MODEL_RESPONSE_INVALID"
-    | "MODEL_INTERPRETATION_FAILURE" | "MODEL_DECISION_FAILURE" | "MODEL_RESPONSE_FAILURE") {
-    super(code);
+    | "MODEL_INTERPRETATION_FAILURE" | "MODEL_DECISION_FAILURE" | "MODEL_RESPONSE_FAILURE",
+    public readonly detail?: string) {
+    super(detail ? `${code}:${detail}` : code);
     this.name = "ModelOutputError";
   }
 }
@@ -237,23 +241,23 @@ function validEffect(value: unknown): boolean {
 }
 
 function decodeProposal(value: unknown): ProposedDecision {
-  if (!isRecord(value) || !ACTIONS.has(value.proposedAction as TurnAction)) throw new ModelOutputError("MODEL_DECISION_INVALID");
-  if (!Array.isArray(value.facts) || !value.facts.every(validMutation)) throw new ModelOutputError("MODEL_DECISION_INVALID");
-  if (!Array.isArray(value.proposedEffects) || !value.proposedEffects.every(validEffect)) throw new ModelOutputError("MODEL_DECISION_INVALID");
-  if (!isRecord(value.responsePlan) || typeof value.responsePlan.guidance !== "string") throw new ModelOutputError("MODEL_DECISION_INVALID");
-  if (!isNonEmptyString(value.reasonCode) || typeof value.reasonSummary !== "string") throw new ModelOutputError("MODEL_DECISION_INVALID");
+  if (!isRecord(value) || !ACTIONS.has(value.proposedAction as TurnAction)) throw new ModelOutputError("MODEL_DECISION_INVALID", "proposedAction");
+  if (!Array.isArray(value.facts) || !value.facts.every(validMutation)) throw new ModelOutputError("MODEL_DECISION_INVALID", "facts");
+  if (!Array.isArray(value.proposedEffects) || !value.proposedEffects.every(validEffect)) throw new ModelOutputError("MODEL_DECISION_INVALID", "proposedEffects");
+  if (!isRecord(value.responsePlan) || typeof value.responsePlan.guidance !== "string") throw new ModelOutputError("MODEL_DECISION_INVALID", "responsePlan.guidance");
+  if (!isNonEmptyString(value.reasonCode) || typeof value.reasonSummary !== "string") throw new ModelOutputError("MODEL_DECISION_INVALID", "reasonCode/reasonSummary");
   if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) {
-    throw new ModelOutputError("MODEL_DECISION_INVALID");
+    throw new ModelOutputError("MODEL_DECISION_INVALID", "confidence");
   }
-  if (value.target !== undefined && value.target !== null && !isRecord(value.target)) throw new ModelOutputError("MODEL_DECISION_INVALID");
+  if (value.target !== undefined && value.target !== null && !isRecord(value.target)) throw new ModelOutputError("MODEL_DECISION_INVALID", "target");
   return immutableCopy(value as unknown as ProposedDecision);
 }
 
 function decodeStep(value: unknown): DecisionStep {
-  if (!isRecord(value)) throw new ModelOutputError("MODEL_DECISION_INVALID");
+  if (!isRecord(value)) throw new ModelOutputError("MODEL_DECISION_INVALID", "step_not_object");
   if (value.kind === "query" && validQueryCall(value.call)) return immutableCopy({ kind: "query", call: value.call });
   if (value.kind === "final") return immutableCopy({ kind: "final", proposal: decodeProposal(value.proposal) });
-  throw new ModelOutputError("MODEL_DECISION_INVALID");
+  throw new ModelOutputError("MODEL_DECISION_INVALID", "kind|query.call");
 }
 
 function validResponsePart(part: unknown): part is ResponsePart {
@@ -317,17 +321,17 @@ export class PromptBoundConversationAdapter implements DecisionLlm, TurnUndersta
     if (step.kind === "final") {
       for (const mutation of step.proposal.facts) {
         if ((mutation.op === "set_slot" || mutation.op === "set_slot_ref") && mutation.sourceTurnId !== ctx.turnId) {
-          throw new ModelOutputError("MODEL_DECISION_INVALID");
+          throw new ModelOutputError("MODEL_DECISION_INVALID", "facts.sourceTurnId");
         }
         if (mutation.op === "set_planned_objective" && mutation.planned.plannedInTurnId !== ctx.turnId) {
-          throw new ModelOutputError("MODEL_DECISION_INVALID");
+          throw new ModelOutputError("MODEL_DECISION_INVALID", "facts.plannedInTurnId");
         }
       }
       // Reuse the authoritative reducer validation before the decision can reach
       // the engine commit. Invalid model mutations become terminal-safe, not a
       // late commit_failed that would leave the lead without a response.
       const dryRun = applyDecision(ctx.state, step.proposal.facts, ctx.turnId, ctx.now);
-      if (!dryRun.ok) throw new ModelOutputError("MODEL_DECISION_INVALID");
+      if (!dryRun.ok) throw new ModelOutputError("MODEL_DECISION_INVALID", "facts.reducer_rejected");
     }
     return step;
   }
