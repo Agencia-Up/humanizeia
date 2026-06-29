@@ -147,6 +147,17 @@ async function main(): Promise<void> {
     )
   `, [TENANT, CONVERSATION, NOW]), "v3_inbox_payload_not_redacted");
 
+  // F2.6P: o payload do evento turn_claimed inclui os event_ids (hashes hex de 64 chars). Um hash com
+  // 11 digitos seguidos (ex.: "...f77842555836c...") NAO pode ser falso-positivo de CPF (o que barrava
+  // o commit). Mas CPF real (formatado OU cru, cercado por borda de palavra) tem de continuar barrado.
+  const hashPayload = '{"eventIds":["uazapi:b265f614176af61086d5a75e46f77842555836c15a047f76a8a3b90c2f4699c8"],"__redacted":true}';
+  const redHash = await db.query<{ ok: boolean }>(`select public.v3_payload_is_redacted($1::jsonb) as ok`, [hashPayload]);
+  check("F2.6P: turn_claimed com hash de 11 digitos passa na redaction", redHash.rows[0]?.ok === true);
+  const redFmt = await db.query<{ ok: boolean }>(`select public.v3_payload_is_redacted('{"__redacted":true,"text":"meu cpf 123.456.789-00"}'::jsonb) as ok`);
+  check("F2.6P: CPF formatado AINDA e barrado", redFmt.rows[0]?.ok === false);
+  const redBare = await db.query<{ ok: boolean }>(`select public.v3_payload_is_redacted('{"__redacted":true,"text":"cpf 12345678900 fim"}'::jsonb) as ok`);
+  check("F2.6P: CPF cru (11 digitos isolados) AINDA e barrado", redBare.rows[0]?.ok === false);
+
   const lease = await db.query<{ token: string }>(`
     select token from public.v3_acquire_lease($1::uuid, $2, 'worker-1', 120000, $3::timestamptz)
   `, [TENANT, CONVERSATION, NOW]);

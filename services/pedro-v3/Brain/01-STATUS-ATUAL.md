@@ -750,3 +750,27 @@ test:all EXIT=0, tsc limpo, offline v2 418.
 Proximo: auto-deploy -> dono manda "tem onix" -> leio o `last_error` enriquecido -> corrijo a chamada exata.
 
 Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.6P (2a ROOT CAUSE: falso-positivo de CPF barra o commit) - 2026-06-29
+
+F2.6O revelou o ponto exato: **`HTTP_FAILURE POST /rest/v1/rpc/v3_commit_turn 400`**. Log do Postgres:
+**`v3_turn_events_payload_ck` violado**. Provado no banco: o payload do evento `turn_claimed` inclui os
+`event_ids` do uazapi (hash hex 64 chars); um hash com **11 digitos seguidos** (`77842555836`) batia no
+heuristico de CPF de `v3_payload_is_redacted` -> check rejeita -> 23514 -> PostgREST 400 -> turno falha sempre.
+As bordas `[^0-9]` tratavam letras hex como delimitador. Nunca rodou contra Postgres real (get() quebrava antes).
+
+**Fix**: `v3_payload_is_redacted` usa **word-boundary `\y`** no regex de CPF. Hash (grudado em alfanumerico)
+nao casa; CPF real (formatado OU cru, cercado por borda) continua barrado. `v3_schema.sql` atualizado +
+migration `sql/v3_f2_6p_redaction_cpf_boundary.sql` (DONO roda no SQL Editor — fix e no BANCO). Teste
+run-sql-schema.ts +3. Gates: test:all EXIT=0, SQL 41 OK, tsc limpo, offline v2 418.
+
+⚠️ Risco residual (PRE-EXISTENTE, fora do escopo): o check ainda barra telefone BR (11 digitos)/protocolo que
+o agente escreva no texto, e e FATAL. Revisitar com Codex (so CPF formatado? nao-fatal?). Handoff
+`handoffs/2026-06-29-claude-f2.6p-fix-cpf-false-positive.md`.
+
+Proximo: dono roda a migration + manda "tem onix" -> commit suceder -> v3 RESPONDE (status=done + outbox + msg).
+
+Resultado: **F2.6P pronto — codigo commitado; AGUARDA o dono rodar a migration SQL.** `PEDRO_V3_PILOT_MODE` active.
+
+Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.

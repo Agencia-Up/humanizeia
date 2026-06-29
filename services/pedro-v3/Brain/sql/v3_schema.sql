@@ -22,7 +22,12 @@ as $$
     p_payload is not null
     and jsonb_typeof(p_payload) = 'object'
     and p_payload @> '{"__redacted": true}'::jsonb
-    and p_payload::text !~* '(^|[^0-9])[0-9]{3}[.]?[0-9]{3}[.]?[0-9]{3}-?[0-9]{2}([^0-9]|$)'
+    -- CPF: usa WORD-BOUNDARY (\y) em vez de [^0-9]/(^|$). Bordas [^0-9] tratavam letras hex como
+    -- delimitador valido, entao um event_id (hash hex de 64 chars) com 11 digitos seguidos (ex.:
+    -- "...f77842555836c...") era falso-positivo de CPF e barrava o commit (F2.6P). Com \y, sequencias
+    -- de digitos GRUDADAS em letras/alfanumerico (hashes) nao casam; CPF real (cercado por espaco/
+    -- pontuacao/inicio/fim) continua pego, formatado ou cru.
+    and p_payload::text !~* '\y[0-9]{3}[.]?[0-9]{3}[.]?[0-9]{3}-?[0-9]{2}\y'
     and p_payload::text !~* '(bearer[[:space:]]+[a-z0-9._-]{20,}|sk-[a-z0-9_-]{16,})'
 $$;
 
