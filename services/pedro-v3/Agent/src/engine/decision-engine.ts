@@ -112,6 +112,7 @@ export async function runTurn(args: {
     };
     let terminalSafe = false;
     let ok = false;
+    let lastDenyDetail = ""; // F2.7.3: motivo do deny de grounding (observabilidade no terminal-safe)
     for (let attempt = 1; attempt <= maxValidationAttempts; attempt++) {
       try {
         const draft = await withTimeout(
@@ -139,10 +140,11 @@ export async function runTurn(args: {
       }
 
       if (!hasDeny(gv)) { ok = true; break; }
+      lastDenyDetail = JSON.stringify(gv.filter((v) => v.outcome === "deny")).slice(0, 220);
     }
     if (!ok) {
       // TERMINAL: cancela efeitos comerciais + resposta segura + dead-letter/alerta. Sem loop/silêncio.
-      decision = emitTerminalSafe(fullCtx.turnId, decision, "Validação de resposta falhou repetidamente");
+      decision = emitTerminalSafe(fullCtx.turnId, decision, `Validação de resposta falhou repetidamente: ${lastDenyDetail || "motivo nao capturado"}`.slice(0, 260));
       composed = {
         draft: { parts: [{ type: "text", content: "Desculpe a lentidão temporária. Como posso te ajudar a escolher seu veículo hoje?" }] },
         text: "Desculpe a lentidão temporária. Como posso te ajudar a escolher seu veículo hoje?"

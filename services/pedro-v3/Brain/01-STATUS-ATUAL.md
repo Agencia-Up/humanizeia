@@ -864,5 +864,28 @@ Handoff `handoffs/2026-06-29-claude-f2.7.2-stock-feed-https-upgrade.md`.
 Proximo: dono re-roda adversariais (com estoque acessivel) -> julgo A-F -> etapa 3 (DESENHO do debounce, parar p/ Codex).
 
 Resultado: **F2.7.2 no ar pelo auto-deploy; aguardando re-teste com estoque acessivel.** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.7.3 (observabilidade do deny de grounding no compose) - 2026-06-29
+
+Re-teste do dono ("Ola/Conheço/tem onix?/Até 80k?") -> "mesma coisa". Diagnostico em v3_decisions: greeting+
+qualify_name OK; o burst AGREGOU "tem onix?"+"Até 80k?" num turno (✅), MAS deu `terminal_safe: "Validação de
+resposta falhou repetidamente"` — o `compose` produziu draft estruturalmente valido, porem a **validacao de
+grounding** (`PolicyEngine.validateResponse`, decision-engine:131/141) **negou repetidamente** -> terminal-safe.
+Provavel: fatos de estoque nao chegaram (F2.7.2 talvez nao deployado no teste, ou feed vazio) OU o modelo citou
+algo fora dos fatos. O motivo (gv.violations) era engolido na mensagem generica.
+
+Fix F2.7.3 (so observabilidade, nao muda logica): captura `lastDenyDetail` (JSON dos verdicts deny, bounded 220)
+no loop de compose e inclui no reason do `emitTerminalSafe` -> aparece em `v3_decisions.reason_summary`. Assim 1
+teste revela QUAL policy/violation negou (stock-vazio? render-ref? overreach?). Gates: test:all EXIT=0, tsc limpo,
+offline 418. Handoff: nota aqui (tweak pequeno, padrao F2.6M/O).
+
+⚠️Padrao observado: o cerebro e FAIL-CLOSED (recusa em vez de alucinar) — cada gate (decisao, grounding) e afinado
+1x1. Ja passamos decisao(F2.6R)+anti-filler(F2.7.1)+estoque-http(F2.7.2); agora o grounding do compose.
+Proximo: confirmar deploy F2.7.2+F2.7.3 -> dono manda 1 "tem onix?" -> leio o motivo exato do deny -> corrijo a raiz
+(stock facts e/ou afinar o grounding) -> dai etapa 3 (debounce). Possivel: debounce sobe de prioridade (rajada
+fragmenta).
+
+Resultado: **F2.7.3 no ar pelo auto-deploy; aguardando 1 teste p/ ler o motivo do deny.** `PEDRO_V3_PILOT_MODE` active.
 
 Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.
