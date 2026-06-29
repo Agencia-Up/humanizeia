@@ -2,6 +2,8 @@ import {
   PilotHttpApp,
   PilotHttpConfigError,
   PilotTurnRuntimeError,
+  type PilotReceiptPayload,
+  type PilotReceiptRunner,
   type PilotTurnPayload,
   type PilotTurnRunner,
 } from "../src/runtime/pilot-http-app.ts";
@@ -79,6 +81,17 @@ class FakeRunner implements PilotTurnRunner {
   }
 }
 
+class FakeReceiptRunner implements PilotReceiptRunner {
+  readonly calls: PilotReceiptPayload[] = [];
+  result = { status: "applied" as const, effectId: "turn-1:message" };
+  error: Error | null = null;
+
+  async applyReceipt(payload: PilotReceiptPayload) {
+    this.calls.push(payload);
+    if (this.error) throw this.error;
+    return this.result;
+  }
+}
 function request(payload: Record<string, unknown> = BASE_PAYLOAD): {
   method: string;
   pathname: string;
@@ -95,6 +108,21 @@ function request(payload: Record<string, unknown> = BASE_PAYLOAD): {
   };
 }
 
+function receiptRequest(payload: Record<string, unknown> = {
+  tenantId: PEDRO_V3_PILOT_TENANT_ID,
+  agentId: PEDRO_V3_PILOT_AGENT_ID,
+  providerMessageId: "3EB0ABC123",
+  status: "Delivered",
+  occurredAt: "2026-06-28T12:00:05.000Z",
+}) {
+  return {
+    method: "POST",
+    pathname: "/v1/pilot/receipt",
+    authorization: `Bearer ${SECRET}`,
+    contentType: "application/json",
+    bodyText: JSON.stringify(payload),
+  };
+}
 function parsed(body: string): Record<string, unknown> {
   return JSON.parse(body) as Record<string, unknown>;
 }
@@ -179,6 +207,40 @@ await expectError(
   check("erro desconhecido e incerto e nao vaza detalhe", response.status === 500 && parsed(response.body).ingested === "unknown" && !response.body.includes("secret internal detail"));
 }
 
+{
+  const app = new PilotHttpApp(SECRET, new FakeRunner());
+  const response = await app.handle(receiptRequest());
+  check("receipt sem runner falha fechado", response.status === 503 && parsed(response.body).error === "receipt_runner_unavailable");
+}
+
+{
+  const receiptRunner = new FakeReceiptRunner();
+  const app = new PilotHttpApp(SECRET, new FakeRunner(), receiptRunner);
+  const invalidStatus = await app.handle(receiptRequest({
+    tenantId: PEDRO_V3_PILOT_TENANT_ID,
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+    providerMessageId: "3EB0ABC123",
+    status: "Sent",
+    occurredAt: "2026-06-28T12:00:05.000Z",
+  }));
+  const crossTenant = await app.handle(receiptRequest({
+    tenantId: "outro-tenant",
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+    providerMessageId: "3EB0ABC123",
+    status: "Delivered",
+    occurredAt: "2026-06-28T12:00:05.000Z",
+  }));
+  check("receipt aceita somente delivered/read", invalidStatus.status === 400 && receiptRunner.calls.length === 0);
+  check("receipt cross-tenant falha antes do runner", crossTenant.status === 403 && receiptRunner.calls.length === 0);
+
+  const delivered = await app.handle(receiptRequest());
+  check("receipt delivered autenticado chama runner", delivered.status === 200 && parsed(delivered.body).status === "applied" && receiptRunner.calls.length === 1);
+  check("receipt normaliza status e timestamp", receiptRunner.calls[0]?.status === "delivered" && receiptRunner.calls[0]?.occurredAt === "2026-06-28T12:00:05.000Z");
+
+  receiptRunner.error = new Error("database secret detail");
+  const failedReceipt = await app.handle(receiptRequest());
+  check("erro de receipt e sanitizado", failedReceipt.status === 503 && !failedReceipt.body.includes("database secret detail"));
+}
 class StalledBodyTransport implements GatewayHttpTransport {
   async fetch(_url: string, _init: RequestInit): Promise<Response> {
     return new Response(new ReadableStream<Uint8Array>({ start() { /* never closes */ } }), {

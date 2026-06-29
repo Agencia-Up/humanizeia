@@ -20,6 +20,7 @@ const RPC_ALLOWLIST = new Set([
   "v3_skip_outbox_guarded",
   "v3_fail_outbox_guarded",
   "v3_commit_effect_outcome",
+  "v3_find_outbox_by_provider_message_id",
 ]);
 
 const TABLE_ALLOWLIST = new Set([

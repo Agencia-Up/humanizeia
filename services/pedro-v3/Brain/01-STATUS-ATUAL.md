@@ -1,7 +1,7 @@
 # 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
-> Ultima atualizacao: 2026-06-28 - por Claude. **F2.5.4A.1 implementada (aguardando auditoria do Codex): correcoes dos bloqueadores P1/P2/P3 — matriz estrita de leitura (segredo so em platform_integrations/selectOne), canary com config-load real do agente, corpo limitado + projecao local, chave 100% privada. 397 OK | 0 FALHA.** (F2.5.4A reprovada por: allowlist ampla de segredo, canary sem vinculo ao agente, corpo ilimitado, header de chave publico.)
+> Ultima atualizacao: 2026-06-28 - por Claude. **F2.6H (receipt callback `messages_update`) auditada e finalizada, entregue para auditoria do Codex.** Endpoint `/v1/pilot/receipt` (bearer igual ao turno, escopo piloto exato, so delivered/read, runner real wirado), RPC tenant-scoped manual `v3_find_outbox_by_provider_message_id` (ambiguidade falha fechado), engine idempotente (accepted nao avanca / delivered avanca), Uazapi captura messageid+track_id, bridge v2 intercepta antes do fromMe + guarda seller. Gates: v3 `test:all` verde; `tsc` limpo; v2 offline **417 OK**; bundle webhook EXIT=0; scan limpo. Build webhook v221. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push.** (historico anterior abaixo.)
 
 ## Fase atual
 
@@ -562,3 +562,32 @@ Gates: Pedro v3 **579 OK | 0 FALHA**; Pedro v2 offline **414 OK | 0 FALHA**; Typ
 Auditoria encontrou bloqueador antes do active: Uazapi send retorna `accepted`, enquanto a memoria autoritativa so avanca com `delivered`. A especificacao oficial oferece `messages_update`, mas o callback ainda nao esta ligado. Para nao recriar repeticao de perguntas, `PEDRO_V3_PILOT_MODE` permanece `off` ate a F2.6H (receipt callback idempotente por providerMessageId). Audio sem texto, CRM-write, handoff, briefing e agenda tambem ainda nao entram no v3 ativo.
 
 Resultado: F2.6G APROVADA PARA PUSH/BUILD, NAO PARA ATIVACAO. Proxima fase obrigatoria: F2.6H.
+---
+
+## Atualizacao Claude - F2.6H (receipt callback messages_update) - 2026-06-28
+
+Claude auditou e finalizou a F2.6H (estava no working tree, nao commitada). Fecha o bloqueador do F2.6G:
+Uazapi devolve `accepted`, a memoria so avanca com `delivered`; agora o callback `messages_update` promove
+o outbox por `providerMessageId` de forma idempotente, sem reenviar. **Piloto continua OFF.**
+
+Verificado nos 6 requisitos (handoff `handoffs/2026-06-28-claude-f2.6h-receipt-callback.md`):
+- Endpoint `POST /v1/pilot/receipt` (`pilot-http-app.ts`): bearer igual ao turno (`timingSafeEqual`), escopo
+  piloto exato (403), so `delivered`/`read` (400), erros sanitizados, runner real wirado no `server.ts`.
+- SQL manual `Brain/sql/v3_f2_6h_receipt_patch.sql`: RPC tenant-scoped `v3_find_outbox_by_provider_message_id`,
+  ambiguidade falha fechado (`limit 2` + adapter `!==1`), `revoke public`/`grant service_role`.
+- Persistencia: `findOutboxByProviderMessageId` via RPC allowlist; `accepted` nao avanca, `delivered`/`read`
+  avanca idempotente (`provider-delivery-receipt.ts` com guarda `duplicate`; `commitEffectOutcome` CAS).
+- Uazapi sender: captura `messageid` + `track_id/track_source`; nao reenvia em duplicado.
+- Bridge v2: `messages_update` interceptado antes do `fromMe`; identidade hardcoded do piloto; nao inicia
+  conversa nova; nao-piloto ignorado; `callPedroV3ReceiptBridge` com timeout/anti-SSRF/sem token no retorno.
+  Correcao defensiva: guarda seller × message_update (nao polui inbox do vendedor).
+- Build webhook `v220` -> `2026-06-28-pedro-v3-delivery-receipt-v221`.
+
+Gates reais: v3 `test:all` EXIT=0; `tsc --noEmit` limpo; v2 offline **417 OK | 0 FALHA** (3 testes
+`v3-bridge` novos); bundle webhook esbuild EXIT=0; scan de segredos/dispatch limpo.
+
+Pendente p/ dono (pre-ativacao, fora desta rodada): rodar o SQL patch; ao conectar a instancia do Aloan,
+garantir `messages_update` no webhook (path moderno ja inclui; nao re-sync via `sync-uazapi-webhook`); ENV
+`PEDRO_V3_SERVICE_URL`/`PEDRO_V3_BRIDGE_SECRET`; rotacao da `service_role`. `PEDRO_V3_PILOT_MODE` segue OFF.
+
+Resultado: **F2.6H entregue para auditoria do Codex.** Sem deploy, sem `db push`, sem CRM/handoff/agenda.

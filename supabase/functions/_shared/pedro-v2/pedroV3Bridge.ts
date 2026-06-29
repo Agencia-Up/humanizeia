@@ -24,6 +24,23 @@ export type PedroV3BridgeBuildResult =
   | { ok: true; turn: PedroV3BridgeTurn }
   | { ok: false; reason: "not_pilot_identity" | "message_id_missing" | "phone_invalid" | "text_unsupported" };
 
+export type PedroV3DeliveryReceipt = {
+  tenantId: string;
+  agentId: string;
+  providerMessageId: string;
+  status: "delivered" | "read";
+  occurredAt: string;
+};
+
+export type PedroV3ReceiptBuildResult =
+  | { ok: true; receipt: PedroV3DeliveryReceipt }
+  | { ok: false; reason: "not_pilot_identity" | "not_message_update" | "provider_message_id_missing" | "status_ignored" };
+
+export type PedroV3ReceiptBridgeCallResult = {
+  kind: "accepted" | "uncertain";
+  httpStatus: number | null;
+  serviceStatus: string | null;
+};
 export type PedroV3BridgeCallResult = {
   kind: "accepted" | "pre_ingest_failure" | "uncertain";
   httpStatus: number | null;
@@ -55,6 +72,8 @@ function incomingMessageId(payload: any): string | null {
     payload?.id,
     payload?.data?.key?.id,
     payload?.data?.messageid,
+    payload?.data?.message?.key?.id,
+    payload?.data?.message?.messageid,
   ]);
 }
 
@@ -158,6 +177,49 @@ export async function buildPedroV3BridgeTurn(input: {
   };
 }
 
+function eventType(payload: any): string {
+  return String(payload?.EventType ?? payload?.eventType ?? payload?.event ?? payload?.type ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+export function buildPedroV3DeliveryReceipt(input: {
+  payload: any;
+  tenantId: string | null | undefined;
+  agentId: string | null | undefined;
+}): PedroV3ReceiptBuildResult {
+  if (!isPedroV3PilotIdentity(input)) return { ok: false, reason: "not_pilot_identity" };
+  const type = eventType(input.payload);
+  if (type !== "messages_update" && type !== "message_update" && type !== "messages.update") {
+    return { ok: false, reason: "not_message_update" };
+  }
+  const message = pickIncoming(input.payload);
+  const providerMessageId = incomingMessageId(input.payload);
+  if (!providerMessageId || providerMessageId.length > 240 || /\s/.test(providerMessageId)) {
+    return { ok: false, reason: "provider_message_id_missing" };
+  }
+  const rawStatus = String(
+    message?.status
+      ?? message?.update?.status
+      ?? input.payload?.status
+      ?? input.payload?.data?.status
+      ?? input.payload?.data?.message?.status
+      ?? "",
+  ).trim().toLowerCase();
+  if (rawStatus !== "delivered" && rawStatus !== "read") {
+    return { ok: false, reason: "status_ignored" };
+  }
+  return {
+    ok: true,
+    receipt: {
+      tenantId: PEDRO_V3_PILOT_TENANT_ID,
+      agentId: PEDRO_V3_PILOT_AGENT_ID,
+      providerMessageId,
+      status: rawStatus,
+      occurredAt: receivedAt(input.payload),
+    },
+  };
+}
 function parseServiceBody(value: unknown): { ingested: boolean | "unknown" | null; status: string | null } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { ingested: null, status: null };
@@ -180,11 +242,11 @@ export function classifyPedroV3BridgeResponse(httpStatus: number, body: unknown)
   return { kind: "uncertain", httpStatus, serviceStatus: parsed.status };
 }
 
-function serviceEndpoint(raw: string): string | null {
+function serviceEndpoint(raw: string, path: "/v1/pilot/turn" | "/v1/pilot/receipt"): string | null {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return null;
-    url.pathname = `${url.pathname.replace(/\/+$/, "")}/v1/pilot/turn`;
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}${path}`;
     return url.toString();
   } catch {
     return null;
@@ -197,7 +259,7 @@ export async function callPedroV3Bridge(input: {
   turn: PedroV3BridgeTurn;
   timeoutMs?: number;
 }): Promise<PedroV3BridgeCallResult> {
-  const endpoint = serviceEndpoint(input.serviceUrl);
+  const endpoint = serviceEndpoint(input.serviceUrl, "/v1/pilot/turn");
   if (!endpoint || typeof input.secret !== "string" || input.secret.trim().length < 32) {
     return { kind: "pre_ingest_failure", httpStatus: null, serviceStatus: "bridge_config_invalid" };
   }
@@ -225,6 +287,49 @@ export async function callPedroV3Bridge(input: {
     let body: unknown = null;
     try { body = text ? JSON.parse(text) : null; } catch { /* resposta invalida = incerta */ }
     return classifyPedroV3BridgeResponse(response.status, body);
+  } catch {
+    return { kind: "uncertain", httpStatus: null, serviceStatus: "network_or_timeout" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+export async function callPedroV3ReceiptBridge(input: {
+  serviceUrl: string;
+  secret: string;
+  receipt: PedroV3DeliveryReceipt;
+  timeoutMs?: number;
+}): Promise<PedroV3ReceiptBridgeCallResult> {
+  const endpoint = serviceEndpoint(input.serviceUrl, "/v1/pilot/receipt");
+  if (!endpoint || typeof input.secret !== "string" || input.secret.trim().length < 32) {
+    return { kind: "uncertain", httpStatus: null, serviceStatus: "bridge_config_invalid" };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? BRIDGE_TIMEOUT_MS);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.secret.trim()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input.receipt),
+      redirect: "error",
+      signal: controller.signal,
+    });
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+      return { kind: "uncertain", httpStatus: response.status, serviceStatus: "response_too_large" };
+    }
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+      return { kind: "uncertain", httpStatus: response.status, serviceStatus: "response_too_large" };
+    }
+    let body: unknown = null;
+    try { body = text ? JSON.parse(text) : null; } catch { /* invalid response remains uncertain */ }
+    const parsed = parseServiceBody(body);
+    return response.ok
+      ? { kind: "accepted", httpStatus: response.status, serviceStatus: parsed.status }
+      : { kind: "uncertain", httpStatus: response.status, serviceStatus: parsed.status };
   } catch {
     return { kind: "uncertain", httpStatus: null, serviceStatus: "network_or_timeout" };
   } finally {

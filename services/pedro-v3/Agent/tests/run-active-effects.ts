@@ -87,7 +87,7 @@ class FakeUazapiTransport implements UazapiHttpTransport {
       throw error;
     }
     if (this.throwError) throw new Error("SECRET-UAZAPI-TOKEN should not leak");
-    return this.responses.shift() ?? { ok: true, status: 200, json: { messageId: "uazapi-msg" } };
+    return this.responses.shift() ?? { ok: true, status: 200, json: { messageid: "uazapi-msg" } };
   }
 }
 
@@ -376,6 +376,7 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   check("uazapi", "destination normalization adds Brazil country code", normalizeUazapiDestination("(12) 99999-9999") === "5512999999999");
   check("uazapi", "text uses /send/text first", transport.calls[0]?.url === "https://api.uazapi.example/base/send/text", JSON.stringify(transport.calls));
   check("uazapi", "text body is compatible with Uazapi number endpoint", body.number === "5512999999999" && body.text === "Oi", JSON.stringify(body));
+  check("uazapi", "text carries stable tracking id for receipt correlation", body.track_source === "pedro_v3" && body.track_id === "idem-1", JSON.stringify(body));
   check("uazapi", "Uazapi HTTP OK is accepted, not delivered", result.ok && result.level === "accepted" && result.providerMessageId === "uazapi-msg", JSON.stringify(result));
   check("uazapi", "credential resolved only at send time", credentials.resolveCount === 1, String(credentials.resolveCount));
 }

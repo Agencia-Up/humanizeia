@@ -506,6 +506,28 @@ export class PostgresPersistence implements Persistence {
     }
   }
 
+  async findOutboxByProviderMessageId(providerMessageId: string): Promise<OutboxRecord | null> {
+    const normalized = typeof providerMessageId === "string" ? providerMessageId.trim() : "";
+    if (normalized.length < 1 || normalized.length > 240) {
+      throw new PostgresPersistenceError("findOutboxByProviderMessageId", "provider message id invalido");
+    }
+    const data = await this.gateway.rpc<JsonValue>("v3_find_outbox_by_provider_message_id", {
+      p_tenant_id: this.config.tenantId,
+      p_provider_message_id: normalized,
+    });
+    if (!Array.isArray(data)) {
+      throw new PostgresPersistenceError("findOutboxByProviderMessageId", "resposta invalida");
+    }
+    if (data.length === 0) return null;
+    if (data.length !== 1) {
+      throw new PostgresPersistenceError("findOutboxByProviderMessageId", "provider message id ambiguo");
+    }
+    const row = data[0];
+    if (row == null || Array.isArray(row) || typeof row !== "object") {
+      throw new PostgresPersistenceError("findOutboxByProviderMessageId", "linha invalida");
+    }
+    return decodeOutbox(row as DatabaseRow);
+  }
   begin(context: UnitOfWorkContext = {}): UnitOfWork {
     return new PostgresTurnUnitOfWork(this.gateway, this.config, context);
   }

@@ -7,6 +7,7 @@ import type { ComposeModelRequest, InterpretModelRequest, ProposeModelRequest, S
 import type { ProposedDecision, TenantCatalog } from "../src/domain/decision.ts";
 import type { TenantAgentRef } from "../src/domain/read-ports.ts";
 import type { TenantCatalogSource } from "../src/engine/turn-context-preparer.ts";
+import { applyProviderDeliveryReceipt } from "../src/engine/provider-delivery-receipt.ts";
 import { redact } from "../src/domain/effect-intent.ts";
 
 const TENANT_ID = "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0";
@@ -59,6 +60,24 @@ class TinyV2ReadDatabase implements V2ReadDatabase {
   }
 }
 
+class ReceiptMemoryPersistence extends InMemoryPersistence {
+  constructor(clock: FakeClock, idGen: FakeIdGen, private readonly receiptConversationId: string) {
+    super(clock, idGen);
+  }
+
+  async findOutboxByProviderMessageId(providerMessageId: string) {
+    const rows = await this.listOutbox(this.receiptConversationId);
+    const matches = rows.filter((row) => {
+      const receipt = row.providerReceipt;
+      return typeof receipt === "object"
+        && receipt !== null
+        && !Array.isArray(receipt)
+        && receipt.providerMessageId === providerMessageId;
+    });
+    if (matches.length > 1) throw new Error("provider_message_id_ambiguous");
+    return matches[0] ?? null;
+  }
+}
 class StaticCatalogSource implements TenantCatalogSource {
   async loadCatalog(_ref: TenantAgentRef): Promise<TenantCatalog> { return { entries: [] }; }
 }
@@ -195,7 +214,7 @@ await expectThrow(
 {
   const model = new ScriptedModel(replyProposal("t1", "Boa noite", "Oi, posso ajudar?"), "Oi, posso ajudar?");
   const { root, clock, transport } = await makeRoot({ model });
-  const persistence = new InMemoryPersistence(clock, new FakeIdGen());
+  const persistence = new ReceiptMemoryPersistence(clock, new FakeIdGen(), "conv-1");
   const result = await root.runTurn({
     persistence,
     conversationId: "conv-1",
@@ -215,6 +234,24 @@ await expectThrow(
   check("outbox fica accepted sem aplicar outcome delivered", outbox[0]?.status === "succeeded" && outbox[0].receiptLevel === "accepted" && outbox[0].outcomeAppliedAt === null, JSON.stringify(outbox[0]));
   check("memoria registra lead mas nao inventa entrega do agente em accepted", state?.state.recentTurns.some((t) => t.role === "lead" && t.text === "Boa noite") === true && state.state.recentTurns.every((t) => !(t.role === "agent" && t.text === "Oi, posso ajudar?")), JSON.stringify(state?.state.recentTurns));
   check("prompt do portal chega ao modelo", model.interpretCalls[0]?.binding.systemPrompt === "Voce e o Aloan.", JSON.stringify(model.interpretCalls[0]?.binding));
+
+  const delivered = await applyProviderDeliveryReceipt({
+    persistence,
+    clock,
+    receipt: { providerMessageId: "wa-msg-1", status: "delivered", at: NOW },
+  });
+  const deliveredState = await persistence.load("conv-1");
+  const deliveredVersion = deliveredState?.version;
+  check("messages_update delivered aplica outcome sem reenviar", delivered.status === "applied" && transport.calls.length === 1, JSON.stringify({ delivered, calls: transport.calls.length }));
+  check("delivery callback grava a fala do agente na memoria", deliveredState?.state.recentTurns.some((turn) => turn.role === "agent" && turn.text === "Oi, posso ajudar?") === true, JSON.stringify(deliveredState?.state.recentTurns));
+
+  const repeatedDelivery = await applyProviderDeliveryReceipt({
+    persistence,
+    clock,
+    receipt: { providerMessageId: "wa-msg-1", status: "read", at: NOW },
+  });
+  const repeatedState = await persistence.load("conv-1");
+  check("callback duplicado/read e idempotente", repeatedDelivery.status === "duplicate" && repeatedState?.version === deliveredVersion && transport.calls.length === 1, JSON.stringify({ repeatedDelivery, version: repeatedState?.version }));
 
   const dup = await root.runTurn({
     persistence,

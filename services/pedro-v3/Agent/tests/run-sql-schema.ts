@@ -114,6 +114,10 @@ async function main(): Promise<void> {
   const outboxPatchSql = await readFile(outboxPatchUrl, "utf8");
   await db.exec(outboxPatchSql);
   check("patch F2.5.1 executa integralmente em PostgreSQL", true);
+  const receiptPatchUrl = new URL("../../Brain/sql/v3_f2_6h_receipt_patch.sql", import.meta.url);
+  const receiptPatchSql = await readFile(receiptPatchUrl, "utf8");
+  await db.exec(receiptPatchSql);
+  check("patch F2.6H executa integralmente em PostgreSQL", true);
 
   await db.query("insert into auth.users(id) values ($1::uuid)", [TENANT]);
 
@@ -220,6 +224,17 @@ async function main(): Promise<void> {
       && accepted.rows[0].outcome_applied_at === null
       && accepted.rows[0].terminal_at === null,
   );
+  const locatedByProvider = await db.query<{ effect_id: string }>(`
+    select effect_id from public.v3_find_outbox_by_provider_message_id($1::uuid, $2)
+  `, [TENANT, "msg-1"]);
+  const crossTenantProvider = await db.query<{ effect_id: string }>(`
+    select effect_id from public.v3_find_outbox_by_provider_message_id($1::uuid, $2)
+  `, ["22222222-2222-4222-8222-222222222222", "msg-1"]);
+  check("providerMessageId localiza um unico outbox do tenant", locatedByProvider.rows.length === 1 && locatedByProvider.rows[0].effect_id === EFFECT);
+  check("providerMessageId nunca cruza tenant", crossTenantProvider.rows.length === 0);
+  await expectReject("providerMessageId vazio falha fechado", () => db.query(`
+    select effect_id from public.v3_find_outbox_by_provider_message_id($1::uuid, '')
+  `, [TENANT]), "v3_provider_message_id_invalid");
 
   await db.query(`
     select public.v3_record_outbox_result(

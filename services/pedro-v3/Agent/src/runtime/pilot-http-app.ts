@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { PilotActiveTurnResult } from "../engine/pilot-active-root.ts";
+import type { ProviderDeliveryResult } from "../engine/provider-delivery-receipt.ts";
 import {
   PEDRO_V3_PILOT_AGENT_ID,
   PEDRO_V3_PILOT_TENANT_ID,
@@ -40,6 +41,18 @@ export type PilotTurnPayload = {
 
 export interface PilotTurnRunner {
   run(payload: PilotTurnPayload): Promise<PilotActiveTurnResult>;
+}
+
+export type PilotReceiptPayload = {
+  readonly tenantId: string;
+  readonly agentId: string;
+  readonly providerMessageId: string;
+  readonly status: "delivered" | "read";
+  readonly occurredAt: string;
+};
+
+export interface PilotReceiptRunner {
+  applyReceipt(payload: PilotReceiptPayload): Promise<ProviderDeliveryResult>;
 }
 
 export class PilotTurnRuntimeError extends Error {
@@ -133,10 +146,41 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
   };
 }
 
+function parseReceiptPayload(bodyText: string): PilotReceiptPayload | null {
+  if (Buffer.byteLength(bodyText, "utf8") > MAX_BODY_BYTES) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bodyText) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isObject(raw)) return null;
+  const tenantId = readString(raw.tenantId);
+  const agentId = readString(raw.agentId);
+  const providerMessageId = readString(raw.providerMessageId);
+  const occurredAt = readString(raw.occurredAt);
+  const normalizedStatus = readString(raw.status)?.toLowerCase();
+  if (
+    !tenantId
+    || !agentId
+    || !providerMessageId
+    || !occurredAt
+    || (normalizedStatus !== "delivered" && normalizedStatus !== "read")
+  ) return null;
+  if (/\s/.test(providerMessageId) || providerMessageId.length > 240) return null;
+  if (!Number.isFinite(Date.parse(occurredAt))) return null;
+  return {
+    tenantId,
+    agentId,
+    providerMessageId,
+    status: normalizedStatus,
+    occurredAt: new Date(occurredAt).toISOString(),
+  };
+}
 export class PilotHttpApp {
   readonly #secretDigest: Buffer;
 
-  constructor(secret: string, private readonly runner: PilotTurnRunner) {
+  constructor(secret: string, private readonly runner: PilotTurnRunner, private readonly receiptRunner?: PilotReceiptRunner) {
     if (typeof secret !== "string" || secret.trim().length < 32) {
       throw new PilotHttpConfigError("BRIDGE_SECRET_INVALID");
     }
@@ -147,7 +191,10 @@ export class PilotHttpApp {
     if (request.method === "GET" && request.pathname === "/health") {
       return json(200, { ok: true, service: "pedro-v3", mode: "pilot" });
     }
-    if (request.method !== "POST" || request.pathname !== "/v1/pilot/turn") {
+    if (
+      request.method !== "POST"
+      || (request.pathname !== "/v1/pilot/turn" && request.pathname !== "/v1/pilot/receipt")
+    ) {
       return json(404, { ok: false, error: "not_found", ingested: false });
     }
     if (!authorized(request.authorization, this.#secretDigest)) {
@@ -157,6 +204,20 @@ export class PilotHttpApp {
       return json(415, { ok: false, error: "content_type_invalid", ingested: false });
     }
 
+    if (request.pathname === "/v1/pilot/receipt") {
+      const receipt = parseReceiptPayload(request.bodyText ?? "");
+      if (!receipt) return json(400, { ok: false, error: "receipt_payload_invalid" });
+      if (!isPedroV3PilotScope({ tenantId: receipt.tenantId, agentId: receipt.agentId })) {
+        return json(403, { ok: false, error: "pilot_scope_denied" });
+      }
+      if (!this.receiptRunner) return json(503, { ok: false, error: "receipt_runner_unavailable" });
+      try {
+        const result = await this.receiptRunner.applyReceipt(receipt);
+        return json(200, { ok: true, status: result.status });
+      } catch {
+        return json(503, { ok: false, error: "receipt_runtime_failed" });
+      }
+    }
     const payload = parsePayload(request.bodyText ?? "");
     if (!payload) return json(400, { ok: false, error: "payload_invalid", ingested: false });
     if (!isPedroV3PilotScope(payload)) {

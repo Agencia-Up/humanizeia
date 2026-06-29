@@ -3,6 +3,7 @@ import { PostgresPersistence } from "../adapters/persistence/postgres-store.ts";
 import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-database.ts";
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot } from "../engine/pilot-active-root.ts";
+import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
 import { createOpenAiModelFactory, OpenAiRuntimeSecret } from "../engine/openai-canary-root.ts";
 import { RealClock } from "./real-clock.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
@@ -11,6 +12,8 @@ import {
   PilotHttpApp,
   PilotTurnRuntimeError,
   type PilotHttpResponse,
+  type PilotReceiptPayload,
+  type PilotReceiptRunner,
   type PilotTurnPayload,
   type PilotTurnRunner,
 } from "./pilot-http-app.ts";
@@ -49,7 +52,7 @@ function supabaseHost(url: string): string {
   return parsed.hostname.toLowerCase();
 }
 
-class ProductionPilotRunner implements PilotTurnRunner {
+class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #supabaseUrl: string;
   readonly #serviceRoleKey: string;
   readonly #openAiKey: string;
@@ -65,6 +68,29 @@ class ProductionPilotRunner implements PilotTurnRunner {
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
   }
 
+  async applyReceipt(payload: PilotReceiptPayload) {
+    const host = supabaseHost(this.#supabaseUrl);
+    const gateway = new SupabaseServiceGateway({
+      url: this.#supabaseUrl,
+      serviceRoleKey: this.#serviceRoleKey,
+      allowedHosts: [host],
+      timeoutMs: 20_000,
+      maxResponseBytes: 8 * 1024 * 1024,
+    });
+    const persistence = new PostgresPersistence(gateway, {
+      tenantId: payload.tenantId,
+      clock: this.#clock,
+    });
+    return applyProviderDeliveryReceipt({
+      persistence,
+      clock: this.#clock,
+      receipt: {
+        providerMessageId: payload.providerMessageId,
+        status: payload.status,
+        at: payload.occurredAt,
+      },
+    });
+  }
   async run(payload: PilotTurnPayload) {
     const host = supabaseHost(this.#supabaseUrl);
     const readDb = SupabaseReadOnlyDatabase.create({
@@ -165,7 +191,8 @@ function send(response: ServerResponse, result: PilotHttpResponse): void {
 const port = Number(process.env.PORT ?? "3000");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RuntimeConfigError("ENV_PORT_INVALID");
 
-const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), new ProductionPilotRunner());
+const runtime = new ProductionPilotRunner();
+const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime);
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");

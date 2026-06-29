@@ -78,7 +78,7 @@ export function normalizeUazapiDestination(value: string): string | null {
 function safeIdFromResponse(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
-  for (const key of ["messageId", "message_id", "id", "key"]) {
+  for (const key of ["messageid", "messageId", "message_id", "id", "key"]) {
     const raw = record[key];
     if (typeof raw === "string" && raw.trim().length > 0 && raw.length <= 160) return raw;
   }
@@ -141,11 +141,11 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
     if (typeof input.text !== "string" || input.text.trim().length === 0) return validationFailure("missing_text");
 
     const attempts: { readonly url: string; readonly body: Record<string, unknown> }[] = [
-      { url: this.url("/send/text"), body: { number: destination, text: input.text } },
-      { url: this.url("/send/text"), body: { remoteJid: `${destination}@s.whatsapp.net`, text: input.text } },
+      { url: this.url("/send/text"), body: { number: destination, text: input.text, track_source: "pedro_v3", track_id: input.idempotencyKey } },
+      { url: this.url("/send/text"), body: { remoteJid: `${destination}@s.whatsapp.net`, text: input.text, track_source: "pedro_v3", track_id: input.idempotencyKey } },
     ];
     if (this.#instanceName) {
-      attempts.push({ url: this.url(`/message/sendText/${encodeURIComponent(this.#instanceName)}`), body: { number: destination, text: input.text } });
+      attempts.push({ url: this.url(`/message/sendText/${encodeURIComponent(this.#instanceName)}`), body: { number: destination, text: input.text, track_source: "pedro_v3", track_id: input.idempotencyKey } });
     }
 
     let last: WhatsAppSendResult = failure("uazapi_http_failure", true);
@@ -169,6 +169,8 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
       file: input.url,
       type: "image",
       caption: "",
+      track_source: "pedro_v3",
+      track_id: input.idempotencyKey,
     });
   }
 

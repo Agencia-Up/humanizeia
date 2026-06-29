@@ -327,6 +327,22 @@ async function main(): Promise<void> {
     check("outcome commit decodifica versao e applied", result.ok && result.stateVersion === 2 && result.applied === true);
     check("outcome commit envia CAS e estado para RPC atomica", call.name === "v3_commit_effect_outcome" && call.args.p_expected_version === 1 && call.args.p_effect_id === "t1:message" && call.args.p_next_state != null);
   }
+  {
+    const gateway = new ScriptedGateway();
+    const acceptedRecord: OutboxRecord = {
+      ...outbox(),
+      status: "succeeded",
+      receiptLevel: "accepted",
+      providerReceipt: { effectId: "t1:message", level: "accepted", at: NOW, providerMessageId: "3EB0ABC123" },
+    };
+    gateway.queueRpc("v3_find_outbox_by_provider_message_id", [outboxRow(acceptedRecord)]);
+    const persistence = store(gateway);
+    const found = await persistence.findOutboxByProviderMessageId("3EB0ABC123");
+    check("providerMessageId usa RPC tenant-scoped", found?.effectId === acceptedRecord.effectId && gateway.rpcCalls[0].args.p_tenant_id === TENANT && gateway.rpcCalls[0].args.p_provider_message_id === "3EB0ABC123");
+
+    gateway.queueRpc("v3_find_outbox_by_provider_message_id", [outboxRow(acceptedRecord), outboxRow({ ...acceptedRecord, effectId: "t2:message", idempotencyKey: "t2:message", turnId: "t2" })]);
+    await expectReject("providerMessageId ambiguo falha fechado", () => persistence.findOutboxByProviderMessageId("3EB0ABC123"), "ambiguo");
+  }
   console.log(`\n=== POSTGRES ADAPTER: ${ok} OK | ${failed} FALHA ===`);
   if (failed > 0) process.exitCode = 1;
 }

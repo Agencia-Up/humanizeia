@@ -79,7 +79,7 @@ import {
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion, buildLastStockOffer, stockOfferVehicleKey, resolvePresentedVehicleReference } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
 import { evaluatePedroV3Pilot, normalizePedroV3PilotMode, PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../../supabase/functions/_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, classifyPedroV3BridgeResponse } from "../../supabase/functions/_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, classifyPedroV3BridgeResponse } from "../../supabase/functions/_shared/pedro-v2/pedroV3Bridge.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -180,6 +180,27 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("v3-bridge", "commit aceito encerra roteamento v2", accepted.kind === "accepted", JSON.stringify(accepted));
   check("v3-bridge", "commit_failed apos ingestao nunca duplica no v2", commitFailed.kind === "uncertain", JSON.stringify(commitFailed));
   check("v3-bridge", "resposta malformada e incerta e nunca dispara fallback", malformed.kind === "uncertain", JSON.stringify(malformed));
+  const deliveredReceipt = buildPedroV3DeliveryReceipt({
+    payload: {
+      event: "messages_update",
+      message: { messageid: "3EB0ABC123", status: "Delivered", messageTimestamp: 1_782_687_605 },
+    },
+    tenantId: PEDRO_V3_PILOT_TENANT_ID,
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+  });
+  const sentReceipt = buildPedroV3DeliveryReceipt({
+    payload: { event: "messages_update", message: { messageid: "3EB0ABC123", status: "Sent" } },
+    tenantId: PEDRO_V3_PILOT_TENANT_ID,
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+  });
+  const foreignReceipt = buildPedroV3DeliveryReceipt({
+    payload: { event: "messages_update", message: { messageid: "3EB0ABC123", status: "Read" } },
+    tenantId: "outro-tenant",
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+  });
+  check("v3-bridge", "messages_update Delivered gera receipt tipado", deliveredReceipt.ok && deliveredReceipt.receipt.status === "delivered" && deliveredReceipt.receipt.providerMessageId === "3EB0ABC123", JSON.stringify(deliveredReceipt));
+  check("v3-bridge", "status Sent nao promove memoria entregue", !sentReceipt.ok && sentReceipt.reason === "status_ignored", JSON.stringify(sentReceipt));
+  check("v3-bridge", "receipt de outro tenant nunca chega ao v3", !foreignReceipt.ok && foreignReceipt.reason === "not_pilot_identity", JSON.stringify(foreignReceipt));
 }
 // ── BUSCA (rankVehicles) — onde mais nasceram bugs ──────────────────────────
 {

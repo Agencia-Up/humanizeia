@@ -10,10 +10,10 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, callPedroV3Bridge } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-28-pedro-v3-active-bridge-v220";
+const PEDRO_V2_BUILD = "2026-06-28-pedro-v3-delivery-receipt-v221";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -59,6 +59,10 @@ function getEventType(payload: any): string {
   ).toLowerCase();
 }
 
+function isMessageUpdateEvent(payload: any): boolean {
+  const eventType = getEventType(payload);
+  return eventType === "messages_update" || eventType === "message_update" || eventType === "messages.update";
+}
 function isConnectionEvent(payload: any): boolean {
   const eventType = getEventType(payload);
   if (!eventType) return false;
@@ -171,8 +175,11 @@ Deno.serve(async (req) => {
   const instanceName =
     payload?.instanceName ||
     payload?.instance_name ||
+    payload?.instance?.name ||
+    payload?.instance?.instanceName ||
     payload?.instance ||
     payload?.data?.instanceName ||
+    payload?.data?.instance?.name ||
     payload?.data?.instance ||
     null;
 
@@ -189,12 +196,6 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: "active_instance_not_found" }, 404);
   }
 
-  // fromMe: nas instâncias do AGENTE ignoramos os próprios envios (a IA não reage ao
-  // que foi enviado pela própria linha). Nas instâncias de VENDEDOR NÃO ignoramos —
-  // o ramo abaixo grava a resposta do vendedor (outgoing) p/ o gerente auditar.
-  if (isOutgoingMessage(payload) && !waInstance.seller_member_id) {
-    return jsonResponse({ ok: true, ignored: "from_me" });
-  }
 
   // ── HARD RULE: a seller's number is NEVER answered by the AI ────────────────
   // Only the master's configured number (the instance linked inside the AI agent)
@@ -213,6 +214,12 @@ Deno.serve(async (req) => {
   // FIX: Embora a IA nunca responda, precisamos registrar as mensagens que passam
   // por aqui na tabela wa_inbox para que o Inbox do Vendedor no portal funcione.
   if (waInstance.seller_member_id) {
+    // F2.6H: delivery receipts (messages_update) are status callbacks, NEVER real inbound
+    // messages. Skip them on seller lines so enabling messages_update never pollutes the
+    // seller inbox with empty entries (sem quebrar v2).
+    if (isMessageUpdateEvent(payload)) {
+      return jsonResponse({ ok: true, ignored: "message_update", build: PEDRO_V2_BUILD });
+    }
     try {
       const inMsg = pickIncomingMessage(payload);
 
@@ -344,6 +351,40 @@ Deno.serve(async (req) => {
     console.log(
       `[pedro-v3-pilot] matched tenant=${agent.user_id} agent=${agent.id} mode=${pedroV3Pilot.mode}`,
     );
+  }
+  // Uazapi delivery callback. It is never a lead message and must never start a
+  // v2/v3 conversational turn. Only the exact active pilot may promote receipts.
+  if (isMessageUpdateEvent(payload)) {
+    if (pedroV3Pilot.enabled && pedroV3Pilot.mode === "active") {
+      const receipt = buildPedroV3DeliveryReceipt({
+        payload,
+        tenantId: (agent as any)?.user_id,
+        agentId: (agent as any)?.id,
+      });
+      const receiptWaitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
+      if (receipt.ok && typeof receiptWaitUntil === "function") {
+        const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
+        const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
+        receiptWaitUntil(callPedroV3ReceiptBridge({
+          serviceUrl,
+          secret: bridgeSecret,
+          receipt: receipt.receipt,
+        }).then((result) => {
+          console.log(`[pedro-v3-receipt] result=${result.kind} status=${result.httpStatus ?? "none"}`);
+        }).catch(() => {
+          console.error("[pedro-v3-receipt] unexpected_uncertain");
+        }));
+        return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_receipt", build: PEDRO_V2_BUILD });
+      }
+      console.warn(`[pedro-v3-receipt] ignored reason=${receipt.ok ? "wait_until_unavailable" : receipt.reason}`);
+    }
+    return jsonResponse({ ok: true, ignored: "message_update", build: PEDRO_V2_BUILD });
+  }
+
+  // fromMe on the AI instance is ignored only after message_update receipts had
+  // the chance to be reconciled. Seller instances were handled above.
+  if (isOutgoingMessage(payload)) {
+    return jsonResponse({ ok: true, ignored: "from_me" });
   }
 
 
