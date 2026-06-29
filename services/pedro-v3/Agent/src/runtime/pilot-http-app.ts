@@ -72,6 +72,15 @@ export class PilotHttpConfigError extends Error {
   }
 }
 
+function sanitizeRuntimeReason(value: unknown): string {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : "unknown";
+  return raw
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]")
+    .replace(/sk-[a-z0-9._-]+/gi, "[redacted]")
+    .replace(/[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}/gi, "[redacted-jwt]")
+    .slice(0, 240);
+}
 function json(status: number, value: Record<string, unknown>): PilotHttpResponse {
   return {
     status,
@@ -236,7 +245,13 @@ export class PilotHttpApp {
         return json(200, { ok: true, status: "duplicate", ingested: true, dispatched: 0 });
       }
       if (result.status === "commit_failed") {
-        return json(503, { ok: false, status: result.status, ingested: true, dispatched: result.dispatched });
+        return json(503, {
+          ok: false,
+          status: result.status,
+          ingested: true,
+          dispatched: result.dispatched,
+          reason: result.engine.status === "commit_failed" ? sanitizeRuntimeReason(result.engine.reason) : "unknown",
+        });
       }
       return json(200, {
         ok: true,

@@ -55,10 +55,18 @@ const BASE_PAYLOAD: PilotTurnPayload = {
 };
 
 function committed(status: "committed" | "commit_failed" | "no_op" = "committed"): PilotActiveTurnResult {
+  const engine = status === "commit_failed"
+    ? {
+        status: "commit_failed" as const,
+        turnId: BASE_PAYLOAD.turnId,
+        claimedEventIds: [BASE_PAYLOAD.eventId],
+        reason: "decision mutations rejected: Bearer secret-token at https://example.test/path sk-testsecret",
+      }
+    : { status } as never;
   return {
     status,
     inserted: true,
-    engine: { status } as never,
+    engine,
     outboxBeforeDispatch: [],
     outboxAfterDispatch: [],
     dispatched: status === "committed" ? 1 : 0,
@@ -186,7 +194,8 @@ await expectError(
   runner.result = committed("commit_failed");
   const app = new PilotHttpApp(SECRET, runner);
   const response = await app.handle(request());
-  check("commit_failed nunca autoriza fallback v2", response.status === 503 && parsed(response.body).ingested === true);
+  const body = parsed(response.body);
+  check("commit_failed expõe motivo sanitizado para diagnostico", response.status === 503 && body.ingested === true && body.reason === "decision mutations rejected: Bearer [redacted] at [url] [redacted]", response.body);
 }
 
 {
