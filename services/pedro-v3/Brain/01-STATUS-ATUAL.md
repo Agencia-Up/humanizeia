@@ -1,7 +1,7 @@
 # 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
-> Ultima atualizacao: 2026-06-28 - por Claude. **F2.6J (chave OpenAI BYOK por tenant) entregue para auditoria.** Removida a env global `OPENAI_API_KEY` do servico; a chave OpenAI agora e resolvida POR TENANT via Vault/RPC `get_client_ai_key` (mesma do v2), sem fallback global, fail-closed, sem vazar (so embrulhada em `OpenAiRuntimeSecret`). Gates: `test:all` EXIT=0 (+18 adversariais), `tsc` limpo, offline v2 **417 OK**. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Anteriores: F2.6H APROVADA (c1f216b7; SQL index_ok/function_ok=true); F2.6I prep (BLOQUEIO factual: Aloan `instance_id`=NULL -> instancia real `6476a393`; dono seta). Pre-ativacao pendente: tenant com chave OpenAI no perfil, `instance_id`, `messages_update`, ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
+> Ultima atualizacao: 2026-06-29 - por Claude. **F2.6K (grandfather BYOK + chave da plataforma) entregue para auditoria.** v3 com o MESMO 3-tier do v2: client key propria -> grandfathered usa chave da PLATAFORMA (Vault, nova RPC `get_platform_ai_key`) -> conta nova fail-closed. `BYOK_GRANDFATHER_CUTOFF=2026-06-16T03:00:00Z` (igual v2); grandfather le `profiles.created_at` fail-open. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Gates: `test:all` EXIT=0 (+26 adversariais), `tsc` limpo, offline v2 **417 OK**. **PASSO MANUAL DO DONO**: rodar `Brain/sql/v3_f2_6k_platform_ai_key.sql` + cadastrar secret `platform_openai_api_key` no Vault (mesma chave do v2). Anteriores: F2.6H APROVADA (c1f216b7); F2.6I prep (Aloan `instance_id`=NULL -> instancia real `6476a393`); F2.6J BYOK por tenant. Pre-ativacao pendente: secret platform no Vault + `instance_id` + `messages_update` + ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
 
 ## Fase atual
 
@@ -642,3 +642,28 @@ Pre-requisito pre-ativacao: o tenant piloto precisa ter chave OpenAI cadastrada 
 `get_client_ai_key(ecb26258,'openai')` nao-vazio. Handoff `handoffs/2026-06-28-claude-f2.6j-byok-openai-por-tenant.md`.
 
 Resultado: **F2.6J entregue para auditoria do Codex.** `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.
+---
+
+## Atualizacao Claude - F2.6K (grandfather BYOK + chave da plataforma) - 2026-06-29
+
+Bloqueador (dono/Codex): a conta piloto NAO tem chave OpenAI propria — usa a da PLATAFORMA (grandfathered),
+como Bruno/Wander. A F2.6J deixou o v3 so com `get_client_ai_key` -> quebraria contas grandfathered.
+
+Correcao: mesmo 3-tier do v2 (`_shared/aiKeys.ts`) no resolver `tenant-openai-key.ts`:
+1. client key propria (`get_client_ai_key`); 2. GRANDFATHERED sem propria -> chave da PLATAFORMA; 3. nova
+sem propria -> fail-closed. `BYOK_GRANDFATHER_CUTOFF=2026-06-16T03:00:00Z` (mesma do v2); grandfather le
+`profiles.created_at` com **fail-open** (igual `isAccountGrandfathered`).
+
+Caminho backend SEGURO da chave da plataforma (sem env no EasyPanel): nova RPC service-role
+`get_platform_ai_key(p_provider)` lendo do **Vault** (`vault.decrypted_secrets`) — SQL MANUAL em
+`Brain/sql/v3_f2_6k_platform_ai_key.sql` (nao executado). Gateway: allowlist + RPC `get_platform_ai_key`
+e tabela `profiles` (so `created_at`). Chave nunca em env/log/estado/outbox/erro/JSON (so via `materialize`).
+
+Gates: `test:all` EXIT=0 (+ `TENANT OPENAI KEY: 26 OK` adversariais, incl. fail-open de profile, cross-tenant,
+boundary do cutoff, no-leak client+platform); `tsc` limpo; offline v2 **417 OK**; bundle N/A; scan limpo.
+
+PASSO MANUAL DO DONO (pre-ativacao): rodar `v3_f2_6k_platform_ai_key.sql` + cadastrar o secret
+`platform_openai_api_key` no Vault (a mesma chave do `OPENAI_API_KEY` do v2). Sem isso, conta grandfathered
+cai em fail-closed (degrada pro v2). Handoff `handoffs/2026-06-29-claude-f2.6k-grandfather-platform-key.md`.
+
+Resultado: **F2.6K entregue para auditoria do Codex.** `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.

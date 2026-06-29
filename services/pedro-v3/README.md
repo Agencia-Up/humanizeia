@@ -20,10 +20,16 @@ Variaveis obrigatorias:
 - `PEDRO_V3_OPENAI_MODEL=gpt-4.1-mini`
 - `PEDRO_V3_ALLOWED_UAZAPI_HOSTS` com os hosts HTTPS permitidos, separados por virgula
 
-> **NAO** configurar `OPENAI_API_KEY` no EasyPanel (F2.6J). A chave OpenAI e BYOK: vem do perfil
-> do tenant (Vault, via `get_client_ai_key` service-role), resolvida por tenant em cada turno — igual
-> ao Pedro v2. Sem chave valida do tenant, o turno falha fechado (sem chave global, sem mensagem dupla).
-> `PEDRO_V3_OPENAI_MODEL` continua sendo so o NOME do modelo (default/override), nao a credencial.
+> **NAO** configurar `OPENAI_API_KEY` no EasyPanel. A chave OpenAI e BYOK (F2.6J/K), MESMO comportamento
+> do Pedro v2, resolvida por tenant em cada turno via service-role:
+> 1. chave PROPRIA do cliente (Vault, `get_client_ai_key`);
+> 2. conta GRANDFATHERED (criada ate 2026-06-16T03:00:00Z) sem chave propria usa a chave da PLATAFORMA
+>    (Vault, `get_platform_ai_key`) — exige o patch `Brain/sql/v3_f2_6k_platform_ai_key.sql` + o secret
+>    `platform_openai_api_key` cadastrado no Vault pelo dono;
+> 3. conta NOVA sem chave propria falha fechado (sem chave global, sem mensagem dupla).
+>
+> Nenhuma chave OpenAI vem de env do container. `PEDRO_V3_OPENAI_MODEL` e so o NOME do modelo (default/
+> override), nunca a credencial.
 
 Nao habilite o roteamento ativo no webhook antes de o health check estar verde.
 No webhook v2, configure a mesma chave em `PEDRO_V3_BRIDGE_SECRET`, a URL HTTPS do

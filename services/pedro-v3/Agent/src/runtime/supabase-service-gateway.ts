@@ -23,12 +23,16 @@ const RPC_ALLOWLIST = new Set([
   "v3_find_outbox_by_provider_message_id",
   // BYOK (F2.6J): chave OpenAI do tenant via Vault, mesma RPC service-role do v2 (aiKeys.ts).
   "get_client_ai_key",
+  // BYOK grandfather (F2.6K): chave da PLATAFORMA via Vault (so conta grandfathered usa). service-role.
+  "get_platform_ai_key",
 ]);
 
 const TABLE_ALLOWLIST = new Set([
   "v3_inbox",
   "v3_conversation_state",
   "v3_effect_outbox",
+  // BYOK grandfather (F2.6K): leitura de profiles.created_at p/ decidir grandfathered (fail-open).
+  "profiles",
 ]);
 
 const DEFAULT_TIMEOUT_MS = 15_000;
