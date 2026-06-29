@@ -75,7 +75,11 @@ export class SupabaseServiceGatewayError extends Error {
 function encodeFilter(value: JsonValue): string {
   if (value === null) return "is.null";
   if (typeof value === "object") throw new SupabaseServiceGatewayError("OPERATION_NOT_ALLOWED");
-  return `eq.${encodeURIComponent(String(value))}`;
+  // NAO pre-encodar: o valor entra num URLSearchParams (selectMany/count) que JA encoda uma vez no
+  // toString(). encodeURIComponent aqui causava DOUBLE-ENCODING (ex.: event_id "uazapi:hash" -> "%3A"
+  // -> URLSearchParams re-encoda "%" -> "%253A"), e o PostgREST nao casava ids com ":" -> get() = null
+  // -> "claimed inbox record missing" (bug F2.6N). O valor cru deixa o URLSearchParams encodar uma vez so.
+  return `eq.${String(value)}`;
 }
 
 function isObject(value: unknown): value is DatabaseRow {

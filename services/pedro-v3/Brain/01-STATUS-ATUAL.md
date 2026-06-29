@@ -1,7 +1,7 @@
 # 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
-> Ultima atualizacao: 2026-06-29 - por Claude. **F2.6L (observabilidade da falha de turno) entregue.** Diagnostico do "v3 nao responde": (a) AGORA `PEDRO_V3_PILOT_MODE` nao esta `active` (teste real -> v2, 0 evento novo no v3_inbox); (b) quando esteve active, o turno falha DEPOIS do ingest (5 eventos pending/attempts=5/outbox=0). **Chave OpenAI da plataforma TESTADA e VALIDA** (GET /models 200 + chat gpt-4.1-mini 200) -> descartada; falha e runtime. F2.6L grava o motivo sanitizado em `v3_inbox.last_error` (sanitize-error.ts + RPC `v3_record_inbox_error` + server.ts) p/ diagnosticar pelo banco. **PASSOS DO DONO**: rodar `Brain/sql/v3_f2_6l_inbox_error.sql` + redeploy do servico v3 + `PEDRO_V3_PILOT_MODE=active` + avisar -> leio o last_error -> corrijo a raiz. Gates: test:all EXIT=0, tsc limpo, offline v2 418 OK. Anteriores: F2.6H APROVADA; F2.6I/J/K (instance_id `6476a393`, BYOK por tenant, grandfather/plataforma). **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.) v3 com o MESMO 3-tier do v2: client key propria -> grandfathered usa chave da PLATAFORMA (Vault, nova RPC `get_platform_ai_key`) -> conta nova fail-closed. `BYOK_GRANDFATHER_CUTOFF=2026-06-16T03:00:00Z` (igual v2); grandfather le `profiles.created_at` fail-open. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Gates: `test:all` EXIT=0 (+26 adversariais), `tsc` limpo, offline v2 **417 OK**. **PASSO MANUAL DO DONO**: rodar `Brain/sql/v3_f2_6k_platform_ai_key.sql` + cadastrar secret `platform_openai_api_key` no Vault (mesma chave do v2). Anteriores: F2.6H APROVADA (c1f216b7); F2.6I prep (Aloan `instance_id`=NULL -> instancia real `6476a393`); F2.6J BYOK por tenant. Pre-ativacao pendente: secret platform no Vault + `instance_id` + `messages_update` + ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
+> Ultima atualizacao: 2026-06-29 - por Claude. **F2.6N: ROOT CAUSE do "v3 nao responde" achado e corrigido.** Era DOUBLE-ENCODING no `SupabaseServiceGateway.encodeFilter` (`encodeURIComponent` + `URLSearchParams` re-encodava -> `event_id` "uazapi:hash" virava "%253A" -> `get()` nao casava -> "claimed inbox record missing" -> turno falhava sempre -> fallback v2). Fix: `encodeFilter` retorna valor CRU (URLSearchParams encoda 1x). Teste `run-gateway-filter.ts` (5). Gates: test:all EXIT=0, tsc limpo, offline v2 418. (F2.6L/M tornaram visivel via `v3_inbox.last_error`; chave OpenAI ja descartada.) **Auto-deploy no push -> dono manda "tem onix" -> verifico v3_inbox done + outbox + resposta do v3.** `PEDRO_V3_PILOT_MODE` active. (historico abaixo.) Diagnostico do "v3 nao responde": (a) AGORA `PEDRO_V3_PILOT_MODE` nao esta `active` (teste real -> v2, 0 evento novo no v3_inbox); (b) quando esteve active, o turno falha DEPOIS do ingest (5 eventos pending/attempts=5/outbox=0). **Chave OpenAI da plataforma TESTADA e VALIDA** (GET /models 200 + chat gpt-4.1-mini 200) -> descartada; falha e runtime. F2.6L grava o motivo sanitizado em `v3_inbox.last_error` (sanitize-error.ts + RPC `v3_record_inbox_error` + server.ts) p/ diagnosticar pelo banco. **PASSOS DO DONO**: rodar `Brain/sql/v3_f2_6l_inbox_error.sql` + redeploy do servico v3 + `PEDRO_V3_PILOT_MODE=active` + avisar -> leio o last_error -> corrijo a raiz. Gates: test:all EXIT=0, tsc limpo, offline v2 418 OK. Anteriores: F2.6H APROVADA; F2.6I/J/K (instance_id `6476a393`, BYOK por tenant, grandfather/plataforma). **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.) v3 com o MESMO 3-tier do v2: client key propria -> grandfathered usa chave da PLATAFORMA (Vault, nova RPC `get_platform_ai_key`) -> conta nova fail-closed. `BYOK_GRANDFATHER_CUTOFF=2026-06-16T03:00:00Z` (igual v2); grandfather le `profiles.created_at` fail-open. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Gates: `test:all` EXIT=0 (+26 adversariais), `tsc` limpo, offline v2 **417 OK**. **PASSO MANUAL DO DONO**: rodar `Brain/sql/v3_f2_6k_platform_ai_key.sql` + cadastrar secret `platform_openai_api_key` no Vault (mesma chave do v2). Anteriores: F2.6H APROVADA (c1f216b7); F2.6I prep (Aloan `instance_id`=NULL -> instancia real `6476a393`); F2.6J BYOK por tenant. Pre-ativacao pendente: secret platform no Vault + `instance_id` + `messages_update` + ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
 
 ## Fase atual
 
@@ -710,3 +710,25 @@ Gates: test:all EXIT=0; tsc limpo; offline v2 418 OK. EasyPanel faz auto-deploy 
 Proximo: dono manda 1 "tem onix" apos o auto-deploy -> leio `v3_inbox.last_error` (ou o log) -> corrijo a raiz real.
 
 Resultado: **F2.6M no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` segue active (piloto); sem db push/rotacao.
+---
+
+## Atualizacao Claude - F2.6N (ROOT CAUSE: double-encoding no filtro PostgREST) - 2026-06-29
+
+O F2.6M revelou o `last_error` real: **`Error: claimed inbox record missing`** (`conversation-engine.ts:128`).
+Investiguei: `claimBurst` claima N eventos mas `get(eventId)` devolve null -> mismatch -> falha todo turno.
+
+**Raiz**: DOUBLE-ENCODING no `SupabaseServiceGateway.encodeFilter`. O `event_id` real e `uazapi:<hash>`
+(com `:`). `encodeFilter` fazia `encodeURIComponent` -> `%3A`, e o `URLSearchParams.toString()` re-encodava
+o `%` -> `%253A`. O PostgREST entao procurava `event_id="uazapi%3A<hash>"` literal -> nao casava ids com `:`
+-> `get()=null` -> "claimed inbox record missing" -> turno falha sempre -> sem resposta -> fallback v2.
+Passou despercebido pq RPCs mandam args no body JSON (sem esse encoding) e os testes usavam ids sem `:`.
+
+**Fix**: `encodeFilter` retorna `eq.${String(value)}` (cru); o `URLSearchParams` encoda UMA vez. Teste novo
+`run-gateway-filter.ts` (5 checks) prova single-encoding p/ `:`-ids. Gates: test:all EXIT=0 (+ GATEWAY FILTER 5),
+tsc limpo, offline v2 418 OK.
+
+Proximo: auto-deploy -> dono manda "tem onix" -> verifico `v3_inbox.status=done` + `v3_effect_outbox` com a
+resposta + WhatsApp recebe do v3. Backlog de 6 eventos do conversation `wa:8ed1...` auto-cura no 1o turno.
+Handoff `handoffs/2026-06-29-claude-f2.6n-fix-double-encoding-claim.md`.
+
+Resultado: **F2.6N no ar pelo auto-deploy — provavel destravamento do piloto.** `PEDRO_V3_PILOT_MODE` active.
