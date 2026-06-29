@@ -1,0 +1,17 @@
+# Node modules
+node_modules/
+
+# Production build outputs
+dist/
+out/
+
+# Log files and system generation artifacts
+*.log
+.system_generated/
+
+# Local configuration / env
+.env
+.env.local
+
+# Local scratch / investigation scripts. Never commit secrets or live probes.
+scratch/

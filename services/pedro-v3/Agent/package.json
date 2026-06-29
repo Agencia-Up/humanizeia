@@ -1,0 +1,32 @@
+{
+  "name": "pedro-v3-agent",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Pedro v3 - kernel, engine in-memory e schema PostgreSQL validado. Sem providers reais.",
+  "scripts": {
+    "test": "tsx tests/run.ts",
+    "test:phase2": "tsx tests/run-phase2.ts",
+    "test:sql": "tsx tests/run-sql-schema.ts",
+    "test:postgres": "tsx tests/run-postgres-adapter.ts",
+    "test:read": "tsx tests/run-read-side.ts",
+    "test:canary": "tsx tests/run-canary-wiring.ts",
+    "test:model": "tsx tests/run-model-adapter.ts",
+    "test:openai": "tsx tests/run-openai-adapter.ts",
+    "test:openai-root": "tsx tests/run-openai-canary-root.ts",
+    "test:pilot": "tsx tests/run-pilot-scope.ts",
+    "test:active-effects": "tsx tests/run-active-effects.ts",
+    "test:active-root": "tsx tests/run-active-root.ts",
+    "test:all": "tsx tests/run.ts && tsx tests/run-phase2.ts && tsx tests/run-sql-schema.ts && tsx tests/run-postgres-adapter.ts && tsx tests/run-read-side.ts && tsx tests/run-canary-wiring.ts && tsx tests/run-model-adapter.ts && tsx tests/run-openai-adapter.ts && tsx tests/run-openai-canary-root.ts && tsx tests/run-pilot-scope.ts && tsx tests/run-active-effects.ts && tsx tests/run-active-root.ts && tsx tests/run-pilot-http.ts",
+    "start": "tsx src/runtime/server.ts",
+    "test:pilot-http": "tsx tests/run-pilot-http.ts"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "@types/node": "^26.0.1",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "tsx": "4.22.4"
+  }
+}

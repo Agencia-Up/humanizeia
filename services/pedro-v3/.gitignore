@@ -1,0 +1,7 @@
+Agent/node_modules/
+Agent/scratch/
+Agent/*.log
+Agent/.env*
+Agent/dist/
+Agent/out/
+Agent/src/**/*.ts~*

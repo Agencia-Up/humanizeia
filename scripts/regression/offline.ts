@@ -79,6 +79,7 @@ import {
 } from "../../supabase/functions/_shared/pedro-v2/photoLogic.ts";
 import { buildConversationCenter, conversationTrackOverride, inferPendingQuestion, buildLastStockOffer, stockOfferVehicleKey, resolvePresentedVehicleReference } from "../../supabase/functions/_shared/pedro-v2/conversationState.ts";
 import { evaluatePedroV3Pilot, normalizePedroV3PilotMode, PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../../supabase/functions/_shared/pedro-v2/pedroV3PilotGate.ts";
+import { buildPedroV3BridgeTurn, classifyPedroV3BridgeResponse } from "../../supabase/functions/_shared/pedro-v2/pedroV3Bridge.ts";
 
 const onlyGroup = (process.argv[2] || "").toLowerCase();
 let ok = 0, fail = 0;
@@ -134,6 +135,52 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("v3-gate", "identidade piloto com mode off fica desligada", !off.enabled && off.reason === "pilot_disabled", JSON.stringify(off));
 }
 
+// Pedro v3 bridge: prova o contrato anti-resposta-dupla. O v2 so pode
+// assumir o fallback quando o servico declarar explicitamente que NAO ingeriu.
+{
+  const payload = {
+    message: {
+      key: { id: "MSG-123", remoteJid: "5512999999999@s.whatsapp.net" },
+      text: "  Boa noite  ",
+      messageTimestamp: 1_782_687_600,
+    },
+  };
+  const built = await buildPedroV3BridgeTurn({
+    payload,
+    tenantId: PEDRO_V3_PILOT_TENANT_ID,
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+    build: "v220-test",
+  });
+  const repeated = await buildPedroV3BridgeTurn({
+    payload,
+    tenantId: PEDRO_V3_PILOT_TENANT_ID,
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+    build: "v220-test",
+  });
+  check("v3-bridge", "payload texto do piloto gera turno", built.ok, JSON.stringify(built));
+  check("v3-bridge", "ids sao deterministas no retry", built.ok && repeated.ok && built.turn.eventId === repeated.turn.eventId && built.turn.turnId === repeated.turn.turnId && built.turn.conversationId === repeated.turn.conversationId, JSON.stringify({ built, repeated }));
+  check("v3-bridge", "telefone e texto sao normalizados", built.ok && built.turn.to === "5512999999999" && built.turn.messageText === "Boa noite", JSON.stringify(built));
+
+  const wrongTenant = await buildPedroV3BridgeTurn({ payload, tenantId: "outro-tenant", agentId: PEDRO_V3_PILOT_AGENT_ID, build: "v220-test" });
+  check("v3-bridge", "tenant fora do piloto nunca vai ao v3", !wrongTenant.ok && wrongTenant.reason === "not_pilot_identity", JSON.stringify(wrongTenant));
+
+  const audioOnly = await buildPedroV3BridgeTurn({
+    payload: { message: { key: { id: "AUDIO-1", remoteJid: "5512999999999@s.whatsapp.net" }, audio: { url: "https://example.invalid/audio" } } },
+    tenantId: PEDRO_V3_PILOT_TENANT_ID,
+    agentId: PEDRO_V3_PILOT_AGENT_ID,
+    build: "v220-test",
+  });
+  check("v3-bridge", "midia sem texto fica no v2 nesta fatia", !audioOnly.ok && audioOnly.reason === "text_unsupported", JSON.stringify(audioOnly));
+
+  const explicitNotIngested = classifyPedroV3BridgeResponse(503, { ingested: false, status: "bootstrap_failed" });
+  const accepted = classifyPedroV3BridgeResponse(200, { ingested: true, status: "committed" });
+  const commitFailed = classifyPedroV3BridgeResponse(503, { ingested: true, status: "commit_failed" });
+  const malformed = classifyPedroV3BridgeResponse(502, "bad gateway");
+  check("v3-bridge", "fallback v2 so quando ingested=false explicito", explicitNotIngested.kind === "pre_ingest_failure", JSON.stringify(explicitNotIngested));
+  check("v3-bridge", "commit aceito encerra roteamento v2", accepted.kind === "accepted", JSON.stringify(accepted));
+  check("v3-bridge", "commit_failed apos ingestao nunca duplica no v2", commitFailed.kind === "uncertain", JSON.stringify(commitFailed));
+  check("v3-bridge", "resposta malformada e incerta e nunca dispara fallback", malformed.kind === "uncertain", JSON.stringify(malformed));
+}
 // ── BUSCA (rankVehicles) — onde mais nasceram bugs ──────────────────────────
 {
   // Busca AMPLA de categoria (query vazia, sem modelo): retorna o POOL do tipo, NUNCA zera.

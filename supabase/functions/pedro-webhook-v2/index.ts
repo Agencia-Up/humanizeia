@@ -10,9 +10,10 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
+import { buildPedroV3BridgeTurn, callPedroV3Bridge } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-28-pedro-v3-pilot-gate-v219";
+const PEDRO_V2_BUILD = "2026-06-28-pedro-v3-active-bridge-v220";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -343,9 +344,6 @@ Deno.serve(async (req) => {
     console.log(
       `[pedro-v3-pilot] matched tenant=${agent.user_id} agent=${agent.id} mode=${pedroV3Pilot.mode}`,
     );
-    if (pedroV3Pilot.mode === "active") {
-      console.warn("[pedro-v3-pilot] active mode requested, but active v3 handler is not wired yet; falling back to Pedro v2");
-    }
   }
 
 
@@ -403,7 +401,41 @@ Deno.serve(async (req) => {
   // (a function MORTA não dispara o safety-net acima, que só pega exceção JS). FIX=responder 200 RÁPIDO e
   // processar em EdgeRuntime.waitUntil (o Supabase mantém a function viva após o 200) -> sem timeout do
   // uazapi, sem desconexão, o turno SEMPRE completa. Dry-run segue awaited (o teste precisa do resultado).
+  // PEDRO V3 ACTIVE PILOT: only the exact tenant+agent gate may leave v2.
+  // The bridge runs in waitUntil and returns 200 to Uazapi immediately. A v2
+  // fallback is allowed ONLY when the service explicitly proves the failure
+  // happened before inbox ingestion. Timeout/network/unknown never invoke both.
   const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
+  if (!_dryRun && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
+    const bridgeTurn = await buildPedroV3BridgeTurn({
+      payload,
+      tenantId: (agent as any)?.user_id,
+      agentId: (agent as any)?.id,
+      build: PEDRO_V2_BUILD,
+    });
+    if (bridgeTurn.ok) {
+      const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
+      const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
+      _waitUntil((async () => {
+        const bridgeResult = await callPedroV3Bridge({
+          serviceUrl,
+          secret: bridgeSecret,
+          turn: bridgeTurn.turn,
+        });
+        if (bridgeResult.kind === "pre_ingest_failure") {
+          console.error(`[pedro-v3-bridge] pre_ingest_failure status=${bridgeResult.httpStatus ?? "none"}; fallback=v2`);
+          await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+          return;
+        }
+        console.log(`[pedro-v3-bridge] result=${bridgeResult.kind} status=${bridgeResult.httpStatus ?? "none"}`);
+      })().catch((error) => {
+        // Unexpected bridge exceptions are uncertain: never risk a double reply.
+        console.error("[pedro-v3-bridge] unexpected_uncertain", String((error as any)?.message || error).slice(0, 300));
+      }));
+      return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3", build: PEDRO_V2_BUILD });
+    }
+    console.warn(`[pedro-v3-bridge] unsupported inbound reason=${bridgeTurn.reason}; fallback=v2`);
+  }
   if (!_dryRun && typeof _waitUntil === "function") {
     _waitUntil(processPedroV2Turn(supabase, _turnInput).catch(_logTurnError));
     return jsonResponse({ ok: true, accepted: true, build: PEDRO_V2_BUILD });

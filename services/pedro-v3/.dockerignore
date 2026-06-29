@@ -1,0 +1,12 @@
+Agent/node_modules
+Agent/tests
+Agent/scratch
+Agent/*.log
+Agent/.env*
+Agent/dist
+Agent/out
+Agent/src/**/*.ts~*
+Brain
+.git
+.gitignore
+README.md
