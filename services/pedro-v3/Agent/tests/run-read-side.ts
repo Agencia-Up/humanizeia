@@ -486,10 +486,23 @@ async function main(): Promise<void> {
   // Testes de validação de URL no SafeHttpClient
   const client = new SafeHttpClient(dnsFake, new FakeHttpTransport(async () => new Response()), sleeperFake);
 
-  expectThrowSync("URL HTTP não é aceita", () => client.validateUrl("http://app.revendamais.com.br/test", "revendamais"), "HTTPS_REQUIRED");
+  // F2.7.2: http:// de host permitido e NORMALIZADO para https:// (em vez de rejeitado) — desbloqueia feeds
+  // legados do v2 mantendo o invariante "so buscamos https". Host fora da allowlist segue bloqueado.
+  check("URL HTTP de host permitido normaliza para HTTPS (F2.7.2)", client.validateUrl("http://app.revendamais.com.br/test", "revendamais").protocol === "https:");
+  expectThrowSync("HTTP de host fora da allowlist segue bloqueado", () => client.validateUrl("http://evil.com/test", "revendamais"), "HOST_NOT_ALLOWED_BY_POLICY");
   expectThrowSync("Host fora da allowlist é bloqueado por provider", () => client.validateUrl("https://evil.com/test", "revendamais"), "HOST_NOT_ALLOWED_BY_POLICY");
   expectThrowSync("Host de outro provider é bloqueado", () => client.validateUrl("https://app.revendamais.com.br/test", "bndv"), "HOST_NOT_ALLOWED_BY_POLICY");
   check("Host permitido é aceito por provider", client.validateUrl("https://app.revendamais.com.br/test", "revendamais").hostname === "app.revendamais.com.br");
+
+  // F2.7.2: o feed http:// e efetivamente BAIXADO como https:// (o transporte recebe a URL normalizada).
+  let upgradedFetchUrl = "";
+  const clientUpgrade = new SafeHttpClient(
+    dnsFake,
+    new FakeHttpTransport(async (u) => { upgradedFetchUrl = u; return new Response("[]", { headers: new Headers({ "content-type": "application/json" }) }); }),
+    sleeperFake,
+  );
+  await clientUpgrade.safeFetch("http://app.revendamais.com.br/feed", { provider: "revendamais" });
+  check("safeFetch baixa http como https (transporte recebe https)", upgradedFetchUrl.startsWith("https://app.revendamais.com.br/feed"), upgradedFetchUrl);
 
   // Teste de redirect com vazamento de Authorization
   const transportRedirectWithAuth = new FakeHttpTransport(async (url, init) => {

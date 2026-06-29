@@ -841,5 +841,28 @@ quando A-F passam consistente; se falhar, fortaleco a instrucao (1-2 rodadas).
 Handoff `handoffs/2026-06-29-claude-f2.7.1-anti-filler-answer-first.md`.
 
 Resultado: **F2.7.1 no ar pelo auto-deploy; aguardando rodada adversarial ao vivo.** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.7.2 (desbloquear estoque: feed http->https) - 2026-06-29
+
+Teste adversarial da F2.7.1 mostrou: anti-filler OK (respostas limpas, sem filler), MAS o agente nao confirmava
+estoque (`unable_to_confirm_stock`). Raiz (banco): o feed RevendaMais do Aloan esta cadastrado como
+**`http://app.revendamais.com.br`** (dado legado v2); o `SafeHttpClient` rejeitava http (HTTPS_REQUIRED, decisao
+de seguranca deliberada) -> estoque 100% bloqueado (sem fallback BNDV).
+
+Fix (aprovado pelo dono): `SafeHttpClient.validateUrl` NORMALIZA http->https (mais seguro que rejeitar; allowlist
+de host + anti-SSRF de IP seguem barrando host nao previsto) + `executeSingleFetch` agora baixa a URL JA
+normalizada (corrige bug latente: validava uma, baixava a crua). ⚠️REVERTE a decisao "rejeitar http" -> SINALIZADO
+p/ re-auditoria do Codex (alternativa: corrigir o dado e manter v3 estrito; implementei o upgrade por ser
+resiliente p/ feeds legados). Testes run-read-side 129 OK (+http-normaliza, +http-fora-allowlist-bloqueado,
++safeFetch-baixa-https); test:all EXIT=0, tsc limpo, offline 418.
+
+Pendencias anotadas: fotos http descartadas (parseVehiclePhotos) -> afeta send_photos depois; timeout do propose
+(1 ocorrencia, provavel latencia transitoria da OpenAI) -> MONITORAR.
+Handoff `handoffs/2026-06-29-claude-f2.7.2-stock-feed-https-upgrade.md`.
+
+Proximo: dono re-roda adversariais (com estoque acessivel) -> julgo A-F -> etapa 3 (DESENHO do debounce, parar p/ Codex).
+
+Resultado: **F2.7.2 no ar pelo auto-deploy; aguardando re-teste com estoque acessivel.** `PEDRO_V3_PILOT_MODE` active.
 
 Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.

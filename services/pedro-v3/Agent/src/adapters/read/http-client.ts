@@ -98,6 +98,13 @@ export class SafeHttpClient {
       throw new Error("INVALID_URL_FORMAT");
     }
 
+    // F2.7.2: feeds legados do v2 vem cadastrados como http:// (ex.: app.revendamais.com.br). Em vez de
+    // rejeitar (quebrando o estoque), NORMALIZAMOS http->https. Isso e ESTRITAMENTE mais seguro que recusar
+    // (sempre buscamos https) e nao abre superficie: a allowlist de host abaixo + o anti-SSRF de IP continuam
+    // barrando qualquer host nao previsto. (Reverte a decisao "rejeitar http" — sinalizado p/ auditoria do Codex.)
+    if (url.protocol === "http:") {
+      url.protocol = "https:";
+    }
     if (url.protocol !== "https:") {
       throw new Error("HTTPS_REQUIRED");
     }
@@ -171,6 +178,9 @@ export class SafeHttpClient {
     try {
       while (true) {
         const url = this.validateUrl(currentUrlString, options.provider);
+        // Usa a URL JA validada/normalizada (https) no fetch e na base de redirect — nao a string crua
+        // (que poderia ser http). Garante o invariante "so buscamos https" de fato no transporte (F2.7.2).
+        currentUrlString = url.toString();
         await this.validateHostIp(url.hostname);
 
         const res = await this.transport.fetch(currentUrlString, {
