@@ -25,6 +25,8 @@ const RPC_ALLOWLIST = new Set([
   "get_client_ai_key",
   // BYOK grandfather (F2.6K): chave da PLATAFORMA via Vault (so conta grandfathered usa). service-role.
   "get_platform_ai_key",
+  // Observabilidade (F2.6L): grava o motivo sanitizado da falha de turno em v3_inbox.last_error.
+  "v3_record_inbox_error",
 ]);
 
 const TABLE_ALLOWLIST = new Set([

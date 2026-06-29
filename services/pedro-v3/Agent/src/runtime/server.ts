@@ -7,6 +7,7 @@ import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receip
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
 import { resolveTenantOpenAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { RealClock } from "./real-clock.ts";
+import { sanitizeTurnError } from "./sanitize-error.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
 import {
@@ -164,12 +165,23 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         },
         maxValidationAttempts: 2,
       });
-    } catch {
+    } catch (error) {
       let ingested: boolean | "unknown" = "unknown";
       try {
         ingested = (await persistence.get(payload.eventId)) !== null;
       } catch {
         ingested = "unknown";
+      }
+      // F2.6L observabilidade: grava o motivo SANITIZADO em v3_inbox.last_error (best-effort), so quando
+      // o evento ja foi ingerido, p/ diagnosticar a raiz pelo banco. Nunca mascara a falha original.
+      if (ingested === true) {
+        try {
+          await gateway.rpc("v3_record_inbox_error", {
+            p_tenant_id: payload.tenantId,
+            p_event_id: payload.eventId,
+            p_error: sanitizeTurnError(error),
+          });
+        } catch { /* best-effort: nunca derruba o caminho de falha */ }
       }
       throw new PilotTurnRuntimeError("PILOT_TURN_FAILED", ingested);
     }

@@ -1,7 +1,7 @@
 # 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
-> Ultima atualizacao: 2026-06-29 - por Claude. **F2.6K (grandfather BYOK + chave da plataforma) entregue para auditoria.** v3 com o MESMO 3-tier do v2: client key propria -> grandfathered usa chave da PLATAFORMA (Vault, nova RPC `get_platform_ai_key`) -> conta nova fail-closed. `BYOK_GRANDFATHER_CUTOFF=2026-06-16T03:00:00Z` (igual v2); grandfather le `profiles.created_at` fail-open. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Gates: `test:all` EXIT=0 (+26 adversariais), `tsc` limpo, offline v2 **417 OK**. **PASSO MANUAL DO DONO**: rodar `Brain/sql/v3_f2_6k_platform_ai_key.sql` + cadastrar secret `platform_openai_api_key` no Vault (mesma chave do v2). Anteriores: F2.6H APROVADA (c1f216b7); F2.6I prep (Aloan `instance_id`=NULL -> instancia real `6476a393`); F2.6J BYOK por tenant. Pre-ativacao pendente: secret platform no Vault + `instance_id` + `messages_update` + ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
+> Ultima atualizacao: 2026-06-29 - por Claude. **F2.6L (observabilidade da falha de turno) entregue.** Diagnostico do "v3 nao responde": (a) AGORA `PEDRO_V3_PILOT_MODE` nao esta `active` (teste real -> v2, 0 evento novo no v3_inbox); (b) quando esteve active, o turno falha DEPOIS do ingest (5 eventos pending/attempts=5/outbox=0). **Chave OpenAI da plataforma TESTADA e VALIDA** (GET /models 200 + chat gpt-4.1-mini 200) -> descartada; falha e runtime. F2.6L grava o motivo sanitizado em `v3_inbox.last_error` (sanitize-error.ts + RPC `v3_record_inbox_error` + server.ts) p/ diagnosticar pelo banco. **PASSOS DO DONO**: rodar `Brain/sql/v3_f2_6l_inbox_error.sql` + redeploy do servico v3 + `PEDRO_V3_PILOT_MODE=active` + avisar -> leio o last_error -> corrijo a raiz. Gates: test:all EXIT=0, tsc limpo, offline v2 418 OK. Anteriores: F2.6H APROVADA; F2.6I/J/K (instance_id `6476a393`, BYOK por tenant, grandfather/plataforma). **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.) v3 com o MESMO 3-tier do v2: client key propria -> grandfathered usa chave da PLATAFORMA (Vault, nova RPC `get_platform_ai_key`) -> conta nova fail-closed. `BYOK_GRANDFATHER_CUTOFF=2026-06-16T03:00:00Z` (igual v2); grandfather le `profiles.created_at` fail-open. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Gates: `test:all` EXIT=0 (+26 adversariais), `tsc` limpo, offline v2 **417 OK**. **PASSO MANUAL DO DONO**: rodar `Brain/sql/v3_f2_6k_platform_ai_key.sql` + cadastrar secret `platform_openai_api_key` no Vault (mesma chave do v2). Anteriores: F2.6H APROVADA (c1f216b7); F2.6I prep (Aloan `instance_id`=NULL -> instancia real `6476a393`); F2.6J BYOK por tenant. Pre-ativacao pendente: secret platform no Vault + `instance_id` + `messages_update` + ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
 
 ## Fase atual
 
@@ -667,3 +667,28 @@ PASSO MANUAL DO DONO (pre-ativacao): rodar `v3_f2_6k_platform_ai_key.sql` + cada
 cai em fail-closed (degrada pro v2). Handoff `handoffs/2026-06-29-claude-f2.6k-grandfather-platform-key.md`.
 
 Resultado: **F2.6K entregue para auditoria do Codex.** `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.
+---
+
+## Atualizacao Claude - F2.6L (observabilidade da falha de turno) - 2026-06-29
+
+Dono reportou: print mostra o v2 respondendo na conta Aloan (v3 nao pegou). Diagnostico read-only:
+- AGORA o webhook NAO roteia pro v3 (teste real na instancia aloan: sem `routed:pedro_v3`, 0 evento novo no
+  v3_inbox, v2 respondeu) -> `PEDRO_V3_PILOT_MODE` nao esta `active`.
+- Quando ESTEVE active: 5 eventos no v3_inbox `pending`/`attempts=5`/sem claim/sem last_error/outbox=0 -> o
+  turno falha DEPOIS do ingest, antes de produzir saida, e cai no v2.
+- Pre-reqs OK (instance_id, secret no Vault, RPC, grandfathered). **Chave OpenAI DESCARTADA**: testei a chave
+  da plataforma (Vault) contra a OpenAI -> GET /models 200 + chat gpt-4.1-mini 200 (valida). A falha e runtime.
+
+F2.6L: tornar a falha diagnosticavel pelo BANCO (o erro hoje so existe no log do EasyPanel).
+- `sanitize-error.ts` (sanitizeTurnError: name:code:msg truncado, redige sk-/JWT/Bearer) +
+  `server.ts` grava o motivo sanitizado em `v3_inbox.last_error` no catch do turno (best-effort, so ingerido) +
+  RPC manual `v3_record_inbox_error` (Brain/sql/v3_f2_6l_inbox_error.sql, tenant-scoped, service-role) +
+  allowlist no gateway + `run-sanitize-error.ts` (7 testes).
+Gates: test:all EXIT=0 (+ SANITIZE ERROR 7, TENANT OPENAI 26); tsc limpo; offline v2 418 OK; scan limpo.
+
+PASSOS DO DONO p/ revelar a raiz: (1) rodar `v3_f2_6l_inbox_error.sql`; (2) redeploy do servico v3 no
+EasyPanel; (3) `PEDRO_V3_PILOT_MODE=active`; (4) avisar -> eu disparo 1 turno e LEIO `v3_inbox.last_error` ->
+raiz -> corrijo. (Alternativa: colar o log do servico v3 no EasyPanel.) Handoff
+`handoffs/2026-06-29-claude-f2.6l-observabilidade-falha-turno.md`.
+
+Resultado: **F2.6L entregue para auditoria do Codex.** `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.
