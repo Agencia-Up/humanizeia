@@ -1,7 +1,7 @@
 # 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
-> Ultima atualizacao: 2026-06-28 - por Claude. **F2.6H APROVADA pelo Codex (commit c1f216b7; SQL rodado: index_ok/function_ok=true). F2.6I (prep de ativacao) entregue para auditoria — so docs.** ENVs autoritativas mapeadas (servico usa `PEDRO_V3_BRIDGE_SECRET` + `PEDRO_V3_ALLOWED_UAZAPI_HOSTS`, nao `_SERVICE_SECRET`; `PEDRO_V3_PILOT_MODE` e do webhook). **BLOQUEIO factual**: agente Aloan `instance_id`=NULL (v3 le o singular) -> instancia real e `6476a393` (uazapi/connected; `instance_ids` aponta p/ orfa `fdd6cbe1`); dono seta o `instance_id`. Checklist off->shadow->active + rollback + validacao `messages_update` no handoff F2.6I. **PEDRO_V3_PILOT_MODE OFF; sem codigo/deploy/db push/rotacao.** (historico abaixo.)
+> Ultima atualizacao: 2026-06-28 - por Claude. **F2.6J (chave OpenAI BYOK por tenant) entregue para auditoria.** Removida a env global `OPENAI_API_KEY` do servico; a chave OpenAI agora e resolvida POR TENANT via Vault/RPC `get_client_ai_key` (mesma do v2), sem fallback global, fail-closed, sem vazar (so embrulhada em `OpenAiRuntimeSecret`). Gates: `test:all` EXIT=0 (+18 adversariais), `tsc` limpo, offline v2 **417 OK**. **NAO setar `OPENAI_API_KEY` no EasyPanel.** Anteriores: F2.6H APROVADA (c1f216b7; SQL index_ok/function_ok=true); F2.6I prep (BLOQUEIO factual: Aloan `instance_id`=NULL -> instancia real `6476a393`; dono seta). Pre-ativacao pendente: tenant com chave OpenAI no perfil, `instance_id`, `messages_update`, ENVs/deploy. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push/rotacao.** (historico abaixo.)
 
 ## Fase atual
 
@@ -618,3 +618,27 @@ fora de docs. Build webhook segue `v221`.
 
 Resultado: **F2.6I entregue para auditoria do Codex.** Bloqueios p/ ativar: setar `instance_id`,
 `messages_update` na instancia, ENVs/deploy. `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.
+---
+
+## Atualizacao Claude - F2.6J (chave OpenAI BYOK por tenant) - 2026-06-28
+
+Codex achou bloqueador pre-ativacao: `server.ts` exigia `OPENAI_API_KEY` global. O produto e BYOK —
+a chave vem do perfil do tenant, como o v2 (`_shared/aiKeys.ts` -> RPC `get_client_ai_key`). Corrigido.
+
+- **Removida** a env global `OPENAI_API_KEY` do servico (campo `#openAiKey` + `requiredEnv` fora).
+- **Novo** `Agent/src/adapters/read/tenant-openai-key.ts` -> `resolveTenantOpenAiSecret({gateway, tenantId})`
+  chama a mesma RPC service-role do v2 `get_client_ai_key(p_user_id, p_provider="openai")` (adicionada ao
+  allowlist do gateway). Resolvida POR TENANT no `run()`, sem fallback global/plataforma.
+- **Fail-closed + sanitizado**: sem chave do tenant -> `OPENAI_KEY_NOT_FOUND` -> `PILOT_BOOTSTRAP_FAILED`
+  (ingested=false, sem dispatch/dupla); erro de leitura -> `OPENAI_KEY_LOOKUP_FAILED` (nao vaza corpo/segredo).
+- **Sem vazamento**: chave volta so embrulhada em `OpenAiRuntimeSecret` (opaca; `toJSON` nao expoe;
+  liberada so via `materialize` no header). `PEDRO_V3_OPENAI_MODEL` segue como NOME do modelo, nao credencial.
+- **Docs**: README sem `OPENAI_API_KEY` nas obrigatorias + nota BYOK; handoff F2.6I corrigido.
+
+Gates: `test:all` EXIT=0 (+ `TENANT OPENAI KEY: 18 OK` adversariais); `tsc` limpo; offline v2 **417 OK**;
+bundle N/A (nao toquei webhook/bridge); scan: `OPENAI_API_KEY` fora das fontes v3, sem log de segredo.
+
+Pre-requisito pre-ativacao: o tenant piloto precisa ter chave OpenAI cadastrada no perfil (Vault) —
+`get_client_ai_key(ecb26258,'openai')` nao-vazio. Handoff `handoffs/2026-06-28-claude-f2.6j-byok-openai-por-tenant.md`.
+
+Resultado: **F2.6J entregue para auditoria do Codex.** `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.

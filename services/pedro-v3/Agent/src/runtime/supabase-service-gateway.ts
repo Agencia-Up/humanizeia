@@ -21,6 +21,8 @@ const RPC_ALLOWLIST = new Set([
   "v3_fail_outbox_guarded",
   "v3_commit_effect_outcome",
   "v3_find_outbox_by_provider_message_id",
+  // BYOK (F2.6J): chave OpenAI do tenant via Vault, mesma RPC service-role do v2 (aiKeys.ts).
+  "get_client_ai_key",
 ]);
 
 const TABLE_ALLOWLIST = new Set([

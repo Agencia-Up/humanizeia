@@ -4,7 +4,8 @@ import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-databas
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot } from "../engine/pilot-active-root.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
-import { createOpenAiModelFactory, OpenAiRuntimeSecret } from "../engine/openai-canary-root.ts";
+import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
+import { resolveTenantOpenAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { RealClock } from "./real-clock.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
@@ -55,7 +56,6 @@ function supabaseHost(url: string): string {
 class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #supabaseUrl: string;
   readonly #serviceRoleKey: string;
-  readonly #openAiKey: string;
   readonly #modelOverride: string;
   readonly #allowedUazapiHosts: readonly string[];
   readonly #clock = new RealClock();
@@ -63,7 +63,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   constructor() {
     this.#supabaseUrl = requiredEnv("SUPABASE_URL");
     this.#serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-    this.#openAiKey = requiredEnv("OPENAI_API_KEY");
+    // F2.6J: a chave OpenAI NAO vem mais de env global. E resolvida por tenant (BYOK) no run(),
+    // via Vault/RPC service-role. Sem chave do tenant -> falha fechado, sem fallback global.
     this.#modelOverride = process.env.PEDRO_V3_OPENAI_MODEL?.trim() || "gpt-4.1-mini";
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
   }
@@ -114,6 +115,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
     let root: PilotActiveRoot;
     try {
+      // F2.6J BYOK: chave OpenAI resolvida POR TENANT (Vault/RPC service-role), sem env global nem
+      // fallback de plataforma. Falha aqui (tenant sem chave) cai no catch -> PILOT_BOOTSTRAP_FAILED
+      // com ingested=false, sem dispatch e sem mensagem dupla.
+      const openAiSecret = await resolveTenantOpenAiSecret({ gateway, tenantId: payload.tenantId });
       root = await PilotActiveRoot.create({
         mode: "active",
         tenantId: payload.tenantId,
@@ -124,7 +129,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         decryptor: new V2PlaintextApiKeyReader(),
         clock: this.#clock,
         modelFactory: createOpenAiModelFactory({
-          openAiSecret: OpenAiRuntimeSecret.fromString(this.#openAiKey),
+          openAiSecret,
           modelTransport: new FetchModelHttpTransport(),
           modelOptions: {
             modelOverride: this.#modelOverride,
