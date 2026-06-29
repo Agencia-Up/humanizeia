@@ -13,7 +13,7 @@ import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
-const PEDRO_V2_BUILD = "2026-06-28-pedro-v3-delivery-receipt-v221";
+const PEDRO_V2_BUILD = "2026-06-29-pedro-v3-no-dispatch-fallback-v222";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];

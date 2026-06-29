@@ -174,11 +174,13 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
 
   const explicitNotIngested = classifyPedroV3BridgeResponse(503, { ingested: false, status: "bootstrap_failed" });
   const accepted = classifyPedroV3BridgeResponse(200, { ingested: true, status: "committed" });
-  const commitFailed = classifyPedroV3BridgeResponse(503, { ingested: true, status: "commit_failed" });
+  const commitFailedNoDispatch = classifyPedroV3BridgeResponse(503, { ingested: true, status: "commit_failed", dispatched: 0 });
+  const commitFailedAfterDispatch = classifyPedroV3BridgeResponse(503, { ingested: true, status: "commit_failed", dispatched: 1 });
   const malformed = classifyPedroV3BridgeResponse(502, "bad gateway");
   check("v3-bridge", "fallback v2 so quando ingested=false explicito", explicitNotIngested.kind === "pre_ingest_failure", JSON.stringify(explicitNotIngested));
   check("v3-bridge", "commit aceito encerra roteamento v2", accepted.kind === "accepted", JSON.stringify(accepted));
-  check("v3-bridge", "commit_failed apos ingestao nunca duplica no v2", commitFailed.kind === "uncertain", JSON.stringify(commitFailed));
+  check("v3-bridge", "commit_failed sem dispatch cai para v2 (anti-silencio)", commitFailedNoDispatch.kind === "pre_ingest_failure", JSON.stringify(commitFailedNoDispatch));
+  check("v3-bridge", "commit_failed apos dispatch nao duplica no v2", commitFailedAfterDispatch.kind === "uncertain", JSON.stringify(commitFailedAfterDispatch));
   check("v3-bridge", "resposta malformada e incerta e nunca dispara fallback", malformed.kind === "uncertain", JSON.stringify(malformed));
   const deliveredReceipt = buildPedroV3DeliveryReceipt({
     payload: {

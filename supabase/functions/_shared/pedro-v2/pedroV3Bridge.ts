@@ -220,20 +220,34 @@ export function buildPedroV3DeliveryReceipt(input: {
     },
   };
 }
-function parseServiceBody(value: unknown): { ingested: boolean | "unknown" | null; status: string | null } {
+function parseServiceBody(value: unknown): {
+  ingested: boolean | "unknown" | null;
+  status: string | null;
+  dispatched: number | null;
+} {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { ingested: null, status: null };
+    return { ingested: null, status: null, dispatched: null };
   }
   const row = value as Record<string, unknown>;
   const ingested = row.ingested === true || row.ingested === false || row.ingested === "unknown"
     ? row.ingested
     : null;
-  return { ingested, status: typeof row.status === "string" ? row.status : null };
+  return {
+    ingested,
+    status: typeof row.status === "string" ? row.status : null,
+    dispatched: typeof row.dispatched === "number" && Number.isFinite(row.dispatched) ? row.dispatched : null,
+  };
 }
 
 export function classifyPedroV3BridgeResponse(httpStatus: number, body: unknown): PedroV3BridgeCallResult {
   const parsed = parseServiceBody(body);
   if (parsed.ingested === false) {
+    return { kind: "pre_ingest_failure", httpStatus, serviceStatus: parsed.status };
+  }
+  // If the v3 service proves the turn failed before any provider dispatch, the
+  // bridge may safely let v2 answer. This prevents the pilot from creating a
+  // silent lead while preserving the anti-double-reply rule after dispatch.
+  if (parsed.ingested === true && parsed.status === "commit_failed" && parsed.dispatched === 0) {
     return { kind: "pre_ingest_failure", httpStatus, serviceStatus: parsed.status };
   }
   if (httpStatus >= 200 && httpStatus < 300 && parsed.ingested === true) {
