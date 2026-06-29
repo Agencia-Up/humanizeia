@@ -1,7 +1,7 @@
 # 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
-> Ultima atualizacao: 2026-06-28 - por Claude. **F2.6H (receipt callback `messages_update`) auditada e finalizada, entregue para auditoria do Codex.** Endpoint `/v1/pilot/receipt` (bearer igual ao turno, escopo piloto exato, so delivered/read, runner real wirado), RPC tenant-scoped manual `v3_find_outbox_by_provider_message_id` (ambiguidade falha fechado), engine idempotente (accepted nao avanca / delivered avanca), Uazapi captura messageid+track_id, bridge v2 intercepta antes do fromMe + guarda seller. Gates: v3 `test:all` verde; `tsc` limpo; v2 offline **417 OK**; bundle webhook EXIT=0; scan limpo. Build webhook v221. **PEDRO_V3_PILOT_MODE OFF; sem deploy/db push.** (historico anterior abaixo.)
+> Ultima atualizacao: 2026-06-28 - por Claude. **F2.6H APROVADA pelo Codex (commit c1f216b7; SQL rodado: index_ok/function_ok=true). F2.6I (prep de ativacao) entregue para auditoria — so docs.** ENVs autoritativas mapeadas (servico usa `PEDRO_V3_BRIDGE_SECRET` + `PEDRO_V3_ALLOWED_UAZAPI_HOSTS`, nao `_SERVICE_SECRET`; `PEDRO_V3_PILOT_MODE` e do webhook). **BLOQUEIO factual**: agente Aloan `instance_id`=NULL (v3 le o singular) -> instancia real e `6476a393` (uazapi/connected; `instance_ids` aponta p/ orfa `fdd6cbe1`); dono seta o `instance_id`. Checklist off->shadow->active + rollback + validacao `messages_update` no handoff F2.6I. **PEDRO_V3_PILOT_MODE OFF; sem codigo/deploy/db push/rotacao.** (historico abaixo.)
 
 ## Fase atual
 
@@ -591,3 +591,30 @@ garantir `messages_update` no webhook (path moderno ja inclui; nao re-sync via `
 `PEDRO_V3_SERVICE_URL`/`PEDRO_V3_BRIDGE_SECRET`; rotacao da `service_role`. `PEDRO_V3_PILOT_MODE` segue OFF.
 
 Resultado: **F2.6H entregue para auditoria do Codex.** Sem deploy, sem `db push`, sem CRM/handoff/agenda.
+---
+
+## Atualizacao Claude - F2.6I (prep de ativacao controlada) - 2026-06-28
+
+**F2.6H APROVADA pelo Codex** (commit `c1f216b7`; SQL `v3_f2_6h_receipt_patch.sql` rodado pelo dono:
+`index_ok=true`, `function_ok=true`; gates re-rodados verdes). F2.6I = **so documentacao/auditoria da
+ativacao**. Nenhuma alteracao de codigo, banco, deploy ou ativacao. `PEDRO_V3_PILOT_MODE` continua OFF.
+
+Entregas (handoff `handoffs/2026-06-28-claude-f2.6i-prep-ativacao.md` + `README.md` operacional):
+- **ENVs autoritativas (lidas do `server.ts`)**: servico EasyPanel = `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `OPENAI_API_KEY`, `PEDRO_V3_ALLOWED_UAZAPI_HOSTS` (CSV, obrigatoria), `PEDRO_V3_BRIDGE_SECRET` (>=32),
+  `PEDRO_V3_OPENAI_MODEL`/`PORT` (opcionais). Webhook = `PEDRO_V3_PILOT_MODE`, `PEDRO_V3_SERVICE_URL`,
+  `PEDRO_V3_BRIDGE_SECRET` (identico). **Correcoes vs missao**: e `PEDRO_V3_BRIDGE_SECRET` (nao `_SERVICE_SECRET`);
+  `PEDRO_V3_ALLOWED_UAZAPI_HOSTS` faltava; `PEDRO_V3_PILOT_MODE` e do webhook, nao do EasyPanel.
+- **instance_id (BLOQUEIO factual)**: o v3 le `instance_id` singular (`pilot-active-root.ts:140`);
+  Aloan tem `instance_id=NULL` -> falha fechado. `instance_ids` aponta p/ `fdd6cbe1` que **nao existe** (orfa).
+  Instancia REAL = **`6476a393`** (nome aloan, uazapi, connected, dona=piloto, phone 558597895634). Remediacao =
+  o DONO seta `instance_id=6476a393` apos confirmar a linha (SQL no handoff). Nao inventei instancia.
+- **messages_update**: validar via `GET /webhook/find/aloan`; sync pontual so da instancia piloto preparado
+  (nao executado, sem script runnable commitado); nao usar `sync-uazapi-webhook` (removeria o evento).
+- **Checklist ativacao** (off->shadow->active) + **rollback** (PILOT_MODE=off volta 100% ao v2) documentados.
+
+Gates: nenhum codigo alterado nesta fatia (so docs) -> gates da F2.6H seguem validos; `git status` limpo
+fora de docs. Build webhook segue `v221`.
+
+Resultado: **F2.6I entregue para auditoria do Codex.** Bloqueios p/ ativar: setar `instance_id`,
+`messages_update` na instancia, ENVs/deploy. `PEDRO_V3_PILOT_MODE` OFF; sem deploy/db push/rotacao.
