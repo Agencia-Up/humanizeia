@@ -755,6 +755,20 @@ function phoneToBrJid(phone: string | null | undefined): string {
   return `${e164}@s.whatsapp.net`;
 }
 
+function isDuplicateLeadError(error: any): boolean {
+  const text = [
+    error?.code,
+    error?.message,
+    error?.details,
+    error?.hint,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  return text.includes('23505')
+    || text.includes('duplicate key')
+    || text.includes('unique constraint')
+    || text.includes('ai_crm_leads_user_id_remote_jid_agent_id_key');
+}
+
 function normalizeBulkText(value: string | null | undefined): string {
   return String(value || '')
     .toLowerCase()
@@ -3103,7 +3117,7 @@ export function CrmAvancadoTab({
       // Spec 28/05/2026: Pedro form so aceita "Tráfego Pago" como origem
       // (campo eh um label read-only). Lead manual no Pedro = sempre vindo
       // de campanha de tráfego pago.
-      const { error } = await (supabase as any).from('ai_crm_leads').insert({
+      const pedroManualLeadPayload = {
         user_id:     effectiveUserId,
         agent_id:    agentId,
         lead_name:   addLeadName.trim(),
@@ -3124,8 +3138,69 @@ export function CrmAvancadoTab({
         visit_scheduled_at: addLeadVisit ? new Date(addLeadVisit).toISOString() : null,
         // Data real que o lead chegou (porta/manual). Vazio = null -> painel usa created_at.
         arrived_at:         addLeadArrived ? new Date(addLeadArrived + 'T12:00:00').toISOString() : null,
-      });
-      if (error) throw error;
+      };
+
+      const resetPedroAddLeadForm = () => {
+        setAddLeadName(''); setAddLeadPhone('');
+        setAddLeadOrigem(''); setAddLeadOrigemOutros('');
+        setAddLeadSourceId(null); setAddLeadSourceName('');
+        setAddLeadCity(''); setAddLeadVehicle(''); setAddLeadVisit(''); setAddLeadArrived('');
+        setAddLeadOpen(false);
+      };
+
+      const reviveExistingPedroLead = async (existingLead: { id: string; assigned_to_id?: string | null }) => {
+        const { user_id: _userId, agent_id: _agentId, ...updatePayload } = pedroManualLeadPayload;
+        const { error: updateError } = await (supabase as any)
+          .from('ai_crm_leads')
+          .update({
+            ...updatePayload,
+            assigned_to_id: memberId || existingLead.assigned_to_id || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingLead.id)
+          .eq('user_id', effectiveUserId);
+        if (updateError) throw updateError;
+
+        toast({
+          title: 'Lead ja existia e foi regularizado',
+          description: 'Ele voltou para o painel do Pedro em Novo para voce conseguir atribuir/acompanhar.',
+        });
+        resetPedroAddLeadForm();
+        setSearchTerm(cleanPhone);
+        await fetchData(true);
+      };
+
+      const { data: existingPedroLead, error: existingPedroLeadError } = await (supabase as any)
+        .from('ai_crm_leads')
+        .select('id, assigned_to_id')
+        .eq('user_id', effectiveUserId)
+        .eq('agent_id', agentId)
+        .eq('remote_jid', remoteJid)
+        .maybeSingle();
+      if (existingPedroLeadError) throw existingPedroLeadError;
+      if (existingPedroLead?.id) {
+        await reviveExistingPedroLead(existingPedroLead);
+        return;
+      }
+
+      const { error } = await (supabase as any).from('ai_crm_leads').insert(pedroManualLeadPayload);
+      if (error) {
+        if (isDuplicateLeadError(error)) {
+          const { data: duplicatedLead, error: duplicatedLeadError } = await (supabase as any)
+            .from('ai_crm_leads')
+            .select('id, assigned_to_id')
+            .eq('user_id', effectiveUserId)
+            .eq('agent_id', agentId)
+            .eq('remote_jid', remoteJid)
+            .maybeSingle();
+          if (duplicatedLeadError) throw duplicatedLeadError;
+          if (duplicatedLead?.id) {
+            await reviveExistingPedroLead(duplicatedLead);
+            return;
+          }
+        }
+        throw error;
+      }
       toast({ title: '✅ Lead adicionado ao CRM!' });
       setAddLeadName(''); setAddLeadPhone('');
       setAddLeadOrigem(''); setAddLeadOrigemOutros('');
@@ -4208,8 +4283,18 @@ export function CrmAvancadoTab({
   // Métricas
   // Filtro universal
   const leadDateBounds = leadDateRange(dateFilter, dateFrom, dateTo);
+  const searchTermTrimmed = searchTerm.toLowerCase().trim();
+  const searchTermDigits = searchTermTrimmed.replace(/\D/g, '');
+  const isDirectPhoneSearch = searchTermDigits.length >= 8;
   const filteredLeads = leads.filter(l => {
     if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
+    if (isDirectPhoneSearch) {
+      const jid = (l.remote_jid || '').toLowerCase();
+      const phoneMatch = jid.replace(/\D/g, '').includes(searchTermDigits);
+      const textMatch = (l.lead_name || '').toLowerCase().includes(searchTermTrimmed) || jid.includes(searchTermTrimmed);
+      if (!textMatch && !phoneMatch) return false;
+      return true;
+    }
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
