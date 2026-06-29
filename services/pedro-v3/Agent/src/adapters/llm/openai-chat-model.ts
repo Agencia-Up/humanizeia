@@ -117,11 +117,13 @@ function operationInstructions(operation: OpenAiChatOperation): string {
       '  "proposedAction": <one of: reply | clarify | collect_slot | search_stock | send_photos | answer_vehicle_question | schedule_visit | handoff | close | no_op>,',
       '  "facts": [],',
       '  "proposedEffects": [ ... ],',
-      '  "responsePlan": { "guidance": <plain-language description, in pt-BR, of the message to send> },',
+      '  "responsePlan": { "guidance": <pt-BR plan for the message. FIRST directly answer whatever the lead just asked, using ONLY real facts/state; THEN add ONE useful funnel question if qualification is still incomplete> },',
       '  "reasonCode": <short_snake_case string>, "reasonSummary": <one short sentence>, "confidence": <number 0..1> }}',
       "",
       "RULES for the final proposal:",
       '  - To actually send a WhatsApp reply you MUST include a send_message effect in proposedEffects: {"kind":"send_message","planId":"reply","order":0,"onSuccess":[]}. Without it NO message is sent. Do NOT put the message text here — it is written in a later step from responsePlan.guidance.',
+      '  - ANSWER FIRST: if the lead asked anything (e.g., do you have a given model? is it automatic? what is the price? send a photo?), the reply MUST address it directly — NEVER ignore a question to push the funnel. If you lack the data to answer, do a query first. Then qualify by appending ONE useful funnel question AFTER the answer, not instead of it.',
+      '  - NO EMPTY CONTENT: every message must carry real information or a purposeful question. Never pad with vacuous affirmations.',
       '  - Keep "facts": [] (do not emit state mutations) unless you are certain of the exact schema.',
       '  - Use proposedEffects:[] with proposedAction:"no_op" ONLY when nothing should be sent.',
       "  - Do not fabricate stock, prices, photos, CRM facts, or delivery outcomes; use a query to get real data first.",
@@ -136,6 +138,7 @@ function operationInstructions(operation: OpenAiChatOperation): string {
     '  {"type":"vehicle_ref","vehicleKey": <string>, "field":"marca"|"modelo"|"ano"}',
     '  {"type":"money_ref","role":"vehicle_price"|"down_payment"|"installment"|"budget","source": {"kind":"vehicle_fact","vehicleKey":<string>} | {"kind":"slot_value","slotName":<string>}}',
     "Write the actual customer message as text parts, following responsePlan.guidance. For specific vehicle facts (marca/modelo/ano) use vehicle_ref parts; for monetary values use money_ref parts. Never write vehicle names or prices as free commercial claims inside plain text.",
+    'ANSWER FIRST, then qualify: open with the direct answer to what the lead asked; add at most ONE funnel question when qualification is still pending. Do NOT open with an empty affirmation that adds no information (e.g., "Que otimo", "Perfeito <nome>", "Otimo", "Que bom", "Maravilha"). A short acknowledgment is allowed ONLY when it carries real information. Every message must be useful.',
     'Example: {"parts":[{"type":"text","content":"Oi! Tudo bem? Me conta: que tipo de carro voce procura?"}]}',
   ].join("\n");
 }

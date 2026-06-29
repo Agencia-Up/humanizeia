@@ -819,5 +819,27 @@ Pendencias: facts ricos (slots/objetivos); CPF/telefone (F2.6P); resolve-throw=>
 Handoff `handoffs/2026-06-29-claude-f2.6r-decision-envelope-prompt.md`.
 
 Resultado: **F2.6R no ar pelo auto-deploy — deve dar respostas REAIS (fim do loop).** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.7.1 (anti-filler + responder a pergunta real) - 2026-06-29
+
+✅ F2.6R confirmado AO VIVO: o Aloan respondeu de verdade (apresentou-se, pegou cidade/nome, seguiu funil).
+Inicio da **FASE F2.7 (naturalidade/paridade UX com v2)**, ordem do dono: 1) anti-filler+responder-pergunta;
+2) testes adversariais; 3) DESENHO do debounce no Brain (parar p/ Codex); 4) digitando depois.
+
+F2.7.1 (etapa 1): regras NO CEREBRO (instrucoes do adapter, sem if por frase, sem if p/ "onix"):
+- **propose**: responsePlan.guidance = "responder PRIMEIRO o que o lead perguntou (so facts/state reais), DEPOIS 1
+  pergunta de funil se faltar qualificacao" + RULES "ANSWER FIRST" (nunca ignorar pergunta pra empurrar funil; se
+  faltar dado, query antes) e "NO EMPTY CONTENT".
+- **compose**: "ANSWER FIRST, then qualify" + proibe abrir com afirmacao vazia ("Que otimo"/"Perfeito"/...).
+Gates offline: test:all EXIT=0, tsc limpo (⚠️offline usa modelo FAKE -> nao valida comportamento do LLM).
+
+Suite adversarial (autoro+julgo, rodada no piloto ao vivo — dono envia, eu leio v3_effect_outbox+v3_decisions):
+A "tem Onix?" no meio da qualificacao; B nome depois pergunta estoque; C "ok/sim/gostei"; D valor/foto/modelo
+especifico; E nenhuma resposta abre com filler; F info util + 1 pergunta de funil quando qualificando. So "verde"
+quando A-F passam consistente; se falhar, fortaleco a instrucao (1-2 rodadas).
+Handoff `handoffs/2026-06-29-claude-f2.7.1-anti-filler-answer-first.md`.
+
+Resultado: **F2.7.1 no ar pelo auto-deploy; aguardando rodada adversarial ao vivo.** `PEDRO_V3_PILOT_MODE` active.
 
 Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.
