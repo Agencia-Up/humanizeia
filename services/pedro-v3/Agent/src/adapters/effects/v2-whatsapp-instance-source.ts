@@ -12,12 +12,15 @@ const INSTANCE_COLUMNS = Object.freeze([
   "provider",
 ] satisfies readonly V2ColumnName[]);
 
+// wa_instances tem `api_key_encrypted` mas NAO tem coluna `api_key` (F2.6Q): selecionar `api_key`
+// gerava `select=...,api_key` -> PostgREST 400 (coluna inexistente) -> o gateway de leitura lancava ->
+// `sender_text_exception` no dispatch (nunca rodou contra PostgREST real; o fake de teste nao valida
+// existencia de coluna). O token mora em `api_key_encrypted` (cru ou JSON), extraido pelo decryptor.
 const INSTANCE_SECRET_COLUMNS = Object.freeze([
   "id",
   "user_id",
   "provider",
   "api_key_encrypted",
-  "api_key",
 ] satisfies readonly V2ColumnName[]);
 
 function asString(value: unknown): string | null {

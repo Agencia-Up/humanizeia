@@ -350,6 +350,9 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   const serialized = JSON.stringify(row);
   check("safety", "sender exception becomes outcome_uncertain", row.status === "outcome_uncertain", JSON.stringify(row));
   check("safety", "sender exception does not leak token", !serialized.includes("SECRET-TOKEN"), serialized);
+  // F2.6Q: o reason ganha um label SEGURO (name+code do erro, ex.: "Error"), nunca a mensagem (que poderia
+  // vazar token). Confirma que diagnosticamos a causa sem vazar.
+  check("safety", "sender exception reason inclui label seguro sem mensagem", serialized.includes("sender_text_exception:Error"), serialized);
 }
 
 // 9) Conversation mismatch blocks dispatch.
@@ -517,6 +520,9 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   const call = db.calls[0];
   check("v2-wa-instance", "credential provider resolves uazapi token", result.ok && result.secret.material === "SECRET-UAZAPI-TOKEN", JSON.stringify(result));
   check("v2-wa-instance", "credential query is scoped by id and tenant", call?.where.id === "wa-inst-real" && call.where.user_id === ref.tenantId, JSON.stringify(call));
+  // F2.6Q: wa_instances NAO tem coluna `api_key` (so `api_key_encrypted`). Selecionar `api_key` gerava
+  // 400 no PostgREST real -> sender_text_exception. A query deve pedir api_key_encrypted e NUNCA api_key.
+  check("v2-wa-instance", "credential query nao seleciona coluna inexistente api_key", !!call && call.columns.includes("api_key_encrypted") && !call.columns.includes("api_key"), JSON.stringify(call));
 }
 
 // 22) V2 wa_instances source and credentials fail closed on cross-tenant/provider mismatch.

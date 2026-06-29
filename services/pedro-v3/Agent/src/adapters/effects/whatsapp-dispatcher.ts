@@ -101,6 +101,16 @@ function uncertain(record: OutboxRecord, reason: string): EffectResult {
   };
 }
 
+// Rotulo SEGURO de erro p/ diagnostico: nome + code (enum-like) do erro, NUNCA a mensagem (que pode
+// conter token/segredo). Ex.: "SupabaseServiceGatewayError:HTTP_FAILURE" ou "Error". Sem isso, o catch
+// devolvia so "sender_text_exception" e a causa do envio ficava invisivel (F2.6Q).
+function safeErrLabel(error: unknown): string {
+  const name = error instanceof Error && typeof error.name === "string" && error.name ? error.name : "Error";
+  const codeRaw = (error as { code?: unknown } | null | undefined)?.code;
+  const code = typeof codeRaw === "string" && /^[A-Za-z0-9_.:/ -]{1,80}$/.test(codeRaw) ? `:${codeRaw}` : "";
+  return `${name}${code}`;
+}
+
 function combineLevels(results: readonly WhatsAppSendOk[]): WhatsAppReceiptLevel {
   return results.every((item) => item.level === "delivered") ? "delivered" : "accepted";
 }
@@ -133,8 +143,10 @@ export class WhatsAppEffectDispatcher implements EffectDispatcher {
         text,
         idempotencyKey: record.idempotencyKey,
       });
-    } catch {
-      return uncertain(record, "sender_text_exception");
+    } catch (error) {
+      const label = safeErrLabel(error);
+      console.error(JSON.stringify({ event: "pedro_v3_send_text_exception", effectId: record.effectId, label }));
+      return uncertain(record, `sender_text_exception:${label}`);
     }
 
     if (!result.ok) return failed(record, result.code, result.message, result.retryable);
@@ -167,8 +179,10 @@ export class WhatsAppEffectDispatcher implements EffectDispatcher {
           photoId,
           idempotencyKey: `${record.idempotencyKey}:${photoId}`,
         });
-      } catch {
-        return uncertain(record, "sender_media_exception");
+      } catch (error) {
+        const label = safeErrLabel(error);
+        console.error(JSON.stringify({ event: "pedro_v3_send_media_exception", effectId: record.effectId, label }));
+        return uncertain(record, `sender_media_exception:${label}`);
       }
 
       if (!result.ok) {

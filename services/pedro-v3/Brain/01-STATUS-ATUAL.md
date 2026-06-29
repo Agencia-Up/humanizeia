@@ -772,5 +772,25 @@ o agente escreva no texto, e e FATAL. Revisitar com Codex (so CPF formatado? nao
 Proximo: dono roda a migration + manda "tem onix" -> commit suceder -> v3 RESPONDE (status=done + outbox + msg).
 
 Resultado: **F2.6P pronto — codigo commitado; AGUARDA o dono rodar a migration SQL.** `PEDRO_V3_PILOT_MODE` active.
+---
+
+## Atualizacao Claude - F2.6Q (3a ROOT CAUSE: envio uazapi + observabilidade do dispatch) - 2026-06-29
+
+Dono rodou o SQL do F2.6P + testou: **commit PASSOU** (`v3_inbox` 11 eventos `done`, backlog auto-curado) e o
+v3 gerou um `send_message`. MAS ficou `outcome_uncertain` com receipt `sender_text_exception` -> o ENVIO
+estourou. Investiguei: `INSTANCE_SECRET_COLUMNS` (credential provider) selecionava **`api_key`**, coluna que
+**NAO existe** em `wa_instances` (so `api_key_encrypted`, confirmado no information_schema) -> `select=...,api_key`
+-> PostgREST 400 -> gateway de leitura lanca -> o `catch {}` VAZIO do dispatcher devolvia so "sender_text_exception".
+
+**Fix**: (1) remover `api_key` de INSTANCE_SECRET_COLUMNS (token mora em `api_key_encrypted`); (2) observabilidade:
+`safeErrLabel` poe um rotulo SEGURO no reason (name+code do erro, NUNCA a mensagem -> sem vazar token) + console.error.
+Testes +2 (run-active-effects 53 OK). Gates: test:all EXIT=0, tsc limpo, offline 418. **Fix PURO de codigo (sem SQL)**.
+
+Proximo: auto-deploy -> dono manda "tem onix" -> `resolve()` pega o token -> `sendText` POSTa -> outbox
+`succeeded`/`accepted` + **mensagem chega no WhatsApp** (resposta REAL, backlog ja limpo).
+Pendencias p/ revisitar: resolve-throw deveria ser failed+retryable (nao uncertain); risco CPF/telefone do F2.6P.
+Handoff `handoffs/2026-06-29-claude-f2.6q-fix-uazapi-send.md`.
+
+Resultado: **F2.6Q no ar pelo auto-deploy — provavel ultimo tijolo do envio.** `PEDRO_V3_PILOT_MODE` active.
 
 Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.
