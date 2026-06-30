@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithReauth } from '@/lib/invokeWithReauth';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -2511,7 +2512,7 @@ export function CrmAvancadoTab({
     setRescuePreview(null);
     setRescueOpen(true);
     try {
-      const { data, error } = await supabase.functions.invoke('rescue-orphan-transfers', {
+      const { data, error } = await invokeWithReauth('rescue-orphan-transfers', {
         body: { dry_run: true, user_id: ownerIdForRescue },
       });
       if (error) throw error;
@@ -2539,7 +2540,7 @@ export function CrmAvancadoTab({
     }
     setRescueRunning(true);
     try {
-      const { data, error } = await supabase.functions.invoke('rescue-orphan-transfers', {
+      const { data, error } = await invokeWithReauth('rescue-orphan-transfers', {
         // force: o gerente clicou confirmar -> envia agora mesmo fora do horário.
         body: { dry_run: false, user_id: ownerIdForRescue, lead_ids: leadIds, force: true },
       });

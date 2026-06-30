@@ -1,10 +1,141 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendPedroText, resolvePedroInstance } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const PEDRO_DEFAULT_OPENER =
+  "Oi {nome}! Recebemos seu cadastro aqui. Posso te ajudar a encontrar o que você procura?";
+
+// Normaliza telefone BR para o formato do WhatsApp (55 + DDD + número).
+function normalizePhoneBR(value: string | null | undefined): string {
+  const digits = String(value || "").replace(/\D/g, "").replace(/^0+/, "");
+  if (!digits) return "";
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function renderOpener(template: string | null | undefined, vars: Record<string, string>): string {
+  const text = (template && template.trim()) ? template : PEDRO_DEFAULT_OPENER;
+  return text.replace(/\{(\w+)\}/g, (_m, key) => vars[key] ?? "");
+}
+
+// FORMULÁRIO DO PEDRO: cria o lead no motor do Pedro (ai_crm_leads) e dispara a
+// abertura pela instância. Quando o lead responder, o webhook (pedro-webhook-v2,
+// hoje; v3 amanhã) acha o lead por (agent_id, remote_jid) e a IA assume.
+// Espelha o caminho já consolidado do meta-leadgen — só toca camada compartilhada
+// (ai_crm_leads + sendPedroText), sem acoplar a nenhuma versão do cérebro.
+async function handlePedroForm(
+  supabase: any,
+  form: any,
+  lead: { name: string | null; email: string | null; phone: string | null; custom_data: Record<string, any> },
+): Promise<{ ok: boolean; lead_id?: string; error?: string }> {
+  const phone = normalizePhoneBR(lead.phone);
+  if (!phone) throw new Error("Telefone inválido para atendimento do Pedro.");
+  const remoteJid = `${phone}@s.whatsapp.net`;
+  const userId = form.user_id;
+  const agentId = form.agent_id;
+  const nowStr = new Date().toISOString();
+
+  // Resolve a instância de envio: a configurada no form, senão a do agente.
+  const instance = await resolvePedroInstance(supabase, {
+    user_id: userId,
+    agent_id: agentId,
+    instance_id: form.instance_id || null,
+  });
+  if (!instance?.id) throw new Error("Nenhuma instância WhatsApp conectada para o Pedro.");
+
+  const baseLead: Record<string, any> = {
+    user_id: userId,
+    agent_id: agentId,
+    instance_id: instance.id,
+    lead_name: lead.name || phone,
+    remote_jid: remoteJid,
+    origem: "outros",
+    entry_channel: "web_form",
+    status_crm: "novo",
+    updated_at: nowStr,
+  };
+
+  // Dedupe por (user_id, remote_jid, agent_id) — mesma chave do webhook.
+  const { data: existing } = await supabase
+    .from("ai_crm_leads")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("remote_jid", remoteJid)
+    .eq("agent_id", agentId)
+    .maybeSingle();
+
+  let leadId: string;
+  if (existing?.id) {
+    await supabase.from("ai_crm_leads").update(baseLead).eq("id", existing.id);
+    leadId = existing.id;
+  } else {
+    const { data: ins, error: insErr } = await supabase
+      .from("ai_crm_leads")
+      .insert({
+        ...baseLead,
+        status: "novo",
+        ai_paused: false,
+        message_count: 0,
+        last_interaction_at: nowStr,
+        created_at: nowStr,
+      })
+      .select("id")
+      .single();
+    if (insErr) throw insErr;
+    leadId = ins.id;
+  }
+
+  // Semeia a memória do Pedro com os dados do formulário (best-effort).
+  try {
+    await supabase.from("pedro_conversation_state").upsert({
+      lead_id: leadId,
+      agent_id: agentId,
+      user_id: userId,
+      state: {
+        lead: { nome: lead.name || undefined, telefone: phone, email: lead.email || undefined },
+        referencia: { origem_anuncio: "web_form", form_id: form.id, form_name: form.name },
+        atendimento: { etapa: "formulario_recebido", ultimo_proximo_passo: "primeiro_contato_whatsapp" },
+        formulario_web: lead.custom_data || {},
+      },
+      updated_at: nowStr,
+    }, { onConflict: "lead_id,agent_id" });
+  } catch (e) {
+    console.error("[form-submit] seed pedro memory:", (e as Error).message);
+  }
+
+  const opener = renderOpener(form.pedro_opener_template, {
+    nome: (lead.name || "").split(" ")[0] || "",
+  });
+
+  try {
+    await supabase.from("wa_chat_history").insert({
+      user_id: userId, agent_id: agentId, instance_id: instance.id, remote_jid: remoteJid,
+      role: "system",
+      content: `Lead recebido pelo formulário web "${form.name}".`,
+      metadata: { source: "web_form", form_id: form.id, field_data: lead.custom_data || {} },
+    });
+  } catch (_e) { /* histórico é best-effort */ }
+
+  const send = await sendPedroText(instance, { to: phone, text: opener }, { humanize: true });
+  if (send?.ok) {
+    try {
+      await supabase.from("wa_chat_history").insert({
+        user_id: userId, agent_id: agentId, instance_id: instance.id, remote_jid: remoteJid,
+        role: "assistant", content: opener,
+        metadata: { source: "web_form_opener", send_result: send },
+      });
+    } catch (_e) { /* best-effort */ }
+  } else {
+    console.error("[form-submit] falha ao enviar abertura do Pedro:", send?.error);
+  }
+
+  return { ok: !!send?.ok, lead_id: leadId, error: send?.ok ? undefined : (send?.error || "envio falhou") };
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -53,6 +184,32 @@ serve(async (req) => {
 
     // 3. Incrementa contador do formulário
     await supabase.rpc("increment_form_submissions" as any, { form_id_param: form_id }).maybeSingle();
+
+    // 3.5 FORMULÁRIO DO PEDRO: se o form está ligado a um agente, o lead vai para
+    // o motor do Pedro (IA) — cria ai_crm_leads + abertura no WhatsApp — em vez do
+    // Marcos. O cadastro nunca falha por causa do Pedro: se o envio falhar, o lead
+    // já está salvo na submissão e a resposta volta com pedro.ok=false.
+    if (form.agent_id && phone) {
+      let pedro: { ok: boolean; lead_id?: string; error?: string };
+      try {
+        pedro = await handlePedroForm(supabase, form, {
+          name: name || null, email: email || null, phone, custom_data: custom_data || {},
+        });
+      } catch (e: any) {
+        console.error("[form-submit] pedro flow:", e?.message);
+        pedro = { ok: false, error: e?.message || "falha no atendimento do Pedro" };
+      }
+      return new Response(
+        JSON.stringify({
+          success: true,
+          submission_id: submission.id,
+          redirect_url: form.redirect_url || null,
+          success_message: form.success_message,
+          pedro,
+        }),
+        { headers: { ...cors, "Content-Type": "application/json" } }
+      );
+    }
 
     // 4. Joga lead no CRM (primeiro estágio do pipeline)
     // Busca primeiro estágio — cria etapas padrão se o usuário nunca abriu o CRM

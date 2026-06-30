@@ -340,7 +340,7 @@ Deno.serve(async (req) => {
   if (isServiceCall) {
     scopeUserId = requestedUserId; // pode ser null = todos os donos
   } else {
-    const authUser = await getAuthUser(supabaseUrl, anonKey, token);
+    const authUser = await getAuthUser(supabaseUrl, serviceKey, token);
     if (!authUser?.id) return json({ error: 'Token invalido' }, 401);
     callerUserId = authUser.id;
     const effectiveUserId = await resolveEffectiveUserId(supabase, callerUserId);

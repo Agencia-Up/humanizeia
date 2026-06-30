@@ -37,6 +37,7 @@ interface CaptureForm {
   primary_color: string; logo_url: string; cover_url: string; fields: FormField[];
   success_message: string; redirect_url: string; instance_id: string | null;
   contact_list_id: string | null;
+  agent_id?: string | null; pedro_opener_template?: string | null;
   is_active: boolean; submission_count: number; created_at: string;
 }
 
@@ -64,7 +65,9 @@ const EMPTY_FORM = {
   name: '', title: '', description: '', primary_color: '#6366f1',
   logo_url: '', cover_url: '', fields: DEFAULT_FIELDS,
   success_message: 'Obrigado! Entraremos em contato em breve.',
-  redirect_url: '', instance_id: null, contact_list_id: null, is_active: true,
+  redirect_url: '', instance_id: null, contact_list_id: null,
+  agent_id: null, pedro_opener_template: '',
+  is_active: true,
 };
 
 /* ─── Preview mini do campo ─────────────────────────────────────────────── */
@@ -134,6 +137,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
   const [forms, setForms] = useState<CaptureForm[]>([]);
   const [loading, setLoading] = useState(true);
   const [instances, setInstances] = useState<any[]>([]);
+  const [agents, setAgents] = useState<any[]>([]);
 
   const [openEditor, setOpenEditor]       = useState(false);
   const [openSubmissions, setOpenSubmissions] = useState(false);
@@ -198,17 +202,20 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     if (!effectiveUserId) return;
     setLoading(true);
     try {
-      const [{ data: f, error: fErr }, { data: i, error: iErr }, { data: cl, error: clErr }] = await Promise.all([
+      const [{ data: f, error: fErr }, { data: i, error: iErr }, { data: cl, error: clErr }, { data: ag, error: agErr }] = await Promise.all([
         (supabase as any).from('capture_forms').select('*').eq('user_id', effectiveUserId).order('created_at', { ascending: false }),
         (supabase as any).from('wa_instances').select('id, instance_name').eq('user_id', effectiveUserId).eq('is_active', true),
         (supabase as any).from('wa_contact_lists').select('id, name, contact_count').eq('user_id', effectiveUserId).order('name'),
+        (supabase as any).from('wa_ai_agents').select('id, name, is_active').eq('user_id', effectiveUserId).eq('is_active', true).order('created_at', { ascending: false }),
       ]);
       if (fErr) console.error('fetchAll forms error:', fErr.message);
       if (iErr) console.error('fetchAll instances error:', iErr.message);
       if (clErr) console.error('fetchAll contact lists error:', clErr.message);
+      if (agErr) console.error('fetchAll agents error:', agErr.message);
       setForms(f || []);
       setInstances(i || []);
       setContactLists(cl || []);
+      setAgents(ag || []);
     } catch (err: any) {
       console.error('fetchAll error:', err?.message || err);
     } finally {
@@ -899,6 +906,57 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
                 {editorTab === 'config' && (
                   <div className="p-5 space-y-4">
                     <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Configurações</h3>
+
+                    {/* ── Quem atende este formulário ── */}
+                    <div className="space-y-2 p-3 border rounded-xl bg-muted/10">
+                      <Label className="text-xs font-semibold">Quem atende este formulário?</Label>
+                      <select
+                        className="w-full h-9 text-sm border rounded-md px-3 bg-background"
+                        value={editingForm.agent_id ? 'pedro' : 'marcos'}
+                        onChange={e => setEditingForm((f: any) => ({
+                          ...f,
+                          agent_id: e.target.value === 'pedro' ? (f.agent_id || agents[0]?.id || null) : null,
+                        }))}
+                      >
+                        <option value="marcos">Marcos — CRM + follow-up (mensagens prontas)</option>
+                        <option value="pedro">Pedro — IA qualifica e transfere o lead</option>
+                      </select>
+
+                      {editingForm.agent_id && (
+                        <div className="space-y-2 pt-1">
+                          {agents.length === 0 ? (
+                            <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                              Nenhum agente Pedro ativo. Crie/ative um agente antes de usar o atendimento por IA.
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <Label className="text-xs font-semibold">Agente Pedro</Label>
+                              <select
+                                className="w-full h-9 text-sm border rounded-md px-3 bg-background"
+                                value={editingForm.agent_id || ''}
+                                onChange={e => setEditingForm((f: any) => ({ ...f, agent_id: e.target.value || null }))}
+                              >
+                                {agents.map(a => <option key={a.id} value={a.id}>{a.name || 'Pedro'}</option>)}
+                              </select>
+                            </div>
+                          )}
+
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold">Mensagem de abertura</Label>
+                            <Textarea
+                              value={editingForm.pedro_opener_template || ''}
+                              onChange={e => setEditingForm((f: any) => ({ ...f, pedro_opener_template: e.target.value }))}
+                              rows={2}
+                              className="text-sm resize-none"
+                              placeholder="Oi {nome}! Recebemos seu cadastro aqui. Posso te ajudar?"
+                            />
+                            <p className="text-[10px] text-muted-foreground leading-relaxed">
+                              O Pedro envia essa mensagem pelo WhatsApp assim que o lead se cadastra. Use <code>{'{nome}'}</code> para o primeiro nome. Quando o lead responder, a IA assume e qualifica. A instância usada é a selecionada em "Instância WhatsApp" abaixo (ou a do agente).
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                     <div className="space-y-1.5">
                       <Label className="text-xs font-semibold">Mensagem de sucesso</Label>
