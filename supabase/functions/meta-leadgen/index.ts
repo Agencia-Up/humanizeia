@@ -201,16 +201,59 @@ async function listForms(userId: string) {
   for (const account of accounts || []) {
     const token = account.access_token_encrypted;
     if (!token) continue;
-    const pageData = await fetchMeta(
-      "me/accounts?fields=id,name,category,picture{url},access_token&limit=200",
-      token,
-    ).catch((err) => {
-      console.warn("[meta-leadgen] list pages failed", err);
-      return { data: [] };
-    });
 
-    for (const page of pageData?.data || []) {
-      const pageToken = page.access_token || token;
+    // Coleta paginas de 3 fontes e deduplica por id:
+    //  1) paginas pessoais (me/accounts)
+    //  2) paginas que o Business Manager possui (owned_pages)
+    //  3) paginas que o BM acessa como cliente (client_pages)
+    // me/accounts sozinho NAO traz paginas de Business Manager.
+    const pageFields = "id,name,category,picture{url},access_token";
+    const pageMap = new Map<string, any>();
+    const addPages = (list: any[]) => {
+      for (const p of list || []) {
+        const id = String(p?.id || "");
+        if (id && !pageMap.has(id)) pageMap.set(id, p);
+      }
+    };
+
+    addPages(
+      await fetchMeta(`me/accounts?fields=${pageFields}&limit=200`, token)
+        .then((d) => d?.data || [])
+        .catch((err) => {
+          console.warn("[meta-leadgen] me/accounts failed", err);
+          return [];
+        }),
+    );
+
+    const businesses = await fetchMeta("me/businesses?fields=id,name&limit=100", token)
+      .then((d) => d?.data || [])
+      .catch((err) => {
+        console.warn("[meta-leadgen] me/businesses failed", err);
+        return [];
+      });
+
+    for (const biz of businesses) {
+      for (const edge of ["owned_pages", "client_pages"]) {
+        addPages(
+          await fetchMeta(`${biz.id}/${edge}?fields=${pageFields}&limit=200`, token)
+            .then((d) => d?.data || [])
+            .catch((err) => {
+              console.warn(`[meta-leadgen] ${edge} failed`, biz.id, err);
+              return [];
+            }),
+        );
+      }
+    }
+
+    for (const page of pageMap.values()) {
+      // Paginas de BM as vezes nao devolvem access_token direto — tenta resolver,
+      // e cai pro token do usuario se nao vier.
+      let pageToken = page.access_token;
+      if (!pageToken) {
+        pageToken = await fetchMeta(`${page.id}?fields=access_token`, token)
+          .then((d) => d?.access_token)
+          .catch(() => null) || token;
+      }
       const formsData = await fetchMeta(
         `${page.id}/leadgen_forms?fields=id,name,status,leads_count,created_time&limit=100`,
         pageToken,
