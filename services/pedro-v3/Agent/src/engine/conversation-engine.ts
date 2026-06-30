@@ -17,7 +17,7 @@ import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { extractLeadSlots } from "./lead-extraction.ts";
-import { resolvePhotoIntent, buildPhotoTurnOutput } from "./photo-intent.ts";
+import { resolvePhotoIntent, buildPhotoTurnOutput, resolvePhotoPromiseRepair, shouldRepairPhotoPromise } from "./photo-intent.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -204,9 +204,23 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
         runQuery,
         interpretation: prepared.interpretation,
       });
-      const turnOutput = photoIntent
+      let turnOutput = photoIntent
         ? buildPhotoTurnOutput(photoIntent, turnId, cutoff)
         : await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
+      // F2.7.8 LAYER 2 (Codex): NENHUMA promessa de foto sem send_media real. Se o LLM decidiu enviar foto
+      // (action send_photos OU texto promete) sem send_media, ROTEIA pelo resolvedor deterministico -> envia
+      // de verdade OU responde honesto. Deploy-independente; pega o caso "Boa tarde -> estou enviando as fotos".
+      if (!photoIntent && shouldRepairPhotoPromise({ decision: turnOutput.decision, composedText: turnOutput.composed.text, leadMessage })) {
+        const repair = await resolvePhotoPromiseRepair({
+          composedText: turnOutput.composed.text,
+          leadMessage,
+          state: contextState,
+          claimExtractor: prepared.claimExtractor,
+          runQuery,
+          interpretation: prepared.interpretation,
+        });
+        turnOutput = buildPhotoTurnOutput(repair, turnId, cutoff);
+      }
       // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0
         ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }]

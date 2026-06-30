@@ -4,7 +4,7 @@
 // ============================================================================
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
-import { resolvePhotoIntent, buildPhotoTurnOutput } from "../src/engine/photo-intent.ts";
+import { resolvePhotoIntent, buildPhotoTurnOutput, resolvePhotoPromiseRepair, shouldRepairPhotoPromise } from "../src/engine/photo-intent.ts";
 import { safeCommitSlots, runConversationTurn } from "../src/engine/conversation-engine.ts";
 import type { QueryRunner } from "../src/engine/decision-engine.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
@@ -53,6 +53,14 @@ const agentOffered = (text: string): ConversationState => baseState({ recentTurn
 const TI = (models?: string[]): TurnInterpretation => ({ relation: "asks_vehicle_detail", ...(models ? { extractedEntities: { models } } : {}) });
 const intent = (leadMessage: string, state: ConversationState, interpretation: TurnInterpretation = TI()) =>
   resolvePhotoIntent({ leadMessage, state, claimExtractor: extractor, runQuery, interpretation });
+const repair = (composedText: string, leadMessage: string, state: ConversationState) =>
+  resolvePhotoPromiseRepair({ composedText, leadMessage, state, claimExtractor: extractor, runQuery, interpretation: TI() });
+const mkSendMessage = () => ({ kind: "send_message" as const, planId: "reply", effectId: "t:reply", order: 0, onSuccess: [] });
+const mkDecision = (action: string, effectPlan: unknown[]): any =>
+  ({ turnId: "t", action, target: null, reasonCode: "x", reasonSummary: "x", confidence: 1, decisionMutations: [], effectPlan, responsePlan: { guidance: "" }, policyChecks: [] });
+// leadMessage default = pedido positivo de foto (so a negacao do lead deve travar o reparo)
+const shouldRepair = (decision: unknown, composedText: string, leadMessage = "quero fotos do onix"): boolean =>
+  shouldRepairPhotoPromise({ decision: decision as any, composedText, leadMessage });
 
 async function main(): Promise<void> {
   console.log("\n=== F2.7.8 Fotos ===\n");
@@ -128,6 +136,42 @@ async function main(): Promise<void> {
     check("fix2: OUTRO veiculo apos envio -> send", r4?.kind === "send" && r4.vehicleKey === RENEGADE, JSON.stringify(r4));
   }
 
+  // ── Fix A (Codex r3): negacao ESCOPADA POR CLAUSULA — o caso REAL que falhou em prod ──
+  {
+    // rajada unida por \n: resposta de troca ("nao tenho") + pedido de foto -> NAO pode bloquear
+    const r1 = await intent("Também não tenho carro pra troca\nquero fotos do onix", baseState());
+    check("A: rajada 'nao tenho troca \\n quero fotos do onix' -> send (negacao de OUTRA clausula nao bloqueia)", r1?.kind === "send" && r1.vehicleKey === ONIX, JSON.stringify(r1));
+    // negacao na MESMA clausula ainda bloqueia
+    const r2 = await intent("nao quero foto agora", baseState());
+    check("A: 'nao quero foto' (mesma clausula) -> null", r2 === null, JSON.stringify(r2));
+    // negacao depois de virgula, em clausula separada, NAO bloqueia o pedido
+    const r3 = await intent("nao curti o preco, mas manda foto do onix", baseState());
+    check("A: 'nao curti o preco, mas manda foto do onix' -> send", r3?.kind === "send", JSON.stringify(r3));
+  }
+
+  // ── Fix B (Codex r3): trava pos-LLM — promessa de foto SEM send_media e reparada, mas RESPEITA a negacao do lead ──
+  {
+    const sendDec = buildPhotoTurnOutput({ kind: "send", vehicleKey: ONIX, vehicleLabel: "Chevrolet Onix 2014", photoIds: ["p1"] }, "t", NOW).decision;
+    check("B: decisao COM send_media -> nao precisa reparo", shouldRepair(sendDec, "Aqui estão as fotos!") === false);
+    check("B: action send_photos SEM send_media -> precisa reparo", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos do onix") === true);
+    check("B: action reply mas texto promete foto -> precisa reparo", shouldRepair(mkDecision("reply", [mkSendMessage()]), "Douglas, vou te enviar as fotos do modelo ONIX 2014") === true);
+    check("B: texto NEGADO ('nao vou mandar fotos') -> NAO repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "entendi, nao vou te mandar fotos entao") === false);
+    check("B: texto normal sem foto -> NAO repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "Qual seu nome para eu te ajudar?") === false);
+
+    // ⭐ P1 do Codex: a NEGACAO DO LEAD trava o reparo MESMO com action send_photos (LLM veio errado)
+    check("B-P1: lead 'não quero foto' + send_photos sem midia -> NAO repara (nunca midia contra a vontade)", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos", "não quero foto") === false);
+    check("B-P1: lead 'não precisa mandar foto do onix' + send_photos -> NAO repara", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos do onix", "não precisa mandar foto do onix") === false);
+    check("B-P1: lead rajada 'troca\\nquero fotos do onix' + send_photos -> REPARA (negacao de outra clausula)", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos do onix", "Também não tenho carro pra troca\nquero fotos do onix") === true);
+    check("B-P1: lead 'tem foto ou não?' + send_photos -> pode reparar (negacao depois)", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos", "tem foto ou não?") === true);
+
+    // repair pega o veiculo do TEXTO do agente (caso real "Boa tarde -> estou enviando as fotos... ONIX 2014")
+    const rep1 = await repair("Douglas, estou enviando as fotos do modelo ONIX 2014", "Boa tarde", baseState());
+    check("B: repair pega o veiculo do texto do agente -> send (onix)", rep1.kind === "send" && rep1.vehicleKey === ONIX, JSON.stringify(rep1));
+    // repair sem modelo no texto/lead -> cai na ultima oferta do agente
+    const rep2 = await repair("vou te enviar as fotos agora", "manda ai", agentOffered("Temos o Chevrolet Onix 2014 disponível"));
+    check("B: repair sem modelo no texto -> usa ultima oferta (onix)", rep2.kind === "send" && rep2.vehicleKey === ONIX, JSON.stringify(rep2));
+  }
+
   // ── buildPhotoTurnOutput: send -> efeito send_media; not_found -> so texto, SEM send_media ──
   {
     const out = buildPhotoTurnOutput({ kind: "send", vehicleKey: ONIX, vehicleLabel: "Chevrolet Onix 2014", photoIds: ["p1", "p2"] }, "t-send", NOW);
@@ -158,6 +202,25 @@ async function main(): Promise<void> {
     const media = outbox.find((r) => r.kind === "send_media");
     check("e2e: outbox tem send_media (nao fingiu por texto)", !!media, JSON.stringify(outbox.map((r) => r.kind)));
     check("e2e: send_media com vehicleKey do onix", !!media && (media.payload as any).vehicleKey === ONIX, JSON.stringify(media?.payload));
+  }
+
+  // ── Engine e2e REGRESSAO (o print real 13:33): rajada "Também não...\nquero fotos do onix" -> send_media ──
+  {
+    const clock = new FakeClock(NOW);
+    const p = new InMemoryPersistence(clock, new FakeIdGen());
+    await p.tryInsert({ eventId: "r1", conversationId: "cR", raw: { __redacted: true, text: "Também não tenho carro pra troca" } as any, receivedAt: "2026-06-30T15:59:58.000Z" });
+    await p.tryInsert({ eventId: "r2", conversationId: "cR", raw: { __redacted: true, text: "quero fotos do onix" } as any, receivedAt: NOW });
+    await runConversationTurn({
+      persistence: p, clock, llm: new FakeLlm(), runQuery,
+      conversationId: "cR", tenantId: TENANT, agentId: AGENT, leadId: null,
+      workerId: "w", turnId: "tR", leaseTtlMs: 60_000,
+      interpretation: TI(["onix"]), tenantCatalog: catalog, claimExtractor: extractor,
+      limits: { maxSteps: 4, totalTimeoutMs: 5000 }, maxValidationAttempts: 2,
+      providerCapability: { send_message: "none", send_media: "none" },
+    });
+    const outbox = await p.listOutbox("cR");
+    const media = outbox.find((r) => r.kind === "send_media");
+    check("e2e REGRESSAO: rajada troca+'quero fotos do onix' -> outbox tem send_media", !!media && (media.payload as any).vehicleKey === ONIX, JSON.stringify(outbox.map((r) => r.kind)));
   }
 
   // ── F2.7.7 hardening: safeCommitSlots commita o valido e DESCARTA o invalido (preview falha) ──
