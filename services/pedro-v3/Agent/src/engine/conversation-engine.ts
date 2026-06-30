@@ -81,7 +81,15 @@ function textFromInbox(rec: InboxRecord): string {
 }
 
 function aggregateLeadMessage(records: InboxRecord[]): string {
-  return records.map(textFromInbox).filter(Boolean).join("\n");
+  // F2.7.6: o bloco da rajada preserva a ORDEM de chegada (received_at), com eventId
+  // como desempate deterministico — independente da ordem em que o claim devolveu.
+  const ordered = [...records].sort((a, b) => {
+    const ta = Date.parse(a.receivedAt);
+    const tb = Date.parse(b.receivedAt);
+    if (ta !== tb) return ta - tb;
+    return a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0;
+  });
+  return ordered.map(textFromInbox).filter(Boolean).join("\n");
 }
 
 function makeEvent(args: {

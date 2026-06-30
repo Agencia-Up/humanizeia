@@ -1,11 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { PostgresPersistence } from "../adapters/persistence/postgres-store.ts";
 import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-database.ts";
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot } from "../engine/pilot-active-root.ts";
+import { ingestPilotMessage } from "../engine/pilot-ingest.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
 import { resolveTenantOpenAiSecret } from "../adapters/read/tenant-openai-key.ts";
+import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
+import { DebouncePoller } from "./debounce-poller.ts";
+import { PEDRO_V3_PILOT_TENANT_ID } from "../domain/pilot-scope.ts";
+import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
@@ -19,6 +25,14 @@ import {
   type PilotTurnPayload,
   type PilotTurnRunner,
 } from "./pilot-http-app.ts";
+
+const PILOT_TURN_LIMITS = {
+  maxSteps: 4,
+  totalTimeoutMs: 70_000,
+  proposeTimeoutMs: 25_000,
+  queryTimeoutMs: 20_000,
+  composeTimeoutMs: 25_000,
+} as const;
 
 const MAX_REQUEST_BYTES = 32 * 1024;
 
@@ -60,26 +74,35 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #modelOverride: string;
   readonly #allowedUazapiHosts: readonly string[];
   readonly #clock = new RealClock();
+  readonly #debounce: DebounceConfig;
+  #turnSeq = 0;
 
   constructor() {
     this.#supabaseUrl = requiredEnv("SUPABASE_URL");
     this.#serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-    // F2.6J: a chave OpenAI NAO vem mais de env global. E resolvida por tenant (BYOK) no run(),
-    // via Vault/RPC service-role. Sem chave do tenant -> falha fechado, sem fallback global.
+    // F2.6J: a chave OpenAI NAO vem de env global. E resolvida por tenant (BYOK) via Vault/RPC.
     this.#modelOverride = process.env.PEDRO_V3_OPENAI_MODEL?.trim() || "gpt-4.1-mini";
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
+    // F2.7.6: janela de debounce + intervalo do poller (defaults 6000/12000/2000ms).
+    this.#debounce = resolveDebounceConfig(process.env);
   }
 
-  async applyReceipt(payload: PilotReceiptPayload) {
-    const host = supabaseHost(this.#supabaseUrl);
-    const gateway = new SupabaseServiceGateway({
+  get debounceConfig(): DebounceConfig {
+    return this.#debounce;
+  }
+
+  #gateway(): SupabaseServiceGateway {
+    return new SupabaseServiceGateway({
       url: this.#supabaseUrl,
       serviceRoleKey: this.#serviceRoleKey,
-      allowedHosts: [host],
+      allowedHosts: [supabaseHost(this.#supabaseUrl)],
       timeoutMs: 20_000,
       maxResponseBytes: 8 * 1024 * 1024,
     });
-    const persistence = new PostgresPersistence(gateway, {
+  }
+
+  async applyReceipt(payload: PilotReceiptPayload) {
+    const persistence = new PostgresPersistence(this.#gateway(), {
       tenantId: payload.tenantId,
       clock: this.#clock,
     });
@@ -93,112 +116,108 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       },
     });
   }
+
+  // F2.7.6: /v1/pilot/turn agora SO INGERE (rapido). O processamento real (decidir +
+  // despachar) fica p/ o poller quando a conversa "assenta" (debounce). Resposta
+  // {status:"accepted", ingested:true} -> o bridge mantem routed: pedro_v3 (contrato intacto).
   async run(payload: PilotTurnPayload) {
-    const host = supabaseHost(this.#supabaseUrl);
-    const readDb = SupabaseReadOnlyDatabase.create({
-      url: this.#supabaseUrl,
-      apiKey: this.#serviceRoleKey,
-      allowedHosts: [host],
-      timeoutMs: 15_000,
-      maxResponseBytes: 4 * 1024 * 1024,
-    });
-    const gateway = new SupabaseServiceGateway({
-      url: this.#supabaseUrl,
-      serviceRoleKey: this.#serviceRoleKey,
-      allowedHosts: [host],
-      timeoutMs: 20_000,
-      maxResponseBytes: 8 * 1024 * 1024,
-    });
-    const persistence = new PostgresPersistence(gateway, {
+    const persistence = new PostgresPersistence(this.#gateway(), {
       tenantId: payload.tenantId,
       clock: this.#clock,
     });
-
-    let root: PilotActiveRoot;
     try {
-      // F2.6J BYOK: chave OpenAI resolvida POR TENANT (Vault/RPC service-role), sem env global nem
-      // fallback de plataforma. Falha aqui (tenant sem chave) cai no catch -> PILOT_BOOTSTRAP_FAILED
-      // com ingested=false, sem dispatch e sem mensagem dupla.
-      const openAiSecret = await resolveTenantOpenAiSecret({ gateway, tenantId: payload.tenantId });
-      root = await PilotActiveRoot.create({
-        mode: "active",
-        tenantId: payload.tenantId,
+      const ingest = await ingestPilotMessage(persistence, this.#clock, {
+        eventId: payload.eventId,
+        conversationId: payload.conversationId,
         agentId: payload.agentId,
         leadId: payload.leadId ?? null,
-      }, {
-        db: readDb,
-        decryptor: new V2PlaintextApiKeyReader(),
-        clock: this.#clock,
-        modelFactory: createOpenAiModelFactory({
-          openAiSecret,
-          modelTransport: new FetchModelHttpTransport(),
-          modelOptions: {
-            modelOverride: this.#modelOverride,
-            timeoutMs: 30_000,
-            maxResponseBytes: 2 * 1024 * 1024,
-            maxCompletionTokens: 1_200,
-          },
-        }),
-        whatsappTransport: new FetchUazapiHttpTransport(),
-        allowedUazapiHosts: this.#allowedUazapiHosts,
-      });
-    } catch {
-      throw new PilotTurnRuntimeError("PILOT_BOOTSTRAP_FAILED", false);
-    }
-
-    try {
-      const result = await root.runTurn({
-        persistence,
-        conversationId: payload.conversationId,
-        to: payload.to,
-        workerId: payload.workerId,
-        turnId: payload.turnId,
-        eventId: payload.eventId,
+        toAddr: payload.to,
         messageText: payload.messageText,
         receivedAt: payload.receivedAt,
-        limits: {
-          maxSteps: 4,
-          totalTimeoutMs: 70_000,
-          proposeTimeoutMs: 25_000,
-          queryTimeoutMs: 20_000,
-          composeTimeoutMs: 25_000,
-        },
-        maxValidationAttempts: 2,
       });
-      // F2.6M: o engine falha GRACIOSAMENTE (status commit_failed) SEM lancar — o motivo so vinha no
-      // retorno (engine.reason), invisivel no log e no banco. Aqui surfacamos: loga (EasyPanel) + grava
-      // em v3_inbox.last_error (banco) p/ diagnosticar a raiz. Sanitizado; best-effort no banco.
-      if (result.status === "commit_failed" && result.engine.status === "commit_failed") {
-        const reason = sanitizeTurnError(result.engine.reason);
-        console.error(JSON.stringify({ event: "pedro_v3_turn_commit_failed", turnId: payload.turnId, reason }));
-        try {
-          await gateway.rpc("v3_record_inbox_error", {
-            p_tenant_id: payload.tenantId,
-            p_event_id: payload.eventId,
-            p_error: reason,
-          });
-        } catch { /* best-effort: nao mascara o resultado */ }
+      if (ingest.decision === "duplicate") {
+        return { status: "duplicate" as const, inserted: false as const, turnId: payload.turnId, dispatched: 0 as const };
       }
-      return result;
-    } catch (error) {
-      let ingested: boolean | "unknown" = "unknown";
-      try {
-        ingested = (await persistence.get(payload.eventId)) !== null;
-      } catch {
-        ingested = "unknown";
-      }
-      // F2.6L observabilidade: grava o motivo SANITIZADO em v3_inbox.last_error (best-effort), so quando
-      // o evento ja foi ingerido, p/ diagnosticar a raiz pelo banco. Nunca mascara a falha original.
-      if (ingested === true) {
-        try {
-          await gateway.rpc("v3_record_inbox_error", {
-            p_tenant_id: payload.tenantId,
-            p_event_id: payload.eventId,
-            p_error: sanitizeTurnError(error),
-          });
-        } catch { /* best-effort: nunca derruba o caminho de falha */ }
-      }
-      throw new PilotTurnRuntimeError("PILOT_TURN_FAILED", ingested);
+      return { status: "accepted" as const, inserted: true as const, dispatched: 0 as const };
+    } catch {
+      // Falha ANTES de ingerir (rota/banco): ingested=false -> bridge faz fallback p/ o v2.
+      throw new PilotTurnRuntimeError("PILOT_TURN_FAILED", false);
+    }
+  }
+
+  // F2.7.6: o poller pergunta quais conversas do tenant do piloto ja assentaram.
+  async findSettled(nowIso: string): Promise<SettledConversation[]> {
+    const persistence = new PostgresPersistence(this.#gateway(), {
+      tenantId: PEDRO_V3_PILOT_TENANT_ID,
+      clock: this.#clock,
+    });
+    return persistence.findSettledConversations(nowIso, this.#debounce.debounceMs, this.#debounce.maxWaitMs, 20);
+  }
+
+  async #createRoot(agentId: string, leadId: string | null, gateway: SupabaseServiceGateway): Promise<PilotActiveRoot> {
+    const readDb = SupabaseReadOnlyDatabase.create({
+      url: this.#supabaseUrl,
+      apiKey: this.#serviceRoleKey,
+      allowedHosts: [supabaseHost(this.#supabaseUrl)],
+      timeoutMs: 15_000,
+      maxResponseBytes: 4 * 1024 * 1024,
+    });
+    const openAiSecret = await resolveTenantOpenAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID });
+    return PilotActiveRoot.create({
+      mode: "active",
+      tenantId: PEDRO_V3_PILOT_TENANT_ID,
+      agentId,
+      leadId,
+    }, {
+      db: readDb,
+      decryptor: new V2PlaintextApiKeyReader(),
+      clock: this.#clock,
+      modelFactory: createOpenAiModelFactory({
+        openAiSecret,
+        modelTransport: new FetchModelHttpTransport(),
+        modelOptions: {
+          modelOverride: this.#modelOverride,
+          timeoutMs: 30_000,
+          maxResponseBytes: 2 * 1024 * 1024,
+          maxCompletionTokens: 1_200,
+        },
+      }),
+      whatsappTransport: new FetchUazapiHttpTransport(),
+      allowedUazapiHosts: this.#allowedUazapiHosts,
+    });
+  }
+
+  // F2.7.6: processa UMA conversa assentada (claim do BLOCO -> decide -> dispatch).
+  // Falha de bootstrap (ex.: sem chave do tenant) NAO derruba o poller: deixa pendente p/ o proximo tick.
+  async processSettled(settled: SettledConversation): Promise<void> {
+    const gateway = this.#gateway();
+    const persistence = new PostgresPersistence(gateway, {
+      tenantId: PEDRO_V3_PILOT_TENANT_ID,
+      clock: this.#clock,
+    });
+    let root: PilotActiveRoot;
+    try {
+      root = await this.#createRoot(settled.agentId, settled.leadId, gateway);
+    } catch {
+      return;
+    }
+    this.#turnSeq += 1;
+    const turnId = `poll-${this.#turnSeq}-${randomUUID()}`;
+    const processed = await root.processConversation({
+      persistence,
+      conversationId: settled.conversationId,
+      to: settled.toAddr,
+      workerId: "poll-worker",
+      turnId,
+      limits: PILOT_TURN_LIMITS,
+      maxValidationAttempts: 2,
+    });
+    if (processed.status === "commit_failed" && processed.engine.status === "commit_failed") {
+      console.error(JSON.stringify({
+        event: "pedro_v3_turn_commit_failed",
+        conversationId: settled.conversationId,
+        reason: sanitizeTurnError(processed.engine.reason),
+      }));
     }
   }
 }
@@ -251,6 +270,30 @@ server.listen(port, "0.0.0.0", () => {
   console.log(JSON.stringify({ event: "pedro_v3_service_started", port, mode: "pilot" }));
 });
 
+// F2.7.6: poller de debounce — processa as conversas que ja assentaram (quietas >= debounce
+// OU pendente mais antiga >= max). Robusto: estado no Postgres (v3_inbox + routing), recupera
+// no restart. Um tick nunca sobrepoe o anterior; falha de uma conversa nao derruba o laço.
+const poller = new DebouncePoller(
+  (nowIso) => runtime.findSettled(nowIso),
+  (settled) => runtime.processSettled(settled),
+  new RealClock(),
+  (event) => {
+    if (event.kind === "error") {
+      console.error(JSON.stringify({ event: "pedro_v3_poll_error", context: event.context, reason: sanitizeTurnError(event.detail) }));
+    }
+  },
+);
+const stopPoller = poller.start(runtime.debounceConfig.pollIntervalMs);
+console.log(JSON.stringify({
+  event: "pedro_v3_debounce_poller_started",
+  debounceMs: runtime.debounceConfig.debounceMs,
+  maxWaitMs: runtime.debounceConfig.maxWaitMs,
+  pollIntervalMs: runtime.debounceConfig.pollIntervalMs,
+}));
+
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
-  process.once(signal, () => server.close(() => process.exit(0)));
+  process.once(signal, () => {
+    stopPoller();
+    server.close(() => process.exit(0));
+  });
 }

@@ -10,9 +10,11 @@ import type {
 } from "../../domain/effect-intent.ts";
 import type {
   Clock,
+  ConversationRoutingStore,
   InboxInsert,
   Lease,
   Persistence,
+  SettledConversation,
   StateSnapshot,
   UnitOfWork,
   UnitOfWorkContext,
@@ -220,13 +222,49 @@ class PostgresTurnUnitOfWork implements UnitOfWork {
   }
 }
 
-export class PostgresPersistence implements Persistence {
+export class PostgresPersistence implements Persistence, ConversationRoutingStore {
   readonly capabilities = Object.freeze({ turnCommit: true, specificOutbox: true, genericOutboxUpdate: false });
 
   constructor(
     private readonly gateway: V3DatabaseGateway,
     private readonly config: PostgresPersistenceConfig,
   ) {}
+
+  // ── ConversationRoutingStore (F2.7.6) ─────────────────────────────────────
+  async upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): Promise<void> {
+    await this.gateway.rpc<JsonValue>("v3_upsert_conversation_routing", {
+      p_tenant_id: this.config.tenantId,
+      p_conversation_id: conversationId,
+      p_agent_id: agentId,
+      p_lead_id: leadId,
+      p_to_addr: toAddr,
+      p_now: this.config.clock.now(),
+    });
+  }
+
+  async findSettledConversations(nowIso: string, debounceMs: number, maxWaitMs: number, limit: number): Promise<SettledConversation[]> {
+    const data = await this.gateway.rpc<JsonValue>("v3_find_settled_conversations", {
+      p_tenant_id: this.config.tenantId,
+      p_now: nowIso,
+      p_debounce_ms: debounceMs,
+      p_max_ms: maxWaitMs,
+      p_limit: limit,
+    });
+    if (!Array.isArray(data)) throw new PostgresPersistenceError("findSettledConversations", "resposta invalida");
+    return data.map((item) => {
+      if (item == null || Array.isArray(item) || typeof item !== "object") {
+        throw new PostgresPersistenceError("findSettledConversations", "linha invalida");
+      }
+      const row = item as DatabaseRow;
+      return {
+        conversationId: requiredString(row, "conversation_id"),
+        agentId: requiredString(row, "agent_id"),
+        leadId: nullableString(row, "lead_id"),
+        toAddr: requiredString(row, "to_addr"),
+        pendingCount: requiredNumber(row, "pending_count"),
+      };
+    });
+  }
 
   async tryInsert(rec: InboxInsert): Promise<boolean> {
     return this.gateway.rpc<boolean>("v3_ingest_inbox", {

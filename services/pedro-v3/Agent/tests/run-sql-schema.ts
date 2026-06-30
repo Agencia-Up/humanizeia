@@ -126,6 +126,12 @@ async function main(): Promise<void> {
   await db.exec(f274PatchSql);
   check("patch F2.7.4-A executa integralmente em PostgreSQL", true);
 
+  // F2.7.6: migration de debounce (tabela de roteamento + RPCs upsert/find settled).
+  const f276PatchUrl = new URL("../../Brain/sql/v3_f2_7_6_debounce.sql", import.meta.url);
+  const f276PatchSql = await readFile(f276PatchUrl, "utf8");
+  await db.exec(f276PatchSql);
+  check("patch F2.7.6 (debounce) executa integralmente em PostgreSQL", true);
+
   // F2.7.4-A: a FONTE UNICA (v3_required_receipt_level) — usada pela coluna gerada, pelo check e pelo RPC.
   const reqLevel = async (kind: string, onSuccess: unknown[]): Promise<string> => {
     const r = await db.query<{ r: string }>(
@@ -233,7 +239,7 @@ async function main(): Promise<void> {
     from pg_tables
     where schemaname = 'public' and tablename like 'v3\\_%' escape '\\'
   `);
-  check("12 tabelas v3 criadas", tableResult.rows[0].count === 12, String(tableResult.rows[0].count));
+  check("13 tabelas v3 criadas (incl. v3_conversation_routing)", tableResult.rows[0].count === 13, String(tableResult.rows[0].count));
 
   const firstIngest = await db.query<{ inserted: boolean }>(`
     select public.v3_ingest_inbox($1::uuid, 'evt-1', $2, $3::jsonb, $4::timestamptz) as inserted
@@ -669,6 +675,41 @@ async function main(): Promise<void> {
     where n.nspname = 'public' and c.relname = 'v3_sensitive_vault'
   `);
   check("cofre sensivel sem leitura autenticada e com RLS", !vaultPolicy.rows[0].public_select && vaultPolicy.rows[0].rls);
+
+  // ── F2.7.6: roteamento + conversas assentadas (debounce) ──
+  const RT = "wa:deb:1";
+  const rawRedacted = JSON.stringify({ __redacted: true, text: "oi" });
+  await db.query("select public.v3_upsert_conversation_routing($1::uuid, $2, $3, $4, $5, $6::timestamptz)", [TENANT, RT, AGENT, null, "5511999990000", NOW]);
+  const route1 = await db.query<{ to_addr: string; agent_id: string }>("select to_addr, agent_id from public.v3_conversation_routing where tenant_id=$1::uuid and conversation_id=$2", [TENANT, RT]);
+  check("F2.7.6 SQL: upsert de roteamento grava", route1.rows[0]?.to_addr === "5511999990000" && route1.rows[0]?.agent_id === AGENT);
+  await db.query("select public.v3_upsert_conversation_routing($1::uuid, $2, $3, $4, $5, $6::timestamptz)", [TENANT, RT, AGENT, null, "5511888880000", NOW]);
+  const route2 = await db.query<{ to_addr: string }>("select to_addr from public.v3_conversation_routing where tenant_id=$1::uuid and conversation_id=$2", [TENANT, RT]);
+  check("F2.7.6 SQL: upsert idempotente atualiza to_addr", route2.rows[0]?.to_addr === "5511888880000");
+
+  await db.query("select public.v3_ingest_inbox($1::uuid, 'deb-e1', $2, $3::jsonb, $4::timestamptz)", [TENANT, RT, rawRedacted, "2026-06-27T12:00:00.000Z"]);
+  await db.query("select public.v3_ingest_inbox($1::uuid, 'deb-e2', $2, $3::jsonb, $4::timestamptz)", [TENANT, RT, rawRedacted, "2026-06-27T12:00:02.000Z"]);
+
+  const findAt = async (nowIso: string, debounceMs: number, maxMs: number) =>
+    (await db.query<{ conversation_id: string; pending_count: number; to_addr: string }>(
+      "select conversation_id, pending_count, to_addr from public.v3_find_settled_conversations($1::uuid, $2::timestamptz, $3, $4, 20)",
+      [TENANT, nowIso, debounceMs, maxMs],
+    )).rows;
+
+  const notYet = await findAt("2026-06-27T12:00:03.000Z", 6000, 12000);
+  check("F2.7.6 SQL: rajada recente (<debounce) NAO assenta", !notYet.some((r) => r.conversation_id === RT));
+  const settled = await findAt("2026-06-27T12:00:09.000Z", 6000, 12000);
+  const rtRow = settled.find((r) => r.conversation_id === RT);
+  check("F2.7.6 SQL: quieto >= debounce assenta com pendingCount=2 e roteamento", !!rtRow && Number(rtRow.pending_count) === 2 && rtRow.to_addr === "5511888880000", JSON.stringify(settled));
+  const starved = await findAt("2026-06-27T12:00:12.000Z", 999999, 12000);
+  check("F2.7.6 SQL: starvation (oldest>=max) assenta mesmo sem quietar", starved.some((r) => r.conversation_id === RT));
+
+  await db.query("select public.v3_ingest_inbox($1::uuid, 'deb-orphan', 'wa:deb:orphan', $2::jsonb, $3::timestamptz)", [TENANT, rawRedacted, "2026-06-27T12:00:00.000Z"]);
+  const withOrphan = await findAt("2026-06-27T12:00:09.000Z", 6000, 12000);
+  check("F2.7.6 SQL: conversa SEM roteamento nao aparece (join exige routing)", !withOrphan.some((r) => r.conversation_id === "wa:deb:orphan"));
+
+  await db.query("update public.v3_inbox set status='done', done_at=$1::timestamptz where event_id in ('deb-e1','deb-e2')", [NOW]);
+  const afterDone = await findAt("2026-06-27T12:00:09.000Z", 6000, 12000);
+  check("F2.7.6 SQL: eventos done nao sao reprocessados", !afterDone.some((r) => r.conversation_id === RT));
 
   const verifyUrl = new URL("../../Brain/sql/v3_verify_after_install.sql", import.meta.url);
   const verifySql = await readFile(verifyUrl, "utf8");

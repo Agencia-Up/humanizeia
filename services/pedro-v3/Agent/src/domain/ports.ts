@@ -36,6 +36,26 @@ export interface InboxStore {
   pendingCount(conversationId: Id): Awaitable<number>;
 }
 
+// ── Roteamento de conversa + debounce (F2.7.6) ──────────────────────────────
+// Interface SEPARADA (nao faz parte de Persistence p/ nao forcar fakes a implementar).
+// Os 2 stores reais (InMemory/Postgres) a implementam. Necessaria porque o
+// conversation_id e hash do telefone (irreversivel): o poller precisa do numero p/
+// despachar a resposta de forma assincrona, fora do request do webhook.
+export type SettledConversation = {
+  readonly conversationId: Id;
+  readonly agentId: string;
+  readonly leadId: string | null;
+  readonly toAddr: string;
+  readonly pendingCount: number;
+};
+
+export interface ConversationRoutingStore {
+  // Grava/atualiza (idempotente) o roteamento da conversa na INGESTAO.
+  upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): Awaitable<void>;
+  // Conversas "assentadas" (quietas >= debounceMs OU pendente mais antiga >= maxWaitMs).
+  findSettledConversations(nowIso: string, debounceMs: number, maxWaitMs: number, limit: number): Awaitable<SettledConversation[]>;
+}
+
 // ── State (snapshot versionado p/ CAS) ──────────────────────────────────────
 export type StateSnapshot = { state: ConversationState; version: number };
 export interface StateStore {

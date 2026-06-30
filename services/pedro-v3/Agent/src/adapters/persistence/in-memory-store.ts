@@ -10,7 +10,9 @@ import type { InboxRecord, OutboxRecord, TurnEventRecord } from "../../domain/ef
 import { isEffectSatisfiedForDependency, requiredReceiptFor } from "../../domain/effect-policy.ts";
 import type {
   Clock, IdGen, Lease, InboxInsert, StateSnapshot, UnitOfWork, Persistence,
+  ConversationRoutingStore, SettledConversation,
 } from "../../domain/ports.ts";
+import { isConversationSettled } from "../../engine/debounce-policy.ts";
 
 // ── Determinismo (Codex F2.0 #8) ────────────────────────────────────────────
 export class FakeClock implements Clock {
@@ -29,7 +31,7 @@ type StagedCas = { conversationId: Id; expectedVersion: number; nextState: Conve
 type SyncCommitResult = { ok: true } | { ok: false; reason: string };
 type SyncUnitOfWork = Omit<UnitOfWork, "commit"> & { commit(): SyncCommitResult };
 
-export class InMemoryPersistence implements Persistence {
+export class InMemoryPersistence implements Persistence, ConversationRoutingStore {
   private inbox = new Map<Id, InboxRecord>();
   private states = new Map<Id, StateSnapshot>();
   private history: { conversationId: Id; version: number; state: ConversationState }[] = [];
@@ -38,8 +40,35 @@ export class InMemoryPersistence implements Persistence {
   private outbox = new Map<Id, OutboxRecord>();   // por effectId
   private outboxIdem = new Set<Id>();             // idempotencyKey UNIQUE
   private leases = new Map<Id, Lease>();          // conversationId -> lease ativo
+  private routing = new Map<Id, { agentId: string; leadId: string | null; toAddr: string }>(); // F2.7.6
 
   constructor(private clock: Clock, private idgen: IdGen) {}
+
+  // ── ConversationRoutingStore (F2.7.6) ─────────────────────────────────────
+  upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): void {
+    this.routing.set(conversationId, { agentId, leadId, toAddr });
+  }
+  findSettledConversations(nowIso: string, debounceMs: number, maxWaitMs: number, limit: number): SettledConversation[] {
+    const nowMs = Date.parse(nowIso);
+    const groups = new Map<Id, { count: number; oldest: number; newest: number }>();
+    for (const r of this.inbox.values()) {
+      if (r.status !== "pending") continue;
+      const at = Date.parse(r.receivedAt);
+      const g = groups.get(r.conversationId);
+      if (!g) groups.set(r.conversationId, { count: 1, oldest: at, newest: at });
+      else { g.count += 1; g.oldest = Math.min(g.oldest, at); g.newest = Math.max(g.newest, at); }
+    }
+    const ordered = [...groups.entries()].sort((a, b) => a[1].oldest - b[1].oldest);
+    const out: SettledConversation[] = [];
+    for (const [conversationId, g] of ordered) {
+      if (out.length >= limit) break;
+      if (!isConversationSettled({ nowMs, oldestPendingMs: g.oldest, newestPendingMs: g.newest, debounceMs, maxWaitMs })) continue;
+      const route = this.routing.get(conversationId);
+      if (!route) continue; // sem roteamento -> nao da p/ despachar async; ignora
+      out.push({ conversationId, agentId: route.agentId, leadId: route.leadId, toAddr: route.toAddr, pendingCount: g.count });
+    }
+    return out;
+  }
 
   // ── LeaseStore ────────────────────────────────────────────────────────────
   acquire(conversationId: Id, owner: string, ttlMs: number): Lease | null {

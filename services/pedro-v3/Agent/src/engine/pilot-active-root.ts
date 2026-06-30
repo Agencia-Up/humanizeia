@@ -2,8 +2,9 @@
 // Active pilot composition root for Pedro v3. It is still pilot-scoped and
 // test-first: no global rollout, no fallback by email, no CRM/handoff dispatch.
 
-import type { Clock, Persistence } from "../domain/ports.ts";
+import type { Clock, ConversationRoutingStore, Persistence } from "../domain/ports.ts";
 import type { QueryLoopLimits } from "../domain/context.ts";
+import { ingestPilotMessage } from "./pilot-ingest.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { Id } from "../domain/types.ts";
 import type { NormalizedVehicle, TenantAgentRef, TenantConfigSource, TenantRuntimeConfig } from "../domain/read-ports.ts";
@@ -21,7 +22,6 @@ import { PromptBoundConversationAdapter } from "../adapters/llm/prompt-bound-con
 import { createReadQueryRunner } from "./read-query-runner.ts";
 import { ConversationTurnContextPreparer, StockTenantCatalogSource, type TenantCatalogSource } from "./turn-context-preparer.ts";
 import { evaluatePedroV3PilotScope } from "../domain/pilot-scope.ts";
-import { redact } from "../domain/effect-intent.ts";
 import type { OutboxRecord } from "../domain/effect-intent.ts";
 import { runConversationTurn, type ConversationEngineResult } from "./conversation-engine.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
@@ -52,7 +52,7 @@ export type PilotActiveDeps = {
 };
 
 export type PilotActiveTurnInput = {
-  readonly persistence: Persistence;
+  readonly persistence: Persistence & ConversationRoutingStore;
   readonly conversationId: Id;
   readonly to: string;
   readonly workerId: string;
@@ -64,16 +64,31 @@ export type PilotActiveTurnInput = {
   readonly maxValidationAttempts: number;
 };
 
+// F2.7.6: processamento de UMA conversa (apos a janela), disparado pelo poller.
+// NAO ingere (as mensagens ja estao no v3_inbox); so claim+decide+dispatch do bloco.
+export type PilotActiveProcessInput = {
+  readonly persistence: Persistence;
+  readonly conversationId: Id;
+  readonly to: string;
+  readonly workerId: string;
+  readonly turnId: Id;
+  readonly limits: QueryLoopLimits;
+  readonly maxValidationAttempts: number;
+};
+
+export type PilotActiveProcessResult = {
+  readonly status: "committed" | "commit_failed" | "no_op";
+  readonly engine: ConversationEngineResult;
+  readonly outboxBeforeDispatch: readonly OutboxRecord[];
+  readonly outboxAfterDispatch: readonly OutboxRecord[];
+  readonly dispatched: number;
+};
+
 export type PilotActiveTurnResult =
   | { readonly status: "duplicate"; readonly inserted: false; readonly turnId: Id; readonly dispatched: 0 }
-  | {
-      readonly status: "committed" | "commit_failed" | "no_op";
-      readonly inserted: true;
-      readonly engine: ConversationEngineResult;
-      readonly outboxBeforeDispatch: readonly OutboxRecord[];
-      readonly outboxAfterDispatch: readonly OutboxRecord[];
-      readonly dispatched: number;
-    };
+  // F2.7.6: ingestao aceita, processamento adiado p/ o poller (debounce). Bridge: ingested=true + status!=commit_failed -> "accepted".
+  | { readonly status: "accepted"; readonly inserted: true; readonly dispatched: 0 }
+  | (PilotActiveProcessResult & { readonly inserted: true });
 
 export class PilotActiveRootError extends Error {
   constructor(public readonly code:
@@ -185,22 +200,37 @@ export class PilotActiveRoot {
     );
   }
 
+  // F2.7.6: ingestao (dedupe + roteamento) e processamento agora sao SEPARADOS.
+  // runTurn (sincrono, usado em teste e como fallback) faz os dois; em PRODUCAO o
+  // /v1/pilot/turn so ingere e o poller chama processConversation. Comportamento identico.
   async runTurn(input: PilotActiveTurnInput): Promise<PilotActiveTurnResult> {
-    const inserted = await input.persistence.tryInsert({
+    const ingest = await ingestPilotMessage(input.persistence, this.clock, {
       eventId: input.eventId,
       conversationId: input.conversationId,
-      raw: redact({ text: input.messageText }),
-      receivedAt: input.receivedAt ?? this.clock.now(),
+      agentId: this.ref.agentId,
+      leadId: this.leadId,
+      toAddr: input.to,
+      messageText: input.messageText,
+      receivedAt: input.receivedAt,
     });
-    if (!inserted) {
-      const existing = await input.persistence.get(input.eventId);
-      // A retry may arrive after the inbox insert but before the original turn
-      // committed. Resume a still-pending event; done/claimed/error remain no-op.
-      if (!existing || existing.status !== "pending") {
-        return { status: "duplicate", inserted: false, turnId: input.turnId, dispatched: 0 };
-      }
+    if (ingest.decision === "duplicate") {
+      return { status: "duplicate", inserted: false, turnId: input.turnId, dispatched: 0 };
     }
+    const processed = await this.processConversation({
+      persistence: input.persistence,
+      conversationId: input.conversationId,
+      to: input.to,
+      workerId: input.workerId,
+      turnId: input.turnId,
+      limits: input.limits,
+      maxValidationAttempts: input.maxValidationAttempts,
+    });
+    return { ...processed, inserted: true };
+  }
 
+  // F2.7.6: claim do BLOCO pendente (a janela de debounce ja passou) -> decide -> dispatch.
+  // As mensagens ja foram ingeridas; claimBurst(cutoff=now) agrega TODAS as pendentes num turno.
+  async processConversation(input: PilotActiveProcessInput): Promise<PilotActiveProcessResult> {
     const engine = await runConversationTurn({
       persistence: input.persistence,
       clock: this.clock,
@@ -252,7 +282,6 @@ export class PilotActiveRoot {
     const outboxAfterDispatch = await input.persistence.listOutbox(input.conversationId);
     return {
       status: engine.status,
-      inserted: true,
       engine,
       outboxBeforeDispatch,
       outboxAfterDispatch,
