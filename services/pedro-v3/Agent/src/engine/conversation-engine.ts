@@ -18,6 +18,7 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { extractLeadSlots } from "./lead-extraction.ts";
 import { resolvePhotoIntent, buildPhotoTurnOutput, resolvePhotoPromiseRepair, shouldRepairPhotoPromise } from "./photo-intent.ts";
+import { detectPopularEconomyIntent, resolvePopularEconomyOffer, buildPopularEconomyTurnOutput, resolvePopularityRankingIntent, buildPopularityRankingTurnOutput } from "./popularity-intent.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -204,22 +205,34 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
         runQuery,
         interpretation: prepared.interpretation,
       });
-      let turnOutput = photoIntent
-        ? buildPhotoTurnOutput(photoIntent, turnId, cutoff)
-        : await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
-      // F2.7.8 LAYER 2 (Codex): NENHUMA promessa de foto sem send_media real. Se o LLM decidiu enviar foto
-      // (action send_photos OU texto promete) sem send_media, ROTEIA pelo resolvedor deterministico -> envia
-      // de verdade OU responde honesto. Deploy-independente; pega o caso "Boa tarde -> estou enviando as fotos".
-      if (!photoIntent && shouldRepairPhotoPromise({ decision: turnOutput.decision, composedText: turnOutput.composed.text, leadMessage })) {
-        const repair = await resolvePhotoPromiseRepair({
-          composedText: turnOutput.composed.text,
-          leadMessage,
-          state: contextState,
-          claimExtractor: prepared.claimExtractor,
-          runQuery,
-          interpretation: prepared.interpretation,
-        });
-        turnOutput = buildPhotoTurnOutput(repair, turnId, cutoff);
+      // F2.7.10 (dominio BR): "carro popular" = ENTRADA/economico -> oferta REAL do estoque. "mais vendidos/
+      // procurados/o que mais sai/best sellers" = ranking sem fonte -> honesto. P1 do Codex: em frase HIBRIDA
+      // ("populares mais vendidos") o RANKING explicito VENCE -> calcula ranking PRIMEIRO; economy so se NAO houver.
+      const rankingIntent = photoIntent ? null : resolvePopularityRankingIntent({ leadMessage });
+      const economyIntent = (photoIntent || rankingIntent) ? false : detectPopularEconomyIntent(leadMessage);
+      let turnOutput: TurnOutput;
+      if (photoIntent) {
+        turnOutput = buildPhotoTurnOutput(photoIntent, turnId, cutoff);
+      } else if (rankingIntent) {
+        turnOutput = buildPopularityRankingTurnOutput(turnId);
+      } else if (economyIntent) {
+        // "populares" -> 5 mais em conta do estoque + nota do criterio (ancorado nos fatos, nunca terminal-safe).
+        turnOutput = buildPopularEconomyTurnOutput(await resolvePopularEconomyOffer({ runQuery }), turnId);
+      } else {
+        turnOutput = await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
+        // F2.7.8 LAYER 2: NENHUMA promessa de foto sem send_media real. Se o LLM decidiu enviar foto sem
+        // send_media, ROTEIA pelo resolvedor deterministico -> envia de verdade OU responde honesto.
+        if (shouldRepairPhotoPromise({ decision: turnOutput.decision, composedText: turnOutput.composed.text, leadMessage })) {
+          const repair = await resolvePhotoPromiseRepair({
+            composedText: turnOutput.composed.text,
+            leadMessage,
+            state: contextState,
+            claimExtractor: prepared.claimExtractor,
+            runQuery,
+            interpretation: prepared.interpretation,
+          });
+          turnOutput = buildPhotoTurnOutput(repair, turnId, cutoff);
+        }
       }
       // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0
