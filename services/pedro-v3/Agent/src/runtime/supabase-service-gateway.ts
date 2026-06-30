@@ -27,6 +27,9 @@ const RPC_ALLOWLIST = new Set([
   "get_platform_ai_key",
   // Observabilidade (F2.6L): grava o motivo sanitizado da falha de turno em v3_inbox.last_error.
   "v3_record_inbox_error",
+  // F2.7.6 debounce: roteamento da conversa (ingestao) + conversas assentadas (poller).
+  "v3_upsert_conversation_routing",
+  "v3_find_settled_conversations",
 ]);
 
 const TABLE_ALLOWLIST = new Set([

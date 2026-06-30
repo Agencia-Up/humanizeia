@@ -30,18 +30,23 @@ alter table public.v3_conversation_routing force row level security;
 -- sem policies => anon/authenticated nao acessam; service_role tem BYPASSRLS (igual demais v3_*).
 
 -- 2) Upsert idempotente do roteamento — chamado na INGESTAO de cada mensagem.
-create or replace function public.v3_upsert_conversation_routing(
+-- F2.7.6.1: retorna BOOLEAN (nao void). Via PostgREST/gateway, uma funcao void pode virar
+-- 204 sem content-type JSON e o gateway rejeitaria (RESPONSE_INVALID) -> ingestao falharia.
+-- drop+create porque mudar o tipo de retorno exige recriar (create or replace nao muda o tipo).
+drop function if exists public.v3_upsert_conversation_routing(uuid, text, text, text, text, timestamptz);
+create function public.v3_upsert_conversation_routing(
   p_tenant_id uuid,
   p_conversation_id text,
   p_agent_id text,
   p_lead_id text,
   p_to_addr text,
   p_now timestamptz default now()
-) returns void
-language sql
+) returns boolean
+language plpgsql
 security definer
 set search_path = public
 as $$
+begin
   insert into public.v3_conversation_routing (tenant_id, conversation_id, agent_id, lead_id, to_addr, updated_at)
   values (p_tenant_id, p_conversation_id, p_agent_id, p_lead_id, p_to_addr, p_now)
   on conflict (tenant_id, conversation_id) do update
@@ -49,6 +54,8 @@ as $$
         lead_id = excluded.lead_id,
         to_addr = excluded.to_addr,
         updated_at = excluded.updated_at;
+  return true;
+end;
 $$;
 
 -- 3) Conversas "assentadas" prontas p/ virar UM turno (quietas >= debounce OU a
