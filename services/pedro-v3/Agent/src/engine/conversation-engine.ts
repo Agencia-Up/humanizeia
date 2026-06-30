@@ -17,6 +17,7 @@ import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { extractLeadSlots } from "./lead-extraction.ts";
+import { resolvePhotoIntent, buildPhotoTurnOutput } from "./photo-intent.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -79,6 +80,25 @@ function textFromInbox(rec: InboxRecord): string {
   const raw = rec.raw as Record<string, unknown>;
   const text = raw.text ?? raw.message ?? raw.body ?? raw.transcription ?? "";
   return typeof text === "string" ? text.trim() : "";
+}
+
+// F2.7.8 hardening (Codex): so commita os slots extraidos se o PREVIEW do reducer passar. Se falhar
+// (mutacao invalida), DESCARTA (committed=[]) — senao o reducer rejeitaria o lote inteiro e derrubaria o
+// turno (terminal-safe). Devolve tambem o contextState (slots aplicados, sem bump de version/turno) p/ o
+// modelo ja ver o que foi capturado. PURO + testavel.
+export function safeCommitSlots(
+  state: ConversationState,
+  slots: DecisionMutation[],
+  turnId: Id,
+  now: Iso,
+): { contextState: ConversationState; committed: DecisionMutation[] } {
+  if (slots.length === 0) return { contextState: state, committed: [] };
+  const preview = applyDecision(state, slots, turnId, now);
+  if (!preview.ok) return { contextState: state, committed: [] };
+  return {
+    contextState: { ...preview.next, version: state.version, turnNumber: state.turnNumber, updatedAt: state.updatedAt },
+    committed: slots,
+  };
 }
 
 function aggregateLeadMessage(records: InboxRecord[]): string {
@@ -161,13 +181,9 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
         claimExtractor: prepared.claimExtractor,
         turnId,
       });
-      let contextState = state;
-      if (extractedSlots.length > 0) {
-        const preview = applyDecision(state, extractedSlots, turnId, cutoff);
-        if (preview.ok) {
-          contextState = { ...preview.next, version: state.version, turnNumber: state.turnNumber, updatedAt: state.updatedAt };
-        }
-      }
+      // F2.7.8 hardening (Codex): so commita os slots se o PREVIEW do reducer passar (senao descarta,
+      // nao derruba o turno). contextState = slots aplicados (sem bump) p/ o modelo nao reperguntar.
+      const { contextState, committed: safeExtractedSlots } = safeCommitSlots(state, extractedSlots, turnId, cutoff);
 
       const ctx: TurnContext = {
         state: contextState,
@@ -179,14 +195,25 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
         claimExtractor: prepared.claimExtractor,
       };
 
-      const turnOutput = await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
+      // F2.7.8: pedido de FOTO e tratado DETERMINISTICAMENTE (resolve veiculo + fotos -> EffectPlan
+      // send_media real), nunca fingido por texto. Se nao for pedido de foto, segue o fluxo normal do LLM.
+      const photoIntent = await resolvePhotoIntent({
+        leadMessage,
+        state: contextState,
+        claimExtractor: prepared.claimExtractor,
+        runQuery,
+        interpretation: prepared.interpretation,
+      });
+      const turnOutput = photoIntent
+        ? buildPhotoTurnOutput(photoIntent, turnId, cutoff)
+        : await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
       // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0
         ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }]
         : [];
       // O engine e a UNICA fonte do append_lead_turn — remove qualquer um emitido pelo modelo (sem duplicar).
       const modelMutations = turnOutput.decision.decisionMutations.filter((m) => m.op !== "append_lead_turn");
-      const committedMutations = [...leadTurnMutations, ...extractedSlots, ...modelMutations];
+      const committedMutations = [...leadTurnMutations, ...safeExtractedSlots, ...modelMutations];
       const reduced = applyDecision(state, committedMutations, turnId, cutoff);
       if (!reduced.ok) {
         throw new Error(`decision mutations rejected: ${reduced.rejected.map((r) => r.reason).join("; ")}`);
