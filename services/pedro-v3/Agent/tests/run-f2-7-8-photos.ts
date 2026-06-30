@@ -153,10 +153,15 @@ async function main(): Promise<void> {
   {
     const sendDec = buildPhotoTurnOutput({ kind: "send", vehicleKey: ONIX, vehicleLabel: "Chevrolet Onix 2014", photoIds: ["p1"] }, "t", NOW).decision;
     check("B: decisao COM send_media -> nao precisa reparo", shouldRepair(sendDec, "Aqui estão as fotos!") === false);
-    check("B: action send_photos SEM send_media -> precisa reparo", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos do onix") === true);
-    check("B: action reply mas texto promete foto -> precisa reparo", shouldRepair(mkDecision("reply", [mkSendMessage()]), "Douglas, vou te enviar as fotos do modelo ONIX 2014") === true);
-    check("B: texto NEGADO ('nao vou mandar fotos') -> NAO repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "entendi, nao vou te mandar fotos entao") === false);
-    check("B: texto normal sem foto -> NAO repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "Qual seu nome para eu te ajudar?") === false);
+    check("B: lead pediu foto + send_photos sem midia -> repara", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "ok", "quero fotos do onix") === true);
+    check("B: lead neutro + texto composto promete foto -> repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "Douglas, vou te enviar as fotos do modelo ONIX 2014", "Boa tarde") === true);
+    check("B: texto NEGADO ('nao vou mandar fotos') + lead neutro -> NAO repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "entendi, nao vou te mandar fotos entao", "ok") === false);
+    check("B: texto normal sem foto + lead neutro -> NAO repara", shouldRepair(mkDecision("reply", [mkSendMessage()]), "Qual seu nome para eu te ajudar?", "ok") === false);
+
+    // ⭐ Codex r3.2 (OVER-TRIGGER): action send_photos SOZINHO (sem foto no lead nem promessa no texto) NAO repara
+    check("B-over: lead 'Bonito ele' + send_photos + texto sem promessa -> NAO repara", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "Que bom que gostou! Quer agendar uma visita?", "Bonito ele") === false);
+    check("B-over: lead 'Gostei' + send_photos -> NAO repara", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "Que otimo! Posso te ajudar com mais detalhes?", "Gostei") === false);
+    check("B-over: lead 'quanto fica?' + send_photos + texto sem promessa -> NAO repara", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "O valor e R$ 54.990.", "quanto fica?") === false);
 
     // ⭐ P1 do Codex: a NEGACAO DO LEAD trava o reparo MESMO com action send_photos (LLM veio errado)
     check("B-P1: lead 'não quero foto' + send_photos sem midia -> NAO repara (nunca midia contra a vontade)", shouldRepair(mkDecision("send_photos", [mkSendMessage()]), "vou enviar as fotos", "não quero foto") === false);

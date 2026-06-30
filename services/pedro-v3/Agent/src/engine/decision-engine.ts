@@ -14,6 +14,7 @@ import type {
 import { PolicyEngine, hasDeny } from "./policy-engine.ts";
 import { finalize, emitTerminalSafe, emitErrorTerminalSafe } from "./finalizer.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
+import { normalizeText } from "./catalog-utils.ts";
 
 export type QueryRunner = (call: QueryCall) => Promise<QueryResult>;
 
@@ -55,6 +56,22 @@ function detectRequestedModels(ctx: TurnContext): string[] {
   return out.slice(0, 3); // bound: no maximo 3 modelos seedados por turno
 }
 
+// F2.7.9: pedido AMPLO de estoque por PRECO BAIXO (barato/economico/em conta/acessivel...) SEM modelo
+// nomeado. Raiz do terminal-safe em "Quais modelos baratos voce tem?": sem seed, o vehicle_offer_list do
+// LLM citava veiculo FORA dos fatos -> POL-GROUND-PRICE deny -> terminal-safe. Deteccao geral (sem if por frase).
+const BROAD_PRICE_QUERY = /\bbarat|\beconomic|\bem conta\b|\bacessiv|\bpreco baixo\b|\bmais barat/;
+export function detectBroadStockQuery(ctx: Pick<TurnContext, "leadMessage">): boolean {
+  return BROAD_PRICE_QUERY.test(normalizeText(ctx.leadMessage));
+}
+
+// Ordena por preco crescente (preco > 0) e limita — a oferta ampla mostra so as opcoes mais em conta.
+export function limitCheapest(res: QueryResult, n: number): QueryResult {
+  if (!res.ok || res.tool !== "stock_search") return res;
+  const priced = res.data.items.filter((v) => typeof v.preco === "number" && v.preco > 0).slice().sort((a, b) => a.preco - b.preco);
+  const items = (priced.length > 0 ? priced : res.data.items).slice(0, n);
+  return { ...res, data: { ...res.data, items } };
+}
+
 // D3 (F2.7.4): recompoe com FEEDBACK do deny anterior em vez de repetir cega (que so reproduz o erro
 // -> terminal-safe). Anexa a correcao ao guidance (o compose ja recebe decision.responsePlan.guidance).
 // NAO muta a decisao original (usada no caminho terminal-safe).
@@ -94,7 +111,8 @@ export async function runTurn(args: {
     // D (F2.7.4): se o lead nomeou um veiculo, consulta o estoque ANTES de propor (deterministico).
     // Raiz do terminal-safe "TextPart contem 'ONIX'": o modelo respondia sobre o veiculo SEM fatos.
     // Com os fatos ja presentes, a proposta/compose se ancora (vehicle_ref) ou diz "nao encontrei" + similares.
-    for (const modelo of detectRequestedModels(fullCtx)) {
+    const seededModels = detectRequestedModels(fullCtx);
+    for (const modelo of seededModels) {
       const seedCall: QueryCall = { tool: "stock_search", input: { modelo } };
       if (PolicyEngine.authorizeQuery(seedCall, fullCtx, facts).outcome !== "allow") continue;
       let seedRes: QueryResult;
@@ -109,6 +127,25 @@ export async function runTurn(args: {
         throw err;
       }
       facts.push(seedRes);
+    }
+    // F2.7.9: busca AMPLA por preco baixo (sem modelo nomeado) -> seed do estoque (a fonte ja ordena por
+    // preco asc) limitado as 5 mais em conta -> o vehicle_offer_list ancora nos fatos (nada de terminal-safe).
+    if (seededModels.length === 0 && detectBroadStockQuery(fullCtx)) {
+      const broadCall: QueryCall = { tool: "stock_search", input: { broad: true } };
+      if (PolicyEngine.authorizeQuery(broadCall, fullCtx, facts).outcome === "allow") {
+        let broadRes: QueryResult;
+        try {
+          broadRes = await withTimeout(
+            runQuery(broadCall),
+            limits.queryTimeoutMs ?? 4000,
+            "query: stock_search (broad seed) exceeded timeout",
+          );
+        } catch (err: any) {
+          err.step = err.step ?? "query";
+          throw err;
+        }
+        facts.push(limitCheapest(broadRes, 5));
+      }
     }
     let proposal: ProposedDecision | null = null;
     let steps = 0;

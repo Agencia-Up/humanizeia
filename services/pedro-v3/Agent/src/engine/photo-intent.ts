@@ -194,6 +194,15 @@ export async function resolvePhotoPromiseRepair(args: {
 // "nunca enviar midia quando o lead negou foto; nunca prometer foto sem send_media quando o lead pediu".
 // Por isso a Layer 2 RESPEITA o mesmo invariante de negacao da Layer 1 (`isNegatedPhotoRequest(leadMessage)`):
 // se o lead negou foto, NAO repara — mesmo que o LLM erre com `action: send_photos`.
+// Intencao de foto na fala do LEAD (mesma deteccao da Layer 1; exclui negacao).
+export function leadHasPhotoIntent(leadMessage: string): boolean {
+  return PHOTO_REQUEST.test(leadMessage) && !isNegatedPhotoRequest(leadMessage);
+}
+// O TEXTO COMPOSTO promete enviar foto (verbo de envio + palavra de foto; exclui negacao).
+export function composedTextPromisesPhoto(composedText: string): boolean {
+  return PHOTO_PROMISE_TEXT.test(stripAccentsLower(composedText)) && !isNegatedPhotoRequest(composedText);
+}
+
 export function shouldRepairPhotoPromise(args: {
   readonly decision: TurnDecision;
   readonly composedText: string;
@@ -201,9 +210,11 @@ export function shouldRepairPhotoPromise(args: {
 }): boolean {
   const { decision, composedText, leadMessage } = args;
   if (decision.effectPlan.some((p) => p.kind === "send_media")) return false; // ja tem midia
-  if (isNegatedPhotoRequest(leadMessage)) return false; // LEAD negou foto -> nunca midia (mesmo invariante da Layer 1)
-  if (decision.action === "send_photos") return true; // LLM decidiu enviar foto sem midia -> reparar
-  return PHOTO_PROMISE_TEXT.test(stripAccentsLower(composedText)) && !isNegatedPhotoRequest(composedText);
+  if (isNegatedPhotoRequest(leadMessage)) return false; // lead negou foto -> nunca midia (override total)
+  // Codex r3.2: `action===send_photos` SOZINHO NAO basta (o LLM erra: "Bonito ele" virava resposta de foto).
+  // So repara se ha intencao textual de foto no LEAD ou promessa explicita de foto no TEXTO COMPOSTO.
+  // `decision.action` deixa de ser gatilho — send_photos sem essas evidencias = erro de decisao do LLM, ignorado.
+  return leadHasPhotoIntent(leadMessage) || composedTextPromisesPhoto(composedText);
 }
 
 // Constroi o TurnOutput deterministico do caso de foto (vai direto ao commit/dispatch, sem LLM).
