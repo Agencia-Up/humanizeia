@@ -19,6 +19,7 @@ import type {
 } from "../../domain/conversation-model.ts";
 import type { TenantRuntimeConfig } from "../../domain/read-ports.ts";
 import { applyDecision } from "../../engine/state-reducer.ts";
+import { deriveModelContext } from "../../engine/model-context-view.ts";
 
 const ACTIONS = new Set<TurnAction>([
   "reply", "clarify", "collect_slot", "search_stock", "send_photos",
@@ -110,6 +111,9 @@ function snapshot(ctx: TurnContext): ModelTurnSnapshot {
     state: ctx.state,
     tenantCatalog: ctx.tenantCatalog,
     interpretation: ctx.interpretation,
+    // F2.7.4 (E): contexto explicito (transcript/ultima fala/ja apresentado/fatos/objetivo/interesse)
+    // derivado de forma PURA do estado+interpretacao — o modelo nao precisa garimpar o state cru.
+    context: deriveModelContext(ctx.state, ctx.interpretation),
   });
 }
 

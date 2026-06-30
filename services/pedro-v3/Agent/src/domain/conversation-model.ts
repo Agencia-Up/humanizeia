@@ -25,6 +25,20 @@ export type ModelBinding = {
   readonly temperature: number | null;
 };
 
+// F2.7.4 (E) — Contexto explicito derivado do estado/historico, surfacado ao modelo
+// a cada turno (em vez do state cru). Tipos vivem no dominio; o DERIVADOR puro fica
+// em engine/model-context-view.ts (deriveModelContext). Mantem o dominio sem depender de engine.
+export type ModelTranscriptTurn = { readonly role: "lead" | "agent"; readonly text: string };
+
+export type ModelConversationContext = {
+  readonly recentTranscript: readonly ModelTranscriptTurn[];
+  readonly lastAgentMessage: string | null;
+  readonly alreadyIntroduced: boolean;
+  readonly conversationFacts: readonly string[];
+  readonly currentObjective: { readonly type: string; readonly slot: string | null; readonly status: string } | null;
+  readonly lastCommercialInterest: { readonly model: string | null; readonly tipo: string | null; readonly precoMax: number | null } | null;
+};
+
 export type ModelTurnSnapshot = {
   readonly turnId: string;
   readonly now: string;
@@ -32,12 +46,14 @@ export type ModelTurnSnapshot = {
   readonly state: ConversationState;
   readonly tenantCatalog: TenantCatalog;
   readonly interpretation?: TurnInterpretation;
+  readonly context: ModelConversationContext;
 };
 
 export type InterpretModelRequest = {
   readonly operation: "interpret";
   readonly binding: ModelBinding;
-  readonly turn: Omit<ModelTurnSnapshot, "interpretation">;
+  // interpret roda ANTES de existir interpretacao/contexto derivado deste turno.
+  readonly turn: Omit<ModelTurnSnapshot, "interpretation" | "context">;
 };
 
 export type ProposeModelRequest = {

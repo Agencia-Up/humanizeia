@@ -34,6 +34,33 @@ const SAFE_CLARIFY = (): ProposedDecision => ({
   reasonCode: "query_loop_exhausted", reasonSummary: "limite do loop atingido", confidence: 0.5,
 });
 
+// D (F2.7.4): modelos que o lead nomeou NESTE turno (interpretacao + claims do catalogo na fala do lead).
+// Base para consultar o estoque ANTES de propor — "tools/query antes de responder", sem if por frase.
+function detectRequestedModels(ctx: TurnContext): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (m: string | null | undefined): void => {
+    const norm = (m ?? "").trim();
+    const key = norm.toLowerCase();
+    if (!norm || seen.has(key)) return;
+    seen.add(key);
+    out.push(norm);
+  };
+  push(ctx.interpretation.extractedEntities?.model);
+  for (const claim of ctx.claimExtractor.extractClaims(ctx.leadMessage)) {
+    if (claim.kind === "model" || claim.kind === "brand_model") push(claim.text);
+  }
+  return out.slice(0, 2); // bound: no maximo 2 modelos seedados por turno
+}
+
+// D3 (F2.7.4): recompoe com FEEDBACK do deny anterior em vez de repetir cega (que so reproduz o erro
+// -> terminal-safe). Anexa a correcao ao guidance (o compose ja recebe decision.responsePlan.guidance).
+// NAO muta a decisao original (usada no caminho terminal-safe).
+function withRetryGuidance(decision: TurnDecision, denyDetail: string): TurnDecision {
+  const note = ` [CORRECAO OBRIGATORIA: sua tentativa anterior foi REJEITADA pela validacao (${denyDetail}). Nunca escreva marca/modelo/preco em texto livre — use partes vehicle_ref/money_ref ancoradas nos fatos; NAO cite veiculo ausente dos fatos.]`;
+  return { ...decision, responsePlan: { guidance: (decision.responsePlan.guidance + note).slice(0, 1400) } };
+}
+
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMsg: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -62,6 +89,25 @@ export async function runTurn(args: {
 
   const execute = async (): Promise<TurnOutput> => {
     const facts: QueryResult[] = [];
+    // D (F2.7.4): se o lead nomeou um veiculo, consulta o estoque ANTES de propor (deterministico).
+    // Raiz do terminal-safe "TextPart contem 'ONIX'": o modelo respondia sobre o veiculo SEM fatos.
+    // Com os fatos ja presentes, a proposta/compose se ancora (vehicle_ref) ou diz "nao encontrei" + similares.
+    for (const modelo of detectRequestedModels(fullCtx)) {
+      const seedCall: QueryCall = { tool: "stock_search", input: { modelo } };
+      if (PolicyEngine.authorizeQuery(seedCall, fullCtx, facts).outcome !== "allow") continue;
+      let seedRes: QueryResult;
+      try {
+        seedRes = await withTimeout(
+          runQuery(seedCall),
+          limits.queryTimeoutMs ?? 4000,
+          "query: stock_search (seed) exceeded timeout",
+        );
+      } catch (err: any) {
+        err.step = err.step ?? "query";
+        throw err;
+      }
+      facts.push(seedRes);
+    }
     let proposal: ProposedDecision | null = null;
     let steps = 0;
     let loopExhausted = false;
@@ -114,9 +160,11 @@ export async function runTurn(args: {
     let ok = false;
     let lastDenyDetail = ""; // F2.7.3: motivo do deny de grounding (observabilidade no terminal-safe)
     for (let attempt = 1; attempt <= maxValidationAttempts; attempt++) {
+      // D3: a partir da 2a tentativa, recompoe COM o motivo do deny anterior (feedback), nao cega.
+      const composeDecision = attempt > 1 && lastDenyDetail ? withRetryGuidance(decision, lastDenyDetail) : decision;
       try {
         const draft = await withTimeout(
-          llm.compose(decision, facts, fullCtx),
+          llm.compose(composeDecision, facts, fullCtx),
           limits.composeTimeoutMs ?? 5000,
           "compose: LLM compose exceeded timeout"
         );
