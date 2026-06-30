@@ -16,6 +16,7 @@ import { finalize, emitTerminalSafe, emitErrorTerminalSafe } from "./finalizer.t
 import { ResponseRenderer } from "./response-renderer.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { buildContextualSdrReply } from "./continuity-fallback.ts";
+import type { RenderedOfferItem } from "../domain/conversation-state.ts";
 
 export type QueryRunner = (call: QueryCall) => Promise<QueryResult>;
 
@@ -26,6 +27,7 @@ export type TurnOutput = {
   loopExhausted: boolean;
   terminalSafe: boolean; // validação esgotou -> SAFE_RESPONSE + alerta/dead-letter
   steps: number;
+  renderedOfferContext?: readonly RenderedOfferItem[] | null; // F2.7.12: handler determinístico já forneceu os itens (ordem)
 };
 
 const SAFE_CLARIFY = (): ProposedDecision => ({

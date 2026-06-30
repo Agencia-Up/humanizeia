@@ -75,6 +75,22 @@ export type PhotoLedger = { sentByVehicle: Record<string, string[]> }; // vehicl
 export type RejectedMemory = { modelos: string[] };
 export type ConversationTurn = { role: "lead" | "agent"; text: string; at: Iso };
 
+// F2.7.12: memória OPERACIONAL da última lista renderizada (vehicle_offer_list), p/ resolver
+// referência ORDINAL ("foto do 3") de forma estruturada — SEM parse de texto, SEM depender do
+// callback delivered. NÃO é o ledger oficial de oferta entregue (offers.last); é só contexto.
+export type RenderedOfferItem = {
+  ordinal: number;            // 1-based, na ordem renderizada
+  vehicleKey: string;
+  marca?: string | null;
+  modelo?: string | null;
+  ano?: number | null;
+};
+export type LastRenderedOfferContext = {
+  sourceTurnId: Id;
+  createdAt: Iso;
+  items: RenderedOfferItem[];
+};
+
 export type ConversationState = {
   schemaVersion: number;
   version: number; // CAS
@@ -89,6 +105,7 @@ export type ConversationState = {
   slots: FunnelSlots;
   vehicleContext: VehicleContext;      // foco apresentado (após entrega)
   offers: OfferMemory;
+  lastRenderedOfferContext: LastRenderedOfferContext | null; // memória operacional p/ referência ordinal
   photoLedger: PhotoLedger;
   rejected: RejectedMemory;
   recentTurns: ConversationTurn[];
@@ -133,6 +150,7 @@ export function createInitialState(args: {
     },
     vehicleContext: { focus: null },
     offers: { last: null, presentedKeys: [] },
+    lastRenderedOfferContext: null,
     photoLedger: { sentByVehicle: {} },
     rejected: { modelos: [] },
     recentTurns: [],

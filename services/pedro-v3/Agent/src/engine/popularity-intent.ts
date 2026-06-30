@@ -59,8 +59,12 @@ export function buildPopularEconomyTurnOutput(result: PopularEconomyResult, turn
   if (result.kind === "none") {
     return textTurn(turnId, "No momento não tenho opções de entrada no estoque, mas posso te avisar assim que chegar algo. Quer?", "popular_economy_no_stock", "Sem estoque economico — honesto, sem inventar.");
   }
-  const text = `${ECONOMY_NOTE}\n\n${renderVehicleOfferList(result.vehicles, { maxItems: 5 })}`;
-  return textTurn(turnId, text, "popular_economy_offer", "Populares = entrada/economicos; oferta ancorada no estoque real.");
+  const vehicles = result.vehicles.slice(0, 5);
+  const text = `${ECONOMY_NOTE}\n\n${renderVehicleOfferList(vehicles, { maxItems: 5 })}`;
+  const out = textTurn(turnId, text, "popular_economy_offer", "Populares = entrada/economicos; oferta ancorada no estoque real.");
+  // F2.7.12: fornece a lista ESTRUTURADA (ordinal -> vehicleKey) p/ resolver "foto do N" depois.
+  const items = vehicles.map((v, i) => ({ ordinal: i + 1, vehicleKey: v.vehicleKey, marca: v.marca ?? null, modelo: v.modelo ?? null, ano: v.ano ?? null }));
+  return { ...out, renderedOfferContext: items };
 }
 
 // TurnOutput deterministico so com send_message (mesmo padrao do buildPhotoTurnOutput). Texto JA pronto.

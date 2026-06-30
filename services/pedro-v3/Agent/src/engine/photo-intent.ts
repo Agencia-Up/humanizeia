@@ -12,7 +12,7 @@
 // VAZIOS): modelo na fala / ordinal "o segundo" na ultima oferta do agente (recentTurns) / unico da lista.
 // O vehicleKey vem SEMPRE do stock_search (grounding). Sem if por frase: invariantes.
 // ============================================================================
-import type { ConversationState } from "../domain/conversation-state.ts";
+import type { ConversationState, RenderedOfferItem } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, ProposedDecision, TurnDecision, TurnInterpretation } from "../domain/decision.ts";
 import type { Id, Iso } from "../domain/types.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
@@ -100,31 +100,78 @@ function modelsInText(text: string, claimExtractor: ClaimExtractor): string[] {
   return out;
 }
 
-// Modelos citados em uma lista de textos (ordem preservada, sem duplicar) + os da interpretacao.
-function collectModels(texts: string[], claimExtractor: ClaimExtractor, interpretation: TurnInterpretation | null | undefined): string[] {
-  const out: string[] = [];
-  const has = (m: string) => out.some((x) => normalizeText(x) === normalizeText(m));
-  for (const t of texts) for (const m of modelsInText(t, claimExtractor)) if (!has(m)) out.push(m);
-  for (const m of interpretation?.extractedEntities?.models ?? []) if (!has(m)) out.push(m);
-  return out;
-}
-
-function parseOrdinal(msg: string): number | null {
+// F2.7.12.1 (Codex P1): digito so e ORDINAL em contexto ordinal EXPLICITO. Quantidade ("3 fotos") NAO e
+// ordinal. FORTE = palavra (primeiro/...) OU item/opcao/numero/posicao/# + N. FRACO = do/da/de/o/a + N
+// (so vence quando NAO ha modelo no texto do lead). Nunca "c3"/"hb20"/"2014"/"1.0".
+function parseOrdinal(msg: string): { value: number; strong: boolean } | null {
   const norm = normalizeText(msg);
   for (const [word, n] of Object.entries(ORDINALS)) {
-    if (new RegExp(`\\b${word}\\b`).test(norm)) return n;
+    if (new RegExp(`\\b${word}\\b`).test(norm)) return { value: n, strong: true };
   }
-  const m = /\b(?:o|numero|item|opcao)\s*([1-5])\b/.exec(norm);
-  return m ? Number(m[1]) : null;
+  const strong = /\b(?:item|opcao|numero|posicao|#)\s*([1-9])\b(?!\s*(?:fotos?|imagens?))/.exec(norm);
+  if (strong) return { value: Number(strong[1]), strong: true };
+  const weak = /\b(?:d[aeo]|[ao])\s+([1-9])\b(?!\s*(?:fotos?|imagens?))/.exec(norm);
+  if (weak) return { value: Number(weak[1]), strong: false };
+  return null;
 }
 
-// Seleciona o modelo-alvo: explicitos (1 -> ele; varios -> ambiguo); senao ordinal na lista; senao unico da lista.
-function selectTargetModel(explicitModels: string[], ordinal: number | null, fallbackModels: string[]): string | null {
-  if (explicitModels.length === 1) return explicitModels[0];
-  if (explicitModels.length > 1) return null; // ambiguo -> perguntar qual
-  if (ordinal != null && fallbackModels.length >= ordinal) return fallbackModels[ordinal - 1];
-  if (fallbackModels.length === 1) return fallbackModels[0];
-  return null;
+function labelFromItem(item: RenderedOfferItem): string {
+  return [item.marca, item.modelo, item.ano && item.ano > 0 ? String(item.ano) : null].filter(Boolean).join(" ") || item.vehicleKey;
+}
+
+// Resolve fotos de um vehicleKey ESPECIFICO (vindo da lista estruturada) — NAO faz stock_search por modelo.
+// Fail-closed: o vehicleKey ja vem da ultima lista; aqui so confirmamos que ha fotos resolviveis.
+async function resolvePhotosForKey(
+  vehicleKey: string, label: string, modeloNorm: string,
+  args: { state: ConversationState; runQuery: QueryRunner; wantsMore: boolean },
+): Promise<PhotoIntentResult> {
+  const { state, runQuery, wantsMore } = args;
+  const photoRes = await runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: vehicleKey } } });
+  if (!photoRes.ok || photoRes.tool !== "vehicle_photos_resolve") return { kind: "not_found", vehicleLabel: label };
+  if (photoRes.data.ambiguous) return { kind: "ask_which" };
+  const photoIds = photoRes.data.photoIds;
+  if (photoIds.length === 0) return { kind: "not_found", vehicleLabel: label };
+  const sent = state.photoLedger.sentByVehicle[vehicleKey] ?? [];
+  const ledgerHasAll = photoIds.every((id) => sent.includes(id));
+  if (!wantsMore && (ledgerHasAll || recentlySentPhotos(state, modeloNorm))) return { kind: "already_sent", vehicleLabel: label };
+  return { kind: "send", vehicleKey, vehicleLabel: label, photoIds };
+}
+
+// F2.7.12.1: resolucao UNIFICADA (Layer 1 e Layer 2). Ordem: ordinal FORTE -> modelo no TEXTO DO LEAD ->
+// ordinal FRACO (so sem modelo no lead) -> modelo da interpretacao -> unico da lista estruturada -> textos
+// de fallback (agente/composto). Ordinal resolve SO contra a lista estruturada (fail-closed, nunca stock_search por digito).
+async function resolvePhotoTargetResult(args: {
+  leadMessage: string; state: ConversationState; claimExtractor: ClaimExtractor;
+  runQuery: QueryRunner; interpretation: TurnInterpretation | null | undefined;
+  wantsMore: boolean; fallbackModelTexts: string[];
+}): Promise<PhotoIntentResult> {
+  const { leadMessage, state, claimExtractor, runQuery, interpretation, wantsMore, fallbackModelTexts } = args;
+  const offerItems = state.lastRenderedOfferContext?.items ?? [];
+  const resolveOrdinal = (n: number): Promise<PhotoIntentResult> => {
+    if (n >= 1 && n <= offerItems.length) {
+      const item = offerItems[n - 1];
+      return resolvePhotosForKey(item.vehicleKey, labelFromItem(item), stripAccentsLower(item.modelo ?? ""), { state, runQuery, wantsMore });
+    }
+    return Promise.resolve({ kind: "ask_which" }); // fail-closed: ordinal sem item -> pergunta, NUNCA outro veiculo
+  };
+  const ord = parseOrdinal(leadMessage);
+
+  if (ord?.strong) return resolveOrdinal(ord.value); // 1) ORDINAL FORTE vence ate modelo explicito
+  const leadModels = modelsInText(leadMessage, claimExtractor); // 2) MODELO no TEXTO DO LEAD vence ordinal fraco
+  if (leadModels.length > 1) return { kind: "ask_which" };
+  if (leadModels.length === 1) return resolveTargetPhotos(leadModels[0], { state, runQuery, wantsMore });
+  if (ord) return resolveOrdinal(ord.value); // 3) ORDINAL FRACO (sem modelo no lead) -> lista estruturada
+  const interpModels = (interpretation?.extractedEntities?.models ?? []).filter((m) => typeof m === "string" && m.trim() !== ""); // 4) interpretacao
+  if (interpModels.length === 1) return resolveTargetPhotos(interpModels[0], { state, runQuery, wantsMore });
+  if (interpModels.length > 1) return { kind: "ask_which" };
+  if (offerItems.length === 1) return resolveOrdinal(1); // 5) unico da lista estruturada
+  if (offerItems.length > 1) return { kind: "ask_which" };
+  for (const t of fallbackModelTexts) { // 6) fallback: modelo no texto do agente / composto
+    const fm = modelsInText(t, claimExtractor);
+    if (fm.length === 1) return resolveTargetPhotos(fm[0], { state, runQuery, wantsMore });
+    if (fm.length > 1) return { kind: "ask_which" };
+  }
+  return { kind: "ask_which" };
 }
 
 // Nucleo: resolve veiculo (estoque) + fotos + anti-reenvio. vehicleKey SEMPRE do estoque (grounding).
@@ -164,11 +211,8 @@ export async function resolvePhotoIntent(args: {
   const { leadMessage, state, claimExtractor, runQuery, interpretation } = args;
   if (!PHOTO_REQUEST.test(leadMessage) || isNegatedPhotoRequest(leadMessage)) return null;
   const wantsMore = WANTS_MORE.test(stripAccentsLower(leadMessage));
-  const leadModels = collectModels([leadMessage], claimExtractor, interpretation);
-  const agentModels = modelsInText(lastAgentText(state), claimExtractor);
-  const target = selectTargetModel(leadModels, parseOrdinal(leadMessage), agentModels);
-  if (!target) return { kind: "ask_which" };
-  return resolveTargetPhotos(target, { state, runQuery, wantsMore });
+  // Fallback de modelo (quando nao ha ordinal nem modelo no lead) = ultima fala do agente.
+  return resolvePhotoTargetResult({ leadMessage, state, claimExtractor, runQuery, interpretation, wantsMore, fallbackModelTexts: [lastAgentText(state)] });
 }
 
 // LAYER 2 (trava): a decisao do LLM promete foto sem `send_media`? Resolve o veiculo (prioridade: o que o
@@ -183,11 +227,9 @@ export async function resolvePhotoPromiseRepair(args: {
 }): Promise<PhotoIntentResult> {
   const { composedText, leadMessage, state, claimExtractor, runQuery, interpretation } = args;
   const wantsMore = WANTS_MORE.test(stripAccentsLower(leadMessage));
-  const explicitModels = collectModels([composedText, leadMessage], claimExtractor, interpretation);
-  const agentModels = modelsInText(lastAgentText(state), claimExtractor);
-  const target = selectTargetModel(explicitModels, parseOrdinal(leadMessage), agentModels);
-  if (!target) return { kind: "ask_which" };
-  return resolveTargetPhotos(target, { state, runQuery, wantsMore });
+  // Codex P1: o repair tambem respeita ORDINAL + lista estruturada (mesmo resolvedor). Fallback de modelo:
+  // o que o AGENTE prometeu no texto composto E a ultima fala — so quando nao ha ordinal nem modelo no lead.
+  return resolvePhotoTargetResult({ leadMessage, state, claimExtractor, runQuery, interpretation, wantsMore, fallbackModelTexts: [composedText, lastAgentText(state)] });
 }
 
 // Reparar a promessa de foto da decisao (gerar send_media real)? Invariante GERAL (Codex r3):

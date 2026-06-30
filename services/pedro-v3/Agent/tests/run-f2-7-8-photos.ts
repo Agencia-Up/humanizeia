@@ -50,6 +50,13 @@ const baseState = (over: Partial<ConversationState> = {}): ConversationState => 
   ...over,
 });
 const agentOffered = (text: string): ConversationState => baseState({ recentTurns: [{ role: "agent", text, at: NOW }] });
+// F2.7.12: memoria ESTRUTURADA da ultima lista (ordinal -> vehicleKey), como o engine grava em prod.
+const offered = (...keys: string[]): ConversationState => baseState({
+  lastRenderedOfferContext: { sourceTurnId: "t-off", createdAt: NOW, items: keys.map((k, i) => {
+    const v = STOCK.find((s) => s.vehicleKey === k)!;
+    return { ordinal: i + 1, vehicleKey: k, marca: v.marca, modelo: v.modelo, ano: v.ano };
+  }) },
+});
 const TI = (models?: string[]): TurnInterpretation => ({ relation: "asks_vehicle_detail", ...(models ? { extractedEntities: { models } } : {}) });
 const intent = (leadMessage: string, state: ConversationState, interpretation: TurnInterpretation = TI()) =>
   resolvePhotoIntent({ leadMessage, state, claimExtractor: extractor, runQuery, interpretation });
@@ -75,10 +82,10 @@ async function main(): Promise<void> {
     const r = await intent("manda foto do onix", baseState());
     check("2 'manda foto do onix' -> send (onix)", r?.kind === "send" && r.vehicleKey === ONIX, JSON.stringify(r));
   }
-  // 3) "foto do segundo" apos lista -> item 2 (Renegade)
+  // 3) "foto do segundo" apos lista -> item 2 (Renegade), via memoria ESTRUTURADA
   {
-    const r = await intent("foto do segundo", agentOffered("1. Chevrolet Onix 2014 — R$ 54.990\n2. Jeep Renegade 2018 — R$ 72.990"));
-    check("3 'foto do segundo' -> send do 2o listado (renegade)", r?.kind === "send" && r.vehicleKey === RENEGADE, JSON.stringify(r));
+    const r = await intent("foto do segundo", offered(ONIX, RENEGADE));
+    check("3 'foto do segundo' -> send do 2o da lista estruturada (renegade)", r?.kind === "send" && r.vehicleKey === RENEGADE, JSON.stringify(r));
   }
   // 4) pedido ambiguo apos lista com varios -> pergunta qual
   {

@@ -20,6 +20,7 @@ import { extractLeadSlots } from "./lead-extraction.ts";
 import { resolvePhotoIntent, buildPhotoTurnOutput, resolvePhotoPromiseRepair, shouldRepairPhotoPromise } from "./photo-intent.ts";
 import { detectPopularEconomyIntent, resolvePopularEconomyOffer, buildPopularEconomyTurnOutput, resolvePopularityRankingIntent, buildPopularityRankingTurnOutput } from "./popularity-intent.ts";
 import { detectContinuityIntent, buildContinuityTurnOutput } from "./continuity-fallback.ts";
+import { computeRenderedOfferContext } from "./offer-context.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -254,6 +255,11 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       if (!reduced.ok) {
         throw new Error(`decision mutations rejected: ${reduced.rejected.map((r) => r.reason).join("; ")}`);
       }
+      // F2.7.12 (P0): se este turno renderizou uma lista (vehicle_offer_list), grava a memória OPERACIONAL
+      // estruturada (ordinal -> vehicleKey) p/ resolver "foto do N" depois — deterministico, sem parse de
+      // texto, sem depender do delivered. Sem nova oferta -> preserva a anterior (reduced.next ja a clonou).
+      const offerCtx = computeRenderedOfferContext(turnOutput, turnId, cutoff);
+      if (offerCtx) reduced.next.lastRenderedOfferContext = offerCtx;
 
       const outbox = materializeEffectPlans(turnOutput.decision, turnOutput.composed, {
         conversationId,
