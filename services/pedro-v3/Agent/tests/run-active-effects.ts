@@ -247,7 +247,8 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   check("text", "text uses effectId as idempotency key", sender.texts[0]?.idempotencyKey === "turn-1:msg", JSON.stringify(sender.texts));
 }
 
-// 3) Critical text with accepted receipt records receipt but does not advance conversation memory.
+// 3) F2.7.4: send_message com SO append_assistant_turn = accepted-safe -> grava a MEMORIA do agente no
+//    ACCEPTED (o agente lembra do que ENVIOU; nao depende do callback delivered, que pode nao chegar).
 {
   const record = baseRecord({
     onSuccess: [{ op: "append_assistant_turn", effectId: "turn-1:msg", turn: { role: "agent", text: "Pergunta entregue", at: NOW } }],
@@ -260,9 +261,30 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   const count = await outbox.dispatchConversation("conv-1");
   const state = p.load("conv-1")?.state;
   const row = p.listOutbox("conv-1")[0];
-  check("receipt", "critical accepted dispatches once", count === 1, String(count));
-  check("receipt", "critical accepted does not apply outcome", row.receiptLevel === "accepted" && row.outcomeAppliedAt == null, JSON.stringify(row));
-  check("receipt", "agent memory not appended on accepted only", state?.recentTurns.every((turn) => turn.role !== "agent") === true, JSON.stringify(state?.recentTurns));
+  check("receipt", "send_message accepted dispatches once", count === 1, String(count));
+  check("receipt", "F2.7.4 append_assistant_turn aplica no accepted", row.receiptLevel === "accepted" && row.outcomeAppliedAt != null, JSON.stringify(row));
+  check("receipt", "F2.7.4 memoria do agente gravada no accepted", state?.recentTurns.some((turn) => turn.role === "agent" && turn.text === "Pergunta entregue") === true, JSON.stringify(state?.recentTurns));
+}
+
+// 3b) F2.7.4 SEPARACAO RIGIDA: send_message com outcome que EXIGE delivered (mark_message_delivered) NAO
+//     aplica no accepted — nem a memoria do agente avanca (espera o delivered real). Nao se inventa delivered.
+{
+  const record = baseRecord({
+    onSuccess: [
+      { op: "append_assistant_turn", effectId: "turn-1:msg", turn: { role: "agent", text: "Pergunta entregue", at: NOW } },
+      { op: "mark_message_delivered", effectId: "turn-1:msg", messageId: "m-1" },
+    ],
+  });
+  const { p, clock, gate } = storeWith(record);
+  const sender = new RecordingSender();
+  sender.textResult = { ok: true, level: "accepted", providerMessageId: "accepted-mixed" };
+  const effectDispatcher = makeDispatcher({ sender }).dispatcher;
+  const outbox = new OutboxDispatcher(p, clock, effectDispatcher, gate);
+  await outbox.dispatchConversation("conv-1");
+  const state = p.load("conv-1")?.state;
+  const row = p.listOutbox("conv-1")[0];
+  check("receipt", "F2.7.4 record que exige delivered NAO aplica no accepted", row.receiptLevel === "accepted" && row.outcomeAppliedAt == null, JSON.stringify(row));
+  check("receipt", "F2.7.4 memoria NAO grava no accepted quando exige delivered", state?.recentTurns.every((turn) => turn.role !== "agent") === true, JSON.stringify(state?.recentTurns));
 }
 
 // 4) Critical text with delivered receipt advances memory.

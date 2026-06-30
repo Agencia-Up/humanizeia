@@ -32,6 +32,30 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- F2.7.4-A: FONTE UNICA da regra accepted-safe. Retorna o receipt MINIMO exigido para aplicar os outcomes
+-- (on_success) de um efeito ao estado. `append_assistant_turn` = memoria do que o AGENTE ENVIOU -> aplica em
+-- "accepted". Qualquer outra coisa (entrega ao lead/mark_message_delivered, objetivo/activate_objective,
+-- oferta/foco/fotos, CRM, handoff, agenda, e os kinds send_media/crm_write/schedule_visit/handoff/notify_seller)
+-- exige "delivered" (confirmacao externa real). Usada pela coluna gerada, pelo check e pelo RPC de outcome.
+-- ---------------------------------------------------------------------------
+create or replace function public.v3_required_receipt_level(p_kind text, p_on_success jsonb)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when p_kind = 'send_message'
+      and not exists (
+        select 1
+        from jsonb_array_elements(coalesce(p_on_success, '[]'::jsonb)) as e
+        where e->>'op' is distinct from 'append_assistant_turn'
+      )
+    then 'accepted'
+    else 'delivered'
+  end
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 1. Snapshot e historico do estado central
 -- ---------------------------------------------------------------------------
 
@@ -199,12 +223,7 @@ create table if not exists public.v3_effect_outbox (
     check (provider_capability in ('idempotent', 'queryable', 'none')),
   receipt_level text check (receipt_level is null or receipt_level in ('accepted', 'delivered')),
   required_receipt_level text generated always as (
-    case
-      when kind in ('send_media', 'crm_write', 'schedule_visit', 'handoff', 'notify_seller')
-        or jsonb_array_length(on_success) > 0
-      then 'delivered'
-      else 'accepted'
-    end
+    public.v3_required_receipt_level(kind, on_success)
   ) stored,
   attempts integer not null default 0 check (attempts >= 0),
   next_retry_at timestamptz,
@@ -233,6 +252,10 @@ create table if not exists public.v3_effect_outbox (
   constraint v3_outbox_applied_only_after_delivery_ck check (
     outcome_applied_at is null
     or (status = 'succeeded' and receipt_level = 'delivered')
+    -- F2.7.4-A: outcome aplicado em "accepted" SOMENTE quando o record e accepted-safe (send_message com
+    -- on_success vazio ou so append_assistant_turn). Acoes comerciais/entrega seguem exigindo delivered.
+    or (status = 'succeeded' and receipt_level = 'accepted'
+        and public.v3_required_receipt_level(kind, on_success) = 'accepted')
   )
 );
 
@@ -1235,8 +1258,17 @@ begin
     return;
   end if;
 
-  if v_record.status <> 'succeeded' or v_record.receipt_level <> 'delivered' then
-    raise exception 'v3_outcome_requires_delivered_success:%', p_effect_id using errcode = '22023';
+  -- F2.7.4-A: valida o receipt MINIMO real exigido por este record (coluna gerada via helper accepted-safe).
+  -- send_message com so append_assistant_turn aceita accepted/delivered; todo o resto exige delivered.
+  -- Nao rebaixa delivered (se ja estiver delivered, segue valido). O early-return acima (outcome_applied_at)
+  -- garante que um delivered POSTERIOR nao reaplique o outcome (idempotente).
+  if v_record.status <> 'succeeded'
+     or not (
+       v_record.receipt_level = 'delivered'
+       or (v_record.required_receipt_level = 'accepted' and v_record.receipt_level = 'accepted')
+     )
+  then
+    raise exception 'v3_outcome_requires_%_receipt:%', v_record.required_receipt_level, p_effect_id using errcode = '22023';
   end if;
 
   select * into v_state_record

@@ -2,7 +2,7 @@
 // EffectMaterializer - F2.1. Converte EffectPlan semantico em OutboxRecord.
 // SEM provider real, SEM dispatch, SEM rede. Payload ja nasce redacted.
 // ============================================================================
-import type { EffectKind, EffectPlan, RenderedResponse, TurnDecision } from "../domain/decision.ts";
+import type { EffectKind, EffectOutcomeMutation, EffectPlan, RenderedResponse, TurnDecision } from "../domain/decision.ts";
 import type { OutboxRecord, ProviderCapability } from "../domain/effect-intent.ts";
 import { redact } from "../domain/effect-intent.ts";
 import type { Id, Iso, JsonValue } from "../domain/types.ts";
@@ -39,6 +39,20 @@ function payloadFor(plan: EffectPlan, composed: RenderedResponse): { [k: string]
   }
 }
 
+// F2.7.4: a fala do agente entra na memoria (recentTurns) deterministicamente — NAO depende do LLM emitir
+// append_assistant_turn. Para todo send_message com texto, injeta o outcome com o texto JA renderizado
+// (composed.text). Idempotente: nao duplica se ja houver um append_assistant_turn. Aplica em "accepted"
+// (memoria do que o agente ENVIOU) via effect-policy; nao confunde com delivered (recepcao pelo lead).
+function withAssistantTurn(plan: EffectPlan, composed: RenderedResponse, at: Iso): EffectOutcomeMutation[] {
+  if (plan.kind !== "send_message") return plan.onSuccess;
+  const text = typeof composed.text === "string" ? composed.text.trim() : "";
+  if (text.length === 0) return plan.onSuccess;
+  // O engine e a UNICA fonte do append_assistant_turn (texto = composed.text JA renderizado). Remove qualquer
+  // um vindo do modelo (idempotente, sem duplicar fala) e injeta o deterministico.
+  const others = plan.onSuccess.filter((o) => o.op !== "append_assistant_turn");
+  return [...others, { op: "append_assistant_turn", effectId: plan.effectId, turn: { role: "agent", text, at } }];
+}
+
 export function materializeEffectPlans(
   decision: TurnDecision,
   composed: RenderedResponse,
@@ -54,7 +68,7 @@ export function materializeEffectPlans(
     order: plan.order,
     dependsOn: plan.dependsOn ?? [],
     payload: redact(payloadFor(plan, composed)),
-    onSuccess: plan.onSuccess,
+    onSuccess: withAssistantTurn(plan, composed, opts.createdAt),
     status: "pending",
     providerCapability: opts.providerCapability?.[plan.kind] ?? DEFAULT_CAPABILITY[plan.kind],
     receiptLevel: null,

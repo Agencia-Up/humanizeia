@@ -338,8 +338,14 @@ export class InMemoryPersistence implements Persistence {
     if (record.outcomeAppliedAt != null) {
       return { ok: true, stateVersion: snapshot.version, applied: false };
     }
-    if (record.status !== "succeeded" || record.receiptLevel !== "delivered") {
-      return { ok: false, reason: "outcome_requires_delivered_success" };
+    // F2.7.4: aplica o outcome quando o receipt atinge o nivel EXIGIDO pelo record (accepted-safe -> accepted;
+    // resto -> delivered). Alinhado com requiredReceiptFor / effect-outcome-commit.
+    const requiredLevel = requiredReceiptFor(record);
+    const levelMeets = requiredLevel === "accepted"
+      ? (record.receiptLevel === "accepted" || record.receiptLevel === "delivered")
+      : record.receiptLevel === "delivered";
+    if (record.status !== "succeeded" || !levelMeets) {
+      return { ok: false, reason: `outcome_requires_${requiredLevel}_success` };
     }
     if (snapshot.version !== expectedVersion) return { ok: false, reason: "outcome_cas_conflict" };
 

@@ -887,5 +887,38 @@ Proximo: confirmar deploy F2.7.2+F2.7.3 -> dono manda 1 "tem onix?" -> leio o mo
 fragmenta).
 
 Resultado: **F2.7.3 no ar pelo auto-deploy; aguardando 1 teste p/ ler o motivo do deny.** `PEDRO_V3_PILOT_MODE` active.
+---
 
-Resultado: **F2.6O no ar pelo auto-deploy.** `PEDRO_V3_PILOT_MODE` active.
+## Atualizacao Claude - F2.7.4-A (memoria accepted-safe: motor + contrato SQL) - 2026-06-29
+
+⚠️ **ENTREGA FECHADA, SEM ATIVAR NADA**: sem deploy, sem push, sem rodar SQL no banco, `PEDRO_V3_PILOT_MODE` INALTERADO.
+Aguarda auditoria do Codex -> dono roda a migration -> so entao push/deploy.
+
+Auditoria (read-only) confirmou **E (combinacao)**: A sem debounce; B fala nao persistida (`recentTurns` VAZIO com
+version=16, `on_success=[]`); C delivered nunca aplica (outboxes presos em `accepted`); D grounding. Esta rodada ataca
+B+C com o contrato **accepted-safe**.
+
+Contrato (aprovado): `append_assistant_turn` em **accepted** = memoria do que o agente ENVIOU (≠ lead recebeu);
+`delivered/read` = confirmacao externa; acoes comerciais (oferta/foco/fotos/objetivo/CRM/handoff/schedule/
+mark_message_delivered) seguem exigindo **delivered**. FONTE UNICA: `v3_required_receipt_level(kind,on_success)`.
+
+Motor (rodada A, ja aprovada pelo Codex): effect-policy (ACCEPTED_SAFE_OUTCOME_OPS), effect-materializer (injeta
+append_assistant_turn deterministico, fonte unica sem duplicar), conversation-engine (injeta append_lead_turn
+deterministico, sem duplicar), effect-outcome-commit + in-memory-store (aplica no nivel exigido; grava receipt antes
+de pular outcome ja aplicado -> delivered posterior sobe accepted->delivered sem reaplicar). Testes: run-active-effects
+55 OK, run-active-root 17 OK.
+
+Contrato SQL (esta rodada): `v3_schema.sql` + `sql/v3_f2_7_4_accepted_safe_memory_patch.sql` (migration manual
+idempotente p/ o dono) — helper + coluna gerada via helper + check (`outcome_applied_at` em accepted so accepted-safe)
++ `v3_commit_effect_outcome` (valida nivel real; delivered posterior idempotente). `v3_record_outbox_result` CONFIRMADO
+compativel (transicao accepted->delivered ja valida; ja ramifica em required_receipt_level). Verificador read-only
+(JSON ok=true) comentado no fim do patch. Testes pglite REAIS (run-sql-schema) cobrem os 9 casos do Codex.
+
+Gates: test:all EXIT=0; tsc limpo; SQL 64 OK; offline v2 418 OK; scan dos arquivos da rodada LIMPO (sem provider/
+dispatch/uazapi/fetch/segredo). Handoff `handoffs/2026-06-29-claude-f2.7.4-a-accepted-safe-memory.md`.
+
+Risco restante: C (callback delivered nao chega no webhook) segue PENDENTE — a memoria nao depende mais disso, mas o
+rastreio de ENTREGA + outcomes que exigem delivered seguem parados ate resolver o C (proxima fase). Debounce/grounding/
+bloco (resto da F2.7.4) PENDENTES.
+
+Resultado: **F2.7.4-A pronto e gateado, NAO deployado — entregue p/ auditoria do Codex + migration p/ o dono rodar.** `PEDRO_V3_PILOT_MODE` INALTERADO.

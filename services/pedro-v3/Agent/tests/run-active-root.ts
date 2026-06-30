@@ -231,8 +231,8 @@ await expectThrow(
   const state = await persistence.load("conv-1");
   check("turno ativo commita", result.status === "committed", JSON.stringify(result));
   check("turno ativo despacha exatamente uma mensagem", result.dispatched === 1 && transport.calls.length === 1, JSON.stringify({ dispatched: result.dispatched, calls: transport.calls.length }));
-  check("outbox fica accepted sem aplicar outcome delivered", outbox[0]?.status === "succeeded" && outbox[0].receiptLevel === "accepted" && outbox[0].outcomeAppliedAt === null, JSON.stringify(outbox[0]));
-  check("memoria registra lead mas nao inventa entrega do agente em accepted", state?.state.recentTurns.some((t) => t.role === "lead" && t.text === "Boa noite") === true && state.state.recentTurns.every((t) => !(t.role === "agent" && t.text === "Oi, posso ajudar?")), JSON.stringify(state?.state.recentTurns));
+  check("F2.7.4 outbox accepted JA aplica o outcome (memoria do agente no accepted)", outbox[0]?.status === "succeeded" && outbox[0].receiptLevel === "accepted" && outbox[0].outcomeAppliedAt !== null, JSON.stringify(outbox[0]));
+  check("F2.7.4 memoria registra a fala do lead E do agente no accepted (sem duplicar lead)", state?.state.recentTurns.filter((t) => t.role === "lead" && t.text === "Boa noite").length === 1 && state.state.recentTurns.some((t) => t.role === "agent" && t.text === "Oi, posso ajudar?") === true, JSON.stringify(state?.state.recentTurns));
   check("prompt do portal chega ao modelo", model.interpretCalls[0]?.binding.systemPrompt === "Voce e o Aloan.", JSON.stringify(model.interpretCalls[0]?.binding));
 
   const delivered = await applyProviderDeliveryReceipt({

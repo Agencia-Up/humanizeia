@@ -8,7 +8,7 @@ import type { Clock, Persistence } from "../domain/ports.ts";
 import type { TurnContext, QueryLoopLimits, TurnContextPreparer } from "../domain/context.ts";
 import { createInitialState } from "../domain/conversation-state.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
-import type { ClaimExtractor, QueryResult, TenantCatalog, TurnDecision, TurnInterpretation } from "../domain/decision.ts";
+import type { ClaimExtractor, DecisionMutation, QueryResult, TenantCatalog, TurnDecision, TurnInterpretation } from "../domain/decision.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
 import { redact } from "../domain/effect-intent.ts";
 import type { Id, Iso, JsonValue } from "../domain/types.ts";
@@ -151,7 +151,16 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       };
 
       const turnOutput = await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
-      const reduced = applyDecision(state, turnOutput.decision.decisionMutations, turnId, cutoff);
+      // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente — NAO depende do LLM emitir
+      // append_lead_turn. Usa o leadMessage AGREGADO do burst como UMA fala do lead deste turno.
+      const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0
+        ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }]
+        : [];
+      // O engine e a UNICA fonte do append_lead_turn (deterministico) — remove qualquer um emitido pelo
+      // modelo p/ NAO duplicar a fala do lead na memoria (recentTurns).
+      const modelMutations = turnOutput.decision.decisionMutations.filter((m) => m.op !== "append_lead_turn");
+      const committedMutations = [...leadTurnMutations, ...modelMutations];
+      const reduced = applyDecision(state, committedMutations, turnId, cutoff);
       if (!reduced.ok) {
         throw new Error(`decision mutations rejected: ${reduced.rejected.map((r) => r.reason).join("; ")}`);
       }
@@ -191,7 +200,7 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       const uow = persistence.begin({ lease });
       uow.casState(conversationId, expectedVersion, reduced.next);
       uow.appendEvents(events);
-      uow.appendDecision(conversationId, turnOutput.decision);
+      uow.appendDecision(conversationId, { ...turnOutput.decision, decisionMutations: committedMutations });
       uow.appendOutbox(outbox);
       uow.markInboxDone(claimedEventIds, workerId, turnId);
       const commit = await uow.commit();
