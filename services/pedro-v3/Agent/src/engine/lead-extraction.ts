@@ -12,7 +12,7 @@
 //    normalizada unida por ", "; NUNCA apaga um modelo pelo outro). Sem novo contrato de estado.
 //  - resolve_objective: se o objetivo pendente pede o nome e capturamos, marca satisfied.
 // ============================================================================
-import type { ConversationState, PendingObjective } from "../domain/conversation-state.ts";
+import type { ConversationState } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, DecisionMutation, TurnInterpretation } from "../domain/decision.ts";
 import type { Id } from "../domain/types.ts";
 import { normalizeText } from "./catalog-utils.ts";
@@ -49,25 +49,35 @@ function isNameToken(token: string, claimExtractor: ClaimExtractor): boolean {
 }
 
 const NAME_PATTERN = /(?:meu nome (?:é|e|eh)|me chamo|pode me chamar de|sou o|sou a|aqui (?:é|e|eh) o|quem fala (?:é|e|eh))\s+(\p{L}[\p{L}'’ -]{1,40})/iu;
+// O AGENTE pediu o nome? (invariante geral sobre a fala do AGENTE, nao if por frase do lead).
+const AGENT_ASKED_NAME = /seu nome|qual.{0,15}nome|como.{0,20}cham/iu;
+
+function lastAgentText(state: ConversationState): string {
+  const turns = state.recentTurns ?? [];
+  for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === "agent") return turns[i].text;
+  return "";
+}
 
 function extractName(
   leadMessage: string,
-  currentObjective: PendingObjective | null | undefined,
-  slots: ConversationState["slots"],
+  state: ConversationState,
   claimExtractor: ClaimExtractor,
 ): { value: string; confidence: number } | null {
-  if (slots.nome.status === "known") return null; // ja conhecido -> nao recaptura
+  if (state.slots.nome.status === "known") return null; // ja conhecido -> nao recaptura
 
-  // 1) Padrao explicito de apresentacao (vale mesmo sem objetivo).
+  // 1) Padrao explicito de apresentacao (vale sempre).
   const m = NAME_PATTERN.exec(leadMessage);
   if (m) {
     const valid = m[1].trim().split(/\s+/).slice(0, 3).filter((w) => isNameToken(w, claimExtractor));
     if (valid.length > 0) return { value: titleCase(valid.join(" ")), confidence: 0.95 };
   }
 
-  // 2) Objetivo pedindo o nome + linha com nome "pelado" (1-3 tokens, todos limpos).
-  const objAskingName = currentObjective?.slot === "nome" && currentObjective.status === "pending";
-  if (objAskingName) {
+  // 2) Nome "pelado" (1-3 tokens limpos) SO quando ha sinal de que o nome foi pedido:
+  //    objetivo de nome pendente OU o AGENTE acabou de perguntar o nome (ultima fala dele).
+  //    Em prod o objetivo raramente existe (LLM nao emite planned), entao o sinal-chave e a pergunta do agente.
+  const objAskingName = state.currentObjective?.slot === "nome" && state.currentObjective.status === "pending";
+  const agentAskedName = AGENT_ASKED_NAME.test(lastAgentText(state));
+  if (objAskingName || agentAskedName) {
     for (const line of leadMessage.split(/\n+/)) {
       const tokens = line.trim().split(/\s+/).filter(Boolean);
       if (tokens.length === 0 || tokens.length > 3) continue;
@@ -112,7 +122,7 @@ export function extractLeadSlots(args: {
   const muts: DecisionMutation[] = [];
 
   // ── NOME (+ resolve do objetivo) ──
-  const name = extractName(leadMessage, state.currentObjective, state.slots, claimExtractor);
+  const name = extractName(leadMessage, state, claimExtractor);
   if (name && name.confidence >= NAME_CONFIDENCE_MIN) {
     muts.push({ op: "set_slot", slot: "nome", value: name.value, confidence: name.confidence, sourceTurnId: turnId });
     if (state.currentObjective?.slot === "nome" && state.currentObjective.status === "pending") {

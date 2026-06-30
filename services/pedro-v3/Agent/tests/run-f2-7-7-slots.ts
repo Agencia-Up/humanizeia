@@ -67,6 +67,25 @@ async function main(): Promise<void> {
     check("1 resolve_objective satisfied do objetivo de nome", muts.some((m) => m.op === "resolve_objective" && m.objectiveId === "obj-nome" && m.status === "satisfied"));
   }
 
+  // 1b) caso REAL de prod: "dOUGLAS" SEM objetivo (o LLM nao cria planned), mas o AGENTE acabou de
+  //     perguntar o nome (ultima fala dele) -> captura "Douglas". Sem objetivo -> sem resolve.
+  {
+    const st = baseState({ recentTurns: [
+      { role: "lead", text: "Bom dia", at: NOW },
+      { role: "agent", text: "Que bom que conhece a loja! Qual é o seu nome, por favor?", at: NOW },
+    ] });
+    const muts = extractLeadSlots({ leadMessage: "dOUGLAS", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1b" });
+    check("1b 'dOUGLAS' sem objetivo, agente perguntou nome -> 'Douglas'", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
+    check("1b sem objetivo pendente -> nao emite resolve_objective", !muts.some((m) => m.op === "resolve_objective"));
+  }
+
+  // 1c) "dOUGLAS" SEM objetivo E SEM o agente ter perguntado nome -> NAO captura (sem sinal).
+  {
+    const st = baseState({ recentTurns: [{ role: "agent", text: "Temos varios SUVs. Qual faixa de preco?", at: NOW }] });
+    const muts = extractLeadSlots({ leadMessage: "Douglas", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1c" });
+    check("1c 'Douglas' sem sinal de pergunta de nome -> NAO captura", !slot(muts, "nome"), JSON.stringify(muts));
+  }
+
   // 2) "Meu nome é douglas" (sem objetivo) -> nome "Douglas" (padrao explicito)
   {
     const muts = extractLeadSlots({ leadMessage: "Meu nome é douglas", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t2" });
