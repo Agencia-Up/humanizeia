@@ -275,6 +275,10 @@ function validResponsePart(part: unknown): part is ResponsePart {
     if (part.source.kind === "vehicle_fact") return isNonEmptyString(part.source.vehicleKey);
     if (part.source.kind === "slot_value") return isNonEmptyString(part.source.slotName);
   }
+  if (part.type === "vehicle_offer_list") {
+    // F2.7.5: o modelo so manda os vehicleKeys; o renderer formata (grounding no render/policy).
+    return isStringArray(part.vehicleKeys) && (part.vehicleKeys as string[]).length > 0;
+  }
   return false;
 }
 

@@ -35,6 +35,8 @@ export type VehicleFact = {
   ano: number;
   preco: number;
   km?: number;
+  cambio?: string | null; // F2.7.5: opcional — renderizado "se houver" (fonte de estoque pode preencher)
+  cor?: string | null;    // F2.7.5: opcional — idem
   tipo: VehicleType;
   photoIds?: string[];
 };

@@ -200,7 +200,10 @@ export type MoneySourceRef =
 export type ResponsePart =
   | { type: "text"; content: string }
   | { type: "vehicle_ref"; vehicleKey: string; field: "marca" | "modelo" | "ano" }
-  | { type: "money_ref"; role: MoneyRole; source: MoneySourceRef };
+  | { type: "money_ref"; role: MoneyRole; source: MoneySourceRef }
+  // F2.7.5: lista de oferta renderizada DETERMINISTICAMENTE (numerada, BRL, km) a partir
+  // dos QueryResults. O modelo so escolhe os vehicleKeys; o sistema formata.
+  | { type: "vehicle_offer_list"; vehicleKeys: string[] };
 
 export type ResponseDraft = {
   parts: ResponsePart[];

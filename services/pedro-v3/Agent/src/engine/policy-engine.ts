@@ -279,6 +279,13 @@ export const PolicyEngine = {
             brandModelViolations.push(`veículo referenciado na fonte monetária '${part.source.vehicleKey}' contém marca/modelo fora do catálogo do tenant`);
           }
         }
+      } else if (part.type === "vehicle_offer_list") {
+        // F2.7.5: cada veículo da lista renderizada deve estar no catálogo do tenant.
+        for (const key of part.vehicleKeys) {
+          if (!isVehicleKeyInCatalog(ctx.tenantCatalog, key)) {
+            brandModelViolations.push(`veículo da lista '${key}' contém marca/modelo fora do catálogo do tenant`);
+          }
+        }
       }
     }
 
