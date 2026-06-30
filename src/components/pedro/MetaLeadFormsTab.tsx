@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, Loader2, RefreshCw, Save, Send, Settings2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -164,7 +165,7 @@ export function MetaLeadFormsTab({ userId }: { userId: string }) {
     } catch (error: any) {
       toast({
         title: 'Nao consegui carregar os formularios',
-        description: error?.message || 'Tente novamente em alguns instantes.',
+        description: descricaoErro(error) || 'Tente novamente em alguns instantes.',
         variant: 'destructive',
       });
     } finally {
@@ -216,7 +217,7 @@ export function MetaLeadFormsTab({ userId }: { userId: string }) {
       } catch (fallbackError: any) {
         toast({
           title: 'Erro ao buscar formularios na Meta',
-          description: fallbackError?.message || error?.message || 'Verifique se a conta Meta esta conectada com leads_retrieval.',
+          description: descricaoErro(fallbackError) || error?.message || 'Verifique se a conta Meta esta conectada com leads_retrieval.',
           variant: 'destructive',
         });
       }
@@ -334,7 +335,7 @@ export function MetaLeadFormsTab({ userId }: { userId: string }) {
       } catch (fallbackError: any) {
         toast({
           title: 'Erro ao salvar formulario',
-          description: fallbackError?.message || error?.message || 'Nao foi possivel salvar a configuracao.',
+          description: descricaoErro(fallbackError) || error?.message || 'Nao foi possivel salvar a configuracao.',
           variant: 'destructive',
         });
       }
@@ -358,7 +359,7 @@ export function MetaLeadFormsTab({ userId }: { userId: string }) {
     } catch (error: any) {
       toast({
         title: 'Erro ao sincronizar formulario',
-        description: error?.message || 'Nao foi possivel puxar os leads recentes.',
+        description: descricaoErro(error) || 'Nao foi possivel puxar os leads recentes.',
         variant: 'destructive',
       });
     } finally {

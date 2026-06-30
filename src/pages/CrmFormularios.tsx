@@ -5,6 +5,7 @@ import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -336,7 +337,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       localStorage.removeItem(DRAFT_KEY);
       setOpenEditor(false); fetchAll();
     } catch (e: any) {
-      toast({ title: 'Erro', description: e.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(e), variant: 'destructive' });
     } finally { setSaving(false); }
   };
 
@@ -344,7 +345,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
     if (!confirm('Excluir este formulário?')) return;
     const { error } = await (supabase as any).from('capture_forms').delete().eq('id', id);
     if (error) {
-      toast({ title: 'Erro ao excluir', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao excluir', description: descricaoErro(error), variant: 'destructive' });
       return;
     }
     fetchAll();
@@ -366,7 +367,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
       setNewListName('');
       toast({ title: `✅ Lista "${data.name}" criada e selecionada!` });
     } catch (err: any) {
-      toast({ title: 'Erro ao criar lista', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao criar lista', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setCreatingList(false);
     }
@@ -449,7 +450,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
 
       toast({ title: `✅ ${toInsert.length} lead${toInsert.length > 1 ? 's' : ''} enviado${toInsert.length > 1 ? 's' : ''} para o CRM!` });
     } catch (e: any) {
-      toast({ title: 'Erro ao sincronizar', description: e.message, variant: 'destructive' });
+      toast({ title: 'Erro ao sincronizar', description: descricaoErro(e), variant: 'destructive' });
     } finally {
       setSyncingCrm(false);
     }
@@ -480,7 +481,7 @@ export default function CrmFormularios({ embedded }: { embedded?: boolean } = {}
         await (supabase as any).from('followup_sequence_steps').insert({ sequence_id: seqId, user_id: effectiveUserId, step_order: i + 1, delay_hours: steps[i].delay_hours, message_text: steps[i].message_text });
       }
       toast({ title: '✅ Sequência salva!' }); setOpenSequence(false);
-    } catch (e: any) { toast({ title: 'Erro', description: e.message, variant: 'destructive' }); }
+    } catch (e: any) { toast({ title: 'Erro', description: descricaoErro(e), variant: 'destructive' }); }
     finally { setSavingSeq(false); }
   };
 

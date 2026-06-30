@@ -11,6 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import {
   Search, Send, Loader2, CheckCheck, Check,
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
@@ -629,7 +630,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         textareaRef.current.style.height = 'auto';
       }
     } catch (err: any) {
-      toast({ title: 'Erro ao enviar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao enviar', description: descricaoErro(err), variant: 'destructive' });
       setMessages(prev => prev.filter(m => m.id !== opt.id));
       setReplyText(text); // Restore text on error
     } finally {
@@ -691,7 +692,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         throw new Error(message);
       }
     } catch (err: any) {
-      toast({ title: 'Erro ao enviar mídia', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao enviar mídia', description: descricaoErro(err), variant: 'destructive' });
       setMessages(prev => prev.filter(m => m.id !== tempId));
     } finally {
       setUploadingMedia(false);
@@ -743,7 +744,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       setRecordSeconds(0);
       recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
     } catch (err: any) {
-      toast({ title: 'Não foi possível acessar o microfone', description: err?.message || 'Permita o uso do microfone no navegador.', variant: 'destructive' });
+      toast({ title: 'Não foi possível acessar o microfone', description: descricaoErro(err) || 'Permita o uso do microfone no navegador.', variant: 'destructive' });
     }
   };
 
@@ -818,7 +819,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         });
       }
     } catch (err: any) {
-      toast({ title: 'Erro ao transferir', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao transferir', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 

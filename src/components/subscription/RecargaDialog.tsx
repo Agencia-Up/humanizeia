@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import {
   CreditCard, QrCode, Lock, CheckCircle2, Zap, Copy, Loader2, ShieldCheck,
 } from 'lucide-react';
@@ -176,7 +177,7 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
         onCredited();
       }
     } catch (err: any) {
-      toast({ title: 'Erro inesperado', description: err?.message || 'Tente novamente.', variant: 'destructive' });
+      toast({ title: 'Erro inesperado', description: descricaoErro(err) || 'Tente novamente.', variant: 'destructive' });
       setSubmitting(false);
     }
   };

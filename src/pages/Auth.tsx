@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import { Mail, Lock, User, Loader2, ArrowLeft, Eye, EyeOff, Moon, Sun } from 'lucide-react';
 import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useAppStore } from '@/store/appStore';
@@ -72,7 +73,7 @@ export default function Auth() {
         let msg = 'Não foi possível fazer login.';
         if (error.message.includes('Invalid login credentials')) msg = 'Email ou senha incorretos.';
         else if (error.message.includes('Email not confirmed')) msg = 'Confirme seu email antes de fazer login.';
-        toast({ title: 'Erro no login', description: error.message || msg, variant: 'destructive' });
+        toast({ title: 'Erro no login', description: descricaoErro(error) || msg, variant: 'destructive' });
       } else {
         // Login OK: navega NA HORA, sem depender do estado reativo `user`.
         // Havia uma corrida no onAuthStateChange (o guard "mesmo usuario" da
@@ -83,7 +84,7 @@ export default function Auth() {
       }
     } catch (err: any) {
       console.error("Erro crítico no Login:", err);
-      toast({ title: 'Erro Crítico de Conexão', description: err.message || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
+      toast({ title: 'Erro Crítico de Conexão', description: descricaoErro(err) || 'Falha ao comunicar com o servidor. Verifique o console.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -110,7 +111,7 @@ export default function Auth() {
     if (error) {
       toast({
         title: 'Erro ao enviar email',
-        description: error.message,
+        description: descricaoErro(error),
         variant: 'destructive',
       });
     } else {
