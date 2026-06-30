@@ -720,6 +720,21 @@ async function main(): Promise<void> {
     verification.rows.length >= 40 && verificationFailures.length === 0,
     JSON.stringify(verificationFailures),
   );
+  // ── Ferramenta de teste: reset de conversa do piloto (apaga tudo do tenant) ──
+  await db.exec(await readFile(new URL("../../Brain/sql/v3_reset_pilot_conversation.sql", import.meta.url), "utf8"));
+  const T3 = "33333333-3333-4333-8333-333333333333";
+  await db.query("insert into auth.users(id) values ($1::uuid) on conflict do nothing", [T3]);
+  await db.query("select public.v3_ingest_inbox($1::uuid, 'reset-e1', 'wa:reset', $2::jsonb, $3::timestamptz)", [T3, rawRedacted, NOW]);
+  await db.query("select public.v3_upsert_conversation_routing($1::uuid, 'wa:reset', 'ag', null, '5511000000000', $2::timestamptz)", [T3, NOW]);
+  const resetRes = await db.query<{ r: Record<string, number> }>("select public.v3_reset_pilot_conversation($1::uuid) as r", [T3]);
+  const leftInbox = await db.query<{ n: number }>("select count(*)::int n from public.v3_inbox where tenant_id=$1::uuid", [T3]);
+  const leftRouting = await db.query<{ n: number }>("select count(*)::int n from public.v3_conversation_routing where tenant_id=$1::uuid", [T3]);
+  check(
+    "reset RPC apaga tudo do tenant e reporta contagem por tabela",
+    leftInbox.rows[0].n === 0 && leftRouting.rows[0].n === 0 && resetRes.rows[0].r.inbox === 1 && resetRes.rows[0].r.conversation_routing === 1,
+    JSON.stringify(resetRes.rows[0].r),
+  );
+
   await db.close();
   console.log(`\n=== SQL: ${ok} OK | ${failed} FALHA ===`);
   if (failed > 0) process.exitCode = 1;
