@@ -15,6 +15,7 @@ import { PolicyEngine, hasDeny } from "./policy-engine.ts";
 import { finalize, emitTerminalSafe, emitErrorTerminalSafe } from "./finalizer.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { buildContextualSdrReply } from "./continuity-fallback.ts";
 
 export type QueryRunner = (call: QueryCall) => Promise<QueryResult>;
 
@@ -231,10 +232,13 @@ export async function runTurn(args: {
     }
     if (!ok) {
       // TERMINAL: cancela efeitos comerciais + resposta segura + dead-letter/alerta. Sem loop/silêncio.
+      // P0 (F2.7.11): reason_code segue terminal_safe (logs), MAS o texto ao lead e um fallback de SDR
+      // conduzido pelo estado — NUNCA "Desculpe a lentidao..." (mensagem de sistema vazando pro cliente).
       decision = emitTerminalSafe(fullCtx.turnId, decision, `Validação de resposta falhou repetidamente: ${lastDenyDetail || "motivo nao capturado"}`.slice(0, 260));
+      const fallbackText = buildContextualSdrReply(fullCtx.state);
       composed = {
-        draft: { parts: [{ type: "text", content: "Desculpe a lentidão temporária. Como posso te ajudar a escolher seu veículo hoje?" }] },
-        text: "Desculpe a lentidão temporária. Como posso te ajudar a escolher seu veículo hoje?"
+        draft: { parts: [{ type: "text", content: fallbackText }] },
+        text: fallbackText
       };
       terminalSafe = true;
     }
@@ -252,11 +256,13 @@ export async function runTurn(args: {
     const step = err.step ?? (err.message?.startsWith("global:") ? "global" : "unknown");
     const reason = err.message ?? String(err);
 
-    // Todo TurnDecision, inclusive erro global/timeout, sai do Finalizer
+    // Todo TurnDecision, inclusive erro global/timeout, sai do Finalizer. P0 (F2.7.11): texto ao lead =
+    // fallback de SDR contextual (NUNCA "Desculpe a lentidao..."); o reason_code error/timeout fica nos logs.
     const decision = emitErrorTerminalSafe(ctx.turnId, step, reason);
+    const fallbackText = buildContextualSdrReply(ctx.state);
     const composed = {
-      draft: { parts: [{ type: "text" as const, content: "Desculpe a lentidão temporária. Como posso te ajudar a escolher seu veículo hoje?" }] },
-      text: "Desculpe a lentidão temporária. Como posso te ajudar a escolher seu veículo hoje?"
+      draft: { parts: [{ type: "text" as const, content: fallbackText }] },
+      text: fallbackText
     };
 
     return {
