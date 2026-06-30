@@ -95,9 +95,10 @@ function operationInstructions(operation: OpenAiChatOperation): string {
     return [
       "Return ONE JSON object (TurnInterpretation) with this exact shape:",
       '{"relation": <one of: answers_pending | direction_change | continues_offer | asks_vehicle_detail | ambiguous | unrelated>,',
-      ' "intentSummary"?: string, "extractedEntities"?: {"model"?: string, "price"?: number}}',
+      ' "intentSummary"?: string, "extractedEntities"?: {"model"?: string, "models"?: string[], "price"?: number}}',
       "Only classify the lead's last message relative to the conversation. Do NOT decide actions, call tools, or write a reply.",
-      'Example: {"relation":"unrelated","intentSummary":"Cliente pergunta se tem um modelo."}',
+      'extractedEntities.models = EVERY distinct vehicle model named in the message, in order (e.g., "quero um onix ou argo" -> ["onix","argo"]). Put the primary one also in "model". Include models even if you are unsure we have them in stock.',
+      'Example: {"relation":"direction_change","intentSummary":"Cliente quer onix ou argo.","extractedEntities":{"model":"onix","models":["onix","argo"]}}',
     ].join("\n");
   }
   if (operation === "propose") {
@@ -150,6 +151,7 @@ function operationInstructions(operation: OpenAiChatOperation): string {
     "Write the customer message as text parts following responsePlan.guidance, and answer the FULL lead message — if the lead sent several things at once, address each, not only the first.",
     "GROUNDING (hard rule — the engine REJECTS violations and retries your draft): NEVER write a vehicle brand or model we HAVE inside a text part. You MAY mention in plain text the model the lead asked for ONLY to say we did not find it right now, and then offer real alternatives. Never cite a vehicle absent from the facts.",
     "PRESENTING STOCK (use this — it fixes ugly glued text): when the facts contain vehicles to present, emit ONE vehicle_offer_list part with their vehicleKeys (up to 5, the best matches). The system renders the numbered list with brand/model/year, price in BRL and km — so do NOT write the vehicles, prices, years, km or a manual list yourself (no per-item vehicle_ref/money_ref, no list typed in text). Put a SHORT generic intro as a text part BEFORE it (e.g., \"Temos sim! Encontrei estas opcoes:\") and at most ONE funnel question as a text part AFTER it.",
+    "MULTIPLE MODELS (answer the WHOLE block): if the lead asked for more than one model (e.g., Onix and Argo), present every requested model that IS in the facts (a single vehicle_offer_list with all of them), and add a short plain-text note for any requested model that is NOT in the facts (e.g., \"o Argo eu nao encontrei no momento\"). Never silently drop a model the lead asked for.",
     'ANSWER FIRST, then qualify: open with the direct answer to what the lead asked; add at most ONE funnel question when qualification is still pending. Do NOT open with an empty affirmation that adds no information (e.g., "Que otimo", "Perfeito <nome>", "Otimo", "Que bom", "Maravilha"). A short acknowledgment is allowed ONLY when it carries real information. Every message must be useful.',
     'Example: {"parts":[{"type":"text","content":"Oi! Tudo bem? Me conta: que tipo de carro voce procura?"}]}',
   ].join("\n");

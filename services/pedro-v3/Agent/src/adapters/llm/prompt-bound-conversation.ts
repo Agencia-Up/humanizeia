@@ -128,13 +128,16 @@ function decodeInterpretation(value: unknown): TurnInterpretation {
   if (value.extractedEntities !== undefined) {
     if (!isRecord(value.extractedEntities)) throw new ModelOutputError("MODEL_INTERPRETATION_INVALID");
     const model = value.extractedEntities.model;
+    const models = value.extractedEntities.models;
     const price = value.extractedEntities.price;
     if (model !== undefined && !isNonEmptyString(model)) throw new ModelOutputError("MODEL_INTERPRETATION_INVALID");
+    if (models !== undefined && !isStringArray(models)) throw new ModelOutputError("MODEL_INTERPRETATION_INVALID");
     if (price !== undefined && (typeof price !== "number" || !Number.isFinite(price) || price < 0)) {
       throw new ModelOutputError("MODEL_INTERPRETATION_INVALID");
     }
     extractedEntities = {
       ...(model === undefined ? {} : { model }),
+      ...(models === undefined ? {} : { models }),
       ...(price === undefined ? {} : { price }),
     };
   }

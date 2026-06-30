@@ -16,6 +16,7 @@ import { runTurn } from "./decision-engine.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
+import { extractLeadSlots } from "./lead-extraction.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -148,8 +149,28 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
           : null;
       if (!prepared) throw new Error("turn context preparation missing");
 
-      const ctx: TurnContext = {
+      // F2.7.7: captura DETERMINISTICA de slots (nome normalizado + interesse multi-modelo) + resolucao
+      // do objetivo de nome — FONTE UNICA (o LLM segue facts:[]). So emite mutacoes VALIDAS (o reducer
+      // rejeita o lote inteiro se algo invalido), entao o extrator e conservador e nunca derruba o turno.
+      // Calculado ANTES de decidir + aplicado num ESTADO-PREVIA (sem bump de version/turnNumber) p/ o
+      // modelo JA ver o nome/interesse capturados -> reconhece e NAO repergunta o nome no MESMO turno.
+      const extractedSlots = extractLeadSlots({
+        leadMessage,
         state,
+        interpretation: prepared.interpretation,
+        claimExtractor: prepared.claimExtractor,
+        turnId,
+      });
+      let contextState = state;
+      if (extractedSlots.length > 0) {
+        const preview = applyDecision(state, extractedSlots, turnId, cutoff);
+        if (preview.ok) {
+          contextState = { ...preview.next, version: state.version, turnNumber: state.turnNumber, updatedAt: state.updatedAt };
+        }
+      }
+
+      const ctx: TurnContext = {
+        state: contextState,
         turnId,
         leadMessage,
         now: cutoff,
@@ -159,15 +180,13 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       };
 
       const turnOutput = await runTurn({ ctx, llm, runQuery, limits, maxValidationAttempts });
-      // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente — NAO depende do LLM emitir
-      // append_lead_turn. Usa o leadMessage AGREGADO do burst como UMA fala do lead deste turno.
+      // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0
         ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }]
         : [];
-      // O engine e a UNICA fonte do append_lead_turn (deterministico) — remove qualquer um emitido pelo
-      // modelo p/ NAO duplicar a fala do lead na memoria (recentTurns).
+      // O engine e a UNICA fonte do append_lead_turn — remove qualquer um emitido pelo modelo (sem duplicar).
       const modelMutations = turnOutput.decision.decisionMutations.filter((m) => m.op !== "append_lead_turn");
-      const committedMutations = [...leadTurnMutations, ...modelMutations];
+      const committedMutations = [...leadTurnMutations, ...extractedSlots, ...modelMutations];
       const reduced = applyDecision(state, committedMutations, turnId, cutoff);
       if (!reduced.ok) {
         throw new Error(`decision mutations rejected: ${reduced.rejected.map((r) => r.reason).join("; ")}`);

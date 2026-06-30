@@ -63,6 +63,9 @@ export type TurnInterpretation = {
   intentSummary?: string;
   extractedEntities?: {
     model?: string;
+    // F2.7.7: TODOS os modelos citados no bloco (ex.: "onix ou argo" -> ["onix","argo"]).
+    // Aditivo: `model` segue p/ compat; `models` permite responder o bloco inteiro.
+    models?: string[];
     price?: number;
   };
 };

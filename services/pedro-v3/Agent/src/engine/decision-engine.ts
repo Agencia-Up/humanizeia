@@ -47,10 +47,12 @@ function detectRequestedModels(ctx: TurnContext): string[] {
     out.push(norm);
   };
   push(ctx.interpretation.extractedEntities?.model);
+  // F2.7.7: TODOS os modelos do bloco (ex.: "onix ou argo") -> consulta cada um (responder o bloco inteiro).
+  for (const m of ctx.interpretation.extractedEntities?.models ?? []) push(m);
   for (const claim of ctx.claimExtractor.extractClaims(ctx.leadMessage)) {
     if (claim.kind === "model" || claim.kind === "brand_model") push(claim.text);
   }
-  return out.slice(0, 2); // bound: no maximo 2 modelos seedados por turno
+  return out.slice(0, 3); // bound: no maximo 3 modelos seedados por turno
 }
 
 // D3 (F2.7.4): recompoe com FEEDBACK do deny anterior em vez de repetir cega (que so reproduz o erro
