@@ -11,6 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import {
   Contact, Search, Trash2, Loader2, Plus, FolderOpen, Users, Phone, Tag,
   Edit, Eye, ArrowLeft, MoreHorizontal, MapPin, MessageCircle,
@@ -171,7 +172,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         setSellerNames({});
       }
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -209,7 +210,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         setFollowupStatus({});
       }
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     }
   }, [effectiveUserId, toast]);
 
@@ -243,7 +244,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       setImportSellers(Array.from(byKey.values()));
     } catch (err: any) {
       setImportSellers([]);
-      toast({ title: 'Erro ao carregar vendedores', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao carregar vendedores', description: descricaoErro(err), variant: 'destructive' });
     }
   }, [effectiveUserId, isSeller, toast]);
 
@@ -270,7 +271,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       setShowNewList(false); setFormListName(''); setFormListDesc('');
       fetchLists();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally { setIsSaving(false); }
   };
 
@@ -364,7 +365,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       setPedroLeadCount(null);
       fetchLists();
     } catch (err: any) {
-      toast({ title: 'Erro ao importar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao importar', description: descricaoErro(err), variant: 'destructive' });
     } finally { setIsSaving(false); }
   };
 
@@ -381,7 +382,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       if (selectedList?.id === editingList.id)
         setSelectedList(prev => prev ? { ...prev, name: formListName.trim(), description: formListDesc.trim() || null } : null);
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally { setIsSaving(false); }
   };
 
@@ -447,7 +448,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       cancelListSelection();
       fetchLists();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally { setIsSaving(false); }
   };
 
@@ -468,7 +469,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       if (selectedList?.id === targetListId) fetchContacts(targetListId);
       fetchLists();
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally { setIsSaving(false); }
   };
 
@@ -486,7 +487,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         fetchLists();
       }
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -503,7 +504,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
         fetchLists();
       }
     } catch (err: any) {
-      toast({ title: 'Erro ao remover', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao remover', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -580,7 +581,7 @@ export default function WhatsAppContacts({ embedded }: { embedded?: boolean } = 
       buildAndDownloadCSV(rows, list.name, statusMap);
       toast({ title: `✅ ${rows.length} contato(s) exportado(s) com sucesso!` });
     } catch (err: any) {
-      toast({ title: 'Erro ao exportar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao exportar', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 

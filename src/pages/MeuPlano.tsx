@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { useSubscription, PLANS, ATENDIMENTO_PACKAGES, type PlanId } from '@/hooks/useSubscription';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { supabase } from '@/integrations/supabase/client';
@@ -175,7 +176,7 @@ export default function MeuPlano() {
       await fetchSaldo();
       toast({ title: 'Saldo atualizado!', description: 'Calculamos quantas conversas esse saldo adiciona.' });
     } catch (e: any) {
-      toast({ title: 'Erro', description: e?.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(e), variant: 'destructive' });
     } finally { setSavingBal(false); }
   };
 

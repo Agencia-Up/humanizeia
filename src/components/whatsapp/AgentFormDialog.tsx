@@ -17,6 +17,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import { Save, Loader2, Brain, Settings2, Clock, Shield, Building2, UserCheck, Target, QrCode, CheckCircle, Trash2, RefreshCw, BookOpen, MessageSquare } from 'lucide-react';
 import { KnowledgeBaseManager } from '@/components/whatsapp/KnowledgeBaseManager';
 import { AgentCrmEquipeTab } from '@/components/whatsapp/AgentCrmEquipeTab';
@@ -560,7 +561,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       }
     } catch (err: any) {
       console.error('[QR] Erro na criação:', err);
-      toast({ title: 'Erro ao gerar QR Code', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao gerar QR Code', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setIsGeneratingQr(false);
     }
@@ -630,7 +631,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
       });
     } catch (err: any) {
       console.error('[Webhook] Falha na sincronização:', err);
-      toast({ title: "Falha ao sincronizar", description: err.message, variant: "destructive" });
+      toast({ title: "Falha ao sincronizar", description: descricaoErro(err), variant: "destructive" });
     }
   };
 
@@ -831,7 +832,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     }
 
     if (error) {
-      toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+      toast({ title: 'Erro ao salvar', description: descricaoErro(error), variant: 'destructive' });
     } else {
       toast({ title: agent?.id ? 'Agente atualizado!' : 'Agente criado! 🤖' });
       // ISOLAMENTO: marca os números escolhidos como finalidade 'agent', pra eles

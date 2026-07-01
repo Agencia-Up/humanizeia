@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { invokeWithReauth } from '@/lib/invokeWithReauth';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { descricaoErro } from '@/lib/erroAmigavel';
 import {
   Bot, MonitorPlay, BarChart3, Loader2, Users, MessageSquare, Inbox,
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
@@ -1995,7 +1996,7 @@ export function CrmAvancadoTab({
       toast({ title: '✅ Anotação salva!' });
       await loadLeadDetail(selectedLead);
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setNoteLoading(false);
     }
@@ -2010,7 +2011,7 @@ export function CrmAvancadoTab({
       setNotes(prev => prev.filter(n => n.id !== noteId));
       toast({ title: 'Anotação apagada.' });
     } catch (err: any) {
-      toast({ title: 'Erro ao apagar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao apagar', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -2022,7 +2023,7 @@ export function CrmAvancadoTab({
         .sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0)));
       toast({ title: !currentPinned ? '📌 Nota fixada!' : 'Nota desafixada' });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -2039,7 +2040,7 @@ export function CrmAvancadoTab({
       });
       toast({ title: '✅ Nota enviada ao gerente!' });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -2061,7 +2062,7 @@ export function CrmAvancadoTab({
       const { data: urlData } = supabase.storage.from('followup-media').getPublicUrl(path);
       setFuMediaUrl(urlData.publicUrl);
     } catch (err: any) {
-      toast({ title: 'Erro ao enviar arquivo', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao enviar arquivo', description: descricaoErro(err), variant: 'destructive' });
       setFuMediaFile(null);
     } finally {
       setFuUploading(false);
@@ -2128,7 +2129,7 @@ export function CrmAvancadoTab({
       toast({ title: '✅ Follow-up agendado!' });
       await loadLeadDetail(selectedLead);
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setFuLoading(false);
     }
@@ -2166,7 +2167,7 @@ export function CrmAvancadoTab({
       }
       toast({ title: '✅ Follow-up cancelado', description: 'Não será enviado pro lead.' });
     } catch (err: any) {
-      toast({ title: 'Erro ao cancelar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao cancelar', description: descricaoErro(err), variant: 'destructive' });
       // Em caso de erro, recarrega pra garantir estado consistente
       if (selectedLead) await loadLeadDetail(selectedLead);
     } finally {
@@ -2217,7 +2218,7 @@ export function CrmAvancadoTab({
       setFbObservations(''); setFbPriority('normal'); setFbReasonOpen(null);
       toast({ title: '✅ Feedback enviado ao gerente!' });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setFbLoading(false);
     }
@@ -2270,7 +2271,7 @@ export function CrmAvancadoTab({
       toast({ title: '✅ Status atualizado!' });
       if (isWinStatus(newStatus)) openVendaDialogFor(selectedLead.id);
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setStatusUpdating(false);
     }
@@ -2289,7 +2290,7 @@ export function CrmAvancadoTab({
       setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, arrived_at: iso } : l));
       toast({ title: '✅ Data de chegada atualizada!' });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -2447,7 +2448,7 @@ export function CrmAvancadoTab({
         });
       }
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setReassigning(null);
     }
@@ -2525,7 +2526,7 @@ export function CrmAvancadoTab({
       setRescueSelected(new Set(ids));
     } catch (err: any) {
       setRescueOpen(false);
-      toast({ title: 'Erro ao pré-visualizar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao pré-visualizar', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setRescueLoading(false);
     }
@@ -2566,7 +2567,7 @@ export function CrmAvancadoTab({
       setRescuePreview(null);
       await fetchData(true);
     } catch (err: any) {
-      toast({ title: 'Erro ao resgatar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao resgatar', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setRescueRunning(false);
     }
@@ -2595,7 +2596,7 @@ export function CrmAvancadoTab({
       setTeamMembers(prev => prev.map(m => m.id === memberId ? { ...m, ...update } : m));
       toast({ title: next ? '✅ Vendedor ativado' : '⛔ Vendedor pausado' });
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -2612,7 +2613,7 @@ export function CrmAvancadoTab({
       });
       if (processed > 0) await fetchData(true);
     } catch (err: any) {
-      toast({ title: 'Erro ao disparar follow-ups', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao disparar follow-ups', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setTriggerLoading(false);
     }
@@ -2644,7 +2645,7 @@ export function CrmAvancadoTab({
       });
       await fetchData(true);
     } catch (err: any) {
-      toast({ title: 'Erro ao iniciar follow-up', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao iniciar follow-up', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setTriggerLoading(false);
     }
@@ -2670,7 +2671,7 @@ export function CrmAvancadoTab({
       });
       if (total > 0) await fetchData(true);
     } catch (err: any) {
-      toast({ title: 'Erro ao reclassificar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao reclassificar', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setClassifyLoading(false);
     }
@@ -2962,7 +2963,7 @@ export function CrmAvancadoTab({
         variant: failed > 0 && success === 0 ? 'destructive' : 'default',
       });
     } catch (err: any) {
-      toast({ title: 'Erro na importação', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro na importação', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setBulkSaving(false);
     }
@@ -3210,7 +3211,7 @@ export function CrmAvancadoTab({
       setAddLeadOpen(false);
       await fetchData(true);
     } catch (err: any) {
-      toast({ title: 'Erro ao adicionar lead', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao adicionar lead', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setAddLeadSaving(false);
     }
@@ -3329,7 +3330,7 @@ export function CrmAvancadoTab({
       setEditingLead(false);
       toast({ title: '✅ Lead atualizado!' });
     } catch (err: any) {
-      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao salvar', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setEditSaving(false);
     }
@@ -3375,7 +3376,7 @@ export function CrmAvancadoTab({
       setSelectedLead(null);
       setLeads(prev => prev.filter(l => l.id !== leadId));
     } catch (err: any) {
-      toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao excluir', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setDeletingLead(false);
     }
@@ -3408,7 +3409,7 @@ export function CrmAvancadoTab({
       toast({ title: '✅ Ordem das colunas salva!' });
     } catch (err: any) {
       setColumnOrder(previousOrder);
-      toast({ title: 'Erro ao salvar ordem', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao salvar ordem', description: descricaoErro(err), variant: 'destructive' });
     }
   };
 
@@ -3449,7 +3450,7 @@ export function CrmAvancadoTab({
       toast({ title: '✅ Venda registrada!', description: 'Carro e data salvos — já aparece no Painel Geral.' });
       setVendaDialog(null);
     } catch (err: any) {
-      toast({ title: 'Erro ao salvar venda', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao salvar venda', description: descricaoErro(err), variant: 'destructive' });
     } finally {
       setVendaSaving(false);
     }
@@ -3470,7 +3471,7 @@ export function CrmAvancadoTab({
         toast({ title: '✅ Ordem das colunas salva!' });
       } catch (err: any) {
         setColumnOrder(previousOrder);
-        toast({ title: 'Erro ao salvar ordem', description: err.message, variant: 'destructive' });
+        toast({ title: 'Erro ao salvar ordem', description: descricaoErro(err), variant: 'destructive' });
       }
       return;
     }
@@ -3498,7 +3499,7 @@ export function CrmAvancadoTab({
       toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : (pedroStages.length ? pedroStages : PIPELINE_COLUMNS)).find(c => c.id === newStatus)?.title || newStatus}` });
       if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
     } catch (err: any) {
-      toast({ title: 'Erro ao mover lead', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao mover lead', description: descricaoErro(err), variant: 'destructive' });
       await fetchData(true); // Revert on failure
     }
   };
