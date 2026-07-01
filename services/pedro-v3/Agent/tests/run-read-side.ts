@@ -575,6 +575,10 @@ async function main(): Promise<void> {
 
   const t1 = classifyVehicleType(vValid.category, vValid.bodyType);
   check("carroceria direta da fonte mapeada como suv", t1.value === "suv" && t1.provenance === "source_field" && t1.confidence === 1.0);
+  const rmUtility = classifyVehicleType("AUTOMÓVEL", "utilitario", "revendamais");
+  const otherUtility = classifyVehicleType("AUTOMÓVEL", "utilitario", "bndv");
+  check("taxonomia RevendaMais: utilitario factual vira pickup", rmUtility.value === "pickup" && rmUtility.provenance === "source_field");
+  check("utilitario de outro provedor nao e promovido sem evidencia", otherUtility.value === "unknown");
 
   // Sem campo confiável: deve classificar como unknown
   const vNoBody = decodeNormalizedVehicle({
@@ -690,6 +694,16 @@ async function main(): Promise<void> {
       images_large: [
         "http://app.revendamais.com.br/insecure.jpg"
       ]
+    },
+    {
+      vehicle_id: 106,
+      make: "Fiat",
+      base_model: "Strada",
+      model: "Strada HD WK CD E",
+      year: 2018,
+      price: 76990,
+      category: "AUTOMÓVEL",
+      body_type: "utilitario"
     }
   ];
 
@@ -723,6 +737,8 @@ async function main(): Promise<void> {
   // Teste de carroceria unknown nunca casar com tipo SUV
   const resSuv = await stockSource.search({ tenantId: TENANT_A, agentId: AGENT_RAW }, { tipo: "suv" });
   check("unknown em carrocerias nunca atende buscas por tipo", resSuv.items.length === 0);
+  const resPickup = await stockSource.search({ tenantId: TENANT_A, agentId: AGENT_RAW }, { tipo: "pickup", precoMax: 80000 });
+  check("RevendaMais utilitario entra na busca pickup com teto", resPickup.items.length === 1 && resPickup.items[0].modelo === "Strada" && resPickup.items[0].preco === 76990);
 
   // Teste do resolvedor de fotos
   const photosRes = await photoSource.resolvePhotos({ tenantId: TENANT_A, agentId: AGENT_RAW }, "revendamais:101");

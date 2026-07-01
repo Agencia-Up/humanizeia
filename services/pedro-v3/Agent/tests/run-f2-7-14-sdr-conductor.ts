@@ -58,6 +58,9 @@ async function main(): Promise<void> {
       "De qual cidade você fala?",
       "Qual valor de parcela cabe no seu bolso?",
     ],
+    agentName: "Aloan",
+    companyName: null,
+    promptText: 'Apresente-se: "Sou o Aloan, consultor aqui da Icom Motors 😊"',
   });
   check("portal: mapeia conheceLoja", policy.orderedSlots.includes("conheceLoja"));
   check("portal: mapeia cidade", policy.orderedSlots.includes("cidade"));
@@ -65,6 +68,19 @@ async function main(): Promise<void> {
   const tradePolicy = buildSdrQualificationPolicy({ qualificationQuestions: ["Você tem algum carro para troca?"] });
   check("portal: pergunta booleana de troca mapeia possuiTroca", tradePolicy.orderedSlots.includes("possuiTroca") && !tradePolicy.orderedSlots.includes("veiculoTroca"));
   check("core: nome e interesse sempre primeiro", policy.orderedSlots[0] === "nome" && policy.orderedSlots[1] === "interesse");
+  check("portal: apresentação é extraída do prompt", /Aloan.*Icom Motors/i.test(policy.introductionText), policy.introductionText);
+  const rawPromptPolicy = buildSdrQualificationPolicy({
+    qualificationQuestions: [],
+    agentName: "Aloan",
+    companyName: null,
+    promptText: `Apresente-se: "Sou o Aloan, consultor aqui da Icom Motors 😊"
+1. Qual e seu nome?
+2. Tem algum carro para dar de troca?
+3. Tem valor para dar de entrada?
+4. Você sabe onde fica a nossa loja?`,
+  });
+  check("portal cru: extrai ordem tipada das perguntas numeradas", rawPromptPolicy.orderedSlots.indexOf("possuiTroca") < rawPromptPolicy.orderedSlots.indexOf("entrada") && rawPromptPolicy.orderedSlots.indexOf("entrada") < rawPromptPolicy.orderedSlots.indexOf("conheceLoja"), JSON.stringify(rawPromptPolicy.orderedSlots));
+  check("portal cru: preserva perguntas obrigatórias do prompt", rawPromptPolicy.questions.possuiTroca?.includes("troca") === true && rawPromptPolicy.questions.conheceLoja?.includes("loja") === true, JSON.stringify(rawPromptPolicy.questions));
 
   {
     const s = state();
@@ -136,7 +152,22 @@ async function main(): Promise<void> {
     check("captura sem troca", muts.some((m) => m.op === "set_slot" && m.slot === "possuiTroca" && m.value === false));
   }
 
+  {
+    const initial = state();
+    const greetingOutput = {
+      ...buildExplicitSearchTurnOutput({ kind: "none", label: "teste" }, "t-portal"),
+      composed: {
+        draft: { parts: [{ type: "text" as const, content: "Bom dia! Você é aqui de Taubaté mesmo ou já conhece nossa loja?" }] },
+        text: "Bom dia! Você é aqui de Taubaté mesmo ou já conhece nossa loja?",
+      },
+    };
+    const conductedGreeting = applySdrConduction({ output: greetingOutput, state: initial, policy, turnId: "t-portal" });
+    check("portal: primeira mensagem inclui apresentação configurada", /Sou o Aloan.*Icom Motors/i.test(conductedGreeting.composed.text), conductedGreeting.composed.text);
+    check("portal: pergunta válida do prompt não é substituída pelo core", /conhece nossa loja\?$/i.test(conductedGreeting.composed.text) && !/qual é o seu nome/i.test(conductedGreeting.composed.text), conductedGreeting.composed.text);
+    check("portal: pergunta preservada ganha objetivo tipado", conductedGreeting.decision.decisionMutations.some((m) => m.op === "set_planned_objective" && m.planned.slot === "conheceLoja"));
+  }
   const flowState = state();
+  flowState.turnNumber = 2;
   flowState.slots.interesse = { status: "known", value: "onix", confidence: 0.95, sourceTurnId: "lead", updatedAt: NOW };
   const offer = buildExplicitSearchTurnOutput({ kind: "offer", label: "Onix", vehicles: [ONIX], missingLabels: [] }, "t1");
   const conducted = applySdrConduction({ output: offer, state: flowState, policy, turnId: "t1" });

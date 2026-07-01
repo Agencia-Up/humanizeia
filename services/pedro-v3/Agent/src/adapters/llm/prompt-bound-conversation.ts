@@ -252,12 +252,15 @@ function decodeProposal(value: unknown): ProposedDecision {
   if (!Array.isArray(value.facts) || !value.facts.every(validMutation)) throw new ModelOutputError("MODEL_DECISION_INVALID", "facts");
   if (!Array.isArray(value.proposedEffects) || !value.proposedEffects.every(validEffect)) throw new ModelOutputError("MODEL_DECISION_INVALID", "proposedEffects");
   if (!isRecord(value.responsePlan) || typeof value.responsePlan.guidance !== "string") throw new ModelOutputError("MODEL_DECISION_INVALID", "responsePlan.guidance");
-  if (!isNonEmptyString(value.reasonCode) || typeof value.reasonSummary !== "string") throw new ModelOutputError("MODEL_DECISION_INVALID", "reasonCode/reasonSummary");
+  // reasonCode/reasonSummary sao metadados de observabilidade, nao contrato comercial.
+  // A ausencia deles nao pode derrubar um turno valido nem gerar fallback ao lead.
+  const reasonCode = isNonEmptyString(value.reasonCode) ? value.reasonCode : "model_decision";
+  const reasonSummary = typeof value.reasonSummary === "string" ? value.reasonSummary : "Decisao valida sem resumo fornecido pelo modelo.";
   if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) {
     throw new ModelOutputError("MODEL_DECISION_INVALID", "confidence");
   }
   if (value.target !== undefined && value.target !== null && !isRecord(value.target)) throw new ModelOutputError("MODEL_DECISION_INVALID", "target");
-  return immutableCopy(value as unknown as ProposedDecision);
+  return immutableCopy({ ...value, reasonCode, reasonSummary } as unknown as ProposedDecision);
 }
 
 function decodeStep(value: unknown): DecisionStep {

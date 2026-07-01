@@ -10,6 +10,8 @@ export type SdrQualificationSlot = Exclude<SlotName, "cpf">;
 export type SdrQualificationPolicy = {
   readonly orderedSlots: readonly SdrQualificationSlot[];
   readonly questions: Readonly<Partial<Record<SdrQualificationSlot, string>>>;
+  readonly agentName: string;
+  readonly introductionText: string;
 };
 
 export type SdrQualificationView = {
@@ -43,7 +45,7 @@ function classifyConfiguredQuestion(question: string): SdrQualificationSlot | nu
   const q = normalizeText(question);
   if (/\bnome\b|\bcomo.*cham/.test(q)) return "nome";
   if (/\bcidade\b|\bonde mora\b|\bde onde/.test(q)) return "cidade";
-  if (/\bconhece.*loja\b|\bja veio.*loja/.test(q)) return "conheceLoja";
+  if (/\bconhece.*loja\b|\bja veio.*loja|\bsabe.*onde.*loja\b|\bonde fica.*loja/.test(q)) return "conheceLoja";
   if (/\bparcela\b|\bmensal/.test(q)) return "parcelaDesejada";
   if (/\bentrada\b/.test(q)) return "entrada";
   if (/\bmodelo.*ano\b|\bano.*quilometr|\bdados.*veiculo.*troca/.test(q)) return "veiculoTroca";
@@ -57,17 +59,56 @@ function classifyConfiguredQuestion(question: string): SdrQualificationSlot | nu
   return null;
 }
 
+function configuredIntroduction(config: Partial<Pick<TenantRuntimeConfig, "agentName" | "companyName" | "promptText">>): string {
+  const agentName = config.agentName?.trim() || "Consultor";
+  const candidates = (config.promptText ?? "").match(/Sou\s+(?:o|a)\s+[^"\r\n]{2,180}/giu) ?? [];
+  const configured = candidates
+    .map((candidate) => candidate.replace(/\*\*/g, "").replace(/[\\“”]+/g, "").trim())
+    .find((candidate) => normalizeText(candidate).includes(normalizeText(agentName)) && /\bconsultor/i.test(candidate));
+  if (configured) return configured.replace(/[.;:,\s]+$/, "") + ".";
+  const company = config.companyName?.trim();
+  return `Sou o ${agentName}, consultor ${company ? `da ${company}` : "da nossa loja"}.`;
+}
+
+function hasAgentIntroduction(text: string, agentName: string): boolean {
+  const normalizedName = normalizeText(agentName);
+  return normalizedName.length > 0 && normalizeText(text).includes(normalizedName);
+}
+
+function ensureInitialIntroduction(text: string, state: ConversationState, policy: SdrQualificationPolicy): string {
+  if (state.turnNumber > 0 || state.recentTurns.some((turn) => turn.role === "agent")) return text;
+  if (hasAgentIntroduction(text, policy.agentName)) return text;
+  const greeting = /^(bom dia|boa tarde|boa noite|oi|ola)(?:[!,.])?/i.exec(text.trim());
+  if (!greeting) return `${policy.introductionText}\n\n${text.trim()}`;
+  const rest = text.trim().slice(greeting[0].length).trim();
+  const firstLine = `${greeting[0]} ${policy.introductionText}`.trim();
+  return rest ? `${firstLine}\n\n${rest}` : firstLine;
+}
+
+function trailingQuestion(text: string): string | null {
+  const match = /(?:^|[\n.!]\s*)([^?\n]{2,240}\?)\s*$/u.exec(text.trim());
+  return match?.[1]?.trim() ?? null;
+}
 function ensureQuestion(text: string): string {
   const trimmed = text.trim().replace(/\s+/g, " ").slice(0, 240);
   return trimmed.endsWith("?") ? trimmed : `${trimmed}?`;
 }
 
+function qualificationQuestionsFromPrompt(promptText: string | null | undefined): string[] {
+  const questions: string[] = [];
+  for (const line of (promptText ?? "").split(/\r?\n/)) {
+    const match = /^\s*\d+[.)]\s*(.+?\?)\s*$/.exec(line.replace(/\*\*/g, "").trim());
+    if (match?.[1]) questions.push(match[1].trim());
+  }
+  return questions;
+}
 export function buildSdrQualificationPolicy(
-  config: Pick<TenantRuntimeConfig, "qualificationQuestions">,
+  config: Pick<TenantRuntimeConfig, "qualificationQuestions"> & Partial<Pick<TenantRuntimeConfig, "agentName" | "companyName" | "promptText">>,
 ): SdrQualificationPolicy {
   const configuredSlots: SdrQualificationSlot[] = [];
   const questions: Partial<Record<SdrQualificationSlot, string>> = {};
-  for (const question of config.qualificationQuestions ?? []) {
+  const configuredQuestions = [...(config.qualificationQuestions ?? []), ...qualificationQuestionsFromPrompt(config.promptText)];
+  for (const question of configuredQuestions) {
     const slot = classifyConfiguredQuestion(question);
     if (!slot || questions[slot]) continue;
     configuredSlots.push(slot);
@@ -76,7 +117,12 @@ export function buildSdrQualificationPolicy(
   const orderedSlots = [...new Set<SdrQualificationSlot>([
     "nome", "interesse", ...configuredSlots, ...CORE,
   ])];
-  return Object.freeze({ orderedSlots: Object.freeze(orderedSlots), questions: Object.freeze(questions) });
+  return Object.freeze({
+    orderedSlots: Object.freeze(orderedSlots),
+    questions: Object.freeze(questions),
+    agentName: config.agentName?.trim() || "Consultor",
+    introductionText: configuredIntroduction(config),
+  });
 }
 
 
@@ -145,28 +191,54 @@ export function applySdrConduction(args: {
   readonly turnId: string;
 }): TurnOutput {
   const { output, state, policy, turnId } = args;
-  if (output.decision.action === "no_op" || shouldPreserveClarification(output)) return output;
-  const view = deriveSdrQualification(state, policy);
-  if (!view.nextSlot) return output;
+  if (output.decision.action === "no_op") return output;
 
-  const question = policy.questions[view.nextSlot] ?? DEFAULT_QUESTIONS[view.nextSlot];
-  const base = stripTrailingQuestion(output.composed.text);
-  const text = base ? `${base}\n\n${question}`.trim() : question;
-  const decision = attachQualificationObjective(output.decision, {
-    id: `${turnId}:sdr:${view.nextSlot}`,
-    type: objectiveType(view.nextSlot),
-    slot: view.nextSlot,
+  const introducedText = ensureInitialIntroduction(output.composed.text, state, policy);
+  const contextualOutput: TurnOutput = introducedText === output.composed.text
+    ? output
+    : {
+        ...output,
+        composed: { draft: { parts: [{ type: "text", content: introducedText }] }, text: introducedText },
+      };
+
+  if (shouldPreserveClarification(contextualOutput)) return contextualOutput;
+  const view = deriveSdrQualification(state, policy);
+  if (!view.nextSlot) return contextualOutput;
+
+  const pendingSlot = state.currentObjective?.status === "pending" && state.currentObjective.slot !== "cpf"
+    ? state.currentObjective.slot as SdrQualificationSlot | null
+    : null;
+  const modelQuestion = trailingQuestion(introducedText);
+  const modelQuestionSlot = modelQuestion ? classifyConfiguredQuestion(modelQuestion) : null;
+  const firstConnectionQuestion = state.turnNumber === 0
+    && (modelQuestionSlot === "cidade" || modelQuestionSlot === "conheceLoja");
+  const preservePortalQuestion = modelQuestionSlot != null
+    && !slotResolved(state, modelQuestionSlot)
+    && (pendingSlot ? pendingSlot === modelQuestionSlot : modelQuestionSlot === view.nextSlot || firstConnectionQuestion);
+  const selectedSlot = preservePortalQuestion ? modelQuestionSlot : view.nextSlot;
+  const question = preservePortalQuestion
+    ? modelQuestion!
+    : policy.questions[selectedSlot] ?? DEFAULT_QUESTIONS[selectedSlot];
+  const base = preservePortalQuestion ? introducedText : stripTrailingQuestion(introducedText);
+  const text = preservePortalQuestion ? introducedText : (base ? `${base}\n\n${question}`.trim() : question);
+
+  const decision = attachQualificationObjective(contextualOutput.decision, {
+    id: `${turnId}:sdr:${selectedSlot}`,
+    type: objectiveType(selectedSlot),
+    slot: selectedSlot,
     plannedInTurnId: turnId,
-    expectedAnswerKinds: expectedAnswerKinds(view.nextSlot),
+    expectedAnswerKinds: expectedAnswerKinds(selectedSlot),
   });
-  if (!decision) return output;
+  if (!decision) return contextualOutput;
 
   return {
-    ...output,
+    ...contextualOutput,
     decision: {
       ...decision,
       responsePlan: {
-        guidance: `${decision.responsePlan.guidance} Depois, faça somente esta pergunta de qualificação: ${question}`,
+        guidance: preservePortalQuestion
+          ? decision.responsePlan.guidance
+          : `${decision.responsePlan.guidance} Depois, faça somente esta pergunta de qualificação: ${question}`,
       },
     },
     composed: { draft: { parts: [{ type: "text", content: text }] }, text },

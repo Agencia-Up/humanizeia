@@ -933,3 +933,9 @@ Gates: F2.7.14 = 39 OK; SQL = 75 OK; Phase2 = 96 OK; test:all exit 0; tsc limpo.
 SQL manual pre-deploy: Brain/sql/v3_f2_7_14_sdr_objective_accepted.sql.
 
 Backlog registrado: (1) garantir cambio/cor do feed ate VehicleFact; (2) primeiro envio limitado a cinco fotos representativas; (3) apos validacao real, integrar CRM, briefing, handoff e follow-up usando readyForHandoff.
+
+## 2026-07-01 - F2.7.14.1: prompt do portal + pickup RevendaMais
+
+Teste real comprovou tres causas: o condutor substituia a pergunta valida do prompt, o feed classificava Strada/Toro como `utilitario` e o decoder derrubava decisao valida sem metadado diagnostico. Corrigido por invariantes: pergunta do portal preservada com objetivo tipado, apresentacao garantida no primeiro turno, perguntas numeradas extraidas do prompt cru, taxonomia `utilitario -> pickup` escopada ao RevendaMais e defaults seguros para reasonCode/reasonSummary.
+
+Gates: read-side 132/0; F2.7.14 45/0; model adapter 28/0; test:all verde; tsc limpo. Sem SQL. Handoff: `handoffs/2026-07-01-codex-f2.7.14.1-prompt-pickup.md`.

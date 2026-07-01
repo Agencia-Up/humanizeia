@@ -15,7 +15,8 @@ export function normalizeText(value: string | null | undefined): string {
 
 export function classifyVehicleType(
   sourceCategory: string | null,
-  sourceBodyType: string | null
+  sourceBodyType: string | null,
+  sourceProvider?: string | null,
 ): TypedVehicleType {
   const categoryNorm = normalizeText(sourceCategory);
   const bodyTypeNorm = normalizeText(sourceBodyType);
@@ -28,6 +29,11 @@ export function classifyVehicleType(
     return null;
   };
 
+  // RevendaMais usa `utilitario` como a carroceria de suas picapes no feed.
+  // A regra e escopada ao provedor e ao campo factual; nao depende de lista de modelos.
+  if (sourceProvider === "revendamais" && bodyTypeNorm === "utilitario") {
+    return { value: "pickup", confidence: 1.0, provenance: "source_field" };
+  }
   const fromBodyType = checkSource(bodyTypeNorm);
   if (fromBodyType) return { value: fromBodyType, confidence: 1.0, provenance: "source_field" };
 
