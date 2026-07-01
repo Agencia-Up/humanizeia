@@ -25,7 +25,7 @@ const inputCls = 'w-28 rounded-md border border-border bg-background px-2 py-1 t
 const vencCls = 'w-16 rounded-md border border-border bg-background px-2 py-1 text-center text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-primary';
 
 interface CustoFixo { id: string; nome: string; valor_brl: number; ativo: boolean; dia_vencimento: number | null; }
-interface Conta { user_id: string; nome: string; receita_brl: number; pagante: boolean; custo_jose_brl: number; }
+interface Conta { user_id: string; nome: string; receita_brl: number; pagante: boolean; custo_jose_brl: number; mensalidade_site: number | null; implementacao_site: number | null; proximo_venc: string | null; plano: string | null; }
 interface Overview {
   mes_inicio: string; cambio_usd_brl: number;
   custos_fixos: CustoFixo[]; contas: Conta[];
@@ -216,6 +216,8 @@ export default function AdminMargemTab() {
                   <TableHead>Conta</TableHead>
                   <TableHead className="text-center">Pagante</TableHead>
                   <TableHead className="text-right">Receita (R$/mês)</TableHead>
+                  <TableHead className="text-right">Implementação</TableHead>
+                  <TableHead className="text-center">Próximo venc.</TableHead>
                   <TableHead className="text-right">Custo José (mês)</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
@@ -223,10 +225,10 @@ export default function AdminMargemTab() {
               <TableBody>
                 {loading ? (
                   Array.from({ length: 4 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: 5 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}</TableRow>
+                    <TableRow key={i}>{Array.from({ length: 7 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}</TableRow>
                   ))
                 ) : (data?.contas ?? []).length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Nenhuma conta com agente.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhuma conta com agente.</TableCell></TableRow>
                 ) : (
                   (data?.contas ?? []).map((c) => (
                     <TableRow key={c.user_id} className={c.pagante ? '' : 'opacity-70'}>
@@ -235,18 +237,39 @@ export default function AdminMargemTab() {
                         {c.pagante && <Badge variant="secondary" className="ml-2 text-[10px]">cliente</Badge>}
                       </TableCell>
                       <TableCell className="text-center">
-                        <Button variant={c.pagante ? 'default' : 'outline'} size="sm" className="h-7 text-[11px]" onClick={() => togglePagante(c)} disabled={saving}>
-                          {c.pagante ? 'Sim' : 'Não'}
-                        </Button>
+                        {c.mensalidade_site != null ? (
+                          <Badge className="text-[10px]">Sim</Badge>
+                        ) : (
+                          <Button variant={c.pagante ? 'default' : 'outline'} size="sm" className="h-7 text-[11px]" onClick={() => togglePagante(c)} disabled={saving}>
+                            {c.pagante ? 'Sim' : 'Não'}
+                          </Button>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <input type="number" step="0.01" className={inputCls}
-                          value={receitaVal[c.user_id] ?? String(c.receita_brl)}
-                          onChange={(e) => setReceitaVal((s) => ({ ...s, [c.user_id]: e.target.value }))} />
+                        {c.mensalidade_site != null ? (
+                          <span className="inline-flex items-center justify-end gap-1 tabular-nums">
+                            {brl(c.mensalidade_site)}
+                            <Badge variant="outline" className="text-[9px]">do site</Badge>
+                          </span>
+                        ) : (
+                          <input type="number" step="0.01" className={inputCls}
+                            value={receitaVal[c.user_id] ?? String(c.receita_brl)}
+                            onChange={(e) => setReceitaVal((s) => ({ ...s, [c.user_id]: e.target.value }))} />
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {c.implementacao_site != null ? brl(c.implementacao_site) : '—'}
+                      </TableCell>
+                      <TableCell className="text-center tabular-nums text-muted-foreground">
+                        {c.proximo_venc ? new Date(c.proximo_venc + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{brl(c.custo_jose_brl)}</TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" className="h-7 text-[11px]" onClick={() => salvarReceita(c)} disabled={saving}>Salvar</Button>
+                        {c.mensalidade_site != null ? (
+                          <span className="text-[10px] text-muted-foreground">auto</span>
+                        ) : (
+                          <Button size="sm" className="h-7 text-[11px]" onClick={() => salvarReceita(c)} disabled={saving}>Salvar</Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))
