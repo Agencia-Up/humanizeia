@@ -48,7 +48,7 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
     // B) Filtro rígido por tipo/carroceria (broad não relaxa!)
     if (filters.tipo) {
       pool = pool.filter(v => {
-        const classified = classifyVehicleType(v.category, v.bodyType, v.source);
+        const classified = classifyVehicleType(v.category, v.bodyType, v.source, { brand: v.markName, model: v.modelName, version: v.versionName });
         // unknown nunca atende SUV, sedan, hatch ou pickup!
         if (classified.value === "unknown") return false;
         return classified.value === filters.tipo;
@@ -101,7 +101,7 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       seenKeys.add(key);
 
       const isAmbiguous = (fingerprintCounts.get(key) || 0) > 1;
-      const classifiedType = classifyVehicleType(v.category, v.bodyType, v.source);
+      const classifiedType = classifyVehicleType(v.category, v.bodyType, v.source, { brand: v.markName, model: v.modelName, version: v.versionName });
       const photos = parseVehiclePhotos(key, v.pictureJs);
       const photoIds = isAmbiguous ? [] : photos.map(p => p.id);
 

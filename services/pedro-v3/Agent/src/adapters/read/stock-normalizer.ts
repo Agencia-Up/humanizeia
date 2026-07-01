@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import type { NormalizedVehicle, StockProvider, TypedVehicleType } from "../../domain/read-ports.ts";
 import type { VehicleType } from "../../domain/types.ts";
+import { resolveVehicleTypeFromTaxonomy } from "./vehicle-taxonomy.ts";
 
 export function normalizeText(value: string | null | undefined): string {
   return String(value || "")
@@ -17,7 +18,13 @@ export function classifyVehicleType(
   sourceCategory: string | null,
   sourceBodyType: string | null,
   sourceProvider?: string | null,
+  vehicle?: { readonly brand?: string | null; readonly model?: string | null; readonly version?: string | null },
 ): TypedVehicleType {
+  const taxonomyType = vehicle ? resolveVehicleTypeFromTaxonomy(vehicle) : null;
+  if (taxonomyType) {
+    return { value: taxonomyType, confidence: 0.98, provenance: "derived" };
+  }
+
   const categoryNorm = normalizeText(sourceCategory);
   const bodyTypeNorm = normalizeText(sourceBodyType);
 

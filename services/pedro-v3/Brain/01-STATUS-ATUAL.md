@@ -939,3 +939,8 @@ Backlog registrado: (1) garantir cambio/cor do feed ate VehicleFact; (2) primeir
 Teste real comprovou tres causas: o condutor substituia a pergunta valida do prompt, o feed classificava Strada/Toro como `utilitario` e o decoder derrubava decisao valida sem metadado diagnostico. Corrigido por invariantes: pergunta do portal preservada com objetivo tipado, apresentacao garantida no primeiro turno, perguntas numeradas extraidas do prompt cru, taxonomia `utilitario -> pickup` escopada ao RevendaMais e defaults seguros para reasonCode/reasonSummary.
 
 Gates: read-side 132/0; F2.7.14 45/0; model adapter 28/0; test:all verde; tsc limpo. Sem SQL. Handoff: `handoffs/2026-07-01-codex-f2.7.14.1-prompt-pickup.md`.
+## 2026-07-01 - F2.7.15: taxonomia automotiva canonica via planilha
+
+A base `carros_brasil_categorias.xlsx` foi incorporada como taxonomia deterministica do Pedro v3: 132 modelos (hatch/sedan/SUV/picape). O classificador de estoque agora tenta marca/modelo/versao pela taxonomia antes de confiar no `category/bodyType` da API. Isso corrige a raiz de `picape`/`SUV` nao aparecerem quando a API manda `utilitario`, `Outros` ou classificacao ruim.
+
+Garantias novas: Strada/Toro/Hilux/Frontier => pickup; Renegade/Fastback/Pulse/Peugeot 2008 => SUV; HB20S/Onix Plus/C3 Aircross vencem os modelos parecidos mais curtos. Sem SQL, sem v2/bridge/webhook. Gates: F2.7.15 22/0; `npx.cmd tsc --noEmit` limpo; `npm run test:all` verde. Handoff: `handoffs/2026-07-01-codex-f2.7.15-vehicle-taxonomy.md`.
