@@ -26,7 +26,7 @@ function check(name: string, pass: boolean, detail = ""): void {
   else { fail++; fails.push(`${name} - ${detail}`); console.log(`  RED ${name}${detail ? ` - ${detail}` : ""}`); }
 }
 
-const ONIX = "chevrolet|onix|2014", GOL = "vw|gol|2015", RENEGADE = "jeep|renegade|2018", COMPASS = "jeep|compass|2020", CRUZE = "chevrolet|cruze|2019", BYD = "byd|song|2024", COROLLA = "toyota|corolla|2018";
+const ONIX = "chevrolet|onix|2014", GOL = "vw|gol|2015", RENEGADE = "jeep|renegade|2018", COMPASS = "jeep|compass|2020", CRUZE = "chevrolet|cruze|2019", BYD = "byd|song|2024", COROLLA = "toyota|corolla|2018", STRADA = "fiat|strada|2018", TORO = "fiat|toro|2017";
 const STOCK: VehicleFact[] = [
   { vehicleKey: ONIX, marca: "Chevrolet", modelo: "Onix", ano: 2014, preco: 54990, km: 132000, tipo: "hatch" },
   { vehicleKey: GOL, marca: "Volkswagen", modelo: "Gol", ano: 2015, preco: 38990, km: 95000, tipo: "hatch" },
@@ -35,6 +35,8 @@ const STOCK: VehicleFact[] = [
   { vehicleKey: CRUZE, marca: "Chevrolet", modelo: "Cruze", ano: 2019, preco: 79990, km: 60000, tipo: "sedan" },
   { vehicleKey: BYD, marca: "BYD", modelo: "Song", ano: 2024, preco: 149990, km: 9000, tipo: "suv" },
   { vehicleKey: COROLLA, marca: "Toyota", modelo: "Corolla", ano: 2018, preco: 55990, km: 110000, tipo: "sedan" },
+  { vehicleKey: STRADA, marca: "Fiat", modelo: "Strada", ano: 2018, preco: 76990, km: 104000, tipo: "pickup" },
+  { vehicleKey: TORO, marca: "Fiat", modelo: "Toro", ano: 2017, preco: 94990, km: 88000, tipo: "pickup" },
 ];
 const NO_JEEP = STOCK.filter((v) => v.marca !== "Jeep");
 const PHOTOS: Record<string, string[]> = Object.fromEntries(STOCK.map((v) => [v.vehicleKey, ["p1"]]));
@@ -56,6 +58,13 @@ const runQueryFor = (stock: VehicleFact[]): QueryRunner => async (call) => {
   return { ok: false, tool: call.tool, error: { code: "NOT_FOUND", message: "n/a", retryable: false } } as QueryResult;
 };
 const runQuery = runQueryFor(STOCK);
+const runQueryWithBrokenPickupType: QueryRunner = async (call) => {
+  calls.push(call);
+  if (call.tool === "stock_search" && call.input.tipo === "pickup" && !call.input.modelo) {
+    return { ok: true as const, tool: "stock_search" as const, data: { items: [], filtersUsed: call.input as any }, source: "fake" };
+  }
+  return runQueryFor(STOCK)(call);
+};
 const frame = (m: string) => computeTurnFrame({ leadMessage: m, claimExtractor: extractor });
 const explicit = (m: string, q: QueryRunner = runQuery) => { calls = []; return resolveExplicitSearchIntent({ leadMessage: m, claimExtractor: extractor, interpretation: { relation: "asks_vehicle_detail" }, runQuery: q }); };
 
@@ -102,6 +111,9 @@ async function main(): Promise<void> {
     check("explicit: 'jeep' SEM estoque -> none honesto", noJeep?.kind === "none", JSON.stringify(noJeep));
     const sedan = await explicit("quero sedan");
     check("explicit: 'sedan' -> offer (tipo)", sedan?.kind === "offer" && sedan.vehicles.every((v) => v.tipo === "sedan"));
+    const pickup = await explicit("queria uma picape", runQueryWithBrokenPickupType);
+    check("explicit: 'picape' usa fallback de taxonomia quando filtro tipo vem vazio", pickup?.kind === "offer" && pickup.vehicles.some((v) => v.modelo === "Strada") && pickup.vehicles.some((v) => v.modelo === "Toro"), JSON.stringify(pickup));
+    check("explicit: fallback de picape consultou modelos canonicos", calls.some((c) => c.tool === "stock_search" && c.input.modelo === "Strada") && calls.some((c) => c.tool === "stock_search" && c.input.modelo === "Toro"), JSON.stringify(calls));
     check("explicit: 'Boa noite' -> null", (await explicit("Boa noite")) === null);
   }
 

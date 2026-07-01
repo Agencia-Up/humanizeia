@@ -15,6 +15,7 @@ import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { finalize } from "./finalizer.ts";
 import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import { renderVehicleOfferList } from "./vehicle-offer-render.ts";
+import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 
 const TYPES = /\b(suvs?|hatchback|hatch|sedans?|pickups?|picapes?)\b/g;
 const TYPE_MAP: Record<string, VehicleType> = { suv: "suv", suvs: "suv", hatch: "hatch", hatchback: "hatch", sedan: "sedan", sedans: "sedan", pickup: "pickup", pickups: "pickup", picape: "pickup", picapes: "pickup" };
@@ -86,7 +87,14 @@ export type ExplicitSearchResult =
 type SearchTarget = {
   readonly label: string;
   readonly input: QueryInputMap["stock_search"];
+  readonly fallbackInputs?: readonly QueryInputMap["stock_search"][];
 };
+
+function taxonomyModelInputsForType(type: VehicleType, budget: Partial<QueryInputMap["stock_search"]>): QueryInputMap["stock_search"][] {
+  return VEHICLE_TAXONOMY
+    .filter((entry) => entry.type === type)
+    .map((entry) => ({ modelo: entry.model, ...budget }));
+}
 
 function buildTargets(frame: TurnFrame): SearchTarget[] {
   const budget = frame.budgetMax != null ? { precoMax: frame.budgetMax } : {};
@@ -104,7 +112,14 @@ function buildTargets(frame: TurnFrame): SearchTarget[] {
     return frame.explicitBrands.map((brand) => ({ label: cap(brand), input: withCommonFilters({ modelo: brand }) }));
   }
   if (frame.explicitTypes.length > 0) {
-    return [{ label: labelType(frame.explicitTypes[0]), input: withCommonFilters({}) }];
+    const type = frame.explicitTypes[0];
+    return [{
+      label: labelType(type),
+      input: withCommonFilters({}),
+      // Defesa contra feed/API mal classificado: se o filtro por tipo vier vazio,
+      // expande pelo conhecimento automotivo canonico da planilha e busca modelos reais.
+      fallbackInputs: taxonomyModelInputsForType(type, budget),
+    }];
   }
   if (frame.budgetMax != null) {
     return [{ label: "nessa faixa de preco", input: { precoMax: frame.budgetMax, broad: true } }];
@@ -124,14 +139,26 @@ export async function resolveExplicitSearchIntent(args: {
 
   const byKey = new Map<string, VehicleFact>();
   const missingLabels: string[] = [];
-  for (const target of targets) {
-    const res = await runQuery({ tool: "stock_search", input: target.input });
-    const items = res.ok && res.tool === "stock_search" ? res.data.items : [];
+  const addVehicles = (items: readonly VehicleFact[]): number => {
     const valid = items.filter((v) => typeof v.preco === "number" && v.preco > 0);
-    if (valid.length === 0) missingLabels.push(target.label);
     for (const vehicle of valid) {
       if (!byKey.has(vehicle.vehicleKey)) byKey.set(vehicle.vehicleKey, vehicle);
     }
+    return valid.length;
+  };
+  const runStock = async (input: QueryInputMap["stock_search"]): Promise<readonly VehicleFact[]> => {
+    const res = await runQuery({ tool: "stock_search", input });
+    return res.ok && res.tool === "stock_search" ? res.data.items : [];
+  };
+
+  for (const target of targets) {
+    let added = addVehicles(await runStock(target.input));
+    if (added === 0 && target.fallbackInputs && target.fallbackInputs.length > 0) {
+      for (const fallbackInput of target.fallbackInputs) {
+        added += addVehicles(await runStock(fallbackInput));
+      }
+    }
+    if (added === 0) missingLabels.push(target.label);
   }
 
   const vehicles = [...byKey.values()].sort((a, b) => a.preco - b.preco).slice(0, 5);
