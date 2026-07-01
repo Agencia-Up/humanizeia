@@ -21,6 +21,7 @@ import { resolvePhotoIntent, buildPhotoTurnOutput, resolvePhotoPromiseRepair, sh
 import { detectPopularEconomyIntent, resolvePopularEconomyOffer, buildPopularEconomyTurnOutput, resolvePopularityRankingIntent, buildPopularityRankingTurnOutput } from "./popularity-intent.ts";
 import { detectContinuityIntent, buildContinuityTurnOutput } from "./continuity-fallback.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
+import { resolveExplicitSearchIntent, buildExplicitSearchTurnOutput } from "./explicit-search.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -212,10 +213,14 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       // ("populares mais vendidos") o RANKING explicito VENCE -> calcula ranking PRIMEIRO; economy so se NAO houver.
       const rankingIntent = photoIntent ? null : resolvePopularityRankingIntent({ leadMessage });
       const economyIntent = (photoIntent || rankingIntent) ? false : detectPopularEconomyIntent(leadMessage);
-      // F2.7.11 (P0, Task 3): saudacao/ack/comentario curto SEM nova intencao comercial em conversa JA
-      // iniciada -> conduz a partir do contexto (recentTurns/interesse), NAO reinicia nem oferta ungrounded
-      // (que virava terminal-safe). 1o contato segue pro LLM (saudacao inicial).
-      const continuityIntent = (photoIntent || rankingIntent || economyIntent)
+      // F2.7.13 (P0): PRIORIDADE DO TURNO ATUAL. Se o lead pediu AGORA marca/modelo/tipo/faixa, roda
+      // stock_search do que ele pediu e oferta (ancorado) OU responde honesto — VENCE memoria antiga
+      // (slots.interesse/lastCommercialInterest/lista antiga). Era a raiz do "jeep -> Argo".
+      const explicitSearch = (photoIntent || rankingIntent || economyIntent)
+        ? null
+        : await resolveExplicitSearchIntent({ leadMessage, claimExtractor: prepared.claimExtractor, interpretation: prepared.interpretation, runQuery });
+      // F2.7.11 (P0): saudacao/ack/comentario curto SEM intencao comercial nova -> conduz pelo contexto.
+      const continuityIntent = (photoIntent || rankingIntent || economyIntent || explicitSearch)
         ? false
         : detectContinuityIntent({ leadMessage, state: contextState, claimExtractor: prepared.claimExtractor });
       let turnOutput: TurnOutput;
@@ -226,6 +231,8 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       } else if (economyIntent) {
         // "populares" -> 5 mais em conta do estoque + nota do criterio (ancorado nos fatos, nunca terminal-safe).
         turnOutput = buildPopularEconomyTurnOutput(await resolvePopularEconomyOffer({ runQuery }), turnId);
+      } else if (explicitSearch) {
+        turnOutput = buildExplicitSearchTurnOutput(explicitSearch, turnId);
       } else if (continuityIntent) {
         turnOutput = buildContinuityTurnOutput(contextState, turnId);
       } else {

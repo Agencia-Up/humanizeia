@@ -25,7 +25,7 @@ export type ModelBinding = {
   readonly temperature: number | null;
 };
 
-// F2.7.4 (E) — Contexto explicito derivado do estado/historico, surfacado ao modelo
+// F2.7.4 (E) â€” Contexto explicito derivado do estado/historico, surfacado ao modelo
 // a cada turno (em vez do state cru). Tipos vivem no dominio; o DERIVADOR puro fica
 // em engine/model-context-view.ts (deriveModelContext). Mantem o dominio sem depender de engine.
 export type ModelTranscriptTurn = { readonly role: "lead" | "agent"; readonly text: string };
@@ -37,6 +37,14 @@ export type ModelConversationContext = {
   readonly conversationFacts: readonly string[];
   readonly currentObjective: { readonly type: string; readonly slot: string | null; readonly status: string } | null;
   readonly lastCommercialInterest: { readonly model: string | null; readonly tipo: string | null; readonly precoMax: number | null } | null;
+  readonly currentTurnFrame: {
+    readonly explicitModels: readonly string[];
+    readonly explicitBrands: readonly string[];
+    readonly explicitTypes: readonly string[];
+    readonly budgetMax: number | null;
+    readonly isNewCommercialIntent: boolean;
+    readonly isReferenceOnly: boolean;
+  } | null;
 };
 
 export type ModelTurnSnapshot = {

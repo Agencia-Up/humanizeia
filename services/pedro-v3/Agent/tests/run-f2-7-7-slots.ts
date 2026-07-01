@@ -1,9 +1,9 @@
 // ============================================================================
-// F2.7.7 — Captura segura de slots + objetivos. Testes offline ($0, sem rede).
+// F2.7.7 â€” Captura segura de slots + objetivos. Testes offline ($0, sem rede).
 //   npx tsx tests/run-f2-7-7-slots.ts
 //
-// Extrator PURO (lead-extraction) + integração no engine (preview -> o modelo já vê
-// o nome capturado e NÃO repergunta no mesmo turno) + multi-modelo no pre-seed.
+// Extrator PURO (lead-extraction) + integraÃ§Ã£o no engine (preview -> o modelo jÃ¡ vÃª
+// o nome capturado e NÃƒO repergunta no mesmo turno) + multi-modelo no pre-seed.
 // ============================================================================
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import type { ConversationState, PendingObjective } from "../src/domain/conversation-state.ts";
@@ -24,7 +24,7 @@ const TENANT = "icom"; const AGENT = "aloan";
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
   if (pass) { ok++; console.log(`  OK  ${name}`); }
-  else { fail++; fails.push(`${name} — ${detail}`); console.log(`  RED ${name}${detail ? ` — ${detail}` : ""}`); }
+  else { fail++; fails.push(`${name} â€” ${detail}`); console.log(`  RED ${name}${detail ? ` â€” ${detail}` : ""}`); }
 }
 
 const STOCK: VehicleFact[] = [
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
   {
     const st = baseState({ recentTurns: [
       { role: "lead", text: "Bom dia", at: NOW },
-      { role: "agent", text: "Que bom que conhece a loja! Qual é o seu nome, por favor?", at: NOW },
+      { role: "agent", text: "Que bom que conhece a loja! Qual Ã© o seu nome, por favor?", at: NOW },
     ] });
     const muts = extractLeadSlots({ leadMessage: "dOUGLAS", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1b" });
     check("1b 'dOUGLAS' sem objetivo, agente perguntou nome -> 'Douglas'", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
@@ -86,16 +86,16 @@ async function main(): Promise<void> {
     check("1c 'Douglas' sem sinal de pergunta de nome -> NAO captura", !slot(muts, "nome"), JSON.stringify(muts));
   }
 
-  // 2) "Meu nome é douglas" (sem objetivo) -> nome "Douglas" (padrao explicito)
+  // 2) "Meu nome e douglas" (sem objetivo) -> nome "Douglas" (padrao explicito)
   {
-    const muts = extractLeadSlots({ leadMessage: "Meu nome é douglas", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t2" });
-    check("2 'Meu nome é douglas' -> set_slot nome 'Douglas'", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
+    const muts = extractLeadSlots({ leadMessage: "Meu nome e douglas", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t2" });
+    check("2 'Meu nome e douglas' -> set_slot nome 'Douglas'", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
   }
 
-  // 3) "Conheço sim" NAO vira nome (mesmo com objetivo de nome pendente)
+  // 3) "ConheÃ§o sim" NAO vira nome (mesmo com objetivo de nome pendente)
   {
-    const muts = extractLeadSlots({ leadMessage: "Conheço sim", state: withNameObjective(), interpretation: TI(), claimExtractor: extractor, turnId: "t3" });
-    check("3 'Conheço sim' NAO vira nome", !slot(muts, "nome"), JSON.stringify(muts));
+    const muts = extractLeadSlots({ leadMessage: "ConheÃ§o sim", state: withNameObjective(), interpretation: TI(), claimExtractor: extractor, turnId: "t3" });
+    check("3 'ConheÃ§o sim' NAO vira nome", !slot(muts, "nome"), JSON.stringify(muts));
   }
 
   // 4) "Quero um onix" NAO vira nome; vira interesse
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
 
   // 6) objetivo de nome resolvido (coberto em 1/5); aqui: sem objetivo -> nao emite resolve
   {
-    const muts = extractLeadSlots({ leadMessage: "Meu nome é Douglas", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t6" });
+    const muts = extractLeadSlots({ leadMessage: "Meu nome e Douglas", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t6" });
     check("6 sem objetivo pendente -> nao emite resolve_objective", !muts.some((m) => m.op === "resolve_objective"));
   }
 
@@ -136,12 +136,12 @@ async function main(): Promise<void> {
     check("8 input ambiguo sem objetivo/padrao -> nao salva nome", !slot(muts, "nome"), JSON.stringify(muts));
   }
 
-  // ── Integração no engine: bloco real com nome explicito + 2 modelos ──
+  // â”€â”€ IntegraÃ§Ã£o no engine: bloco real com nome explicito + 2 modelos â”€â”€
   // preview faz o modelo VER o nome (nao repergunta) + pre-seed consulta os modelos do bloco.
   {
     const clock = new FakeClock(NOW);
     const p = new InMemoryPersistence(clock, new FakeIdGen());
-    await p.tryInsert({ eventId: "b1", conversationId: "cB", raw: { __redacted: true, text: "Meu nome é Douglas\nquero onix ou argo" } as any, receivedAt: NOW });
+    await p.tryInsert({ eventId: "b1", conversationId: "cB", raw: { __redacted: true, text: "Meu nome e Douglas\nquero onix ou argo" } as any, receivedAt: NOW });
     const queried: string[] = [];
     const runQuery: QueryRunner = async (call) => {
       if (call.tool === "stock_search") {
@@ -164,10 +164,26 @@ async function main(): Promise<void> {
     const st = (await p.load("cB"))!.state;
     check("engine: nome salvo no estado ('Douglas')", st.slots.nome.status === "known" && st.slots.nome.value === "Douglas", JSON.stringify(st.slots.nome));
     check("engine: interesse salvo com onix e argo", st.slots.interesse.status === "known" && /onix/.test(st.slots.interesse.value ?? "") && /argo/.test(st.slots.interesse.value ?? ""), JSON.stringify(st.slots.interesse));
-    check("engine: PREVIEW fez o modelo ver o nome (nao reperguntaria)", llm.capturedNomeStatus === "known", String(llm.capturedNomeStatus));
+    check("engine: caminho deterministico de oferta nao depende do LLM", llm.capturedNomeStatus === null, String(llm.capturedNomeStatus));
     check("engine: pre-seed consultou AMBOS os modelos do bloco (onix+argo)", queried.includes("onix") && queried.includes("argo"), JSON.stringify(queried));
   }
 
+  // Integração no engine: quando o turno segue para o LLM, o preview faz o modelo ver o nome.
+  {
+    const clock = new FakeClock(NOW);
+    const p = new InMemoryPersistence(clock, new FakeIdGen());
+    await p.tryInsert({ eventId: "c1", conversationId: "cC", raw: { __redacted: true, text: "Meu nome e Douglas\nobrigado" } as any, receivedAt: NOW });
+    const llm = new RecordingLlm();
+    await runConversationTurn({
+      persistence: p, clock, llm, runQuery: async (call) => ({ ok: false, tool: call.tool, error: { code: "NOT_FOUND", message: "n/a", retryable: false } } as QueryResult),
+      conversationId: "cC", tenantId: TENANT, agentId: AGENT, leadId: null,
+      workerId: "w", turnId: "tC", leaseTtlMs: 60_000,
+      interpretation: TI({}, "answers_pending"), tenantCatalog: catalog, claimExtractor: extractor,
+      limits: { maxSteps: 4, totalTimeoutMs: 5000 }, maxValidationAttempts: 2,
+      providerCapability: { send_message: "none" },
+    });
+    check("engine: PREVIEW fez o modelo ver o nome (nao reperguntaria)", llm.capturedNomeStatus === "known", String(llm.capturedNomeStatus));
+  }
   console.log(`\n=== F2.7.7: ${ok} OK | ${fail} FALHA ===`);
   if (fail > 0) { for (const f of fails) console.error("  - " + f); process.exit(1); }
 }

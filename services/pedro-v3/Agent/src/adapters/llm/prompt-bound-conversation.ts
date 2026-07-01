@@ -78,7 +78,7 @@ function immutableCopy<T>(value: T): T {
 export class ModelOutputError extends Error {
   // `detail` (F2.6R) nomeia QUAL campo do envelope falhou (ex.: "proposedEffects", "responsePlan.guidance"),
   // p/ diagnosticar o desalinhamento prompt<->contrato pelo banco (v3_decisions.reason_summary). So nome de
-  // campo/checagem — nunca dado do modelo. Diagnostico, nao muda o controle de fluxo (segue terminal-safe).
+  // campo/checagem â€” nunca dado do modelo. Diagnostico, nao muda o controle de fluxo (segue terminal-safe).
   constructor(public readonly code:
     | "MODEL_INTERPRETATION_INVALID" | "MODEL_DECISION_INVALID" | "MODEL_RESPONSE_INVALID"
     | "MODEL_INTERPRETATION_FAILURE" | "MODEL_DECISION_FAILURE" | "MODEL_RESPONSE_FAILURE",
@@ -112,8 +112,8 @@ function snapshot(ctx: TurnContext): ModelTurnSnapshot {
     tenantCatalog: ctx.tenantCatalog,
     interpretation: ctx.interpretation,
     // F2.7.4 (E): contexto explicito (transcript/ultima fala/ja apresentado/fatos/objetivo/interesse)
-    // derivado de forma PURA do estado+interpretacao — o modelo nao precisa garimpar o state cru.
-    context: deriveModelContext(ctx.state, ctx.interpretation),
+    // derivado de forma PURA do estado+interpretacao â€” o modelo nao precisa garimpar o state cru.
+    context: deriveModelContext(ctx.state, ctx.interpretation, { leadMessage: ctx.leadMessage, claimExtractor: ctx.claimExtractor }),
   });
 }
 

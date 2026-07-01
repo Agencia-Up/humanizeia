@@ -1,5 +1,5 @@
 // ============================================================================
-// F2.7.6 — Debounce/burst do lead. Testes offline ($0, sem rede, FakeClock).
+// F2.7.6 â€” Debounce/burst do lead. Testes offline ($0, sem rede, FakeClock).
 //   npx tsx tests/run-f2-7-6-debounce.ts
 //
 // Prova: rajada vira UM turno; ordem preservada; mensagem depois da janela = novo
@@ -26,7 +26,7 @@ const TO = "5511999990000";
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
   if (pass) { ok++; console.log(`  OK  ${name}`); }
-  else { fail++; fails.push(`${name} — ${detail}`); console.log(`  RED ${name}${detail ? ` — ${detail}` : ""}`); }
+  else { fail++; fails.push(`${name} â€” ${detail}`); console.log(`  RED ${name}${detail ? ` â€” ${detail}` : ""}`); }
 }
 
 const STOCK: VehicleFact[] = [{ vehicleKey: "chevrolet|onix|2021", marca: "Chevrolet", modelo: "Onix", ano: 2021, preco: 72990, km: 30000, tipo: "hatch" }];
@@ -66,7 +66,7 @@ async function processBlock(p: InMemoryPersistence, clock: FakeClock, conversati
 async function main(): Promise<void> {
   console.log("\n=== F2.7.6 Debounce/burst ===\n");
 
-  // ── Politica pura ──
+  // â”€â”€ Politica pura â”€â”€
   {
     check("policy: quieto >= debounce -> settled", isConversationSettled({ nowMs: 10_000, oldestPendingMs: 0, newestPendingMs: 4_000, debounceMs: 6000, maxWaitMs: 12000 }) === true);
     check("policy: barulhento < debounce -> nao settled", isConversationSettled({ nowMs: 10_000, oldestPendingMs: 6_000, newestPendingMs: 6_000, debounceMs: 6000, maxWaitMs: 12000 }) === false);
@@ -77,13 +77,13 @@ async function main(): Promise<void> {
     check("config maxWait nunca menor que debounce", cfg2.debounceMs === 8000 && cfg2.maxWaitMs === 8000);
   }
 
-  // ── 2 mensagens com intervalo < debounce viram UM turno; ordem preservada ──
+  // â”€â”€ 2 mensagens com intervalo < debounce viram UM turno; ordem preservada â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T00:00:00.000Z");
-    await ingestNow(p, clock, "e1", "cA", "Conheço sim");
+    await ingestNow(p, clock, "e1", "cA", "ConheÃ§o sim");
     clock.advance(1000);
-    await ingestNow(p, clock, "e2", "cA", "quero um onix");
+    await ingestNow(p, clock, "e2", "cA", "quero ver opcoes");
     // ainda dentro da janela -> nao assentou
     clock.advance(1000); // now = T+2s
     check("rajada < debounce: NAO assenta ainda", p.findSettledConversations(clock.now(), 6000, 12000, 20).length === 0);
@@ -93,28 +93,28 @@ async function main(): Promise<void> {
     check("rajada quieta >= debounce: assenta com pendingCount=2", settled.length === 1 && settled[0].pendingCount === 2 && settled[0].toAddr === TO && settled[0].agentId === AGENT, JSON.stringify(settled));
     const { leadMessage, result } = await processBlock(p, clock, "cA", "t-cA");
     check("rajada vira UM turno (committed)", result.status === "committed", result.status);
-    check("bloco preserva ordem e conteudo das 2 mensagens", leadMessage === "Conheço sim\nquero um onix", JSON.stringify(leadMessage));
+    check("bloco preserva ordem e conteudo das 2 mensagens", leadMessage === "ConheÃ§o sim\nquero ver opcoes", JSON.stringify(leadMessage));
     check("apos processar, nada pendente (nao reprocessa)", p.findSettledConversations(clock.now(), 6000, 12000, 20).length === 0);
   }
 
-  // ── 3 mensagens rapidas preservam ordem ──
+  // â”€â”€ 3 mensagens rapidas preservam ordem â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T01:00:00.000Z");
     await ingestNow(p, clock, "f1", "cB", "Bom dia"); clock.advance(500);
-    await ingestNow(p, clock, "f2", "cB", "Conheço sim"); clock.advance(500);
-    await ingestNow(p, clock, "f3", "cB", "quero um onix");
+    await ingestNow(p, clock, "f2", "cB", "ConheÃ§o sim"); clock.advance(500);
+    await ingestNow(p, clock, "f3", "cB", "quero ver opcoes");
     clock.advance(6000);
     const { leadMessage } = await processBlock(p, clock, "cB", "t-cB");
-    check("3 mensagens: ordem preservada no bloco", leadMessage === "Bom dia\nConheço sim\nquero um onix", JSON.stringify(leadMessage));
+    check("3 mensagens: ordem preservada no bloco", leadMessage === "Bom dia\nConheÃ§o sim\nquero ver opcoes", JSON.stringify(leadMessage));
   }
 
-  // ── 'Conheço sim' + 'quero um onix' geram UMA decisao que ve ambos ──
+  // â”€â”€ 'ConheÃ§o sim' + 'quero ver opcoes' (sem modelo -> caminho LLM) geram UMA decisao que ve ambos â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T02:00:00.000Z");
-    await ingestNow(p, clock, "g1", "cC", "Conheço sim"); clock.advance(2000);
-    await ingestNow(p, clock, "g2", "cC", "quero um onix");
+    await ingestNow(p, clock, "g1", "cC", "ConheÃ§o sim"); clock.advance(2000);
+    await ingestNow(p, clock, "g2", "cC", "quero ver opcoes");
     clock.advance(6000);
     const llm = new RecordingLlm();
     const result = await runConversationTurn({
@@ -123,10 +123,31 @@ async function main(): Promise<void> {
       tenantCatalog: catalog, claimExtractor: extractor, limits, maxValidationAttempts: 2, providerCapability: { send_message: "none" },
     });
     check("UMA unica decisao para a rajada", llm.captured.length === 1 && result.status === "committed");
-    check("a decisao considerou AMBOS (onix presente no bloco)", /conhe.o sim/i.test(llm.captured[0]) && /onix/i.test(llm.captured[0]), llm.captured[0]);
+    check("a decisao considerou AMBOS (2a msg presente no bloco)", llm.captured[0].toLowerCase().includes("conhe") && llm.captured[0].toLowerCase().includes("opcoes"), llm.captured[0]);
   }
 
-  // ── Mensagem DEPOIS da janela vira novo turno ──
+
+  // -- Caso real: "Conheco sim" + "quero um onix" tambem precisa ser UM turno.
+  // O explicit-search pode bypassar o LLM, entao a prova aqui e no estado/decisao, nao no RecordingLlm.
+  {
+    const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
+    const clock = new FakeClock("2026-06-30T02:30:00.000Z");
+    await ingestNow(p, clock, "gr1", "cREAL", "Conheco sim"); clock.advance(2000);
+    await ingestNow(p, clock, "gr2", "cREAL", "quero um onix");
+    clock.advance(6000);
+    const llm = new RecordingLlm();
+    const result = await runConversationTurn({
+      persistence: p, clock, llm, runQuery, conversationId: "cREAL", tenantId: TENANT, agentId: AGENT, leadId: null,
+      workerId: "w", turnId: "t-cREAL", leaseTtlMs: 60_000, interpretation: { relation: "answers_pending" },
+      tenantCatalog: catalog, claimExtractor: extractor, limits, maxValidationAttempts: 2, providerCapability: { send_message: "none" },
+    });
+    const snap = p.load("cREAL");
+    const lastLead = snap?.state.recentTurns.filter((t) => t.role === "lead").at(-1)?.text ?? "";
+    check("rajada real Onix: UMA decisao committed", result.status === "committed" && result.decision.reasonCode === "explicit_offer", result.status === "committed" ? result.decision.reasonCode : result.status);
+    check("rajada real Onix: bloco preservado no estado", lastLead === "Conheco sim\nquero um onix", JSON.stringify(lastLead));
+    check("rajada real Onix: pedido atual venceu sem depender do LLM", llm.captured.length === 0);
+  }
+  // â”€â”€ Mensagem DEPOIS da janela vira novo turno â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T03:00:00.000Z");
@@ -139,7 +160,7 @@ async function main(): Promise<void> {
     check("mensagem depois da janela = 2o turno separado", r1.leadMessage === "primeira" && r2.leadMessage === "segunda", JSON.stringify([r1.leadMessage, r2.leadMessage]));
   }
 
-  // ── Max-wait: processa mesmo com o lead mandando mensagem continuamente ──
+  // â”€â”€ Max-wait: processa mesmo com o lead mandando mensagem continuamente â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T04:00:00.000Z");
@@ -152,7 +173,7 @@ async function main(): Promise<void> {
     check("max-wait: assenta em T+12 por starvation (mesmo barulhento)", settled.length === 1 && settled[0].pendingCount === 4, JSON.stringify(settled));
   }
 
-  // ── Duplicado de webhook NAO gera 2o turno; e nao reprocessa done ──
+  // â”€â”€ Duplicado de webhook NAO gera 2o turno; e nao reprocessa done â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T05:00:00.000Z");
@@ -167,7 +188,7 @@ async function main(): Promise<void> {
     check("nada pendente apos done", p.findSettledConversations(clock.now(), 0, 0, 20).length === 0);
   }
 
-  // ── Roteamento exigido: sem upsert, findSettled ignora a conversa ──
+  // â”€â”€ Roteamento exigido: sem upsert, findSettled ignora a conversa â”€â”€
   {
     const p = new InMemoryPersistence(new FakeClock(), new FakeIdGen());
     const clock = new FakeClock("2026-06-30T06:00:00.000Z");
@@ -177,7 +198,7 @@ async function main(): Promise<void> {
     check("sem roteamento: findSettled NAO retorna (nao da p/ despachar)", p.findSettledConversations(clock.now(), 6000, 12000, 20).length === 0);
   }
 
-  // ── Poller: orquestra find + process, isola falhas ──
+  // â”€â”€ Poller: orquestra find + process, isola falhas â”€â”€
   {
     const fakeClock: Clock = { now: () => "2026-06-30T07:00:00.000Z" };
     const s = (id: string): SettledConversation => ({ conversationId: id, agentId: AGENT, leadId: null, toAddr: TO, pendingCount: 1 });
@@ -193,7 +214,7 @@ async function main(): Promise<void> {
 
     const poller3 = new DebouncePoller(async () => { throw new Error("db down"); }, async () => { /* */ }, fakeClock);
     const r3 = await poller3.runOnce();
-    check("poller: finder que lança nao crasha o tick", r3.found === 0 && r3.processed === 0, JSON.stringify(r3));
+    check("poller: finder que lanÃ§a nao crasha o tick", r3.found === 0 && r3.processed === 0, JSON.stringify(r3));
   }
 
   console.log(`\n=== F2.7.6: ${ok} OK | ${fail} FALHA ===`);

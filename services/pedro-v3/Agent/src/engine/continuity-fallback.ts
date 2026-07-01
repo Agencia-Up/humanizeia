@@ -17,6 +17,7 @@ import type { Id } from "../domain/types.ts";
 import type { TurnOutput } from "./decision-engine.ts";
 import { finalize } from "./finalizer.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { turnHasNewCommercialIntent } from "./explicit-search.ts";
 
 const FALLBACK_MARKER = /desculpe a lentid/i; // fallback tecnico antigo: NUNCA reusar como "oferta"
 
@@ -61,6 +62,7 @@ const COMMERCIAL_SIGNAL = /\bfotos?\b|\bimagens?\b|\bbarat|\bpopular|\bvendid|\b
 export function detectContinuityIntent(args: { readonly leadMessage: string; readonly state: ConversationState; readonly claimExtractor: ClaimExtractor }): boolean {
   const { leadMessage, state, claimExtractor } = args;
   if (!alreadyIntroduced(state)) return false; // 1o contato -> LLM faz a saudacao inicial (nao curto-circuita)
+  if (turnHasNewCommercialIntent(leadMessage, claimExtractor)) return false; // F2.7.13: marca/modelo/tipo/faixa NAO e continuidade
   const norm = normalizeText(leadMessage);
   const words = norm.split(/\s+/).filter(Boolean);
   if (words.length === 0 || words.length > 6) return false; // continuidade = mensagem CURTA

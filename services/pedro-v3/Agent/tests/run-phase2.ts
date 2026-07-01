@@ -1205,7 +1205,9 @@ async function runBasicTurn(args: { p: InMemoryPersistence; clock: FakeClock; tu
     workerId: "worker-shadow",
     turnId: "turn-shadow-1",
     eventId: "evt-shadow-1",
-    messageText: "quero um carro ate 65 mil",
+    // F2.7.13: input vago (sem marca/modelo/tipo/faixa no TEXTO) -> NAO cai no handler deterministico de
+    // busca explicita; exercita o caminho do LLM (search_stock), que e o que este teste do HARNESS valida.
+    messageText: "me ajuda a achar um carro?",
     interpretation,
     tenantCatalog: catalog,
     claimExtractor,
