@@ -25,7 +25,7 @@ const inputCls = 'w-28 rounded-md border border-border bg-background px-2 py-1 t
 const vencCls = 'w-16 rounded-md border border-border bg-background px-2 py-1 text-center text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-primary';
 
 interface CustoFixo { id: string; nome: string; valor_brl: number; ativo: boolean; dia_vencimento: number | null; }
-interface Conta { user_id: string; nome: string; receita_brl: number; pagante: boolean; custo_jose_brl: number; mensalidade_site: number | null; implementacao_site: number | null; proximo_venc: string | null; plano: string | null; }
+interface Conta { user_id: string; nome: string; receita_brl: number; pagante: boolean; custo_jose_brl: number; mensalidade_site: number | null; implementacao_site: number | null; proximo_venc: string | null; plano: string | null; interna: boolean; }
 interface Overview {
   mes_inicio: string; cambio_usd_brl: number;
   custos_fixos: CustoFixo[]; contas: Conta[];
@@ -45,6 +45,7 @@ export default function AdminMargemTab() {
   const [novoValor, setNovoValor] = useState('');
   const [novoVenc, setNovoVenc] = useState('');
   const [saving, setSaving] = useState(false);
+  const [mostrarInternas, setMostrarInternas] = useState(false);
 
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
@@ -90,7 +91,12 @@ export default function AdminMargemTab() {
     rpc('admin_margem_set_cliente', { p_user_id: c.user_id, p_receita: Number(receitaVal[c.user_id] ?? c.receita_brl) || 0, p_ativo: c.pagante || Number(receitaVal[c.user_id] ?? c.receita_brl) > 0 });
   const togglePagante = (c: Conta) =>
     rpc('admin_margem_set_cliente', { p_user_id: c.user_id, p_receita: c.receita_brl, p_ativo: !c.pagante });
+  const toggleInterna = (c: Conta) =>
+    rpc('admin_margem_set_cliente', { p_user_id: c.user_id, p_receita: c.receita_brl, p_ativo: c.pagante, p_interna: !c.interna });
 
+  const contasAll = data?.contas ?? [];
+  const internasCount = contasAll.filter((c) => c.interna).length;
+  const contasVisiveis = mostrarInternas ? contasAll : contasAll.filter((c) => !c.interna);
   const t = data?.totais;
   const receita = nf(t?.receita_brl), fixos = nf(t?.custos_fixos_brl), custoJose = nf(t?.custo_jose_brl);
   const margem = receita - fixos - custoJose;
@@ -206,7 +212,12 @@ export default function AdminMargemTab() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4" /> Contas — receita & custo do José</CardTitle>
-          <p className="text-[11px] text-muted-foreground">Marque "Pagante" só nos clientes reais e ponha a mensalidade. ADM, conta de teste e vendedores deixam desmarcado.</p>
+          <p className="text-[11px] text-muted-foreground">Marque "Pagante" só nos clientes reais e ponha a mensalidade. ADM, conta de teste e vendedores marque como "Interna" (some da lista e sai da margem).</p>
+          {internasCount > 0 && (
+            <Button variant="outline" size="sm" className="mt-1 h-7 w-fit text-[11px]" onClick={() => setMostrarInternas((v) => !v)}>
+              {mostrarInternas ? 'Ocultar internas' : `Mostrar internas (${internasCount})`}
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="px-0">
           <div className="overflow-x-auto">
@@ -227,11 +238,11 @@ export default function AdminMargemTab() {
                   Array.from({ length: 4 }).map((_, i) => (
                     <TableRow key={i}>{Array.from({ length: 7 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}</TableRow>
                   ))
-                ) : (data?.contas ?? []).length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhuma conta com agente.</TableCell></TableRow>
+                ) : contasVisiveis.length === 0 ? (
+                  <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">{internasCount > 0 ? 'Todas as contas estão marcadas como internas. Use "Mostrar internas".' : 'Nenhuma conta com agente.'}</TableCell></TableRow>
                 ) : (
-                  (data?.contas ?? []).map((c) => (
-                    <TableRow key={c.user_id} className={c.pagante ? '' : 'opacity-70'}>
+                  contasVisiveis.map((c) => (
+                    <TableRow key={c.user_id} className={c.interna ? 'opacity-50' : (c.pagante ? '' : 'opacity-70')}>
                       <TableCell className="max-w-[220px] truncate font-medium">
                         {c.nome}
                         {c.pagante && <Badge variant="secondary" className="ml-2 text-[10px]">cliente</Badge>}
@@ -265,11 +276,17 @@ export default function AdminMargemTab() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{brl(c.custo_jose_brl)}</TableCell>
                       <TableCell className="text-right">
-                        {c.mensalidade_site != null ? (
-                          <span className="text-[10px] text-muted-foreground">auto</span>
-                        ) : (
-                          <Button size="sm" className="h-7 text-[11px]" onClick={() => salvarReceita(c)} disabled={saving}>Salvar</Button>
-                        )}
+                        <div className="flex items-center justify-end gap-1">
+                          {c.mensalidade_site != null ? (
+                            <span className="text-[10px] text-muted-foreground">auto</span>
+                          ) : (
+                            <Button size="sm" className="h-7 text-[11px]" onClick={() => salvarReceita(c)} disabled={saving}>Salvar</Button>
+                          )}
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] text-muted-foreground" onClick={() => toggleInterna(c)} disabled={saving}
+                            title={c.interna ? 'Voltar a considerar como conta' : 'Marcar como interna (esconde e tira da margem)'}>
+                            {c.interna ? 'Cliente' : 'Interna'}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
