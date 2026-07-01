@@ -477,8 +477,8 @@ async function runBasicTurn(args: { p: InMemoryPersistence; clock: FakeClock; tu
 
   const afterAccepted = p.load("c1")!;
   const outAccepted = p.listOutbox("c1")[0];
-  check("F2.2-commit", "14 accepted não muda estado (versão 1)", afterAccepted.version === 1 && afterAccepted.state.currentObjective == null, JSON.stringify(afterAccepted));
-  check("F2.2-commit", "14 accepted marca succeeded, level accepted, outcomeAppliedAt null", outAccepted.status === "succeeded" && outAccepted.receiptLevel === "accepted" && outAccepted.outcomeAppliedAt === null, JSON.stringify(outAccepted));
+  check("F2.2-commit", "14 accepted ativa objetivo da pergunta (versão 2)", afterAccepted.version === 2 && afterAccepted.state.currentObjective?.id === "obj-1" && afterAccepted.state.currentObjective.deliveryLevel === "accepted", JSON.stringify(afterAccepted));
+  check("F2.2-commit", "14 accepted aplica objetivo e preenche outcomeAppliedAt", outAccepted.status === "succeeded" && outAccepted.receiptLevel === "accepted" && outAccepted.outcomeAppliedAt != null, JSON.stringify(outAccepted));
 
   // Teste 2: Receipt "delivered" chega depois
   const resDelivered: EffectResult = {
@@ -492,7 +492,7 @@ async function runBasicTurn(args: { p: InMemoryPersistence; clock: FakeClock; tu
 
   const afterDelivered = p.load("c1")!;
   const outDelivered = p.listOutbox("c1")[0];
-  check("F2.2-commit", "14 delivered muda estado (versão 2) e ativa objetivo", afterDelivered.version === 2 && afterDelivered.state.currentObjective?.id === "obj-1", JSON.stringify(afterDelivered));
+  check("F2.2-commit", "14 delivered posterior não reaplica objetivo", afterDelivered.version === 2 && afterDelivered.state.currentObjective?.id === "obj-1", JSON.stringify(afterDelivered));
   check("F2.2-commit", "14 delivered preenche outcomeAppliedAt", outDelivered.status === "succeeded" && outDelivered.receiptLevel === "delivered" && outDelivered.outcomeAppliedAt != null, JSON.stringify(outDelivered));
 
   // Teste 3: Repetir "delivered" é idempotente

@@ -22,6 +22,7 @@ import { detectPopularEconomyIntent, resolvePopularEconomyOffer, buildPopularEco
 import { detectContinuityIntent, buildContinuityTurnOutput } from "./continuity-fallback.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { resolveExplicitSearchIntent, buildExplicitSearchTurnOutput } from "./explicit-search.ts";
+import { applySdrConduction, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 
 export type ConversationEngineArgs = {
   persistence: Persistence;
@@ -42,6 +43,7 @@ export type ConversationEngineArgs = {
   limits: QueryLoopLimits;
   maxValidationAttempts: number;
   providerCapability?: Partial<Record<OutboxRecord["kind"], ProviderCapability>>;
+  sdrPolicy?: SdrQualificationPolicy;
   afterCutoff?: (cutoff: Iso) => void | Promise<void>;
   beforeCommit?: (ctx: BeforeCommitContext) => void | Promise<void>;
 };
@@ -140,7 +142,7 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
   const {
     persistence, clock, llm, runQuery, conversationId, tenantId, agentId, leadId,
     workerId, turnId, leaseTtlMs, interpretation, tenantCatalog, claimExtractor, contextPreparer,
-    limits, maxValidationAttempts, providerCapability, afterCutoff, beforeCommit,
+    limits, maxValidationAttempts, providerCapability, sdrPolicy, afterCutoff, beforeCommit,
   } = args;
 
   let claimedEventIds: Id[] = [];
@@ -251,6 +253,12 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
           turnOutput = buildPhotoTurnOutput(repair, turnId, cutoff);
         }
       }
+      // Preserve the structured offer before the SDR conductor rewrites the final CTA.
+      const renderedOfferContext = computeRenderedOfferContext(turnOutput, turnId, cutoff);
+      if (sdrPolicy) {
+        turnOutput = applySdrConduction({ output: turnOutput, state: contextState, policy: sdrPolicy, turnId });
+      }
+
       // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0
         ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }]
@@ -265,8 +273,7 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       // F2.7.12 (P0): se este turno renderizou uma lista (vehicle_offer_list), grava a memória OPERACIONAL
       // estruturada (ordinal -> vehicleKey) p/ resolver "foto do N" depois — deterministico, sem parse de
       // texto, sem depender do delivered. Sem nova oferta -> preserva a anterior (reduced.next ja a clonou).
-      const offerCtx = computeRenderedOfferContext(turnOutput, turnId, cutoff);
-      if (offerCtx) reduced.next.lastRenderedOfferContext = offerCtx;
+      if (renderedOfferContext) reduced.next.lastRenderedOfferContext = renderedOfferContext;
 
       const outbox = materializeEffectPlans(turnOutput.decision, turnOutput.composed, {
         conversationId,

@@ -1,4 +1,4 @@
-﻿# 01 - Status Atual do Pedro v3
+# 01 - Status Atual do Pedro v3
 
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
 > Ultima atualizacao: 2026-06-30 - por Codex. **F2.7.13 R1 APROVADA E ENDURECIDA: prioridade do turno atual vence memoria antiga.** Corrigido o fix parcial do Claude: busca explicita agora usa TenantCatalog dinamico + interpretacao somente quando o termo literal aparece na fala do lead; sem marcas hardcoded; filtros combinados (marca/modelo/tipo + teto); multi-modelo/multi-marca consultam todos; `slots.interesse` deixa de acumular historico/lixo e passa a representar a intencao comercial atual; `deriveModelContext` remove interesse velho quando o turno atual traz intencao nova. Testes: `tsc --noEmit` limpo; `test:f276` 27 OK; `test:f277` 21 OK; `test:f2713` 35 OK; vizinhas f274/f278/f2712 verdes; `test:all` EXIT=0. Scan engine sem `BRANDS`, listas hardcoded ou `msg.includes`. Aguardando commit/push controlado.
@@ -922,3 +922,14 @@ rastreio de ENTREGA + outcomes que exigem delivered seguem parados ate resolver 
 bloco (resto da F2.7.4) PENDENTES.
 
 Resultado: **F2.7.4-A pronto e gateado, NAO deployado â€” entregue p/ auditoria do Codex + migration p/ o dono rodar.** `PEDRO_V3_PILOT_MODE` INALTERADO.
+## 2026-06-30 - F2.7.14: conducao SDR minima (Codex)
+
+Implementado controlador de qualificacao baseado no estado central. A resposta ao pedido atual continua prioritaria; depois dela o agente faz no maximo uma pergunta pendente. Slots conhecidos nao sao repetidos. O gate minimo cobre nome, interesse, faixa de preco, pagamento, troca e visita, com condicionais para entrada/parcela, dados do veiculo de troca e dia/horario.
+
+Perguntas configuradas no portal sao mapeadas para slots tipados quando reconheciveis. O Finalizer acopla cada pergunta a um PlannedObjective 1:1 e o objetivo ativa em receipt accepted; efeitos comerciais e entrega seguem delivered.
+
+Gates: F2.7.14 = 39 OK; SQL = 75 OK; Phase2 = 96 OK; test:all exit 0; tsc limpo.
+
+SQL manual pre-deploy: Brain/sql/v3_f2_7_14_sdr_objective_accepted.sql.
+
+Backlog registrado: (1) garantir cambio/cor do feed ate VehicleFact; (2) primeiro envio limitado a cinco fotos representativas; (3) apos validacao real, integrar CRM, briefing, handoff e follow-up usando readyForHandoff.

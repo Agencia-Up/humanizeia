@@ -6,6 +6,7 @@ import type { Id } from "../domain/types.ts";
 import type {
   ProposedDecision, PolicyVerdict, QueryResult, TurnDecision, TurnAction, EffectPlan, SendMessagePlan, DecisionMutation, EffectOutcomeMutation
 } from "../domain/decision.ts";
+import type { PlannedObjective } from "../domain/conversation-state.ts";
 import { hasDeny, collectRequirements } from "./policy-engine.ts";
 
 const ALLOWED_OUTCOMES: Record<string, string[]> = {
@@ -187,6 +188,40 @@ export function validateDecisionObjectives(decision: TurnDecision): string[] {
   }
 
   return violations;
+}
+
+export function attachQualificationObjective(
+  decision: TurnDecision,
+  objective: Omit<PlannedObjective, "activationPlanId" | "effectId">,
+): TurnDecision | null {
+  if (decision.decisionMutations.some((m) => m.op === "set_planned_objective")) return null;
+  if (decision.effectPlan.some((p) => p.onSuccess.some((o) => o.op === "activate_objective"))) return null;
+
+  const messageIndex = decision.effectPlan.findIndex((p) => p.kind === "send_message");
+  if (messageIndex < 0) return null;
+  const message = decision.effectPlan[messageIndex];
+  const planned: PlannedObjective = {
+    ...objective,
+    activationPlanId: message.planId,
+    effectId: message.effectId,
+  };
+  const effectPlan = decision.effectPlan.map((plan, index) => index === messageIndex
+    ? {
+        ...plan,
+        onSuccess: [
+          ...plan.onSuccess,
+          { op: "activate_objective" as const, effectId: plan.effectId, plannedObjectiveId: planned.id },
+        ],
+      }
+    : plan);
+  const next: TurnDecision = {
+    ...decision,
+    decisionMutations: [...decision.decisionMutations, { op: "set_planned_objective", planned }],
+    effectPlan,
+  };
+  if (validateEffectPlans(next.effectPlan).length > 0) return null;
+  if (validateDecisionObjectives(next).length > 0) return null;
+  return next;
 }
 
 export function finalize(

@@ -48,7 +48,7 @@ as $$
       and not exists (
         select 1
         from jsonb_array_elements(coalesce(p_on_success, '[]'::jsonb)) as e
-        where e->>'op' is distinct from 'append_assistant_turn'
+        where coalesce(e->>'op', '') not in ('append_assistant_turn', 'activate_objective')
       )
     then 'accepted'
     else 'delivered'
@@ -1259,7 +1259,7 @@ begin
   end if;
 
   -- F2.7.4-A: valida o receipt MINIMO real exigido por este record (coluna gerada via helper accepted-safe).
-  -- send_message com so append_assistant_turn aceita accepted/delivered; todo o resto exige delivered.
+  -- send_message com apenas append_assistant_turn/activate_objective aceita accepted/delivered; o resto exige delivered.
   -- Nao rebaixa delivered (se ja estiver delivered, segue valido). O early-return acima (outcome_applied_at)
   -- garante que um delivered POSTERIOR nao reaplique o outcome (idempotente).
   if v_record.status <> 'succeeded'

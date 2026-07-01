@@ -229,10 +229,11 @@ await expectThrow(
   });
   const outbox = await persistence.listOutbox("conv-1");
   const state = await persistence.load("conv-1");
+  const sentText = typeof (outbox[0]?.payload as any)?.text === "string" ? (outbox[0]?.payload as any).text : "";
   check("turno ativo commita", result.status === "committed", JSON.stringify(result));
   check("turno ativo despacha exatamente uma mensagem", result.dispatched === 1 && transport.calls.length === 1, JSON.stringify({ dispatched: result.dispatched, calls: transport.calls.length }));
   check("F2.7.4 outbox accepted JA aplica o outcome (memoria do agente no accepted)", outbox[0]?.status === "succeeded" && outbox[0].receiptLevel === "accepted" && outbox[0].outcomeAppliedAt !== null, JSON.stringify(outbox[0]));
-  check("F2.7.4 memoria registra a fala do lead E do agente no accepted (sem duplicar lead)", state?.state.recentTurns.filter((t) => t.role === "lead" && t.text === "Boa noite").length === 1 && state.state.recentTurns.some((t) => t.role === "agent" && t.text === "Oi, posso ajudar?") === true, JSON.stringify(state?.state.recentTurns));
+  check("F2.7.14 memoria registra lead e o texto realmente enviado (sem duplicar)", state?.state.recentTurns.filter((t) => t.role === "lead" && t.text === "Boa noite").length === 1 && sentText.length > 0 && state.state.recentTurns.filter((t) => t.role === "agent" && t.text === sentText).length === 1, JSON.stringify({ sentText, turns: state?.state.recentTurns }));
   check("prompt do portal chega ao modelo", model.interpretCalls[0]?.binding.systemPrompt === "Voce e o Aloan.", JSON.stringify(model.interpretCalls[0]?.binding));
 
   const delivered = await applyProviderDeliveryReceipt({
@@ -243,7 +244,7 @@ await expectThrow(
   const deliveredState = await persistence.load("conv-1");
   const deliveredVersion = deliveredState?.version;
   check("messages_update delivered aplica outcome sem reenviar", delivered.status === "applied" && transport.calls.length === 1, JSON.stringify({ delivered, calls: transport.calls.length }));
-  check("delivery callback grava a fala do agente na memoria", deliveredState?.state.recentTurns.some((turn) => turn.role === "agent" && turn.text === "Oi, posso ajudar?") === true, JSON.stringify(deliveredState?.state.recentTurns));
+  check("delivery posterior preserva a fala sem duplicar", deliveredState?.state.recentTurns.filter((turn) => turn.role === "agent" && turn.text === sentText).length === 1, JSON.stringify(deliveredState?.state.recentTurns));
 
   const repeatedDelivery = await applyProviderDeliveryReceipt({
     persistence,

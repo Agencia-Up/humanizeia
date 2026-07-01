@@ -1,10 +1,15 @@
 import type { OutboxRecord } from "./effect-intent.ts";
 
-// F2.7.4: outcomes "accepted-safe" aplicam quando o provider apenas ACEITOU o envio (= memoria do que o
-// AGENTE enviou). Hoje so `append_assistant_turn` (a fala do agente) e accepted-safe. Tudo mais — entrega ao
-// lead (mark_message_delivered), objetivo critico (activate_objective), oferta/foco/fotos/handoff/stage,
-// CRM/handoff/agenda — exige DELIVERED (confirmacao externa real). Separacao rigida aprovada pelo Codex.
-export const ACCEPTED_SAFE_OUTCOME_OPS: ReadonlySet<string> = new Set(["append_assistant_turn"]);
+// F2.7.14: append_assistant_turn and activate_objective are accepted-safe for send_message.
+// They record what the agent sent/asked, not that the lead read it. Delivery and commercial
+// outcomes (offer, focus, media, CRM, handoff, schedule and stage) remain delivered-only.
+export const ACCEPTED_SAFE_OUTCOME_OPS: ReadonlySet<string> = new Set([
+  "append_assistant_turn",
+  // The provider accepted the same message that contains the question. This marks
+  // what the agent asked, not that the lead read it. Delivery-sensitive outcomes
+  // (offer, focus, media, CRM, handoff and stage) remain delivered-only.
+  "activate_objective",
+]);
 
 export function isCriticalForConversationState(record: OutboxRecord): boolean {
   if (

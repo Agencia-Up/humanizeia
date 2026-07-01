@@ -29,6 +29,7 @@ import type { EffectGate } from "./effect-gate.ts";
 import type { UazapiHttpTransport } from "../adapters/effects/uazapi-whatsapp-sender.ts";
 import { createPilotWhatsAppDispatcher } from "../adapters/effects/pilot-whatsapp-runtime.ts";
 import { V2WhatsAppInstanceCredentialProvider, V2WhatsAppInstanceSource } from "../adapters/effects/v2-whatsapp-instance-source.ts";
+import { buildSdrQualificationPolicy, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 
 export type PilotActiveConfig = {
   readonly mode: "active";
@@ -136,6 +137,7 @@ export class PilotActiveRoot {
     private readonly whatsappTransport: UazapiHttpTransport,
     private readonly photoSource: V2VehiclePhotoSource,
     private readonly allowedUazapiHosts: readonly string[],
+    private readonly sdrPolicy: SdrQualificationPolicy,
   ) {}
 
   get tenantConfig(): TenantRuntimeConfig {
@@ -197,6 +199,7 @@ export class PilotActiveRoot {
       deps.whatsappTransport,
       photoSource,
       deps.allowedUazapiHosts,
+      buildSdrQualificationPolicy(runtimeConfig),
     );
   }
 
@@ -247,6 +250,7 @@ export class PilotActiveRoot {
       limits: input.limits,
       maxValidationAttempts: input.maxValidationAttempts,
       providerCapability: { send_message: "none", send_media: "none" },
+      sdrPolicy: this.sdrPolicy,
     });
 
     const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);

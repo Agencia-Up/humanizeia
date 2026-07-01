@@ -132,6 +132,12 @@ async function main(): Promise<void> {
   await db.exec(f276PatchSql);
   check("patch F2.7.6 (debounce) executa integralmente em PostgreSQL", true);
 
+  // F2.7.14: activate_objective da mesma mensagem e accepted-safe (pergunta enviada != lida).
+  const f2714PatchUrl = new URL("../../Brain/sql/v3_f2_7_14_sdr_objective_accepted.sql", import.meta.url);
+  const f2714PatchSql = await readFile(f2714PatchUrl, "utf8");
+  await db.exec(f2714PatchSql);
+  check("patch F2.7.14 (objetivo SDR accepted-safe) executa integralmente em PostgreSQL", true);
+
   // F2.7.4-A: a FONTE UNICA (v3_required_receipt_level) — usada pela coluna gerada, pelo check e pelo RPC.
   const reqLevel = async (kind: string, onSuccess: unknown[]): Promise<string> => {
     const r = await db.query<{ r: string }>(
@@ -144,7 +150,8 @@ async function main(): Promise<void> {
   check("F2.7.4-A send_message + [] -> accepted", await reqLevel("send_message", []) === "accepted");
   check("F2.7.4-A send_message + 2x append_assistant_turn -> accepted", await reqLevel("send_message", [{ op: "append_assistant_turn" }, { op: "append_assistant_turn" }]) === "accepted");
   check("F2.7.4-A send_message + mark_message_delivered -> delivered", await reqLevel("send_message", [{ op: "append_assistant_turn" }, { op: "mark_message_delivered" }]) === "delivered");
-  check("F2.7.4-A send_message + activate_objective -> delivered", await reqLevel("send_message", [{ op: "activate_objective" }]) === "delivered");
+  check("F2.7.14 send_message + activate_objective -> accepted", await reqLevel("send_message", [{ op: "activate_objective" }]) === "accepted");
+  check("F2.7.14 send_message + objective+assistant -> accepted", await reqLevel("send_message", [{ op: "activate_objective" }, { op: "append_assistant_turn" }]) === "accepted");
   check("F2.7.4-A send_message + record_offer -> delivered", await reqLevel("send_message", [{ op: "record_offer" }]) === "delivered");
   check("F2.7.4-A send_message + set_presented_vehicle_focus -> delivered", await reqLevel("send_message", [{ op: "set_presented_vehicle_focus" }]) === "delivered");
   check("F2.7.4-A send_media -> delivered", await reqLevel("send_media", []) === "delivered");
@@ -171,9 +178,8 @@ async function main(): Promise<void> {
   await expectReject("F2.7.4-A check REJEITA accepted+outcome com mark_message_delivered",
     () => insOutbox("f274bad1", "send_message", [{ op: "append_assistant_turn" }, { op: "mark_message_delivered" }]),
     "v3_outbox_applied_only_after_delivery_ck");
-  await expectReject("F2.7.4-A check REJEITA accepted+outcome com activate_objective",
-    () => insOutbox("f274bad2", "send_message", [{ op: "activate_objective" }]),
-    "v3_outbox_applied_only_after_delivery_ck");
+  await insOutbox("f2714ok", "send_message", [{ op: "activate_objective" }, { op: "append_assistant_turn" }]);
+  check("F2.7.14 check ACEITA objetivo+memoria em accepted", true);
   await expectReject("F2.7.4-A check REJEITA send_media avancar so por accepted",
     () => insOutbox("f274bad3", "send_media", [{ op: "mark_photos_sent" }]),
     "v3_outbox_applied_only_after_delivery_ck");
