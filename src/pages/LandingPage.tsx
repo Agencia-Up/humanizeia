@@ -179,7 +179,7 @@ export default function LandingPage() {
               <Play className="h-4 w-4" style={{ color: 'var(--brand-gold)' }} /> Veja como funciona em 90 segundos
             </a>
             <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
-              Quero testar agora <ArrowRight className="ml-2 h-4 w-4" />
+              Assinar agora <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
 
@@ -420,7 +420,7 @@ export default function LandingPage() {
             onClick={() => navigate(DEFAULT_CHECKOUT)}
             className="shrink-0 bg-primary px-4 text-primary-foreground hover:bg-primary/90"
           >
-            Começar
+            Assinar
           </Button>
         </div>
       </div>

@@ -7,7 +7,7 @@ import { Moon, Sun, Menu, X } from 'lucide-react';
 
 // Header publico compartilhado. O destino do CTA e definido pela pagina.
 export function MarketingHeader({
-  onCta, navItems = [], ctaLabel = 'Quero testar agora',
+  onCta, navItems = [], ctaLabel = 'Assinar agora',
 }: { onCta: () => void; navItems?: { href: string; label: string }[]; ctaLabel?: string }) {
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
