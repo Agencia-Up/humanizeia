@@ -13,7 +13,6 @@ import {
 // /pedro, /marcos, /jose. CTA primario = checkout de pagamento.
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const;
-const DEFAULT_CHECKOUT = '/checkout?plano=pro&ciclo=mensal';
 
 const AGENTS = [
   {
@@ -130,14 +129,15 @@ const PLANS = [
 export default function LandingPage() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const goToPlans = () => document.getElementById('planos')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
   return (
     <div className="min-h-screen bg-background pb-24 text-foreground overflow-x-hidden md:pb-0">
       <MarketingHeader
-        onCta={() => navigate(DEFAULT_CHECKOUT)}
-        ctaLabel="Assinar agora"
+        onCta={goToPlans}
+        ctaLabel="Conheça nossos planos"
         navItems={[
           { href: '#demo', label: 'Por dentro' },
           { href: '#agentes', label: 'Agentes' },
@@ -178,14 +178,10 @@ export default function LandingPage() {
             <a href="#demo" className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               <Play className="h-4 w-4" style={{ color: 'var(--brand-gold)' }} /> Veja como funciona em 90 segundos
             </a>
-            <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
-              Assinar agora <ArrowRight className="ml-2 h-4 w-4" />
+            <Button size="lg" onClick={goToPlans} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+              Conheça nossos planos <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
-
-          <p className="mt-4 text-xs text-muted-foreground">
-            ⚡ No ar em 5 minutos · Sem fidelidade · Suporte humano de verdade
-          </p>
         </div>
       </section>
 
@@ -277,7 +273,7 @@ export default function LandingPage() {
           </div>
 
           <div className="text-center mt-8">
-            <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+            <Button size="lg" onClick={goToPlans} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
               Faça as contas: quanto te custa cada lead hoje? <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
@@ -393,9 +389,9 @@ export default function LandingPage() {
           <p className="text-base md:text-lg mb-8" style={{ color: 'rgba(250, 248, 242, 0.85)' }}>
             Coloque a Logos IA pra trabalhar hoje. No ar em 5 minutos.
           </p>
-          <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="px-7 text-base"
+          <Button size="lg" onClick={goToPlans} className="px-7 text-base"
             style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy-dark)' }}>
-            Quero minha equipe de IA <ArrowRight className="ml-2 h-4 w-4" />
+            Conheça nossos planos <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-x-6 gap-y-2 text-sm" style={{ color: 'rgba(250, 248, 242, 0.80)' }}>
             <a href="https://wa.me/5534999080815" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 hover:opacity-100 opacity-90">
@@ -417,10 +413,10 @@ export default function LandingPage() {
             <p className="truncate text-sm font-bold text-foreground">Equipe de IA no ar em 5 minutos</p>
           </div>
           <Button
-            onClick={() => navigate(DEFAULT_CHECKOUT)}
+            onClick={goToPlans}
             className="shrink-0 bg-primary px-4 text-primary-foreground hover:bg-primary/90"
           >
-            Assinar
+            Planos
           </Button>
         </div>
       </div>
