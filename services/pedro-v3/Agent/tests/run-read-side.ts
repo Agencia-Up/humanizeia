@@ -572,6 +572,8 @@ async function main(): Promise<void> {
     body_type: "suv"
   }, "revendamais");
   check("decodeNormalizedVehicle decodifica válido", vValid.externalVehicleId === "12345" && vValid.saleValue === 65000 && vValid.year === 2018 && vValid.source === "revendamais");
+  const vAliasDetails = decodeNormalizedVehicle({ vehicle_id: 777, make: "VW", base_model: "Gol", model: "Gol 1.0", year: 2020, price: 50000, cor: "Branco", cambio: "Manual" }, "revendamais");
+  check("decodeNormalizedVehicle aceita aliases cor/cambio", vAliasDetails.color === "Branco" && vAliasDetails.transmissionName === "Manual", JSON.stringify(vAliasDetails));
 
   const t1 = classifyVehicleType(vValid.category, vValid.bodyType);
   check("carroceria direta da fonte mapeada como suv", t1.value === "suv" && t1.provenance === "source_field" && t1.confidence === 1.0);
@@ -653,6 +655,8 @@ async function main(): Promise<void> {
       model: "Onix LT 1.0",
       year: 2020,
       price: 60000,
+      color: "Prata",
+      gear: "Automatico",
       category: "AUTOMÓVEL",
       body_type: "hatch",
       images_large: [
@@ -724,6 +728,7 @@ async function main(): Promise<void> {
   // Teste de busca com teto de preço
   const resSearch = await stockSource.search({ tenantId: TENANT_A, agentId: AGENT_RAW }, { precoMax: 65000 });
   check("busca retorna itens compatíveis dentro do teto de preço", resSearch.items.length === 1 && resSearch.items[0].modelo === "Onix" && resSearch.items[0].preco === 60000);
+  check("busca preserva cor e cambio no VehicleFact", resSearch.items[0]?.cor === "Prata" && resSearch.items[0]?.cambio === "Automatico", JSON.stringify(resSearch.items[0]));
   check("carro sem preço (103) foi filtrado da busca", !resSearch.items.some(i => i.vehicleKey.includes("103")));
 
   // Teste de excludeKeys

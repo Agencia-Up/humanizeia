@@ -153,6 +153,34 @@ async function main(): Promise<void> {
   }
 
   {
+    const s = state();
+    s.currentObjective = {
+      id: "obj-trade-details", type: "perguntou_troca", slot: "veiculoTroca", askedAt: NOW, askedInTurnId: "old",
+      deliveredByEffectId: "old:reply", deliveryLevel: "accepted", expectedAnswerKinds: ["modelo"], status: "pending", attempts: 0,
+    };
+    const muts = extract(s, "Nao tenho carro pra troca\nvoce tem SUV ate 100k?", "t-no-trade");
+    check("sem troca captura possuiTroca=false", muts.some((m) => m.op === "set_slot" && m.slot === "possuiTroca" && m.value === false), JSON.stringify(muts));
+    check("sem troca supersede objetivo velho de veiculoTroca", muts.some((m) => m.op === "supersede_objective" && m.objectiveId === "obj-trade-details"), JSON.stringify(muts));
+    const applied = applyDecision(s, muts, "t-no-trade", NOW);
+    if (!applied.ok) throw new Error(applied.rejected.map((r) => r.reason).join("; "));
+    const q = deriveSdrQualification(applied.next, buildSdrQualificationPolicy({ qualificationQuestions: ["Qual Ã© o modelo, ano e quilometragem do veÃ­culo da troca?"] }));
+    check("sem troca nÃ£o pergunta modelo/ano/km da troca de novo", q.nextSlot !== "veiculoTroca", JSON.stringify(q));
+  }
+  {
+    const s = state();
+    s.currentObjective = {
+      id: "obj-stale-trade-details", type: "perguntou_troca", slot: "veiculoTroca", askedAt: NOW, askedInTurnId: "old",
+      deliveredByEffectId: "old:reply", deliveryLevel: "accepted", expectedAnswerKinds: ["modelo"], status: "pending", attempts: 0,
+    };
+    s.slots.nome = { status: "known", value: "Douglas", confidence: 1, updatedAt: NOW };
+    s.slots.interesse = { status: "known", value: "suv", confidence: 1, updatedAt: NOW };
+    s.slots.faixaPreco = { status: "known", value: { max: 100000 }, confidence: 1, updatedAt: NOW };
+    s.slots.formaPagamento = { status: "known", value: "a_vista", confidence: 1, updatedAt: NOW };
+    s.slots.possuiTroca = { status: "known", value: false, confidence: 1, updatedAt: NOW };
+    const q = deriveSdrQualification(s, buildSdrQualificationPolicy({ qualificationQuestions: ["Qual Ã© o modelo, ano e quilometragem do veÃ­culo da troca?"] }));
+    check("objetivo condicional obsoleto nÃ£o vence estado atual", q.nextSlot !== "veiculoTroca", JSON.stringify(q));
+  }
+  {
     const initial = state();
     const greetingOutput = {
       ...buildExplicitSearchTurnOutput({ kind: "none", label: "teste" }, "t-portal"),

@@ -292,11 +292,15 @@ export function extractLeadSlots(args: {
     if (amount != null) add({ op: "set_slot", slot: "parcelaDesejada", value: amount, confidence: 0.9, sourceTurnId: turnId }, "parcelaDesejada");
   }
 
-  const explicitTrade = /\b(?:tenho|possuo).{0,25}\b(?:carro|veiculo).{0,20}\btroca\b|\b(?:carro|veiculo)\s+para\s+troca\b/.test(norm);
-  const explicitNoTrade = /\b(?:nao tenho|sem).{0,20}\b(?:carro|veiculo|troca)\b|\bnao.*troca\b/.test(norm);
+  const explicitNoTrade = /\b(?:nao tenho|sem).{0,40}\b(?:carro|veiculo|troca)\b|\bnao.{0,60}\btroca\b/.test(norm);
+  const explicitTrade = !explicitNoTrade && /\b(?:tenho|possuo).{0,25}\b(?:carro|veiculo).{0,20}\btroca\b|\b(?:carro|veiculo)\s+(?:para|pra)\s+troca\b/.test(norm);
+  let deniedTradeVehicle = false;
   if (explicitTrade || explicitNoTrade || expected === "possuiTroca") {
     const value = explicitNoTrade ? false : explicitTrade ? true : parseBooleanAnswer(leadMessage);
-    if (value != null) add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");
+    if (value != null) {
+      if (value === false) deniedTradeVehicle = true;
+      add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");
+    }
   }
 
   if (expected === "veiculoTroca" || (state.slots.possuiTroca.value === true && /\b(?:ano|km|quilometr|troca)\b/.test(norm))) {
@@ -325,6 +329,8 @@ export function extractLeadSlots(args: {
   const current = state.currentObjective;
   if (current?.status === "pending" && current.slot && captured.has(current.slot)) {
     muts.push({ op: "resolve_objective", objectiveId: current.id, status: "satisfied" });
+  } else if (current?.status === "pending" && current.slot === "veiculoTroca" && deniedTradeVehicle) {
+    muts.push({ op: "supersede_objective", objectiveId: current.id });
   }
 
   return muts;

@@ -15,8 +15,8 @@ export type DebounceConfig = {
 };
 
 export const DEFAULT_DEBOUNCE_CONFIG: DebounceConfig = Object.freeze({
-  debounceMs: 6000,
-  maxWaitMs: 12000,
+  debounceMs: 10_000,
+  maxWaitMs: 20_000,
   pollIntervalMs: 2000,
 });
 
@@ -42,7 +42,7 @@ function clampInt(raw: string | undefined, fallback: number, min: number, max: n
   return i;
 }
 
-// Le PEDRO_V3_DEBOUNCE_MS (default 6000), PEDRO_V3_DEBOUNCE_MAX_MS (default 12000),
+// Le PEDRO_V3_DEBOUNCE_MS (default 10000), PEDRO_V3_DEBOUNCE_MAX_MS (default 20000),
 // PEDRO_V3_POLL_INTERVAL_MS (default 2000). maxWaitMs nunca menor que debounceMs.
 export function resolveDebounceConfig(env: Record<string, string | undefined>): DebounceConfig {
   const debounceMs = clampInt(env.PEDRO_V3_DEBOUNCE_MS, DEFAULT_DEBOUNCE_CONFIG.debounceMs, 0, 60_000);

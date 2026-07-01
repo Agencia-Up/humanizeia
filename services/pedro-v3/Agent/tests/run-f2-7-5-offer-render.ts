@@ -94,6 +94,12 @@ async function main(): Promise<void> {
     check("km 132623 -> '132.623'", formatKm(132623) === "132.623", formatKm(132623));
   }
 
+  // 4b) detalhes comerciais: cambio e cor entram na linha de detalhes
+  {
+    const detailed: VehicleFact = { ...ONIX, cambio: "Automatico", cor: "Prata" };
+    const out = renderVehicleOfferList([detailed]);
+    check("detalhes incluem km, cambio e cor", out.includes("132.623 km") && out.includes("Automatico") && out.includes("Prata"), out);
+  }
   // 5) campos ausentes nao quebram layout
   {
     const semKm: VehicleFact = { vehicleKey: "x|y|2020", marca: "Marca", modelo: "Modelo", ano: 2020, preco: 50000, tipo: "sedan" };

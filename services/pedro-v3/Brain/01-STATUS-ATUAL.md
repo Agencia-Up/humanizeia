@@ -950,3 +950,11 @@ Garantias novas: Strada/Toro/Hilux/Frontier => pickup; Renegade/Fastback/Pulse/P
 Teste real ainda mostrou `nao tenho picape` mesmo apos a taxonomia. Raiz: classificar melhor o veiculo retornado nao basta quando a consulta primaria `stock_search({ tipo: "pickup" })` vem vazia por feed/API mal classificado. O handler de busca explicita agora, quando o filtro por tipo retorna vazio, expande pelo catalogo canonico da planilha e consulta modelos reais daquele tipo (ex.: Strada/Toro/Hilux/Frontier para picape), mantendo precoMax quando existir.
 
 Invariante: o agente nao inventa estoque nem oferece modelo da planilha sozinho; ele so mostra o que voltar das buscas reais por modelo. Isso fecha o buraco de `picape`/`SUV` por tipo sem depender cegamente da categoria do provedor. Sem SQL, sem v2/bridge/webhook. Gates: F2.7.13 37/0; F2.7.15 22/0; `npx.cmd tsc --noEmit` limpo; `npm run test:all` EXIT=0. Handoff: `handoffs/2026-07-01-codex-f2.7.15.1-taxonomy-type-fallback.md`.
+
+## 2026-07-01 - F2.7.16: SDR condicional, detalhes de oferta e debounce ampliado
+
+Teste real mostrou tres falhas combinadas: o objetivo antigo de `veiculoTroca` continuava vivo apos o lead dizer que nao tinha carro para troca; o estoque carregava cor/cambio no normalizador mas nao levava esses campos ate `VehicleFact`; e a janela padrao de debounce de 6s ainda era curta para o bloco real do WhatsApp.
+
+Correcoes: `extractLeadSlots` agora trata negacao de troca com precedencia sobre "tenho" e supersede objetivo pendente de `veiculoTroca`; `deriveSdrQualification` ignora objetivos/slots condicionais que nao se aplicam ao estado atual (troca=false, pagamento!=financiamento, visita=false); o read-side mapeia `color/cor` e `gear/transmission/cambio` ate `VehicleFact`, e o renderer passa a exibir km + cambio + cor quando existirem; defaults de debounce mudaram para 10s de silencio e 20s de max-wait.
+
+Sem SQL, sem v2/bridge/webhook. Gates: F2.7.14 49/0; F2.7.5 24/0; F2.7.6 27/0; read-side 134/0; `npx.cmd tsc --noEmit` limpo; `npm.cmd run test:all` EXIT=0. Handoff: `handoffs/2026-07-01-codex-f2.7.16-sdr-state-offer-details-debounce.md`.

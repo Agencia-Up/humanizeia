@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     check("policy: barulhento < debounce -> nao settled", isConversationSettled({ nowMs: 10_000, oldestPendingMs: 6_000, newestPendingMs: 6_000, debounceMs: 6000, maxWaitMs: 12000 }) === false);
     check("policy: starvation (oldest >= max) -> settled mesmo barulhento", isConversationSettled({ nowMs: 13_000, oldestPendingMs: 1_000, newestPendingMs: 12_500, debounceMs: 6000, maxWaitMs: 12000 }) === true);
     const cfg = resolveDebounceConfig({});
-    check("config defaults 6000/12000/2000", cfg.debounceMs === 6000 && cfg.maxWaitMs === 12000 && cfg.pollIntervalMs === 2000);
+    check("config defaults 10000/20000/2000", cfg.debounceMs === 10000 && cfg.maxWaitMs === 20000 && cfg.pollIntervalMs === 2000);
     const cfg2 = resolveDebounceConfig({ PEDRO_V3_DEBOUNCE_MS: "8000", PEDRO_V3_DEBOUNCE_MAX_MS: "3000" });
     check("config maxWait nunca menor que debounce", cfg2.debounceMs === 8000 && cfg2.maxWaitMs === 8000);
   }

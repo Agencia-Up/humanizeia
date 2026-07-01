@@ -112,6 +112,8 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
         ano: v.year!,
         preco: v.saleValue!,
         km: v.km !== null ? v.km : undefined,
+        cambio: v.transmissionName ? this.cleanPart(v.transmissionName) : undefined,
+        cor: v.color ? this.cleanPart(v.color) : undefined,
         tipo: classifiedType.value,
         photoIds: photoIds.length > 0 ? photoIds : undefined
       });

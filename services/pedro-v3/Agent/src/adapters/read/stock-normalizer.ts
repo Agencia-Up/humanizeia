@@ -187,9 +187,9 @@ export function decodeNormalizedVehicle(raw: unknown, source: StockProvider): No
     pick(obj, ["price"]),
     pick(obj, ["saleValue"])
   ]);
-  const color = optionalString(pick(obj, ["color"]), "color");
+  const color = optionalString(pick(obj, ["color", "colorName", "vehicle_color", "cor"]), "color");
   const fuelName = optionalString(pick(obj, ["fuel", "fuelName"]), "fuelName");
-  const transmissionName = optionalString(pick(obj, ["gear", "transmissionName"]), "transmissionName");
+  const transmissionName = optionalString(pick(obj, ["gear", "transmissionName", "transmission", "transmission_name", "gearbox", "cambio"]), "transmissionName");
   const category = optionalString(pick(obj, ["category"]), "category");
   const bodyType = optionalString(pick(obj, ["body_type", "subCategoryName"]), "bodyType");
 

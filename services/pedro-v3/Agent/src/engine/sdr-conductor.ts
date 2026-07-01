@@ -130,13 +130,20 @@ function slotResolved(state: ConversationState, slot: SdrQualificationSlot): boo
   return state.slots[slot].status !== "unknown";
 }
 
+function slotApplicable(state: ConversationState, slot: SdrQualificationSlot): boolean {
+  if (slot === "veiculoTroca") return state.slots.possuiTroca.value === true;
+  if (slot === "entrada" || slot === "parcelaDesejada") return state.slots.formaPagamento.value === "financiamento";
+  if (slot === "diaHorario") return state.slots.interesseVisita.value === true;
+  return true;
+}
+
 export function deriveSdrQualification(
   state: ConversationState,
   policy: SdrQualificationPolicy,
 ): SdrQualificationView {
   const expanded: SdrQualificationSlot[] = [];
   for (const slot of policy.orderedSlots) {
-    expanded.push(slot);
+    if (slotApplicable(state, slot)) expanded.push(slot);
     if (slot === "formaPagamento" && state.slots.formaPagamento.value === "financiamento") {
       expanded.push("entrada", "parcelaDesejada");
     }
@@ -149,7 +156,11 @@ export function deriveSdrQualification(
   const pendingSlot = state.currentObjective?.status === "pending" && state.currentObjective.slot !== "cpf"
     ? state.currentObjective.slot as SdrQualificationSlot | null
     : null;
-  const nextSlot = pendingSlot && !slotResolved(state, pendingSlot) ? pendingSlot : (missingSlots[0] ?? null);
+  const pendingStillValid = !!pendingSlot
+    && required.includes(pendingSlot)
+    && slotApplicable(state, pendingSlot)
+    && !slotResolved(state, pendingSlot);
+  const nextSlot = pendingStillValid ? pendingSlot : (missingSlots[0] ?? null);
   return { knownSlots, missingSlots, nextSlot, readyForHandoff: missingSlots.length === 0 };
 }
 
