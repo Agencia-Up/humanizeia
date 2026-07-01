@@ -61,6 +61,8 @@ async function main(): Promise<void> {
   check("taxonomy: Fiat Fastback => suv", typeOf("Fiat", "Fastback").value === "suv");
   check("taxonomy: Fiat Pulse => suv", typeOf("Fiat", "Pulse").value === "suv");
   check("taxonomy: Peugeot 2008 => suv", typeOf("Peugeot", "2008").value === "suv");
+  check("taxonomy: Honda CR-V => suv mesmo com feed 'CRV' sem hifen", typeOf("Honda", "CRV").value === "suv");
+  check("taxonomy: CAOA Chery Tiggo 2 => suv (nao confunde com Tiggo 5x/7/8)", typeOf("CAOA Chery", "Tiggo 2").value === "suv");
   check("taxonomy: HB20S vence HB20 e vira sedan", typeOf("Hyundai", "HB20S").value === "sedan");
   check("taxonomy: HB20 sem S vira hatch", typeOf("Hyundai", "HB20").value === "hatch");
   check("taxonomy: Onix Plus vence Onix e vira sedan", typeOf("Chevrolet", "Onix Plus").value === "sedan");
@@ -78,6 +80,8 @@ async function main(): Promise<void> {
     vehicle({ source: "bndv", externalVehicleId: "fastback", markName: "Fiat", modelName: "Fastback", bodyType: "Outros", year: 2023, saleValue: 99990 }),
     vehicle({ source: "bndv", externalVehicleId: "pulse", markName: "Fiat", modelName: "Pulse", bodyType: "Outros", year: 2022, saleValue: 89990 }),
     vehicle({ source: "bndv", externalVehicleId: "renegade", markName: "Jeep", modelName: "Renegade", bodyType: "Utilitario", year: 2021, saleValue: 82990 }),
+    vehicle({ source: "revendamais", externalVehicleId: "crv", markName: "Honda", modelName: "CRV", bodyType: "Outros", year: 2012, saleValue: 68990 }),
+    vehicle({ source: "revendamais", externalVehicleId: "tiggo2", markName: "CAOA Chery", modelName: "Tiggo 2", bodyType: "Outros", year: 2020, saleValue: 71990 }),
     vehicle({ source: "bndv", externalVehicleId: "onix", markName: "Chevrolet", modelName: "Onix", bodyType: "Outros", year: 2014, saleValue: 54990 }),
     vehicle({ source: "bndv", externalVehicleId: "onix-plus", markName: "Chevrolet", modelName: "Onix Plus", bodyType: "Outros", year: 2021, saleValue: 79990 }),
   ];
@@ -92,6 +96,7 @@ async function main(): Promise<void> {
   const suvModels = suvs.items.map((v) => v.modelo).sort().join(",");
   check("stock: filtro suv encontra Fastback/Pulse/Renegade mesmo com source ruim", /Fastback/.test(suvModels) && /Pulse/.test(suvModels) && /Renegade/.test(suvModels), suvModels);
   check("stock: filtro suv nao traz picapes", suvs.items.every((v) => v.tipo === "suv"), JSON.stringify(suvs.items));
+  check("stock: filtro suv agora acha CRV e Tiggo 2 (feed sem carroceria) - fim do 'nao tenho SUV'", /CRV/.test(suvModels) && /Tiggo 2/.test(suvModels), suvModels);
 
   const sedans = await source.search(ref, { tipo: "sedan" });
   check("stock: Onix Plus entra como sedan", sedans.items.some((v) => v.modelo === "Onix Plus"));

@@ -256,7 +256,18 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       // Preserve the structured offer before the SDR conductor rewrites the final CTA.
       const renderedOfferContext = computeRenderedOfferContext(turnOutput, turnId, cutoff);
       if (sdrPolicy) {
-        turnOutput = applySdrConduction({ output: turnOutput, state: contextState, policy: sdrPolicy, turnId });
+        // FINDING 2 (auditoria P1, 2026-07-01): o conductor precisa ver os slots que ESTE turno acabou de
+        // gravar. `contextState` ja tem os slots do lead-extraction (safeCommitSlots), mas NAO os do HANDLER
+        // (ex.: Fix C do explicit-search grava tipoVeiculo/interesse em decisionMutations, so aplicados no
+        // commit ~L269). Sem projetar, o conductor acha o slot "unknown" e REPERGUNTA "qual modelo/tipo?" no
+        // MESMO turno. FINDING 2b (auditoria P1): usar safeCommitSlots (NAO applyDecision cru) — ele PRESERVA
+        // version/turnNumber/updatedAt. Com applyDecision cru o turnNumber bumpava 0->1 e o conductor OMITIA a
+        // APRESENTACAO do portal no 1o contato (ensureInitialIntroduction: turnNumber>0 -> pula a intro).
+        const handlerSlotMutations = turnOutput.decision.decisionMutations.filter((m) => m.op === "set_slot" || m.op === "set_slot_ref");
+        const conductorState = handlerSlotMutations.length > 0
+          ? safeCommitSlots(contextState, handlerSlotMutations, turnId, cutoff).contextState
+          : contextState;
+        turnOutput = applySdrConduction({ output: turnOutput, state: conductorState, policy: sdrPolicy, turnId });
       }
 
       // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).

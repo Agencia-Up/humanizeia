@@ -190,6 +190,24 @@ async function main(): Promise<void> {
     check("metadado diagnostico ausente nao derruba decisao valida", step.kind === "final" && step.proposal.reasonCode === "model_decision");
   }
   {
+    // FIX D (Fase 0): confidence e METADADO -> fora de [0,1] NAO derruba o turno, clampa (era a raiz do turno-3).
+    const transport = new RecordingModelTransport();
+    const proposal = { proposedAction: "reply", facts: [], proposedEffects: [], responsePlan: { guidance: "ok" }, reasonCode: "OK", reasonSummary: "ok", confidence: 1.5 };
+    transport.response = { status: 200, contentType: "application/json", bodyText: JSON.stringify({ output: { kind: "final", proposal } }) };
+    const adapter = new PromptBoundConversationAdapter(runtimeConfig, model(transport));
+    const step = await adapter.proposeNextQueryOrFinal(turnContext(new CatalogClaimExtractor({ entries: [] })), []);
+    check("FIX D: confidence>1 nao derruba turno (clampa em 1)", step.kind === "final" && step.proposal.confidence === 1, JSON.stringify(step.kind === "final" ? step.proposal.confidence : step.kind));
+  }
+  {
+    // FIX D (Fase 0): confidence ausente/nao-numerico -> default seguro, turno segue vivo.
+    const transport = new RecordingModelTransport();
+    const proposal = { proposedAction: "reply", facts: [], proposedEffects: [], responsePlan: { guidance: "ok" }, reasonCode: "OK", reasonSummary: "ok" };
+    transport.response = { status: 200, contentType: "application/json", bodyText: JSON.stringify({ output: { kind: "final", proposal } }) };
+    const adapter = new PromptBoundConversationAdapter(runtimeConfig, model(transport));
+    const step = await adapter.proposeNextQueryOrFinal(turnContext(new CatalogClaimExtractor({ entries: [] })), []);
+    check("FIX D: confidence ausente nao derruba turno (default 0.7)", step.kind === "final" && step.proposal.confidence === 0.7, JSON.stringify(step.kind === "final" ? step.proposal.confidence : step.kind));
+  }
+  {
     // F2.6R: proposta final SEM proposedEffects -> decoder rejeita E aponta o campo (observabilidade).
     const transport = new RecordingModelTransport();
     transport.response = { status: 200, contentType: "application/json", bodyText: JSON.stringify({ output: { kind: "final", proposal: { proposedAction: "reply", facts: [], responsePlan: { guidance: "x" }, reasonCode: "OK", reasonSummary: "ok", confidence: 0.5 } } }) };

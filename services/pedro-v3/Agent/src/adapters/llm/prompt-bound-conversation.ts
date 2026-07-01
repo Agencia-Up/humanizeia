@@ -256,11 +256,15 @@ function decodeProposal(value: unknown): ProposedDecision {
   // A ausencia deles nao pode derrubar um turno valido nem gerar fallback ao lead.
   const reasonCode = isNonEmptyString(value.reasonCode) ? value.reasonCode : "model_decision";
   const reasonSummary = typeof value.reasonSummary === "string" ? value.reasonSummary : "Decisao valida sem resumo fornecido pelo modelo.";
-  if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) {
-    throw new ModelOutputError("MODEL_DECISION_INVALID", "confidence");
-  }
+  // FIX D (Fase 0, 2026-07-01): confidence e METADADO de observabilidade (como reasonCode/reasonSummary
+  // acima), NAO contrato comercial. Um numero malformado do modelo NAO pode derrubar um turno valido e
+  // jogar o lead num fallback cego (era a raiz do turno-3 "MODEL_DECISION_INVALID:confidence"). Normaliza:
+  // finito -> clampa em [0,1]; ausente/NaN -> default seguro. O conteudo real segue validado pelo grounding.
+  const confidence = (typeof value.confidence === "number" && Number.isFinite(value.confidence))
+    ? Math.min(1, Math.max(0, value.confidence))
+    : 0.7;
   if (value.target !== undefined && value.target !== null && !isRecord(value.target)) throw new ModelOutputError("MODEL_DECISION_INVALID", "target");
-  return immutableCopy({ ...value, reasonCode, reasonSummary } as unknown as ProposedDecision);
+  return immutableCopy({ ...value, reasonCode, reasonSummary, confidence } as unknown as ProposedDecision);
 }
 
 function decodeStep(value: unknown): DecisionStep {
