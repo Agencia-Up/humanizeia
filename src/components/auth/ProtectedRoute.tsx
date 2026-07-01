@@ -15,22 +15,19 @@ const ORG_EXEMPT_PATHS  = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 const QUIZ_EXEMPT_PATHS = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 
 // ── Trava de pagamento (paywall) ─────────────────────────────────────────────
-// So vale pra CONTAS NOVAS. Contas criadas ANTES desta data de corte sao
-// "grandfathered": entram normalmente, sem checagem de pagamento. As 18 contas
-// atuais (criadas ate 28/05/2026) ficam protegidas por essa data. Funcionarios
-// (sellers) tambem sao isentos: usam o plano do patrao, nao pagam.
-// O cliente novo (owner) so passa daqui se tiver assinatura status='active'
-// — o que so acontece depois do webhook da Asaas confirmar o pagamento.
-const LOCK_CUTOFF = Date.parse('2026-06-03T00:00:00Z');
-
-type ProfileState = 'ok' | 'no_org' | 'no_quiz' | 'no_payment';
+// O status real fica no banco: master paga; vendedor herda a conta do master.
+// Em falha de rede/RPC, esta rota permanece fail-open para nao travar cliente
+// indevidamente por instabilidade temporaria.
+type ProfileState = 'ok' | 'no_org' | 'no_quiz' | 'no_payment' | 'seller_payment_blocked';
 
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Survives React Fast Refresh (HMR) re-renders because it lives in module scope.
 // Key: `userId:pathname` → cached profile state.
 // This prevents ProtectedRoute from firing a DB round-trip (and showing a
 // full-page spinner that remounts children) after every file save.
-const profileCache = new Map<string, ProfileState>();
+// TTL curto porque pagamento pode mudar a qualquer momento.
+const PROFILE_CACHE_TTL_MS = 60_000;
+const profileCache = new Map<string, { state: ProfileState; ts: number }>();
 
 export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
@@ -68,8 +65,8 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
 
     // ── Cache hit: apply instantly, NO spinner, NO remount ──────────────────
     const cached = profileCache.get(cacheKey);
-    if (cached) {
-      setProfileState(cached);
+    if (cached && Date.now() - cached.ts < PROFILE_CACHE_TTL_MS) {
+      setProfileState(cached.state);
       return;
     }
 
@@ -124,26 +121,21 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
           }
         }
 
-        // ── Trava de pagamento: só pra cliente novo (owner criado a partir da
-        // data de corte). Sellers e contas antigas nunca caem aqui. Se a
-        // assinatura não estiver 'active', manda pro checkout pra pagar.
-        const createdMs = user.created_at ? Date.parse(user.created_at) : NaN;
-        const isNewAccount = Number.isFinite(createdMs) && createdMs >= LOCK_CUTOFF;
-        if (next === 'ok' && !isSeller && isNewAccount) {
-          const { data: sub, error: subErr } = await supabase
-            .from('user_subscriptions')
-            .select('status')
-            .eq('user_id', user.id)
-            .maybeSingle();
+        // ── Trava de pagamento: vale para todo master e para vendedor herdando
+        // o status do master. A regra fina (carencia, owner efetivo e status)
+        // fica no banco. Erro de rede/RPC = fail-open.
+        if (next === 'ok') {
+          const { data: paywall, error: paywallErr } = await (supabase as any).rpc(
+            'get_effective_subscription_status',
+            { p_user_id: user.id },
+          );
           if (ac.signal.aborted) return;
-          // FIX: so manda pro checkout se a query VOLTOU certo e nao ha
-          // assinatura ativa. Erro de rede NAO trava o usuario no /checkout.
-          if (!subErr && (sub as any)?.status !== 'active') {
-            next = 'no_payment';
+          if (!paywallErr && paywall?.is_blocked) {
+            next = (isSeller || paywall?.role === 'seller') ? 'seller_payment_blocked' : 'no_payment';
           }
         }
 
-        profileCache.set(cacheKey, next);
+        profileCache.set(cacheKey, { state: next, ts: Date.now() });
         setProfileState(next);
       } catch {
         // FIX: excecao (tipicamente rede ao voltar o foco) NAO deve expulsar o
@@ -187,7 +179,24 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
     return <Navigate to="/niche-quiz" replace />;
   }
 
-  // Cliente novo sem pagamento confirmado → manda pagar antes de liberar.
+  if (profileState === 'seller_payment_blocked') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 text-center shadow-lg">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+            !
+          </div>
+          <h1 className="mb-2 text-xl font-semibold">Conta da empresa suspensa</h1>
+          <p className="text-sm text-muted-foreground">
+            O acesso desta equipe esta temporariamente bloqueado por pendencia de pagamento.
+            Fale com o gestor da conta para regularizar o plano.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Master sem pagamento regularizado -> envia para o checkout.
   if (profileState === 'no_payment') {
     return <Navigate to="/checkout?plano=pro&ciclo=mensal" replace />;
   }

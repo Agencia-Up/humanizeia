@@ -369,15 +369,16 @@ serve(async (req: Request) => {
           error_message: 'Pagamento vencido. Cliente precisa renovar.',
         }).eq('id', pending.id);
 
-        // Suspender acesso enquanto o pagamento estiver vencido.
-        // Só mexe em status — preserva cota/plano pra reativar fácil quando pagar.
+        // Marca como vencido, mas nao suspende imediatamente: o paywall aplica
+        // carencia de 3 dias uteis e o cron diario suspende depois da carencia.
+        // So mexe em status — preserva cota/plano pra reativar fácil quando pagar.
         if (pending.user_id) {
           const { error: susErr } = await supabase
             .from('user_subscriptions')
-            .update({ status: 'suspended', updated_at: new Date().toISOString() })
+            .update({ status: 'overdue', updated_at: new Date().toISOString() })
             .eq('user_id', pending.user_id);
-          if (susErr) console.warn(`[checkout-asaas-webhook] falha ao suspender assinatura: ${susErr.message}`);
-          else console.log(`[checkout-asaas-webhook] assinatura SUSPENSA — user=${pending.user_id}`);
+          if (susErr) console.warn(`[checkout-asaas-webhook] falha ao marcar assinatura vencida: ${susErr.message}`);
+          else console.log(`[checkout-asaas-webhook] assinatura OVERDUE — user=${pending.user_id}`);
         }
 
         console.log(`[checkout-asaas-webhook] ⚠️ VENCIDO — pending=${pending.id}`);
