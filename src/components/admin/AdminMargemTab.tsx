@@ -22,8 +22,9 @@ function brl(n: unknown, casas = 2) {
   return nf(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: casas, maximumFractionDigits: casas });
 }
 const inputCls = 'w-28 rounded-md border border-border bg-background px-2 py-1 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-primary';
+const vencCls = 'w-16 rounded-md border border-border bg-background px-2 py-1 text-center text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-primary';
 
-interface CustoFixo { id: string; nome: string; valor_brl: number; ativo: boolean; }
+interface CustoFixo { id: string; nome: string; valor_brl: number; ativo: boolean; dia_vencimento: number | null; }
 interface Conta { user_id: string; nome: string; receita_brl: number; pagante: boolean; custo_jose_brl: number; }
 interface Overview {
   mes_inicio: string; cambio_usd_brl: number;
@@ -38,9 +39,11 @@ export default function AdminMargemTab() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [custoVal, setCustoVal] = useState<Record<string, string>>({});
+  const [custoVenc, setCustoVenc] = useState<Record<string, string>>({});
   const [receitaVal, setReceitaVal] = useState<Record<string, string>>({});
   const [novoNome, setNovoNome] = useState('');
   const [novoValor, setNovoValor] = useState('');
+  const [novoVenc, setNovoVenc] = useState('');
   const [saving, setSaving] = useState(false);
 
   const carregar = useCallback(async () => {
@@ -49,7 +52,7 @@ export default function AdminMargemTab() {
       const { data: res, error } = await (supabase as any).rpc('admin_margem_overview');
       if (error) throw error;
       setData(res as Overview);
-      setCustoVal({}); setReceitaVal({});
+      setCustoVal({}); setCustoVenc({}); setReceitaVal({});
     } catch (e: any) {
       setErro(e?.message || 'Falha ao carregar a margem.');
     } finally { setLoading(false); }
@@ -67,15 +70,21 @@ export default function AdminMargemTab() {
     } finally { setSaving(false); }
   }, [carregar, toast]);
 
+  // Dia de vencimento: inteiro 1..31, ou null (opcional). String vazia = limpa.
+  const parseVenc = (v: string | number | null | undefined): number | null => {
+    const n = Math.trunc(Number(v));
+    return Number.isFinite(n) && n >= 1 && n <= 31 ? n : null;
+  };
+
   const salvarCusto = (c: CustoFixo) =>
-    rpc('admin_margem_set_custo', { p_id: c.id, p_nome: c.nome, p_valor: Number(custoVal[c.id] ?? c.valor_brl) || 0, p_ativo: c.ativo });
+    rpc('admin_margem_set_custo', { p_id: c.id, p_nome: c.nome, p_valor: Number(custoVal[c.id] ?? c.valor_brl) || 0, p_ativo: c.ativo, p_dia_vencimento: parseVenc(custoVenc[c.id] ?? c.dia_vencimento) });
   const toggleCusto = (c: CustoFixo) =>
-    rpc('admin_margem_set_custo', { p_id: c.id, p_nome: c.nome, p_valor: c.valor_brl, p_ativo: !c.ativo });
+    rpc('admin_margem_set_custo', { p_id: c.id, p_nome: c.nome, p_valor: c.valor_brl, p_ativo: !c.ativo, p_dia_vencimento: c.dia_vencimento });
   const delCusto = (c: CustoFixo) => rpc('admin_margem_del_custo', { p_id: c.id });
   const addCusto = () => {
     if (!novoNome.trim()) return;
-    rpc('admin_margem_set_custo', { p_id: null, p_nome: novoNome.trim(), p_valor: Number(novoValor) || 0, p_ativo: true })
-      .then(() => { setNovoNome(''); setNovoValor(''); });
+    rpc('admin_margem_set_custo', { p_id: null, p_nome: novoNome.trim(), p_valor: Number(novoValor) || 0, p_ativo: true, p_dia_vencimento: parseVenc(novoVenc) })
+      .then(() => { setNovoNome(''); setNovoValor(''); setNovoVenc(''); });
   };
   const salvarReceita = (c: Conta) =>
     rpc('admin_margem_set_cliente', { p_user_id: c.user_id, p_receita: Number(receitaVal[c.user_id] ?? c.receita_brl) || 0, p_ativo: c.pagante || Number(receitaVal[c.user_id] ?? c.receita_brl) > 0 });
@@ -130,6 +139,7 @@ export default function AdminMargemTab() {
                 <TableRow>
                   <TableHead>Custo</TableHead>
                   <TableHead className="text-right">Valor (R$/mês)</TableHead>
+                  <TableHead className="text-center">Vencimento</TableHead>
                   <TableHead className="text-center">Ativo</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
@@ -137,7 +147,7 @@ export default function AdminMargemTab() {
               <TableBody>
                 {loading ? (
                   Array.from({ length: 3 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: 4 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}</TableRow>
+                    <TableRow key={i}>{Array.from({ length: 5 }).map((__, j) => (<TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>))}</TableRow>
                   ))
                 ) : (
                   (data?.custos_fixos ?? []).map((c) => (
@@ -147,6 +157,11 @@ export default function AdminMargemTab() {
                         <input type="number" step="0.01" className={inputCls}
                           value={custoVal[c.id] ?? String(c.valor_brl)}
                           onChange={(e) => setCustoVal((s) => ({ ...s, [c.id]: e.target.value }))} />
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <input type="number" min={1} max={31} className={vencCls} placeholder="dia"
+                          value={custoVenc[c.id] ?? (c.dia_vencimento != null ? String(c.dia_vencimento) : '')}
+                          onChange={(e) => setCustoVenc((s) => ({ ...s, [c.id]: e.target.value }))} />
                       </TableCell>
                       <TableCell className="text-center">
                         <Button variant={c.ativo ? 'default' : 'outline'} size="sm" className="h-7 text-[11px]" onClick={() => toggleCusto(c)} disabled={saving}>
@@ -170,6 +185,9 @@ export default function AdminMargemTab() {
                   </TableCell>
                   <TableCell className="text-right">
                     <input type="number" step="0.01" className={inputCls} placeholder="0,00" value={novoValor} onChange={(e) => setNovoValor(e.target.value)} />
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <input type="number" min={1} max={31} className={vencCls} placeholder="dia" value={novoVenc} onChange={(e) => setNovoVenc(e.target.value)} />
                   </TableCell>
                   <TableCell />
                   <TableCell className="text-right">
