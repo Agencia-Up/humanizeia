@@ -1,10 +1,8 @@
-import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { MarketingHeader } from '@/components/marketing/MarketingHeader';
 import { MarketingFooter } from '@/components/marketing/MarketingFooter';
-import { LeadCaptureForm } from '@/components/marketing/LeadCaptureForm';
 import {
   ArrowRight, Play, Clock, Wallet, Zap, TrendingUp,
   MessageSquare, Database, Target, Phone, Mail, Check,
@@ -12,9 +10,10 @@ import {
 
 // ── Home = RESUMO EXECUTIVO (redesign 20/06) ─────────────────────────────────
 // Enxuta, mobile-first, vídeo no topo. Conteúdo técnico de cada agente vive em
-// /pedro, /marcos, /jose. CTA primário = formulário de lead -> checkout.
+// /pedro, /marcos, /jose. CTA primario = checkout de pagamento.
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const;
+const DEFAULT_CHECKOUT = '/checkout?plano=pro&ciclo=mensal';
 
 const AGENTS = [
   {
@@ -53,7 +52,7 @@ const COST_ROWS: [string, string, string][] = [
 ];
 
 // Planos COM preço (repostos 24/06 — valores do último estado com preço, commit 86c3b02).
-// Botão abre o formulário de lead; o Wander fecha condições/pagamento pelo WhatsApp.
+// Botao dos planos abre o checkout seguro de pagamento.
 const PLANS = [
   {
     id: 'basico',
@@ -131,16 +130,14 @@ const PLANS = [
 export default function LandingPage() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
-  const [leadOpen, setLeadOpen] = useState(false);
-  const [leadOrigem, setLeadOrigem] = useState('home');
-  const openLead = (origem: string) => { setLeadOrigem(origem); setLeadOpen(true); };
 
   if (!loading && user) return <Navigate to="/tela-inicial" replace />;
 
   return (
     <div className="min-h-screen bg-background pb-24 text-foreground overflow-x-hidden md:pb-0">
       <MarketingHeader
-        onCta={() => openLead('home_header')}
+        onCta={() => navigate(DEFAULT_CHECKOUT)}
+        ctaLabel="Assinar agora"
         navItems={[
           { href: '#demo', label: 'Por dentro' },
           { href: '#agentes', label: 'Agentes' },
@@ -181,7 +178,7 @@ export default function LandingPage() {
             <a href="#demo" className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               <Play className="h-4 w-4" style={{ color: 'var(--brand-gold)' }} /> Veja como funciona em 90 segundos
             </a>
-            <Button size="lg" onClick={() => openLead('home_hero')} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+            <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
               Quero testar agora <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
@@ -280,7 +277,7 @@ export default function LandingPage() {
           </div>
 
           <div className="text-center mt-8">
-            <Button size="lg" onClick={() => openLead('home_custo')} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
+            <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="bg-primary text-primary-foreground hover:bg-primary/90 px-6">
               Faça as contas: quanto te custa cada lead hoje? <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
@@ -396,7 +393,7 @@ export default function LandingPage() {
           <p className="text-base md:text-lg mb-8" style={{ color: 'rgba(250, 248, 242, 0.85)' }}>
             Coloque a Logos IA pra trabalhar hoje. No ar em 5 minutos.
           </p>
-          <Button size="lg" onClick={() => openLead('home_final')} className="px-7 text-base"
+          <Button size="lg" onClick={() => navigate(DEFAULT_CHECKOUT)} className="px-7 text-base"
             style={{ background: 'var(--brand-gold)', color: 'var(--brand-navy-dark)' }}>
             Quero minha equipe de IA <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
@@ -420,15 +417,13 @@ export default function LandingPage() {
             <p className="truncate text-sm font-bold text-foreground">Equipe de IA no ar em 5 minutos</p>
           </div>
           <Button
-            onClick={() => openLead('home_mobile_sticky')}
+            onClick={() => navigate(DEFAULT_CHECKOUT)}
             className="shrink-0 bg-primary px-4 text-primary-foreground hover:bg-primary/90"
           >
             Começar
           </Button>
         </div>
       </div>
-
-      <LeadCaptureForm open={leadOpen} onOpenChange={setLeadOpen} origem={leadOrigem} />
     </div>
   );
 }

@@ -5,10 +5,10 @@ import { LogosIALogo } from '@/components/brand/LogosIALogo';
 import { useAppStore } from '@/store/appStore';
 import { Moon, Sun, Menu, X } from 'lucide-react';
 
-// Header publico compartilhado. O CTA primario abre o formulario de lead.
+// Header publico compartilhado. O destino do CTA e definido pela pagina.
 export function MarketingHeader({
-  onCta, navItems = [],
-}: { onCta: () => void; navItems?: { href: string; label: string }[] }) {
+  onCta, navItems = [], ctaLabel = 'Quero testar agora',
+}: { onCta: () => void; navItems?: { href: string; label: string }[]; ctaLabel?: string }) {
   const { isDarkMode, toggleDarkMode } = useAppStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -30,7 +30,7 @@ export function MarketingHeader({
             {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" asChild className="text-muted-foreground hover:text-foreground"><Link to="/auth">Entrar</Link></Button>
-          <Button onClick={onCta} className="bg-primary text-primary-foreground hover:bg-primary/90">Quero testar agora</Button>
+          <Button onClick={onCta} className="bg-primary text-primary-foreground hover:bg-primary/90">{ctaLabel}</Button>
         </div>
 
         <div className="flex md:hidden items-center gap-1 shrink-0">
@@ -79,7 +79,7 @@ export function MarketingHeader({
                 onClick={() => { setMobileMenuOpen(false); onCta(); }}
                 className="h-11 w-full bg-primary text-primary-foreground hover:bg-primary/90"
               >
-                Quero testar agora
+                {ctaLabel}
               </Button>
             </div>
           </nav>
