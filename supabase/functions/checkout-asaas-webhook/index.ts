@@ -46,8 +46,8 @@ const WEBHOOK_TOKEN =
 // O plano contratado vem de `checkout_pending.plan_type` (pro|basico), gravado
 // pela checkout-create-subscription. No padrao novo, `tokens_included` usa
 // 999999 como sentinela visual de ilimitado; o controle fino fica no saldo de IA.
-// Linhas antigas sem plan_type caem em basico (compatibilidade). NAO mexe no
-// gating de agentes por plano (frente separada).
+// Linhas antigas sem plan_type nao devem rebaixar cliente existente. Para conta
+// nova sem plan_type ainda usamos basico por compatibilidade.
 const UNLIMITED_ATENDIMENTOS = 999999;
 const DEFAULT_OPENAI_BALANCE_USD = 20;
 
@@ -290,12 +290,15 @@ serve(async (req: Request) => {
         // o re-processamento ainda provisione (idempotente) antes do guard cortar.
         if (userId) {
           const renewalISO = computeRenewalISO(pending.plano);
-          const { planId, atendimentos } = resolveEntitlement(pending.plan_type);
           const { data: existingSub } = await supabase
             .from('user_subscriptions')
-            .select('id')
+            .select('id, plan_id, tokens_included')
             .eq('user_id', userId)
             .maybeSingle();
+          const entitlement = resolveEntitlement(pending.plan_type);
+          const hasExplicitPlanType = pending.plan_type === 'pro' || pending.plan_type === 'enterprise' || pending.plan_type === 'basico';
+          const planId = hasExplicitPlanType ? entitlement.planId : (existingSub?.plan_id || entitlement.planId);
+          const atendimentos = hasExplicitPlanType ? entitlement.atendimentos : (existingSub?.tokens_included ?? entitlement.atendimentos);
 
           if (existingSub) {
             const { error: updErr } = await supabase

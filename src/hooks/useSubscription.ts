@@ -65,7 +65,7 @@ export interface Subscription {
   id: string;
   user_id: string;
   plan_id: PlanId;
-  status: 'active' | 'pending' | 'suspended' | 'cancelled';
+  status: 'active' | 'pending' | 'overdue' | 'suspended' | 'cancelled';
   tokens_included: number;
   tokens_used: number;
   tokens_purchased: number;
@@ -153,7 +153,13 @@ export function useSubscription() {
       // acesso grátis. Só o webhook da Asaas (após pagamento confirmado) muda
       // o status pra 'active'. Contas antigas já têm linha, então este fallback
       // praticamente nunca dispara pra elas — é só uma rede de segurança.
-      if (!data || selErr) {
+      if (selErr) {
+        throw selErr;
+      }
+
+      // Se nao existe assinatura, cria uma PENDENTE (travada). Nunca use upsert:
+      // falha de leitura/RLS poderia sobrescrever plano pago existente como basico.
+      if (!data) {
         const newSub = {
           user_id: user.id,
           plan_id: 'basico',
@@ -163,16 +169,30 @@ export function useSubscription() {
           tokens_purchased: 0,
           renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         };
-        const { data: inserted } = await withTimeout(
+        const { data: inserted, error: insErr } = await withTimeout(
           (supabase as any)
             .from('user_subscriptions')
-            .upsert(newSub, { onConflict: 'user_id' })
+            .insert(newSub)
             .select()
             .maybeSingle(),
           8000,
-          'upsert user_subscriptions',
+          'insert user_subscriptions',
         );
-        data = inserted || newSub;
+        if (insErr) {
+          const { data: existingAfterRace, error: retryErr } = await withTimeout(
+            (supabase as any)
+              .from('user_subscriptions')
+              .select('*')
+              .eq('user_id', user.id)
+              .maybeSingle(),
+            8000,
+            'retry select user_subscriptions',
+          );
+          if (retryErr || !existingAfterRace) throw insErr;
+          data = existingAfterRace;
+        } else {
+          data = inserted || newSub;
+        }
       }
 
       setSubscription(data as Subscription);
