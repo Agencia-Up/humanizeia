@@ -37,22 +37,9 @@ const tourSteps: Step[] = [
     content: '',
     data: {
       emoji: '📋',
-      title: 'Navegação — Equipe Salomão',
+      title: 'Navegação — Seus Agentes',
       body: 'No menu lateral você encontra todos os agentes IA da sua equipe e as ferramentas da plataforma. Cada agente é especialista em uma área do marketing digital.',
       tip: 'Clique nos grupos para expandir ou recolher as seções.',
-    },
-  },
-  // 3 — SALOMÃO
-  {
-    target: '[data-tour="sidebar-agents"] a[href="/salomao"]',
-    placement: 'right',
-    disableBeacon: true,
-    content: '',
-    data: {
-      emoji: '👑',
-      title: 'SALOMÃO — Orquestrador',
-      body: 'Salomão é o líder da equipe. Ele coordena todos os outros agentes, distribui tarefas e garante que sua estratégia de marketing funcione como um todo integrado.',
-      tip: 'Comece por aqui para ter uma visão geral de toda a operação.',
     },
   },
   // 4 — JOSÉ

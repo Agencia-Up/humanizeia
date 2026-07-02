@@ -62,7 +62,6 @@ const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 
 // ── Agentes (sem Pedro e Marcos — têm navegação própria expandível) ───────────
 const agentItems = [
-  { title: 'Salomão', subtitle: 'Orquestrador', url: '/salomao',         icon: Sparkles,  emoji: '👑' },
   { title: 'José',    subtitle: 'Tráfego Pago',  url: '/jose',           icon: Radar,     emoji: '🎯' },
   { title: 'Paulo',   subtitle: 'Copywriter',    url: '/copywriter',     icon: PenTool,   emoji: '✍️' },
   { title: 'Maria',   subtitle: 'Design',        url: '/creative-studio',icon: Palette,   emoji: '🎨' },
@@ -88,7 +87,6 @@ const allSellerSystemItems = [
 // ── Agentes Seller — filtrados por visibleFeatures (unificado com Dashboard) ─
 const allSellerAgentItems: { title: string; url: string; icon: any; featureKey: keyof VisibleFeatures }[] = [
   { title: 'José Tráfego Pago',    url: '/jose',            icon: Radar,     featureKey: 'agent_jose' },
-  { title: 'Salomão Orquestrador', url: '/salomao',         icon: Sparkles,  featureKey: 'agent_salomao' },
   { title: 'Paulo Copywriting',    url: '/copywriter',      icon: PenTool,   featureKey: 'agent_paulo' },
   { title: 'Maria Designer',       url: '/creative-studio', icon: Palette,   featureKey: 'agent_maria' },
   { title: 'Davi Social Mídia',    url: '/davi',            icon: Instagram, featureKey: 'agent_davi' },
@@ -433,7 +431,6 @@ export function AppSidebar() {
 
               {/* Enterprise (Pro Max) */}
               {showEnterprise && <>
-                <NavItem collapsed={collapsed} item={{ title: 'Salomão Orquestrador', url: '/salomao', icon: Sparkles }} />
                 <NavItem collapsed={collapsed} item={{ title: 'Paulo Copywriting', url: '/copywriter', icon: PenTool }} />
                 <NavItem collapsed={collapsed} item={{ title: 'Maria Designer', url: '/creative-studio', icon: Palette }} />
                 <NavItem collapsed={collapsed} item={{ title: 'Davi Social Mídia', url: '/davi', icon: Instagram }} />

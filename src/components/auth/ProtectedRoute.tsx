@@ -108,14 +108,12 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
         } else if (isSeller) {
           next = 'ok';
         } else {
-          const hasOrg   = !!data.organization_id;
-          const doneQuiz = !!(data as any).quiz_completed
-            || localStorage.getItem(`quiz_completed_${user.id}`) === 'true';
-
+          const hasOrg = !!data.organization_id;
+          // Quiz de nicho REMOVIDO (02/07/2026): segmentamos so loja de veiculo,
+          // entao o usuario cai DIRETO no painel. Resta apenas o gate de
+          // organizacao (a tela rapida do nome da empresa).
           if (!hasOrg && !isOrgExempt) {
             next = 'no_org';
-          } else if (!doneQuiz && !isQuizExempt) {
-            next = 'no_quiz';
           } else {
             next = 'ok';
           }
@@ -173,10 +171,6 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
 
   if (profileState === 'no_org' && !isOrgExempt) {
     return <Navigate to="/onboarding" replace />;
-  }
-
-  if (profileState === 'no_quiz' && !isQuizExempt) {
-    return <Navigate to="/niche-quiz" replace />;
   }
 
   if (profileState === 'seller_payment_blocked') {

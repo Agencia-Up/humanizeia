@@ -268,38 +268,6 @@ export function ProfileSettingsTab() {
         Salvar Alterações
       </Button>
 
-      {/* Refazer Quiz */}
-      <Card className="border-amber-500/20 bg-amber-500/5 backdrop-blur-sm">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10">
-              <Sparkles className="h-5 w-5 text-amber-400" />
-            </div>
-            <div>
-              <CardTitle className="text-base">Qualificação de Nicho</CardTitle>
-              <CardDescription>Refaça o quiz para atualizar seu briefing personalizado</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground mb-4">
-            Ao refazer o quiz, o Agente de Briefing irá gerar um novo briefing estratégico
-            baseado nas suas novas respostas.
-          </p>
-          <Button
-            variant="outline"
-            onClick={handleResetQuiz}
-            disabled={isResettingQuiz}
-            className="border-amber-500/30 hover:bg-amber-500/10 text-amber-400 hover:text-amber-300 gap-2"
-          >
-            {isResettingQuiz
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <RotateCcw className="h-4 w-4" />
-            }
-            Refazer Quiz de Nicho
-          </Button>
-        </CardContent>
-      </Card>
     </div>
   );
 }

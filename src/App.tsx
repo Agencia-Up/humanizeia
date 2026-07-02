@@ -343,7 +343,8 @@ const App = () => (
 
                 {/* ── Protected routes ── each page has its own Suspense so the
                      sidebar/topbar stay mounted and never flash during HMR ── */}
-                <Route path="/niche-quiz"    element={<ProtectedRoute><Lazy><NicheQuiz /></Lazy></ProtectedRoute>} />
+                {/* Quiz de nicho REMOVIDO (02/07): rota redireciona pro painel. */}
+                <Route path="/niche-quiz"    element={<Navigate to="/tela-inicial" replace />} />
                 <Route path="/briefing/:nicho" element={<ProtectedRoute><Lazy><BriefingDetails /></Lazy></ProtectedRoute>} />
 
                 <Route path="/tela-inicial"       element={<ProtectedRoute><Lazy><AgentHub /></Lazy></ProtectedRoute>} />
@@ -406,7 +407,8 @@ const App = () => (
                 <Route path="/meta-pixels"          element={<ProtectedRoute><Lazy><MetaPixels /></Lazy></ProtectedRoute>} />
                 <Route path="/meta-audiences"       element={<ProtectedRoute><Lazy><MetaAudiences /></Lazy></ProtectedRoute>} />
 
-                <Route path="/salomao"        element={<ProtectedRoute><Lazy><SalomaoOrchestrator /></Lazy></ProtectedRoute>} />
+                {/* Salomao em STANDBY (02/07): oculto e rota redireciona pro painel. */}
+                <Route path="/salomao"        element={<Navigate to="/tela-inicial" replace />} />
                 <Route path="/crm"            element={<ProtectedRoute><Lazy><FluxCRM /></Lazy></ProtectedRoute>} />
                 <Route path="/marcos"         element={<ProtectedRoute><Lazy><MarcosLeads /></Lazy></ProtectedRoute>} />
                 <Route path="/pedro"          element={<ProtectedRoute><Lazy><PedroSDR /></Lazy></ProtectedRoute>} />

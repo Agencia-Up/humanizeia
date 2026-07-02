@@ -56,13 +56,6 @@ const AGENTS: Array<{
     badge: 'bg-orange-500/10 text-orange-400',
   },
   {
-    key: 'agent_salomao',
-    emoji: '👑', name: 'Salomão', role: 'Ponto de partida',
-    desc: 'Treine seus agentes com informações do seu negócio',
-    url: '/salomao', color: 'border-yellow-500/30 hover:border-yellow-400/60',
-    badge: 'bg-yellow-500/10 text-yellow-400',
-  },
-  {
     key: 'agent_paulo',
     emoji: '✍️', name: 'Paulo', role: 'Textos e anúncios',
     desc: 'Crie textos persuasivos para vender mais',
@@ -232,9 +225,6 @@ export default function Dashboard() {
                   <Plug className="mr-2 h-5 w-5" />
                   Conectar minha conta de anúncios
                 </Button>
-                <button onClick={() => navigate('/salomao')} className="text-sm text-muted-foreground hover:text-primary transition-colors underline underline-offset-4">
-                  Quero primeiro treinar meus agentes
-                </button>
               </CardContent>
             </Card>
           </motion.div>
@@ -425,29 +415,6 @@ export default function Dashboard() {
                 </motion.button>
               );
             })}
-          </div>
-        </motion.div>
-
-        {/* ── Dica rápida ──────────────────────────────────────── */}
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-          <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-2xl">
-              💡
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold text-sm">Dica: comece pelo Salomão</p>
-              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                Antes de usar qualquer agente, treine o Salomão com informações do seu negócio. Assim todos os agentes vão falar com a voz e o estilo da sua empresa.
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => navigate('/salomao')}
-              className="shrink-0 border-primary/30 hover:bg-primary/10 text-primary text-xs"
-            >
-              Treinar agora <ArrowRight className="h-3 w-3 ml-1" />
-            </Button>
           </div>
         </motion.div>
 

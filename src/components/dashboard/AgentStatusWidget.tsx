@@ -20,7 +20,6 @@ interface Agent {
 }
 
 const agents: Agent[] = [
-  { name: 'SALOMÃO', role: 'Orquestrador', icon: Sparkles, active: true, color: 'text-amber-500' },
   { name: 'JOSÉ', role: 'Tráfego Pago', icon: Radar, active: true, color: 'text-blue-500' },
   { name: 'PAULO', role: 'Copywriter', icon: PenTool, active: true, color: 'text-violet-500' },
   { name: 'MARIA', role: 'Design', icon: Palette, active: true, color: 'text-pink-500' },
@@ -38,7 +37,7 @@ export function AgentStatusWidget() {
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10">
             <Sparkles className="h-4 w-4 text-amber-500" />
           </div>
-          Equipe Salomão
+          Equipe de Agentes
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-1.5 pt-0">

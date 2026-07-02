@@ -81,7 +81,6 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'agent_pedro',   label: 'Pedro',   desc: 'SDR & Atendimento',     icon: Bot,       group: 'agents' },
   { key: 'agent_marcos',  label: 'Marcos',  desc: 'CRM & WhatsApp',         icon: Users,     group: 'agents' },
   { key: 'agent_jose',    label: 'José',    desc: 'Tráfego Pago — Meta Ads', icon: Radar,     group: 'agents' },
-  { key: 'agent_salomao', label: 'Salomão', desc: 'Orquestrador Central',   icon: Crown,     group: 'agents' },
   { key: 'agent_paulo',   label: 'Paulo',   desc: 'Copywriter',             icon: PenTool,   group: 'agents' },
   { key: 'agent_maria',   label: 'Maria',   desc: 'Design Criativo',        icon: Palette,   group: 'agents' },
   { key: 'agent_davi',    label: 'Davi',    desc: 'Social Media',           icon: Instagram, group: 'agents' },

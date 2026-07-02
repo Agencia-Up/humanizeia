@@ -106,8 +106,9 @@ export default function Onboarding() {
 
       toast({ title: '🎉 Empresa criada!', description: 'Sua organização foi criada com sucesso.' });
       // Hard redirect — força reload completo de todos os hooks e contexts
-      // Isso garante que ProtectedRoute lê o organization_id atualizado do banco
-      window.location.replace('/niche-quiz');
+      // Isso garante que ProtectedRoute lê o organization_id atualizado do banco.
+      // Quiz REMOVIDO: cai DIRETO no painel (tela inicial dos agentes).
+      window.location.replace('/tela-inicial');
 
     } catch (err: any) {
       toast({ title: 'Erro ao criar empresa', description: err.message, variant: 'destructive' });
