@@ -745,6 +745,12 @@ const STATUS_CRM_OPTIONS = [
   { value: 'fechado',            label: 'Venda concluída',   color: 'text-green-400'   },
   { value: 'perdido',            label: 'Perdido',           color: 'text-red-400'     },
 ];
+// Mapa id->cor (Tailwind) das etapas padrao. Serve pro dropdown de status manter
+// as cores mesmo derivando das colunas REAIS do board (colunas customizadas caem
+// em 'text-foreground'). Sincroniza dropdown do card <-> Kanban.
+const STATUS_COLOR_BY_ID: Record<string, string> = Object.fromEntries(
+  STATUS_CRM_OPTIONS.map(o => [o.value, o.color]),
+);
 
 // Normaliza telefone BR -> JID do WhatsApp com DDI 55. SEM isso, um número
 // digitado/importado em formato local ("12 99999-9999") vira um lead SEPARADO
@@ -1340,6 +1346,7 @@ export function CrmAvancadoTab({
   const [classifyLoading, setClassifyLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [reassigning, setReassigning]       = useState<string | null>(null);
+  const [confirmingLead, setConfirmingLead] = useState(false);
 
   // detect seller vs gerente (vendedor pode ter múltiplos registros em agentes diferentes)
   useEffect(() => {
@@ -2329,6 +2336,30 @@ export function CrmAvancadoTab({
       toast({ title: '✅ Data de chegada atualizada!' });
     } catch (err: any) {
       toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
+    }
+  };
+
+  // Gerente confirma o lead pelo card — vale como se o vendedor tivesse confirmado
+  // o "Ok" no WhatsApp. Chama a funcao isolada confirm-lead-manual (reproduz o V2).
+  const handleConfirmLead = async (leadId: string) => {
+    setConfirmingLead(true);
+    try {
+      const { data, error } = await invokeWithReauth('confirm-lead-manual', { body: { lead_id: leadId } });
+      if (error) throw error;
+      const d = data as any;
+      if (d?.ok) {
+        setSelectedLead(prev => (prev && prev.id === leadId
+          ? { ...prev, status: 'em_atendimento', assigned_to_id: d.member_id || prev.assigned_to_id } : prev));
+        setLeads(prev => prev.map(l => l.id === leadId
+          ? { ...l, status: 'em_atendimento', assigned_to_id: d.member_id || l.assigned_to_id } : l));
+        toast({ title: '✅ Lead confirmado!', description: 'Valeu como a confirmação do vendedor.' });
+      } else {
+        toast({ title: 'Nada a confirmar', description: d?.message || 'Este lead não está aguardando confirmação.' });
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao confirmar', description: descricaoErro(err), variant: 'destructive' });
+    } finally {
+      setConfirmingLead(false);
     }
   };
 
@@ -3601,9 +3632,15 @@ export function CrmAvancadoTab({
     ? (manualStages.length > 0 ? manualStages : PIPELINE_COLUMNS)
     : (pedroStages.length > 0 ? pedroStages : PIPELINE_COLUMNS);
   const pipelineColumns = applyColumnOrder(basePipelineColumns, columnOrder);
-  const statusOptions = isMarcosCrm
-    ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' }))
-    : STATUS_CRM_OPTIONS;
+  // FIX (#3): o dropdown de status SEMPRE deriva das colunas REAIS do board
+  // (pipelineColumns) — Pedro e Marcos. Antes o Pedro usava a lista fixa
+  // STATUS_CRM_OPTIONS, que divergia das colunas customizadas: selecionar aqui
+  // gravava um status_crm sem coluna correspondente e o lead nao ia pro card certo.
+  const statusOptions = pipelineColumns.map(c => ({
+    value: c.id,
+    label: c.title,
+    color: STATUS_COLOR_BY_ID[c.id] || 'text-foreground',
+  }));
   const canManageLeadStatus = !isMarcosCrm || !isSeller;
   const canReassignLeadSeller = !isSeller && teamMembers.length > 0;
   const openSelectedLeadConversation = () => {
@@ -3782,6 +3819,21 @@ export function CrmAvancadoTab({
                   ))}
                 </SelectContent>
               </Select>
+            )}
+            {/* Confirmar lead pelo card — so gerente e quando esta aguardando (status transferido).
+                Vale como se o vendedor tivesse confirmado o "Ok" no WhatsApp. */}
+            {!isSeller && selectedLead.status === 'transferido' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleConfirmLead(selectedLead.id)}
+                disabled={confirmingLead}
+                className="h-8 gap-1.5 text-xs border-emerald-500/40 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10"
+                title="Confirmar o lead por aqui — vale como se o vendedor tivesse confirmado no WhatsApp"
+              >
+                {confirmingLead ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                Confirmar lead
+              </Button>
             )}
             <Button
               variant="ghost"
@@ -4676,7 +4728,7 @@ export function CrmAvancadoTab({
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
           {[
-            { id: 'pipeline',  label: 'Pipeline',   icon: ArrowRightLeft, badge: 0 },
+            { id: 'pipeline',  label: 'CRM',        icon: ArrowRightLeft, badge: 0 },
             // TAREFA 1 (29/05/2026): no painel do Marcos (isMarcosCrm) o CRM mostra
             // SOMENTE o Pipeline. As views Lista, Feedbacks e Vendedores continuam
             // existindo e ativas no painel do Pedro (mode='pedro') — só ficam ocultas
@@ -5355,7 +5407,7 @@ export function CrmAvancadoTab({
         <div className="space-y-2">
           {view === 'leads' && filterStatus === 'all' && (
             <div className="flex gap-1 flex-wrap mb-2">
-              {(isMarcosCrm ? pipelineColumns.map(c => ({ value: c.id, label: c.title, color: 'text-blue-400' })) : STATUS_CRM_OPTIONS).map(opt => {
+              {statusOptions.map(opt => {
                 const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo') === opt.value).length;
                 if (!count) return null;
                 return (
