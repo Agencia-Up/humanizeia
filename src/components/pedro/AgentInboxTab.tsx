@@ -40,6 +40,8 @@ interface Lead {
   arrived_at: string | null;
   last_interaction_at: string | null;
   summary: string | null;
+  // Origem do lead no inbox unificado: 'pedro' (ai_crm_leads, tráfego) | 'marcos' (crm_leads, manual).
+  origem?: 'pedro' | 'marcos';
 }
 
 interface Message {
@@ -69,6 +71,10 @@ interface AgentInboxTabProps {
   readOnly?: boolean;
   // Abre automaticamente a conversa de um lead vindo do CRM.
   focusLeadId?: string | null;
+  // UNIFICADO (aba "Conversas"): além dos leads do Pedro (ai_crm_leads), traz também
+  // os leads MANUAIS do Marcos (crm_leads) e mostra o filtro de origem (Todos/Pedro/Marcos).
+  // Default false = comportamento atual do Pedro inalterado.
+  unified?: boolean;
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -174,7 +180,7 @@ const ALL_AGENTS = '__all__';
 const ALL_SELLERS = '__all_sellers__'; // filtro "todos" do dropdown de vendedor (só master)
 
 /* ── Componente Principal ──────────────────────────────────────────── */
-export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false, focusLeadId = null }: AgentInboxTabProps) {
+export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false, focusLeadId = null, unified = false }: AgentInboxTabProps) {
   const { toast } = useToast();
   const lastFocusedLeadRef = useRef<string | null>(null);
 
@@ -190,6 +196,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  // Filtro de origem no inbox unificado (chips Todos/Pedro/Marcos).
+  const [originFilter, setOriginFilter] = useState<'all' | 'pedro' | 'marcos'>('all');
   const [arrivalDateFilter, setArrivalDateFilter] = useState('');
 
   // Chat
@@ -304,9 +312,56 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
     }
     const { data } = await query.order('last_interaction_at', { ascending: false });
-    setLeads(data || []);
+    const pedroLeads: Lead[] = (data || []).map((l: any) => ({ ...l, origem: 'pedro' as const }));
+
+    // UNIFICADO: junta os leads MANUAIS do Marcos (crm_leads), sem duplicar por telefone
+    // (um lead que já veio do Pedro/tráfego não repete). Mensagens continuam sendo por
+    // telefone, então o resto do inbox funciona igual pras duas origens.
+    let marcosLeads: Lead[] = [];
+    if (unified) {
+      let mq = (supabase as any)
+        .from('crm_leads')
+        .select('id, name, phone, assigned_to, created_at, arrived_at')
+        .eq('user_id', userId);
+      if (isSeller) {
+        mq = sellerMemberIds.length > 0
+          ? mq.in('assigned_to', sellerMemberIds)
+          : mq.eq('assigned_to', '00000000-0000-0000-0000-000000000000');
+      } else if (sellerFilter !== ALL_SELLERS) {
+        const ids = sellers.find(s => s.key === sellerFilter)?.memberIds || [];
+        mq = ids.length > 0
+          ? mq.in('assigned_to', ids)
+          : mq.eq('assigned_to', '00000000-0000-0000-0000-000000000000');
+      }
+      const { data: mData } = await mq.order('arrived_at', { ascending: false }).limit(2000);
+      const pedroPhones = new Set(pedroLeads.map(l => cleanPhone(l.remote_jid)));
+      marcosLeads = (mData || [])
+        .filter((c: any) => { const k = cleanPhone(c.phone); return !!k && !pedroPhones.has(k); })
+        .map((c: any): Lead => ({
+          id: c.id,
+          remote_jid: c.phone || '',
+          lead_name: c.name || null,
+          status: 'manual',
+          ai_paused: true,           // lead manual não tem IA rodando
+          instance_id: null,
+          agent_id: '',
+          message_count: 0,
+          created_at: c.created_at,
+          arrived_at: c.arrived_at,
+          last_interaction_at: c.arrived_at || c.created_at,
+          summary: null,
+          origem: 'marcos',
+        }));
+    }
+
+    const merged = [...pedroLeads, ...marcosLeads].sort((a, b) => {
+      const ta = new Date(a.last_interaction_at || a.arrived_at || a.created_at || 0).getTime();
+      const tb = new Date(b.last_interaction_at || b.arrived_at || b.created_at || 0).getTime();
+      return tb - ta;
+    });
+    setLeads(merged);
     setLoadingLeads(false);
-  }, [selectedAgentId, userId, isSeller, sellerMemberIds, sellerFilter, sellers]);
+  }, [selectedAgentId, userId, isSeller, sellerMemberIds, sellerFilter, sellers, unified]);
 
   useEffect(() => {
     fetchLeads();
@@ -822,6 +877,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   /* ── Filtro de busca ──────────────────────────────────────────────── */
   const filteredLeads = leads.filter(l => {
+    if (unified && originFilter !== 'all' && (l.origem || 'pedro') !== originFilter) return false;
     if (arrivalDateFilter && dateInputValue(leadArrivalIso(l)) !== arrivalDateFilter) return false;
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
@@ -853,7 +909,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     );
   }
 
-  if (agents.length === 0) {
+  if (agents.length === 0 && !unified) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <Bot className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -938,6 +994,23 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                 className="h-9 pl-9 text-sm"
               />
             </div>
+            {unified && (
+              <div className="mt-2 flex items-center gap-1.5">
+                {([['all', 'Todos'], ['pedro', 'Pedro'], ['marcos', 'Marcos']] as const).map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => { setOriginFilter(val); setSelectedLead(null); }}
+                    className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                      originFilter === val
+                        ? 'bg-violet-500/20 border-violet-500/50 text-violet-300'
+                        : 'border-border/50 text-muted-foreground hover:bg-accent/50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="mt-2 flex items-center gap-2">
               <div className="flex flex-1 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
