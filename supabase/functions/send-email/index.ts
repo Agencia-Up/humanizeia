@@ -200,7 +200,7 @@ function welcomeEmail(name: string, loginUrl: string): string {
 
     <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
       Precisa de ajuda? Fale conosco em
-      <a href="mailto:carvalho@scalpergx.com.br" style="color:${COLORS.primary};">carvalho@scalpergx.com.br</a>
+      <a href="mailto:suporte@logosiabrasil.com" style="color:${COLORS.primary};">suporte@logosiabrasil.com</a>
     </p>
   `;
   return baseTemplate(content);
