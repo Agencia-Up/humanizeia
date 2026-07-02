@@ -3244,6 +3244,54 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     return new Blob(byteArrays, {type: contentType});
   }
 
+  const extFromMime = (mime: string): string => {
+    const m = (mime || '').toLowerCase();
+    if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+    if (m.includes('png')) return 'png';
+    if (m.includes('webp')) return 'webp';
+    if (m.includes('gif')) return 'gif';
+    if (m.includes('ogg')) return 'ogg';
+    if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+    if (m.includes('mp4')) return 'mp4';
+    if (m.includes('3gpp') || m.includes('3gp')) return '3gp';
+    if (m.includes('webm')) return 'webm';
+    if (m.includes('wav')) return 'wav';
+    if (m.includes('pdf')) return 'pdf';
+    return 'bin';
+  };
+
+  const uploadBase64ToWaMedia = async (base64: string, mimetype: string, mediaPhone: string): Promise<string | null> => {
+    try {
+      if (!base64) return null;
+      const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (!supabaseUrl || !serviceKey) return null;
+
+      const blob = b64toBlob(base64, mimetype || 'application/octet-stream');
+      const safePhone = (mediaPhone || '').replace(/\D/g, '') || 'lead';
+      const path = `${waInstance.user_id}/${safePhone}/${Date.now()}-${crypto.randomUUID()}.${extFromMime(mimetype)}`;
+      const uploadRes = await fetch(`${supabaseUrl}/storage/v1/object/wa-media/${path}`, {
+        method: 'POST',
+        headers: {
+          'apikey': serviceKey,
+          'Authorization': `Bearer ${serviceKey}`,
+          'Content-Type': mimetype || 'application/octet-stream',
+          'x-upsert': 'true',
+        },
+        body: blob,
+      });
+      if (!uploadRes.ok) {
+        const detail = await uploadRes.text().catch(() => '');
+        console.error('[Webhook] wa-media upload error:', uploadRes.status, detail.slice(0, 300));
+        return null;
+      }
+      return `${supabaseUrl}/storage/v1/object/public/wa-media/${path}`;
+    } catch (err) {
+      console.error('[Webhook] wa-media upload threw:', err);
+      return null;
+    }
+  };
+
   // UazAPI V6 envia messageType em PascalCase (ex: "AudioMessage", "ImageMessage", "Conversation")
   // Normalizar para lowercase para comparação consistente
   const rawMsgType = rawMsgObj?.messageType || rawMsgObj?.type || '';
@@ -3266,6 +3314,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   let finalUserText = userText;
   let userMessageContentForOpenAi: any = finalUserText;
+  let inboxMediaUrl: string | null = null;
 
   // Detectar mídia: UazAPI envia "AudioMessage"/"ImageMessage" em messageType, ou "ptt"/"image" em mediaType
   const isAudio = msgType.includes('audio') || msgType === 'ptt' || mediaType === 'ptt' || mediaType === 'audio';
@@ -3301,6 +3350,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
           if (dData.mimetype) {
             mediaMimetype = dData.mimetype;
           }
+          inboxMediaUrl = dData.fileURL || dData.fileUrl || dData.url || null;
           console.log(`[Webhook] ✅ Mídia baixada! length: ${base64.length}, mime: ${dData.mimetype || 'N/A'}, cached: ${dData.cached || false}`);
 
           // UazAPI V6 pode incluir transcrição automática para áudio.
@@ -3325,6 +3375,8 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
     }
 
     if (base64) {
+      const uploadedUrl = await uploadBase64ToWaMedia(base64, mediaMimetype || (isAudio ? 'audio/ogg' : 'image/jpeg'), phoneNumber);
+      if (uploadedUrl) inboxMediaUrl = uploadedUrl;
       if (isAudio) {
         try {
           const audioMime = mediaMimetype || 'audio/ogg';
@@ -3364,6 +3416,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       // Fallback: se base64 falhou mas temos URL da mídia, enviar URL direto ao GPT-4o
       const mediaUrl = contentObj.URL || contentObj.url || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || '';
       if (mediaUrl) {
+        inboxMediaUrl = mediaUrl;
         console.log(`[Webhook] 🖼️ Fallback: usando URL da mídia direto: ${mediaUrl.substring(0, 80)}...`);
         finalUserText = finalUserText || '[Imagem recebida]';
         userMessageContentForOpenAi = [
@@ -3550,7 +3603,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   // Salvar mensagem RECEBIDA no wa_inbox (para aparecer no Inbox do Marcos)
   const incomingMediaType = isAudio ? 'audio' : (isImage ? 'image' : 'text');
   // Para mídia, extrair URL se disponível no payload UazAPI (content.URL ou directUrl)
-  const incomingMediaUrl = contentObj.URL || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || rawMsgObj?.media_url || rawMsgObj?.url || null;
+  const incomingMediaUrl = inboxMediaUrl || contentObj.URL || rawMsgObj?.mediaUrl || rawMsgObj?.directUrl || rawMsgObj?.media_url || rawMsgObj?.url || null;
   await supabase.from('wa_inbox').insert({
     user_id: waInstance.user_id,
     instance_id: waInstance.id,

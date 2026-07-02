@@ -50,6 +50,7 @@ interface Message {
   content: string | null;
   message_type: string;
   media_url: string | null;
+  remote_message_id?: string | null;
   media_list?: { file?: string; url?: string; type?: string; caption?: string }[] | null;
   created_at: string;
   contact_name: string | null;
@@ -195,6 +196,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [resolvingMediaIds, setResolvingMediaIds] = useState<Set<string>>(new Set());
 
   // Reply
   const [replyText, setReplyText] = useState('');
@@ -224,6 +226,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mediaResolveAttemptsRef = useRef<Set<string>>(new Set());
 
   /* ── Fetch agents ──────────────────────────────────────────────── */
   useEffect(() => {
@@ -330,7 +333,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     try {
       let inboxQuery = (supabase as any)
         .from('wa_inbox')
-        .select('id, phone, instance_id, direction, content, message_type, media_url, created_at, contact_name')
+        .select('id, phone, instance_id, direction, content, message_type, media_url, remote_message_id, created_at, contact_name')
         .eq('user_id', userId)
         .in('phone', phoneCandidates(selectedLeadPhone));
 
@@ -455,6 +458,39 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   useEffect(() => {
     fetchMessages();
   }, [fetchMessages]);
+
+  useEffect(() => {
+    const recoverable = messages.filter(msg => {
+      const mt = (msg.message_type || '').toLowerCase();
+      const isMedia = mt === 'image' || mt === 'audio' || mt === 'ptt' || mt === 'voice' || mt === 'video' || mt === 'document' || mt === 'file';
+      return isMedia
+        && msg.remote_message_id
+        && !msgHasRenderableMedia(msg)
+        && !mediaResolveAttemptsRef.current.has(msg.id)
+        && !resolvingMediaIds.has(msg.id);
+    });
+    if (recoverable.length === 0) return;
+
+    for (const msg of recoverable.slice(0, 4)) {
+      mediaResolveAttemptsRef.current.add(msg.id);
+      setResolvingMediaIds(prev => new Set(prev).add(msg.id));
+      supabase.functions.invoke('wa-resolve-media', {
+        body: { message_id: msg.id },
+      }).then(({ data, error }) => {
+        if (!error && data?.media_url) {
+          setMessages(prev => prev.map(item =>
+            item.id === msg.id ? { ...item, media_url: data.media_url } : item
+          ));
+        }
+      }).finally(() => {
+        setResolvingMediaIds(prev => {
+          const next = new Set(prev);
+          next.delete(msg.id);
+          return next;
+        });
+      });
+    }
+  }, [messages, resolvingMediaIds]);
 
   /* ── Polling para novas mensagens ──────────────────────────────── */
   useEffect(() => {
@@ -1088,7 +1124,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
               )}
 
               {/* Messages */}
-              <ScrollArea className="flex-1 px-4 py-3">
+              <ScrollArea className="flex-1 px-4 py-3 bg-[#0b141a]">
                 {loadingMessages ? (
                   <div className="flex justify-center py-12">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1107,15 +1143,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       const isDoc = mt === 'document' || mt === 'file';
                       const isMediaType = mt !== 'text' && mt !== '';
                       const mainOk = isRenderableMedia(msg.media_url);
+                      const isResolvingMedia = resolvingMediaIds.has(msg.id);
                       // Mídia presente mas não-renderizável (ex.: URL .enc do WhatsApp).
                       const mediaUnavailable = isMediaType && album.length === 0 && !mainOk && !isDoc;
                       const caption = displayText(msg.content);
                       return (
-                        <div key={msg.id} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm ${
+                        <div key={msg.id} data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[78%] rounded-lg px-3 py-2 text-[14.5px] leading-relaxed shadow-md ${
                             isOutgoing
-                              ? 'bg-primary/20 text-foreground rounded-br-md'
-                              : 'bg-muted/70 text-foreground rounded-bl-md'
+                              ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm'
+                              : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5'
                           }`}>
                             {album.length > 0 ? (
                               <div className={`grid ${album.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-2 max-w-[360px]`}>
@@ -1136,7 +1173,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                               )
                             )}
                             {mainOk && isAudio && (
-                              <audio controls src={msg.media_url!} className="w-full min-w-[240px] mb-1.5" />
+                              <audio controls src={msg.media_url!} className="w-full min-w-[240px] mb-1.5 accent-[#00a884]" />
                             )}
                             {mainOk && mt === 'video' && (
                               <video controls src={msg.media_url!} className="max-w-full rounded-xl mb-2 max-h-72" />
@@ -1155,14 +1192,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             )}
                             {mediaUnavailable && (
                               <span className="inline-flex items-center gap-1.5 rounded-lg bg-background/50 px-2.5 py-1.5 mb-1.5 text-xs text-muted-foreground">
-                                {MEDIA_PLACEHOLDER[mt] || '📎 Mídia'}
+                                {isResolvingMedia ? 'Recuperando midia...' : (MEDIA_PLACEHOLDER[mt] || 'Midia recebida')}
                               </span>
                             )}
                             {caption && !isDoc && (
                               <p className="whitespace-pre-wrap break-words">{caption}</p>
                             )}
                             <p className={`text-[11px] mt-1.5 flex items-center gap-1 ${
-                              isOutgoing ? 'text-primary/60 justify-end' : 'text-muted-foreground/60'
+                              isOutgoing ? 'text-[#d1f4e5]/65 justify-end' : 'text-[#8696a0]'
                             }`}>
                               {fmtTime(msg.created_at)}
                               {isOutgoing && <CheckCheck className="h-3 w-3" />}

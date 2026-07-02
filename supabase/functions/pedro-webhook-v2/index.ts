@@ -49,6 +49,109 @@ function isReactionMessage(payload: any): boolean {
 // dedicated event, NOT a chat message. The v1 webhook (uazapi-webhook) handled
 // this; v2 never did. Mirror v1 so a brand-new instance gets flipped to
 // connected once the seller scans the QR.
+function extFromMime(mime: string): string {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("3gpp") || m.includes("3gp")) return "3gp";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("wav")) return "wav";
+  if (m.includes("pdf")) return "pdf";
+  return "bin";
+}
+
+function decodeBase64ToBytes(base64: string): Uint8Array {
+  const bin = atob(String(base64 || "").replace(/\s/g, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function uploadBase64ToWaMedia(
+  supabase: any,
+  userId: string,
+  phone: string,
+  base64: string,
+  mimetype: string,
+): Promise<string | null> {
+  try {
+    if (!base64) return null;
+    const bytes = decodeBase64ToBytes(base64);
+    if (!bytes.length) return null;
+    const safePhone = String(phone || "").replace(/\D/g, "") || "lead";
+    const path = `${userId}/${safePhone}/${Date.now()}-${crypto.randomUUID()}.${extFromMime(mimetype)}`;
+    const { error } = await supabase.storage
+      .from("wa-media")
+      .upload(path, bytes, { contentType: mimetype || "application/octet-stream", upsert: true });
+    if (error) {
+      console.error("[pedro-webhook-v2] wa-media upload error:", error.message || error);
+      return null;
+    }
+    const { data: pub } = supabase.storage.from("wa-media").getPublicUrl(path);
+    return pub?.publicUrl || null;
+  } catch (err) {
+    console.error("[pedro-webhook-v2] wa-media upload threw:", err);
+    return null;
+  }
+}
+
+function detectMimeFromMessage(message: any, messageType: string): string {
+  return String(
+    message?.mimetype ||
+    message?.content?.mimetype ||
+    message?.message?.imageMessage?.mimetype ||
+    message?.message?.audioMessage?.mimetype ||
+    message?.message?.videoMessage?.mimetype ||
+    message?.message?.documentMessage?.mimetype ||
+    (messageType === "audio" ? "audio/ogg" : messageType === "image" ? "image/jpeg" : "application/octet-stream")
+  );
+}
+
+async function rehostUazapiMediaForInbox(
+  supabase: any,
+  instance: any,
+  instanceName: string,
+  message: any,
+  messageId: string | null,
+  phone: string,
+  messageType: string,
+): Promise<string | null> {
+  try {
+    let base64 = message?.base64 || message?.message?.base64 || "";
+    let mimetype = detectMimeFromMessage(message, messageType);
+
+    if (!base64 && messageId) {
+      const baseUrl = String(instance?.api_url || "").replace(/\/+$/, "");
+      const instKey = String(instance?.api_key_encrypted || "");
+      if (baseUrl && instKey) {
+        const res = await fetch(`${baseUrl}/message/download?instance=${instanceName}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: instKey, token: instKey },
+          body: JSON.stringify({ id: messageId, return_base64: true }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          base64 = data.base64Data || data.base64 || data.file || "";
+          mimetype = data.mimetype || mimetype;
+        } else {
+          console.error("[pedro-webhook-v2] media download error:", res.status, await res.text());
+        }
+      }
+    }
+
+    if (!base64) return null;
+    return await uploadBase64ToWaMedia(supabase, instance.user_id, phone, base64, mimetype);
+  } catch (err) {
+    console.error("[pedro-webhook-v2] media rehost threw:", err);
+    return null;
+  }
+}
+
 function getEventType(payload: any): string {
   return String(
     payload?.EventType ||
@@ -300,6 +403,22 @@ Deno.serve(async (req) => {
 
         const inboxMsgId = inMsg?.key?.id || inMsg?.messageid || inMsg?.id || null;
         const pushNm = inMsg?.pushName || inMsg?.senderName || inMsg?.notifyName || null;
+
+        if (
+          (messageType === "image" || messageType === "audio" || messageType === "video" || messageType === "document") &&
+          typeof inboxMsgId === "string"
+        ) {
+          const hostedUrl = await rehostUazapiMediaForInbox(
+            supabase,
+            waInstance,
+            String(instanceName),
+            inMsg,
+            inboxMsgId,
+            phoneOnly,
+            messageType,
+          );
+          if (hostedUrl) mediaUrl = hostedUrl;
+        }
 
         // 6. Persistir no banco de dados (o índice único wa_inbox_remote_msg_unique evitará duplicidades)
         await supabase.from("wa_inbox").insert({

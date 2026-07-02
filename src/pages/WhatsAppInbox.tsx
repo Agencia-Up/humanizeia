@@ -44,6 +44,7 @@ interface InboxMessage {
   message_type: string;
   content: string | null;
   media_url: string | null;
+  remote_message_id?: string | null;
   ai_category: string | null;
   ai_sentiment: string | null;
   is_read: boolean;
@@ -143,6 +144,14 @@ function mediaKind(type: string | null | undefined): 'image' | 'audio' | 'video'
   return null;
 }
 
+function isRenderableMedia(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  if (u.startsWith('data:') || u.startsWith('blob:')) return true;
+  if (u.includes('mmg.whatsapp.net') || u.includes('.enc')) return false;
+  return /^https?:\/\//.test(u);
+}
+
 function isPlaceholderContent(content: string | null | undefined) {
   const c = (content || '').trim().toLowerCase();
   return c.startsWith('[imagem recebida')
@@ -205,6 +214,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   // conversas de leads nas instâncias dos vendedores (auditoria sem poluição).
   const [masterLeadPhones, setMasterLeadPhones] = useState<Set<string> | null>(null);
   const [uploadingMedia, setUploadingMedia]   = useState(false);
+  const [resolvingMediaIds, setResolvingMediaIds] = useState<Set<string>>(new Set());
   const [recording, setRecording]             = useState(false);
   const [recordSeconds, setRecordSeconds]     = useState(0);
   const lastFocusedPhoneRef = useRef<string | null>(null);
@@ -217,6 +227,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const recordStreamRef  = useRef<MediaStream | null>(null);
   const recordTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordCancelRef  = useRef<(() => void) | null>(null);
+  const mediaResolveAttemptsRef = useRef<Set<string>>(new Set());
 
   /* ── Fetch phones dos leads atribuídos ao vendedor ────────────── */
   useEffect(() => {
@@ -533,6 +544,38 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    const recoverable = messages.filter(msg => {
+      const kind = mediaKind(msg.message_type);
+      return kind
+        && msg.remote_message_id
+        && !isRenderableMedia(msg.media_url)
+        && !mediaResolveAttemptsRef.current.has(msg.id)
+        && !resolvingMediaIds.has(msg.id);
+    });
+    if (recoverable.length === 0) return;
+
+    for (const msg of recoverable.slice(0, 4)) {
+      mediaResolveAttemptsRef.current.add(msg.id);
+      setResolvingMediaIds(prev => new Set(prev).add(msg.id));
+      supabase.functions.invoke('wa-resolve-media', {
+        body: { message_id: msg.id },
+      }).then(({ data, error }) => {
+        if (!error && data?.media_url) {
+          setMessages(prev => prev.map(item =>
+            item.id === msg.id ? { ...item, media_url: data.media_url } : item
+          ));
+        }
+      }).finally(() => {
+        setResolvingMediaIds(prev => {
+          const next = new Set(prev);
+          next.delete(msg.id);
+          return next;
+        });
+      });
+    }
+  }, [messages, resolvingMediaIds]);
 
   /* ── Realtime ──────────────────────────────────────────────────── */
   // Refs estáveis — subscription recriada apenas quando user muda, não a cada render
@@ -1218,7 +1261,15 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                 </div>
 
                 {/* ── Mensagens ── */}
-                <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-1 bg-muted/10" style={{ backgroundImage: 'radial-gradient(circle, hsl(var(--muted)) 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundRepeat: 'repeat' }}>
+                <div
+                  className="flex-1 min-h-0 overflow-y-auto p-4 space-y-1"
+                  style={{
+                    backgroundColor: '#0b141a',
+                    backgroundImage: 'radial-gradient(circle, rgba(134,150,160,.18) 1px, transparent 1px)',
+                    backgroundSize: '22px 22px',
+                    backgroundRepeat: 'repeat',
+                  }}
+                >
                   {loadingMsgs ? (
                     <div className="flex items-center justify-center h-full">
                       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1236,7 +1287,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         const sameDir = prevMsg && prevMsg.direction === msg.direction;
                         const gap = sameDir ? 'mt-0.5' : 'mt-3';
                         const kind = mediaKind(msg.message_type);
-                        const hasMedia = Boolean(msg.media_url);
+                        const hasMedia = isRenderableMedia(msg.media_url);
+                        const isResolvingMedia = resolvingMediaIds.has(msg.id);
                         const showText = Boolean(msg.content)
                           && msg.message_type !== 'document'
                           && !(kind && isPlaceholderContent(msg.content));
@@ -1254,11 +1306,11 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                             )}
 
                             <div className={`flex ${isOut ? 'justify-end' : 'justify-start'} ${gap}`}>
-                              <div className={`max-w-[82%] sm:max-w-[72%] flex flex-col ${isOut ? 'items-end' : 'items-start'}`}>
-                                <div className={`px-3.5 py-2 rounded-2xl shadow-sm overflow-hidden ${
+                              <div className={`max-w-[84%] sm:max-w-[74%] flex flex-col ${isOut ? 'items-end' : 'items-start'}`}>
+                                <div className={`relative px-3 py-2 rounded-lg shadow-md overflow-hidden ${
                                   isOut
-                                    ? 'bg-primary text-primary-foreground rounded-br-sm'
-                                    : 'bg-background text-foreground rounded-bl-sm border border-border/30'
+                                    ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm'
+                                    : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5'
                                 }`}>
                                   {showMediaBlock && kind && (
                                     <div className={showText ? 'mb-2' : 'mb-0'}>
@@ -1272,12 +1324,14 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                           />
                                         </a>
                                       ) : kind === 'audio' && hasMedia ? (
-                                        <div className={`rounded-xl px-3 py-2 min-w-[260px] ${isOut ? 'bg-primary-foreground/10' : 'bg-muted/60'}`}>
+                                        <div className={`rounded-xl px-3 py-2 min-w-[260px] ${isOut ? 'bg-white/10' : 'bg-[#111b21]'}`}>
                                           <div className="flex items-center gap-2 mb-1.5">
-                                            <Mic className="h-4 w-4 opacity-80" />
-                                            <span className="text-xs font-semibold opacity-80">Audio recebido</span>
+                                            <span className={`h-8 w-8 rounded-full flex items-center justify-center ${isOut ? 'bg-[#25d366]/20' : 'bg-[#00a884]/15'}`}>
+                                              <Mic className="h-4 w-4 text-[#00a884]" />
+                                            </span>
+                                            <span className="text-xs font-semibold opacity-80">Audio</span>
                                           </div>
-                                          <audio controls src={msg.media_url!} className="h-9 w-full max-w-[280px]" />
+                                          <audio controls src={msg.media_url!} className="h-9 w-full max-w-[280px] accent-[#00a884]" />
                                         </div>
                                       ) : kind === 'video' && hasMedia ? (
                                         <video controls src={msg.media_url!} className="rounded-xl max-w-[280px] max-h-[320px] border border-white/10" />
@@ -1291,7 +1345,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                           <Download className="h-3.5 w-3.5 shrink-0 opacity-70" />
                                         </a>
                                       ) : (
-                                        <div className={`rounded-xl px-3 py-2 min-w-[230px] border ${isOut ? 'bg-primary-foreground/10 border-primary-foreground/10' : 'bg-muted/60 border-border/40'}`}>
+                                        <div className={`rounded-xl px-3 py-2 min-w-[230px] border ${isOut ? 'bg-white/10 border-white/10' : 'bg-[#111b21] border-white/10'}`}>
                                           <div className="flex items-center gap-2">
                                             {kind === 'image' ? <ImageIcon className="h-4 w-4 opacity-80" /> : kind === 'audio' ? <Mic className="h-4 w-4 opacity-80" /> : kind === 'video' ? <Video className="h-4 w-4 opacity-80" /> : <FileText className="h-4 w-4 opacity-80" />}
                                             <span className="text-sm font-semibold">
@@ -1299,15 +1353,15 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                             </span>
                                           </div>
                                           <div className="flex items-start gap-1.5 mt-1 text-[11px] opacity-70 leading-snug">
-                                            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                                            <span>Arquivo ainda nao disponivel para visualizacao.</span>
+                                            {isResolvingMedia ? <Loader2 className="h-3 w-3 mt-0.5 shrink-0 animate-spin" /> : <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />}
+                                            <span>{isResolvingMedia ? 'Recuperando arquivo da conversa...' : 'Arquivo ainda nao disponivel para visualizacao.'}</span>
                                           </div>
                                         </div>
                                       )}
                                     </div>
                                   )}
                                   {showText && (
-                                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                                    <p className="text-[14.5px] whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
                                   )}
 
                                   {/* Rodapé da mensagem: hora + status */}
@@ -1315,13 +1369,13 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                     {isOut && msg.instance_id && allInstances.length > 1 && (
                                       <span className="text-[9px] opacity-50">{instName(msg.instance_id)}</span>
                                     )}
-                                    <span className={`text-[10px] ${isOut ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
+                                    <span className={`text-[10px] ${isOut ? 'text-[#d1f4e5]/65' : 'text-[#8696a0]'}`}>
                                       {format(new Date(msg.created_at), 'HH:mm')}
                                     </span>
                                     {isOut && (
                                       msg.is_read
-                                        ? <CheckCheck className="h-3 w-3 text-primary-foreground/60" />
-                                        : <Check className="h-3 w-3 text-primary-foreground/60" />
+                                        ? <CheckCheck className="h-3 w-3 text-[#53bdeb]" />
+                                        : <Check className="h-3 w-3 text-[#d1f4e5]/65" />
                                     )}
                                   </div>
                                 </div>
