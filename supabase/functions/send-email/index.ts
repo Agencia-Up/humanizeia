@@ -6,17 +6,18 @@ const corsHeaders = {
 };
 
 // ─── PALETA DE CORES LogosIA ────────────────────────────────────────
-// Paleta oficial LogosIA (doc "Corpo de E-mail Padrão"):
+// Paleta oficial LogosIA (doc "Corpo de E-mail Padrão") — tema claro, fundo branco:
 const COLORS = {
   primary:    '#FFC542',   // dourado claro (CTA/realce)
-  secondary:  '#D4A017',   // dourado escuro
-  dark:       '#0D1B2A',   // azul escuro (fundo)
-  card:       '#10213A',   // azul escuro (card)
-  cardBorder: '#1e3355',   // borda sutil
-  text:       '#FFFFFF',   // branco
-  muted:      '#9fb0c9',   // cinza claro azulado
+  secondary:  '#D4A017',   // dourado escuro (texto/realce sobre branco)
+  dark:       '#0D1B2A',   // azul escuro — usado em titulo/texto e no texto do botao
+  bg:         '#FFFFFF',   // fundo branco
+  card:       '#FFFFFF',   // card branco
+  cardBorder: '#E4E9F2',   // borda clara
+  text:       '#0D1B2A',   // texto principal (azul escuro)
+  muted:      '#5B6B82',   // texto secundario (cinza)
 };
-const LOGO_URL = 'https://logosiabrasil.com/logosia-logo-dark.png';
+const LOGO_URL = 'https://logosiabrasil.com/logosia-logo-light.png';
 
 // ─── TEMPLATE BASE ─────────────────────────────────────────────────────────
 function baseTemplate(content: string): string {
@@ -30,12 +31,12 @@ function baseTemplate(content: string): string {
   <title>LogosIA</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background-color: ${COLORS.dark}; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: ${COLORS.text}; }
+    body { background-color: ${COLORS.bg}; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: ${COLORS.text}; }
     a { color: ${COLORS.primary}; }
   </style>
 </head>
-<body style="background-color:${COLORS.dark}; padding:0; margin:0;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:${COLORS.dark}; padding:40px 16px;">
+<body style="background-color:${COLORS.bg}; padding:0; margin:0;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:${COLORS.bg}; padding:40px 16px;">
     <tr>
       <td align="center">
         <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%;">
@@ -79,7 +80,7 @@ function baseTemplate(content: string): string {
           <!-- FOOTER -->
           <tr>
             <td align="center" style="padding-top:32px;">
-              <p style="color:${COLORS.primary}; font-size:13px; font-weight:700; letter-spacing:0.4px; margin-bottom:14px;">
+              <p style="color:${COLORS.secondary}; font-size:13px; font-weight:700; letter-spacing:0.4px; margin-bottom:14px;">
                 Inteligência. Conhecimento. Transformação.
               </p>
               <p style="color:${COLORS.muted}; font-size:12px; line-height:1.6;">
@@ -188,10 +189,9 @@ function welcomeEmail(name: string, loginUrl: string): string {
     </p>
 
     <table cellpadding="0" cellspacing="0" width="100%">
-      ${featureItem('📊', 'Meta Ads Dashboard', 'Veja todas as métricas das suas campanhas em tempo real')}
-      ${featureItem('🤖', 'IA Avançada', 'Deixe a inteligência artificial otimizar seus anúncios')}
-      ${featureItem('⚡', 'Automação', 'Crie regras automáticas e relatórios agendados')}
-      ${featureItem('📈', 'Google & TikTok Ads', 'Gerencie todas as plataformas em um só lugar')}
+      ${featureItem('🤖', 'Pedro — SDR & Atendimento', 'Qualifica seus leads e atende no WhatsApp automaticamente')}
+      ${featureItem('📋', 'Marcos — CRM & WhatsApp', 'Organiza seus leads e conversas em um CRM completo')}
+      ${featureItem('🎯', 'José — Tráfego Pago', 'Cuida dos seus anúncios no Meta Ads e otimiza campanhas')}
     </table>
 
     ${ctaButton('Acessar a Plataforma →', loginUrl)}
