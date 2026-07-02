@@ -47,8 +47,10 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-// ── Config Asaas (sandbox por default; trocar via ASAAS_BASE_URL) ──────────
-const ASAAS_BASE_URL = Deno.env.get('ASAAS_BASE_URL') || 'https://sandbox.asaas.com/api/v3';
+// ── Config Asaas (PRODUÇÃO por default; sandbox só se ASAAS_BASE_URL apontar pra lá) ──
+// Default de PROD evita o footgun de, se o secret sumir/errar, cair em sandbox e
+// TODO checkout falhar silencioso ("a chave não pertence a este ambiente").
+const ASAAS_BASE_URL = Deno.env.get('ASAAS_BASE_URL') || 'https://api.asaas.com/v3';
 const ASAAS_API_KEY = Deno.env.get('ASAAS_API_KEY') || '';
 
 // ── Preços: fonte única em _shared/checkout-plans.ts (matriz Pro/Básico) ────
