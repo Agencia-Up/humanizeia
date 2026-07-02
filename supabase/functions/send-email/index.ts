@@ -340,6 +340,78 @@ function emailChangeEmail(name: string, newEmail: string, confirmUrl: string): s
   return baseTemplate(content);
 }
 
+// ─── LINK DE RECUPERACAO/DEFINIR SENHA (scanner-safe) ───────────────────────
+// FIX DEFINITIVO: NAO usar o action_link cru do GoTrue — ele e o endpoint
+// /auth/v1/verify, consumido no primeiro GET (inclusive por scanner de e-mail
+// do Gmail/antivirus que pre-abre o link) -> vira "invalid or has expired".
+// Em vez disso montamos ${appUrl}/auth/confirm?token_hash=...&type=recovery,
+// que so e verificado NO NAVEGADOR (ConfirmEmail -> supabase.auth.verifyOtp).
+// Um GET de scanner so pega o HTML estatico e NAO roda o JS -> NAO queima o token.
+// Mesmo padrao ja provado no invite-seller. Fallback: se por qualquer motivo nao
+// vier o hashed_token, cai no action_link (comportamento antigo) -> zero regressao.
+async function generateRecoveryLink(
+  email: string,
+  appUrl: string,
+): Promise<{ link: string | null; error?: string }> {
+  const supabaseAdmin = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+  );
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'recovery',
+    email,
+    options: { redirectTo: `${appUrl}/reset-password` },
+  });
+  if (error || !data) return { link: null, error: error?.message ?? 'Erro ao gerar link' };
+  const props: any = (data as any).properties || {};
+  const hashedToken: string = props.hashed_token || (data as any).hashed_token || '';
+  const link = hashedToken
+    ? `${appUrl}/auth/confirm?token_hash=${encodeURIComponent(hashedToken)}&type=recovery`
+    : (props.action_link || null);
+  if (!link) return { link: null, error: 'GoTrue nao retornou token nem action_link' };
+  return { link };
+}
+
+// ─── EMAIL: COMPRA CONFIRMADA + CRIAR SENHA (checkout) ──────────────────────
+function checkoutWelcomeEmail(name: string, createUrl: string): string {
+  const content = `
+    <!-- ICONE TOPO -->
+    <div style="text-align:center; margin-bottom:28px;">
+      <div style="
+        display:inline-block;
+        width:72px; height:72px;
+        background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
+        border-radius:18px;
+        line-height:72px;
+        text-align:center;
+        font-size:36px;
+        box-shadow: 0 8px 32px ${COLORS.primary}44;
+      ">✓</div>
+    </div>
+
+    <h1 style="text-align:center; color:${COLORS.text}; font-size:28px; font-weight:800; margin-bottom:8px;">
+      Compra confirmada! 🎉
+    </h1>
+    <p style="text-align:center; color:${COLORS.muted}; font-size:15px; margin-bottom:32px;">
+      Olá, <strong style="color:${COLORS.text};">${name}</strong>! Seu pagamento foi confirmado e sua conta na LogosIA já está ativa. Falta só um passo: <strong style="color:${COLORS.text};">criar sua senha</strong> para acessar.
+    </p>
+
+    ${ctaButton('Criar minha senha e acessar →', createUrl)}
+
+    <div style="height:1px; background:${COLORS.cardBorder}; margin:0 0 24px;"></div>
+
+    <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
+      Ou copie e cole este link no seu navegador:<br>
+      <a href="${createUrl}" style="color:${COLORS.primary}; word-break:break-all; font-size:12px;">${createUrl}</a>
+    </p>
+
+    <p style="color:${COLORS.muted}; font-size:12px; text-align:center; margin-top:20px; line-height:1.6;">
+      Por segurança, crie sua senha o quanto antes. Se o link expirar, use <strong style="color:${COLORS.text};">"Esqueci minha senha"</strong> na tela de login com este mesmo e-mail.
+    </p>
+  `;
+  return baseTemplate(content);
+}
+
 // ─── HANDLER PRINCIPAL ──────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -372,29 +444,29 @@ Deno.serve(async (req) => {
       html = welcomeEmail(name, `${appUrl}/auth`);
 
     } else if (type === 'reset_password') {
-      // Usa Supabase Admin para gerar o link de recuperação
-      const supabaseAdmin = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      );
-
-      const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'recovery',
-        email,
-        options: {
-          redirectTo: redirectTo ?? `${appUrl}/reset-password`,
-        },
-      });
-
-      if (error || !data?.properties?.action_link) {
-        return new Response(JSON.stringify({ error: error?.message ?? 'Erro ao gerar link' }), {
+      const { link, error } = await generateRecoveryLink(email, appUrl);
+      if (!link) {
+        return new Response(JSON.stringify({ error: error ?? 'Erro ao gerar link' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-
       subject = '🔐 Recuperação de senha - LogosIA';
-      html = resetPasswordEmail(name, data.properties.action_link);
+      html = resetPasswordEmail(name, link);
+
+    } else if (type === 'checkout_welcome') {
+      // E-mail pos-compra: confirma a compra + link pra criar a senha (mesmo
+      // link recovery scanner-safe). Enviado pelo checkout-asaas-webhook quando
+      // uma conta NOVA e criada apos pagamento confirmado.
+      const { link, error } = await generateRecoveryLink(email, appUrl);
+      if (!link) {
+        return new Response(JSON.stringify({ error: error ?? 'Erro ao gerar link' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      subject = '✅ Compra confirmada — crie sua senha e acesse a LogosIA';
+      html = checkoutWelcomeEmail(name, link);
 
     } else if (type === 'email_change') {
       const { newEmail, confirmUrl } = body;

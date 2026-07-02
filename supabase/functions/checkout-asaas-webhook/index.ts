@@ -264,17 +264,19 @@ serve(async (req: Request) => {
             userId = created.user?.id || null;
             console.log(`[checkout-asaas-webhook] usuário criado: ${userId}`);
 
-            // ENVIA o e-mail de acesso (definir senha). FIX: antes usava
-            // admin.generateLink(type:'recovery'), que SO GERA o link e NAO dispara
-            // e-mail nenhum (o link era descartado) -> cliente pagava e ficava trancado
-            // pra fora. A function send-email (type:'reset_password') gera o recovery
-            // link E despacha o e-mail via Resend. Best-effort: nao derruba o webhook.
+            // ENVIA o e-mail pos-compra: "compra confirmada + crie sua senha".
+            // send-email(type:'checkout_welcome') gera o link de definir senha no
+            // formato SCANNER-SAFE (token_hash verificado no navegador via /auth/confirm,
+            // igual invite-seller) e despacha via Resend. Antes usava 'reset_password'
+            // com action_link cru -> o scanner de e-mail do cliente pre-abria e queimava
+            // o token -> "invalid or has expired" -> cliente pagava e ficava trancado.
+            // Best-effort: nao derruba o webhook.
             try {
               const { error: mailErr } = await supabase.functions.invoke('send-email', {
-                body: { type: 'reset_password', email: pending.email, name: pending.full_name },
+                body: { type: 'checkout_welcome', email: pending.email, name: pending.full_name },
               });
               if (mailErr) console.warn(`[checkout-asaas-webhook] falha ao enviar e-mail de acesso: ${mailErr.message}`);
-              else console.log(`[checkout-asaas-webhook] e-mail de acesso (definir senha) enviado para ${pending.email}`);
+              else console.log(`[checkout-asaas-webhook] e-mail de compra confirmada + criar senha enviado para ${pending.email}`);
             } catch (mailEx) {
               console.warn(`[checkout-asaas-webhook] excecao ao enviar e-mail de acesso: ${(mailEx as any)?.message || mailEx}`);
             }
