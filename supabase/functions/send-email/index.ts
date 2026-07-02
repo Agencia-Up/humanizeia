@@ -9,15 +9,17 @@ const corsHeaders = {
 // Paleta oficial LogosIA (doc "Corpo de E-mail Padrão") — tema claro, fundo branco:
 const COLORS = {
   primary:    '#FFC542',   // dourado claro (CTA/realce)
-  secondary:  '#D4A017',   // dourado escuro (texto/realce sobre branco)
-  dark:       '#0D1B2A',   // azul escuro — usado em titulo/texto e no texto do botao
-  bg:         '#FFFFFF',   // fundo branco
-  card:       '#FFFFFF',   // card branco
-  cardBorder: '#E4E9F2',   // borda clara
-  text:       '#0D1B2A',   // texto principal (azul escuro)
-  muted:      '#5B6B82',   // texto secundario (cinza)
+  secondary:  '#D4A017',   // dourado escuro
+  frame:      '#0D1B2A',   // moldura/fundo geral (azul escuro LogosIA)
+  card:       '#FFFFFF',   // card do conteudo (BRANCO)
+  cardBorder: '#E4E9F2',   // divisores DENTRO do card (cinza claro)
+  text:       '#0D1B2A',   // texto do card (azul escuro)
+  muted:      '#5B6B82',   // secundario do card (cinza)
+  footerText: '#9FB0C9',   // texto do rodape (sobre o azul)
+  dark:       '#0D1B2A',   // texto do botao dourado
 };
-const LOGO_URL = 'https://logosiabrasil.com/logosia-logo-light.png';
+// Logo variante DARK (wordmark branco) — a moldura/topo e azul escuro:
+const LOGO_URL = 'https://logosiabrasil.com/logosia-logo-dark.png';
 
 // ─── TEMPLATE BASE ─────────────────────────────────────────────────────────
 function baseTemplate(content: string): string {
@@ -31,45 +33,35 @@ function baseTemplate(content: string): string {
   <title>LogosIA</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background-color: ${COLORS.bg}; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: ${COLORS.text}; }
-    a { color: ${COLORS.primary}; }
+    body { background-color: ${COLORS.frame}; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: ${COLORS.footerText}; }
+    a { color: ${COLORS.secondary}; }
   </style>
 </head>
-<body style="background-color:${COLORS.bg}; padding:0; margin:0;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:${COLORS.bg}; padding:40px 16px;">
+<body style="background-color:${COLORS.frame}; padding:0; margin:0;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:${COLORS.frame}; padding:24px 12px;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%;">
+        <table width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%;">
 
-          <!-- HEADER / LOGO -->
+          <!-- HEADER / LOGO (sobre a moldura azul escura) -->
           <tr>
-            <td align="center" style="padding-bottom:32px;">
-              <img src="${LOGO_URL}" alt="LOGOS IA" width="190" style="display:block; width:190px; max-width:70%; height:auto; margin:0 auto; border:0;" />
+            <td align="center" style="padding-bottom:18px;">
+              <img src="${LOGO_URL}" alt="LOGOS IA" width="150" style="display:block; width:150px; max-width:58%; height:auto; margin:0 auto; border:0;" />
             </td>
           </tr>
 
-          <!-- CARD PRINCIPAL -->
+          <!-- CARD BRANCO (SO o conteudo tem fundo branco) -->
           <tr>
-            <td style="
-              background-color:${COLORS.card};
-              border:1px solid ${COLORS.cardBorder};
-              border-radius:20px;
-              overflow:hidden;
-            ">
-              <!-- tabela interna OBRIGATORIA: <tr> nao pode ser filho direto de <td>.
-                   Sem ela, o Gmail descarta/embaralha o conteudo (botao + link somem). -->
+            <td style="background-color:${COLORS.card}; border-radius:16px; overflow:hidden;">
+              <!-- tabela interna OBRIGATORIA: <tr> nao pode ser filho direto de <td>. -->
               <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;">
                 <!-- BARRA GRADIENTE TOPO -->
                 <tr>
-                  <td style="
-                    height:4px; font-size:0; line-height:0;
-                    background: linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary}, ${COLORS.primary});
-                  ">&nbsp;</td>
+                  <td style="height:4px; font-size:0; line-height:0; background: linear-gradient(90deg, ${COLORS.primary}, ${COLORS.secondary}, ${COLORS.primary});">&nbsp;</td>
                 </tr>
-
                 <!-- CONTEÚDO -->
                 <tr>
-                  <td style="padding:48px 40px;">
+                  <td style="padding:28px 24px;">
                     ${content}
                   </td>
                 </tr>
@@ -77,20 +69,20 @@ function baseTemplate(content: string): string {
             </td>
           </tr>
 
-          <!-- FOOTER -->
+          <!-- FOOTER (sobre a moldura azul escura) -->
           <tr>
-            <td align="center" style="padding-top:32px;">
-              <p style="color:${COLORS.secondary}; font-size:13px; font-weight:700; letter-spacing:0.4px; margin-bottom:14px;">
+            <td align="center" style="padding-top:20px;">
+              <p style="color:${COLORS.primary}; font-size:12px; font-weight:700; letter-spacing:0.4px; margin-bottom:10px;">
                 Inteligência. Conhecimento. Transformação.
               </p>
-              <p style="color:${COLORS.muted}; font-size:12px; line-height:1.6;">
+              <p style="color:${COLORS.footerText}; font-size:11px; line-height:1.6;">
                 © ${new Date().getFullYear()} LogosIA. Todos os direitos reservados.<br>
                 Você está recebendo este email porque possui uma conta em nossa plataforma.
               </p>
-              <p style="margin-top:12px;">
-                <a href="https://logosiabrasil.com/privacy-policy" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Política de Privacidade</a>
-                <span style="color:${COLORS.cardBorder};">|</span>
-                <a href="https://logosiabrasil.com/terms-of-service" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Termos de Serviço</a>
+              <p style="margin-top:10px;">
+                <a href="https://logosiabrasil.com/privacy-policy" style="color:${COLORS.footerText}; font-size:11px; text-decoration:none; margin:0 8px;">Política de Privacidade</a>
+                <span style="color:#33456b;">|</span>
+                <a href="https://logosiabrasil.com/terms-of-service" style="color:${COLORS.footerText}; font-size:11px; text-decoration:none; margin:0 8px;">Termos de Serviço</a>
               </p>
             </td>
           </tr>
@@ -106,7 +98,7 @@ function baseTemplate(content: string): string {
 // ─── BOTÃO CTA ──────────────────────────────────────────────────────────────
 function ctaButton(label: string, url: string): string {
   return `
-    <table cellpadding="0" cellspacing="0" style="margin:32px auto;">
+    <table cellpadding="0" cellspacing="0" style="margin:22px auto;">
       <tr>
         <td align="center" bgcolor="${COLORS.primary}" style="
           background-color: ${COLORS.primary};
@@ -115,7 +107,7 @@ function ctaButton(label: string, url: string): string {
         ">
           <a href="${url}" style="
             display:inline-block;
-            padding:16px 40px;
+            padding:14px 32px;
             color:${COLORS.dark};
             background-color: ${COLORS.primary};
             border-radius:12px;
@@ -133,7 +125,7 @@ function ctaButton(label: string, url: string): string {
 function featureItem(emoji: string, title: string, desc: string): string {
   return `
     <tr>
-      <td style="padding:10px 0;">
+      <td style="padding:6px 0;">
         <table cellpadding="0" cellspacing="0" width="100%">
           <tr>
             <td width="44" valign="top" style="padding-top:2px;">
@@ -161,23 +153,22 @@ function featureItem(emoji: string, title: string, desc: string): string {
 function welcomeEmail(name: string, loginUrl: string): string {
   const content = `
     <!-- ÍCONE TOPO -->
-    <div style="text-align:center; margin-bottom:28px;">
+    <div style="text-align:center; margin-bottom:16px;">
       <div style="
         display:inline-block;
-        width:72px; height:72px;
+        width:52px; height:52px;
         background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
-        border-radius:18px;
-        line-height:72px;
+        border-radius:14px;
+        line-height:52px;
         text-align:center;
-        font-size:36px;
-        box-shadow: 0 8px 32px ${COLORS.primary}44;
+        font-size:26px;
       ">✦</div>
     </div>
 
-    <h1 style="text-align:center; color:${COLORS.text}; font-size:28px; font-weight:800; margin-bottom:8px;">
+    <h1 style="text-align:center; color:${COLORS.text}; font-size:23px; font-weight:800; margin-bottom:8px;">
       Bem-vindo, ${name}! 🎉
     </h1>
-    <p style="text-align:center; color:${COLORS.muted}; font-size:15px; margin-bottom:36px;">
+    <p style="text-align:center; color:${COLORS.muted}; font-size:14px; margin-bottom:18px;">
       Sua conta foi criada com sucesso. Você agora faz parte da plataforma de marketing mais inteligente do Brasil.
     </p>
 
@@ -200,7 +191,7 @@ function welcomeEmail(name: string, loginUrl: string): string {
 
     <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
       Precisa de ajuda? Fale conosco em
-      <a href="mailto:suporte@logosiabrasil.com" style="color:${COLORS.primary};">suporte@logosiabrasil.com</a>
+      <a href="mailto:suporte@logosiabrasil.com" style="color:${COLORS.secondary};">suporte@logosiabrasil.com</a>
     </p>
   `;
   return baseTemplate(content);
@@ -210,15 +201,15 @@ function welcomeEmail(name: string, loginUrl: string): string {
 function resetPasswordEmail(name: string, resetUrl: string): string {
   const content = `
     <!-- ÍCONE TOPO -->
-    <div style="text-align:center; margin-bottom:28px;">
+    <div style="text-align:center; margin-bottom:16px;">
       <div style="
         display:inline-block;
-        width:72px; height:72px;
+        width:52px; height:52px;
         background: linear-gradient(135deg, #f59e0b, #f97316);
         border-radius:18px;
-        line-height:72px;
+        line-height:52px;
         text-align:center;
-        font-size:36px;
+        font-size:26px;
         box-shadow: 0 8px 32px #f59e0b44;
       ">🔐</div>
     </div>
@@ -253,7 +244,7 @@ function resetPasswordEmail(name: string, resetUrl: string): string {
 
     <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
       Ou copie e cole este link no seu navegador:<br>
-      <a href="${resetUrl}" style="color:${COLORS.primary}; word-break:break-all; font-size:12px;">${resetUrl}</a>
+      <a href="${resetUrl}" style="color:${COLORS.secondary}; word-break:break-all; font-size:12px;">${resetUrl}</a>
     </p>
 
     <p style="color:${COLORS.muted}; font-size:12px; text-align:center; margin-top:20px;">
@@ -267,15 +258,15 @@ function resetPasswordEmail(name: string, resetUrl: string): string {
 function emailChangeEmail(name: string, newEmail: string, confirmUrl: string): string {
   const content = `
     <!-- ÍCONE TOPO -->
-    <div style="text-align:center; margin-bottom:28px;">
+    <div style="text-align:center; margin-bottom:16px;">
       <div style="
         display:inline-block;
-        width:72px; height:72px;
+        width:52px; height:52px;
         background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
         border-radius:18px;
-        line-height:72px;
+        line-height:52px;
         text-align:center;
-        font-size:36px;
+        font-size:26px;
         box-shadow: 0 8px 32px ${COLORS.primary}44;
       ">✉️</div>
     </div>
@@ -298,7 +289,7 @@ function emailChangeEmail(name: string, newEmail: string, confirmUrl: string): s
           text-align:center;
         ">
           <p style="color:${COLORS.muted}; font-size:12px; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">Novo endereço de email</p>
-          <p style="color:${COLORS.primary}; font-size:18px; font-weight:700;">${newEmail}</p>
+          <p style="color:${COLORS.secondary}; font-size:18px; font-weight:700;">${newEmail}</p>
         </td>
       </tr>
     </table>
@@ -326,7 +317,7 @@ function emailChangeEmail(name: string, newEmail: string, confirmUrl: string): s
 
     <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
       Ou copie e cole este link no seu navegador:<br>
-      <a href="${confirmUrl}" style="color:${COLORS.primary}; word-break:break-all; font-size:12px;">${confirmUrl}</a>
+      <a href="${confirmUrl}" style="color:${COLORS.secondary}; word-break:break-all; font-size:12px;">${confirmUrl}</a>
     </p>
   `;
   return baseTemplate(content);
@@ -368,15 +359,15 @@ async function generateRecoveryLink(
 function checkoutWelcomeEmail(name: string, createUrl: string): string {
   const content = `
     <!-- ICONE TOPO -->
-    <div style="text-align:center; margin-bottom:28px;">
+    <div style="text-align:center; margin-bottom:16px;">
       <div style="
         display:inline-block;
-        width:72px; height:72px;
+        width:52px; height:52px;
         background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
         border-radius:18px;
-        line-height:72px;
+        line-height:52px;
         text-align:center;
-        font-size:36px;
+        font-size:26px;
         box-shadow: 0 8px 32px ${COLORS.primary}44;
       ">✓</div>
     </div>
@@ -394,7 +385,7 @@ function checkoutWelcomeEmail(name: string, createUrl: string): string {
 
     <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
       Ou copie e cole este link no seu navegador:<br>
-      <a href="${createUrl}" style="color:${COLORS.primary}; word-break:break-all; font-size:12px;">${createUrl}</a>
+      <a href="${createUrl}" style="color:${COLORS.secondary}; word-break:break-all; font-size:12px;">${createUrl}</a>
     </p>
 
     <table cellpadding="0" cellspacing="0" width="100%" style="margin-top:20px;">
