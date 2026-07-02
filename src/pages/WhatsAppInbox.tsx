@@ -1240,6 +1240,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         const showText = Boolean(msg.content)
                           && msg.message_type !== 'document'
                           && !(kind && isPlaceholderContent(msg.content));
+                        const showMediaBlock = Boolean(kind && (hasMedia || !showText));
 
                         return (
                           <div key={msg.id}>
@@ -1259,7 +1260,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                     ? 'bg-primary text-primary-foreground rounded-br-sm'
                                     : 'bg-background text-foreground rounded-bl-sm border border-border/30'
                                 }`}>
-                                  {kind && (
+                                  {showMediaBlock && kind && (
                                     <div className={showText ? 'mb-2' : 'mb-0'}>
                                       {kind === 'image' && hasMedia ? (
                                         <a href={msg.media_url!} target="_blank" rel="noopener noreferrer" className="block group">
@@ -1299,7 +1300,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                           </div>
                                           <div className="flex items-start gap-1.5 mt-1 text-[11px] opacity-70 leading-snug">
                                             <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                                            <span>Midia sem arquivo salvo. O sistema vai exibir o preview assim que a UAZAPI entregar a URL/base64.</span>
+                                            <span>Arquivo ainda nao disponivel para visualizacao.</span>
                                           </div>
                                         </div>
                                       )}
