@@ -7,14 +7,15 @@ const corsHeaders = {
 
 // ─── PALETA DE CORES LogosIA ────────────────────────────────────────
 const COLORS = {
-  primary:    '#14b89a',
-  secondary:  '#2bbdab',
-  dark:       '#071620',
-  card:       '#101f2c',
-  cardBorder: '#1a3040',
-  text:       '#e8f5f2',
-  muted:      '#7db5a8',
+  primary:    '#e0a82e',   // dourado da logo (realce/CTA)
+  secondary:  '#c58f1e',   // dourado escuro
+  dark:       '#081431',   // navy escuro (fundo) — mesmo dos templates do Auth
+  card:       '#0e1c40',   // navy do card
+  cardBorder: '#24325f',
+  text:       '#eef2fb',
+  muted:      '#9aa8c7',
 };
+const LOGO_URL = 'https://logosiabrasil.com/logosia-logo-dark.png';
 
 // ─── TEMPLATE BASE ─────────────────────────────────────────────────────────
 function baseTemplate(content: string): string {
@@ -41,20 +42,7 @@ function baseTemplate(content: string): string {
           <!-- HEADER / LOGO -->
           <tr>
             <td align="center" style="padding-bottom:32px;">
-              <table cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="
-                    background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
-                    border-radius:16px;
-                    padding:12px 16px;
-                    display:inline-block;
-                  ">
-                    <span style="font-size:22px; font-weight:800; color:#ffffff; letter-spacing:-0.5px;">
-                      ✦ LogosIA
-                    </span>
-                  </td>
-                </tr>
-              </table>
+              <img src="${LOGO_URL}" alt="LOGOS IA" width="190" style="display:block; width:190px; max-width:70%; height:auto; margin:0 auto; border:0;" />
             </td>
           </tr>
 
@@ -123,7 +111,7 @@ function ctaButton(label: string, url: string): string {
           <a href="${url}" style="
             display:inline-block;
             padding:16px 40px;
-            color:#ffffff;
+            color:${COLORS.dark};
             background-color: ${COLORS.primary};
             border-radius:12px;
             font-weight:700;
