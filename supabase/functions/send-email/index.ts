@@ -400,6 +400,13 @@ function checkoutWelcomeEmail(name: string, createUrl: string): string {
   return baseTemplate(content);
 }
 
+// ─── VERSAO TEXTO PURO (multipart) — melhora nota anti-spam ─────────────────
+// Filtros dao nota melhor quando o e-mail traz HTML + texto. Mantem a marca em
+// texto (wordmark "LOGOS | IA" + assinatura) pra respeitar a identidade visual.
+function plainText(lines: string[]): string {
+  return ['LOGOS | IA', '', ...lines, '', '— Equipe LogosIA', 'https://logosiabrasil.com'].join('\n');
+}
+
 // ─── HANDLER PRINCIPAL ──────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -420,6 +427,7 @@ Deno.serve(async (req) => {
 
     let subject = '';
     let html = '';
+    let text = '';
     // Dominio canonico do app = site_url do Auth (logosiabrasil.com). PRECISA bater com a
     // uri_allow_list, senao o Supabase descarta o redirect_to e joga pra raiz do site ->
     // cliente clica no link e cai na home, nao na tela de redefinir senha.
@@ -430,6 +438,7 @@ Deno.serve(async (req) => {
     if (type === 'welcome') {
       subject = '🎉 Bem-vindo à LogosIA!';
       html = welcomeEmail(name, `${appUrl}/auth`);
+      text = plainText([`Bem-vindo, ${name}!`, '', 'Sua conta foi criada com sucesso. Acesse a plataforma:', `${appUrl}/auth`]);
 
     } else if (type === 'reset_password') {
       const { link, error } = await generateRecoveryLink(email, appUrl);
@@ -441,6 +450,7 @@ Deno.serve(async (req) => {
       }
       subject = '🔐 Recuperação de senha - LogosIA';
       html = resetPasswordEmail(name, link);
+      text = plainText([`Olá, ${name}!`, '', 'Recebemos uma solicitação para redefinir a senha da sua conta LogosIA.', 'Acesse o link abaixo para criar uma nova senha (expira em 1 hora):', link, '', 'Se não foi você, ignore este e-mail — sua senha continua a mesma.']);
 
     } else if (type === 'checkout_welcome') {
       // E-mail pos-compra: confirma a compra + link pra criar a senha (mesmo
@@ -455,11 +465,14 @@ Deno.serve(async (req) => {
       }
       subject = '✅ Compra confirmada — crie sua senha e acesse a LogosIA';
       html = checkoutWelcomeEmail(name, link);
+      text = plainText([`Compra confirmada! Olá, ${name}.`, '', 'Seu pagamento foi confirmado e sua conta na LogosIA já está ativa.', 'Falta só um passo: criar sua senha para acessar.', link, '', "Se o link expirar, use 'Esqueci minha senha' na tela de login com este mesmo e-mail."]);
 
     } else if (type === 'email_change') {
       const { newEmail, confirmUrl } = body;
       subject = '✉️ Confirme seu novo email - LogosIA';
-      html = emailChangeEmail(name, newEmail, confirmUrl ?? `${appUrl}/auth`);
+      const changeUrl = confirmUrl ?? `${appUrl}/auth`;
+      html = emailChangeEmail(name, newEmail, changeUrl);
+      text = plainText([`Olá, ${name}!`, '', `Você solicitou alterar o e-mail da sua conta para ${newEmail}.`, 'Confirme no link abaixo:', changeUrl, '', 'Se não foi você, ignore este e-mail.']);
 
     } else {
       return new Response(JSON.stringify({ error: `Tipo de email desconhecido: ${type}` }), {
@@ -480,6 +493,7 @@ Deno.serve(async (req) => {
         to: [email],
         subject,
         html,
+        ...(text ? { text } : {}),
       }),
     });
 
