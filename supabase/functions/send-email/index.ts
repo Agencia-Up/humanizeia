@@ -6,14 +6,15 @@ const corsHeaders = {
 };
 
 // ─── PALETA DE CORES LogosIA ────────────────────────────────────────
+// Paleta oficial LogosIA (doc "Corpo de E-mail Padrão"):
 const COLORS = {
-  primary:    '#e0a82e',   // dourado da logo (realce/CTA)
-  secondary:  '#c58f1e',   // dourado escuro
-  dark:       '#081431',   // navy escuro (fundo) — mesmo dos templates do Auth
-  card:       '#0e1c40',   // navy do card
-  cardBorder: '#24325f',
-  text:       '#eef2fb',
-  muted:      '#9aa8c7',
+  primary:    '#FFC542',   // dourado claro (CTA/realce)
+  secondary:  '#D4A017',   // dourado escuro
+  dark:       '#0D1B2A',   // azul escuro (fundo)
+  card:       '#10213A',   // azul escuro (card)
+  cardBorder: '#1e3355',   // borda sutil
+  text:       '#FFFFFF',   // branco
+  muted:      '#9fb0c9',   // cinza claro azulado
 };
 const LOGO_URL = 'https://logosiabrasil.com/logosia-logo-dark.png';
 
@@ -78,14 +79,17 @@ function baseTemplate(content: string): string {
           <!-- FOOTER -->
           <tr>
             <td align="center" style="padding-top:32px;">
+              <p style="color:${COLORS.primary}; font-size:13px; font-weight:700; letter-spacing:0.4px; margin-bottom:14px;">
+                Inteligência. Conhecimento. Transformação.
+              </p>
               <p style="color:${COLORS.muted}; font-size:12px; line-height:1.6;">
                 © ${new Date().getFullYear()} LogosIA. Todos os direitos reservados.<br>
                 Você está recebendo este email porque possui uma conta em nossa plataforma.
               </p>
               <p style="margin-top:12px;">
-                <a href="https://logosia.com.br/privacy-policy" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Política de Privacidade</a>
+                <a href="https://logosiabrasil.com/privacy-policy" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Política de Privacidade</a>
                 <span style="color:${COLORS.cardBorder};">|</span>
-                <a href="https://logosia.com.br/terms-of-service" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Termos de Serviço</a>
+                <a href="https://logosiabrasil.com/terms-of-service" style="color:${COLORS.muted}; font-size:12px; text-decoration:none; margin:0 8px;">Termos de Serviço</a>
               </p>
             </td>
           </tr>
@@ -393,9 +397,15 @@ function checkoutWelcomeEmail(name: string, createUrl: string): string {
       <a href="${createUrl}" style="color:${COLORS.primary}; word-break:break-all; font-size:12px;">${createUrl}</a>
     </p>
 
-    <p style="color:${COLORS.muted}; font-size:12px; text-align:center; margin-top:20px; line-height:1.6;">
-      Por segurança, crie sua senha o quanto antes. Se o link expirar, use <strong style="color:${COLORS.text};">"Esqueci minha senha"</strong> na tela de login com este mesmo e-mail.
-    </p>
+    <table cellpadding="0" cellspacing="0" width="100%" style="margin-top:20px;">
+      <tr>
+        <td style="background:${COLORS.primary}14; border:1px solid ${COLORS.primary}44; border-left:4px solid ${COLORS.primary}; border-radius:8px; padding:14px 18px;">
+          <p style="color:${COLORS.muted}; font-size:13px; line-height:1.55; margin:0;">
+            🔒 <strong style="color:${COLORS.text};">Segurança:</strong> crie sua senha o quanto antes. Se o link expirar, use "Esqueci minha senha" na tela de login com este mesmo e-mail. Nunca compartilhe este link com ninguém.
+          </p>
+        </td>
+      </tr>
+    </table>
   `;
   return baseTemplate(content);
 }
