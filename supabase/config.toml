@@ -228,6 +228,9 @@ verify_jwt = false
 [functions.checkout-asaas-webhook]
 verify_jwt = false
 
+[functions.asaas-health]
+verify_jwt = false
+
 [functions.checkout-pricing]
 verify_jwt = false
 

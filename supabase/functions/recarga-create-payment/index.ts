@@ -45,8 +45,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-// ── Config Asaas (sandbox por default; trocar via ASAAS_BASE_URL) ──────────
-const ASAAS_BASE_URL = Deno.env.get('ASAAS_BASE_URL') || 'https://sandbox.asaas.com/api/v3';
+// ── Config Asaas (PRODUÇÃO por default; sandbox só se ASAAS_BASE_URL apontar pra lá) ──
+const ASAAS_BASE_URL = Deno.env.get('ASAAS_BASE_URL') || 'https://api.asaas.com/v3';
 const ASAAS_API_KEY = Deno.env.get('ASAAS_API_KEY') || '';
 
 // ── Pacotes de recarga: FONTE UNICA no servidor (nunca confiar no preco do client) ──
