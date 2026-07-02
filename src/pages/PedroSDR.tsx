@@ -19,7 +19,7 @@ import {
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
-  Pin, PinOff, Image, Mic, Video, Upload, X, Trash2,
+  Pin, PinOff, Image, Mic, Video, Upload, X, Trash2, Download,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
   Pencil, Check, Trophy,
 } from 'lucide-react';
@@ -1121,6 +1121,43 @@ interface LeadMetrics {
   month: number;
 }
 
+const backupDateTime = (iso: string | null | undefined) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('pt-BR');
+};
+
+const backupPhone = (value: string | null | undefined) => (
+  String(value || '').replace(/@.*/, '').replace(/\D/g, '')
+);
+
+const backupJson = (value: unknown) => {
+  if (!value) return '';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+async function fetchAllBackupRows(table: 'ai_crm_leads' | 'crm_leads', select: string, userId: string) {
+  const rows: any[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await (supabase as any)
+      .from(table)
+      .select(select)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return rows;
+}
+
 interface BulkLeadRow {
   name: string;
   phone: string;
@@ -1203,6 +1240,7 @@ export function CrmAvancadoTab({
   const [instances, setInstances] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [backupDownloading, setBackupDownloading] = useState(false);
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
@@ -4495,6 +4533,125 @@ export function CrmAvancadoTab({
     setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
   };
 
+  const handleDownloadBackup = async () => {
+    if (!userId || isSeller) return;
+
+    const agentName = isMarcosCrm ? 'Marcos' : 'Pedro';
+    const table = isMarcosCrm ? 'crm_leads' : 'ai_crm_leads';
+    const ownerId = effectiveUserIdState || userId;
+    const sellerById = new Map(teamMembers.map(m => [m.id, m.name]));
+    const stageById = new Map(pipelineColumns.map(c => [c.id, c.title]));
+    const statusById = new Map(statusOptions.map(s => [s.value, s.label]));
+
+    setBackupDownloading(true);
+    try {
+      const rows = await fetchAllBackupRows(table, '*', ownerId);
+
+      const exportRows = rows.map((row: any) => {
+        const customFields = row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields : {};
+
+        if (isMarcosCrm) {
+          const sellerId = row.assigned_to
+            || customFields.seller_member_id
+            || customFields.migrated_from_assigned_to_id
+            || '';
+          const stageId = row.stage_id || '';
+
+          return {
+            Agente: 'Marcos',
+            Nome: row.name || backupPhone(row.phone) || 'Lead',
+            Telefone: backupPhone(row.phone),
+            Email: row.email || '',
+            Empresa: row.company || '',
+            Etapa: stageById.get(stageId) || stageId,
+            'ID da etapa': stageId,
+            Vendedor: sellerById.get(sellerId) || customFields.seller_name || '',
+            Origem: row.source || row.origem || '',
+            Cidade: row.client_city || '',
+            'Veiculo de interesse': row.vehicle_interest || '',
+            'Visita agendada': row.visit_scheduled ? 'Sim' : '',
+            'Data da visita': backupDateTime(row.visit_scheduled_at),
+            'Chegou em': backupDateTime(row.arrived_at || row.created_at),
+            'Criado em': backupDateTime(row.created_at),
+            'Atualizado em': backupDateTime(row.updated_at),
+            Observacoes: row.notes || '',
+            Valor: row.value ?? '',
+            Moeda: row.currency || '',
+            Prioridade: row.priority || '',
+            'Motivo perdido': row.lost_reason || '',
+            'Vendido em': backupDateTime(row.won_at),
+            'Perdido em': backupDateTime(row.lost_at),
+            'Consignado modelo': row.consignado_modelo || '',
+            'Consignado ano': row.consignado_ano || '',
+            'Consignado versao': row.consignado_versao || '',
+            'Consignado km': row.consignado_km || '',
+            'Consignado cor': row.consignado_cor || '',
+            'Consignado estado': row.consignado_estado || '',
+            'Campos extras': backupJson(row.custom_fields),
+            ID: row.id,
+            'ID vendedor': sellerId,
+          };
+        }
+
+        const sellerId = row.assigned_to_id || '';
+        const statusId = row.status_crm || row.status || 'novo';
+
+        return {
+          Agente: 'Pedro',
+          Nome: row.lead_name || backupPhone(row.remote_jid) || 'Lead',
+          Telefone: backupPhone(row.remote_jid),
+          'Etapa/Status': statusById.get(statusId) || stageById.get(statusId) || statusId,
+          'Status CRM': row.status_crm || '',
+          'Status bruto': row.status || '',
+          Vendedor: sellerById.get(sellerId) || '',
+          Origem: leadOrigemLabel(row.origem) || row.origem || '',
+          'Origem detalhe': row.origem_outros || '',
+          Cidade: row.client_city || '',
+          'Veiculo de interesse': row.vehicle_interest || '',
+          Campanha: row.campaign_name || '',
+          Anuncio: row.ad_name || '',
+          'Resumo IA': row.summary || '',
+          'Visita agendada': row.visit_scheduled ? 'Sim' : '',
+          'Data da visita': backupDateTime(row.visit_scheduled_at),
+          'Ultima resposta cliente': backupDateTime(row.last_user_reply_at),
+          'Ultima interacao': backupDateTime(row.last_interaction_at),
+          'Chegou em': backupDateTime(row.arrived_at || row.created_at),
+          'Criado em': backupDateTime(row.created_at),
+          'Atualizado em': backupDateTime(row.updated_at),
+          'Notas do vendedor': row.seller_notes_count ?? '',
+          'ID agente': row.agent_id || '',
+          ID: row.id,
+          'ID vendedor': sellerId,
+          'ID conversa': row.remote_jid || '',
+          'Campos extras': backupJson(row.metadata || row.custom_fields),
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportRows.length > 0 ? exportRows : [{ Aviso: `Nenhum lead encontrado no ${agentName}.` }]);
+      const firstRow = exportRows[0] || { Aviso: '' };
+      worksheet['!cols'] = Object.keys(firstRow).map(key => ({ wch: Math.min(Math.max(key.length + 4, 14), 42) }));
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `Leads ${agentName}`);
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(workbook, `backup-leads-${agentName.toLowerCase()}-${stamp}.xlsx`);
+
+      toast({
+        title: 'Backup dos leads gerado',
+        description: `${exportRows.length} lead(s) do ${agentName} exportado(s).`,
+      });
+    } catch (err: any) {
+      toast({
+        title: 'Nao foi possivel gerar o backup',
+        description: descricaoErro(err),
+        variant: 'destructive',
+      });
+    } finally {
+      setBackupDownloading(false);
+    }
+  };
+
   return (
     <div className="p-4 lg:p-6 space-y-4">
       {/* ── Métricas ────────────────────────────────────────────────── */}
@@ -4553,6 +4710,20 @@ export function CrmAvancadoTab({
           ))}
         </div>
         <div className="flex items-center gap-1.5">
+          {!isSeller && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadBackup}
+              disabled={backupDownloading}
+              className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10"
+              title={`Baixar backup completo dos leads do ${isMarcosCrm ? 'Marcos' : 'Pedro'}`}
+            >
+              {backupDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              Backup dos leads
+            </Button>
+          )}
           <Input
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}

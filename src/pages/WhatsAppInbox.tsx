@@ -17,7 +17,7 @@ import {
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
   Wifi, WifiOff, ChevronDown, MoreVertical, Smile,
   Paperclip, Tag, UserCheck, Mic, FileText, Download, Trash2,
-  CalendarDays, X
+  CalendarDays, X, Image as ImageIcon, Video, AlertCircle
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
@@ -132,6 +132,33 @@ function formatArrivalDate(value: string | null | undefined) {
 function initials(name: string) {
   const parts = name.trim().split(' ');
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
+
+function mediaKind(type: string | null | undefined): 'image' | 'audio' | 'video' | 'document' | null {
+  const t = (type || '').toLowerCase();
+  if (t === 'image' || t === 'sticker') return 'image';
+  if (t === 'audio' || t === 'ptt' || t === 'voice') return 'audio';
+  if (t === 'video') return 'video';
+  if (t === 'document' || t === 'file') return 'document';
+  return null;
+}
+
+function isPlaceholderContent(content: string | null | undefined) {
+  const c = (content || '').trim().toLowerCase();
+  return c.startsWith('[imagem recebida')
+    || c.startsWith('[mensagem de audio recebida')
+    || c.startsWith('[audio recebido')
+    || c.startsWith('[áudio recebido');
+}
+
+function mediaPreviewText(messageType: string | null | undefined, content: string | null | undefined, mediaUrl?: string | null) {
+  const kind = mediaKind(messageType);
+  if (!kind) return content || '';
+  if (kind === 'image') return content && !isPlaceholderContent(content) ? content : 'Imagem recebida';
+  if (kind === 'audio') return content && !isPlaceholderContent(content) ? `Audio: ${content}` : 'Audio recebido';
+  if (kind === 'video') return content && !isPlaceholderContent(content) ? content : 'Video recebido';
+  if (kind === 'document') return content || (mediaUrl ? 'Arquivo recebido' : 'Arquivo');
+  return content || '';
 }
 
 /* ── Componente principal ────────────────────────────────────────── */
@@ -323,7 +350,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     if (visibleInstanceIds.length > 0) {
       let query = supabase
         .from('wa_inbox')
-        .select('phone, contact_name, content, ai_category, is_read, created_at, instance_id, direction')
+        .select('phone, contact_name, content, message_type, media_url, ai_category, is_read, created_at, instance_id, direction')
         .eq('user_id', effectiveUserId as string)
         .neq('is_archived', true)
         .in('instance_id', visibleInstanceIds)
@@ -347,7 +374,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
       if (!convMap.has(key)) {
         convMap.set(key, {
           key, phone: msg.phone, instance_id: msg.instance_id,
-          contact_name: msg.contact_name, last_message: msg.content,
+          contact_name: msg.contact_name, last_message: mediaPreviewText(msg.message_type, msg.content, msg.media_url),
           last_message_at: msg.created_at, lead_arrived_at: null,
           lead_created_at: null, unread_count: 0,
           ai_category: msg.ai_category, has_ai_message: false,
@@ -1208,6 +1235,11 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         const showDate = !prevMsg || format(new Date(msg.created_at), 'dd/MM/yyyy') !== format(new Date(prevMsg.created_at), 'dd/MM/yyyy');
                         const sameDir = prevMsg && prevMsg.direction === msg.direction;
                         const gap = sameDir ? 'mt-0.5' : 'mt-3';
+                        const kind = mediaKind(msg.message_type);
+                        const hasMedia = Boolean(msg.media_url);
+                        const showText = Boolean(msg.content)
+                          && msg.message_type !== 'document'
+                          && !(kind && isPlaceholderContent(msg.content));
 
                         return (
                           <div key={msg.id}>
@@ -1221,35 +1253,59 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                             )}
 
                             <div className={`flex ${isOut ? 'justify-end' : 'justify-start'} ${gap}`}>
-                              <div className={`max-w-[72%] flex flex-col ${isOut ? 'items-end' : 'items-start'}`}>
-                                <div className={`px-3.5 py-2 rounded-2xl shadow-sm ${
+                              <div className={`max-w-[82%] sm:max-w-[72%] flex flex-col ${isOut ? 'items-end' : 'items-start'}`}>
+                                <div className={`px-3.5 py-2 rounded-2xl shadow-sm overflow-hidden ${
                                   isOut
                                     ? 'bg-primary text-primary-foreground rounded-br-sm'
                                     : 'bg-background text-foreground rounded-bl-sm border border-border/30'
                                 }`}>
-                                  {msg.media_url && (
-                                    <div className="mb-1">
-                                      {msg.message_type === 'image' ? (
-                                        <a href={msg.media_url} target="_blank" rel="noopener noreferrer">
-                                          <img src={msg.media_url} alt="imagem" loading="lazy" className="rounded-lg max-w-[240px] max-h-[280px] object-cover" />
+                                  {kind && (
+                                    <div className={showText ? 'mb-2' : 'mb-0'}>
+                                      {kind === 'image' && hasMedia ? (
+                                        <a href={msg.media_url!} target="_blank" rel="noopener noreferrer" className="block group">
+                                          <img
+                                            src={msg.media_url!}
+                                            alt="Imagem recebida"
+                                            loading="lazy"
+                                            className="rounded-xl max-w-[280px] max-h-[320px] object-cover border border-white/10 group-hover:opacity-95 transition-opacity"
+                                          />
                                         </a>
-                                      ) : (msg.message_type === 'audio' || msg.message_type === 'ptt' || msg.message_type === 'voice') ? (
-                                        <audio controls src={msg.media_url} className="h-9 max-w-[240px]" />
-                                      ) : msg.message_type === 'video' ? (
-                                        <video controls src={msg.media_url} className="rounded-lg max-w-[240px] max-h-[280px]" />
-                                      ) : (
+                                      ) : kind === 'audio' && hasMedia ? (
+                                        <div className={`rounded-xl px-3 py-2 min-w-[260px] ${isOut ? 'bg-primary-foreground/10' : 'bg-muted/60'}`}>
+                                          <div className="flex items-center gap-2 mb-1.5">
+                                            <Mic className="h-4 w-4 opacity-80" />
+                                            <span className="text-xs font-semibold opacity-80">Audio recebido</span>
+                                          </div>
+                                          <audio controls src={msg.media_url!} className="h-9 w-full max-w-[280px]" />
+                                        </div>
+                                      ) : kind === 'video' && hasMedia ? (
+                                        <video controls src={msg.media_url!} className="rounded-xl max-w-[280px] max-h-[320px] border border-white/10" />
+                                      ) : kind === 'document' && hasMedia ? (
                                         <a
-                                          href={msg.media_url} target="_blank" rel="noopener noreferrer"
-                                          className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${isOut ? 'bg-primary-foreground/10' : 'bg-muted/60'}`}
+                                          href={msg.media_url!} target="_blank" rel="noopener noreferrer"
+                                          className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm min-w-[240px] ${isOut ? 'bg-primary-foreground/10' : 'bg-muted/60'}`}
                                         >
                                           <FileText className="h-4 w-4 shrink-0" />
-                                          <span className="truncate max-w-[180px]">{msg.content || 'Arquivo'}</span>
+                                          <span className="truncate max-w-[190px]">{msg.content || 'Arquivo recebido'}</span>
                                           <Download className="h-3.5 w-3.5 shrink-0 opacity-70" />
                                         </a>
+                                      ) : (
+                                        <div className={`rounded-xl px-3 py-2 min-w-[230px] border ${isOut ? 'bg-primary-foreground/10 border-primary-foreground/10' : 'bg-muted/60 border-border/40'}`}>
+                                          <div className="flex items-center gap-2">
+                                            {kind === 'image' ? <ImageIcon className="h-4 w-4 opacity-80" /> : kind === 'audio' ? <Mic className="h-4 w-4 opacity-80" /> : kind === 'video' ? <Video className="h-4 w-4 opacity-80" /> : <FileText className="h-4 w-4 opacity-80" />}
+                                            <span className="text-sm font-semibold">
+                                              {kind === 'image' ? 'Imagem recebida' : kind === 'audio' ? 'Audio recebido' : kind === 'video' ? 'Video recebido' : 'Arquivo recebido'}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-start gap-1.5 mt-1 text-[11px] opacity-70 leading-snug">
+                                            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                                            <span>Midia sem arquivo salvo. O sistema vai exibir o preview assim que a UAZAPI entregar a URL/base64.</span>
+                                          </div>
+                                        </div>
                                       )}
                                     </div>
                                   )}
-                                  {msg.content && msg.message_type !== 'document' && (
+                                  {showText && (
                                     <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
                                   )}
 

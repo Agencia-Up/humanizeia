@@ -468,8 +468,8 @@ async function processEvolutionIncomingMessage(
   messageData: any,
   instanceName: string,
 ) {
-  const message = messageData.message || messageData;
-  const key = messageData.key || {};
+  const message = unwrapEvolutionMessage(messageData);
+  const key = extractEvolutionKey(messageData);
 
   console.log("[wa-inbox-webhook] Full messageData keys:", JSON.stringify(Object.keys(messageData || {})));
   console.log("[wa-inbox-webhook] key:", JSON.stringify(key));
@@ -771,6 +771,43 @@ function extractEvolutionMessageEntries(messageData: any): any[] {
   return [messageData];
 }
 
+function extractEvolutionKey(messageData: any): any {
+  return messageData?.key
+    || messageData?.message?.key
+    || messageData?.data?.key
+    || {};
+}
+
+function unwrapEvolutionMessage(messageData: any): any {
+  const candidates = [
+    messageData?.message?.message,
+    messageData?.data?.message?.message,
+    messageData?.message,
+    messageData?.data?.message,
+    messageData,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    if (
+      candidate.conversation
+      || candidate.extendedTextMessage
+      || candidate.buttonsResponseMessage
+      || candidate.listResponseMessage
+      || candidate.templateButtonReplyMessage
+      || candidate.imageMessage
+      || candidate.videoMessage
+      || candidate.audioMessage
+      || candidate.documentMessage
+      || candidate.stickerMessage
+    ) {
+      return candidate;
+    }
+  }
+
+  return messageData?.message || messageData;
+}
+
 function buildImageContent(caption: string | null | undefined): string {
   const trimmedCaption = (caption || "").trim();
   if (!trimmedCaption) {
@@ -782,6 +819,73 @@ function buildImageContent(caption: string | null | undefined): string {
 
 function buildAudioFallbackContent(): string {
   return "[Mensagem de audio recebida sem transcricao]";
+}
+
+function normalizeBase64Value(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let base64 = value.trim();
+  if (base64.startsWith("data:")) {
+    const comma = base64.indexOf(",");
+    if (comma >= 0) base64 = base64.slice(comma + 1);
+  }
+  return base64 || null;
+}
+
+function detectMimeFromPayload(payload: any): string {
+  return payload?.mimetype
+    || payload?.mimeType
+    || payload?.mime_type
+    || payload?.mediaType
+    || payload?.message?.imageMessage?.mimetype
+    || payload?.message?.videoMessage?.mimetype
+    || payload?.message?.audioMessage?.mimetype
+    || payload?.message?.documentMessage?.mimetype
+    || payload?.message?.message?.imageMessage?.mimetype
+    || payload?.message?.message?.videoMessage?.mimetype
+    || payload?.message?.message?.audioMessage?.mimetype
+    || payload?.message?.message?.documentMessage?.mimetype
+    || payload?.imageMessage?.mimetype
+    || payload?.videoMessage?.mimetype
+    || payload?.audioMessage?.mimetype
+    || payload?.documentMessage?.mimetype
+    || "";
+}
+
+function extractBase64FromPayload(payload: any): { base64: string; mimetype: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  const candidates = [
+    payload.base64,
+    payload.mediaBase64,
+    payload.media_base64,
+    payload.fileBase64,
+    payload.file_base64,
+    payload.data?.base64,
+    payload.data?.mediaBase64,
+    payload.data?.media_base64,
+    payload.data?.fileBase64,
+    payload.message?.base64,
+    payload.message?.mediaBase64,
+    payload.message?.imageMessage?.base64,
+    payload.message?.videoMessage?.base64,
+    payload.message?.audioMessage?.base64,
+    payload.message?.documentMessage?.base64,
+    payload.message?.message?.imageMessage?.base64,
+    payload.message?.message?.videoMessage?.base64,
+    payload.message?.message?.audioMessage?.base64,
+    payload.message?.message?.documentMessage?.base64,
+    payload.imageMessage?.base64,
+    payload.videoMessage?.base64,
+    payload.audioMessage?.base64,
+    payload.documentMessage?.base64,
+  ];
+
+  for (const candidate of candidates) {
+    const base64 = normalizeBase64Value(candidate);
+    if (base64) return { base64, mimetype: detectMimeFromPayload(payload) };
+  }
+
+  return null;
 }
 
 function parseStoredIntegrationCredentials(raw: string | null) {
@@ -3010,13 +3114,55 @@ async function fetchMediaBase64FromUazapi(
       return null;
     }
 
-    const key = messageData.key || {};
-    const message = messageData.message || messageData;
+    const directMedia = extractBase64FromPayload(messageData);
+    if (directMedia?.base64) {
+      return directMedia;
+    }
+
+    const key = extractEvolutionKey(messageData);
+    const message = unwrapEvolutionMessage(messageData);
 
     let base64: string | null = null;
     let mimetype = "";
 
-    // Attempt 1: corpo completo da mensagem.
+    const payloadAttempts = [
+      { label: "raw-entry", body: { message: messageData } },
+      { label: "key-message", body: { key, message } },
+      { label: "id-remote", body: { messageId: key?.id, remoteJid: key?.remoteJid, fromMe: key?.fromMe } },
+      { label: "id-only", body: { id: key?.id } },
+    ].filter((attempt: any) => {
+      const body = attempt.body || {};
+      return body.message || body.key || body.messageId || body.id;
+    });
+
+    for (const attempt of payloadAttempts) {
+      try {
+        const mediaRes = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: apiKey },
+          body: JSON.stringify(attempt.body),
+        });
+
+        if (!mediaRes.ok) {
+          const errText = await mediaRes.text();
+          console.error(`[media-fetch] ${attempt.label} failed: ${mediaRes.status} - ${errText}`);
+          continue;
+        }
+
+        const mediaData = await mediaRes.json();
+        const extracted = extractBase64FromPayload(mediaData);
+        if (extracted?.base64) {
+          base64 = extracted.base64;
+          mimetype = extracted.mimetype || detectMimeFromPayload(messageData);
+          break;
+        }
+      } catch (attemptErr) {
+        console.error(`[media-fetch] ${attempt.label} threw:`, attemptErr);
+      }
+    }
+
+    if (!base64) {
+    // Tenta varios formatos aceitos por versoes diferentes da UazAPI/Evolution.
     const mediaRes = await fetch(`${apiUrl}/chat/getBase64FromMediaMessage/${instanceName}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: apiKey },
@@ -3044,6 +3190,30 @@ async function fetchMediaBase64FromUazapi(
         await mediaRes2.text(); // consume body
       }
     }
+    }
+
+    if (!base64 && key?.id) {
+      try {
+        const legacyRes = await fetch(`${apiUrl}/message/getBase64FromMediaMessage/${instanceName}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: apiKey },
+          body: JSON.stringify({ message: { key, message } }),
+        });
+        if (legacyRes.ok) {
+          const legacyData = await legacyRes.json();
+          const extracted = extractBase64FromPayload(legacyData);
+          if (extracted?.base64) {
+            base64 = extracted.base64;
+            mimetype = extracted.mimetype || detectMimeFromPayload(messageData);
+          }
+        } else {
+          const errText = await legacyRes.text();
+          console.error(`[media-fetch] legacy endpoint failed: ${legacyRes.status} - ${errText}`);
+        }
+      } catch (legacyErr) {
+        console.error("[media-fetch] legacy endpoint threw:", legacyErr);
+      }
+    }
 
     if (!base64) {
       console.error("[media-fetch] No base64 returned from UazAPI after all attempts");
@@ -3058,7 +3228,7 @@ async function fetchMediaBase64FromUazapi(
         base64 = base64.slice(comma + 1);
       }
     }
-    return { base64, mimetype };
+    return { base64, mimetype: mimetype || detectMimeFromPayload(messageData) };
   } catch (err) {
     console.error("[media-fetch] UazAPI media fetch error:", err);
     return null;
