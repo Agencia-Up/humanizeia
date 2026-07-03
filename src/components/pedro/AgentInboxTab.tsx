@@ -261,6 +261,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // FASE 1: momento da transferencia IA->vendedor (ai_lead_transfers.confirmed_at) do lead aberto,
   // pra marcar "Atendimento IA" antes e o divisor de transferencia. So no modo Conversas e no Pedro.
   const [transferInfo, setTransferInfo] = useState<{ at: string; toMemberId: string | null } | null>(null);
+  // Modelo B: numero (instancia conectada) do PROPRIO vendedor atribuido, pra o follow-up do lead
+  // do Pedro sair do numero dele (nao do numero da empresa). null = vendedor sem numero conectado.
+  const [sellerSendInstanceId, setSellerSendInstanceId] = useState<string | null>(null);
 
   // Reply
   const [replyText, setReplyText] = useState('');
@@ -449,7 +452,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         .eq('user_id', userId)
         .in('phone', unified ? phoneVariantsBR(selectedLeadPhone) : phoneCandidates(selectedLeadPhone));
 
-      if (selectedLeadInstanceId) {
+      // Modelo Conversas (unified): a conversa com o lead pode estar em VARIOS numeros — o da
+      // empresa (fase IA) e o do PROPRIO vendedor (follow-up). Nao filtramos por instancia pra
+      // trazer a timeline completa; fora do unified, mantem o filtro do inbox do Pedro.
+      if (!unified && selectedLeadInstanceId) {
         inboxQuery = inboxQuery.eq('instance_id', selectedLeadInstanceId);
       }
 
@@ -592,6 +598,25 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     return () => { cancelled = true; };
   }, [unified, selectedLead?.id, selectedLead?.origem]);
 
+  // Modelo B: resolve o numero (instancia conectada) do vendedor atribuido ao lead aberto,
+  // pra o envio manual sair do numero dele. So no modo Conversas.
+  useEffect(() => {
+    const memberId = selectedLead?.assigned_to_id;
+    if (!unified || !memberId) { setSellerSendInstanceId(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('wa_instances')
+        .select('id')
+        .eq('seller_member_id', memberId)
+        .eq('status', 'connected')
+        .limit(1);
+      if (cancelled) return;
+      setSellerSendInstanceId((data && data[0]?.id) || null);
+    })();
+    return () => { cancelled = true; };
+  }, [unified, selectedLead?.id, selectedLead?.assigned_to_id]);
+
   useEffect(() => {
     const recoverable = messages.filter(msg => {
       const mt = (msg.message_type || '').toLowerCase();
@@ -693,6 +718,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   /* ── Resolver instancia vinculada ao lead ────────────────────────── */
   const resolveInstanceId = (): string | null => {
     if (!selectedLead) return null;
+    // Modelo B (Conversas): follow-up do lead do Pedro sai do numero do PROPRIO vendedor quando
+    // ele tem instancia conectada. Marcos ja resolve pela instancia das mensagens dele.
+    if (unified && selectedLead.origem !== 'marcos' && sellerSendInstanceId) {
+      return sellerSendInstanceId;
+    }
     const agentForLead = agents.find(a => a.id === selectedLead.agent_id);
     return selectedLead.instance_id
       || [...messages].reverse().find(m => m.instance_id)?.instance_id
