@@ -337,6 +337,10 @@ export function AppSidebar() {
         {sellerLoading ? null : isSeller ? (
           /* ── SELLER: tudo agrupado em "Agentes" filtrado por visibleFeatures ── */
           <>
+            {/* Conversas — inbox UNIFICADO (Pedro tráfego + Marcos manuais). Ferramenta
+                central do vendedor; visível pra master e vendedor. */}
+            <NavItem collapsed={collapsed} item={{ title: 'Conversas', url: '/conversas', icon: MessageCircle }} />
+
             {(visibleFeatures.sidebar_dashboard || visibleFeatures.sidebar_painel_geral) && (
               <NavGroup label="Painel" collapsed={collapsed}>
                 {visibleFeatures.sidebar_dashboard && (
@@ -385,12 +389,6 @@ export function AppSidebar() {
                 </NavGroup>
               );
             })()}
-
-            {/* WhatsApp — inbox unificado (Pedro tráfego + Marcos manuais). Grupo pra
-                concentrar os recursos de WhatsApp; começa com Conversas. */}
-            <NavGroup label="WhatsApp" collapsed={collapsed}>
-              <NavItem collapsed={collapsed} item={{ title: 'Conversas', url: '/conversas', icon: MessageCircle }} />
-            </NavGroup>
 
             {(() => {
               const sellerSysItems = allSellerSystemItems.filter(i => visibleFeatures[i.featureKey]);
@@ -443,12 +441,6 @@ export function AppSidebar() {
                 <NavItem collapsed={collapsed} item={{ title: 'João E-mail MKT', url: '/joao', icon: Mail }} />
                 <NavItem collapsed={collapsed} item={{ title: 'Daniel Estrategista', url: '/daniel', icon: Brain }} />
               </>}
-            </NavGroup>
-
-            {/* WhatsApp — inbox unificado (Pedro tráfego + Marcos manuais). Grupo pra
-                concentrar os recursos de WhatsApp; começa com Conversas. */}
-            <NavGroup label="WhatsApp" collapsed={collapsed}>
-              <NavItem collapsed={collapsed} item={{ title: 'Conversas', url: '/conversas', icon: MessageCircle }} />
             </NavGroup>
 
             {/* ── Sistema ── */}
