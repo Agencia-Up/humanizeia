@@ -196,7 +196,7 @@ export function useMetaConnection() {
     }
   };
 
-  const startOAuth = async () => {
+  const startOAuth = async (returnPath?: string) => {
     setIsConnecting(true);
     try {
       if (!user?.id) throw new Error('Usuário não autenticado.');
@@ -204,12 +204,14 @@ export function useMetaConnection() {
       const origin = window.location.origin;
       const loginUrl = new URL('/api/meta/login', origin);
       loginUrl.searchParams.set('user_id', user.id);
-      // Volta pra MESMA página de onde o usuário clicou — é onde o
-      // MetaAdsSettingsTab está montado e consome a sessão OAuth (lê
-      // ?meta_oauth_session=). Antes ia fixo p/ /settings, onde esse
-      // componente não existe, então a sessão nunca era consumida e as
-      // contas não apareciam pra selecionar.
-      loginUrl.searchParams.set('return_to', `${origin}${window.location.pathname}`);
+      // Volta pra uma página que TEM o MetaAdsSettingsTab montado — é ele que
+      // consome a sessão OAuth (lê ?meta_oauth_session=) e mostra a seleção de
+      // conta. Por padrão volta pra página atual; quando chamado direto do card
+      // de Integrações (que NÃO consome a sessão), passamos '/integrations/meta'
+      // pra cair na tela certa de seleção. Antes ia fixo p/ /settings, onde esse
+      // componente não existe, então a sessão nunca era consumida e as contas
+      // não apareciam pra selecionar.
+      loginUrl.searchParams.set('return_to', `${origin}${returnPath || window.location.pathname}`);
       window.location.href = loginUrl.toString();
     } catch (err: any) {
       toast({

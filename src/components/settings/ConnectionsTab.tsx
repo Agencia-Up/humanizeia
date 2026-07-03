@@ -795,7 +795,11 @@ export function ConnectionsTab() {
                     <Button
                       size="sm"
                       className="w-full text-xs gradient-primary text-primary-foreground"
-                      onClick={() => setSelectedPlatform(platform.id)}
+                      onClick={() =>
+                        platform.id === 'meta'
+                          ? meta.startOAuth('/integrations/meta') // vai DIRETO pro Facebook (sem tutorial, sem token)
+                          : setSelectedPlatform(platform.id)
+                      }
                       disabled={status === 'connecting'}
                     >
                       {status === 'connecting' ? (
@@ -832,7 +836,7 @@ export function ConnectionsTab() {
       {/* Detail / How-to modal */}
       <Dialog open={!!selectedPlatform} onOpenChange={(open) => !open && setSelectedPlatform(null)}>
         {activePlatform && (
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <div className="flex items-center gap-3 mb-1">
                 <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${activePlatform.iconBg}`}>
