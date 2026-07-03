@@ -151,31 +151,54 @@ async function resolveInstance(service: any, userId: string, phone: string, inst
 }
 
 async function fetchProfilePhoto(instance: any, phone: string): Promise<string | null> {
-  const apiUrl = String(instance?.api_url || "").replace(/\/+$/, "");
-  const apiKey = String(instance?.api_key_encrypted || "");
+  const legacyUazapiToken = Deno.env.get("UAZAPI_API") || Deno.env.get("UAZAPI-API");
+  const envApiUrl =
+    Deno.env.get("UAZAPI_URL") ||
+    Deno.env.get("EVOLUTION_API_URL") ||
+    (legacyUazapiToken ? "https://logosiabrasilcom.uazapi.com" : "");
+  const adminToken =
+    Deno.env.get("UAZAPI_ADMIN_TOKEN") ||
+    legacyUazapiToken ||
+    Deno.env.get("EVOLUTION_API_KEY") ||
+    "";
+
+  const apiUrl = String(envApiUrl || instance?.api_url || "").replace(/\/+$/, "");
+  const instanceToken = String(instance?.api_key_encrypted || "");
   const instanceName = String(instance?.instance_name || "");
   const number = onlyDigits(phone);
-  if (!apiUrl || !apiKey || !instanceName || !number) return null;
+  if (!apiUrl || !instanceName || !number) return null;
 
-  const headers = { "Content-Type": "application/json", apikey: apiKey, token: apiKey };
+  const tokens = Array.from(new Set([adminToken, instanceToken].filter(Boolean)));
+  if (tokens.length === 0) return null;
+
   const attempts = [
     { label: "chat/fetchProfile", url: `${apiUrl}/chat/fetchProfile/${encodeURIComponent(instanceName)}`, body: { number } },
     { label: "contact/find", url: `${apiUrl}/contact/find/${encodeURIComponent(instanceName)}`, body: { numbers: [number] } },
     { label: "chat/fetchContacts", url: `${apiUrl}/chat/fetchContacts/${encodeURIComponent(instanceName)}`, body: { numbers: [number] } },
   ];
 
-  for (const attempt of attempts) {
-    try {
-      const res = await fetch(attempt.url, { method: "POST", headers, body: JSON.stringify(attempt.body) });
-      if (!res.ok) {
-        await res.text();
-        continue;
+  for (const token of tokens) {
+    const headers = {
+      "Content-Type": "application/json",
+      apikey: token,
+      token,
+      admintoken: token,
+      Authorization: `Bearer ${token}`,
+    };
+
+    for (const attempt of attempts) {
+      try {
+        const res = await fetch(attempt.url, { method: "POST", headers, body: JSON.stringify(attempt.body) });
+        if (!res.ok) {
+          await res.text();
+          continue;
+        }
+        const data = await res.json();
+        const url = extractProfilePictureUrl(data);
+        if (url) return url;
+      } catch (err) {
+        console.warn(`[wa-sync-profile-photo] ${attempt.label} failed`, err);
       }
-      const data = await res.json();
-      const url = extractProfilePictureUrl(data);
-      if (url) return url;
-    } catch (err) {
-      console.warn(`[wa-sync-profile-photo] ${attempt.label} failed`, err);
     }
   }
 
