@@ -276,6 +276,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Modelo B: numero (instancia conectada) do PROPRIO vendedor atribuido, pra o follow-up do lead
   // do Pedro sair do numero dele (nao do numero da empresa). null = vendedor sem numero conectado.
   const [sellerSendInstanceId, setSellerSendInstanceId] = useState<string | null>(null);
+  // Se ja terminamos de checar a instancia do vendedor (pra nao mostrar "nao conectado" antes de saber).
+  const [sellerInstanceLoaded, setSellerInstanceLoaded] = useState(false);
 
   // Reply
   const [replyText, setReplyText] = useState('');
@@ -614,8 +616,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // pra o envio manual sair do numero dele. So no modo Conversas.
   useEffect(() => {
     const memberId = selectedLead?.assigned_to_id;
-    if (!unified || !memberId) { setSellerSendInstanceId(null); return; }
+    if (!unified || !memberId) { setSellerSendInstanceId(null); setSellerInstanceLoaded(false); return; }
     let cancelled = false;
+    setSellerInstanceLoaded(false);
     (async () => {
       const { data } = await (supabase as any)
         .from('wa_instances')
@@ -625,6 +628,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         .limit(1);
       if (cancelled) return;
       setSellerSendInstanceId((data && data[0]?.id) || null);
+      setSellerInstanceLoaded(true);
     })();
     return () => { cancelled = true; };
   }, [unified, selectedLead?.id, selectedLead?.assigned_to_id]);
@@ -1081,14 +1085,22 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         <p className="text-[11px] text-[#8696a0] flex items-center justify-center gap-1.5">
           <ArrowRight className="h-3 w-3" /> Transferido{transferSellerName ? ` para ${transferSellerName}` : ''}
         </p>
-        <p className="text-[11px] text-[#8696a0] mt-1">
-          OK do vendedor · {format(new Date(transferInfo.at), "dd/MM 'às' HH:mm", { locale: ptBR })}
+        <p className="text-[11px] text-emerald-300/90 mt-1 flex items-center justify-center gap-1">
+          <CheckCheck className="h-3 w-3" /> Vendedor confirmou (OK) · {format(new Date(transferInfo.at), "dd/MM 'às' HH:mm", { locale: ptBR })}
         </p>
-        <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
-          {firstContactMs != null
-            ? `1º contato do vendedor · ${fmtDur(handoffDelayMs as number)} depois do OK`
-            : `Aguardando 1º contato · ${fmtDur(handoffDelayMs as number)} desde o OK`}
-        </p>
+        {firstContactMs != null ? (
+          <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
+            1º contato do vendedor · {fmtDur(handoffDelayMs as number)} depois do OK
+          </p>
+        ) : (sellerInstanceLoaded && !sellerSendInstanceId) ? (
+          <p className="text-[11px] mt-0.5 text-amber-200/80">
+            Número do vendedor não conectado à Logos — o 1º contato dele não aparece aqui
+          </p>
+        ) : (
+          <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
+            Aguardando 1º contato · {fmtDur(handoffDelayMs as number)} desde o OK
+          </p>
+        )}
       </div>
     </div>
   ) : null;
