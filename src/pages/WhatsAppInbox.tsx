@@ -235,6 +235,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const recordTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordCancelRef  = useRef<(() => void) | null>(null);
   const mediaResolveAttemptsRef = useRef<Set<string>>(new Set());
+  const profilePhotoAttemptsRef = useRef<Set<string>>(new Set());
 
   /* ── Fetch phones dos leads atribuídos ao vendedor ────────────── */
   useEffect(() => {
@@ -551,6 +552,41 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchContactTags(); }, [fetchContactTags, conversations.length]);
   useEffect(() => { fetchTeamMembers(); }, [fetchTeamMembers]);
+
+  useEffect(() => {
+    if (!effectiveUserId || conversations.length === 0) return;
+    const missing = conversations.filter(conv => {
+      const canonical = leadKey(conv.phone);
+      return conv.phone
+        && !contactProfilePictures[conv.phone]
+        && !contactProfilePictures[canonical]
+        && !profilePhotoAttemptsRef.current.has(conv.phone);
+    });
+    if (missing.length === 0) return;
+
+    for (const conv of missing.slice(0, 6)) {
+      profilePhotoAttemptsRef.current.add(conv.phone);
+      supabase.functions.invoke('wa-sync-profile-photo', {
+        body: {
+          user_id: effectiveUserId,
+          phone: conv.phone,
+          instance_id: conv.instance_id,
+        },
+      }).then(({ data, error }) => {
+        const picture = !error && typeof data?.profile_picture_url === 'string'
+          ? data.profile_picture_url
+          : null;
+        if (!picture) return;
+        setContactProfilePictures(prev => ({
+          ...prev,
+          [conv.phone]: picture,
+          [leadKey(conv.phone)]: picture,
+        }));
+      }).catch(() => {
+        // Foto de perfil e melhoria visual: falha aqui nao deve quebrar o inbox.
+      });
+    }
+  }, [effectiveUserId, conversations, contactProfilePictures]);
 
   // Limpa gravação de áudio em andamento se o componente desmontar
   useEffect(() => () => {

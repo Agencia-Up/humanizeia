@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -90,6 +90,12 @@ function fmtTime(iso: string) {
 function initials(name: string | null, phone: string) {
   if (name && name.length >= 2) return name.slice(0, 2).toUpperCase();
   return cleanPhone(phone).slice(-2);
+}
+
+function contactProfilePicture(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const value = (metadata as Record<string, unknown>).profile_picture_url;
+  return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : null;
 }
 
 // Duracao humana curta: "8 min", "2h15", "3 dias". Metrica de tempo ate o 1o contato.
@@ -304,6 +310,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const recordStreamRef = useRef<MediaStream | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordCancelRef = useRef(false);
+  const profilePhotoAttemptsRef = useRef<Set<string>>(new Set());
+  const [leadProfilePictures, setLeadProfilePictures] = useState<Record<string, string>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -440,6 +448,72 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  useEffect(() => {
+    if (!userId || leads.length === 0) return;
+    const phones = Array.from(new Set(leads.map(lead => cleanPhone(lead.remote_jid)).filter(Boolean)));
+    if (phones.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('wa_contacts')
+        .select('phone, metadata')
+        .eq('user_id', userId)
+        .in('phone', phones);
+      if (cancelled) return;
+
+      const next: Record<string, string> = {};
+      for (const c of (data || []) as any[]) {
+        const picture = contactProfilePicture(c.metadata);
+        if (!picture) continue;
+        next[c.phone] = picture;
+        next[phoneCanonical(c.phone)] = picture;
+      }
+      if (Object.keys(next).length > 0) {
+        setLeadProfilePictures(prev => ({ ...prev, ...next }));
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId, leads.length]);
+
+  useEffect(() => {
+    if (!userId || leads.length === 0) return;
+    const missing = leads.filter(lead => {
+      const phone = cleanPhone(lead.remote_jid);
+      const canonical = phoneCanonical(phone);
+      return phone
+        && !leadProfilePictures[phone]
+        && !leadProfilePictures[canonical]
+        && !profilePhotoAttemptsRef.current.has(phone);
+    });
+    if (missing.length === 0) return;
+
+    for (const lead of missing.slice(0, 6)) {
+      const phone = cleanPhone(lead.remote_jid);
+      profilePhotoAttemptsRef.current.add(phone);
+      supabase.functions.invoke('wa-sync-profile-photo', {
+        body: {
+          user_id: userId,
+          phone,
+          instance_id: lead.instance_id,
+        },
+      }).then(({ data, error }) => {
+        const picture = !error && typeof data?.profile_picture_url === 'string'
+          ? data.profile_picture_url
+          : null;
+        if (!picture) return;
+        setLeadProfilePictures(prev => ({
+          ...prev,
+          [phone]: picture,
+          [phoneCanonical(phone)]: picture,
+        }));
+      }).catch(() => {
+        // Foto de perfil e melhoria visual: falha aqui nao deve quebrar o inbox.
+      });
+    }
+  }, [userId, leads, leadProfilePictures]);
 
   useEffect(() => {
     if (!focusLeadId || loadingLeads || leads.length === 0) return;
@@ -1246,6 +1320,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
               filteredLeads.map(lead => {
                 const isSelected = selectedLead?.id === lead.id;
                 const st = statusLabel(lead.status);
+                const phone = cleanPhone(lead.remote_jid);
+                const profilePicture = leadProfilePictures[phone] || leadProfilePictures[phoneCanonical(phone)] || null;
                 return (
                   <button
                     key={lead.id}
@@ -1256,6 +1332,13 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   >
                     <div className="flex items-start gap-2.5">
                       <Avatar className="h-11 w-11 shrink-0">
+                        {profilePicture && (
+                          <AvatarImage
+                            src={profilePicture}
+                            alt={lead.lead_name || lead.remote_jid}
+                            className="object-cover"
+                          />
+                        )}
                         <AvatarFallback className={`text-xs font-bold ${
                           unified
                             ? 'bg-primary/10 text-primary border border-primary/20'
@@ -1351,6 +1434,13 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                 </Button>
 
                 <Avatar className="h-11 w-11 shrink-0">
+                  {(leadProfilePictures[cleanPhone(selectedLead.remote_jid)] || leadProfilePictures[phoneCanonical(selectedLead.remote_jid)]) && (
+                    <AvatarImage
+                      src={leadProfilePictures[cleanPhone(selectedLead.remote_jid)] || leadProfilePictures[phoneCanonical(selectedLead.remote_jid)]}
+                      alt={selectedLead.lead_name || selectedLead.remote_jid}
+                      className="object-cover"
+                    />
+                  )}
                   <AvatarFallback className={`text-xs font-bold ${
                     unified
                       ? 'bg-primary/10 text-primary border border-primary/20'
