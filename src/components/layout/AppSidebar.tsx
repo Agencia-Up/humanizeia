@@ -28,6 +28,7 @@ import {
   GraduationCap,
   Bot,
   ShieldCheck,
+  MessageCircle,
 } from 'lucide-react';
 import { TokenWidgetCompact } from '@/components/subscription/TokenWidget';
 import { LogosIAIcon, LogosIALogo } from '@/components/brand/LogosIALogo';
