@@ -1,44 +1,52 @@
 import { useNavigate } from 'react-router-dom';
+import type { ComponentType } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
-import { useSubscription } from '@/hooks/useSubscription';
+import { PLANS, useSubscription, type PlanId } from '@/hooks/useSubscription';
 import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { motion } from 'framer-motion';
 import {
-  Sparkles, Radar, Users, PenTool, Palette, Send,
-  Layers, Megaphone, Bot, Brain, BarChart3,
-  ArrowRight, Lock, MessageCircle, FileText, Zap,
-  TrendingUp, Mail, Instagram, MessageSquare, Crown,
+  Bot,
+  Brain,
+  CalendarDays,
+  CheckCircle2,
+  Crown,
+  Lock,
+  Mail,
+  MessageCircle,
+  PenTool,
+  Palette,
+  Radar,
+  Sparkles,
+  Users,
+  Zap,
+  ArrowRight,
+  Instagram,
 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { isAgentReleased, COMING_SOON_LABEL } from '@/config/releasedAgents';
-import { FEATURES } from '@/config/features';
 
-// ── Todos os agentes com tier mínimo necessário ─────────────────────────────
-// basico = liberado no Básico, pro = liberado no Pro, enterprise = liberado no Pro Max
 const allAgentsList: Array<{
   name: string;
   role: string;
-  icon: any;
+  icon: ComponentType<{ className?: string }>;
   color: string;
   url: string;
-  desc: string;
-  tier: 'basico' | 'pro' | 'enterprise';
+  tier: PlanId;
   featureKey: keyof VisibleFeatures;
 }> = [
-  { name: 'Pedro',   role: 'SDR & Agente IA',  icon: Bot,      color: '#34d399', url: '/pedro',           desc: 'Qualificação de leads, CRM avançado e automação comercial', tier: 'basico',     featureKey: 'agent_pedro' },
-  { name: 'Marcos',  role: 'CRM & WhatsApp',   icon: Users,    color: '#a855f7', url: '/marcos',          desc: 'CRM, leads e toda estrutura WhatsApp',                      tier: 'pro',        featureKey: 'agent_marcos' },
-  { name: 'José',    role: 'Tráfego Pago',     icon: Radar,    color: '#f97316', url: '/jose',            desc: 'Meta Ads, Google Ads e otimização de campanhas',            tier: 'pro',        featureKey: 'agent_jose' },
-  { name: 'Paulo',   role: 'Copywriter',       icon: PenTool,  color: '#22d3a0', url: '/copywriter',      desc: 'Copies persuasivas geradas por IA',                         tier: 'enterprise', featureKey: 'agent_paulo' },
-  { name: 'Maria',   role: 'Design',           icon: Palette,  color: '#f472b6', url: '/creative-studio', desc: 'Criativos, imagens e vídeos com IA',                        tier: 'enterprise', featureKey: 'agent_maria' },
-  { name: 'Davi',    role: 'Social Media',     icon: Instagram, color: '#60a5fa', url: '/davi',           desc: 'Gestão de redes sociais e conteúdo',                        tier: 'enterprise', featureKey: 'agent_davi' },
-  { name: 'João',    role: 'Email',            icon: Mail,     color: '#a78bfa', url: '/joao',            desc: 'Email marketing e automações',                              tier: 'enterprise', featureKey: 'agent_joao' },
-  { name: 'Daniel',  role: 'Estratégia',       icon: Brain,    color: '#f87171', url: '/daniel',          desc: 'Planejamento e análise estratégica',                        tier: 'enterprise', featureKey: 'agent_daniel' },
+  { name: 'Pedro', role: 'SDR & Agente IA', icon: Bot, color: '#34d399', url: '/pedro', tier: 'basico', featureKey: 'agent_pedro' },
+  { name: 'Marcos', role: 'CRM & WhatsApp', icon: Users, color: '#a855f7', url: '/marcos', tier: 'pro', featureKey: 'agent_marcos' },
+  { name: 'José', role: 'Tráfego Pago', icon: Radar, color: '#f97316', url: '/jose', tier: 'pro', featureKey: 'agent_jose' },
+  { name: 'Paulo', role: 'Copywriter', icon: PenTool, color: '#22d3a0', url: '/copywriter', tier: 'enterprise', featureKey: 'agent_paulo' },
+  { name: 'Maria', role: 'Design', icon: Palette, color: '#f472b6', url: '/creative-studio', tier: 'enterprise', featureKey: 'agent_maria' },
+  { name: 'Davi', role: 'Social Media', icon: Instagram, color: '#60a5fa', url: '/davi', tier: 'enterprise', featureKey: 'agent_davi' },
+  { name: 'João', role: 'Email', icon: Mail, color: '#a78bfa', url: '/joao', tier: 'enterprise', featureKey: 'agent_joao' },
+  { name: 'Daniel', role: 'Estratégia', icon: Brain, color: '#f87171', url: '/daniel', tier: 'enterprise', featureKey: 'agent_daniel' },
 ];
 
-const TIER_ORDER = { basico: 0, pro: 1, enterprise: 2 };
+const TIER_ORDER: Record<PlanId, number> = { basico: 0, pro: 1, enterprise: 2 };
 const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 
 function hasManualAgentRelease(userId: string | undefined, featureKey: keyof VisibleFeatures) {
@@ -49,98 +57,33 @@ function hasManualAgentRelease(userId: string | undefined, featureKey: keyof Vis
   );
 }
 
-// ── Ações Rápidas — o que o usuário faz com mais frequência ──────────────────
-const quickActions = [
-  {
-    label: 'Criar um texto / anúncio',
-    desc: 'Paulo escreve o copy perfeito para você em segundos',
-    icon: FileText,
-    color: 'text-violet-400',
-    bg: 'bg-violet-500/10 border-violet-500/20 hover:border-violet-500/40',
-    url: '/copywriter',
-  },
-  {
-    label: 'Disparar mensagem no WhatsApp',
-    desc: 'Envie campanha em massa para sua lista de contatos',
-    icon: MessageCircle,
-    color: 'text-emerald-400',
-    bg: 'bg-emerald-500/10 border-emerald-500/20 hover:border-emerald-500/40',
-    url: '/whatsapp/broadcast',
-  },
-  {
-    label: 'Ver resultados dos anúncios',
-    desc: 'Métricas do Meta Ads e Google Ads atualizadas',
-    icon: TrendingUp,
-    color: 'text-blue-400',
-    bg: 'bg-blue-500/10 border-blue-500/20 hover:border-blue-500/40',
-    url: '/metrics',
-  },
-  {
-    label: 'Criar conteúdo para redes sociais',
-    desc: 'Davi gera posts, legendas e calendário editorial',
-    icon: Instagram,
-    color: 'text-pink-400',
-    bg: 'bg-pink-500/10 border-pink-500/20 hover:border-pink-500/40',
-    url: '/davi',
-  },
-  {
-    label: 'Ver leads e pipeline de vendas',
-    desc: 'Acompanhe cada lead do primeiro contato ao fechamento',
-    icon: Users,
-    color: 'text-orange-400',
-    bg: 'bg-orange-500/10 border-orange-500/20 hover:border-orange-500/40',
-    url: '/marcos',
-  },
-  {
-    label: 'Montar estratégia de negócio',
-    desc: 'Daniel analisa seu mercado e cria o plano de ação',
-    icon: Zap,
-    color: 'text-amber-400',
-    bg: 'bg-amber-500/10 border-amber-500/20 hover:border-amber-500/40',
-    url: '/daniel',
-  },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ── Mapeamento de ações rápidas por tier ────────────────────────────────────
-const QUICK_ACTION_TIERS: Record<string, 'basico' | 'pro' | 'enterprise'> = {
-  '/copywriter': 'enterprise',
-  '/whatsapp/broadcast': 'pro',
-  '/metrics': 'pro',
-  '/davi': 'enterprise',
-  '/marcos': 'pro',
-  '/daniel': 'enterprise',
-  '/pedro': 'basico',
-};
+function daysUntil(dateIso?: string) {
+  if (!dateIso) return 0;
+  const target = new Date(dateIso).getTime();
+  if (!Number.isFinite(target)) return 0;
+  return Math.max(0, Math.ceil((target - Date.now()) / 86_400_000));
+}
 
 export default function AgentHub() {
   const { user, profile } = useAuth();
   const { isAdmin } = useIsAdmin();
-  const { subscription } = useSubscription();
+  const { subscription, tokensAvailable, tokensTotal } = useSubscription();
   const { isSeller, visibleFeatures } = useSellerProfile(user?.id);
   const navigate = useNavigate();
-  // Mostra exatamente o nome do Perfil (profiles.full_name), igual ao Topbar —
-  // nome completo, sem cortar pra primeira palavra. Fallbacks: nome do cadastro
-  // (auth) e, por fim, o e-mail.
-  const firstName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário';
 
-  // Admin sempre vê tudo; senão usa o plano real do usuário
-  const userTier = isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico');
+  const displayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário';
+  const userTier = (isAdmin ? 'enterprise' : (subscription?.plan_id || 'basico')) as PlanId;
   const userTierLevel = TIER_ORDER[userTier] ?? 0;
+  const planInfo = PLANS[userTier] ?? PLANS.basico;
+  const renewalDays = daysUntil(subscription?.renewal_date);
+  const safeTokensAvailable = Math.max(0, tokensAvailable || 0);
+  const tokenPercent = tokensTotal > 0 ? Math.max(4, Math.min(100, Math.round((safeTokensAvailable / tokensTotal) * 100))) : 100;
 
-  // Filtragem por seller: vendedor só vê os agentes que o master liberou
   const agentsAfterSellerFilter = isSeller
-    ? allAgentsList.filter(a => visibleFeatures[a.featureKey])
+    ? allAgentsList.filter(agent => visibleFeatures[agent.featureKey])
     : allAgentsList;
 
-  // Decisão de produto (27/05/2026): só Pedro e Marcos liberados pra todas as
-  // contas. Demais aparecem visíveis com badge "Em breve" + desabilitados.
-  // A lógica de tier/plano continua sendo respeitada PARA OS LIBERADOS (Pedro/
-  // Marcos seguem precisando do tier mínimo deles), mas qualquer agente fora
-  // da lista RELEASED_AGENTS aparece sempre como locked, independente do tier.
   const hasAgentAccess = (agent: typeof allAgentsList[number]) => {
-    // Se o agente NÃO está na lista de liberados, nunca desbloqueia.
     if (!isAgentReleased(agent.name)) return false;
     if (hasManualAgentRelease(user?.id, agent.featureKey)) return true;
     if (isSeller && visibleFeatures[agent.featureKey]) return true;
@@ -148,175 +91,185 @@ export default function AgentHub() {
   };
 
   const unlockedAgents = agentsAfterSellerFilter.filter(hasAgentAccess);
-  const lockedAgents = agentsAfterSellerFilter.filter(a => !hasAgentAccess(a));
+  const lockedAgents = agentsAfterSellerFilter.filter(agent => !hasAgentAccess(agent));
 
-  // Badge label para cada tier
-  const tierBadge = (tier: string) => tier === 'pro' ? 'Pro' : 'Pro Max';
+  const quickActions = [
+    {
+      label: 'Disparar mensagem no WhatsApp',
+      desc: 'Envie campanha em massa para sua lista de contatos.',
+      icon: MessageCircle,
+      url: '/whatsapp/broadcast',
+      tone: 'green',
+      allowed: userTierLevel >= TIER_ORDER.pro || (isSeller && visibleFeatures.marcos_disparo),
+    },
+    {
+      label: 'Ver leads e pipeline de vendas',
+      desc: 'Acompanhe cada lead do primeiro contato ao fechamento.',
+      icon: Users,
+      url: '/marcos',
+      tone: 'gold',
+      allowed: userTierLevel >= TIER_ORDER.pro || hasManualAgentRelease(user?.id, 'agent_marcos') || (isSeller && visibleFeatures.agent_marcos),
+    },
+  ].filter(action => action.allowed);
+
+  const todayText = new Intl.DateTimeFormat('pt-BR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date());
 
   return (
     <MainLayout>
-      <div className="mx-auto max-w-6xl space-y-10 py-4">
+      <section className="logos-home mx-auto flex w-full max-w-[1360px] flex-col gap-10">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px] xl:items-start">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-3 pt-3"
+          >
+            <h1 className="logos-home-title text-4xl font-black tracking-normal text-foreground md:text-5xl">
+              Oi, <span>{displayName}</span>! <span aria-hidden="true">👋</span>
+            </h1>
+            <p className="max-w-2xl text-base text-muted-foreground">
+              Pronto para acelerar seus resultados? Escolha uma ação ou um agente abaixo.
+            </p>
+          </motion.div>
 
-        {/* ── Saudação ─────────────────────────────────────────────────────── */}
-        <motion.div
-          initial={{ opacity: 0, y: -15 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-1"
-        >
-          <h1 className="text-3xl font-bold tracking-tight lg:text-4xl">
-            Oi, <span className="gradient-text">{firstName}</span>! 👋
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            O que você quer fazer hoje? Escolha uma ação ou um agente abaixo.
-          </p>
-        </motion.div>
+          <motion.aside
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.06 }}
+            className="logos-home-plan-card"
+          >
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              <span>Hoje, {todayText}</span>
+            </div>
+            <div className="mt-5 grid grid-cols-3 divide-x divide-border/50">
+              <div className="pr-5">
+                <Crown className="mb-2 h-5 w-5 text-[var(--brand-gold)]" />
+                <p className="text-xs text-muted-foreground">Plano</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{planInfo.name}</p>
+              </div>
+              <div className="px-5">
+                <p className="text-xs text-muted-foreground">Conversas restantes</p>
+                <p className="mt-2 text-xl font-bold text-emerald-400">{safeTokensAvailable.toLocaleString('pt-BR')}</p>
+                <div className="mt-2 h-1.5 rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${tokenPercent}%` }} />
+                </div>
+              </div>
+              <div className="pl-5">
+                <p className="text-xs text-muted-foreground">Renovação em</p>
+                <p className="mt-2 text-xl font-bold text-primary">{renewalDays} dias</p>
+              </div>
+            </div>
+          </motion.aside>
+        </div>
 
-        {/* ── Ações Rápidas ─────────────────────────────────────────────────── */}
-        {/* FEATURE FLAGS:
-            - googleAdsMetrics/socialMediaContent/businessStrategy: removem
-              individualmente os atalhos /metrics, /davi e /daniel.
-            - Os 3 atalhos permanentes (/copywriter, /whatsapp/broadcast,
-              /marcos) NUNCA são filtrados por flag — devem permanecer
-              visíveis sempre (decisão de produto 27/05/2026).
-            - Por isso a seção NÃO é envolvida por uma flag externa
-              `quickActions`: como ela sempre tem itens visíveis, ela
-              sempre aparece. */}
-        <div>
-          <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-foreground">
-            <Zap className="h-4 w-4 text-primary" />
-            Ações rápidas
-          </h2>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {quickActions.filter(a => {
-              // Filtros por feature flag (oculta os 3 atalhos não-liberados)
-              if (a.url === '/metrics' && !FEATURES.googleAdsMetrics) return false;
-              if (a.url === '/davi' && !FEATURES.socialMediaContent) return false;
-              if (a.url === '/daniel' && !FEATURES.businessStrategy) return false;
-              // Filtro original por tier do plano
-              const actionTier = QUICK_ACTION_TIERS[a.url] || 'basico';
-              if (a.url === '/marcos' && (hasManualAgentRelease(user?.id, 'agent_marcos') || (isSeller && visibleFeatures.agent_marcos))) return true;
-              return userTierLevel >= TIER_ORDER[actionTier];
-            }).map((action, i) => (
+        <section className="space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="flex items-center gap-2 text-xl font-bold text-foreground">
+              <Zap className="h-5 w-5 text-primary" />
+              Ações rápidas
+            </h2>
+            <span className="rounded-full border border-border/70 bg-card/70 px-3 py-1 text-xs text-muted-foreground">
+              Escolha uma ação para começar
+            </span>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {quickActions.map((action, index) => (
               <motion.button
                 key={action.url}
-                initial={{ opacity: 0, y: 16 }}
+                initial={{ opacity: 0, y: 14 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+                transition={{ delay: index * 0.05 }}
                 onClick={() => navigate(action.url)}
-                className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-all ${action.bg}`}
+                className={`logos-home-action logos-home-action-${action.tone}`}
               >
-                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-background/60`}>
-                  <action.icon className={`h-5 w-5 ${action.color}`} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground leading-tight">{action.label}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground leading-tight">{action.desc}</p>
-                </div>
-                <ArrowRight className="ml-auto h-4 w-4 shrink-0 text-muted-foreground/50" />
+                <span className="logos-home-action-icon">
+                  <action.icon className="h-7 w-7" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-lg font-bold text-foreground">{action.label}</span>
+                  <span className="mt-1 block max-w-md text-sm leading-5 text-muted-foreground">{action.desc}</span>
+                </span>
+                <span className="logos-home-action-arrow">
+                  <ArrowRight className="h-5 w-5" />
+                </span>
               </motion.button>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* ── Seus Agentes ────────────────────────────────────────────────── */}
-        <div>
-          <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-foreground">
-            <Sparkles className="h-4 w-4 text-primary" />
-            Seus agentes
-          </h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {/* Agentes desbloqueados */}
-            {unlockedAgents.map((agent, i) => (
-              <motion.div
+        <section className="space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="flex items-center gap-2 text-xl font-bold text-foreground">
+              <Sparkles className="h-5 w-5 text-violet-400" />
+              Seus agentes
+            </h2>
+            <span className="rounded-full border border-border/70 bg-card/70 px-3 py-1 text-xs text-muted-foreground">
+              Selecione um agente para acessar
+            </span>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+            {unlockedAgents.map((agent, index) => (
+              <motion.button
                 key={agent.name}
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-                whileHover={{ scale: 1.04, y: -3 }}
-                whileTap={{ scale: 0.97 }}
+                transition={{ delay: index * 0.04 }}
+                onClick={() => navigate(agent.url)}
+                className="logos-home-agent-card group text-left"
               >
-                <Card
-                  className="relative cursor-pointer border-border/30 bg-card/50 backdrop-blur-sm hover:shadow-lg transition-all h-full group"
-                  onClick={() => navigate(agent.url)}
+                <span
+                  className="logos-home-agent-icon"
+                  style={{
+                    background: `linear-gradient(135deg, ${agent.color}, ${agent.color}cc)`,
+                    boxShadow: `0 18px 42px ${agent.color}24`,
+                  }}
                 >
-                  <CardContent className="flex flex-col items-center text-center gap-3 p-4">
-                    <div
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl transition-transform group-hover:scale-110"
-                      style={{ backgroundColor: `${agent.color}18` }}
-                    >
-                      <agent.icon className="h-6 w-6" style={{ color: agent.color }} />
-                    </div>
-                    <div>
-                      <p className="font-bold text-sm text-foreground">{agent.name}</p>
-                      <p className="text-[11px] text-muted-foreground leading-tight">{agent.role}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
+                  <agent.icon className="h-8 w-8 text-white" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-lg font-bold text-foreground">{agent.name}</span>
+                  <span className="block text-sm text-muted-foreground">{agent.role}</span>
+                </span>
+                <span className="flex w-full items-center justify-between">
+                  <Badge className="border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/10">
+                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                    Ativo
+                  </Badge>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-primary" />
+                </span>
+              </motion.button>
             ))}
 
-            {/* Agentes travados — badge "Em breve" (decisão de produto: só
-                Pedro e Marcos liberados por enquanto, demais aparecem mas
-                desabilitados independente do plano). */}
-            {lockedAgents.map((agent, i) => (
+            {lockedAgents.map((agent, index) => (
               <motion.div
                 key={agent.name}
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: (unlockedAgents.length + i) * 0.04 }}
+                transition={{ delay: (unlockedAgents.length + index) * 0.04 }}
+                className="logos-home-agent-card logos-home-agent-card-locked"
+                aria-disabled="true"
               >
-                <Card
-                  className="relative cursor-not-allowed border-border/20 bg-card/30 backdrop-blur-sm h-full opacity-55 grayscale-[0.4] pointer-events-auto"
-                  title="Agente em breve disponível"
-                  aria-disabled="true"
-                >
-                  <div className="absolute top-2 right-2 z-10">
-                    <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/30 text-[9px] px-2 py-0 font-semibold tracking-wide lowercase">
-                      {COMING_SOON_LABEL}
-                    </Badge>
-                  </div>
-                  <CardContent className="flex flex-col items-center text-center gap-3 p-4">
-                    <div
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl"
-                      style={{ backgroundColor: `${agent.color}10` }}
-                    >
-                      <Lock className="h-5 w-5 text-muted-foreground/50" />
-                    </div>
-                    <div>
-                      <p className="font-bold text-sm text-muted-foreground/70">{agent.name}</p>
-                      <p className="text-[11px] text-muted-foreground/50 leading-tight">{agent.role}</p>
-                    </div>
-                  </CardContent>
-                </Card>
+                <Badge className="absolute right-4 top-4 border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold lowercase text-amber-300 hover:bg-amber-400/10">
+                  {COMING_SOON_LABEL}
+                </Badge>
+                <span className="logos-home-lock">
+                  <Lock className="h-6 w-6" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-lg font-bold text-muted-foreground/75">{agent.name}</span>
+                  <span className="block text-sm text-muted-foreground/55">{agent.role}</span>
+                </span>
               </motion.div>
             ))}
           </div>
-        </div>
-
-        {/* ── Banner de resultados (Pro ou superior) ──────────────────────── */}
-        {/* FEATURE FLAG campaignResults: quando false, banner nao renderiza. */}
-        {FEATURES.campaignResults && userTierLevel >= TIER_ORDER.pro && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            className="flex cursor-pointer items-center gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 transition-all hover:border-primary/40 hover:bg-primary/8"
-            onClick={() => navigate('/metrics')}
-          >
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15">
-              <BarChart3 className="h-5 w-5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-foreground">Ver resultados das campanhas</p>
-              <p className="text-xs text-muted-foreground">Métricas em tempo real — investimento, cliques, leads e muito mais</p>
-            </div>
-            <ArrowRight className="h-4 w-4 shrink-0 text-primary/60" />
-          </motion.div>
-        )}
-
-      </div>
+        </section>
+      </section>
     </MainLayout>
   );
 }

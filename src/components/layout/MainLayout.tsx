@@ -22,6 +22,7 @@ export function MainLayout({ children }: MainLayoutProps) {
   const navigate = useNavigate();
 
   const showBackButton = !NO_BACK_ROUTES.includes(location.pathname);
+  const isAgentHubHome = location.pathname === '/tela-inicial';
 
   // ── HMR safety net ───────────────────────────────────────────────────────
   // If a Radix UI modal was open when HMR fired, the `inert` / `aria-hidden`
@@ -49,7 +50,7 @@ export function MainLayout({ children }: MainLayoutProps) {
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen} open={sidebarOpen} onOpenChange={setSidebarOpen}>
-      <div className="flex h-screen w-full overflow-hidden bg-background">
+      <div className={`flex h-screen w-full overflow-hidden bg-background ${isAgentHubHome ? 'logos-home-layout' : ''}`}>
         <AppSidebar />
         <SidebarInset className="flex flex-1 flex-col overflow-hidden relative">
           
@@ -62,6 +63,8 @@ export function MainLayout({ children }: MainLayoutProps) {
             className={`flex-1 flex flex-col ${
               isFullPageApp
                 ? 'overflow-hidden px-4 pb-2 pt-2 lg:px-6 lg:pb-3 lg:pt-3'
+                : isAgentHubHome
+                ? 'overflow-auto px-4 pb-4 pt-5 lg:px-10 lg:pb-6 lg:pt-7'
                 : 'overflow-auto p-4 lg:p-6'
             }`}
           >
