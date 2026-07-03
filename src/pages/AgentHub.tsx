@@ -1,10 +1,12 @@
 import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useIsAdmin } from '@/hooks/useIsAdmin';
 import { PLANS, useSubscription, type PlanId } from '@/hooks/useSubscription';
 import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
+import { supabase } from '@/integrations/supabase/client';
 import { motion } from 'framer-motion';
 import {
   Bot,
@@ -48,6 +50,7 @@ const allAgentsList: Array<{
 
 const TIER_ORDER: Record<PlanId, number> = { basico: 0, pro: 1, enterprise: 2 };
 const BRUNO_LIRA_USER_ID = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+const UNLIMITED_AT = 999999;
 
 function hasManualAgentRelease(userId: string | undefined, featureKey: keyof VisibleFeatures) {
   return userId === BRUNO_LIRA_USER_ID && (
@@ -64,11 +67,42 @@ function daysUntil(dateIso?: string) {
   return Math.max(0, Math.ceil((target - Date.now()) / 86_400_000));
 }
 
+function fmt(n: number) {
+  return n.toLocaleString('pt-BR');
+}
+
+function useSaldoOpenAI(enabled: boolean) {
+  const [saldo, setSaldo] = useState<any>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setSaldo(null);
+      return;
+    }
+
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await (supabase as any).rpc('cliente_saldo_ia');
+        if (alive) setSaldo(data || null);
+      } catch {
+        if (alive) setSaldo(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [enabled]);
+
+  return saldo;
+}
+
 export default function AgentHub() {
   const { user, profile } = useAuth();
   const { isAdmin } = useIsAdmin();
   const { subscription, tokensAvailable, tokensTotal } = useSubscription();
-  const { isSeller, visibleFeatures } = useSellerProfile(user?.id);
+  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   const navigate = useNavigate();
 
   const displayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário';
@@ -77,7 +111,28 @@ export default function AgentHub() {
   const planInfo = PLANS[userTier] ?? PLANS.basico;
   const renewalDays = daysUntil(subscription?.renewal_date);
   const safeTokensAvailable = Math.max(0, tokensAvailable || 0);
-  const tokenPercent = tokensTotal > 0 ? Math.max(4, Math.min(100, Math.round((safeTokensAvailable / tokensTotal) * 100))) : 100;
+  const saldo = useSaldoOpenAI(!sellerLoading && !isSeller && !!subscription);
+  const hasSaldo = !!saldo?.tem_saldo;
+  const conversasRestantes = hasSaldo ? Math.max(0, Number(saldo.conversas_restantes ?? 0)) : 0;
+  const conversasTotal = hasSaldo ? Math.max(0, Number(saldo.conversas_total ?? 0)) : 0;
+  const isUnlimited = (subscription?.tokens_included ?? 0) >= UNLIMITED_AT;
+  const conversationDisplay = hasSaldo
+    ? fmt(conversasRestantes)
+    : isUnlimited
+    ? 'Ilimitado'
+    : fmt(safeTokensAvailable);
+  const conversationHint = hasSaldo
+    ? `${fmt(conversasTotal)} adicionadas pelo saldo`
+    : isUnlimited
+    ? 'sua chave de IA'
+    : 'no ciclo atual';
+  const tokenPercent = hasSaldo
+    ? (conversasTotal > 0 ? Math.max(4, Math.min(100, Math.round((conversasRestantes / conversasTotal) * 100))) : 100)
+    : isUnlimited
+    ? 100
+    : tokensTotal > 0
+    ? Math.max(4, Math.min(100, Math.round((safeTokensAvailable / tokensTotal) * 100)))
+    : 100;
 
   const agentsAfterSellerFilter = isSeller
     ? allAgentsList.filter(agent => visibleFeatures[agent.featureKey])
@@ -153,7 +208,8 @@ export default function AgentHub() {
               </div>
               <div className="px-5">
                 <p className="text-xs text-muted-foreground">Conversas restantes</p>
-                <p className="mt-2 text-xl font-bold text-emerald-400">{safeTokensAvailable.toLocaleString('pt-BR')}</p>
+                <p className="mt-2 text-xl font-bold text-emerald-400">{conversationDisplay}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{conversationHint}</p>
                 <div className="mt-2 h-1.5 rounded-full bg-muted">
                   <div className="h-full rounded-full bg-emerald-400" style={{ width: `${tokenPercent}%` }} />
                 </div>
