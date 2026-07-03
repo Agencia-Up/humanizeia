@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { PostgresPersistence } from "../adapters/persistence/postgres-store.ts";
 import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-database.ts";
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
-import { PilotActiveRoot } from "../engine/pilot-active-root.ts";
+import { PilotActiveRoot, type PilotBrainMode } from "../engine/pilot-active-root.ts";
 import { ingestPilotMessage } from "../engine/pilot-ingest.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
+import { OpenAiAgentBrain } from "../adapters/llm/openai-agent-brain.ts";
+import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
 import { resolveTenantOpenAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
 import { DebouncePoller } from "./debounce-poller.ts";
@@ -35,6 +37,15 @@ const PILOT_TURN_LIMITS = {
 } as const;
 
 const MAX_REQUEST_BYTES = 32 * 1024;
+
+const CENTRAL_BRAIN_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] as const;
+
+// R13-D/4: modo do cérebro do piloto (default OFF). central_active só vale dentro do escopo do piloto (Douglas),
+// que o próprio runtime já garante (PEDRO_V3_PILOT_TENANT_ID). Rollback imediato = voltar a env p/ off.
+function resolveBrainMode(): PilotBrainMode {
+  const value = process.env.PEDRO_V3_BRAIN_MODE?.trim();
+  return value === "central_active" || value === "central_shadow" ? value : "off";
+}
 
 class RuntimeConfigError extends Error {
   constructor(public readonly code: string) {
@@ -163,6 +174,15 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       maxResponseBytes: 4 * 1024 * 1024,
     });
     const openAiSecret = await resolveTenantOpenAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID });
+    const brainMode = resolveBrainMode();
+    // R13-D/4: AgentBrain REAL (OpenAI) só é fabricado quando o modo pede. Planner em temp baixa (0.2). Segredo por
+    // tenant (mesmo openAiSecret do compose); prompt integral vai no system do brain (prova por SHA no adapter).
+    const agentBrainFactory = brainMode !== "off"
+      ? (config: TenantRuntimeConfig) => new OpenAiAgentBrain(openAiSecret, new FetchModelHttpTransport(), config.promptText, {
+          model: this.#modelOverride, temperature: 0.2, maxCompletionTokens: 1_200, timeoutMs: 45_000,
+          allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
+        })
+      : undefined;
     return PilotActiveRoot.create({
       mode: "active",
       tenantId: PEDRO_V3_PILOT_TENANT_ID,
@@ -184,6 +204,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }),
       whatsappTransport: new FetchUazapiHttpTransport(),
       allowedUazapiHosts: this.#allowedUazapiHosts,
+      brainMode,
+      agentBrainFactory,
     });
   }
 
@@ -267,7 +289,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(JSON.stringify({ event: "pedro_v3_service_started", port, mode: "pilot" }));
+  console.log(JSON.stringify({ event: "pedro_v3_service_started", port, mode: "pilot", brainMode: resolveBrainMode() }));
 });
 
 // F2.7.6: poller de debounce — processa as conversas que ja assentaram (quietas >= debounce

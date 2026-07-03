@@ -1,4 +1,5 @@
 import type { ConversationState } from "../../domain/conversation-state.ts";
+import type { PersistedWorkingMemory } from "../../domain/agent-brain.ts";
 import type { EffectResult, TurnDecision } from "../../domain/decision.ts";
 import type { DatabaseRow, V3DatabaseGateway } from "../../domain/database-gateway.ts";
 import type {
@@ -566,6 +567,38 @@ export class PostgresPersistence implements Persistence, ConversationRoutingStor
     }
     return decodeOutbox(row as DatabaseRow);
   }
+  // R13-D/1 (audit Codex): promoção accepted-safe da WorkingMemory via RPC dedicada. Envia SOMENTE a WorkingMemory
+  // (NUNCA o ConversationState completo); a RPC carrega o estado e atualiza só workingMemory/appliedAcceptedEffectIds/
+  // version/updatedAt (preserva o resto). Resposta validada FAIL-CLOSED.
+  async commitWorkingMemoryOutcome(
+    conversationId: Id,
+    effectId: Id,
+    expectedVersion: number,
+    nextWorkingMemory: PersistedWorkingMemory,
+    at: string,
+  ): Promise<{ ok: true; applied: boolean; version: number } | { ok: false; reason: string }> {
+    try {
+      const data = await this.gateway.rpc<JsonValue>("v3_commit_working_memory_outcome", {
+        p_tenant_id: this.config.tenantId,
+        p_conversation_id: conversationId,
+        p_effect_id: effectId,
+        p_expected_version: expectedVersion,
+        p_next_working_memory: jsonValue(nextWorkingMemory),
+        p_now: at,
+      });
+      if (!Array.isArray(data) || data.length !== 1) return { ok: false, reason: "wm_outcome_rpc_response_invalid" };
+      const item = data[0];
+      if (item == null || Array.isArray(item) || typeof item !== "object") return { ok: false, reason: "wm_outcome_rpc_row_invalid" };
+      const row = item as DatabaseRow;
+      const version = requiredNumber(row, "state_version");
+      const applied = row.applied;
+      if (typeof applied !== "boolean") return { ok: false, reason: "wm_outcome_applied_invalid" };
+      return { ok: true, applied, version };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   begin(context: UnitOfWorkContext = {}): UnitOfWork {
     return new PostgresTurnUnitOfWork(this.gateway, this.config, context);
   }

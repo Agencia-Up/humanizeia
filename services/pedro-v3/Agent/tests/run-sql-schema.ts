@@ -138,6 +138,11 @@ async function main(): Promise<void> {
   await db.exec(f2714PatchSql);
   check("patch F2.7.14 (objetivo SDR accepted-safe) executa integralmente em PostgreSQL", true);
 
+  const r13dWmPatchUrl = new URL("../../Brain/sql/v3_r13d_wm_outcome_patch.sql", import.meta.url);
+  const r13dWmPatchSql = await readFile(r13dWmPatchUrl, "utf8");
+  await db.exec(r13dWmPatchSql);
+  check("patch R13-D (WM outcome accepted-safe) executa integralmente em PostgreSQL", true);
+
   // F2.7.4-A: a FONTE UNICA (v3_required_receipt_level) — usada pela coluna gerada, pelo check e pelo RPC.
   const reqLevel = async (kind: string, onSuccess: unknown[]): Promise<string> => {
     const r = await db.query<{ r: string }>(
@@ -237,6 +242,53 @@ async function main(): Promise<void> {
       && finalRpc.rows[0].outcome_applied_at !== null
       && Number(finalRpc.rows[0].version) === 1,
     JSON.stringify(finalRpc.rows[0]));
+
+  // R13-D/1 (audit Codex): v3_commit_working_memory_outcome — recebe SÓ a WorkingMemory; atualiza só workingMemory/
+  // appliedAcceptedEffectIds/version/updatedAt; PRESERVA byte-a-byte o resto; idempotente; exige receipt accepted|delivered.
+  await db.query(
+    `insert into public.v3_conversation_state (conversation_id, tenant_id, agent_id, schema_version, version, state)
+     values ('wa:r13dwm', $1::uuid, 'agent-x', 1, 0,
+       jsonb_build_object('conversationId','wa:r13dwm','tenantId',$1::text,'agentId','agent-x','schemaVersion',1,'version',0,
+         'recentTurns','[]'::jsonb, 'workingMemory', jsonb_build_object('schemaVersion',1), 'appliedAcceptedEffectIds','[]'::jsonb,
+         'slots', jsonb_build_object('nome', jsonb_build_object('status','known','value','Douglas')),
+         'photoLedger', jsonb_build_object('sentByVehicle','{}'::jsonb), 'preservedMarker','KEEP-ME'))`,
+    [T2],
+  );
+  await db.query(
+    `insert into public.v3_effect_outbox (effect_id, idempotency_key, tenant_id, conversation_id, turn_id, plan_id, kind, payload, on_success, effect_order, status, receipt_level)
+     values ('r13dwm:media','r13dwm:media',$1::uuid,'wa:r13dwm','r13dwm','media','send_media','{"__redacted":true,"vehicleKey":"rm:1"}'::jsonb,'[{"op":"mark_photos_sent"}]'::jsonb,1,'succeeded','accepted')`, [T2]);
+  await db.query(
+    `insert into public.v3_effect_outbox (effect_id, idempotency_key, tenant_id, conversation_id, turn_id, plan_id, kind, payload, on_success, effect_order, status, receipt_level)
+     values ('r13dwm:msg','r13dwm:msg',$1::uuid,'wa:r13dwm','r13dwm','msg','send_message','{"__redacted":true,"text":"oi"}'::jsonb,'[{"op":"append_assistant_turn"}]'::jsonb,0,'succeeded','accepted')`, [T2]);
+  await db.query(
+    `insert into public.v3_effect_outbox (effect_id, idempotency_key, tenant_id, conversation_id, turn_id, plan_id, kind, payload, on_success, effect_order, status, receipt_level)
+     values ('r13dwm:pending','r13dwm:pending',$1::uuid,'wa:r13dwm','r13dwm','pending','send_media','{"__redacted":true,"vehicleKey":"rm:2"}'::jsonb,'[{"op":"mark_photos_sent"}]'::jsonb,2,'pending',null)`, [T2]);
+  // wmNext = SOMENTE a WorkingMemory (não o estado completo).
+  const wmNext = JSON.stringify({ schemaVersion: 1, lastPhotoAction: { vehicleKey: "rm:1", label: "Nissan Kicks 2018", photoIds: ["k1"], effectId: "r13dwm:media", sourceTurnId: "r13dwm", sourceTurnNumber: 1, acceptedAt: NOW } });
+  const wmRpc = (effect: string, ver: number, tenant = T2) => db.query<{ state_version: bigint; applied: boolean }>(
+    `select * from public.v3_commit_working_memory_outcome($1::uuid,'wa:r13dwm',$4,$2,$3::jsonb,$5::timestamptz)`, [tenant, ver, wmNext, effect, NOW]);
+  // (i) conflito de versão (efeito ainda não aplicado) -> applied=false, sem escrita.
+  const wmStale = await wmRpc("r13dwm:media", 9);
+  check("R13-D WM RPC conflito de versão -> applied=false (sem escrita)", wmStale.rows[0].applied === false && Number(wmStale.rows[0].state_version) === 0);
+  // (ii) aplica accepted -> applied=true, version bump.
+  const wm1 = await wmRpc("r13dwm:media", 0);
+  check("R13-D WM RPC aplica accepted (applied + version bump)", wm1.rows[0].applied === true && Number(wm1.rows[0].state_version) === 1, JSON.stringify(wm1.rows[0]));
+  // (iii) BYTE-PRESERVE: WM atualizada + appliedAcceptedEffectIds append server-side + demais campos INTACTOS.
+  const preserved = await db.query<{ label: string | null; marker: string | null; nome: string | null; ids: unknown }>(
+    `select state->'workingMemory'->'lastPhotoAction'->>'label' as label, state->>'preservedMarker' as marker,
+            state->'slots'->'nome'->>'value' as nome, state->'appliedAcceptedEffectIds' as ids
+     from public.v3_conversation_state where tenant_id=$1::uuid and conversation_id='wa:r13dwm'`, [T2]);
+  check("R13-D WM atualizada + appliedAcceptedEffectIds append server-side + resto PRESERVADO byte-a-byte",
+    preserved.rows[0].label === "Nissan Kicks 2018" && preserved.rows[0].marker === "KEEP-ME" && preserved.rows[0].nome === "Douglas" && JSON.stringify(preserved.rows[0].ids).includes("r13dwm:media"), JSON.stringify(preserved.rows[0]));
+  // (iv) DUPLICADO -> NO-OP idempotente (mesmo effect, versão correta) -> applied=false, versão inalterada.
+  const wmDup = await wmRpc("r13dwm:media", 1);
+  check("R13-D WM RPC duplicado -> NO-OP (applied=false, versão inalterada)", wmDup.rows[0].applied === false && Number(wmDup.rows[0].state_version) === 1);
+  // (v) efeito não-aceito (send_media pending, sem receipt) -> rejeita.
+  await expectReject("R13-D WM RPC rejeita send_media sem receipt (não-aceito)", () => wmRpc("r13dwm:pending", 1), "v3_wm_effect_not_accepted");
+  // (vi) kind guard (send_message) -> rejeita.
+  await expectReject("R13-D WM RPC rejeita efeito não-send_media (kind guard)", () => wmRpc("r13dwm:msg", 1), "v3_wm_effect_kind_invalid");
+  // (vii) cross-tenant -> efeito não encontrado.
+  await expectReject("R13-D WM RPC cross-tenant falha fechado (efeito não encontrado)", () => wmRpc("r13dwm:media", 1, TENANT), "v3_wm_effect_not_found");
 
   await db.query("insert into auth.users(id) values ($1::uuid)", [TENANT]);
 

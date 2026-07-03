@@ -208,6 +208,9 @@ export type RealAssembly = {
   readonly retryTransport: RetryingModelHttpTransport; // Seção 9: retries/backoff do transporte do agente
   readonly judgeRetryTransport: RetryingModelHttpTransport; // idem p/ o judge
   readonly chat: (system: string, user: string) => Promise<string>;
+  // R13 Inc2/G: exposto p/ o AgentBrain REAL (central-real-harness) materializar a chave no seu próprio transporte
+  // contador (prova de chamada + prompt integral do brain), sem re-resolver a chave.
+  readonly openAiSecret: OpenAiRuntimeSecret;
 };
 
 export async function buildRealAssembly(clock: { now(): string }): Promise<RealAssembly> {
@@ -276,7 +279,7 @@ export async function buildRealAssembly(clock: { now(): string }): Promise<RealA
     try { return (JSON.parse(res.bodyText)?.choices?.[0]?.message?.content as string) ?? "{}"; } catch { return "{}"; }
   });
 
-  return { ref, runtimeConfig, portalPrompt: runtimeConfig.promptText, promptSha: transport.promptSha, llm, runQuery, contextPreparer, sdrPolicy, transport, retryTransport, judgeRetryTransport: judgeTransport, chat };
+  return { ref, runtimeConfig, portalPrompt: runtimeConfig.promptText, promptSha: transport.promptSha, llm, runQuery, contextPreparer, sdrPolicy, transport, retryTransport, judgeRetryTransport: judgeTransport, chat, openAiSecret };
 }
 
 // ── Sanitização (nunca vaza chave/prompt/telefone/CPF/dado pessoal) ──────────

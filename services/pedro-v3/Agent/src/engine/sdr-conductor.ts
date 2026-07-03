@@ -1,4 +1,4 @@
-import type { ConversationState } from "../domain/conversation-state.ts";
+import type { ConversationState, PendingObjective } from "../domain/conversation-state.ts";
 import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
 import type { AnswerKind, ObjectiveType, SlotName } from "../domain/types.ts";
 import type { TurnDecision, ResponseDraft, ResponsePart, TurnInterpretation } from "../domain/decision.ts";
@@ -152,6 +152,43 @@ export function deriveSdrQualification(
   return { knownSlots, missingSlots, nextSlot, readyForHandoff: missingSlots.length === 0 };
 }
 
+// ── R12-B: DEFERIMENTO DE SLOT (fonte única de "qual a próxima pergunta do funil, deferindo/avançando") ──────
+// Problema: o lead ignora uma pergunta do funil (ex.: nome) e traz intenção comercial; o funil quer REPERGUNTAR
+// o mesmo slot -> fixação. Regra: adiar o slot pendente e, no encontro seguinte, AVANÇAR para outro slot.
+// DEFER_LIMIT=1 é deliberado: mantém `deferrals` < 2 (sem OBJECTIVE_STARVED) e o mesmo slot < 3x seguidas
+// (sem SLOT_FIXATION), dando ao lead 1 turno extra para responder naturalmente antes de o funil seguir.
+// Função PURA e determinística consumida por conductDecision (guidance), reconcile (mutações), applySdrConduction
+// (legado) e adjustDraftSafeguards (backstop) — TODOS os caminhos usam a MESMA decisão (sem `if` por frase).
+const DEFER_LIMIT = 1;
+
+export type FunnelNextDecision = {
+  readonly kind: "normal" | "defer" | "advance";
+  readonly nextSlot: SdrQualificationSlot | null;      // slot a perguntar (null = não empurrar pergunta de funil)
+  readonly deferredSlot: SdrQualificationSlot | null;  // slot que NÃO deve ser reperguntado agora
+  readonly deferObjectiveId: string | null;            // emitir defer_objective (conta o deferimento)
+  readonly supersedeObjectiveId: string | null;        // emitir supersede_objective (avançou p/ outro slot)
+};
+
+export function decideFunnelNext(state: ConversationState, policy: SdrQualificationPolicy): FunnelNextDecision {
+  const view = deriveSdrQualification(state, policy);
+  const obj = state.currentObjective;
+  const pending: (PendingObjective & { slot: SdrQualificationSlot }) | null =
+    obj?.status === "pending" && obj.slot != null && obj.slot !== "cpf"
+      ? (obj as PendingObjective & { slot: SdrQualificationSlot })
+      : null;
+  // Sem pendente, ou o pendente já foi respondido, ou o funil já seguiu naturalmente -> fluxo normal.
+  if (!pending || slotResolved(state, pending.slot) || view.nextSlot !== pending.slot) {
+    return { kind: "normal", nextSlot: view.nextSlot, deferredSlot: null, deferObjectiveId: null, supersedeObjectiveId: null };
+  }
+  // O funil quer REPERGUNTAR o slot pendente (não respondido) -> deferir ou avançar.
+  const deferrals = pending.deferrals ?? 0;
+  const nextDifferent = view.missingSlots.find((s) => s !== pending.slot && slotApplicable(state, s)) ?? null;
+  if (deferrals >= DEFER_LIMIT && nextDifferent) {
+    return { kind: "advance", nextSlot: nextDifferent, deferredSlot: pending.slot, deferObjectiveId: null, supersedeObjectiveId: pending.id };
+  }
+  return { kind: "defer", nextSlot: null, deferredSlot: pending.slot, deferObjectiveId: pending.id, supersedeObjectiveId: null };
+}
+
 function objectiveType(slot: SdrQualificationSlot): ObjectiveType {
   if (["formaPagamento", "entrada", "parcelaDesejada"].includes(slot)) return "perguntou_pagamento";
   if (["possuiTroca", "veiculoTroca"].includes(slot)) return "perguntou_troca";
@@ -221,11 +258,12 @@ export function applySdrConduction(args: {
   // naturalmente, NÃO reescrever com a pergunta hardcoded. Até o limite: DEFERE (responde o assunto atual,
   // mantém o objetivo pendente, conta o deferimento — sem nagging). No limite: AVANÇA para o próximo slot
   // faltante DIFERENTE (não fica preso). Se o LLM repergunta (preservePortalQuestion), é decisão do prompt.
-  const MAX_DEFERRALS = 2;
+  // R12-B: usa o MESMO DEFER_LIMIT do caminho moderno (defere 1x, depois avança) — mantém `deferrals` < 2
+  // (sem OBJECTIVE_STARVED) e não reativa a pergunta antiga além do limite, unificando legado e moderno.
   let supersedeOldId: string | null = null;
   if (!preservePortalQuestion && pendingSlot != null && pendingSlot === selectedSlot) {
     const deferrals = state.currentObjective?.deferrals ?? 0;
-    if (deferrals < MAX_DEFERRALS) {
+    if (deferrals < DEFER_LIMIT) {
       const objId = state.currentObjective?.id;
       return objId
         ? { ...contextualOutput, decision: { ...contextualOutput.decision, decisionMutations: [...contextualOutput.decision.decisionMutations, { op: "defer_objective", objectiveId: objId }] } }
@@ -315,9 +353,13 @@ export function conductDecision(args: {
   if (decision.action === "clarify" || /clarif|ask_which|ambig|which_vehicle/.test(decision.reasonCode)) return decision;
 
   const view = deriveSdrQualification(state, policy);
-  const nextQuestion = view.nextSlot ? (policy.questions[view.nextSlot] ?? DEFAULT_QUESTIONS[view.nextSlot]) : null;
+  // R12-B: a PRÓXIMA pergunta vem de decideFunnelNext (defere o slot que o lead ignorou / avança após o limite),
+  // não mais de view.nextSlot cru — assim o frame nunca guia o LLM a reperguntar o slot deferido.
+  const funnel = decideFunnelNext(state, policy);
+  const nextQuestion = funnel.nextSlot ? (policy.questions[funnel.nextSlot] ?? DEFAULT_QUESTIONS[funnel.nextSlot]) : null;
   const frame = buildSdrConductionFrame({
-    state, leadMessage, interpretation, view, nextQuestion,
+    state, leadMessage, interpretation, view,
+    nextSlot: funnel.nextSlot, nextQuestion, deferredSlot: funnel.deferredSlot,
     reasonCode: decision.reasonCode, isFirstContact: needsInitialIntroduction(state),
   });
   return withConductionGuidance(decision, frame.composeGuidance);
@@ -340,13 +382,22 @@ export function reconcileObjectiveWithQuestion(args: {
   readonly composedText: string;
   readonly state: ConversationState;
   readonly turnId: string;
+  readonly policy: SdrQualificationPolicy;
 }): TurnDecision {
-  const { composedText, state, turnId } = args;
+  const { composedText, state, turnId, policy } = args;
   const stripped = stripAllObjectiveMutations(args.decision);
   if (stripped.action === "no_op") return stripped;
   if (stripped.action === "clarify" || /clarif|ask_which|ambig|which_vehicle/.test(stripped.reasonCode)) return stripped;
   const asked = slotQuestions(composedText).filter((s) => s !== "cpf");
-  if (asked.length === 0) return stripped; // 0 perguntas -> sem objetivo novo (pendente segue pendente)
+  if (asked.length === 0) {
+    // R12-B: nenhuma pergunta -> NÃO cria objetivo artificial (invariante 6). Mas, se o funil queria o slot
+    // pendente e o lead o IGNOROU (trouxe outra coisa), CONTA o deferimento; passado o limite, SUPERSEDE (avança)
+    // para não travar. Sem isso, o pendente ficava vivo e o LLM voltava a repergunta-lo -> fixação.
+    const funnel = decideFunnelNext(state, policy);
+    if (funnel.deferObjectiveId) return { ...stripped, decisionMutations: [...stripped.decisionMutations, { op: "defer_objective", objectiveId: funnel.deferObjectiveId }] };
+    if (funnel.supersedeObjectiveId) return { ...stripped, decisionMutations: [...stripped.decisionMutations, { op: "supersede_objective", objectiveId: funnel.supersedeObjectiveId }] };
+    return stripped;
+  }
   const slot = asked[0] as SdrQualificationSlot;
   if (slotResolved(state, slot)) return stripped; // slot já conhecido -> não cria (a policy deveria ter negado)
   const pending = state.currentObjective?.status === "pending" && state.currentObjective.slot !== "cpf" ? state.currentObjective : null;
@@ -354,7 +405,11 @@ export function reconcileObjectiveWithQuestion(args: {
     id: `${turnId}:sdr:${slot}`, type: objectiveType(slot), slot, plannedInTurnId: turnId, expectedAnswerKinds: expectedAnswerKinds(slot),
   });
   if (!withObj) return stripped;
-  const decisionMutations = (pending && pending.slot !== slot)
+  // R12-B: só SUPERSEDE o pendente anterior se ele for DIFERENTE **e ainda não respondido**. Se o lead acabou de
+  // respondê-lo (o lead-extraction emite resolve_objective=satisfied), NÃO supersede — senão sobrescreveria
+  // "satisfied" por "superseded" no mesmo turno em que o agente já avança para a próxima pergunta.
+  const pendingSlotName = pending?.slot as SdrQualificationSlot | undefined;
+  const decisionMutations = (pending && pendingSlotName != null && pendingSlotName !== slot && !slotResolved(state, pendingSlotName))
     ? [{ op: "supersede_objective" as const, objectiveId: pending.id }, ...withObj.decisionMutations]
     : withObj.decisionMutations;
   return { ...withObj, decisionMutations };
@@ -399,6 +454,31 @@ export function adjustDraftSafeguards(draft: ResponseDraft, state: ConversationS
     const name = normalizeText(policy.agentName);
     const hasName = name.length > 0 && parts.some((p) => p.type === "text" && normalizeText(p.content).includes(name));
     if (!hasName) parts = [{ type: "text", content: policy.introductionText }, ...parts];
+  }
+  // (1.5) R12-B backstop determinístico do DEFERIMENTO: se o LLM insistir em perguntar o slot que decideFunnelNext
+  // mandou DEFERIR (o lead ignorou e trouxe outra coisa), corrige o DRAFT antes de renderizar — DEFERE (remove a
+  // pergunta, mantendo a resposta à intenção) ou AVANÇA (troca pela próxima pergunta). MESMA decisão do frame/
+  // reconcile (fonte única = decideFunnelNext). Garante SLOT_FIXATION=0 mesmo se o LLM ignorar a guidance.
+  {
+    const funnel = decideFunnelNext(state, policy);
+    if (funnel.deferredSlot) {
+      let qi = -1;
+      for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; if (p.type === "text" && trailingQuestion(p.content) != null) { qi = i; break; } }
+      if (qi >= 0) {
+        const content = (parts[qi] as Extract<ResponsePart, { type: "text" }>).content;
+        const q = trailingQuestion(content);
+        const askedSlot = q ? classifyConfiguredQuestion(q) : null;
+        if (q && askedSlot === funnel.deferredSlot) {
+          const prefix = content.slice(0, content.lastIndexOf(q)).trimEnd();
+          const replacement = funnel.nextSlot ? (policy.questions[funnel.nextSlot] ?? DEFAULT_QUESTIONS[funnel.nextSlot]) : "";
+          const newContent = replacement ? (prefix ? `${prefix} ${replacement}` : replacement) : prefix;
+          const hasOtherContent = parts.some((pp, i) => i !== qi && (pp.type !== "text" || pp.content.trim().length > 0));
+          // Só corrige se sobrar conteúdo (nunca produz mensagem vazia): senão deixa passar (caso degenerado raro).
+          if (newContent.trim().length > 0) parts = parts.map((pp, i) => (i === qi ? { type: "text" as const, content: newContent } : pp));
+          else if (hasOtherContent) parts = parts.filter((_, i) => i !== qi);
+        }
+      }
+    }
   }
   // (2) anti-SLOT_FIXATION: a ÚLTIMA TextPart que é pergunta de slot repetida 3x -> troca pelo próximo faltante.
   let idx = -1;

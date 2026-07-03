@@ -967,3 +967,175 @@ Entregue `Agent/eval/` — CLI `PEDRO_V3_REAL_EVAL=1 npm run eval:conversation:r
 
 ### CORREÇÃO DA AUDITORIA CODEX (2ª rodada, 2026-07-01) — baseline refeito
 O Codex reprovou o baseline acima: **P0 = o harness não simulava o receipt `accepted`** → **amnésia artificial** (`append_assistant_turn`/`activate_objective` nunca aplicavam). **RC1 (laço do nome) era ARTEFATO do harness, não bug do agente.** Corrigido (9 itens; detalhe no handoff §"AUDITORIA CODEX"): ciclo `claimOutbox`+`commitEffectOutcome` REAIS com `accepted` sintético (sem despachar; `commitEffectOutcome` **exige** claim antes); modos `pilot-realistic`/`ideal-delivered`; **teste offline `tests/run-f2-7-18-eval-receipt-cycle.ts` (14/14, DENTRO do `test:all`)** prova o ciclo; grounding por turno (sem `allReturnedKeys` global); RC1 exige resposta COMPATÍVEL+interrogativa; novos `SLOT_FIXATION`/`HALLUCINATED_VEHICLE`; judge com prompt real em memória; **prova de prompt por SHA-256 integral**; `replay_v2`→`synthetic_v2_incident`. **Rerun final: 206 chamadas (204 2xx), prompt integral em todas (SHA `009edd16…`), `dispatchExterno=false`, commit-errors=0, `recentTurnsMax=26`(era 0), `nomeKnown=true`.** Judge subiu (s1 33→65, s3 37→54, r3 46→60). **Causas-raiz FIÉIS:** ~~RC1~~ refutada → **over-binding** (binder ganancioso: `nome="Mostra Mais Opções"`); **RC-FIXAÇÃO (nº1)** condutor anexa a mesma pergunta de slot todo turno (=Fase 1 rebalance); **RC2** confirmada/precisa (só TIPO como `modelo` zera); **RC8** alucinação confirmada. **Só o evaluador mudou; nenhuma mudança de produção; `tsc`+`test:all` verdes; sem commit/push/deploy. PARADO p/ NOVA auditoria do Codex.**
+
+## 2026-07-02 - Codex: correcao de rumo obrigatoria R13
+
+Auditoria da conversa real do telefone `85988323679` reprovou a premissa de que o runtime atual ja era uma maquina
+conversacional central. A memoria textual estava persistida, mas nao havia memoria operacional suficiente para
+recordar o Kicks; handlers de foto sequestraram perguntas de memoria e da loja; `Quero saber da loja` poluiu
+`possuiTroca`; houve `terminal_safe` consecutivo e texto com U+FFFD.
+
+Decisao: **R12-B nao deve ser deployada isoladamente.** Seus testes de deferimento ficam preservados como melhoria
+local, mas nao constituem aceite do agente. O plano `10` foi marcado como historico para governanca do turno.
+
+Nova fonte autoritativa: `11-PLANO-AGENTE-CENTRAL-MEMORIA-FERRAMENTAS.md`. A proxima fase e R13: WorkingMemory
+semantica, AgentBrain como unica autoridade comercial, ferramentas subordinadas, policies somente como guardrails e
+replay da conversa real com `gpt-4.1-mini` + prompt/estoque reais + efeitos OFF. CRM/handoff ativo fica bloqueado ate
+o gate conversacional R13-D.
+
+Sem mudanca de runtime, commit, push, deploy, SQL ou reset de conversa nesta atualizacao documental.
+---
+
+## Atualizacao Claude - R13-S1 fundacao (contratos AgentBrain + WorkingMemory) revisada pos-auditoria - 2026-07-03
+
+Increment 1 da fatia central em SHADOW: contratos tipados + reducer da WorkingMemory. Aditivo, default OFF, sem
+tocar o caminho ativo do piloto. A 1a versao foi REPROVADA pelo Codex (4 P0 + 2 P1); esta linha ja e a REVISAO.
+
+Arquivos (novos/reescritos): `src/domain/agent-brain.ts`, `src/engine/working-memory.ts`,
+`tests/run-f2-12-working-memory.ts`. Handoff: `Brain/2026-07-03-claude-r13s1-agente-central-shadow.md`.
+
+Correcoes: P0-1 autoridade temporal (DecisionWorkingMemoryMutation no commit x EffectOutcomeWorkingMemoryMutation
+so em receipt; mark_photo_action_accepted so na 2a uniao, accepted-safe idempotente por effectId, failed/uncertain
+nao atualizam, mismatch rejeita); P0-2 proposedEffects=ProposedEffectPlan[] (Finalizer materializa effectId);
+P0-3 ToolTelemetry sanitizada x AgentToolObservation (fatos por QueryOutputMap; sem PII em telemetria/memoria);
+P0-4 funnel/selectedVehicle/lastOffer = VIEW derivada read-only do ConversationState (removidos update_funnel/
+set_selected_vehicle/set_last_offer); P0-5 validacao runtime + loader fail-closed + turnId autorizado + rejeicao
+atomica; P1-6 IDs estaveis (resolve/update por id).
+
+MATRIZ DE PROPRIEDADE CANONICA (autoridade gravavel UNICA):
+- ConversationState (canonico): funnel(slots+currentObjective), selectedVehicle(vehicleContext.selected),
+  lastOffer(lastRenderedOfferContext), photoLedger(delivered/read). Entram na WM como VIEW derivada read-only.
+- WorkingMemory (canonica, no state JSONB, mesmo CAS do turno): activeTopic, currentLeadIntent,
+  unansweredLeadQuestions, lastToolResults, commitments, conversationSummary, lastAgentAction,
+  lastAnsweredLeadQuestion (via DecisionWorkingMemoryMutation no commit) + lastPhotoAction accepted-safe (via
+  EffectOutcomeWorkingMemoryMutation no EffectOutcomeCommit, CAS+idempotente). Nunca duas autoridades gravaveis.
+
+Gates reais: `npm run test:f212` -> 40 OK | 0 FALHA; `npm run test:all` -> EXIT 0, 0 FALHA; `npx tsc --noEmit` -> EXIT 0.
+R12-B e anteriores preservados. NAO e a fase concluida: o gate segue sendo o replay P0 real (increment 2, NAO iniciado:
+central-engine flag-gated + tenant_business_info + suite offline 8.1 + eval:central:real). Sem commit/push/deploy/SQL.
+Parado para nova auditoria do Codex.
+
+---
+
+## Atualizacao Claude - R13 Incremento 2 Parte A (pendencias da memoria) - 2026-07-03
+
+Fundacao aprovada condicionalmente; Codex encomendou o Inc2 "incorporando primeiro as pendencias" (Parte A).
+Entregue a Parte A provada offline (`run-f2-12` 38 OK; test:all EXIT 0; tsc EXIT 0). Handoff:
+`Brain/2026-07-03-claude-r13-inc2-parte-a-memoria.md`.
+
+- A.1 PhotoAction: mutacao carrega PhotoActionDraft (sem acceptedAt); acceptedAt = result.receipt.at; triple-check
+  effectId (draft==result==receipt); newer-wins (A->B->callback atrasado A mantem B); duplicado no-op; failed/
+  outcome_uncertain nao alteram.
+- A.2 tools: add_tool_result removido da LLM; SystemWorkingMemoryMutation (record_tool_result) aplicada so pelo
+  engine com resultado executado; sanitizacao+limite antes de persistir.
+- A.3 turnId em toda mutacao (inclui set_lead_intent); turno errado rejeita.
+- A.4 schemaVersion futuro/desconhecido fail-closed; ausente/0 migra p/ V1.
+
+PENDENTE (build do engine, o gate real, NAO iniciado): B persistencia da WorkingMemory no ConversationState JSONB
+(mesmo CAS do turno; receipt em EffectOutcomeCommit CAS idempotente; cross-tenant isolado); C CentralConversationEngine
+(flag PEDRO_V3_BRAIN_MODE=central_shadow, default OFF; TurnFrame->AgentBrain tool loop->1 decisao->compose/validate->
+reducers WM->EffectGate OFF); D suite offline do engine; E eval:central:real + replay P0 do tel 85988323679 (assertivas
+deterministicas sao o gate). `npm run eval:central:real` ainda NAO existe (Parte E). Sem commit/push/deploy/SQL.
+Parado para auditoria Codex.
+
+---
+
+## Atualizacao Claude - R13 Inc2 (2a passada): correcoes de entrada + Parte B - 2026-07-03
+
+Codex liberou B->E. Feitas as CORRECOES DE ENTRADA (1 recencia de PhotoAction por sourceTurnNumber; 2 ToolResultMemory
+estruturado sanitizado pelo engine, sem summary livre/PII; 3 consistencia open/answered/fulfilled) + Parte B
+(workingMemory no ConversationState JSONB, mesma tx CAS via structuredClone; init no createInitialState;
+createInitialPersistedWorkingMemory movido ao dominio). run-f2-12 41 OK; test:all EXIT 0; tsc EXIT 0; zero regressao.
+
+C (CentralConversationEngine) + D (suite engine) + E (eval:central:real replay P0 real) NAO feitos: build multi-arquivo
+grande com depuracao de LLM real, sem orcamento de contexto nesta sessao para fazer com qualidade E validar o replay.
+Declarado como limite de orcamento (nao bloqueio externo). Plano exato em Brain/2026-07-03-claude-r13-inc2-parte-a-memoria.md.
+Sem commit/push/deploy/SQL. Parado.
+
+---
+
+## Atualizacao Claude - R13 Inc2 ENGINE CENTRAL + PERSISTENCIA REAL + REPLAY P0 REAL - 2026-07-03
+
+**Entregue B->C->D->E + F (adapter OpenAI real) + G (replay real EXECUTADO). O ACHADO P0 do Codex esta RESOLVIDO**:
+`buildWorkingMemory`/`applyDecisionWorkingMemoryMutations`/`applySystemWorkingMemoryMutations`/`toToolResultMemory`/
+`applyEffectOutcomeToWorkingMemory` agora sao chamados no ciclo REAL do turno e do receipt pelo `central-engine.ts`.
+
+**Novos arquivos:** `src/engine/central-engine.ts` (runCentralConversationTurn + applyAcceptedPhotoActionOutcome, flag
+`PEDRO_V3_BRAIN_MODE=central_shadow` default OFF), `src/engine/turn-frame-builder.ts`, `src/engine/tenant-business-info.ts`,
+`src/adapters/llm/fake-agent-brain.ts`, `src/adapters/llm/openai-agent-brain.ts`, `tests/run-f2-13-central-shadow.ts`,
+`tests/run-f2-14-openai-agent-brain.ts`, `eval/central-real-harness.ts` + `central-scenarios.ts` + `central-assertions.ts`
++ `run-central-eval.ts`. **Aditivos:** `agent-brain.ts` (CentralQueryCall/tenant_business_info + stateMutations),
+`conversation-state.ts` (appliedAcceptedEffectIds/pendingPhotoActions + RenderedOfferItem.preco), `in-memory-store.ts`
+(backing durável injetável p/ restart), `offer-context.ts` (preco), `eval/real-harness.ts` (expõe openAiSecret).
+
+**B persistencia:** state+WM+decisao+eventos+outbox na MESMA UnitOfWork CAS; two-phase accepted(lastPhotoAction, sem
+ledger)/delivered(photoLedger) com idempotencia INDEPENDENTE (appliedAcceptedEffectIds != outcomeAppliedAt); isolamento
+tenant/agent/conversation fail-closed no load E commit; cerebro propoe DecisionMutation[], reducer e a autoridade.
+
+**C engine:** UM cerebro/turno; nenhum handler comercial antes; autorizacao por chamada; tool nao fala com o lead; UMA
+decisao. Executores DETERMINISTICOS de invariante (Brain/11 §5): strip de send_media sem pedido; trimToOneQuestion;
+recall determinístico nomeia o veiculo lembrado; auto-grounding de vehicle_details do carro nomeado; grounding de
+MEMORIA (veiculos ja ofertados/selecionados/fotografados com preco real); `renderDeterministicResponse` (quando o
+compose do LLM falha grounding, renderiza a decisao ja tomada aterrada -> **elimina terminal_safe** sem cancelar efeitos).
+
+**D tools:** +tenant_business_info (fonte factual do config; honesto sem fonte; nunca inventa). AgentToolObservation
+transitoria; ToolResultMemory sanitizada (zero PII/URL/token).
+
+**Gates:** `test:f212` 41 OK · `test:f213` 37 OK · `test:f214` 13 OK · `test:all` EXIT 0 (0 FALHA) · `tsc --noEmit`
+EXIT 0 · **`PEDRO_V3_REAL_EVAL=1 npm run eval:central:real` EXECUTADO** (replay P0 tel 85988323679 + 3 conversas 15+
+turnos, 2x cada, gpt-4.1-mini real, efeitos OFF): **GATE PASS = 0 criticas / 0 terminal_safe em TODOS os 8 runs (112
+turnos)**; possuiTroca nunca muda em pergunta de loja; recall nomeia o veiculo; sem reenvio de foto; <=1 pergunta;
+efeitos OFF (delivered=0, nenhum dispatcher). Prova LLM real: prompt integral por SHA-256 em todas as chamadas do
+BRAIN e do COMPOSE (transportes contadores separados). Detalhe completo: `Brain/2026-07-03-claude-r13-inc2-engine-central-gate.md`.
+
+**NAO tocado:** Pedro v2/bridge/webhook; caminho ativo do piloto (flag OFF). Sem commit/push/deploy/SQL. Parado para
+auditoria do Codex -> R13-D (comparacao lado-a-lado v3 atual x central shadow; ativar flag so apos aceite).
+
+---
+
+## Atualizacao Claude - R13-D ENGINE CENTRAL NO PILOTO (baixo custo) - 2026-07-03
+
+**Ligado o cerebro central ao RUNTIME do piloto Douglas, custo baixo, tudo provado offline + UM smoke real.**
+Detalhe completo: `Brain/2026-07-03-claude-r13d-piloto-central.md`. Flag default OFF; NADA ativado; sem commit/push/
+deploy; SQL manual NAO executado; Pedro v2 intocado.
+
+- **1 Persistencia real:** RPC dedicada `v3_commit_working_memory_outcome` (CAS accepted-safe da WorkingMemory,
+  tenant-scoped, ligada a send_media real; conflito->applied=false; nunca toca photoLedger) + porta
+  `WorkingMemoryOutcomeStore` (InMemory+Postgres) + `applyAcceptedPhotoActionOutcome` usa a RPC + `OutboxDispatcher`
+  promove no receipt do send_media. SQL manual `Brain/sql/v3_r13d_wm_outcome_patch.sql` (aditivo, NAO executado).
+  Provado PGlite (accepted/round-trip WM no JSONB/conflito/kind-guard/cross-tenant) + adapter + InMemory.
+- **2 Shadow verdadeiro** (`central-shadow-runner.ts`): engine central em store ISOLADO, ZERO escrita canonica, ZERO
+  dispatch (provado com OutboxDispatcher REAL + gate shadow -> skipped), comparacao sanitizada. `test:shadow` 10 OK.
+- **3 Fatos do prompt:** `TenantBusinessFacts` (provenance portal_prompt|config|absent), extracao conservadora
+  (so rotulo de alta confianca; ausente->null, nunca inventa) -> `tenant_business_info`.
+- **4 Runtime:** `PEDRO_V3_BRAIN_MODE = off|central_shadow|central_active` no `pilot-active-root`+`server`;
+  central_active SO Douglas (tenant-scoped por construcao), NENHUM handler antes do cerebro, rollback imediato = off.
+- **6 Smoke real** (`smoke:central`, teto de chamadas + probe de quota, SEM judge): **c1 15 turnos, 1 execucao ->
+  SMOKE PASS: 0 criticas, 0 terminal_safe, BRAIN 18 (2xx=18)+COMPOSE 17 (2xx=17)=35 chamadas REAIS 100% 2xx, prompt
+  integral, efeitos OFF.** Gates: test:all EXIT 0, tsc EXIT 0, test:sql (PGlite WM RPC) OK, test:shadow 10 OK.
+
+**Proximo:** auditoria Codex -> rodar o SQL manual -> `central_shadow` (comparacao controlada) -> `central_active`
+(Douglas testa no WhatsApp). Checklist ativacao/rollback no handoff.
+
+---
+
+## Atualizacao Claude - R13-D.1 CORRECOES DA AUDITORIA CODEX - 2026-07-03
+
+Auditoria endureceu a RPC de WM + dispatcher + trocou o "gate" do smoke pago por um GATE OFFLINE deterministico.
+Tudo corrigido, so testes GRATIS. Detalhe: `Brain/2026-07-03-claude-r13d-audit-correcoes.md`. Sem OpenAI/SQL/deploy/push.
+
+- **1 Allowlist:** `v3_commit_working_memory_outcome` no allowlist do gateway + teste estrutural que FALHA sem a entrada.
+- **2 RPC redesenhada:** recebe SO a WorkingMemory (nao o state completo); carrega o estado atual e atualiza SO
+  workingMemory/appliedAcceptedEffectIds/version/updatedAt (PRESERVA byte-a-byte o resto); idempotente (duplicado=NO-OP);
+  exige send_media succeeded + receipt accepted|delivered. Patch + `v3_schema.sql` canonico. Provado PGlite (byte-preserve,
+  duplicado, nao-aceito, kind-guard, cross-tenant).
+- **3 Adapter:** porta/InMemory/Postgres enviam SO a WorkingMemory; resposta da RPC validada fail-closed.
+- **4 Dispatcher:** NAO ignora o resultado da promocao; nunca reenvia midia por falha de memoria; `reconcileAcceptedPhotoOutcomes`
+  (rastro durAvel = send_media succeeded sem appliedAcceptedEffectIds) retoma idempotente SEM redispatch. Provado (f213 [E6]:
+  falha transitoria -> restart -> reconcile promove sem 2o dispatch).
+- **5 GATE OFFLINE (a-f, sem OpenAI, `test:gate-offline` 7 OK):** (a) SUV<=90 respondido com oferta antes do funil;
+  (b) "o primeiro" resolve o 1o item (novo: `resolveSelectedVehicle` deterministico no engine, sem inferencia booleana,
+  nao reintroduz bug de possuiTroca); (c) "gostei" != "voce gostou?"; (d) nome conhecido nao reperguntado; (e) visita+sabado
+  avanca agendamento; (f) sem fixacao de slot. **O smoke pago NAO e o gate; este offline e.**
+- **6 Gates gratis:** tsc EXIT 0, test:all EXIT 0 (0 RED): KERNEL 68, POSTGRES 27, GATEWAY 11, F2.13 40, SHADOW 10,
+  GATE OFFLINE 7, SQL SCHEMA/PGlite. Parado para nova auditoria Codex.

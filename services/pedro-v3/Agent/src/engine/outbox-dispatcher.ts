@@ -8,7 +8,9 @@ import type { OutboxRecord } from "../domain/effect-intent.ts";
 import { redact } from "../domain/effect-intent.ts";
 import type { EffectResult, EffectReceipt, ToolError } from "../domain/decision.ts";
 import { commitEffectOutcome } from "./effect-outcome-commit.ts";
+import { applyAcceptedPhotoActionOutcome } from "./central-engine.ts";
 import { isEffectSatisfiedForDependency } from "./receipt-policy.ts";
+import { sanitizeTurnError } from "../runtime/sanitize-error.ts";
 import type { EffectGate } from "./effect-gate.ts";
 
 export type ReconcileResult =
@@ -79,6 +81,28 @@ export class OutboxDispatcher {
         });
         if (!committed.ok) {
           throw new Error(`outbox result/outcome nao persistido para ${record.effectId}: ${committed.reason}`);
+        }
+
+        // R13-D/4 (audit Codex): promoção accepted-safe da WorkingMemory no receipt do send_media. NÃO ignora o
+        // resultado. A mídia JÁ foi despachada — uma falha de MEMÓRIA nunca reenvia a mídia. Se a promoção falhar
+        // (CAS/transiente/limite), NÃO derruba o dispatch: deixa o rastro DURÁVEL (send_media succeeded sem
+        // appliedAcceptedEffectIds) p/ reconcileAcceptedPhotoOutcomes retomar (idempotente, sem redispatch), e loga
+        // um diagnóstico sanitizado. No caminho handler-first (sem pendingPhotoActions) é no-op silencioso.
+        if (record.kind === "send_media") {
+          const promoted = await applyAcceptedPhotoActionOutcome({
+            persistence: this.persistence,
+            conversationId,
+            effectId: record.effectId,
+            result,
+          });
+          if (!promoted.ok) {
+            console.error(JSON.stringify({
+              event: "pedro_v3_wm_promotion_failed",
+              conversationId,
+              effectId: record.effectId,
+              reason: sanitizeTurnError(promoted.reason),
+            }));
+          }
         }
       }
     }

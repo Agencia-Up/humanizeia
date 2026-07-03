@@ -92,3 +92,11 @@ O dono/Codex reprovou o deploy. **Finding 3:** mesmo após o `compose`, o `sdr-c
 - **Requisito da Fase 1 (reforçado na 2ª auditoria):** NÃO basta o LLM só REDIGIR uma pergunta que o conductor ESCOLHEU da sua lista hardcoded (`orderedSlots`/`DEFAULT_QUESTIONS`) — isso ainda ignora o funil do cliente. A **seleção E a ORDEM dos slots** têm que vir do PROMPT (Bloco 4: nome → troca → entrada → loja), não do conductor. Fase 1: o compose recebe o ESTADO do funil (o que já se sabe / o que falta) + o prompt, e o LLM decide **qual** a próxima pergunta seguindo o Bloco 4. O conductor deixa de escolher/ordenar/redigir; vira só o **rastreador** de slots conhecidos/faltantes (memória do funil), não o autor da fala.
 - A **Fase 3** mantém só: injetar `sdr_goal` (hoje ignorado) + alinhar a cobertura de core-slots ao funil do prompt (ex.: não forçar "interesse" fora do Bloco 4).
 - **Findings 1 e 2** da auditoria já corrigidos no CÓDIGO (não eram Fase 1) — ver `2026-07-01-claude-diagnostico-suv-memoria-conducao.md` §13. Gates verdes (test:all EXIT=0, tsc EXIT=0, e2e F2.7.17 6/0). **Sem commit/deploy.**
+
+---
+
+## Nota de governanca - 2026-07-02
+
+Este documento permanece como historico das rodadas de composicao e grounding, mas foi **superado para governanca
+do turno**. O teste real do WhatsApp demonstrou que handlers ainda sequestram o contexto antes do cerebro. A fonte
+autoritativa da proxima fase e `11-PLANO-AGENTE-CENTRAL-MEMORIA-FERRAMENTAS.md`.

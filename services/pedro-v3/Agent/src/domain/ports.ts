@@ -5,6 +5,7 @@
 // ============================================================================
 import type { Id, JsonValue, Redacted } from "./types.ts";
 import type { ConversationState } from "./conversation-state.ts";
+import type { PersistedWorkingMemory } from "./agent-brain.ts";
 import type { EffectResult, TurnDecision } from "./decision.ts";
 import type { InboxRecord, OutboxRecord, TurnEventRecord } from "./effect-intent.ts";
 
@@ -82,6 +83,21 @@ export interface OutboxStore {
     nextState: ConversationState | null,
     at: string,
   ): Awaitable<OutboxOutcomeResult>;
+}
+
+// ── R13-D/1 (audit Codex): promoção accepted-safe da WorkingMemory ──────────────────────────────────────────
+// Fora do commit de turno. Recebe SOMENTE a WorkingMemory (NUNCA o ConversationState completo): o adapter/RPC carrega
+// o estado atual e atualiza SÓ workingMemory + appliedAcceptedEffectIds + version + updatedAt, preservando o resto.
+// Idempotente (duplicado -> applied=false); conflito de versão -> applied=false (o chamador recarrega e reprocessa).
+// Ligada a um send_media REAL (succeeded + receipt accepted|delivered). Capability separada do UnitOfWork de turno.
+export interface WorkingMemoryOutcomeStore {
+  commitWorkingMemoryOutcome(
+    conversationId: Id,
+    effectId: Id,
+    expectedVersion: number,
+    nextWorkingMemory: PersistedWorkingMemory,
+    at: string,
+  ): Awaitable<{ ok: true; applied: boolean; version: number } | { ok: false; reason: string }>;
 }
 
 // ── UnitOfWork: persistência ATÔMICA (tudo-ou-nada) com CAS (Brain/02 §3 #15) ─

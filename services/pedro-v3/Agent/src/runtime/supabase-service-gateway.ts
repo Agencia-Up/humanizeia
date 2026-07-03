@@ -20,6 +20,8 @@ const RPC_ALLOWLIST = new Set([
   "v3_skip_outbox_guarded",
   "v3_fail_outbox_guarded",
   "v3_commit_effect_outcome",
+  // R13-D/1 (audit Codex): promoção accepted-safe da WorkingMemory (escrita avulsa de WM por CAS, service-role).
+  "v3_commit_working_memory_outcome",
   "v3_find_outbox_by_provider_message_id",
   // BYOK (F2.6J): chave OpenAI do tenant via Vault, mesma RPC service-role do v2 (aiKeys.ts).
   "get_client_ai_key",

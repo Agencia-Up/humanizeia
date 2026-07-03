@@ -1,4 +1,5 @@
 import { createInitialState } from "../src/domain/conversation-state.ts";
+import { createInitialPersistedWorkingMemory } from "../src/domain/agent-brain.ts";
 import type { TurnDecision } from "../src/domain/decision.ts";
 import type { DatabaseFilters, DatabaseRow, V3DatabaseGateway } from "../src/domain/database-gateway.ts";
 import { redact } from "../src/domain/effect-intent.ts";
@@ -343,6 +344,42 @@ async function main(): Promise<void> {
     gateway.queueRpc("v3_find_outbox_by_provider_message_id", [outboxRow(acceptedRecord), outboxRow({ ...acceptedRecord, effectId: "t2:message", idempotencyKey: "t2:message", turnId: "t2" })]);
     await expectReject("providerMessageId ambiguo falha fechado", () => persistence.findOutboxByProviderMessageId("3EB0ABC123"), "ambiguo");
   }
+  {
+    // R13-D/1 (audit Codex): commitWorkingMemoryOutcome envia SÓ a WorkingMemory (p_next_working_memory), NUNCA o
+    // ConversationState completo (p_next_state ausente). Tenant-scoped. Resposta validada fail-closed.
+    const gateway = new ScriptedGateway();
+    gateway.queueRpc("v3_commit_working_memory_outcome", [{ state_version: 3, applied: true }]);
+    const persistence = store(gateway);
+    const wm = createInitialPersistedWorkingMemory();
+    const res = await persistence.commitWorkingMemoryOutcome("c1", "t1:media", 2, wm, NOW);
+    const call = gateway.rpcCalls[0];
+    check(
+      "WM outcome envia SÓ WorkingMemory (p_next_working_memory), NUNCA state completo",
+      res.ok && res.applied === true && res.version === 3
+        && call.name === "v3_commit_working_memory_outcome"
+        && call.args.p_tenant_id === TENANT && call.args.p_effect_id === "t1:media"
+        && call.args.p_expected_version === 2 && call.args.p_next_working_memory != null && call.args.p_next_state === undefined,
+      JSON.stringify(Object.keys(call.args)),
+    );
+    gateway.queueRpc("v3_commit_working_memory_outcome", [{ state_version: 3, applied: false }]);
+    const stale = await persistence.commitWorkingMemoryOutcome("c1", "t1:media", 2, wm, NOW);
+    check("WM outcome decodifica applied=false (conflito/duplicado)", stale.ok && stale.applied === false && stale.version === 3);
+    // fail-closed: resposta malformada da RPC.
+    gateway.queueRpc("v3_commit_working_memory_outcome", [{ state_version: 3 }]);
+    const bad = await persistence.commitWorkingMemoryOutcome("c1", "t1:media", 2, wm, NOW);
+    check("WM outcome fail-closed em resposta invalida (applied ausente)", !bad.ok);
+  }
+  {
+    // R13-D/1: o state JSONB com workingMemory/appliedAcceptedEffectIds volta intacto no decode (round-trip).
+    const gateway = new ScriptedGateway();
+    const initial = createInitialState({ conversationId: "c1", tenantId: TENANT, agentId: "a1", now: NOW });
+    const withWm = { ...initial, workingMemory: { schemaVersion: 1, lastPhotoAction: { label: "Nissan Kicks 2018" } }, appliedAcceptedEffectIds: ["t1:media"] };
+    gateway.setOne("v3_conversation_state", { conversation_id: "c1", version: 0, state: withWm as unknown as JsonValue });
+    const snap = await store(gateway).load("c1");
+    const wm = (snap?.state as unknown as { workingMemory?: { lastPhotoAction?: { label?: string } }; appliedAcceptedEffectIds?: string[] });
+    check("decodeState preserva workingMemory + appliedAcceptedEffectIds (round-trip)", wm?.workingMemory?.lastPhotoAction?.label === "Nissan Kicks 2018" && Array.isArray(wm?.appliedAcceptedEffectIds) && wm!.appliedAcceptedEffectIds!.includes("t1:media"));
+  }
+
   console.log(`\n=== POSTGRES ADAPTER: ${ok} OK | ${failed} FALHA ===`);
   if (failed > 0) process.exitCode = 1;
 }

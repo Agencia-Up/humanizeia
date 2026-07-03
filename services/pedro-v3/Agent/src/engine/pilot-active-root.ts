@@ -24,12 +24,23 @@ import { ConversationTurnContextPreparer, StockTenantCatalogSource, type TenantC
 import { evaluatePedroV3PilotScope } from "../domain/pilot-scope.ts";
 import type { OutboxRecord } from "../domain/effect-intent.ts";
 import { runConversationTurn, type ConversationEngineResult } from "./conversation-engine.ts";
+import { runCentralConversationTurn, reconcileAcceptedPhotoOutcomes } from "./central-engine.ts";
+import { sanitizeTurnError } from "../runtime/sanitize-error.ts";
+import { runCentralShadowTurn, type CentralShadowDeps } from "./central-shadow-runner.ts";
+import { PromptTenantBusinessInfoSource, type TenantBusinessInfoSource } from "./tenant-business-info.ts";
+import type { AgentBrainPort } from "../domain/agent-brain.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
 import type { EffectGate } from "./effect-gate.ts";
 import type { UazapiHttpTransport } from "../adapters/effects/uazapi-whatsapp-sender.ts";
 import { createPilotWhatsAppDispatcher } from "../adapters/effects/pilot-whatsapp-runtime.ts";
 import { V2WhatsAppInstanceCredentialProvider, V2WhatsAppInstanceSource } from "../adapters/effects/v2-whatsapp-instance-source.ts";
 import { buildSdrQualificationPolicy, type SdrQualificationPolicy } from "./sdr-conductor.ts";
+import { createHash } from "node:crypto";
+
+// R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
+// lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
+// cérebro central conduz o turno canônico e despacha (SÓ Douglas; ativar só após auditoria Codex).
+export type PilotBrainMode = "off" | "central_shadow" | "central_active";
 
 export type PilotActiveConfig = {
   readonly mode: "active";
@@ -50,7 +61,20 @@ export type PilotActiveDeps = {
   readonly independentClaimExtractor?: ClaimExtractor;
   readonly whatsappTransport: UazapiHttpTransport;
   readonly allowedUazapiHosts: readonly string[];
+  // R13-D/4: modo do cérebro (default off) + fábrica do AgentBrain REAL (OpenAI). Sem a fábrica, central_* cai em off.
+  readonly brainMode?: PilotBrainMode;
+  readonly agentBrainFactory?: (config: TenantRuntimeConfig) => AgentBrainPort;
 };
+
+const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
+const CENTRAL_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] as const;
+
+// Extrai o texto do ÚLTIMO turno do lead do estado (p/ o shadow reprocessar o mesmo bloco que o canônico viu).
+function lastLeadBlock(state: { recentTurns?: { role?: string; text?: string }[] } | undefined | null): string | null {
+  const turns = state?.recentTurns ?? [];
+  for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === "lead" && typeof turns[i].text === "string" && turns[i].text!.trim()) return turns[i].text!;
+  return null;
+}
 
 export type PilotActiveTurnInput = {
   readonly persistence: Persistence & ConversationRoutingStore;
@@ -138,10 +162,19 @@ export class PilotActiveRoot {
     private readonly photoSource: V2VehiclePhotoSource,
     private readonly allowedUazapiHosts: readonly string[],
     private readonly sdrPolicy: SdrQualificationPolicy,
+    private readonly brainMode: PilotBrainMode,
+    private readonly agentBrain: AgentBrainPort | null,
+    private readonly businessInfo: TenantBusinessInfoSource,
+    private readonly promptSha256: string,
   ) {}
 
   get tenantConfig(): TenantRuntimeConfig {
     return this.runtimeConfig;
+  }
+
+  get mode(): PilotBrainMode {
+    // central_* só valem com o AgentBrain configurado; senão degrada p/ off (fail-safe).
+    return this.brainMode !== "off" && this.agentBrain ? this.brainMode : "off";
   }
 
   static async create(config: PilotActiveConfig, deps: PilotActiveDeps): Promise<PilotActiveRoot> {
@@ -185,6 +218,12 @@ export class PilotActiveRoot {
     const catalogSource = deps.catalogSource ?? new StockTenantCatalogSource(stockSource);
     const contextPreparer = new ConversationTurnContextPreparer(ref, llm, catalogSource, deps.independentClaimExtractor);
 
+    // R13-D/4: cérebro central real (OpenAI) só é materializado quando o modo pede; fatos de negócio do prompt.
+    const brainMode: PilotBrainMode = deps.brainMode ?? "off";
+    const agentBrain = brainMode !== "off" ? (deps.agentBrainFactory?.(runtimeConfig) ?? null) : null;
+    const businessInfo = new PromptTenantBusinessInfoSource(runtimeConfig);
+    const promptSha256 = createHash("sha256").update(runtimeConfig.promptText, "utf8").digest("hex");
+
     return new PilotActiveRoot(
       ref,
       config.leadId ?? null,
@@ -200,6 +239,10 @@ export class PilotActiveRoot {
       photoSource,
       deps.allowedUazapiHosts,
       buildSdrQualificationPolicy(runtimeConfig),
+      brainMode,
+      agentBrain,
+      businessInfo,
+      promptSha256,
     );
   }
 
@@ -234,62 +277,94 @@ export class PilotActiveRoot {
   // F2.7.6: claim do BLOCO pendente (a janela de debounce ja passou) -> decide -> dispatch.
   // As mensagens ja foram ingeridas; claimBurst(cutoff=now) agrega TODAS as pendentes num turno.
   async processConversation(input: PilotActiveProcessInput): Promise<PilotActiveProcessResult> {
-    const engine = await runConversationTurn({
-      persistence: input.persistence,
-      clock: this.clock,
-      llm: this.llm,
-      runQuery: this.runQuery,
-      contextPreparer: this.contextPreparer,
-      conversationId: input.conversationId,
-      tenantId: this.ref.tenantId,
-      agentId: this.ref.agentId,
-      leadId: this.leadId,
-      workerId: input.workerId,
-      turnId: input.turnId,
-      leaseTtlMs: 60_000,
-      limits: input.limits,
-      maxValidationAttempts: input.maxValidationAttempts,
-      providerCapability: { send_message: "none", send_media: "none" },
-      sdrPolicy: this.sdrPolicy,
-    });
-
-    const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
-    let dispatched = 0;
-    if (engine.status === "committed") {
-      const dispatcherRuntime = await createPilotWhatsAppDispatcher({
-        ref: this.ref,
-        conversationId: input.conversationId,
-        to: input.to,
-        allowedUazapiHosts: this.allowedUazapiHosts,
-      }, {
-        configSource: this.configSource,
-        instanceSource: this.instanceSource,
-        credentialProvider: this.credentialProvider,
-        httpTransport: this.whatsappTransport,
-        photoSource: this.photoSource,
-        clock: this.clock,
-      });
-      if (!dispatcherRuntime.ok) {
-        throw new PilotActiveRootError(dispatcherRuntime.error);
-      }
-      const gate = new ConversationOnlyActiveGate(input.conversationId);
-      const dispatcher = new OutboxDispatcher(
-        input.persistence,
-        this.clock,
-        dispatcherRuntime.dispatcher,
-        gate,
-        `${input.workerId}:active-dispatcher`,
-      );
-      dispatched = await dispatcher.dispatchConversation(input.conversationId);
+    // R13-D/4: NENHUM handler comercial roda antes do AgentBrain no caminho central_active — o cérebro conduz.
+    if (this.mode === "central_active" && this.agentBrain) {
+      return this.#processCentralActive(input);
     }
+    // off + central_shadow: o canônico (handler-first) responde ao lead (nada de deixar o lead sem resposta).
+    const preSnap = this.mode === "central_shadow" ? await input.persistence.load(input.conversationId) : null;
+    const result = await this.#processHandlerFirst(input);
+    if (this.mode === "central_shadow" && this.agentBrain) {
+      // SHADOW VERDADEIRO (R13-D/2): store ISOLADO, zero escrita canônica, zero dispatch. Best-effort — nunca
+      // derruba o canônico/poller. ⚠️ CUSTO: uma passada extra do cérebro por turno; LIGAR só p/ comparação controlada.
+      try {
+        const block = lastLeadBlock((await input.persistence.load(input.conversationId))?.state);
+        if (block) {
+          const shadow = await runCentralShadowTurn({
+            canonicalPersistence: input.persistence, conversationId: input.conversationId,
+            tenantId: this.ref.tenantId, agentId: this.ref.agentId, leadId: this.leadId,
+            messageBlock: block, turnId: `${input.turnId}-shadow`, seedStateOverride: preSnap?.state,
+            deps: this.#centralShadowDeps(),
+          });
+          console.log(JSON.stringify(shadow.ok
+            ? { event: "pedro_v3_central_shadow_comparison", ...shadow.comparison }
+            : { event: "pedro_v3_central_shadow_failed", conversationId: input.conversationId, reason: shadow.reason }));
+        }
+      } catch { /* shadow NUNCA afeta o canônico */ }
+    }
+    return result;
+  }
 
-    const outboxAfterDispatch = await input.persistence.listOutbox(input.conversationId);
+  #centralShadowDeps(): CentralShadowDeps {
     return {
-      status: engine.status,
-      engine,
-      outboxBeforeDispatch,
-      outboxAfterDispatch,
-      dispatched,
+      brain: this.agentBrain!, llm: this.llm, runQuery: this.runQuery, businessInfo: this.businessInfo,
+      contextPreparer: this.contextPreparer, clock: this.clock, portalPromptSha256: this.promptSha256,
+      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 4, allowedTools: CENTRAL_ALLOWED_TOOLS,
     };
+  }
+
+  async #processCentralActive(input: PilotActiveProcessInput): Promise<PilotActiveProcessResult> {
+    // R13-D (audit Codex): ANTES do turno, recupera a memória de foto pendente. Rastro DURÁVEL = send_media
+    // succeeded (accepted|delivered) sem promoção em appliedAcceptedEffectIds. Após restart/falha transitória da
+    // promoção no dispatch, a WorkingMemory da foto é reconciliada aqui — IDEMPOTENTE, SEM redispatch (só escrita de
+    // WorkingMemory). Best-effort: erro sanitizado, NUNCA derruba o turno (o lead sempre é respondido).
+    try {
+      const rec = await reconcileAcceptedPhotoOutcomes({ persistence: input.persistence, conversationId: input.conversationId });
+      if (rec.reconciled > 0 || rec.failed > 0) {
+        console.log(JSON.stringify({ event: "pedro_v3_wm_reconcile", conversationId: input.conversationId, reconciled: rec.reconciled, failed: rec.failed, pending: rec.pending }));
+      }
+    } catch (error) {
+      console.error(JSON.stringify({ event: "pedro_v3_wm_reconcile_error", conversationId: input.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
+    }
+    const engine = await runCentralConversationTurn({
+      persistence: input.persistence, clock: this.clock, brain: this.agentBrain!, llm: this.llm, runQuery: this.runQuery,
+      businessInfo: this.businessInfo, contextPreparer: this.contextPreparer,
+      conversationId: input.conversationId, tenantId: this.ref.tenantId, agentId: this.ref.agentId, leadId: this.leadId,
+      workerId: input.workerId, turnId: input.turnId, leaseTtlMs: 60_000, portalPromptSha256: this.promptSha256,
+      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 4,
+      allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
+    });
+    const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
+    const dispatched = await this.#dispatchIfCommitted(input, engine.status === "committed");
+    const outboxAfterDispatch = await input.persistence.listOutbox(input.conversationId);
+    return { status: engine.status, engine: engine as unknown as ConversationEngineResult, outboxBeforeDispatch, outboxAfterDispatch, dispatched };
+  }
+
+  async #processHandlerFirst(input: PilotActiveProcessInput): Promise<PilotActiveProcessResult> {
+    const engine = await runConversationTurn({
+      persistence: input.persistence, clock: this.clock, llm: this.llm, runQuery: this.runQuery,
+      contextPreparer: this.contextPreparer, conversationId: input.conversationId, tenantId: this.ref.tenantId,
+      agentId: this.ref.agentId, leadId: this.leadId, workerId: input.workerId, turnId: input.turnId, leaseTtlMs: 60_000,
+      limits: input.limits, maxValidationAttempts: input.maxValidationAttempts,
+      providerCapability: { send_message: "none", send_media: "none" }, sdrPolicy: this.sdrPolicy,
+    });
+    const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
+    const dispatched = await this.#dispatchIfCommitted(input, engine.status === "committed");
+    const outboxAfterDispatch = await input.persistence.listOutbox(input.conversationId);
+    return { status: engine.status, engine, outboxBeforeDispatch, outboxAfterDispatch, dispatched };
+  }
+
+  async #dispatchIfCommitted(input: PilotActiveProcessInput, committed: boolean): Promise<number> {
+    if (!committed) return 0;
+    const dispatcherRuntime = await createPilotWhatsAppDispatcher({
+      ref: this.ref, conversationId: input.conversationId, to: input.to, allowedUazapiHosts: this.allowedUazapiHosts,
+    }, {
+      configSource: this.configSource, instanceSource: this.instanceSource, credentialProvider: this.credentialProvider,
+      httpTransport: this.whatsappTransport, photoSource: this.photoSource, clock: this.clock,
+    });
+    if (!dispatcherRuntime.ok) throw new PilotActiveRootError(dispatcherRuntime.error);
+    const gate = new ConversationOnlyActiveGate(input.conversationId);
+    const dispatcher = new OutboxDispatcher(input.persistence, this.clock, dispatcherRuntime.dispatcher, gate, `${input.workerId}:active-dispatcher`);
+    return dispatcher.dispatchConversation(input.conversationId);
   }
 }

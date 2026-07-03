@@ -131,8 +131,13 @@ export function buildSdrConductionFrame(args: {
   readonly nextQuestion: string | null;                // policy.questions[nextSlot] ?? default (caller)
   readonly reasonCode: string;
   readonly isFirstContact: boolean;
+  // R12-B: o caller (conductDecision) já resolveu o próximo slot COM deferimento (decideFunnelNext).
+  // nextSlot override = slot a perguntar (null = não empurrar funil); deferredSlot = slot ignorado a NÃO repetir.
+  readonly nextSlot?: SdrQualificationSlot | null;
+  readonly deferredSlot?: SdrQualificationSlot | null;
 }): SdrConductionFrame {
-  const { state, leadMessage, interpretation, view, nextQuestion, reasonCode, isFirstContact } = args;
+  const { state, leadMessage, interpretation, view, nextQuestion, reasonCode, isFirstContact, deferredSlot = null } = args;
+  const effectiveNextSlot = args.nextSlot !== undefined ? args.nextSlot : view.nextSlot; // R12-B: já deferido/avançado
   const norm = normalizeText(leadMessage);
 
   const buySignalLevel = detectBuySignal(norm);
@@ -148,7 +153,7 @@ export function buildSdrConductionFrame(args: {
   const nomeKnown = state.slots.nome.status === "known";
   const interesseVisitaTrue = state.slots.interesseVisita.status === "known" && state.slots.interesseVisita.value === true;
   const hasSelectedVehicle = !!state.vehicleContext.selected?.key;
-  const nextAllowedQuestion = view.nextSlot && nextQuestion ? { slot: view.nextSlot, question: nextQuestion } : null;
+  const nextAllowedQuestion = effectiveNextSlot && nextQuestion ? { slot: effectiveNextSlot, question: nextQuestion } : null;
   const handoffEligibility: "blocked" | "ready" = view.readyForHandoff ? "ready" : "blocked";
   const stage = stageOf({ view, buy: buySignalLevel, hasSelectedVehicle, leadIntent, nomeKnown, interesseVisitaTrue });
 
@@ -180,7 +185,14 @@ export function buildSdrConductionFrame(args: {
   // Fechamento OU próxima pergunta do funil (UMA, opcional de follow-up). Compra forte já tem seu próprio pedido.
   // Responder-primeiro NÃO suprime o follow-up — a resposta ao lead vem antes, a pergunta continua sendo UMA.
   if (buySignalLevel !== "strong") {
-    if (stage === "handoff_ready" || !nextAllowedQuestion) {
+    if (deferredSlot) {
+      // R12-B: o lead IGNOROU o slot pendente e trouxe outra intencao -> responda a intencao, NAO repita o slot.
+      if (nextAllowedQuestion) {
+        seg.push(`[DEFERIR+AVANCAR] O lead NAO respondeu '${deferredSlot}' e seguiu com outra intencao. Responda a intencao PRIMEIRO, SEM repetir a pergunta de '${deferredSlot}'. Depois avance UMA pergunta do funil. Pergunta sugerida (uma so, pode reformular no seu tom): ${nextAllowedQuestion.question}`);
+      } else {
+        seg.push(`[DEFERIR] O lead NAO respondeu '${deferredSlot}' e trouxe outra intencao. Responda a intencao dele e conduza natural, SEM repetir a pergunta de '${deferredSlot}' agora e SEM forcar outra pergunta de funil neste turno.`);
+      }
+    } else if (stage === "handoff_ready" || !nextAllowedQuestion) {
       seg.push("[FECHAMENTO] Qualificacao COMPLETA — NAO faca mais perguntas de dados nem repita nada que ja sabe. Conduza o PROXIMO PASSO do prompt (confirmar/agendar visita, combinar retorno ou preparar a transferencia). Se a visita ja foi aceita e falta so o horario, pergunte SO o dia/horario.");
     } else {
       seg.push(`[PROXIMA PERGUNTA] Na ordem do funil do prompt, o proximo dado util e sobre '${nextAllowedQuestion.slot}'. Pergunta sugerida (uma so, pode reformular no seu tom): ${nextAllowedQuestion.question}`);

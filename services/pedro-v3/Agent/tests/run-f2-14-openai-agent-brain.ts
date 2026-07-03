@@ -1,0 +1,124 @@
+// ============================================================================
+// F2.14 — R13 Inc2/F: OpenAiAgentBrain (adapter REAL) validado OFFLINE via transporte FAKE ($0, sem rede).
+// Prova: decode query|final, restrição de tool (allowlist), JSON malformado -> final seguro (sem crash/silêncio),
+// prompt INTEGRAL do portal no system + promptSha256, segredo NUNCA no corpo/JSON, stateMutations estampam turnId.
+//   npx tsx tests/run-f2-14-openai-agent-brain.ts
+// ============================================================================
+import { OpenAiAgentBrain } from "../src/adapters/llm/openai-agent-brain.ts";
+import { OpenAiRuntimeSecret } from "../src/engine/openai-canary-root.ts";
+import type { ModelHttpTransport, ModelHttpRequest, ModelHttpResponse } from "../src/adapters/llm/structured-json-model.ts";
+import type { TurnFrame } from "../src/domain/agent-brain.ts";
+import { createInitialPersistedWorkingMemory } from "../src/domain/agent-brain.ts";
+
+let ok = 0, fail = 0; const fails: string[] = [];
+function check(name: string, pass: boolean, detail = ""): void {
+  if (pass) { ok++; console.log(`  OK  ${name}`); }
+  else { fail++; fails.push(`${name}${detail ? ` — ${detail}` : ""}`); console.error(`  RED ${name}${detail ? ` — ${detail}` : ""}`); }
+}
+
+class CannedTransport implements ModelHttpTransport {
+  lastRequest?: ModelHttpRequest;
+  lastUrl = "";
+  constructor(private readonly content: string, private readonly status = 200) {}
+  async postJson(url: string, request: ModelHttpRequest): Promise<ModelHttpResponse> {
+    this.lastUrl = url; this.lastRequest = request;
+    return { status: this.status, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: this.content } }] }) };
+  }
+}
+const PORTAL_PROMPT = "Você é a Aloan, atendente da Loja Piloto. Seja cordial e objetiva. PROMPT-INTEGRAL-MARKER-42.";
+const SECRET = OpenAiRuntimeSecret.fromString("sk-test-CANARY-KEY-should-never-appear");
+function frame(block: string): TurnFrame {
+  return {
+    turnId: "t-brain-1", now: "2026-07-03T12:00:00.000Z", block, portalPromptSha256: "sha",
+    workingMemory: { ...createInitialPersistedWorkingMemory(), funnel: { known: [], declined: [], deferred: [], suggestedObjective: null }, selectedVehicle: null, lastOffer: null },
+    recentTranscript: [], signals: { mentionsPhoto: false, mentionsStore: false, mentionsMoreOptions: false, mentionsVehicleType: "suv", isMemoryQuestion: false, relation: "direction_change" },
+  };
+}
+function brainWith(content: string, status = 200): { brain: OpenAiAgentBrain; transport: CannedTransport } {
+  const transport = new CannedTransport(content, status);
+  const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1-mini" });
+  return { brain, transport };
+}
+
+async function main(): Promise<void> {
+  console.log("== F2.14 OpenAiAgentBrain (offline, fake transport) ==");
+
+  // [1] query decode
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "query", call: { tool: "stock_search", input: { tipo: "suv", precoMax: 90000 } } }));
+    const step = await brain.proposeNextStep(frame("quero uma suv"), []);
+    check("[1] decode query stock_search (tipo+precoMax)", step.kind === "query" && step.call.tool === "stock_search" && (step.call.input as { tipo?: string; precoMax?: number }).tipo === "suv" && (step.call.input as { precoMax?: number }).precoMax === 90000);
+  }
+  // [2] final decode com send_media + guidance
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", reasonCode: "photo", confidence: 0.9, guidance: "Aqui estão as fotos que você pediu", effects: [{ kind: "send_message" }, { kind: "send_media", vehicleKey: "rm:1", photoIds: ["p1", "p2"] }] }));
+    const step = await brain.proposeNextStep(frame("manda foto"), []);
+    const media = step.kind === "final" && step.decision.proposedEffects.find((e) => e.kind === "send_media");
+    check("[2] decode final + send_media aterrado", step.kind === "final" && !!media && (media as { vehicleKey?: string }).vehicleKey === "rm:1" && step.decision.responsePlan.guidance.includes("fotos"));
+  }
+  // [3] tool proibida/desconhecida -> final seguro (não trava)
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "query", call: { tool: "delete_everything", input: {} } }));
+    const step = await brain.proposeNextStep(frame("oi"), []);
+    check("[3] tool desconhecida -> final seguro", step.kind === "final" && step.decision.reasonCode === "brain_fallback");
+  }
+  // [3b] allowlist restrita: crm_read fora do allowlist -> final seguro
+  {
+    const transport = new CannedTransport(JSON.stringify({ kind: "query", call: { tool: "crm_read", input: { leadId: "x" } } }));
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1-mini", allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] });
+    const step = await brain.proposeNextStep(frame("oi"), []);
+    check("[3b] crm_read fora do allowlist -> final seguro", step.kind === "final");
+  }
+  // [4] JSON malformado -> final seguro (sem crash, sem silêncio)
+  {
+    const { brain } = brainWith("isto não é json {");
+    const step = await brain.proposeNextStep(frame("oi"), []);
+    check("[4] JSON malformado -> final seguro", step.kind === "final" && step.decision.responsePlan.guidance.length > 0);
+  }
+  // [4b] HTTP não-2xx -> final seguro
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", guidance: "x" }), 429);
+    const step = await brain.proposeNextStep(frame("oi"), []);
+    check("[4b] HTTP 429 -> final seguro", step.kind === "final" && step.decision.reasonCode === "brain_fallback");
+  }
+  // [5] prompt INTEGRAL do portal no system + promptSha256
+  {
+    const { brain, transport } = brainWith(JSON.stringify({ kind: "final", guidance: "ok" }));
+    await brain.proposeNextStep(frame("oi"), []);
+    const body = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
+    const sys = body.messages.find((m) => m.role === "system")?.content ?? "";
+    const crypto = await import("node:crypto");
+    const expectedSha = crypto.createHash("sha256").update(PORTAL_PROMPT, "utf8").digest("hex");
+    check("[5] prompt do portal presente INTEGRALMENTE no system", sys.includes(PORTAL_PROMPT) && sys.includes("PROMPT-INTEGRAL-MARKER-42"));
+    check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
+  }
+  // [6] segredo NUNCA no corpo/JSON serializável (só no header via materialize)
+  {
+    const { brain, transport } = brainWith(JSON.stringify({ kind: "final", guidance: "ok" }));
+    await brain.proposeNextStep(frame("oi"), []);
+    const bodyHasKey = transport.lastRequest!.body.includes("CANARY-KEY");
+    const authHeader = (transport.lastRequest!.headers as Record<string, string>).authorization ?? "";
+    check("[6] segredo fora do body", !bodyHasKey);
+    check("[6] segredo só no header authorization", authHeader.includes("CANARY-KEY"));
+    check("[6] segredo não vaza em JSON.stringify(secret)", !JSON.stringify(SECRET).includes("CANARY-KEY"));
+  }
+  // [7] stateMutations estampadas com turnId do frame (não do modelo)
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", guidance: "beleza", stateMutations: [{ op: "set_slot", slot: "possuiTroca", value: true }, { op: "set_slot", slot: "tipoVeiculo", value: "suv" }] }));
+    const step = await brain.proposeNextStep(frame("tenho um gol na troca e quero uma suv"), []);
+    const sm = step.kind === "final" ? step.decision.stateMutations ?? [] : [];
+    const troca = sm.find((m) => m.op === "set_slot" && m.slot === "possuiTroca");
+    check("[7] stateMutations set_slot estampam sourceTurnId=frame.turnId", !!troca && (troca as { sourceTurnId?: string }).sourceTurnId === "t-brain-1" && sm.length === 2);
+  }
+  // [8] memoryMutations curadas + turnId estampado
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", guidance: "oi", memoryMutations: [{ op: "set_lead_intent", intent: "discover_stock", confidence: 0.9, evidence: ["quer suv"] }, { op: "op_desconhecida" }] }));
+    const step = await brain.proposeNextStep(frame("quero suv"), []);
+    const mm = step.kind === "final" ? step.decision.memoryMutations : [];
+    check("[8] memoryMutations: op válida mantida + turnId; desconhecida descartada", mm.length === 1 && mm[0].op === "set_lead_intent" && (mm[0] as { turnId?: string }).turnId === "t-brain-1");
+  }
+
+  console.log(`\n== F2.14: ${ok} OK | ${fail} FALHA ==`);
+  if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }
+}
+main().catch((e) => { console.error("ERRO FATAL:", (e as Error)?.message ?? e); process.exit(1); });

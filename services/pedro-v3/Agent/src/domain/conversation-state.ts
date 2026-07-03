@@ -5,6 +5,8 @@ import type {
   Id, Iso, VehicleType, TransmissionPreference, PaymentMethod, EntityReference, ConversationStage,
   SlotName, ObjectiveType, AnswerKind, SensitiveValueRef,
 } from "./types.ts";
+import type { PersistedWorkingMemory, PhotoActionDraft } from "./agent-brain.ts";
+import { createInitialPersistedWorkingMemory } from "./agent-brain.ts";
 
 export type FunnelSlot<T> = {
   status: "unknown" | "known" | "declined" | "not_applicable";
@@ -88,6 +90,9 @@ export type RenderedOfferItem = {
   marca?: string | null;
   modelo?: string | null;
   ano?: number | null;
+  // R13 Inc2/G: preço aterrado da oferta (para grounding de MEMÓRIA: um preço já ofertado pode ser citado num
+  // turno posterior sem re-consultar). Aditivo/opcional.
+  preco?: number | null;
 };
 export type LastRenderedOfferContext = {
   sourceTurnId: Id;
@@ -115,7 +120,18 @@ export type ConversationState = {
   photoLedger: PhotoLedger;
   rejected: RejectedMemory;
   recentTurns: ConversationTurn[];
-  appliedEffectIds: string[];          // idempotência do EffectOutcomeCommit (Codex r3 #2)
+  appliedEffectIds: string[];          // idempotência do EffectOutcomeCommit (Codex r3 #2) — fase DELIVERED (estado/ledger)
+  // R13 Inc2/B item 2 (Codex): idempotência INDEPENDENTE da fase ACCEPTED (WorkingMemory lastPhotoAction). Separada
+  // de appliedEffectIds/outcomeAppliedAt (que governam a fase delivered): um único marcador NÃO pode impedir a fase
+  // delivered posterior. Aditivo/opcional p/ retrocompat com estados antigos (default []).
+  appliedAcceptedEffectIds?: string[];
+  // R13 Inc2/B item 2: draft accepted-safe da ação de foto capturado no COMMIT do turno (effectId -> PhotoActionDraft
+  // com o sourceTurnNumber exato). Promovido à WorkingMemory.lastPhotoAction só no receipt accepted (newer-wins).
+  pendingPhotoActions?: Record<string, PhotoActionDraft>;
+  // R13 Inc2/B (Codex): WorkingMemory PERSISTIDA dentro do MESMO state JSONB (mesma tx CAS do turno; receipt no
+  // EffectOutcomeCommit). Sessão isolada por tenantId+agentId+conversationId (já são chaves do estado). Opcional
+  // p/ retrocompat com estados antigos — carregada via loadPersistedWorkingMemory (fail-closed).
+  workingMemory?: PersistedWorkingMemory;
   updatedAt: Iso;
 };
 
@@ -162,6 +178,9 @@ export function createInitialState(args: {
     rejected: { modelos: [] },
     recentTurns: [],
     appliedEffectIds: [],
+    appliedAcceptedEffectIds: [],
+    pendingPhotoActions: {},
+    workingMemory: createInitialPersistedWorkingMemory(),
     updatedAt: now,
   };
 }

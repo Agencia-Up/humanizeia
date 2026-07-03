@@ -5,3 +5,5 @@ Agent/.env*
 Agent/dist/
 Agent/out/
 Agent/src/**/*.ts~*
+# Artefatos gerados pelas suítes de avaliação (relatórios timestamped) — não versionar.
+Agent/eval/reports/

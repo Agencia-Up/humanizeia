@@ -5,6 +5,7 @@
 // ============================================================================
 import type { Id, JsonValue } from "../../domain/types.ts";
 import type { ConversationState } from "../../domain/conversation-state.ts";
+import type { PersistedWorkingMemory } from "../../domain/agent-brain.ts";
 import type { EffectResult, TurnDecision } from "../../domain/decision.ts";
 import type { InboxRecord, OutboxRecord, TurnEventRecord } from "../../domain/effect-intent.ts";
 import { isEffectSatisfiedForDependency, requiredReceiptFor } from "../../domain/effect-policy.ts";
@@ -31,6 +32,24 @@ type StagedCas = { conversationId: Id; expectedVersion: number; nextState: Conve
 type SyncCommitResult = { ok: true } | { ok: false; reason: string };
 type SyncUnitOfWork = Omit<UnitOfWork, "commit"> & { commit(): SyncCommitResult };
 
+// R13 Inc2/E (Codex): backing DURÁVEL injetável — simula a tabela v3_* que SOBREVIVE a um restart do processo.
+// Um novo InMemoryPersistence + novo engine apontando p/ o MESMO backing = "restart" (memória recuperada do banco,
+// nunca de estado global no processo). Sem backing => Maps próprios (comportamento anterior 100% preservado).
+export type InMemoryBacking = {
+  inbox: Map<Id, InboxRecord>;
+  states: Map<Id, StateSnapshot>;
+  history: { conversationId: Id; version: number; state: ConversationState }[];
+  events: TurnEventRecord[];
+  decisions: { conversationId: Id; decision: TurnDecision }[];
+  outbox: Map<Id, OutboxRecord>;
+  outboxIdem: Set<Id>;
+  leases: Map<Id, Lease>;
+  routing: Map<Id, { agentId: string; leadId: string | null; toAddr: string }>;
+};
+export function createInMemoryBacking(): InMemoryBacking {
+  return { inbox: new Map(), states: new Map(), history: [], events: [], decisions: [], outbox: new Map(), outboxIdem: new Set(), leases: new Map(), routing: new Map() };
+}
+
 export class InMemoryPersistence implements Persistence, ConversationRoutingStore {
   private inbox = new Map<Id, InboxRecord>();
   private states = new Map<Id, StateSnapshot>();
@@ -42,7 +61,20 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
   private leases = new Map<Id, Lease>();          // conversationId -> lease ativo
   private routing = new Map<Id, { agentId: string; leadId: string | null; toAddr: string }>(); // F2.7.6
 
-  constructor(private clock: Clock, private idgen: IdGen) {}
+  constructor(private clock: Clock, private idgen: IdGen, backing?: InMemoryBacking) {
+    if (backing) {
+      // Aponta os Maps INTERNOS p/ o backing durável (mesma referência) — o restart lê o que foi commitado antes.
+      this.inbox = backing.inbox;
+      this.states = backing.states;
+      this.history = backing.history;
+      this.events = backing.events;
+      this.decisions = backing.decisions;
+      this.outbox = backing.outbox;
+      this.outboxIdem = backing.outboxIdem;
+      this.leases = backing.leases;
+      this.routing = backing.routing;
+    }
+  }
 
   // ── ConversationRoutingStore (F2.7.6) ─────────────────────────────────────
   upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): void {
@@ -395,6 +427,31 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
       terminalAt: at,
     });
     return { ok: true, stateVersion, applied: true };
+  }
+
+  // ── R13-D/1 (audit Codex): promoção accepted-safe da WorkingMemory. Recebe SÓ a WorkingMemory; carrega o estado
+  //    ATUAL e atualiza SÓ workingMemory + appliedAcceptedEffectIds + version + updatedAt (preserva o resto).
+  //    Idempotente (duplicado -> applied=false); conflito de versão -> applied=false. Ligado a send_media real.
+  commitWorkingMemoryOutcome(conversationId: Id, effectId: Id, expectedVersion: number, nextWorkingMemory: PersistedWorkingMemory, at: string): { ok: true; applied: boolean; version: number } | { ok: false; reason: string } {
+    const snapshot = this.states.get(conversationId);
+    if (!snapshot) return { ok: false, reason: "wm_state_not_found" };
+    const effect = this.outbox.get(effectId);
+    if (!effect || effect.conversationId !== conversationId) return { ok: false, reason: "wm_effect_not_found" };
+    if (effect.kind !== "send_media") return { ok: false, reason: "wm_effect_kind_invalid" };
+    if (effect.status !== "succeeded" || (effect.receiptLevel !== "accepted" && effect.receiptLevel !== "delivered")) return { ok: false, reason: "wm_effect_not_accepted" };
+    const current = snapshot.state;
+    const applied = current.appliedAcceptedEffectIds ?? [];
+    if (applied.includes(effectId)) return { ok: true, applied: false, version: snapshot.version };   // duplicado -> no-op
+    if (snapshot.version !== expectedVersion) return { ok: true, applied: false, version: snapshot.version };  // CAS
+    const version = expectedVersion + 1;
+    const state = structuredClone(current);                                 // preserva byte-a-byte o resto do estado
+    state.workingMemory = structuredClone(nextWorkingMemory);
+    state.appliedAcceptedEffectIds = [...applied, effectId];
+    state.version = version;
+    state.updatedAt = at;
+    this.states.set(conversationId, { state, version });
+    this.history.push({ conversationId, version, state: structuredClone(state) });
+    return { ok: true, applied: true, version };
   }
 
   // ── UnitOfWork (atômico, CAS) ─────────────────────────────────────────────

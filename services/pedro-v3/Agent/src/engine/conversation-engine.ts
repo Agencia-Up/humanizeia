@@ -318,7 +318,7 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
       // pergunta EFETIVAMENTE renderizada (0 perguntas -> sem objetivo; supersede o anterior diferente). ImpossÃ­vel
       // gravar objetivo != pergunta enviada. NÃ£o roda em terminal-safe (fallback nÃ£o tem pergunta estruturada).
       if (sdrPolicy && !turnOutput.terminalSafe) {
-        turnOutput = { ...turnOutput, decision: reconcileObjectiveWithQuestion({ decision: turnOutput.decision, composedText: turnOutput.composed.text, state: conductorState, turnId }) };
+        turnOutput = { ...turnOutput, decision: reconcileObjectiveWithQuestion({ decision: turnOutput.decision, composedText: turnOutput.composed.text, state: conductorState, turnId, policy: sdrPolicy }) };
       }
 
       // F2.7.4: a fala do lead entra na memoria (recentTurns) deterministicamente (burst agregado num turno).

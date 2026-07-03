@@ -27,7 +27,7 @@
     "test:f2711": "tsx tests/run-f2-7-11-continuity-fallback.ts",
     "test:f2712": "tsx tests/run-f2-7-12-ordinal-offer.ts",
     "test:f2713": "tsx tests/run-f2-7-13-turn-priority.ts",
-    "test:all": "tsx tests/run.ts && tsx tests/run-phase2.ts && tsx tests/run-sql-schema.ts && tsx tests/run-postgres-adapter.ts && tsx tests/run-read-side.ts && tsx tests/run-canary-wiring.ts && tsx tests/run-model-adapter.ts && tsx tests/run-openai-adapter.ts && tsx tests/run-openai-canary-root.ts && tsx tests/run-pilot-scope.ts && tsx tests/run-active-effects.ts && tsx tests/run-active-root.ts && tsx tests/run-pilot-http.ts && tsx tests/run-tenant-openai-key.ts && tsx tests/run-sanitize-error.ts && tsx tests/run-gateway-filter.ts && tsx tests/run-f2-7-4-grounding-context.ts && tsx tests/run-f2-7-5-offer-render.ts && tsx tests/run-f2-7-6-debounce.ts && tsx tests/run-f2-7-7-slots.ts && tsx tests/run-f2-7-8-photos.ts && tsx tests/run-f2-7-9-cheap-stock.ts && tsx tests/run-f2-7-10-popularity.ts && tsx tests/run-f2-7-11-continuity-fallback.ts && tsx tests/run-f2-7-12-ordinal-offer.ts && tsx tests/run-f2-7-13-turn-priority.ts && tsx tests/run-f2-7-14-sdr-conductor.ts && tsx tests/run-f2-7-15-vehicle-taxonomy.ts && tsx tests/run-f2-7-16-explicit-honesty.ts && tsx tests/run-f2-7-17-audit-fixes.ts && tsx tests/run-f2-7-18-eval-receipt-cycle.ts && tsx tests/run-f2-8-rebalance-cases.ts && tsx tests/run-f2-9-conduction-frame.ts && tsx tests/run-f2-10-conduction-routing.ts",
+    "test:all": "tsx tests/run.ts && tsx tests/run-phase2.ts && tsx tests/run-sql-schema.ts && tsx tests/run-postgres-adapter.ts && tsx tests/run-read-side.ts && tsx tests/run-canary-wiring.ts && tsx tests/run-model-adapter.ts && tsx tests/run-openai-adapter.ts && tsx tests/run-openai-canary-root.ts && tsx tests/run-pilot-scope.ts && tsx tests/run-active-effects.ts && tsx tests/run-active-root.ts && tsx tests/run-pilot-http.ts && tsx tests/run-tenant-openai-key.ts && tsx tests/run-sanitize-error.ts && tsx tests/run-gateway-filter.ts && tsx tests/run-f2-7-4-grounding-context.ts && tsx tests/run-f2-7-5-offer-render.ts && tsx tests/run-f2-7-6-debounce.ts && tsx tests/run-f2-7-7-slots.ts && tsx tests/run-f2-7-8-photos.ts && tsx tests/run-f2-7-9-cheap-stock.ts && tsx tests/run-f2-7-10-popularity.ts && tsx tests/run-f2-7-11-continuity-fallback.ts && tsx tests/run-f2-7-12-ordinal-offer.ts && tsx tests/run-f2-7-13-turn-priority.ts && tsx tests/run-f2-7-14-sdr-conductor.ts && tsx tests/run-f2-7-15-vehicle-taxonomy.ts && tsx tests/run-f2-7-16-explicit-honesty.ts && tsx tests/run-f2-7-17-audit-fixes.ts && tsx tests/run-f2-7-18-eval-receipt-cycle.ts && tsx tests/run-f2-8-rebalance-cases.ts && tsx tests/run-f2-9-conduction-frame.ts && tsx tests/run-f2-10-conduction-routing.ts && tsx tests/run-f2-11-slot-deferral-conduction.ts && tsx tests/run-f2-12-working-memory.ts && tsx tests/run-f2-13-central-shadow.ts && tsx tests/run-f2-14-openai-agent-brain.ts && tsx tests/run-central-shadow-isolation.ts && tsx tests/run-central-gate-offline.ts",
     "start": "tsx src/runtime/server.ts",
     "test:pilot-http": "tsx tests/run-pilot-http.ts",
     "test:tenant-openai-key": "tsx tests/run-tenant-openai-key.ts",
@@ -40,8 +40,16 @@
     "test:f2718": "tsx tests/run-f2-7-18-eval-receipt-cycle.ts",
     "test:f28": "tsx tests/run-f2-8-rebalance-cases.ts",
     "eval:conversation:real": "tsx eval/run-eval.ts",
+    "eval:central:real": "tsx eval/run-central-eval.ts",
+    "smoke:central": "tsx eval/run-central-smoke.ts",
+    "test:f213": "tsx tests/run-f2-13-central-shadow.ts",
+    "test:f214": "tsx tests/run-f2-14-openai-agent-brain.ts",
+    "test:shadow": "tsx tests/run-central-shadow-isolation.ts",
+    "test:gate-offline": "tsx tests/run-central-gate-offline.ts",
     "test:f29": "tsx tests/run-f2-9-conduction-frame.ts",
-    "test:f210": "tsx tests/run-f2-10-conduction-routing.ts"
+    "test:f210": "tsx tests/run-f2-10-conduction-routing.ts",
+    "test:f211": "tsx tests/run-f2-11-slot-deferral-conduction.ts",
+    "test:f212": "tsx tests/run-f2-12-working-memory.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.3",

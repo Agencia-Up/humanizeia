@@ -543,7 +543,8 @@ async function main(): Promise<void> {
     const mkDec = (muts: DecisionMutation[], effectPlan: unknown[] = sendMsg()): TurnDecision =>
       ({ action: "reply", target: null, reasonCode: "answer", reasonSummary: "", confidence: 0.9, decisionMutations: muts, effectPlan, responsePlan: { guidance: "" }, policyChecks: [] } as unknown as TurnDecision);
     const plannedMut = (slot: string): DecisionMutation => ({ op: "set_planned_objective", planned: { id: `o-${slot}`, activationPlanId: "reply", effectId: "tR:reply", type: "perguntou_dados", slot, plannedInTurnId: "tR", expectedAnswerKinds: ["afirmacao"] } } as unknown as DecisionMutation);
-    const rec = (text: string, decision: TurnDecision, state: ConversationState = base()) => reconcileObjectiveWithQuestion({ decision, composedText: text, state, turnId: "tR" });
+    const recPolicy = buildSdrQualificationPolicy({ qualificationQuestions: null });
+    const rec = (text: string, decision: TurnDecision, state: ConversationState = base()) => reconcileObjectiveWithQuestion({ decision, composedText: text, state, turnId: "tR", policy: recPolicy });
     const objOf = (d: TurnDecision) => d.decisionMutations.find((m) => m.op === "set_planned_objective");
     const slotOfObj = (d: TurnDecision): string | undefined => { const m = objOf(d); return m && m.op === "set_planned_objective" ? (m.planned.slot as string) : undefined; };
     // conductor "planejou" nome (mutação + activate), mas o LLM perguntou TROCA -> objetivo persistido = possuiTroca.

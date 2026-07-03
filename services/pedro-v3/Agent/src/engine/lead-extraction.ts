@@ -301,7 +301,7 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
 // item 1 (Codex): ESCOLHA de veículo do lead a partir da última lista renderizada — ordinal OU modelo ÚNICO.
 // Ambíguo (2 Onix pelo modelo) -> NÃO seleciona (o ordinal desambigua); modelo fora da lista -> não muda o foco.
 // item 2: usa o parseOrdinal ÚNICO/endurecido (quantidade não é ordinal: "quero 3 fotos" não seleciona).
-function resolveSelectedVehicle(leadMessage: string, state: ConversationState, claimExtractor: ClaimExtractor): EntityReference | null {
+export function resolveSelectedVehicle(leadMessage: string, state: ConversationState, claimExtractor: ClaimExtractor): EntityReference | null {
   const items = state.lastRenderedOfferContext?.items ?? [];
   if (items.length === 0) return null;
   const labelOf = (it: (typeof items)[number]): string => [it.marca, it.modelo, it.ano].filter(Boolean).join(" ").trim();

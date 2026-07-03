@@ -60,7 +60,9 @@ async function main(): Promise<void> {
 
   // F2.7.6: as RPCs novas do debounce DEVEM estar no allowlist do gateway. Regressao real:
   // eu esqueci de allowlistar -> toda ingestao virava OPERATION_NOT_ALLOWED -> bridge caia no v2.
-  for (const rpc of ["v3_upsert_conversation_routing", "v3_find_settled_conversations"]) {
+  // R13-D/1 (audit Codex): a RPC de WM outcome DEVE estar no allowlist (senao a promocao accepted-safe vira
+  // OPERATION_NOT_ALLOWED e a lembranca de foto nunca persiste). Este teste FALHA se a entrada for removida.
+  for (const rpc of ["v3_upsert_conversation_routing", "v3_find_settled_conversations", "v3_commit_working_memory_outcome"]) {
     const cap: { url?: string } = {};
     await gw(cap).rpc(rpc, { p_tenant_id: "11111111-1111-1111-1111-111111111111" });
     check(`RPC '${rpc}' no allowlist (chega no transport, nao bloqueia)`, !!cap.url && cap.url.includes(`rpc/${rpc}`), cap.url);
