@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Bot, Send, Loader2, Search, ArrowLeft, Pause, Play,
+  Bot, Send, Loader2, Search, ArrowLeft, ArrowRight, Pause, Play,
   MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
   Paperclip, Mic, FileText, Download, Trash2, X, Square, Eye,
 } from 'lucide-react';
@@ -258,6 +258,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [resolvingMediaIds, setResolvingMediaIds] = useState<Set<string>>(new Set());
+  // FASE 1: momento da transferencia IA->vendedor (ai_lead_transfers.confirmed_at) do lead aberto,
+  // pra marcar "Atendimento IA" antes e o divisor de transferencia. So no modo Conversas e no Pedro.
+  const [transferInfo, setTransferInfo] = useState<{ at: string; toMemberId: string | null } | null>(null);
 
   // Reply
   const [replyText, setReplyText] = useState('');
@@ -567,6 +570,27 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   useEffect(() => {
     fetchMessages();
   }, [fetchMessages]);
+
+  // FASE 1: busca a transferencia confirmada do lead aberto (so no modo Conversas e leads do Pedro).
+  // Marcos nao passa pela IA -> sem transferencia -> sem marcacao.
+  useEffect(() => {
+    if (!unified || !selectedLead || selectedLead.origem === 'marcos') { setTransferInfo(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase as any)
+        .from('ai_lead_transfers')
+        .select('confirmed_at, to_member_id')
+        .eq('lead_id', selectedLead.id)
+        .eq('is_confirmed', true)
+        .not('confirmed_at', 'is', null)
+        .order('confirmed_at', { ascending: true })
+        .limit(1);
+      if (cancelled) return;
+      const row = (data || [])[0];
+      setTransferInfo(row ? { at: row.confirmed_at as string, toMemberId: (row.to_member_id as string) || null } : null);
+    })();
+    return () => { cancelled = true; };
+  }, [unified, selectedLead?.id, selectedLead?.origem]);
 
   useEffect(() => {
     const recoverable = messages.filter(msg => {
@@ -1000,6 +1024,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Mapa member_id -> nome do vendedor, pra mostrar quem atende cada lead no card (so master).
   const sellerNameById = new Map<string, string>();
   for (const s of sellers) for (const id of s.memberIds) sellerNameById.set(id, s.name);
+  // FASE 1: limite temporal da transferencia e nome do vendedor que recebeu, pro divisor da timeline.
+  const transferAtMs = transferInfo ? new Date(transferInfo.at).getTime() : null;
+  const transferSellerName = transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null;
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
@@ -1326,8 +1353,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {messages.map(msg => {
+                    {messages.map((msg, idx) => {
                       const isOutgoing = msg.direction === 'outgoing';
+                      // FASE 1: fase da IA = mensagens ANTES da transferencia confirmada.
+                      const prevMsg = idx > 0 ? messages[idx - 1] : null;
+                      const curIa = transferAtMs != null && new Date(msg.created_at).getTime() < transferAtMs;
+                      const prevIa = prevMsg ? (transferAtMs != null && new Date(prevMsg.created_at).getTime() < transferAtMs) : false;
+                      const showIaHeader = transferAtMs != null && idx === 0 && curIa;
+                      const showTransferDivider = transferAtMs != null && idx > 0 && prevIa && !curIa;
                       const album = (msg.media_list || []).filter(m => isRenderableMedia(m?.file || m?.url));
                       const mt = msg.message_type;
                       const isAudio = mt === 'audio' || mt === 'ptt' || mt === 'voice';
@@ -1339,11 +1372,27 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       const mediaUnavailable = isMediaType && album.length === 0 && !mainOk && !isDoc;
                       const caption = displayText(msg.content);
                       return (
-                        <div key={msg.id} data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+                        <Fragment key={msg.id}>
+                          {showIaHeader && (
+                            <div className="flex justify-center my-2">
+                              <span className="inline-flex items-center gap-1.5 text-[11px] text-violet-200/90 bg-[#2a2340] px-3 py-1 rounded-full shadow-sm">
+                                <Bot className="h-3 w-3 text-violet-300" /> Atendimento IA — qualificação
+                              </span>
+                            </div>
+                          )}
+                          {showTransferDivider && (
+                            <div className="flex justify-center my-3">
+                              <span className="inline-flex items-center gap-1.5 text-[11px] text-[#8696a0] bg-[#182229] px-3 py-1 rounded-full shadow-sm">
+                                <ArrowRight className="h-3 w-3" />
+                                Transferido{transferSellerName ? ` para ${transferSellerName}` : ''}{transferInfo ? ` · ${format(new Date(transferInfo.at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}` : ''}
+                              </span>
+                            </div>
+                          )}
+                        <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[78%] rounded-lg px-3 py-2 text-[14.5px] leading-relaxed shadow-md ${
                             isOutgoing
-                              ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm'
-                              : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5'
+                              ? (curIa ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm' : 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm')
+                              : (curIa ? 'bg-[#241f33] text-[#e9edef] rounded-tl-sm border border-violet-500/20' : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5')
                           }`}>
                             {album.length > 0 ? (
                               <div className={`grid ${album.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-2 max-w-[360px]`}>
@@ -1397,6 +1446,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             </p>
                           </div>
                         </div>
+                        </Fragment>
                       );
                     })}
                     <div ref={messagesEndRef} />
