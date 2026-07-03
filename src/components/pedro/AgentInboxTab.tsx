@@ -187,6 +187,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Agents
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>(ALL_AGENTS);
+  // Divisor arrastavel da lista de conversas (modo Conversas), estilo WhatsApp
+  const paneRef = useRef<HTMLDivElement>(null);
+  const [listW, setListW] = useState<number>(() => {
+    try { const v = parseInt(localStorage.getItem('conversas_list_w') || '', 10); if (v >= 280 && v <= 560) return v; } catch { /* ignore */ }
+    return 380;
+  });
+  const startListDrag = (e: { preventDefault(): void }) => {
+    e.preventDefault();
+    let lastW = listW;
+    const onMove = (ev: MouseEvent) => {
+      const rect = paneRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      lastW = Math.min(560, Math.max(280, ev.clientX - rect.left));
+      setListW(lastW);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try { localStorage.setItem('conversas_list_w', String(lastW)); } catch { /* ignore */ }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
   // Filtro por vendedor (só master): acompanhar os leads/conversas de um vendedor.
   const [sellers, setSellers] = useState<{ key: string; name: string; memberIds: string[] }[]>([]);
   const [sellerFilter, setSellerFilter] = useState<string>(ALL_SELLERS);
@@ -623,10 +646,28 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       || null;
   };
 
+  /* ── Modo Conversas (unified): vendedor assume o controle ─────────────
+     Ao responder por aqui num lead do Pedro que ainda estava com a IA ativa,
+     pausa a IA silenciosamente pra ela nao responder por cima do vendedor.
+     Marcos nao tem IA -> no-op. Reversivel na aba do Pedro. */
+  const ensureManualControlUnified = async () => {
+    if (!unified || !selectedLead) return;
+    if (selectedLead.origem === 'marcos') return;
+    if (selectedLead.ai_paused) return;
+    const { error } = await supabase
+      .from('ai_crm_leads')
+      .update({ ai_paused: true })
+      .eq('id', selectedLead.id);
+    if (!error) {
+      setLeads(prev => prev.map(l => (l.id === selectedLead.id ? { ...l, ai_paused: true } : l)));
+      setSelectedLead(prev => (prev ? { ...prev, ai_paused: true } : prev));
+    }
+  };
+
   /* ── Enviar resposta manual ──────────────────────────────────────── */
   const handleSend = async () => {
     if (!replyText.trim() || !selectedLead || sending) return;
-    if (!selectedLead.ai_paused) {
+    if (!unified && !selectedLead.ai_paused) {
       toast({
         title: 'Pause a IA primeiro',
         description: 'Assim o agente nao responde junto com voce nesta conversa.',
@@ -634,6 +675,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
       return;
     }
+    if (unified) await ensureManualControlUnified();
     setSending(true);
 
     const instId = resolveInstanceId();
@@ -680,7 +722,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   /* ── Enviar anexo (imagem, audio, video, documento) ──────────────── */
   const sendMediaMessage = async (blob: Blob, filename: string, caption = ''): Promise<boolean> => {
     if (!selectedLead) return false;
-    if (!selectedLead.ai_paused) {
+    if (!unified && !selectedLead.ai_paused) {
       toast({
         title: 'Pause a IA primeiro',
         description: 'Assim o agente nao responde junto com voce nesta conversa.',
@@ -688,6 +730,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
       return false;
     }
+    if (unified) await ensureManualControlUnified();
     const instId = resolveInstanceId();
     if (!instId) {
       toast({ title: 'Sem instancia vinculada a este lead', variant: 'destructive' });
@@ -776,7 +819,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   /* ── Gravacao de audio ────────────────────────────────────────────── */
   const startRecording = async () => {
-    if (!selectedLead?.ai_paused) {
+    if (!unified && !selectedLead?.ai_paused) {
       toast({
         title: 'Pause a IA primeiro',
         description: 'Assim o agente nao responde junto com voce nesta conversa.',
@@ -784,6 +827,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
       return;
     }
+    if (unified) await ensureManualControlUnified();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recordStreamRef.current = stream;
@@ -926,32 +970,41 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden">
-      {/* ── Top Bar: Seletor de Agente ── */}
+      {/* ── Top Bar: Seletor de Agente (Pedro) / titulo Conversas (unified) ── */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30">
-        <Bot className="h-5 w-5 text-violet-400 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <Select value={selectedAgentId} onValueChange={v => { setSelectedAgentId(v); setSelectedLead(null); }}>
-            <SelectTrigger className="h-9 text-sm w-full max-w-[300px]">
-              <SelectValue placeholder="Selecionar agente..." />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_AGENTS} className="text-xs">
-                <span className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
-                  Todos os agentes
-                </span>
-              </SelectItem>
-              {agents.map(a => (
-                <SelectItem key={a.id} value={a.id} className="text-xs">
-                  <span className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                    {a.name}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {unified ? (
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <MessageCircle className="h-5 w-5 text-primary shrink-0" />
+            <span className="text-sm font-semibold text-foreground">Conversas</span>
+          </div>
+        ) : (
+          <>
+            <Bot className="h-5 w-5 text-violet-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <Select value={selectedAgentId} onValueChange={v => { setSelectedAgentId(v); setSelectedLead(null); }}>
+                <SelectTrigger className="h-9 text-sm w-full max-w-[300px]">
+                  <SelectValue placeholder="Selecionar agente..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_AGENTS} className="text-xs">
+                    <span className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
+                      Todos os agentes
+                    </span>
+                  </SelectItem>
+                  {agents.map(a => (
+                    <SelectItem key={a.id} value={a.id} className="text-xs">
+                      <span className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                        {a.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )}
         {!isSeller && sellers.length > 0 && (
           <Select value={sellerFilter} onValueChange={v => { setSellerFilter(v); setSelectedLead(null); }}>
             <SelectTrigger className="h-9 text-sm w-[200px] shrink-0" title="Acompanhar as conversas de um vendedor">
@@ -980,9 +1033,12 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         </Badge>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div ref={paneRef} className="flex flex-1 overflow-hidden">
         {/* ── Painel Esquerdo: Lista de Conversas ── */}
-        <div className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40`}>
+        <div
+          className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40 ${unified ? 'md:!w-[var(--conv-lw)] shrink-0' : ''}`}
+          style={unified ? ({ ['--conv-lw']: `${listW}px` } as any) : undefined}
+        >
           {/* Search */}
           <div className="p-3 border-b border-border/30">
             <div className="relative">
@@ -1063,7 +1119,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     <div className="flex items-start gap-2.5">
                       <Avatar className="h-11 w-11 shrink-0">
                         <AvatarFallback className={`text-xs font-bold ${
-                          lead.ai_paused
+                          unified
+                            ? 'bg-primary/10 text-primary border border-primary/20'
+                            : lead.ai_paused
                             ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                             : 'bg-violet-500/15 text-violet-400 border border-violet-500/30'
                         }`}>
@@ -1083,7 +1141,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${st.color}`}>
                             {st.label}
                           </span>
-                          {lead.ai_paused ? (
+                          {unified ? (
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                              {lead.origem === 'marcos' ? 'Marcos' : 'Pedro'}
+                            </span>
+                          ) : lead.ai_paused ? (
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 flex items-center gap-0.5">
                               <Pause className="h-2.5 w-2.5" /> Manual
                             </span>
@@ -1110,12 +1172,25 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           </ScrollArea>
         </div>
 
+        {/* Divisor arrastavel (estilo WhatsApp) — so no modo Conversas, desktop */}
+        {unified && (
+          <div
+            onMouseDown={startListDrag}
+            className="hidden md:block w-1.5 cursor-col-resize bg-border/20 hover:bg-primary/40 transition-colors shrink-0"
+            title="Arraste para ajustar a largura"
+          />
+        )}
+
         {/* ── Painel Direito: Chat ── */}
         <div className={`${selectedLead ? 'flex' : 'hidden md:flex'} flex-col flex-1`}>
           {!selectedLead ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground">
-              <Bot className="h-16 w-16 opacity-20 mb-4" />
-              <p className="text-sm font-medium">Conversas IA</p>
+              {unified ? (
+                <MessageCircle className="h-16 w-16 opacity-20 mb-4" />
+              ) : (
+                <Bot className="h-16 w-16 opacity-20 mb-4" />
+              )}
+              <p className="text-sm font-medium">{unified ? 'Conversas' : 'Conversas IA'}</p>
               <p className="text-xs mt-1">Selecione uma conversa para visualizar</p>
             </div>
           ) : (
@@ -1132,7 +1207,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
                 <Avatar className="h-11 w-11 shrink-0">
                   <AvatarFallback className={`text-xs font-bold ${
-                    selectedLead.ai_paused
+                    unified
+                      ? 'bg-primary/10 text-primary border border-primary/20'
+                      : selectedLead.ai_paused
                       ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                       : 'bg-violet-500/15 text-violet-400 border border-violet-500/30'
                   }`}>
@@ -1151,8 +1228,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   </p>
                 </div>
 
-                {/* Pause / Resume button — escondido em modo consulta (vendedor) */}
-                {readOnly ? (
+                {/* Pause / Resume button — so no inbox do Pedro; escondido no modo Conversas e em consulta */}
+                {!unified && (readOnly ? (
                   <Badge variant="outline" className="h-8 px-3 text-xs gap-1.5 shrink-0 border-border/60 text-muted-foreground">
                     <Eye className="h-3.5 w-3.5" />
                     Somente leitura
@@ -1183,11 +1260,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       </>
                     )}
                   </Button>
-                )}
+                ))}
               </div>
 
               {/* AI status banner */}
-              {!readOnly && selectedLead.ai_paused && (
+              {!unified && !readOnly && selectedLead.ai_paused && (
                 <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2">
                   <Pause className="h-3.5 w-3.5 text-amber-400 shrink-0" />
                   <p className="text-xs text-amber-300">
@@ -1420,7 +1497,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       variant="ghost"
                       className="h-9 w-9 p-0 rounded-xl text-muted-foreground hover:text-foreground shrink-0"
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={!selectedLead.ai_paused || uploadingMedia}
+                      disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
                       title="Anexar arquivo"
                     >
                       {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
@@ -1430,11 +1507,12 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         value={replyText}
                         onChange={e => setReplyText(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder={selectedLead.ai_paused
-                          ? 'Digite sua resposta manual...'
+                        placeholder={
+                          unified ? 'Digite uma mensagem...'
+                          : selectedLead.ai_paused ? 'Digite sua resposta manual...'
                           : 'Pause a IA para responder manualmente...'
                         }
-                        disabled={!selectedLead.ai_paused}
+                        disabled={!unified && !selectedLead.ai_paused}
                         rows={1}
                         className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
                       />
@@ -1444,7 +1522,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         size="sm"
                         className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
                         onClick={handleSend}
-                        disabled={!selectedLead.ai_paused || sending}
+                        disabled={(!unified && !selectedLead.ai_paused) || sending}
                       >
                         {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                       </Button>
@@ -1453,7 +1531,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         size="sm"
                         className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
                         onClick={startRecording}
-                        disabled={!selectedLead.ai_paused || uploadingMedia}
+                        disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
                         title="Gravar audio"
                       >
                         <Mic className="h-4 w-4" />
@@ -1461,7 +1539,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     )}
                   </div>
                 )}
-                {!selectedLead.ai_paused && (
+                {!unified && !selectedLead.ai_paused && (
                   <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
                     <Bot className="h-3 w-3 text-violet-400" />
                     IA ativa — pause a IA para responder, anexar arquivo ou gravar audio.
