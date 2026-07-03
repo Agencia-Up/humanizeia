@@ -194,9 +194,9 @@ export default function Dashboard() {
   if (!isConnected && !isLoading) {
     return (
       <MainLayout>
-        <div className="flex flex-1 items-center justify-center py-10 px-4">
+        <div className="logos-dashboard-shell flex flex-1 items-center justify-center py-10 px-4">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
-            <Card className="border-border/50 bg-card/80 overflow-hidden">
+            <Card className="logos-dashboard-card border overflow-hidden">
               <div className="h-1.5 w-full bg-gradient-to-r from-primary to-yellow-500" />
               <CardContent className="flex flex-col items-center gap-6 p-8 text-center">
                 <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 text-4xl">
@@ -215,7 +215,7 @@ export default function Dashboard() {
                     { emoji: '🔒', text: 'Seus dados ficam 100% seguros' },
                     { emoji: '📈', text: 'Você vê tudo num só lugar' },
                   ].map(item => (
-                    <div key={item.text} className="flex items-center gap-3 rounded-xl bg-muted/40 px-4 py-3">
+                    <div key={item.text} className="logos-dashboard-action flex items-center gap-3 rounded-xl border px-4 py-3">
                       <span className="text-xl">{item.emoji}</span>
                       <span className="text-sm font-medium">{item.text}</span>
                     </div>
@@ -236,11 +236,11 @@ export default function Dashboard() {
   /* ═══ DASHBOARD PRINCIPAL ══════════════════════════════════════ */
   return (
     <MainLayout>
-      <div className="space-y-8 max-w-5xl mx-auto">
+      <div className="logos-dashboard-shell space-y-8 max-w-5xl mx-auto">
 
         {/* ── Saudação ─────────────────────────────────────────── */}
         <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-2xl md:text-3xl font-bold">
+          <h1 className="logos-dashboard-title text-2xl md:text-3xl font-bold">
             Oi, <span className="bg-gradient-to-r from-primary to-yellow-400 bg-clip-text text-transparent">{firstName}</span>! 👋
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
@@ -253,7 +253,7 @@ export default function Dashboard() {
             saude/anomalies das campanhas nao renderiza. */}
         {FEATURES.campaignSection && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-          <div className={`rounded-2xl border p-4 flex items-center justify-between gap-4 ${healthConfig.bg}`}>
+          <div className={`logos-dashboard-status rounded-2xl border p-4 flex items-center justify-between gap-4 ${healthConfig.bg}`}>
             <div className="flex items-center gap-3">
               <span className="text-2xl">{healthConfig.emoji}</span>
               <div>
@@ -287,7 +287,7 @@ export default function Dashboard() {
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing || isRefreshingManual}
-                className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-card/50 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                className="logos-dashboard-action flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
               >
                 <RefreshCw className={`h-3 w-3 ${(isRefreshing || isRefreshingManual) ? 'animate-spin' : ''}`} />
                 Atualizar
@@ -343,9 +343,9 @@ export default function Dashboard() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.12 + i * 0.05 }}
-                  className="rounded-2xl border border-border/50 bg-card/60 p-4 flex flex-col gap-2 hover:border-primary/30 transition-colors"
+                  className="logos-dashboard-card rounded-2xl border p-4 flex flex-col gap-2 transition-all duration-200"
                 >
-                  <span className="text-2xl">{card.emoji}</span>
+                  <span className="logos-dashboard-kpi-icon flex h-10 w-10 items-center justify-center rounded-xl text-2xl">{card.emoji}</span>
                   <div>
                     <p className="text-[11px] text-muted-foreground leading-tight">{card.label}</p>
                     <p className="text-xl font-bold mt-0.5 leading-tight">{card.value}</p>
@@ -392,9 +392,9 @@ export default function Dashboard() {
                   disabled={!released}
                   aria-disabled={!released}
                   title={released ? undefined : 'Agente em breve disponível'}
-                  className={`group relative rounded-2xl border bg-card/60 p-4 text-left transition-all ${agent.color} ${
+                  className={`logos-dashboard-card group relative rounded-2xl border p-4 text-left transition-all duration-200 ${agent.color} ${
                     released
-                      ? 'hover:bg-card/80 hover:shadow-md cursor-pointer'
+                      ? 'cursor-pointer'
                       : 'opacity-55 cursor-not-allowed grayscale-[40%]'
                   }`}
                 >
