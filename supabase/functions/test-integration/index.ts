@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { checkCalendarAccess } from "../_shared/google-calendar.ts";
+import { resolveBndvAuthHeader, BNDV_GRAPHQL_URL, type BndvCredentials } from "../_shared/bndv-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,7 +8,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
+const BNDV_API_URL = BNDV_GRAPHQL_URL;
 
 async function getAuthenticatedUser(req: Request) {
   const authHeader = req.headers.get("Authorization");
@@ -124,17 +125,18 @@ async function testGoogleCalendar(credentials: { calendar_id: string }) {
   return { success: result.ok, message: result.message };
 }
 
-async function testBndv(credentials: { api_token: string }) {
-  if (!credentials.api_token?.trim()) {
-    return { success: false, message: "Bearer Token é obrigatório." };
-  }
+async function testBndv(credentials: BndvCredentials) {
+  // Resolve o header de auth (faz /login com ExternalKey+Senha, ou usa o Bearer legado). Se falhar, o erro
+  // já é claro (credencial ausente / login rejeitado / formato de token inesperado).
+  const auth = await resolveBndvAuthHeader(credentials || {});
+  if (!auth.ok) return { success: false, message: auth.error };
 
   try {
     const res = await fetch(BNDV_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${credentials.api_token.trim()}`,
+        Authorization: auth.authHeader,
       },
       body: JSON.stringify({
         query: `
@@ -158,7 +160,7 @@ async function testBndv(credentials: { api_token: string }) {
         message:
           data?.errors?.[0]?.message ||
           data?.message ||
-          `BNDV retornou status ${res.status}.`,
+          `BNDV /graphql retornou status ${res.status}.`,
       };
     }
 
@@ -221,6 +223,22 @@ async function testRevendaMais(credentials: { feed_url?: string }) {
   }
 }
 
+// Dispatcher único de validação — usado tanto pelo "Testar Conexão" quanto ANTES de salvar (fix do bug do
+// "Conectado" falso). Toda plataforma valida contra o serviço real; sem sucesso, NÃO conecta.
+async function runIntegrationTest(platform: string, credentials: any): Promise<{ success: boolean; message: string }> {
+  switch (platform) {
+    case "ga4": return await testGA4(credentials);
+    case "hotmart": return await testHotmart(credentials);
+    case "zapier":
+    case "webhook": return await testWebhook(credentials);
+    case "google_sheets": return await testGoogleSheets(credentials);
+    case "bndv": return await testBndv(credentials);
+    case "revendamais": return await testRevendaMais(credentials);
+    case "google_calendar": return await testGoogleCalendar(credentials);
+    default: return { success: false, message: "Plataforma não suportada" };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -238,6 +256,17 @@ Deno.serve(async (req) => {
     const { platform, credentials, action } = await req.json();
 
     if (action === "save") {
+      // ── FIX (bug do "Conectado" falso): valida a credencial CONTRA o serviço real ANTES de marcar como ativa.
+      // Antes, o save gravava is_active=true sem testar nada → qualquer texto ficava "Conectado". Agora só conecta
+      // se a validação passar. Devolve 200 com {error} p/ a UI exibir a mensagem exata (invoke perde msg em não-2xx).
+      const validation = await runIntegrationTest(platform, credentials);
+      if (!validation.success) {
+        return new Response(
+          JSON.stringify({ error: validation.message || "Não foi possível validar a conexão. Verifique as credenciais." }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const adminClient = createClient(
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -305,33 +334,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    let result;
-    switch (platform) {
-      case "ga4":
-        result = await testGA4(credentials);
-        break;
-      case "hotmart":
-        result = await testHotmart(credentials);
-        break;
-      case "zapier":
-      case "webhook":
-        result = await testWebhook(credentials);
-        break;
-      case "google_sheets":
-        result = await testGoogleSheets(credentials);
-        break;
-      case "bndv":
-        result = await testBndv(credentials);
-        break;
-      case "revendamais":
-        result = await testRevendaMais(credentials);
-        break;
-      case "google_calendar":
-        result = await testGoogleCalendar(credentials);
-        break;
-      default:
-        result = { success: false, message: "Plataforma não suportada" };
-    }
+    const result = await runIntegrationTest(platform, credentials);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

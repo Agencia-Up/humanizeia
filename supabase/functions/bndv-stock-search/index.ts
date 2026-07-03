@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { parseBndvCredentials, resolveBndvAuthHeader, BNDV_GRAPHQL_URL } from "../_shared/bndv-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,12 +7,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
+const BNDV_API_URL = BNDV_GRAPHQL_URL;
 const DEFAULT_LIMIT = 12;
-
-interface BndvCredentials {
-  api_token?: string;
-}
 
 interface BndvVehicle {
   modelName?: string | null;
@@ -39,21 +36,6 @@ async function getAuthenticatedUserId(req: Request) {
   const { data, error } = await supabase.auth.getUser();
   if (error || !data?.user) return null;
   return data.user.id;
-}
-
-function parseCredentials(raw: string | null): BndvCredentials {
-  if (!raw) return {};
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      return parsed;
-    }
-  } catch {
-    return { api_token: raw };
-  }
-
-  return {};
 }
 
 function normalizeText(value?: string | null) {
@@ -408,15 +390,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    const credentials = parseCredentials(integration.api_key_encrypted);
-    const token = credentials.api_token?.trim();
-
-    if (!token) {
+    const credentials = parseBndvCredentials(integration.api_key_encrypted);
+    // Resolve a auth: /login (ExternalKey+Senha, cliente novo) OU Bearer estático (legado). Falha -> erro claro.
+    const auth = await resolveBndvAuthHeader(credentials);
+    if (!auth.ok) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Bearer Token do BNDV não encontrado na integração salva.",
-        }),
+        JSON.stringify({ success: false, error: auth.error }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -428,7 +407,7 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: auth.authHeader,
       },
       body: JSON.stringify({
         query: `

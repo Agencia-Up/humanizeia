@@ -36,15 +36,16 @@ const INTEGRATIONS: IntegrationConfig[] = [
     icon: '🚗',
     description: 'Permite ao Pedro consultar estoque, preço e versão dos veículos',
     fields: [
-      { key: 'api_token', label: 'Bearer Token', placeholder: 'Cole aqui o token do BNDV...', type: 'password' },
+      { key: 'external_key', label: 'Chave Externa (ExternalKey)', placeholder: 'Cole aqui a ExternalKey do BNDV...', type: 'password' },
+      { key: 'password', label: 'Senha (Password)', placeholder: 'Cole aqui a senha do BNDV...', type: 'password' },
     ],
     helpText:
-      'A integração é individual por cliente. O token salvo aqui será usado somente na conta logada para consultar o estoque automotivo desse cliente.',
+      'A integração é individual por cliente. As credenciais salvas aqui são usadas somente na conta logada para consultar o estoque automotivo desse cliente. O agente autentica no BNDV (login) e consulta o estoque automaticamente.',
     helpSteps: [
-      'Acesse o painel ou suporte do BNDV e solicite o Bearer Token da API GraphQL do estoque.',
-      'Se existir um menu de API / Integrações / Tokens no painel, gere a chave por lá.',
-      'Cole o token abaixo e clique em "Testar Conexão".',
-      'Se o teste passar, clique em "Conectar e Salvar" para liberar a consulta de estoque no agente.',
+      'Solicite ao suporte do BNDV a ExternalKey e a Senha (Password) da API de Estoque da loja.',
+      'Cole a ExternalKey e a Senha nos campos abaixo.',
+      'Clique em "Testar Conexão" — o teste faz o login real no BNDV e busca o estoque.',
+      'Só clique em "Conectar e Salvar" depois que o teste passar (a conexão fica verde apenas quando funciona de verdade).',
     ],
   },
   {

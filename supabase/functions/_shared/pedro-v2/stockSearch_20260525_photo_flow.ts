@@ -1,5 +1,6 @@
 import { rankVehiclesV2 } from "./vehicleMatch.ts";
 import { fetchRevendaMaisVehicles } from "./revendaMaisStock.ts";
+import { resolveBndvAuthHeader } from "../bndv-auth.ts";
 
 const BNDV_API_URL = "https://api-estoque.azurewebsites.net/graphql";
 const DEFAULT_LIMIT = 24;
@@ -743,14 +744,15 @@ export async function searchPedroStock(supabase: any, input: PedroStockSearchInp
     return { success: false, total: 0, items: [], error: "Integracao BNDV nao conectada para este cliente." };
   }
 
-  const token = parseCredentials(integration.api_key_encrypted).api_token?.trim();
-  if (!token) return { success: false, total: 0, items: [], error: "Bearer Token do BNDV nao encontrado." };
+  // Auth BNDV: /login (ExternalKey+Senha, cliente novo) OU Bearer estatico (legado). Resolve os 2 formatos.
+  const bndvAuth = await resolveBndvAuthHeader(parseCredentials(integration.api_key_encrypted) as any);
+  if (!bndvAuth.ok) return { success: false, total: 0, items: [], error: bndvAuth.error };
 
   const graphqlResponse = await fetch(BNDV_API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: bndvAuth.authHeader,
     },
     body: JSON.stringify({
       query: `
