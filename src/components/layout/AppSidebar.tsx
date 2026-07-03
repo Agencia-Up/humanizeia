@@ -102,7 +102,8 @@ const marcosSubItems: { title: string; url: string; icon: any; featureKey: keyof
   { title: 'Formulários',     url: '/crm/formularios',   icon: ClipboardList, featureKey: 'marcos_formularios' },
   { title: 'Contatos',        url: '/whatsapp/contacts', icon: Users,         featureKey: 'marcos_contatos' },
   { title: 'Disparo em Massa',url: '/whatsapp/broadcast',icon: Send,          featureKey: 'marcos_disparo' },
-  { title: 'Conversas',       url: '/whatsapp/inbox',    icon: Inbox,         featureKey: 'marcos_inbox' },
+  // 'Conversas' (/whatsapp/inbox) REMOVIDO da sidebar do Marcos — substituido pela aba
+  // lateral unificada WhatsApp > Conversas (/conversas). A rota antiga ainda existe.
   { title: 'Instâncias',      url: '/whatsapp/instances',icon: Smartphone,    featureKey: 'marcos_instancias' },
   { title: 'Automações',      url: '/whatsapp/automations',icon: Zap,         featureKey: 'marcos_automacoes' },
 ].filter(item =>
