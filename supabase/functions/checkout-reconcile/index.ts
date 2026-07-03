@@ -185,5 +185,30 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── ALERTA ao admin: se a rede de seguranca RESGATOU alguem, o webhook do Asaas
+  // falhou pra esse cliente. Avisa por e-mail (Resend direto) pra NUNCA falhar em
+  // silencio. So dispara quando ha resgate (raro) -> sem spam. Best-effort.
+  const rescued = results.filter((r) => r.provisioned);
+  if (rescued.length > 0) {
+    const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
+    const adminEmail = Deno.env.get('ADMIN_ALERT_EMAIL') || 'suporte@logosiabrasil.com';
+    if (RESEND_API_KEY) {
+      const linhas = rescued.map((r) => `&bull; ${r.email} (pending ${r.pending})`).join('<br>');
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Logosai <suporte@logosiabrasil.com>',
+            to: [adminEmail],
+            subject: `[LogosIA] Rede de seguranca do checkout ativada — ${rescued.length} cliente(s)`,
+            html: `<p>A rede de seguranca provisionou <b>${rescued.length}</b> checkout(s) que o webhook do Asaas <b>NAO processou</b> (o cliente pagou mas ficou sem conta ate agora):</p><p>${linhas}</p><p>Acao: confirme que o(s) cliente(s) recebeu(ram) o e-mail de acesso. Se repetir com frequencia, verifique a configuracao do webhook do checkout no painel do Asaas.</p>`,
+          }),
+        });
+        console.log(`[checkout-reconcile] alerta admin enviado (${rescued.length} resgate(s)) para ${adminEmail}`);
+      } catch (_e) { /* best-effort: nao derruba a reconciliacao */ }
+    }
+  }
+
   return json({ ok: true, verificados: (pendings || []).length, results });
 });
