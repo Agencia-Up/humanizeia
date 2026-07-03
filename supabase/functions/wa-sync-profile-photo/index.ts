@@ -150,7 +150,15 @@ async function resolveInstance(service: any, userId: string, phone: string, inst
   return fallback || null;
 }
 
-async function fetchProfilePhoto(instance: any, phone: string): Promise<string | null> {
+type ProfilePhotoAttempt = {
+  label: string;
+  status: number | null;
+  ok: boolean;
+  found: boolean;
+  error?: string;
+};
+
+async function fetchProfilePhoto(instance: any, phone: string): Promise<{ url: string | null; attempts: ProfilePhotoAttempt[] }> {
   const legacyUazapiToken = Deno.env.get("UAZAPI_API") || Deno.env.get("UAZAPI-API");
   const envApiUrl =
     Deno.env.get("UAZAPI_URL") ||
@@ -166,10 +174,27 @@ async function fetchProfilePhoto(instance: any, phone: string): Promise<string |
   const instanceToken = String(instance?.api_key_encrypted || "");
   const instanceName = String(instance?.instance_name || "");
   const number = onlyDigits(phone);
-  if (!apiUrl || !instanceName || !number) return null;
+  const diagnostic: ProfilePhotoAttempt[] = [];
+  if (!apiUrl || !instanceName || !number) {
+    return {
+      url: null,
+      attempts: [{
+        label: "config",
+        status: null,
+        ok: false,
+        found: false,
+        error: !apiUrl ? "missing_api_url" : !instanceName ? "missing_instance_name" : "missing_phone",
+      }],
+    };
+  }
 
   const tokens = Array.from(new Set([adminToken, instanceToken].filter(Boolean)));
-  if (tokens.length === 0) return null;
+  if (tokens.length === 0) {
+    return {
+      url: null,
+      attempts: [{ label: "config", status: null, ok: false, found: false, error: "missing_token" }],
+    };
+  }
 
   const attempts = [
     { label: "chat/fetchProfile", url: `${apiUrl}/chat/fetchProfile/${encodeURIComponent(instanceName)}`, body: { number } },
@@ -189,23 +214,39 @@ async function fetchProfilePhoto(instance: any, phone: string): Promise<string |
     for (const attempt of attempts) {
       try {
         const res = await fetch(attempt.url, { method: "POST", headers, body: JSON.stringify(attempt.body) });
+        const entry: ProfilePhotoAttempt = { label: attempt.label, status: res.status, ok: res.ok, found: false };
         if (!res.ok) {
-          await res.text();
+          diagnostic.push(entry);
+          await res.text().catch(() => "");
           continue;
         }
         const data = await res.json();
         const url = extractProfilePictureUrl(data);
-        if (url) return url;
+        entry.found = !!url;
+        diagnostic.push(entry);
+        if (url) return { url, attempts: diagnostic };
       } catch (err) {
+        diagnostic.push({
+          label: attempt.label,
+          status: null,
+          ok: false,
+          found: false,
+          error: err instanceof Error ? err.message.slice(0, 180) : "unknown_error",
+        });
         console.warn(`[wa-sync-profile-photo] ${attempt.label} failed`, err);
       }
     }
   }
 
-  return null;
+  return { url: null, attempts: diagnostic };
 }
 
-async function upsertContactPhoto(service: any, userId: string, phone: string, photoUrl: string) {
+async function upsertContactMetadata(
+  service: any,
+  userId: string,
+  phone: string,
+  metadataPatch: Record<string, unknown>,
+) {
   const cleanPhone = onlyDigits(phone);
   const now = new Date().toISOString();
   const { data: existing } = await service
@@ -219,13 +260,11 @@ async function upsertContactPhoto(service: any, userId: string, phone: string, p
 
   const metadata = {
     ...((existing?.metadata && typeof existing.metadata === "object") ? existing.metadata : {}),
-    profile_picture_url: photoUrl,
-    profile_picture_source: "uazapi-fetch-profile",
-    profile_picture_synced_at: now,
+    ...metadataPatch,
   };
 
   if (existing?.id) {
-    await service.from("wa_contacts").update({ metadata }).eq("id", existing.id);
+    await service.from("wa_contacts").update({ metadata, last_message_at: now }).eq("id", existing.id);
     return;
   }
 
@@ -235,6 +274,29 @@ async function upsertContactPhoto(service: any, userId: string, phone: string, p
     source: "inbox",
     metadata,
     last_message_at: now,
+  });
+}
+
+async function upsertContactPhoto(service: any, userId: string, phone: string, photoUrl: string) {
+  await upsertContactMetadata(service, userId, phone, {
+    profile_picture_url: photoUrl,
+    profile_picture_source: "uazapi-fetch-profile",
+    profile_picture_synced_at: new Date().toISOString(),
+    profile_picture_last_error: null,
+  });
+}
+
+async function recordProfilePhotoAttempt(
+  service: any,
+  userId: string,
+  phone: string,
+  attempts: ProfilePhotoAttempt[],
+  reason: string,
+) {
+  await upsertContactMetadata(service, userId, phone, {
+    profile_picture_last_attempt_at: new Date().toISOString(),
+    profile_picture_last_error: reason,
+    profile_picture_attempts: attempts.slice(-8),
   });
 }
 
@@ -276,8 +338,17 @@ Deno.serve(async (req) => {
     const instance = await resolveInstance(service, userId, phone, instanceId);
     if (!instance?.id) return json({ profile_picture_url: null, error: "Instance not found" }, 404);
 
-    const photoUrl = await fetchProfilePhoto(instance, phone);
-    if (!photoUrl) return json({ profile_picture_url: null, cached: false });
+    const result = await fetchProfilePhoto(instance, phone);
+    const photoUrl = result.url;
+    if (!photoUrl) {
+      await recordProfilePhotoAttempt(service, userId, phone, result.attempts, "no_profile_picture_url_returned");
+      return json({
+        profile_picture_url: null,
+        cached: false,
+        error: "no_profile_picture_url_returned",
+        attempts: result.attempts,
+      });
+    }
 
     await upsertContactPhoto(service, userId, phone, photoUrl);
     return json({ profile_picture_url: photoUrl, cached: false });
