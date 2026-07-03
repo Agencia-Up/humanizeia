@@ -41,7 +41,9 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
-import { resolveSelectedVehicle } from "./lead-extraction.ts";
+import { extractLeadSlots, resolveSelectedVehicle } from "./lead-extraction.ts";
+import { safeCommitSlots } from "./conversation-engine.ts";
+import { reconcileObjectiveWithQuestion, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame } from "./turn-frame-builder.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import {
@@ -81,10 +83,23 @@ export type CentralTurnArgs = {
   readonly portalPromptSha256: string;
   readonly limits: QueryLoopLimits;
   readonly maxValidationAttempts: number;
+  readonly sdrPolicy?: SdrQualificationPolicy;
   readonly brainMaxSteps?: number;                       // teto de passos de ferramenta do cérebro (default 4)
   readonly allowedTools?: ReadonlySet<string> | readonly string[];
   readonly providerCapability?: Partial<Record<OutboxRecord["kind"], ProviderCapability>>;
 };
+
+function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[]): string | null {
+  const wasObserved = (tool: string) => observations.some((observation) =>
+    observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
+  if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search")) {
+    return "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final.";
+  }
+  if (frame.signals.mentionsStore && !wasObserved("tenant_business_info")) {
+    return "O lead pediu informação da loja. Execute tenant_business_info antes da resposta final.";
+  }
+  return null;
+}
 
 export type CentralTurnResult =
   | { status: "no_op"; turnId: Id; claimedEventIds: Id[] }
@@ -280,7 +295,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
   const {
     persistence, clock, brain, llm, runQuery, businessInfo, contextPreparer,
     conversationId, tenantId, agentId, leadId, workerId, turnId, leaseTtlMs, portalPromptSha256,
-    limits, maxValidationAttempts, providerCapability,
+    limits, maxValidationAttempts, providerCapability, sdrPolicy,
   } = args;
   const ref: TenantAgentRef = { tenantId, agentId };
   const allowed = new Set(args.allowedTools ?? DEFAULT_ALLOWED_TOOLS);
@@ -307,15 +322,26 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const leadMessage = aggregateLeadMessage(inboxRecords);
       const prepared = await contextPreparer.prepare({ state, turnId, leadMessage, now: cutoff });
 
+      // Bind factual answers before the brain runs. This does not choose the reply; it only projects
+      // conservative slot facts (for example, a bare name when the previous accepted question asked for it).
+      const extractedSlots = extractLeadSlots({
+        leadMessage,
+        state,
+        interpretation: prepared.interpretation,
+        claimExtractor: prepared.claimExtractor,
+        turnId,
+      });
+      const { contextState, committed: safeExtractedSlots } = safeCommitSlots(state, extractedSlots, turnId, cutoff);
+
       const ctx: TurnContext = {
-        state, turnId, leadMessage, now: cutoff,
+        state: contextState, turnId, leadMessage, now: cutoff,
         interpretation: prepared.interpretation, tenantCatalog: prepared.tenantCatalog, claimExtractor: prepared.claimExtractor,
       };
 
       // ── WorkingMemory: parte persistida (WM-owned) + view canônica derivada do estado. ──
-      const persisted0: PersistedWorkingMemory = loadPersistedWorkingMemory(state.workingMemory).memory;
-      const wmV1: WorkingMemoryV1 = { ...persisted0, ...deriveCanonicalViews(state) };
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmV1, interpretation: prepared.interpretation, state });
+      const persisted0: PersistedWorkingMemory = loadPersistedWorkingMemory(contextState.workingMemory).memory;
+      const wmV1: WorkingMemoryV1 = { ...persisted0, ...deriveCanonicalViews(contextState) };
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmV1, interpretation: prepared.interpretation, state: contextState });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -330,7 +356,16 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         try {
           step = await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout");
         } catch { break; } // falha técnica do cérebro -> sai do loop -> fallback seguro (nunca silêncio)
-        if (step.kind === "final") { finalDecision = step.decision; break; }
+        if (step.kind === "final") {
+          const missingTool = requiredToolBeforeFinal(frame, observations);
+          if (missingTool && brainSteps + 1 < brainMaxSteps) {
+            observations.push({ tool: frame.signals.mentionsStore ? "tenant_business_info" : "stock_search", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
+            continue;
+          }
+          if (missingTool) break;
+          finalDecision = step.decision;
+          break;
+        }
 
         const call = step.call;
         // Allowlist: tool proibida NÃO executa (observação de erro; o cérebro segue com o que tem).
@@ -392,8 +427,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const decision0 = finalize(turnId, proposal, post, facts);
       // Grounding do compose = fatos de tool + fatos de MEMÓRIA (veículos já estabelecidos) + auto-grounding dos
       // veículos que a resposta pode nomear (foto/seleção), buscando vehicle_details real.
-      const memoryFacts = buildMemoryGroundingFacts(state);
-      const groundFacts = await groundNamedVehicles({ proposedEffects, state, facts, memoryFacts, runQuery, timeoutMs: limits.queryTimeoutMs ?? 20_000 });
+      const memoryFacts = buildMemoryGroundingFacts(contextState);
+      const groundFacts = await groundNamedVehicles({ proposedEffects, state: contextState, facts, memoryFacts, runQuery, timeoutMs: limits.queryTimeoutMs ?? 20_000 });
       const composeFacts = [...facts, ...memoryFacts, ...groundFacts];
       const cv = await composeAndVerify({ decision: decision0, facts: composeFacts, ctx, llm, limits, maxValidationAttempts });
       // Se o LLM falhou o grounding (terminal_safe), EXECUTA a decisão JÁ tomada deterministicamente (grounded por
@@ -417,6 +452,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       if (recalledLabel && isPhotoMemoryQuestionBlock(leadMessage) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && !mentionsLabel(composed.text, recalledLabel)) {
         const recall = `Você pediu as fotos do ${recalledLabel}. Quer que eu te passe mais detalhes dele?`;
         composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
+      }
+      // The question actually sent is the source of truth for the next turn. Persist its objective on
+      // send_message accepted so a short answer such as "Douglas" is bound to `nome` deterministically.
+      if (sdrPolicy && !terminalSafe) {
+        effectiveDecision = reconcileObjectiveWithQuestion({
+          decision: effectiveDecision,
+          composedText: composed.text,
+          state: contextState,
+          turnId,
+          policy: sdrPolicy,
+        });
       }
       const turnOutput: TurnOutput = { decision: effectiveDecision, composed, facts, loopExhausted: false, terminalSafe, steps: brainSteps };
       const decision = turnOutput.decision;
@@ -443,19 +489,19 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         relation: prepared.interpretation.relation, renderedItemCount: renderedItems.length, explicitSearchKind: null,
       });
       const focusInvalidation = focusInvalidationMutations(newSearchExecuted, renderedItems, turnId);
-      const moreOptionsReset: DecisionMutation[] = (renderedItems.length > 0 && (state.moreOptionsExhausted ?? 0) > 0) ? [{ op: "set_more_options_exhausted", value: 0 }] : [];
+      const moreOptionsReset: DecisionMutation[] = (renderedItems.length > 0 && (contextState.moreOptionsExhausted ?? 0) > 0) ? [{ op: "set_more_options_exhausted", value: 0 }] : [];
       // Resolução DETERMINÍSTICA de referência ordinal/modelo à ÚLTIMA oferta ("o primeiro", "gostei do segundo") ->
       // selectedVehicleFocus. Grounded (só seleciona item da última lista renderizada); SEM inferência booleana (não
       // reintroduz o bug de possuiTroca). Aplicada por último -> vence a seleção do cérebro em caso de divergência.
-      const ordinalRef = resolveSelectedVehicle(leadMessage, state, prepared.claimExtractor);
+      const ordinalRef = resolveSelectedVehicle(leadMessage, contextState, prepared.claimExtractor);
       const ordinalSelect: DecisionMutation[] = ordinalRef ? [{ op: "select_vehicle_focus", vehicle: ordinalRef, sourceTurnId: turnId }] : [];
 
-      const committedMutations = [...leadTurnMutations, ...brainStateMutations, ...focusInvalidation, ...moreOptionsReset, ...ordinalSelect];
+      const committedMutations = [...leadTurnMutations, ...safeExtractedSlots, ...brainStateMutations, ...focusInvalidation, ...moreOptionsReset, ...ordinalSelect];
       let reduced = applyDecision(state, committedMutations, turnId, cutoff);
       if (!reduced.ok) {
         // Fato de estado proposto pelo cérebro inválido -> o reducer (autoridade) rejeita SÓ o do cérebro; a
         // fala e a memória do turno continuam (nunca derruba o turno por causa de uma mutação do cérebro).
-        reduced = applyDecision(state, [...leadTurnMutations, ...focusInvalidation, ...moreOptionsReset], turnId, cutoff);
+        reduced = applyDecision(state, [...leadTurnMutations, ...safeExtractedSlots, ...focusInvalidation, ...moreOptionsReset], turnId, cutoff);
         if (!reduced.ok) throw new Error(`central: decision mutations rejected: ${reduced.rejected.map((r) => r.reason).join("; ")}`);
       }
       reduced.next.workingMemory = nextWM;
@@ -465,7 +511,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const pending: Record<string, PhotoActionDraft> = { ...(reduced.next.pendingPhotoActions ?? {}) };
       for (const plan of decision.effectPlan) {
         if (plan.kind !== "send_media" || !plan.photoIds || plan.photoIds.length === 0) continue;
-        const label = resolveVehicleLabel(plan.vehicleKey, composeFacts, state); // nome HUMANO (marca modelo ano), nunca a chave crua
+        const label = resolveVehicleLabel(plan.vehicleKey, composeFacts, contextState); // nome HUMANO (marca modelo ano), nunca a chave crua
         const draft: PhotoActionDraft = { vehicleKey: plan.vehicleKey, label, photoIds: [...plan.photoIds], effectId: plan.effectId, sourceTurnId: turnId, sourceTurnNumber: reduced.next.turnNumber };
         if (isValidPhotoActionDraft(draft)) pending[plan.effectId] = draft;
       }
@@ -480,7 +526,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
 
       const events = [
         makeEvent({ conversationId, turnId, type: "turn_claimed", suffix: "claimed", payload: { eventIds: claimedEventIds }, at: cutoff }),
-        makeEvent({ conversationId, turnId, type: "decision_final", suffix: "decision", payload: { action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId), brainMode: "central_shadow", brainSteps }, at: cutoff }),
+        makeEvent({ conversationId, turnId, type: "decision_final", suffix: "decision", payload: { action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId), brainMode: "central_active", brainSteps }, at: cutoff }),
         makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe }, at: cutoff }),
       ];
 

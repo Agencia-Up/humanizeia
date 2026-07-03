@@ -63,6 +63,9 @@ REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos
   algo comercial e você AINDA NÃO tem um fato de estoque neste turno, você é OBRIGADO a devolver {"kind":"query",
   "call":{"tool":"stock_search",...}} — NUNCA um "final" que ofereça/liste/mencione carros sem antes ter o fato.
   Se decidir apenas ACOLHER e perguntar o nome (sem citar carros), pode ir direto ao final SEM ferramenta.
+- Em "mais opções"/"tem outros", preserve os filtros conhecidos em workingMemory.funnel e use excludeKeys com
+  os vehicleKeys de workingMemory.lastOffer. A ferramenta precisa rodar NESTE passo; só depois apresente os novos
+  resultados. Se não houver novos itens, diga isso honestamente.
 - ANTES de citar/listar QUALQUER marca, modelo, preço ou "temos várias opções", chame "stock_search" primeiro NESTE
   turno. NUNCA mencione um carro específico sem um fato de ferramenta ou da memória.
 - Se o cliente pede FOTOS de um carro, você é OBRIGADO a: (1) devolver {"kind":"query","call":{"tool":

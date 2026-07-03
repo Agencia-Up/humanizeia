@@ -27,6 +27,7 @@ import type { EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { Persistence, UnitOfWorkContext } from "../src/domain/ports.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 import { redact } from "../src/domain/effect-intent.ts";
+import type { SdrQualificationPolicy } from "../src/engine/sdr-conductor.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -58,6 +59,12 @@ class FakeBusinessInfo implements TenantBusinessInfoSource {
 }
 const NO_STORE_INFO: TenantBusinessInfo = { address: null, hours: null, unit: null, source: "tenant_runtime_config" };
 const REAL_STORE_INFO: TenantBusinessInfo = { address: "Avenida das Nações, bairro Centro", hours: "Seg a Sex das 8h às 18h", unit: "Matriz", source: "tenant_business_info_table" };
+const SDR_POLICY: SdrQualificationPolicy = {
+  orderedSlots: ["nome", "interesse", "faixaPreco", "formaPagamento", "possuiTroca", "interesseVisita"],
+  questions: { nome: "Qual é o seu nome?", interesse: "Qual carro você procura?" },
+  agentName: "Aloan",
+  introductionText: "Sou o Aloan, consultor da Icom Motors.",
+};
 
 let toolCalls: QueryCall[] = [];
 let crmName = "MARIA DA SILVA SECRETA";
@@ -116,6 +123,7 @@ type RunOpts = {
   persistence: Persistence; clock: FakeClock; brain: ScriptedAgentBrain; llm: FakeLlm; businessInfo: TenantBusinessInfoSource;
   preparer: FixedPreparer; conv: string; turnId: string; leadText: string; leadId?: string | null;
   tenant?: string; agent?: string; allowedTools?: string[]; brainMaxSteps?: number;
+  sdrPolicy?: SdrQualificationPolicy;
   proposeTimeoutMs?: number; eventSeq: number;
 };
 async function runTurn(o: RunOpts) {
@@ -128,6 +136,7 @@ async function runTurn(o: RunOpts) {
     workerId: "w", turnId: o.turnId, leaseTtlMs: 60_000, portalPromptSha256: "sha-fake",
     limits: { maxSteps: 4, totalTimeoutMs: 8000, proposeTimeoutMs: o.proposeTimeoutMs ?? 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 },
     maxValidationAttempts: 2, brainMaxSteps: o.brainMaxSteps ?? 4, allowedTools: o.allowedTools,
+    sdrPolicy: o.sdrPolicy,
     providerCapability: { send_message: "none", send_media: "none" },
   });
 }
@@ -194,6 +203,48 @@ async function main(): Promise<void> {
     check("[3] não-terminal-safe (oferta aterrada)", r.status === "committed" && r.terminalSafe === false, r.status === "committed" ? r.decision.reasonSummary : "");
     check("[10] exatamente UMA decisão (1 send_message)", r.status === "committed" && r.outbox.filter((o) => o.kind === "send_message").length === 1);
     check("[18/19] EffectGate OFF: outbox pending, nada despachado", r.status === "committed" && r.outbox.every((o) => o.status === "pending"));
+  }
+
+  // [3b] "mais opções" não pode finalizar sem consultar estoque novamente.
+  {
+    const p = freshPersistence(); const clock = new FakeClock(NOW); const prep = new FixedPreparer();
+    const firstBrain = new ScriptedAgentBrain();
+    firstBrain.setTurnScript([q({ tool: "stock_search", input: { tipo: "suv", precoMax: 80_000 } }), finalStep({ guidance: "Encontrei estas opções." })]);
+    const first = await runTurn({ persistence: p, clock, brain: firstBrain, llm: llmWith(offerList), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c3b", turnId: "c3b-t1", leadText: "quero SUV até 80 mil", eventSeq: 1 });
+    check("[3b] oferta inicial registrada", first.status === "committed" && first.composedText.includes("Kicks") && first.composedText.includes("CRV"));
+
+    const moreBrain = new ScriptedAgentBrain();
+    moreBrain.setResponder((frame, observations, index) => {
+      if (index === 0) return finalStep({ guidance: "Tenho outras opções." }); // tentativa inválida: sem tool
+      const stock = observations.find((o) => o.tool === "stock_search" && o.ok);
+      if (!stock) return q({ tool: "stock_search", input: { tipo: "suv", excludeKeys: [...(frame.workingMemory.lastOffer?.vehicleKeys ?? [])] } });
+      return finalStep({ guidance: "Encontrei mais esta opção." });
+    });
+    const more = await runTurn({ persistence: p, clock, brain: moreBrain, llm: llmWith(offerList), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c3b", turnId: "c3b-t2", leadText: "Tem outras?", eventSeq: 2 });
+    check("[3b] final sem tool foi recusado e stock_search executou", more.status === "committed" && toolCalls.some((call) => call.tool === "stock_search"), more.status);
+    check("[3b] mais opções lista somente veículo novo", more.status === "committed" && more.composedText.includes("Renegade") && !more.composedText.includes("Kicks") && !more.composedText.includes("CRV"), more.status === "committed" ? more.composedText : more.status);
+  }
+
+  // [3c] A pergunta realmente enviada cria objetivo; a resposta curta é ligada ao slot antes do cérebro.
+  {
+    const p = freshPersistence(); const clock = new FakeClock(NOW); const prep = new FixedPreparer();
+    const askBrain = new ScriptedAgentBrain();
+    askBrain.setTurnScript([finalStep({ guidance: "Para continuar, qual é o seu nome?" })]);
+    const asked = await runTurn({ persistence: p, clock, brain: askBrain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c3c", turnId: "c3c-t1", leadText: "tem SUV?", eventSeq: 1, sdrPolicy: SDR_POLICY });
+    await settleAccepted(p, clock, "c3c");
+    const pending = (await p.load("c3c"))?.state.currentObjective;
+    check("[3c] pergunta enviada ativou objetivo nome no accepted", asked.status === "committed" && pending?.slot === "nome" && pending.status === "pending", JSON.stringify(pending));
+
+    const answerBrain = new ScriptedAgentBrain();
+    answerBrain.setResponder((frame) => finalStep({
+      guidance: frame.workingMemory.funnel.known.includes("nome")
+        ? "Prazer, Douglas. Agora me diga qual tipo de carro você procura."
+        : "Qual é o seu nome?",
+    }));
+    const answered = await runTurn({ persistence: p, clock, brain: answerBrain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c3c", turnId: "c3c-t2", leadText: "Douglas", eventSeq: 2, sdrPolicy: SDR_POLICY });
+    const after = (await p.load("c3c"))?.state;
+    check("[3c] resposta curta vinculada ao nome antes do cérebro", after?.slots.nome.status === "known" && after.slots.nome.value === "Douglas", JSON.stringify(after?.slots.nome));
+    check("[3c] nome conhecido não é reperguntado", answered.status === "committed" && !/qual.{0,20}nome/i.test(answered.composedText), answered.status === "committed" ? answered.composedText : answered.status);
   }
 
   // [4] DETALHE: vehicle_details quando necessário.

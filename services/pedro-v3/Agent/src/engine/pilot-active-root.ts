@@ -332,6 +332,7 @@ export class PilotActiveRoot {
       conversationId: input.conversationId, tenantId: this.ref.tenantId, agentId: this.ref.agentId, leadId: this.leadId,
       workerId: input.workerId, turnId: input.turnId, leaseTtlMs: 60_000, portalPromptSha256: this.promptSha256,
       limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 4,
+      sdrPolicy: this.sdrPolicy,
       allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
     });
     const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
