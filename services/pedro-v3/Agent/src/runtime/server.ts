@@ -265,7 +265,7 @@ const port = Number(process.env.PORT ?? "3000");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RuntimeConfigError("ENV_PORT_INVALID");
 
 const runtime = new ProductionPilotRunner();
-const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime);
+const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime, () => ({ configuredBrainMode: resolveBrainMode() }));
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");

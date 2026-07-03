@@ -29,16 +29,16 @@ function vehicleName(v: VehicleFact): string {
 
 function vehiclePrice(v: VehicleFact): string {
   // Preco ausente/0 NUNCA vira "R$ 0": grounding honesto.
-  return v.preco && v.preco > 0 ? formatBRL(v.preco) : "preço a confirmar";
+  return v.preco && v.preco > 0 ? formatBRL(v.preco) : "preco a confirmar";
 }
 
 function vehicleDetails(v: VehicleFact): string | null {
   const parts = [
-    v.km != null && Number.isFinite(v.km) ? `${formatKm(v.km)} km` : null,
+    v.km != null && Number.isFinite(v.km) && v.km > 0 ? `${formatKm(v.km)} km` : null,
     v.cambio && String(v.cambio).trim() !== "" ? String(v.cambio).trim() : null,
     v.cor && String(v.cor).trim() !== "" ? String(v.cor).trim() : null,
   ].filter((x): x is string => x !== null);
-  return parts.length > 0 ? parts.join(" · ") : null;
+  return parts.length > 0 ? parts.join(" | ") : null;
 }
 
 // Renderiza a lista numerada. 1 veiculo tambem vira "1. ...". Limite default 5.
@@ -46,7 +46,7 @@ export function renderVehicleOfferList(vehicles: readonly VehicleFact[], options
   const max = options.maxItems ?? DEFAULT_MAX_ITEMS;
   const items = vehicles.slice(0, Math.max(1, max));
   const blocks = items.map((v, i) => {
-    const title = `${i + 1}. ${vehicleName(v)} — ${vehiclePrice(v)}`;
+    const title = `${i + 1}. ${vehicleName(v)} - ${vehiclePrice(v)}`;
     const details = vehicleDetails(v);
     return details ? `${title}\n   ${details}` : title;
   });

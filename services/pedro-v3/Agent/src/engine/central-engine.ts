@@ -55,9 +55,10 @@ import type { TenantBusinessInfoSource } from "./tenant-business-info.ts";
 import { resolveTenantBusinessInfo, businessInfoToolResultMemory } from "./tenant-business-info.ts";
 
 // ── Flag de modo ─────────────────────────────────────────────────────────────────────────────────────────────
-export type BrainMode = "off" | "central_shadow";
+export type BrainMode = "off" | "central_shadow" | "central_active";
 export function readBrainMode(env: Record<string, string | undefined> = process.env): BrainMode {
-  return env.PEDRO_V3_BRAIN_MODE === "central_shadow" ? "central_shadow" : "off";
+  const value = env.PEDRO_V3_BRAIN_MODE?.trim();
+  return value === "central_shadow" || value === "central_active" ? value : "off";
 }
 export function isCentralShadowMode(env: Record<string, string | undefined> = process.env): boolean {
   return readBrainMode(env) === "central_shadow";
@@ -277,13 +278,13 @@ function resolveVehicleLabel(vehicleKey: string, facts: readonly QueryResult[], 
 // turno; senão -> resposta SDR contextual (sem citar veículo). Nunca inventa; substitui o terminal_safe genérico.
 function renderDeterministicResponse(decision: TurnDecision, toolFacts: readonly QueryResult[], composeFacts: readonly QueryResult[], state: ConversationState, leadMessage: string): RenderedResponse {
   if (decision.effectPlan.some((p) => p.kind === "send_media")) {
-    const parts: ResponsePart[] = [{ type: "text", content: "Aqui estão as fotos que você pediu! 😊 Quer que eu te passe mais detalhes desse carro?" }];
+    const parts: ResponsePart[] = [{ type: "text", content: "Aqui estao as fotos que voce pediu. Quer que eu te passe mais detalhes desse carro?" }];
     return { draft: { parts }, text: ResponseRenderer.render({ parts }, [...composeFacts], state) };
   }
   const items = toolFacts.flatMap((f) => (f.ok && f.tool === "stock_search") ? f.data.items : []).filter((v) => typeof v.preco === "number" && v.preco > 0);
   if (items.length > 0) {
     const keys = [...new Set(items.map((v) => v.vehicleKey))].slice(0, 5);
-    const parts: ResponsePart[] = [{ type: "text", content: "Tenho estas opções pra você:" }, { type: "vehicle_offer_list", vehicleKeys: keys }, { type: "text", content: "Quer ver as fotos de alguma?" }];
+    const parts: ResponsePart[] = [{ type: "text", content: "Tenho estas opcoes para voce:" }, { type: "vehicle_offer_list", vehicleKeys: keys }, { type: "text", content: "Quer ver as fotos de alguma?" }];
     return { draft: { parts }, text: ResponseRenderer.render({ parts }, [...composeFacts], state) };
   }
   const text = buildContextualSdrReply(state, { leadMessage });

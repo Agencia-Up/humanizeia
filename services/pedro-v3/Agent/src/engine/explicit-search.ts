@@ -5,7 +5,7 @@
 // DETERMINISTICO: roda stock_search do que o lead pediu AGORA e oferta (ancorado) OU responde
 // honesto "nao encontrei X" - NUNCA cai no modelo/lista antiga.
 //
-// Importante: marcas/modelos vêm do TenantCatalog via ClaimExtractor. Nada hardcoded por marca.
+// Importante: marcas/modelos vï¿½m do TenantCatalog via ClaimExtractor. Nada hardcoded por marca.
 // Memoria antiga so vale para referencia vaga (esse/dele/ordinal).
 // ============================================================================
 import type { ConversationState, RenderedOfferItem } from "../domain/conversation-state.ts";
@@ -87,9 +87,9 @@ export function computeTurnFrame(args: { leadMessage: string; claimExtractor: Cl
   const explicitTypes = [...new Set((norm.match(TYPES) ?? []).map((t) => TYPE_MAP[t]).filter((x): x is VehicleType => !!x))];
   const budgetMax = parseBudget(norm);
   const transmission = parseTransmission(norm);
-  // item 1A.4 + busca SEMÂNTICA (Codex): TIPO nunca é MODELO; e CÂMBIO ("automático"/"manual"/"CVT") é
-  // preferência/FILTRO, jamais parte do modelo. Remove o câmbio do modelo; se o que sobra é um TIPO puro
-  // (ex.: "hatch automático" -> "hatch") ou vazio, descarta -> NUNCA stock_search({modelo:"hatch automatico"}).
+  // item 1A.4 + busca SEMï¿½NTICA (Codex): TIPO nunca ï¿½ MODELO; e Cï¿½MBIO ("automï¿½tico"/"manual"/"CVT") ï¿½
+  // preferï¿½ncia/FILTRO, jamais parte do modelo. Remove o cï¿½mbio do modelo; se o que sobra ï¿½ um TIPO puro
+  // (ex.: "hatch automï¿½tico" -> "hatch") ou vazio, descarta -> NUNCA stock_search({modelo:"hatch automatico"}).
   const explicitModels = claims.models
     .map((m) => m.replace(TRANSMISSION_WORDS, "").replace(/\s+/g, " ").trim())
     .filter((m) => m.length > 0 && !TYPE_MAP[normalizeText(m)]);
@@ -203,7 +203,7 @@ export async function resolveExplicitSearchIntent(args: {
   const label = targets.map((t) => t.label).join(", ");
   // FIX A (revisado apos auditoria P1, 2026-07-01): NUNCA mostrar veiculo de tipo ERRADO como "opcao".
   // Antes, quando a busca por tipo zerava, um broad-rescue exibia C3/Gol como "opcoes que encaixam" p/ quem
-  // pediu SUV — repetia a dor do veiculo aleatorio. E tambem nao se mente "nao tenho SUV". Agora, sem match
+  // pediu SUV ï¿½ repetia a dor do veiculo aleatorio. E tambem nao se mente "nao tenho SUV". Agora, sem match
   // ATERRADO do tipo pedido -> `none` -> o handler faz uma pergunta HONESTA e condutiva (ampliar faixa /
   // outro tipo), SEM listar carro do tipo errado. Achar os SUV reais e papel da classificacao (Fix B).
   if (vehicles.length === 0) return { kind: "none", label, frame };
@@ -214,7 +214,7 @@ const cap = (s: string): string => s.charAt(0).toLocaleUpperCase("pt-BR") + s.sl
 const labelType = (t: VehicleType): string => ({ suv: "SUV", hatch: "hatch", sedan: "sedan", pickup: "picape", unknown: "esse tipo" } as Record<string, string>)[t] ?? "esse tipo";
 
 export function buildExplicitSearchTurnOutput(result: ExplicitSearchResult, turnId: Id): TurnOutput {
-  // 1B.7: o handler NAO redige o texto final — produz FATOS + GUIDANCE (principios) + fallbackText
+  // 1B.7: o handler NAO redige o texto final ï¿½ produz FATOS + GUIDANCE (principios) + fallbackText
   // (deterministico, SO p/ falha tecnica). O compose (LLM) redige seguindo o prompt do portal; o conductor
   // injeta a qualificacao. FIX C: persiste a intencao explicita do turno nos slots (intentSlotMutations).
   const slotMuts = result.frame ? intentSlotMutations(result.frame, turnId) : [];
@@ -232,7 +232,7 @@ export function buildExplicitSearchTurnOutput(result: ExplicitSearchResult, turn
   const facts: QueryResult[] = [{ ok: true, tool: "stock_search", source: "handler", data: { items: result.vehicles, filtersUsed: {} } } as QueryResult];
   const items: RenderedOfferItem[] = result.vehicles.map((v, i) => ({ ordinal: i + 1, vehicleKey: v.vehicleKey, marca: v.marca ?? null, modelo: v.modelo ?? null, ano: v.ano ?? null }));
   const missingNote = result.missingLabels.length > 0 ? ` Em uma frase curta, diga que nao encontrou agora: ${result.missingLabels.join(", ")}.` : "";
-  const guidance = `O lead pediu ${result.label}. Encontrei ${result.vehicles.length} veiculo(s) REAIS no estoque (nos fatos deste turno). Apresente-os com UMA parte vehicle_offer_list usando os vehicleKeys dos fatos (o sistema renderiza marca/modelo/ano/preco/km). REGRA CRITICA: NAO escreva NENHUM nome de modelo, marca, preco ou km em TEXTO livre (nem abreviado) — a lista ja mostra tudo; no texto fale de forma generica ("essas opcoes", "esse sedan").${missingNote} Siga o prompt do portal: conduza a qualificacao com no maximo UMA pergunta, sem despejar tudo de uma vez.`;
+  const guidance = `O lead pediu ${result.label}. Encontrei ${result.vehicles.length} veiculo(s) REAIS no estoque (nos fatos deste turno). Apresente-os com UMA parte vehicle_offer_list usando os vehicleKeys dos fatos (o sistema renderiza marca/modelo/ano/preco/km). REGRA CRITICA: NAO escreva NENHUM nome de modelo, marca, preco ou km em TEXTO livre (nem abreviado) - a lista ja mostra tudo; no texto fale de forma generica ("essas opcoes", "esse sedan").${missingNote} Siga o prompt do portal: conduza a qualificacao com no maximo UMA pergunta, sem despejar tudo de uma vez.`;
   const fallbackText = `Encontrei estas opcoes pra voce:\n\n${renderVehicleOfferList(result.vehicles, { maxItems: 5 })}${result.missingLabels.length > 0 ? `\n\nNao encontrei agora: ${result.missingLabels.join(", ")}.` : ""}\n\nQuer ver as fotos de algum desses ou prefere agendar uma visita?`;
   return composeTurn(turnId, "explicit_offer", guidance, fallbackText, facts, slotMuts, items);
 }
@@ -247,7 +247,7 @@ function budgetPhrase(frame: TurnFrame | undefined): string {
 function intentSlotMutations(frame: TurnFrame, turnId: Id): DecisionMutation[] {
   const muts: DecisionMutation[] = [];
   // interesse: SO quando o turno e por TIPO puro (sem modelo/marca). Modelo/marca ficam com o
-  // lead-extraction, que AGREGA multi-modelo ("onix e argo") — Fix C nao pode clobrar com o 1o item.
+  // lead-extraction, que AGREGA multi-modelo ("onix e argo") ï¿½ Fix C nao pode clobrar com o 1o item.
   if (frame.explicitModels.length === 0 && frame.explicitBrands.length === 0 && frame.explicitTypes[0]) {
     muts.push({ op: "set_slot", slot: "interesse", value: frame.explicitTypes[0], confidence: 0.9, sourceTurnId: turnId });
   }
@@ -280,12 +280,12 @@ export function turnHasNewCommercialIntent(leadMessage: string, claimExtractor: 
   return computeTurnFrame({ leadMessage, claimExtractor }).isNewCommercialIntent;
 }
 
-// -- Seção 4 (Codex): "MAIS OPÇÕES" como INVARIANTE DETERMINÍSTICO ----------------------------------------
-// Bug do incidente v2 (e regressão do 1B.7 quando o LLM tinha liberdade): ao pedir "mais opções", perdia
-// tipo/teto e mostrava carro aleatório (ou o LLM inventava veículos fora dos fatos -> VEHICLE_OUTSIDE_QUERYRESULTS).
-// Regra: herda tipo+precoMax dos SLOTS, EXCLUI os vehicleKeys já mostrados, roda stock_search — NUNCA depende
+// -- Seï¿½ï¿½o 4 (Codex): "MAIS OPï¿½ï¿½ES" como INVARIANTE DETERMINï¿½STICO ----------------------------------------
+// Bug do incidente v2 (e regressï¿½o do 1B.7 quando o LLM tinha liberdade): ao pedir "mais opï¿½ï¿½es", perdia
+// tipo/teto e mostrava carro aleatï¿½rio (ou o LLM inventava veï¿½culos fora dos fatos -> VEHICLE_OUTSIDE_QUERYRESULTS).
+// Regra: herda tipo+precoMax dos SLOTS, EXCLUI os vehicleKeys jï¿½ mostrados, roda stock_search ï¿½ NUNCA depende
 // do LLM lembrar os filtros. Sem contexto comercial anterior -> null (deixa o LLM). Retorna fatos p/ o compose.
-const MORE_OPTIONS = /\bmais\s+(op[cç]|carr|ve[ií]cul|modelo|alternativ|algum|outr)|\boutras?\s+(op[cç]|carr|modelo|alternativ)|\bmais alguma\b|\bmostrar? mais\b|\btem\s+(mais|outr)/;
+const MORE_OPTIONS = /\bmais\s+(opc|carr|veicul|modelo|alternativ|algum|outr)|\boutras?\s+(opc|carr|modelo|alternativ)|\bmais alguma\b|\bmostrar? mais\b|\btem\s+(mais|outr)/;
 export function looksLikeMoreOptions(leadMessage: string): boolean {
   return MORE_OPTIONS.test(normalizeText(leadMessage));
 }
@@ -295,8 +295,8 @@ export async function resolveMoreOptionsIntent(args: {
   const { leadMessage, state, runQuery, claimExtractor } = args;
   if (!looksLikeMoreOptions(leadMessage)) return null;
   const frame = computeTurnFrame({ leadMessage, claimExtractor });
-  // Intenção comercial NOVA por MODELO/MARCA/TIPO é papel do explicit-search. Mas um novo TETO
-  // ("mais opções até 90 mil") NÃO troca de busca — atualiza o teto e mantém categoria+exclusões (Codex).
+  // Intenï¿½ï¿½o comercial NOVA por MODELO/MARCA/TIPO ï¿½ papel do explicit-search. Mas um novo TETO
+  // ("mais opï¿½ï¿½es atï¿½ 90 mil") Nï¿½O troca de busca ï¿½ atualiza o teto e mantï¿½m categoria+exclusï¿½es (Codex).
   if (frame.explicitModels.length > 0 || frame.explicitBrands.length > 0 || frame.explicitTypes.length > 0) return null;
 
   const slots = state.slots as unknown as { tipoVeiculo?: { status?: string; value?: string }; faixaPreco?: { status?: string; value?: { max?: number | null } } };
@@ -304,10 +304,10 @@ export async function resolveMoreOptionsIntent(args: {
   const precoMaxSlot = slots.faixaPreco?.status === "known" ? (slots.faixaPreco.value?.max ?? null) : null;
   const precoMax = frame.budgetMax ?? precoMaxSlot; // novo teto do turno VENCE o do slot
   const transmission = frame.transmission ?? state.searchPreferences?.transmission ?? null;
-  // P1 (Codex): memória CUMULATIVA — exclui TODAS as chaves já apresentadas (offers.presentedKeys, accepted-safe)
-  // + a última lista ordinal. Assim "mais opções" repetido 3× NUNCA repete um veículo.
+  // P1 (Codex): memï¿½ria CUMULATIVA ï¿½ exclui TODAS as chaves jï¿½ apresentadas (offers.presentedKeys, accepted-safe)
+  // + a ï¿½ltima lista ordinal. Assim "mais opï¿½ï¿½es" repetido 3ï¿½ NUNCA repete um veï¿½culo.
   const shownKeys = [...new Set([...(state.offers?.presentedKeys ?? []), ...(state.lastRenderedOfferContext?.items ?? []).map((i) => i.vehicleKey)])];
-  // Sem NENHUM contexto comercial anterior -> não é "mais opções" acionável.
+  // Sem NENHUM contexto comercial anterior -> nï¿½o ï¿½ "mais opï¿½ï¿½es" acionï¿½vel.
   if (!tipo && precoMax == null && shownKeys.length === 0) return null;
 
   const input: QueryInputMap["stock_search"] = {};
@@ -317,40 +317,40 @@ export async function resolveMoreOptionsIntent(args: {
   if (shownKeys.length > 0) input.excludeKeys = shownKeys;
   const res = await runQuery({ tool: "stock_search", input });
   const items = res.ok && res.tool === "stock_search" ? res.data.items : [];
-  // Defesa (além do excludeKeys do runner): exclui explicitamente os já mostrados e sem preço inválido.
+  // Defesa (alï¿½m do excludeKeys do runner): exclui explicitamente os jï¿½ mostrados e sem preï¿½o invï¿½lido.
   const shown = new Set(shownKeys);
   const fresh = items
     .filter((v) => typeof v.preco === "number" && v.preco > 0 && !shown.has(v.vehicleKey) && vehicleMatchesTransmission(v, transmission))
     .sort((a, b) => a.preco - b.preco)
     .slice(0, 5);
-  const label = tipo ? labelType(tipo) : "opções";
+  const label = tipo ? labelType(tipo) : "opcoes";
   return fresh.length === 0 ? { kind: "none", label } : { kind: "offer", label, vehicles: fresh, missingLabels: [] };
 }
 export function buildMoreOptionsTurnOutput(result: ExplicitSearchResult, turnId: Id, exhaustedCount = 0): TurnOutput {
   if (result.kind === "none") {
-    // R10-4 (Codex): PROGRESSÃO de "mais opções esgotadas" — NÃO repete o mesmo texto. Passa pelo compose (redação
-    // segue o prompt do portal), com guidance que PROÍBE inventar veículo/vehicle_offer_list. count 0 -> ampliar
-    // preço; 1 -> outro tipo; 2+ -> conduzir p/ rever atuais/fotos/visita. Incrementa o contador no estado.
+    // R10-4 (Codex): PROGRESSï¿½O de "mais opï¿½ï¿½es esgotadas" ï¿½ Nï¿½O repete o mesmo texto. Passa pelo compose (redaï¿½ï¿½o
+    // segue o prompt do portal), com guidance que PROï¿½BE inventar veï¿½culo/vehicle_offer_list. count 0 -> ampliar
+    // preï¿½o; 1 -> outro tipo; 2+ -> conduzir p/ rever atuais/fotos/visita. Incrementa o contador no estado.
     const bump: DecisionMutation[] = [{ op: "set_more_options_exhausted", value: exhaustedCount + 1 }];
-    const noVehicles = ` NÃO invente veículo, NÃO use vehicle_offer_list e NÃO escreva modelos/preços — não há veículos novos nos fatos deste turno.`;
+    const noVehicles = ` NAO invente veiculo, NAO use vehicle_offer_list e NAO escreva modelos/precos - nao ha veiculos novos nos fatos deste turno.`;
     let guidance: string; let fallbackText: string;
     if (exhaustedCount === 0) {
-      guidance = `O lead pediu MAIS opções de ${result.label}, mas não há veículos novos além dos já mostrados.${noVehicles} Seja honesto e ofereça UMA saída: AMPLIAR a faixa de preço para buscar mais. Só UMA pergunta.`;
-      fallbackText = `Por ora não encontrei outros ${result.label} além desses. Quer que eu amplie um pouco a faixa de preço para buscar mais opções?`;
+      guidance = `O lead pediu MAIS opcoes de ${result.label}, mas nao ha veiculos novos alem dos ja mostrados.${noVehicles} Seja honesto e ofereca UMA saida: AMPLIAR a faixa de preco para buscar mais. SO UMA pergunta.`;
+      fallbackText = `Por ora nao encontrei outros ${result.label} alem desses. Quer que eu amplie um pouco a faixa de preco para buscar mais opcoes?`;
     } else if (exhaustedCount === 1) {
-      guidance = `Continua sem ${result.label} novos e o lead já foi consultado sobre ampliar o preço.${noVehicles} Ofereça OUTRA dimensão: procurar em OUTRO TIPO de veículo (SUV, sedan, hatch, picape). Só UMA pergunta, DIFERENTE da anterior.`;
-      fallbackText = `Nessa faixa não tenho outros ${result.label} no momento. Quer que eu procure em outro tipo de veículo — SUV, sedan, hatch ou picape?`;
+      guidance = `Continua sem ${result.label} novos e o lead ja foi consultado sobre ampliar o preco.${noVehicles} Ofereca OUTRA dimensao: procurar em OUTRO TIPO de veiculo (SUV, sedan, hatch, picape). SO UMA pergunta, DIFERENTE da anterior.`;
+      fallbackText = `Nessa faixa nao tenho outros ${result.label} no momento. Quer que eu procure em outro tipo de veiculo - SUV, sedan, hatch ou picape?`;
     } else {
-      guidance = `Já ofereci ampliar preço e trocar de tipo, ainda sem resultados novos.${noVehicles} NÃO repita as perguntas anteriores. Conduza para o fechamento: rever as opções já mostradas, ver as fotos delas, ou agendar uma visita.`;
-      fallbackText = `Por ora essas são as opções que consigo. Prefere rever as que já te mostrei, ver as fotos, ou agendar uma visita para conhecer pessoalmente?`;
+      guidance = `Ja ofereci ampliar preco e trocar de tipo, ainda sem resultados novos.${noVehicles} NAO repita as perguntas anteriores. Conduza para o fechamento: rever as opcoes ja mostradas, ver as fotos delas, ou agendar uma visita.`;
+      fallbackText = `Por ora essas sao as opcoes que consigo. Prefere rever as que ja te mostrei, ver as fotos, ou agendar uma visita para conhecer pessoalmente?`;
     }
     return composeTurn(turnId, "offer_more_options_none", guidance, fallbackText, [], bump, null);
   }
   const facts: QueryResult[] = [{ ok: true, tool: "stock_search", source: "handler", data: { items: result.vehicles, filtersUsed: {} } } as QueryResult];
   const items: RenderedOfferItem[] = result.vehicles.map((v, i) => ({ ordinal: i + 1, vehicleKey: v.vehicleKey, marca: v.marca ?? null, modelo: v.modelo ?? null, ano: v.ano ?? null }));
-  const guidance = `O lead pediu MAIS opções de ${result.label}. Encontrei ${result.vehicles.length} veículo(s) REAIS no estoque (nos fatos deste turno), DIFERENTES dos já mostrados. Apresente-os com UMA parte vehicle_offer_list usando os vehicleKeys dos fatos (o sistema renderiza; não escreva a lista/preços em texto). Não repita os já mostrados. Siga o prompt: no máximo UMA pergunta de condução.`;
-  const fallbackText = `Tenho mais estas opções pra você:\n\n${renderVehicleOfferList(result.vehicles, { maxItems: 5 })}\n\nQuer ver as fotos de alguma ou prefere agendar uma visita?`;
-  // veículos novos renderizados -> RESETA a progressão de esgotamento (o lead voltou a ver opções).
+  const guidance = `O lead pediu MAIS opcoes de ${result.label}. Encontrei ${result.vehicles.length} veiculo(s) REAIS no estoque (nos fatos deste turno), DIFERENTES dos ja mostrados. Apresente-os com UMA parte vehicle_offer_list usando os vehicleKeys dos fatos (o sistema renderiza; nao escreva a lista/precos em texto). Nao repita os ja mostrados. Siga o prompt: no maximo UMA pergunta de conducao.`;
+  const fallbackText = `Tenho mais estas opcoes para voce:\n\n${renderVehicleOfferList(result.vehicles, { maxItems: 5 })}\n\nQuer ver as fotos de alguma ou prefere agendar uma visita?`;
+  // veï¿½culos novos renderizados -> RESETA a progressï¿½o de esgotamento (o lead voltou a ver opï¿½ï¿½es).
   return composeTurn(turnId, "offer_more_options", guidance, fallbackText, facts, [{ op: "set_more_options_exhausted", value: 0 }], items);
 }
 

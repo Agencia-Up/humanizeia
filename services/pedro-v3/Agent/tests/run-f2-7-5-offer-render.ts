@@ -55,7 +55,7 @@ function ctx(leadMessage: string, turnId: string, interpretation: TurnInterpreta
   return { state: baseState(), turnId, leadMessage, now: NOW, interpretation, tenantCatalog: catalog, claimExtractor: extractor };
 }
 const stockFacts = (items: VehicleFact[]): QueryResult[] => [{ ok: true, tool: "stock_search", data: { items, filtersUsed: {} }, source: "fake" }];
-const GLUE = /[A-Za-z]\d{4}[A-Za-z]|\d{3}R\$|R\$\s?[\d.]+[A-Za-z]/; // "ONIX2014Ele", "990R$", "R$ 71.990RENEGADE"
+const GLUE = /[A-Za-z]\d{4}[A-Za-z]|\d{3}R\$|R\$\s?[\d.]+[A-Za-z]|[\u00C3\u00C2\uFFFD]/u; // "ONIX2014Ele", "990R$", "R$ 71.990RENEGADE", mojibake
 const offerListOverride: ComposeOverride = (_d, facts) => {
   const keys: string[] = [];
   for (const f of facts) if (f.ok && f.tool === "stock_search") for (const v of f.data.items) keys.push(v.vehicleKey);
@@ -104,12 +104,15 @@ async function main(): Promise<void> {
   {
     const semKm: VehicleFact = { vehicleKey: "x|y|2020", marca: "Marca", modelo: "Modelo", ano: 2020, preco: 50000, tipo: "sedan" };
     const out1 = renderVehicleOfferList([semKm]);
-    check("sem km: sem 'undefined' e sem ' · ' solto", !out1.includes("undefined") && !out1.includes(" · ") && !/\n {3}$/.test(out1), out1);
-    check("sem km: so o titulo (uma linha)", out1 === "1. Marca Modelo 2020 — R$ 50.000", JSON.stringify(out1));
+    check("sem km: sem undefined e sem separador solto", !out1.includes("undefined") && !out1.includes(" | ") && !/\n {3}$/.test(out1), out1);
+    check("sem km: so o titulo (uma linha)", out1 === "1. Marca Modelo 2020 - R$ 50.000", JSON.stringify(out1));
+    const kmZero: VehicleFact = { vehicleKey: "x|km0|2020", marca: "Marca", modelo: "Zero", ano: 2020, preco: 50000, km: 0, tipo: "sedan" };
+    const outKm0 = renderVehicleOfferList([kmZero]);
+    check("km 0: omite quilometragem em vez de mostrar 0 km", !outKm0.includes("0 km") && outKm0 === "1. Marca Zero 2020 - R$ 50.000", JSON.stringify(outKm0));
     const semPreco: VehicleFact = { vehicleKey: "x|z|2019", marca: "Marca", modelo: "Zeta", ano: 2019, preco: 0, tipo: "sedan" };
-    check("preco 0 -> 'preço a confirmar' (nunca R$ 0)", renderVehicleOfferList([semPreco]).includes("preço a confirmar") && !renderVehicleOfferList([semPreco]).includes("R$ 0"), renderVehicleOfferList([semPreco]));
+    check("preco 0 -> preco a confirmar (nunca R$ 0)", renderVehicleOfferList([semPreco]).includes("preco a confirmar") && !renderVehicleOfferList([semPreco]).includes("R$ 0"), renderVehicleOfferList([semPreco]));
     const semAno: VehicleFact = { vehicleKey: "x|w|0", marca: "Marca", modelo: "Wagon", ano: 0, preco: 60000, tipo: "sedan" };
-    check("ano ausente: nao inventa ano", renderVehicleOfferList([semAno]) === "1. Marca Wagon — R$ 60.000", JSON.stringify(renderVehicleOfferList([semAno])));
+    check("ano ausente: nao inventa ano", renderVehicleOfferList([semAno]) === "1. Marca Wagon - R$ 60.000", JSON.stringify(renderVehicleOfferList([semAno])));
   }
 
   // 5b) maxItems limita a lista

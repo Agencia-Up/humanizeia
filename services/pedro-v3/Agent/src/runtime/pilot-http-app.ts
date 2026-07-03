@@ -55,6 +55,8 @@ export interface PilotReceiptRunner {
   applyReceipt(payload: PilotReceiptPayload): Promise<ProviderDeliveryResult>;
 }
 
+export type PilotHealthInfo = () => Readonly<Record<string, unknown>>;
+
 export class PilotTurnRuntimeError extends Error {
   constructor(
     public readonly code: "PILOT_BOOTSTRAP_FAILED" | "PILOT_TURN_FAILED",
@@ -189,7 +191,7 @@ function parseReceiptPayload(bodyText: string): PilotReceiptPayload | null {
 export class PilotHttpApp {
   readonly #secretDigest: Buffer;
 
-  constructor(secret: string, private readonly runner: PilotTurnRunner, private readonly receiptRunner?: PilotReceiptRunner) {
+  constructor(secret: string, private readonly runner: PilotTurnRunner, private readonly receiptRunner?: PilotReceiptRunner, private readonly healthInfo?: PilotHealthInfo) {
     if (typeof secret !== "string" || secret.trim().length < 32) {
       throw new PilotHttpConfigError("BRIDGE_SECRET_INVALID");
     }
@@ -198,7 +200,7 @@ export class PilotHttpApp {
 
   async handle(request: PilotHttpRequest): Promise<PilotHttpResponse> {
     if (request.method === "GET" && request.pathname === "/health") {
-      return json(200, { ok: true, service: "pedro-v3", mode: "pilot" });
+      return json(200, { ok: true, service: "pedro-v3", mode: "pilot", ...(this.healthInfo?.() ?? {}) });
     }
     if (
       request.method !== "POST"
