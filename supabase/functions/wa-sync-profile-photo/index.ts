@@ -197,6 +197,16 @@ async function fetchProfilePhoto(instance: any, phone: string): Promise<{ url: s
   }
 
   const attempts = [
+    {
+      label: "chat/details",
+      url: `${apiUrl}/chat/details`,
+      body: { number, preview: true },
+    },
+    {
+      label: "chat/fetchProfilePictureUrl",
+      url: `${apiUrl}/chat/fetchProfilePictureUrl/${encodeURIComponent(instanceName)}`,
+      body: { number },
+    },
     { label: "chat/fetchProfile", url: `${apiUrl}/chat/fetchProfile/${encodeURIComponent(instanceName)}`, body: { number } },
     { label: "contact/find", url: `${apiUrl}/contact/find/${encodeURIComponent(instanceName)}`, body: { numbers: [number] } },
     { label: "chat/fetchContacts", url: `${apiUrl}/chat/fetchContacts/${encodeURIComponent(instanceName)}`, body: { numbers: [number] } },
