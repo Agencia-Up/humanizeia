@@ -102,6 +102,34 @@ function phoneCandidates(value: string | null | undefined) {
   return Array.from(new Set(candidates));
 }
 
+/* Numero BR canonico = DDD(2) + 8 digitos, sem DDI 55 e sem o 9o digito do celular.
+   Ex.: "5512991097564" e "12991097564" -> "1291097564". Usado pra deduplicar leads
+   Pedro×Marcos por telefone independente do formato. */
+function phoneCanonical(value: string | null | undefined): string {
+  let core = cleanPhone(value);
+  if (core.startsWith('55') && core.length > 11) core = core.slice(2);
+  if (core.length === 11 && core[2] === '9') core = core.slice(0, 2) + core.slice(3);
+  return core;
+}
+
+/* TODAS as variacoes plausiveis do mesmo numero (com/sem DDI 55, com/sem 9o digito),
+   pra casar no .in('phone', ...) do wa_inbox. O crm_leads (Marcos) guarda o telefone
+   sem o 55, enquanto o wa_inbox guarda com o 55 -> sem isto a conversa abre VAZIA. */
+function phoneVariantsBR(value: string | null | undefined): string[] {
+  const base = phoneCandidates(value);
+  const core = phoneCanonical(value);
+  if (core.length !== 10) return base;                 // nao e celular BR reconhecivel
+  const dd = core.slice(0, 2);
+  const rest = core.slice(2);                          // 8 digitos
+  const with9 = `${dd}9${rest}`;                       // 11 digitos (com 9o)
+  const out = new Set<string>(base);
+  for (const f of [core, with9, `55${core}`, `55${with9}`]) {
+    out.add(f);
+    out.add(`${f}@s.whatsapp.net`);
+  }
+  return Array.from(out);
+}
+
 function displayPhone(value: string | null | undefined) {
   return cleanPhone(value) || value || '';
 }
@@ -357,9 +385,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           : mq.eq('assigned_to', '00000000-0000-0000-0000-000000000000');
       }
       const { data: mData } = await mq.order('arrived_at', { ascending: false }).limit(2000);
-      const pedroPhones = new Set(pedroLeads.map(l => cleanPhone(l.remote_jid)));
+      const pedroPhones = new Set(pedroLeads.map(l => phoneCanonical(l.remote_jid)));
       marcosLeads = (mData || [])
-        .filter((c: any) => { const k = cleanPhone(c.phone); return !!k && !pedroPhones.has(k); })
+        .filter((c: any) => { const k = phoneCanonical(c.phone); return !!k && !pedroPhones.has(k); })
         .map((c: any): Lead => ({
           id: c.id,
           remote_jid: c.phone || '',
@@ -413,7 +441,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         .from('wa_inbox')
         .select('id, phone, instance_id, direction, content, message_type, media_url, remote_message_id, created_at, contact_name')
         .eq('user_id', userId)
-        .in('phone', phoneCandidates(selectedLeadPhone));
+        .in('phone', unified ? phoneVariantsBR(selectedLeadPhone) : phoneCandidates(selectedLeadPhone));
 
       if (selectedLeadInstanceId) {
         inboxQuery = inboxQuery.eq('instance_id', selectedLeadInstanceId);
@@ -434,7 +462,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           .from('wa_chat_history')
           .select('id, remote_jid, role, content, metadata, created_at')
           .eq('user_id', userId)
-          .in('remote_jid', phoneCandidates(selectedLeadPhone))
+          .in('remote_jid', unified ? phoneVariantsBR(selectedLeadPhone) : phoneCandidates(selectedLeadPhone))
           .order('created_at', { ascending: true })
           .range(0, 999);
         historyRows = (histData || []).map((r: any): Message => {
@@ -531,7 +559,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
     }
-  }, [selectedLeadId, selectedLeadPhone, selectedLeadInstanceId, userId]);
+  }, [selectedLeadId, selectedLeadPhone, selectedLeadInstanceId, userId, unified]);
 
   useEffect(() => {
     fetchMessages();
@@ -1176,9 +1204,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         {unified && (
           <div
             onMouseDown={startListDrag}
-            className="hidden md:block w-1.5 cursor-col-resize bg-border/20 hover:bg-primary/40 transition-colors shrink-0"
+            className="hidden md:flex w-1.5 cursor-col-resize items-center justify-center shrink-0 group"
             title="Arraste para ajustar a largura"
-          />
+          >
+            <div className="h-8 w-[3px] rounded-full bg-transparent group-hover:bg-primary/50 transition-colors" />
+          </div>
         )}
 
         {/* ── Painel Direito: Chat ── */}
