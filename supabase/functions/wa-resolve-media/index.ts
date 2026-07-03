@@ -83,14 +83,34 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (msgError || !msg) return json({ error: "Message not found" }, 404);
     if (isRenderableUrl(msg.media_url)) return json({ media_url: msg.media_url, cached: true });
-    if (!msg.instance_id || !msg.remote_message_id) {
+    if (!msg.remote_message_id) {
       return json({ error: "Mensagem sem identificador de midia para recuperar" }, 422);
+    }
+
+    // instance_id pode vir nulo em mensagens antigas/importadas. Como a conversa com um
+    // telefone acontece sempre numa mesma instancia, recuperamos a instancia por outra
+    // mensagem (irma) do mesmo user+telefone que tenha instance_id. Sem chute: e a mesma
+    // conversa. Cobre ~31% das midias que estavam sem instance_id.
+    let resolvedInstanceId: string | null = msg.instance_id || null;
+    if (!resolvedInstanceId && msg.phone) {
+      const { data: sib } = await service
+        .from("wa_inbox")
+        .select("instance_id")
+        .eq("user_id", msg.user_id)
+        .eq("phone", msg.phone)
+        .not("instance_id", "is", null)
+        .limit(1)
+        .maybeSingle();
+      resolvedInstanceId = sib?.instance_id || null;
+    }
+    if (!resolvedInstanceId) {
+      return json({ error: "Mensagem sem instancia para recuperar a midia" }, 422);
     }
 
     const { data: instance, error: instanceError } = await service
       .from("wa_instances")
       .select("id, user_id, instance_name, api_url, api_key_encrypted")
-      .eq("id", msg.instance_id)
+      .eq("id", resolvedInstanceId)
       .maybeSingle();
     if (instanceError || !instance) return json({ error: "Instance not found" }, 404);
 

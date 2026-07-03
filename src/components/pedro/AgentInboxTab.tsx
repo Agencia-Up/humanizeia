@@ -42,6 +42,8 @@ interface Lead {
   summary: string | null;
   // Origem do lead no inbox unificado: 'pedro' (ai_crm_leads, tráfego) | 'marcos' (crm_leads, manual).
   origem?: 'pedro' | 'marcos';
+  // Vendedor atribuido (ai_crm_leads.assigned_to_id / crm_leads.assigned_to) — mostrado no card p/ o master.
+  assigned_to_id?: string | null;
 }
 
 interface Message {
@@ -340,7 +342,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       .from('ai_crm_leads')
       // message_count NÃO está no SELECT porque a coluna não existe em ai_crm_leads.
       // O valor é calculado dinamicamente abaixo via wa_chat_history (useEffect).
-      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, created_at, arrived_at, last_interaction_at, summary')
+      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, created_at, arrived_at, last_interaction_at, summary, assigned_to_id')
       .eq('user_id', userId);
     // Filtra por agente so quando um agente especifico esta selecionado. No modo
     // "Todos os agentes" escopa apenas por user_id (igual ao CRM, que funciona).
@@ -401,6 +403,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           arrived_at: c.arrived_at,
           last_interaction_at: c.arrived_at || c.created_at,
           summary: null,
+          assigned_to_id: c.assigned_to || null,
           origem: 'marcos',
         }));
     }
@@ -994,6 +997,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   }
 
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
+  // Mapa member_id -> nome do vendedor, pra mostrar quem atende cada lead no card (so master).
+  const sellerNameById = new Map<string, string>();
+  for (const s of sellers) for (const id of s.memberIds) sellerNameById.set(id, s.name);
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
@@ -1165,7 +1171,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             {lead.last_interaction_at ? fmtTime(lead.last_interaction_at) : ''}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="flex items-center flex-wrap gap-1.5 gap-y-1 mt-0.5">
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${st.color}`}>
                             {st.label}
                           </span>
@@ -1180,6 +1186,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           ) : (
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-violet-500/15 text-violet-400 flex items-center gap-0.5">
                               <Bot className="h-2.5 w-2.5" /> IA
+                            </span>
+                          )}
+                          {unified && !isSeller && lead.assigned_to_id && sellerNameById.get(lead.assigned_to_id) && (
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary flex items-center gap-0.5">
+                              <User className="h-2.5 w-2.5" /> {sellerNameById.get(lead.assigned_to_id)}
                             </span>
                           )}
                         </div>
