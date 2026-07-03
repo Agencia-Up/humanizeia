@@ -92,6 +92,18 @@ function initials(name: string | null, phone: string) {
   return cleanPhone(phone).slice(-2);
 }
 
+// Duracao humana curta: "8 min", "2h15", "3 dias". Metrica de tempo ate o 1o contato.
+function fmtDur(ms: number): string {
+  const min = Math.max(0, Math.round(ms / 60000));
+  if (min < 1) return 'menos de 1 min';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h < 24) return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d} dia${d > 1 ? 's' : ''}`;
+}
+
 function cleanPhone(value: string | null | undefined) {
   return (value || '').replace(/@.*$/, '').replace(/\D/g, '');
 }
@@ -1057,6 +1069,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // FASE 1: limite temporal da transferencia e nome do vendedor que recebeu, pro divisor da timeline.
   const transferAtMs = transferInfo ? new Date(transferInfo.at).getTime() : null;
   const transferSellerName = transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null;
+  // Metrica de tempo ate o 1o contato: do OK (confirmed_at) ate a 1a mensagem ENVIADA depois dele.
+  const firstPostIdx = transferAtMs != null ? messages.findIndex(m => new Date(m.created_at).getTime() >= transferAtMs) : -1;
+  const firstContactMsg = transferAtMs != null ? messages.find(m => m.direction === 'outgoing' && new Date(m.created_at).getTime() >= transferAtMs) : null;
+  const firstContactMs = firstContactMsg ? new Date(firstContactMsg.created_at).getTime() : null;
+  const handoffDelayMs = transferAtMs == null ? null : (firstContactMs != null ? firstContactMs - transferAtMs : Date.now() - transferAtMs);
+  const handoffColor = handoffDelayMs == null ? '' : handoffDelayMs <= 15 * 60000 ? 'text-emerald-300' : handoffDelayMs <= 60 * 60000 ? 'text-amber-300' : 'text-red-300';
+  const handoffCard = (transferAtMs != null && transferInfo) ? (
+    <div className="flex justify-center my-3">
+      <div className="max-w-[88%] text-center bg-[#182229] rounded-xl px-4 py-2.5 shadow-sm border border-white/5">
+        <p className="text-[11px] text-[#8696a0] flex items-center justify-center gap-1.5">
+          <ArrowRight className="h-3 w-3" /> Transferido{transferSellerName ? ` para ${transferSellerName}` : ''}
+        </p>
+        <p className="text-[11px] text-[#8696a0] mt-1">
+          OK do vendedor · {format(new Date(transferInfo.at), "dd/MM 'às' HH:mm", { locale: ptBR })}
+        </p>
+        <p className={`text-[11px] mt-0.5 font-semibold ${handoffColor}`}>
+          {firstContactMs != null
+            ? `1º contato do vendedor · ${fmtDur(handoffDelayMs as number)} depois do OK`
+            : `Aguardando 1º contato · ${fmtDur(handoffDelayMs as number)} desde o OK`}
+        </p>
+      </div>
+    </div>
+  ) : null;
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
@@ -1386,11 +1421,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     {messages.map((msg, idx) => {
                       const isOutgoing = msg.direction === 'outgoing';
                       // FASE 1: fase da IA = mensagens ANTES da transferencia confirmada.
-                      const prevMsg = idx > 0 ? messages[idx - 1] : null;
                       const curIa = transferAtMs != null && new Date(msg.created_at).getTime() < transferAtMs;
-                      const prevIa = prevMsg ? (transferAtMs != null && new Date(prevMsg.created_at).getTime() < transferAtMs) : false;
                       const showIaHeader = transferAtMs != null && idx === 0 && curIa;
-                      const showTransferDivider = transferAtMs != null && idx > 0 && prevIa && !curIa;
+                      // Cartao de handoff antes da 1a mensagem pos-transferencia.
+                      const showHandoff = transferAtMs != null && idx === firstPostIdx;
                       const album = (msg.media_list || []).filter(m => isRenderableMedia(m?.file || m?.url));
                       const mt = msg.message_type;
                       const isAudio = mt === 'audio' || mt === 'ptt' || mt === 'voice';
@@ -1410,14 +1444,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                               </span>
                             </div>
                           )}
-                          {showTransferDivider && (
-                            <div className="flex justify-center my-3">
-                              <span className="inline-flex items-center gap-1.5 text-[11px] text-[#8696a0] bg-[#182229] px-3 py-1 rounded-full shadow-sm">
-                                <ArrowRight className="h-3 w-3" />
-                                Transferido{transferSellerName ? ` para ${transferSellerName}` : ''}{transferInfo ? ` · ${format(new Date(transferInfo.at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}` : ''}
-                              </span>
-                            </div>
-                          )}
+                          {showHandoff && handoffCard}
                         <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[78%] rounded-lg px-3 py-2 text-[14.5px] leading-relaxed shadow-md ${
                             isOutgoing
@@ -1479,6 +1506,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         </Fragment>
                       );
                     })}
+                    {transferAtMs != null && firstPostIdx === -1 && handoffCard}
                     <div ref={messagesEndRef} />
                   </div>
                 )}
