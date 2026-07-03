@@ -222,13 +222,23 @@ console.log("\n=== KERNEL Pedro v3 â€” L1 (unit) + L4 (multiturno) â€”
   check("L1-policy", "POL-GROUND-PRICE preÃ§o livre no TextPart -> deny", hasDeny(badPriceRes), JSON.stringify(badPriceRes));
 
   // 2. TextPart com marca/modelo livre/sem referÃªncia -> deny
+  // Modelo NAO-ATERRADO (Jeep Renegade nao esta nos fatos deste turno; so ha Creta) em texto livre -> deny (invencao).
   const badModelRes = PolicyEngine.validateResponse(
-    { draft: { parts: [{ type: "text", content: "O modelo Hyundai Creta Ã© excelente" }] }, text: "O modelo Hyundai Creta Ã© excelente" },
+    { draft: { parts: [{ type: "text", content: "O modelo Jeep Renegade e excelente" }] }, text: "O modelo Jeep Renegade e excelente" },
     facts,
     blankDecision,
     ctx
   );
-  check("L1-policy", "POL-GROUND-STOCK marca/modelo livre no TextPart -> deny", hasDeny(badModelRes), JSON.stringify(badModelRes));
+  check("L1-policy", "POL-GROUND-STOCK marca/modelo NAO-aterrado no TextPart -> deny", hasDeny(badModelRes), JSON.stringify(badModelRes));
+
+  // Rodada 9: modelo ATERRADO nos fatos do turno pode ser citado em texto livre (conversa natural, nao invencao) -> allow.
+  const groundedModelRes = PolicyEngine.validateResponse(
+    { draft: { parts: [{ type: "text", content: "O Creta e um otimo SUV para voce!" }] }, text: "O Creta e um otimo SUV para voce!" },
+    facts,
+    blankDecision,
+    ctx
+  );
+  check("L1-policy", "POL-GROUND-STOCK modelo ATERRADO no TextPart -> allow (Rodada 9)", !hasDeny(groundedModelRes), JSON.stringify(groundedModelRes));
 
   // 3. ReferÃªncia estruturada vÃ¡lida resolvida e aterrada -> allow
   const validDraft = {
@@ -563,11 +573,13 @@ await (async () => {
   };
   const tightLimitsCompose = { maxSteps: 2, totalTimeoutMs: 1000, composeTimeoutMs: 10 };
   const outComposeTimeout = await runTurn({ ctx, llm: slowComposeLlm, runQuery, limits: tightLimitsCompose, maxValidationAttempts: 2 });
-  check("L4-extra", "Compose timeout -> safe fallback", outComposeTimeout.terminalSafe === true && outComposeTimeout.decision.reasonCode === "error", "");
+  // P0-1 (Codex): compose timeout é DEPOIS dos fatos -> NÃO propaga (não vira error/commit_failed); vira
+  // terminal-safe interno (composeAndVerify) com 1 send_message. Nunca silêncio.
+  check("L4-extra", "Compose timeout -> terminal-safe interno (nao propaga como error)", outComposeTimeout.terminalSafe === true && outComposeTimeout.decision.reasonCode === "terminal_safe" && outComposeTimeout.decision.effectPlan.some((p) => p.kind === "send_message"), outComposeTimeout.decision.reasonCode);
 
-  // 5. erro global/timeout passa pelo Finalizer
-  const isErrDecisionFromFinalizer = outComposeTimeout.decision.policyChecks.some(v => v.policyId === "POL-TIMEOUT-GUARD");
-  check("L4-extra", "erro global/timeout passa pelo Finalizer", outComposeTimeout.terminalSafe && isErrDecisionFromFinalizer, JSON.stringify(outComposeTimeout.decision));
+  // 5. erro ANTES dos fatos (query/global timeout) passa pelo Finalizer como error (POL-TIMEOUT-GUARD).
+  const isErrDecisionFromFinalizer = outQueryTimeout.decision.policyChecks.some(v => v.policyId === "POL-TIMEOUT-GUARD");
+  check("L4-extra", "erro global/timeout (query) passa pelo Finalizer", outQueryTimeout.terminalSafe && isErrDecisionFromFinalizer, JSON.stringify(outQueryTimeout.decision.policyChecks));
 
   // 6. fallback nÃ£o faz promessa sem mecanismo
   const txt = outComposeTimeout.composed.text;

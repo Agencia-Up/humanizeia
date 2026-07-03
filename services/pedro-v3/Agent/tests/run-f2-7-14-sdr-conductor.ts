@@ -13,7 +13,7 @@ import {
 } from "../src/engine/sdr-conductor.ts";
 import { materializeEffectPlans } from "../src/engine/effect-materializer.ts";import { runConversationTurn } from "../src/engine/conversation-engine.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
-import { FakeLlm } from "../src/adapters/llm/fake-llm.ts";
+import { FakeLlm, type ComposeOverride } from "../src/adapters/llm/fake-llm.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import type { QueryRunner } from "../src/engine/decision-engine.ts";
@@ -266,10 +266,23 @@ async function main(): Promise<void> {
       raw: { __redacted: true, text: "tem onix?" },
       receivedAt: NOW,
     });
+    // 1B.7: dublê do compose do LLM real — a oferta passa pelo compose (needsCompose). Emite UM vehicle_offer_list
+    // ancorado nos fatos + a pergunta de qualificação SUGERIDA no guidance do conductor (o LLM real faz isso;
+    // e a POL-QUESTION-OBJECTIVE exige congruência pergunta↔objetivo).
+    const fakeCompose: ComposeOverride = (d, facts) => {
+      const items = facts.flatMap((f) => (f.ok && f.tool === "stock_search" ? f.data.items : []));
+      const qMatch = /pergunta sugerida[^:]*:\s*([^?\n]+\?)/i.exec(d.responsePlan.guidance ?? "");
+      const parts: any[] = items.length > 0
+        ? [{ type: "text", content: "Encontrei estas opcoes pra voce:" }, { type: "vehicle_offer_list", vehicleKeys: items.slice(0, 5).map((v) => v.vehicleKey) }]
+        : [{ type: "text", content: "Nao achei esse modelo agora." }];
+      if (qMatch) parts.push({ type: "text", content: qMatch[1].trim() });
+      return { parts };
+    };
+    const offerLlm = new FakeLlm(); offerLlm.setTurnScript([], fakeCompose);
     const result = await runConversationTurn({
       persistence,
       clock,
-      llm: new FakeLlm(),
+      llm: offerLlm,
       runQuery,
       conversationId: "c-sdr-offer",
       tenantId: "tenant",
@@ -293,9 +306,12 @@ async function main(): Promise<void> {
       snapshot?.state.lastRenderedOfferContext?.items[0]?.vehicleKey === ONIX.vehicleKey,
       JSON.stringify(snapshot?.state.lastRenderedOfferContext),
     );
+    // R11 (Condução SDR): em OFERTA com nome AINDA desconhecido, o frame conduz para coletar o NOME (CTA coerente
+    // com o estado). O objetivo persistido é RECONCILIADO à pergunta realmente enviada (nome) — nunca divergente —
+    // e o turno commita sem virar terminal_safe (congruência preservada, oferta preservada).
     check(
-      "integração: pergunta SDR fica planejada sem apagar oferta",
-      snapshot?.state.plannedObjectives.some((objective) => objective.slot === "nome") === true,
+      "integração: oferta com nome desconhecido -> objetivo = nome (reconciliado à pergunta), oferta preservada",
+      result.status === "committed" && (snapshot?.state.plannedObjectives ?? []).every((objective) => objective.slot === "nome"),
       JSON.stringify(snapshot?.state.plannedObjectives),
     );
   }

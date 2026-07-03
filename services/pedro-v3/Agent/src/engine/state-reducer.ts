@@ -184,6 +184,13 @@ export function applyDecision(
         if (next.currentObjective?.id === m.objectiveId) next.currentObjective.status = "superseded";
         break;
       }
+      case "defer_objective": {
+        // item 5 + F-5: o lead falou de outra coisa; o objetivo continua pendente, só conta o deferimento.
+        // objectiveId DIVERGENTE do objetivo ativo é REJEITADO (não ignorado) — fail-closed.
+        if (next.currentObjective?.id === m.objectiveId) next.currentObjective.deferrals = (next.currentObjective.deferrals ?? 0) + 1;
+        else rejected.push({ mutation: m, reason: "defer_objective: objetivo ativo não corresponde" });
+        break;
+      }
       case "add_rejected": {
         if (!next.rejected.modelos.includes(m.modelo)) next.rejected.modelos.push(m.modelo);
         break;
@@ -196,6 +203,33 @@ export function applyDecision(
       case "append_lead_turn": {
         if (m.turn.role !== "lead") { rejected.push({ mutation: m, reason: "append_lead_turn só aceita role=lead" }); continue; }
         next.recentTurns.push(m.turn);
+        break;
+      }
+      case "select_vehicle_focus": {
+        // item 1: ESCOLHA explícita do lead -> selectedVehicleFocus (fato inbound, no commit). Substitui o anterior.
+        if (m.sourceTurnId !== expectedTurnId) { rejected.push({ mutation: m, reason: `sourceTurnId '${m.sourceTurnId}' != turno esperado '${expectedTurnId}'` }); continue; }
+        if (!m.vehicle?.key) { rejected.push({ mutation: m, reason: "select_vehicle_focus sem vehicle.key" }); continue; }
+        next.vehicleContext.selected = m.vehicle;
+        break;
+      }
+      case "clear_vehicle_focus": {
+        // item F-3: nova intenção explícita / busca ambígua ou vazia -> foco obsoleto é LIMPO.
+        if (m.sourceTurnId !== expectedTurnId) { rejected.push({ mutation: m, reason: `sourceTurnId '${m.sourceTurnId}' != turno esperado '${expectedTurnId}'` }); continue; }
+        next.vehicleContext.selected = null;
+        break;
+      }
+      case "set_more_options_exhausted": {
+        // R10-4: progressão de "mais opções esgotadas". Valor >=0 (incremento a cada esgotamento; reset=0 em nova oferta).
+        if (!Number.isInteger(m.value) || m.value < 0) { rejected.push({ mutation: m, reason: `set_more_options_exhausted valor inválido '${m.value}'` }); continue; }
+        next.moreOptionsExhausted = m.value;
+        break;
+      }
+      case "set_search_transmission": {
+        if (m.sourceTurnId !== expectedTurnId) { rejected.push({ mutation: m, reason: `sourceTurnId '${m.sourceTurnId}' != turno esperado '${expectedTurnId}'` }); continue; }
+        if (m.value !== null && m.value !== "automatic" && m.value !== "manual") {
+          rejected.push({ mutation: m, reason: `preferencia de cambio invalida '${m.value}'` }); continue;
+        }
+        next.searchPreferences = { transmission: m.value };
         break;
       }
       default: rejected.push({ mutation: m as DecisionMutation, reason: "op desconhecida" });
@@ -319,7 +353,7 @@ export function applyEffectOutcome(
           id: p.id, type: p.type, slot: p.slot ?? null,
           askedAt: receipt.at, askedInTurnId: p.plannedInTurnId,
           deliveredByEffectId: result.effectId, deliveryLevel: receipt.level,
-          expectedAnswerKinds: p.expectedAnswerKinds, status: "pending", attempts: 0,
+          expectedAnswerKinds: p.expectedAnswerKinds, status: "pending", attempts: 0, deferrals: 0,
         };
         next.currentObjective = pending;
         next.plannedObjectives.splice(idx, 1);

@@ -210,7 +210,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       workerId: "poll-worker",
       turnId,
       limits: PILOT_TURN_LIMITS,
-      maxValidationAttempts: 2,
+      maxValidationAttempts: 3, // R10: 1 tentativa + 2 retries c/ guidance específico -> menos terminal-safe
     });
     if (processed.status === "commit_failed" && processed.engine.status === "commit_failed") {
       console.error(JSON.stringify({

@@ -9,8 +9,9 @@
 import type { TurnContext, QueryLoopLimits } from "../domain/context.ts";
 import type { DecisionLlm } from "../domain/llm.ts";
 import type {
-  QueryCall, QueryResult, ProposedDecision, TurnDecision, RenderedResponse, EffectPlan, SendMessagePlan, ProposedEffectPlan,
+  QueryCall, QueryResult, ProposedDecision, TurnDecision, RenderedResponse, ResponseDraft, EffectPlan, SendMessagePlan, ProposedEffectPlan,
 } from "../domain/decision.ts";
+import { normalizeStockSearchInput } from "../domain/decision.ts";
 import { PolicyEngine, hasDeny } from "./policy-engine.ts";
 import { finalize, emitTerminalSafe, emitErrorTerminalSafe } from "./finalizer.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
@@ -28,6 +29,14 @@ export type TurnOutput = {
   terminalSafe: boolean; // validação esgotou -> SAFE_RESPONSE + alerta/dead-letter
   steps: number;
   renderedOfferContext?: readonly RenderedOfferItem[] | null; // F2.7.12: handler determinístico já forneceu os itens (ordem)
+  // 1B.7: quando true, o handler produziu FATOS+decisão+guidance (não texto final) e o ENGINE deve rodar
+  // conductDecision + composeAndVerify (o LLM redige seguindo o prompt do portal). `composed` é só placeholder
+  // e `fallbackText` é o texto determinístico usado SOMENTE em falha técnica/schema/policy repetida.
+  needsCompose?: boolean;
+  fallbackText?: string;
+  // 1B.7: o runTurn (LLM puro) já aplicou a condução por GUIDANCE (conductDecision) antes de compor — o engine
+  // NÃO deve reconduzir via applySdrConduction (só garante a apresentação). Handlers legados não setam.
+  conducted?: boolean;
 };
 
 const SAFE_CLARIFY = (): ProposedDecision => ({
@@ -78,9 +87,19 @@ export function limitCheapest(res: QueryResult, n: number): QueryResult {
 // D3 (F2.7.4): recompoe com FEEDBACK do deny anterior em vez de repetir cega (que so reproduz o erro
 // -> terminal-safe). Anexa a correcao ao guidance (o compose ja recebe decision.responsePlan.guidance).
 // NAO muta a decisao original (usada no caminho terminal-safe).
+// Guidance de retry ESPECÍFICO por motivo do deny (R10): instrução genérica não fazia o LLM corrigir -> terminal-safe.
+// Cada regra da policy tem uma correção acionável; assim a 2ª tentativa conserta em vez de repetir o erro.
 function withRetryGuidance(decision: TurnDecision, denyDetail: string): TurnDecision {
-  const note = ` [CORRECAO OBRIGATORIA: sua tentativa anterior foi REJEITADA pela validacao (${denyDetail}). Nunca escreva marca/modelo/preco em texto livre — use partes vehicle_ref/money_ref ancoradas nos fatos; NAO cite veiculo ausente dos fatos.]`;
-  return { ...decision, responsePlan: { guidance: (decision.responsePlan.guidance + note).slice(0, 1400) } };
+  const d = denyDetail.toLowerCase();
+  const tips: string[] = [];
+  if (d.includes("mais de uma pergunta")) tips.push("Você fez MAIS DE UMA pergunta (oferecer visita/fotos TAMBÉM conta como pergunta). Faça SÓ UMA pergunta — escolha a mais importante agora e REMOVA as outras.");
+  if (d.includes("conhecido")) tips.push("Você perguntou/reofereceu algo que o lead JÁ informou. NÃO repita nada já conhecido (inclusive visita/horário já aceitos) — use o dado e avance para o PRÓXIMO passo do funil.");
+  if (d.includes("cpf")) tips.push("NÃO peça CPF neste momento — não é parte da qualificação inicial.");
+  if (d.includes("nao-aterrado") || d.includes("não-aterrado")) tips.push("Você citou um MODELO que não está na oferta deste turno (ou abreviou o nome). Cite os veículos SÓ pela vehicle_offer_list com o nome EXATO dos fatos; NÃO escreva nomes de modelo em texto livre nem abrevie.");
+  if (d.includes("monetario") || d.includes("monetário") || d.includes("preco") || d.includes("preço")) tips.push("NÃO escreva preço/valor de veículo em texto — use money_ref ou a vehicle_offer_list.");
+  const specific = tips.length > 0 ? " " + tips.join(" ") : " Nunca escreva marca/modelo/preco em texto livre — use partes vehicle_ref/money_ref ancoradas nos fatos; NAO cite veiculo ausente dos fatos.";
+  const note = ` [CORRECAO OBRIGATORIA: sua tentativa anterior foi REJEITADA pela validacao (${denyDetail}).${specific}]`;
+  return { ...decision, responsePlan: { guidance: (decision.responsePlan.guidance + note).slice(0, 1600) } };
 }
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMsg: string): Promise<T> {
@@ -104,6 +123,11 @@ export async function runTurn(args: {
   runQuery: QueryRunner;
   limits: QueryLoopLimits;
   maxValidationAttempts: number;
+  // 1B.7: condução por GUIDANCE injetada pelo engine (conductDecision fechado sobre state/policy/turnId).
+  // Evita dependência circular decision-engine <-> sdr-conductor. Aplicada após finalize, ANTES do compose.
+  conduct?: (decision: TurnDecision) => TurnDecision;
+  // P1 (Codex): ajuste determinístico do draft (apresentação/anti-fixação) antes de renderizar+validar.
+  adjustDraft?: (draft: ResponseDraft) => ResponseDraft;
 }): Promise<TurnOutput> {
   const { ctx, llm, runQuery, limits, maxValidationAttempts } = args;
 
@@ -116,7 +140,11 @@ export async function runTurn(args: {
     // Com os fatos ja presentes, a proposta/compose se ancora (vehicle_ref) ou diz "nao encontrei" + similares.
     const seededModels = detectRequestedModels(fullCtx);
     for (const modelo of seededModels) {
-      const seedCall: QueryCall = { tool: "stock_search", input: { modelo } };
+      // 1A.4: a seed também normaliza — termo de TIPO ("suv") citado como modelo pela interpretação vira `tipo`
+      // (nunca stock_search({modelo:"suv"}); bypassa o decodeStep por ser query do ENGINE, não do LLM).
+      const seedNorm = normalizeStockSearchInput({ modelo });
+      if (!seedNorm.ok) continue;
+      const seedCall: QueryCall = { tool: "stock_search", input: seedNorm.input };
       if (PolicyEngine.authorizeQuery(seedCall, fullCtx, facts).outcome !== "allow") continue;
       let seedRes: QueryResult;
       try {
@@ -148,6 +176,17 @@ export async function runTurn(args: {
           throw err;
         }
         facts.push(limitCheapest(broadRes, 5));
+      }
+    }
+    // item 2: pergunta de DETALHE sobre o veículo SELECIONADO (pronome "ele/dele", sem modelo novo) -> consulta
+    // vehicle_details do vehicleKey EXATO, aterrando a resposta de atributo (câmbio/cor/…) no fato do veículo certo.
+    const selectedKey = fullCtx.state.vehicleContext.selected?.key;
+    if (seededModels.length === 0 && selectedKey && fullCtx.interpretation.relation === "asks_vehicle_detail") {
+      const detailCall: QueryCall = { tool: "vehicle_details", input: { vehicleKey: selectedKey } };
+      if (PolicyEngine.authorizeQuery(detailCall, fullCtx, facts).outcome === "allow") {
+        try {
+          facts.push(await withTimeout(runQuery(detailCall), limits.queryTimeoutMs ?? 4000, "query: vehicle_details (selected) exceeded timeout"));
+        } catch (err: any) { err.step = err.step ?? "query"; throw err; }
       }
     }
     let proposal: ProposedDecision | null = null;
@@ -192,60 +231,13 @@ export async function runTurn(args: {
     // ── PÓS-QUERY -> Finalizer (única decisão) ──
     const post = PolicyEngine.postQuery(proposal, facts, fullCtx);
     let decision = finalize(fullCtx.turnId, proposal, post, facts);
+    // 1B.7: condução por GUIDANCE (o conductor injeta slots conhecidos/próximo/deferimento) ANTES do compose —
+    // o LLM redige seguindo o prompt do portal + esse guidance, em vez do conductor reescrever a pergunta.
+    if (args.conduct) decision = args.conduct(decision);
 
-    // ── COMPOSE -> VALIDATE com LIMITE (Codex r3 #7) ──
-    let composed: RenderedResponse = {
-      draft: { parts: [] },
-      text: ""
-    };
-    let terminalSafe = false;
-    let ok = false;
-    let lastDenyDetail = ""; // F2.7.3: motivo do deny de grounding (observabilidade no terminal-safe)
-    for (let attempt = 1; attempt <= maxValidationAttempts; attempt++) {
-      // D3: a partir da 2a tentativa, recompoe COM o motivo do deny anterior (feedback), nao cega.
-      const composeDecision = attempt > 1 && lastDenyDetail ? withRetryGuidance(decision, lastDenyDetail) : decision;
-      try {
-        const draft = await withTimeout(
-          llm.compose(composeDecision, facts, fullCtx),
-          limits.composeTimeoutMs ?? 5000,
-          "compose: LLM compose exceeded timeout"
-        );
-        composed = { draft, text: "" };
-      } catch (err: any) {
-        err.step = err.step ?? "compose";
-        throw err;
-      }
-
-      let gv;
-      try {
-        composed.text = ResponseRenderer.render(composed.draft, facts, fullCtx.state);
-        gv = PolicyEngine.validateResponse(composed, facts, decision, fullCtx);
-      } catch (renderErr: any) {
-        // Referência inválida falha fechada -> gv vira deny imediato
-        gv = [{
-          policyId: "POL-GROUND-PRICE",
-          outcome: "deny" as const,
-          violations: [`Erro de renderização: ${renderErr.message ?? renderErr}`]
-        }];
-      }
-
-      if (!hasDeny(gv)) { ok = true; break; }
-      lastDenyDetail = JSON.stringify(gv.filter((v) => v.outcome === "deny")).slice(0, 220);
-    }
-    if (!ok) {
-      // TERMINAL: cancela efeitos comerciais + resposta segura + dead-letter/alerta. Sem loop/silêncio.
-      // P0 (F2.7.11): reason_code segue terminal_safe (logs), MAS o texto ao lead e um fallback de SDR
-      // conduzido pelo estado — NUNCA "Desculpe a lentidao..." (mensagem de sistema vazando pro cliente).
-      decision = emitTerminalSafe(fullCtx.turnId, decision, `Validação de resposta falhou repetidamente: ${lastDenyDetail || "motivo nao capturado"}`.slice(0, 260));
-      const fallbackText = buildContextualSdrReply(fullCtx.state);
-      composed = {
-        draft: { parts: [{ type: "text", content: fallbackText }] },
-        text: fallbackText
-      };
-      terminalSafe = true;
-    }
-
-    return { decision, composed, facts, loopExhausted, terminalSafe, steps };
+    // ── COMPOSE -> VALIDATE com LIMITE (Codex r3 #7) — extraído p/ composeAndVerify (reusado pelo 1B.7). ──
+    const cv = await composeAndVerify({ decision, facts, ctx: fullCtx, llm, limits, maxValidationAttempts, adjustDraft: args.adjustDraft });
+    return { decision: cv.decision, composed: cv.composed, facts, loopExhausted, terminalSafe: cv.terminalSafe, steps, conducted: !!args.conduct };
   };
 
   try {
@@ -261,7 +253,7 @@ export async function runTurn(args: {
     // Todo TurnDecision, inclusive erro global/timeout, sai do Finalizer. P0 (F2.7.11): texto ao lead =
     // fallback de SDR contextual (NUNCA "Desculpe a lentidao..."); o reason_code error/timeout fica nos logs.
     const decision = emitErrorTerminalSafe(ctx.turnId, step, reason);
-    const fallbackText = buildContextualSdrReply(ctx.state);
+    const fallbackText = buildContextualSdrReply(ctx.state, { leadMessage: ctx.leadMessage });
     const composed = {
       draft: { parts: [{ type: "text" as const, content: fallbackText }] },
       text: fallbackText
@@ -276,4 +268,55 @@ export async function runTurn(args: {
       steps: 0
     };
   }
+}
+
+// 1B.7 (Codex): loop de COMPOSE -> VALIDATE reutilizável. O LLM real compõe a fala (seguindo o prompt do
+// portal + responsePlan.guidance) sobre os FATOS já decididos pelo handler/engine; a policy é a autoridade
+// final; fallback determinístico SOMENTE em falha técnica/schema (validação repetida) -> terminal-safe.
+export async function composeAndVerify(args: {
+  readonly decision: TurnDecision;
+  readonly facts: QueryResult[];
+  readonly ctx: TurnContext;
+  readonly llm: DecisionLlm;
+  readonly limits: QueryLoopLimits;
+  readonly maxValidationAttempts: number;
+  // 1B.7: fallback determinístico do HANDLER (ex.: a lista da oferta já renderizada). Usado SOMENTE em falha
+  // técnica/schema/policy repetida. Sem ele, cai no fallback SDR contextual genérico.
+  readonly fallbackText?: string;
+  // P1 (Codex): ajuste determinístico do DRAFT (apresentação/anti-fixação) aplicado ANTES de renderizar+validar
+  // — nada é reescrito DEPOIS da policy; o texto validado já é o final.
+  readonly adjustDraft?: (draft: ResponseDraft) => ResponseDraft;
+}): Promise<{ decision: TurnDecision; composed: RenderedResponse; terminalSafe: boolean }> {
+  const { facts, ctx, llm, limits, maxValidationAttempts } = args;
+  let decision = args.decision;
+  let composed: RenderedResponse = { draft: { parts: [] }, text: "" };
+  let ok = false, lastDenyDetail = "";
+  for (let attempt = 1; attempt <= maxValidationAttempts; attempt++) {
+    const composeDecision = attempt > 1 && lastDenyDetail ? withRetryGuidance(decision, lastDenyDetail) : decision;
+    let gv;
+    try {
+      const rawDraft = await withTimeout(llm.compose(composeDecision, facts, ctx), limits.composeTimeoutMs ?? 5000, "compose: LLM compose exceeded timeout");
+      // P1 (Codex): as travas determinísticas ajustam o DRAFT (parts) ANTES de renderizar+validar. Assim o
+      // texto validado JÁ É o final (nada é substituído depois da policy) e as parts estruturadas são preservadas.
+      const draft = args.adjustDraft ? args.adjustDraft(rawDraft) : rawDraft;
+      composed = { draft, text: ResponseRenderer.render(draft, facts, ctx.state) };
+      gv = PolicyEngine.validateResponse(composed, facts, decision, ctx);
+    } catch (err: any) {
+      // P0-1 (Codex): QUALQUER falha técnica do compose (throw/timeout/schema inválido/erro de render) — DEPOIS
+      // dos fatos já obtidos — NÃO pode propagar (viraria commit_failed). Trata como deny -> re-tenta; se
+      // esgotar, cai no fallback determinístico (terminal-safe + fallbackText do handler). Nunca há silêncio.
+      gv = [{ policyId: "POL-COMPOSE-FAIL", outcome: "deny" as const, violations: [`compose falhou: ${String(err?.message ?? err).slice(0, 160)}`] }];
+    }
+    if (!hasDeny(gv)) { ok = true; break; }
+    lastDenyDetail = JSON.stringify(gv.filter((v) => v.outcome === "deny")).slice(0, 220);
+  }
+  if (!ok) {
+    decision = emitTerminalSafe(ctx.turnId, decision, `Validação de resposta falhou repetidamente: ${lastDenyDetail || "motivo nao capturado"}`.slice(0, 260));
+    const fallbackText = (args.fallbackText && args.fallbackText.trim().length > 0)
+      ? args.fallbackText
+      : buildContextualSdrReply(ctx.state, { leadMessage: ctx.leadMessage });
+    composed = { draft: { parts: [{ type: "text", content: fallbackText }] }, text: fallbackText };
+    return { decision, composed, terminalSafe: true };
+  }
+  return { decision, composed, terminalSafe: false };
 }

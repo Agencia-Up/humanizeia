@@ -246,6 +246,29 @@ async function main(): Promise<void> {
     check("hardening: preview falha -> NAO commita (committed=[]), nao derruba o turno", badRes.committed.length === 0 && badRes.contextState === st);
   }
 
+  // ── R10-5 (Codex): REENVIO IMPLÍCITO — "manda de novo" (sem "foto") após envio -> reenvia deterministicamente ──
+  {
+    const afterPhoto = (key: string, label: string): ConversationState => baseState({
+      recentTurns: [{ role: "agent", text: `Aqui estão as fotos do ${label}! 📸`, at: NOW }],
+      vehicleContext: { focus: null, selected: { kind: "vehicle", key, label } },
+    });
+    const stOnix = afterPhoto(ONIX, "Chevrolet Onix 2014");
+    const r1 = await intent("Manda de novo", stOnix);
+    check("R10-5 'Manda de novo' após foto do Onix -> send (reenvio determinístico)", r1?.kind === "send" && r1.vehicleKey === ONIX, JSON.stringify(r1));
+    const r2 = await intent("reenvia aí", stOnix);
+    check("R10-5 'reenvia aí' após foto -> send", r2?.kind === "send" && r2.vehicleKey === ONIX, JSON.stringify(r2));
+    // SEM envio anterior -> NÃO é reenvio (fluxo LLM normal).
+    const r3 = await intent("Manda de novo", agentOffered("Qual seu nome?"));
+    check("R10-5 'Manda de novo' SEM foto anterior -> null (fluxo LLM)", r3 === null, JSON.stringify(r3));
+    // Negação preservada.
+    const r4 = await intent("não manda de novo não", stOnix);
+    check("R10-5 negação 'não manda de novo' -> null", r4 === null, JSON.stringify(r4));
+    // Ambiguidade fail-closed: envio anterior citou 2 modelos e sem selected -> ask_which (nunca chuta).
+    const stAmbig = baseState({ recentTurns: [{ role: "agent", text: "Aqui estão as fotos do Onix e do Renegade! 📸", at: NOW }] });
+    const r5 = await intent("manda de novo", stAmbig);
+    check("R10-5 reenvio com 2 modelos na última fala e sem seleção -> ask_which (fail-closed)", r5?.kind === "ask_which", JSON.stringify(r5));
+  }
+
   console.log(`\n=== F2.7.8: ${ok} OK | ${fail} FALHA ===`);
   if (fail > 0) { for (const f of fails) console.error("  - " + f); process.exit(1); }
 }

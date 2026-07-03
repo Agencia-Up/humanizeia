@@ -15,8 +15,9 @@
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, DecisionMutation, TurnInterpretation } from "../domain/decision.ts";
-import type { Id } from "../domain/types.ts";
+import type { EntityReference, Id } from "../domain/types.ts";
 import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
+import { parseOrdinal } from "./ordinal.ts";
 
 const NON_NAME = new Set([
   "sim", "nao", "claro", "certo", "ok", "okay", "isso", "beleza", "blz", "opa", "oi", "ola", "eai", "e", "ou", "eh",
@@ -57,6 +58,25 @@ function lastAgentText(state: ConversationState): string {
   return "";
 }
 
+// COMPATIBILIDADE (item 4, Codex): classificador de KIND por EXTRATORES TIPADOS (não só stoplist). Diz
+// quais answer-kinds a fala satisfaz; a binder compara com `currentObjective.expectedAnswerKinds` — uma
+// resposta INCOMPATÍVEL não preenche o slot. "command" = pedido comercial/ordinal/comparativo/atributo.
+// Ex.: "automático", "mais barato", "outras possibilidades", "sábado de manhã", "não tenho troca" -> não são nome.
+function classifyAnswerKinds(message: string, claimExtractor: ClaimExtractor): Set<string> {
+  const n = normalizeText(message);
+  const kinds = new Set<string>();
+  if (moneySpans(message).length > 0) kinds.add("valor");
+  if (parseVehicleType(message) || claimExtractor.extractClaims(message).some((c) => c.kind === "model" || c.kind === "brand_model" || c.kind === "brand")) kinds.add("modelo");
+  const bool = parseBooleanAnswer(message);
+  if (bool === false) kinds.add("negacao");
+  if (bool === true) kinds.add("afirmacao");
+  if (visitScheduleAnswer(message)) kinds.add("data");
+  if (/\b(mostra|mostrar|manda|mandar|envia|enviar|ver|fotos?|imagens?)\b/.test(n)) kinds.add("command");            // comando imperativo/foto
+  if (/\bmais\s+\w|\boutr[ao]s?\b|\bbarat|\bcar[oa]\b|\beconomic|\bautomatic|\bmanual\b|\bflex\b|\bcompleto\b|\bpossibilidade/.test(n)) kinds.add("command"); // comparativo/atributo
+  if (/\b(primeir|segund|terceir|quart|quint)o?\b|\b(?:do|no|opcao|numero|item)\s*\d\b/.test(n)) kinds.add("command"); // ordinal
+  return kinds;
+}
+
 function extractName(
   leadMessage: string,
   state: ConversationState,
@@ -74,8 +94,13 @@ function extractName(
   const agentAskedName = AGENT_ASKED_NAME.test(lastAgentText(state));
   if (objAskingName || agentAskedName) {
     for (const line of leadMessage.split(/\n+/)) {
-      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      const trimmed = line.trim();
+      const tokens = trimmed.split(/\s+/).filter(Boolean);
       if (tokens.length === 0 || tokens.length > 3) continue;
+      // Fail-closed POR LINHA (item 4): se a linha classifica como QUALQUER outro answer-kind (valor/modelo/
+      // negacao/afirmacao/data/command), NÃO é um nome — evita nome="Automático"/"Mais Barato"/"Mostra...".
+      // Preserva a linha-nome numa rajada mista ("Douglas\nquero onix").
+      if (classifyAnswerKinds(trimmed, claimExtractor).size > 0) continue;
       if (tokens.every((t) => isNameToken(t, claimExtractor))) {
         return { value: titleCase(tokens.join(" ")), confidence: 0.85 };
       }
@@ -148,10 +173,49 @@ function parseAmount(raw: string): number | null {
   return values[0]?.amount ?? null;
 }
 
-function amountAfterCue(raw: string, cue: RegExp): number | null {
-  const match = cue.exec(raw);
-  if (!match) return null;
-  return parseAmount(raw.slice(match.index, match.index + 80));
+// Item 3 (Codex): extração monetária por SPANS + CUES independentes (order-independent). Cada papel
+// (parcela/entrada/orçamento) pega o valor MAIS PRÓXIMO do seu cue e o CONSOME, então outro papel não o
+// reusa. Anos (1900-2100 sem R$/mil) e km nunca viram dinheiro. Índices preservados (toLowerCase, sem NFD).
+type MoneySpan = { value: number; start: number; end: number };
+function moneySpans(message: string): MoneySpan[] {
+  const lower = message.toLowerCase();
+  const out: MoneySpan[] = [];
+  const re = /(?:r\$\s*)?(\d{1,3}(?:[.\s]\d{3})+|\d+(?:,\d{1,2})?)\s*(mil|k)?\b/gi;
+  for (let m = re.exec(lower); m; m = re.exec(lower)) {
+    const hasCurrency = /r\$/.test(m[0]);
+    let v = Number(m[1].replace(/[.\s]/g, "").replace(",", "."));
+    if (!Number.isFinite(v)) continue;
+    const mult = m[2];
+    if (mult) v *= 1000;
+    const after = lower.slice(m.index + m[0].length, m.index + m[0].length + 12);
+    if (/\bkm\b|quilometr|rodad/.test(after)) continue;                 // km/rodagem não é dinheiro
+    if (!mult && !hasCurrency && v >= 1900 && v <= 2100) continue;      // ano não é dinheiro
+    const hasSep = /[.\s,]/.test(m[1]);
+    if (v < 1000 && !hasSep && !mult && !hasCurrency) continue;         // número pequeno puro não é dinheiro
+    out.push({ value: Math.round(v), start: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+// Papel por CLÁUSULA (robusto a ambas as ordens): divide a fala em cláusulas (vírgula/;/./"e"/"com"/"mas")
+// e classifica cada uma pelo cue presente NELA. O valor da cláusula é o 1º span monetário dela. Assim
+// "picape até 100 mil, parcela até 1.800" separa as cláusulas e não confunde os valores (não depende de
+// distância nem de apagar texto). "unknown" = valor sem cue (resposta pura a uma pergunta pendente).
+type MoneyRoleTag = "parcela" | "entrada" | "budget" | "unknown";
+function moneyByClause(message: string): Array<{ role: MoneyRoleTag; value: number }> {
+  const clauses = message.split(/(?!\d)[,;.](?!\d)|\s+\b(?:e|com|mas|mais)\b\s+/i);
+  const out: Array<{ role: MoneyRoleTag; value: number }> = [];
+  for (const clause of clauses) {
+    const spans = moneySpans(clause);
+    if (spans.length === 0) continue;
+    const n = clause.toLowerCase();
+    const role: MoneyRoleTag =
+      /parcela|mensal|mensais|por m[eê]s|prestac/.test(n) ? "parcela"
+      : /entrada|sinal/.test(n) ? "entrada"
+      : /at[eé]|no m[aá]ximo|or[çc]amento|faixa|investir|gastar/.test(n) ? "budget"
+      : "unknown";
+    out.push({ role, value: spans[0].value });
+  }
+  return out;
 }
 
 function parseBooleanAnswer(text: string): boolean | null {
@@ -234,6 +298,37 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
   return Object.keys(result).length > 0 ? result : null;
 }
 
+// item 1 (Codex): ESCOLHA de veículo do lead a partir da última lista renderizada — ordinal OU modelo ÚNICO.
+// Ambíguo (2 Onix pelo modelo) -> NÃO seleciona (o ordinal desambigua); modelo fora da lista -> não muda o foco.
+// item 2: usa o parseOrdinal ÚNICO/endurecido (quantidade não é ordinal: "quero 3 fotos" não seleciona).
+function resolveSelectedVehicle(leadMessage: string, state: ConversationState, claimExtractor: ClaimExtractor): EntityReference | null {
+  const items = state.lastRenderedOfferContext?.items ?? [];
+  if (items.length === 0) return null;
+  const labelOf = (it: (typeof items)[number]): string => [it.marca, it.modelo, it.ano].filter(Boolean).join(" ").trim();
+  const ord = parseOrdinal(leadMessage);
+  if (ord && ord.value >= 1 && ord.value <= items.length) {
+    const it = items[ord.value - 1];
+    return { kind: "vehicle", key: it.vehicleKey, label: labelOf(it) };
+  }
+  const claims = claimExtractor.extractClaims(leadMessage).filter((c) => c.kind === "model" || c.kind === "brand_model").map((c) => normalizeText(c.text));
+  if (claims.length > 0) {
+    const matches = items.filter((it) => { const mm = normalizeText(it.modelo ?? ""); return !!mm && claims.some((cl) => mm.includes(cl) || cl.includes(mm)); });
+    const uniqueKeys = [...new Set(matches.map((m) => m.vehicleKey))];
+    if (uniqueKeys.length === 1) return { kind: "vehicle", key: matches[0].vehicleKey, label: labelOf(matches[0]) };
+  }
+  return null;
+}
+
+// item F-6 (Codex): kind de resposta representado por cada slot — p/ a interseção answerKinds no resolve.
+function slotAnswerKind(slot: keyof ConversationState["slots"]): string {
+  if (slot === "nome") return "nome";
+  if (slot === "possuiTroca" || slot === "conheceLoja" || slot === "interesseVisita") return "boolean";
+  if (slot === "interesse" || slot === "tipoVeiculo" || slot === "veiculoTroca") return "modelo";
+  if (slot === "faixaPreco" || slot === "entrada" || slot === "parcelaDesejada") return "valor";
+  if (slot === "diaHorario") return "data";
+  return "afirmacao";
+}
+
 export function extractLeadSlots(args: {
   readonly leadMessage: string;
   readonly state: ConversationState;
@@ -269,34 +364,43 @@ export function extractLeadSlots(args: {
   const type = parseVehicleType(leadMessage);
   if (type) add({ op: "set_slot", slot: "tipoVeiculo", value: type, confidence: 0.95, sourceTurnId: turnId }, "tipoVeiculo");
 
-  const budgetCue = /\bate\b|\bno maximo\b|\borcamento\b|\bfaixa.*valor\b|\bpretendo.*invest/.test(norm);
-  if (expected === "faixaPreco" || budgetCue) {
-    const amount = amountAfterCue(leadMessage, /até|ate|no máximo|no maximo|orçamento|orcamento|faixa|invest/iu) ?? parseAmount(leadMessage);
-    if (amount != null) add({ op: "set_slot", slot: "faixaPreco", value: { max: amount }, confidence: budgetCue ? 0.95 : 0.82, sourceTurnId: turnId }, "faixaPreco");
+  // ── Papéis monetários (item 3): por CLÁUSULA, order-independent (ver moneyByClause). Cada papel pega o
+  //    valor da SUA cláusula; "unknown" (valor sem cue) só alimenta o slot monetário PENDENTE (resposta pura).
+  const money = moneyByClause(leadMessage);
+  const unknownMoney = money.find((r) => r.role === "unknown")?.value;
+  const roleVal = (role: MoneyRoleTag, slotForExpected: keyof ConversationState["slots"]): number | undefined =>
+    money.find((r) => r.role === role)?.value ?? (expected === slotForExpected ? unknownMoney : undefined);
+
+  const parcelaVal = roleVal("parcela", "parcelaDesejada");
+  if (parcelaVal != null) add({ op: "set_slot", slot: "parcelaDesejada", value: parcelaVal, confidence: 0.9, sourceTurnId: turnId }, "parcelaDesejada");
+
+  if (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm)) {
+    add({ op: "set_slot", slot: "entrada", value: 0, confidence: 0.98, sourceTurnId: turnId }, "entrada");
+  } else {
+    const entradaVal = roleVal("entrada", "entrada");
+    if (entradaVal != null) add({ op: "set_slot", slot: "entrada", value: entradaVal, confidence: 0.9, sourceTurnId: turnId }, "entrada");
   }
+
+  const budgetVal = roleVal("budget", "faixaPreco");
+  if (budgetVal != null) add({ op: "set_slot", slot: "faixaPreco", value: { max: budgetVal }, confidence: 0.92, sourceTurnId: turnId }, "faixaPreco");
 
   const payment = parsePayment(leadMessage);
   if (payment && (expected === "formaPagamento" || /\ba vista\b|\bfinanc|\bparcel|\bconsorcio\b|\bpagamento\b/.test(norm))) {
     add({ op: "set_slot", slot: "formaPagamento", value: payment, confidence: 0.95, sourceTurnId: turnId }, "formaPagamento");
   }
 
-  if (/\b(?:sem|nao tenho)\s+entrada\b/.test(norm)) {
-    add({ op: "set_slot", slot: "entrada", value: 0, confidence: 0.98, sourceTurnId: turnId }, "entrada");
-  } else if (expected === "entrada" || /\bentrada\b/.test(norm)) {
-    const amount = amountAfterCue(leadMessage, /entrada/iu) ?? parseAmount(leadMessage);
-    if (amount != null) add({ op: "set_slot", slot: "entrada", value: amount, confidence: 0.9, sourceTurnId: turnId }, "entrada");
-  }
-
-  if (expected === "parcelaDesejada" || /\bparcela\b|\bpor mes\b|\bmensal\b/.test(norm)) {
-    const amount = amountAfterCue(leadMessage, /parcela|mensal/iu) ?? parseAmount(leadMessage);
-    if (amount != null) add({ op: "set_slot", slot: "parcelaDesejada", value: amount, confidence: 0.9, sourceTurnId: turnId }, "parcelaDesejada");
-  }
-
   const explicitNoTrade = /\b(?:nao tenho|sem).{0,40}\b(?:carro|veiculo|troca)\b|\bnao.{0,60}\btroca\b/.test(norm);
   const explicitTrade = !explicitNoTrade && /\b(?:tenho|possuo).{0,25}\b(?:carro|veiculo).{0,20}\btroca\b|\b(?:carro|veiculo)\s+(?:para|pra)\s+troca\b/.test(norm);
+  // R11-A1 (Codex): um PEDIDO de compra ("Quero SUV até 70 mil", "quero um Gol") NÃO é resposta booleana de troca.
+  // Sem isto, com objetivo 'possuiTroca' pendente, parseBooleanAnswer("quero...") virava possuiTroca=true ESPÚRIO
+  // (memória corrompida -> objetivo trocava sem base). "tenho um Gol" (verbo de POSSE) continua sendo troca=sim.
+  const buyVerb = /\b(quero|procuro|busco|prefiro|mostra|me ve|gostaria de ver|estou procurando|to procurando)\b/.test(norm);
+  const mentionsVehicle = parseVehicleType(leadMessage) != null || /\b(carro|veiculo|modelo)\b/.test(norm) || /\b\d{1,3}\s*mil\b/.test(norm)
+    || claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model");
+  const looksLikeBuyRequest = buyVerb && mentionsVehicle;
   let deniedTradeVehicle = false;
   if (explicitTrade || explicitNoTrade || expected === "possuiTroca") {
-    const value = explicitNoTrade ? false : explicitTrade ? true : parseBooleanAnswer(leadMessage);
+    const value = explicitNoTrade ? false : explicitTrade ? true : (looksLikeBuyRequest ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
       add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");
@@ -317,7 +421,13 @@ export function extractLeadSlots(args: {
   }
 
   if (expected === "interesseVisita" || /\b(?:quero|gostaria|posso).{0,20}\b(?:visita|agendar|ir na loja)\b|\bnao quero.{0,20}\bvisita\b/.test(norm)) {
-    const value = /\bnao quero\b|\bagora nao\b/.test(norm) ? false : /\bvisita\b|\bagendar\b|\bir na loja\b/.test(norm) ? true : parseBooleanAnswer(leadMessage);
+    const explicitNo = /\bnao quero\b|\bagora nao\b/.test(norm);
+    const explicitYes = /\bvisita\b|\bagendar\b|\bir na loja\b/.test(norm);
+    // Guard: "quero o terceiro" / "quero fotos" = SELEÇÃO de veículo ou pedido de mídia, NÃO resposta booleana à
+    // pergunta de visita. Sem isso, o "quero" caía em parseBooleanAnswer -> interesseVisita=true espúrio (o lead
+    // mudou de assunto). Só interpreta como resposta de visita quando NÃO há referência a item/ordinal/mídia.
+    const refersVehicleOrMedia = /\b(?:primeir|segund|terceir|quart|quint|ultim)[oa]\b|\bo\s+\d+\b|\bop[cç][aã]o\b|\bfotos?\b|\bimagens?\b|\bv[ií]deos?\b/.test(norm);
+    const value = explicitNo ? false : explicitYes ? true : (refersVehicleOrMedia ? null : parseBooleanAnswer(leadMessage));
     if (value != null) add({ op: "set_slot", slot: "interesseVisita", value, confidence: 0.9, sourceTurnId: turnId }, "interesseVisita");
   }
 
@@ -326,8 +436,16 @@ export function extractLeadSlots(args: {
     if (answer) add({ op: "set_slot", slot: "diaHorario", value: answer, confidence: 0.82, sourceTurnId: turnId }, "diaHorario");
   }
 
+  const selectedVehicle = resolveSelectedVehicle(leadMessage, state, claimExtractor);
+  if (selectedVehicle) muts.push({ op: "select_vehicle_focus", vehicle: selectedVehicle, sourceTurnId: turnId });
+
+  // item F-6: só resolve o currentObjective quando o slot foi CAPTURADO **E** o answerKind é compatível com
+  // expectedAnswerKinds (interseção real). Resposta incompatível não resolve nem altera o objetivo.
   const current = state.currentObjective;
-  if (current?.status === "pending" && current.slot && captured.has(current.slot)) {
+  const capturedKinds = new Set<string>();
+  for (const s of captured) { const k = slotAnswerKind(s); capturedKinds.add(k); if (k === "boolean") { capturedKinds.add("afirmacao"); capturedKinds.add("negacao"); } }
+  const kindsCompatible = (current?.expectedAnswerKinds ?? []).some((k) => capturedKinds.has(k));
+  if (current?.status === "pending" && current.slot && captured.has(current.slot) && kindsCompatible) {
     muts.push({ op: "resolve_objective", objectiveId: current.id, status: "satisfied" });
   } else if (current?.status === "pending" && current.slot === "veiculoTroca" && deniedTradeVehicle) {
     muts.push({ op: "supersede_objective", objectiveId: current.id });

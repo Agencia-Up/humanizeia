@@ -95,6 +95,28 @@ async function main(): Promise<void> {
     check("reply sem contexto: descoberta, sem 'Desculpe'", /procura/i.test(disc) && !FALLBACK.test(disc), disc);
   }
 
+  // 2b) 1B.7 — ANTI-REPETIÇÃO + SINAL DE AVANÇO (bugs r3/s3/r1: fallback repetia verbatim e ignorava o lead).
+  {
+    // Descoberta: última fala do agente == candidato[0] -> escolhe OUTRA formulação (não repete).
+    const discLine = "Me conta o que você procura — um modelo específico, uma faixa de preço ou um tipo (SUV, hatch, sedan)? Aí já busco no nosso estoque.";
+    const repeated = withState({ turnNumber: 3, recentTurns: [{ role: "agent", text: discLine, at: NOW }] });
+    const varied = buildContextualSdrReply(repeated);
+    check("fallback NÃO repete a última fala do agente (varia a formulação)", normalizeText(varied) !== normalizeText(discLine), varied);
+    check("fallback variado ainda conduz descoberta (modelo/tipo/faixa)", /modelo|tipo|faixa/i.test(varied), varied);
+    // Sinal de compra: 'Quero comprar agora' -> conduz p/ avanço, NÃO reabre descoberta genérica (bug r3 T3).
+    const buy = buildContextualSdrReply(base(), { leadMessage: "Quero comprar agora" });
+    check("sinal 'Quero comprar agora' -> fallback avança (não 'Me conta o que você procura')", /avan[çc]|disponibilidade|encaminh|seguir/i.test(buy) && !/me conta o que voce procura/i.test(normalizeText(buy)), buy);
+    // Após já ter perguntado 'fotos/filtre', repetir a MESMA frase é proibido -> varia.
+    const photoLine = "Quer ver as fotos de algum desses, ou prefere que eu filtre por valor, câmbio ou ano?";
+    const offeredThenPhotos = withState({ turnNumber: 5, recentTurns: [{ role: "agent", text: "Separei: 1. Onix — R$ 51.990", at: NOW }, { role: "agent", text: photoLine, at: NOW }] });
+    const afterPhotos = buildContextualSdrReply(offeredThenPhotos);
+    check("após 'fotos/filtre', fallback NÃO repete a mesma frase (varia)", normalizeText(afterPhotos) !== normalizeText(photoLine), afterPhotos);
+    // NÃO-adjacente (caso real s1 T6/T8): 'fotos/filtre' foi dita 2 turnos atrás, com uma FOTO no meio -> ainda varia.
+    const photosBetween = withState({ turnNumber: 7, recentTurns: [{ role: "agent", text: "Separei: 1. Onix — R$ 51.990", at: NOW }, { role: "agent", text: photoLine, at: NOW }, { role: "agent", text: "Aqui estão as fotos do Onix! 📸", at: NOW }] });
+    const afterNonAdjacent = buildContextualSdrReply(photosBetween);
+    check("anti-repetição olha N turnos: 'fotos/filtre' 2 turnos atrás (foto no meio) -> varia mesmo assim", normalizeText(afterNonAdjacent) !== normalizeText(photoLine), afterNonAdjacent);
+  }
+
   // 3) buildContinuityTurnOutput: nao terminal-safe, so send_message, reasonCode, sem 'Desculpe'
   {
     const out = buildContinuityTurnOutput(withInteresse, "t-cont");
@@ -163,7 +185,9 @@ async function main(): Promise<void> {
       const msgs = res.outbox.filter((r) => r.kind === "send_message");
       check("e2e1: exatamente 1 send_message, 0 send_media", msgs.length === 1 && !res.outbox.some((r) => r.kind === "send_media"), JSON.stringify(res.outbox.map((r) => r.kind)));
       check("e2e1: payload.text NAO 'Desculpe a lentidao'", !FALLBACK.test((msgs[0]?.payload as any)?.text ?? res.composedText), res.composedText);
-      check("e2e1: conduz pelo contexto (fotos/filtro/valor/cambio/ano)", /fotos|filtre|valor|c[aâ]mbio|ano/i.test(res.composedText), res.composedText);
+      // R12-A: a continuidade agora PASSA PELO COMPOSE (needsCompose=true), não mais pelo menu robótico legado
+      // (applySdrConduction). Prova do roteamento: NÃO caiu em terminal-safe (o compose rodou e validou).
+      check("e2e1: passou pelo COMPOSE do frame (nao caiu no fallback legado)", res.terminalSafe === false, `terminalSafe=${res.terminalSafe}`);
     }
   }
   // 9) "Bonito ele" apos oferta/lista -> continuity_conduct, sem foto, sem reiniciar apresentacao

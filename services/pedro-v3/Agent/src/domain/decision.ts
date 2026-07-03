@@ -3,7 +3,7 @@
 // Brain/02 §2.4–2.8 (com correções r2/r3/Fase 1.5).
 // ============================================================================
 import type {
-  Id, VehicleType, PaymentMethod, EntityReference, VehicleFact, ConversationStage,
+  Id, VehicleType, TransmissionPreference, PaymentMethod, EntityReference, VehicleFact, ConversationStage,
   SlotName, ObjectiveType, SensitiveValueRef, Redacted, JsonValue, RedactedText,
 } from "./types.ts";
 import type { PlannedObjective, OfferRecord, ConversationTurn } from "./conversation-state.ts";
@@ -34,9 +34,21 @@ export type DecisionMutation =
   | SlotMutation
   | { op: "resolve_objective"; objectiveId: Id; status: "satisfied" | "declined" }
   | { op: "supersede_objective"; objectiveId: Id }
+  // item 5 (Codex): o slot pendente foi DEFERIDO neste turno (o lead falou de outra coisa) — incrementa o
+  // contador de deferimentos do objetivo pendente. Limite tipado no conductor evita fixação e stall.
+  | { op: "defer_objective"; objectiveId: Id }
   | { op: "add_rejected"; modelo: string }
   | { op: "set_planned_objective"; planned: PlannedObjective }
-  | { op: "append_lead_turn"; turn: ConversationTurn };
+  | { op: "append_lead_turn"; turn: ConversationTurn }
+  // item 1 (Codex): ESCOLHA explícita do lead (ordinal da lista ou modelo/vehicleKey citado). Fato INBOUND
+  // aplicado no COMMIT da decisão (não depende de receipt). Substitui o selectedVehicleFocus anterior.
+  | { op: "select_vehicle_focus"; vehicle: EntityReference; sourceTurnId: Id }
+  // item F-3 (Codex): LIMPA o selectedVehicleFocus (nova intenção explícita de veículo, busca ambígua ou
+  // sem resultado). Aplicado ANTES de uma nova seleção — foco obsoleto nunca é reutilizado.
+  | { op: "clear_vehicle_focus"; sourceTurnId: Id }
+  // R10-4 (Codex): progressão de "mais opções esgotadas". Incrementa a cada esgotamento; reset=0 em nova oferta.
+  | { op: "set_more_options_exhausted"; value: number }
+  | { op: "set_search_transmission"; value: TransmissionPreference | null; sourceTurnId: Id };
 
 // ── Mutações de OUTCOME (após receipt) — Codex r3 #1 ─────────────────────────
 export type EffectOutcomeMutation =
@@ -72,7 +84,7 @@ export type TurnInterpretation = {
 
 // ── Query loop (read-only) — Codex #4/r3 #6 ─────────────────────────────────
 export type QueryInputMap = {
-  stock_search: { tipo?: VehicleType; precoMax?: number; modelo?: string; broad?: boolean; excludeKeys?: string[] };
+  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; broad?: boolean; excludeKeys?: string[] };
   vehicle_details: { vehicleKey: string };
   vehicle_photos_resolve: { vehicleRef: EntityReference };
   crm_read: { leadId: string };
@@ -93,6 +105,31 @@ export type QueryResult = {
 }[QueryName];
 
 export type ToolError = { code: "TIMEOUT" | "NOT_FOUND" | "UPSTREAM" | "VALIDATION" | "FORBIDDEN"; message: string; retryable: boolean };
+
+// 1A.4: um termo de TIPO (suv/sedan/hatch/picape) NUNCA é `modelo`. Se o proponente (LLM) o colocar em
+// `modelo`, movemos para `tipo` e removemos de `modelo` — evita stock_search({modelo:"suv"}) que zera a
+// busca com estoque real. Aplicado no DECODE da proposta e no runner (defesa em profundidade). Modelo real
+// (onix/hb20/...) fica intacto. Função PURA.
+// Item 6 (Codex): conflito tipo-em-modelo vs `tipo` explícito DIVERGENTE FALHA FECHADO (não vira o outro
+// tipo silenciosamente) — o chamador rejeita a query (decode) ou devolve VALIDATION (runner).
+const STOCK_TYPE_WORDS: Readonly<Record<string, VehicleType>> = {
+  suv: "suv", suvs: "suv", sedan: "sedan", sedans: "sedan", hatch: "hatch", hatchback: "hatch", hatchbacks: "hatch",
+  picape: "pickup", picapes: "pickup", pickup: "pickup", pickups: "pickup", caminhonete: "pickup", caminhonetes: "pickup",
+};
+export type StockInputNormalization =
+  | { readonly ok: true; readonly input: QueryInputMap["stock_search"] }
+  | { readonly ok: false; readonly conflict: string };
+export function normalizeStockSearchInput(input: QueryInputMap["stock_search"]): StockInputNormalization {
+  if (typeof input.modelo !== "string") return { ok: true, input };
+  const key = input.modelo.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const asType = STOCK_TYPE_WORDS[key];
+  if (!asType) return { ok: true, input };
+  if (input.tipo != null && input.tipo !== asType) {
+    return { ok: false, conflict: `modelo '${input.modelo}' (tipo ${asType}) conflita com tipo '${input.tipo}'` };
+  }
+  const { modelo: _drop, ...rest } = input;
+  return { ok: true, input: { ...rest, tipo: asType } };
+}
 
 // ── Effect plans (união semântica) — Codex r3 #4 + outcomes r3.5 #2 ─────────
 export type EffectKind = "send_message" | "send_media" | "crm_write" | "schedule_visit" | "handoff" | "notify_seller";
@@ -202,7 +239,9 @@ export type MoneySourceRef =
 // ── ResponseDraft / ResponsePart (Fase 1.5: "preco" removido de vehicle_ref) ──
 export type ResponsePart =
   | { type: "text"; content: string }
-  | { type: "vehicle_ref"; vehicleKey: string; field: "marca" | "modelo" | "ano" }
+  // F-4 (Codex): vehicle_ref suporta ATRIBUTOS (ano/km/câmbio/cor) — o valor vem do VehicleFact EXATO no
+  // renderer (fail-closed se ausente). Preço continua SÓ por money_ref. Atributo em texto livre é proibido.
+  | { type: "vehicle_ref"; vehicleKey: string; field: "marca" | "modelo" | "ano" | "km" | "cambio" | "cor" }
   | { type: "money_ref"; role: MoneyRole; source: MoneySourceRef }
   // F2.7.5: lista de oferta renderizada DETERMINISTICAMENTE (numerada, BRL, km) a partir
   // dos QueryResults. O modelo so escolhe os vehicleKeys; o sistema formata.

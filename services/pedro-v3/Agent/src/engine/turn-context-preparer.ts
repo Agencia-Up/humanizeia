@@ -39,13 +39,46 @@ export class CatalogClaimExtractor implements ClaimExtractor {
 
     for (const entry of this.catalog.entries) {
       if (normalizedTermInText(text, entry.brand)) add("brand", entry.brand);
-      if (normalizedTermInText(text, entry.model)) add("model", entry.model);
-      for (const alias of entry.aliases) {
-        // Alias identifies the canonical model; emitting the full alias as a model
-        // would make "Jeep Renegade" differ from the grounded model "Renegade".
-        if (normalizedTermInText(text, alias)) add("model", entry.model);
+    }
+
+    // Model names frequently overlap in a live catalog (HB20/HB20S,
+    // Onix/Onix Plus, C3/C3 Aircross). Keep the longest match at each span so
+    // rendering a grounded model cannot manufacture an extra shorter claim.
+    const normalizedText = normalizeText(text);
+    const matches: Array<{ start: number; end: number; model: string }> = [];
+    const ranges = (term: string): Array<{ start: number; end: number }> => {
+      const needle = normalizeText(term);
+      if (!needle) return [];
+      const haystack = ` ${normalizedText} `;
+      const bounded = ` ${needle} `;
+      const out: Array<{ start: number; end: number }> = [];
+      let from = 0;
+      while (from < haystack.length) {
+        const index = haystack.indexOf(bounded, from);
+        if (index < 0) break;
+        const start = index + 1;
+        out.push({ start, end: start + needle.length });
+        from = index + 1;
+      }
+      return out;
+    }
+
+    for (const entry of this.catalog.entries) {
+      for (const term of new Set([entry.model, ...entry.aliases])) {
+        for (const range of ranges(term)) matches.push({ ...range, model: entry.model });
       }
     }
+
+    matches.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
+    const selected: typeof matches = [];
+    for (const candidate of matches) {
+      const overlapsLonger = selected.some((match) =>
+        candidate.start < match.end && match.start < candidate.end &&
+        (match.end - match.start) > (candidate.end - candidate.start));
+      if (!overlapsLonger) selected.push(candidate);
+    }
+    selected.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+    for (const match of selected) add("model", match.model);
     return claims;
   }
 }

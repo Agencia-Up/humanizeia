@@ -19,6 +19,7 @@ export function redactText(text: string): RedactedText {
 }
 
 export type VehicleType = "suv" | "sedan" | "hatch" | "pickup" | "unknown";
+export type TransmissionPreference = "automatic" | "manual";
 export type PaymentMethod = "a_vista" | "financiamento" | "consorcio" | "troca";
 
 export type EntityReference = {

@@ -31,6 +31,7 @@ function publicFrame(frame: TurnFrame | null): PublicTurnFrame {
     explicitBrands: frame.explicitBrands,
     explicitTypes: frame.explicitTypes,
     budgetMax: frame.budgetMax,
+    transmission: frame.transmission,
     isNewCommercialIntent: frame.isNewCommercialIntent,
     isReferenceOnly: frame.isReferenceOnly,
   };
@@ -72,6 +73,7 @@ export function deriveModelContext(
     const fp = s.faixaPreco.value;
     if (fp.min != null || fp.max != null) facts.push(`faixa de preco: ${fp.min ?? "?"} a ${fp.max ?? "?"}`);
   }
+  if (state.searchPreferences?.transmission) facts.push(`cambio preferido: ${state.searchPreferences.transmission === "automatic" ? "automatico" : "manual"}`);
   if (s.formaPagamento.status === "known" && s.formaPagamento.value) facts.push(`forma de pagamento: ${s.formaPagamento.value}`);
   if (s.possuiTroca.status === "known" && s.possuiTroca.value != null) facts.push(`possui troca: ${s.possuiTroca.value ? "sim" : "nao"}`);
   if (s.parcelaDesejada.status === "known" && s.parcelaDesejada.value != null) facts.push(`parcela desejada: ${s.parcelaDesejada.value}`);
@@ -79,6 +81,9 @@ export function deriveModelContext(
   if (s.diaHorario.status === "known" && s.diaHorario.value) facts.push(`dia/horario preferido: ${s.diaHorario.value}`);
   if (state.vehicleContext.focus?.label) facts.push(`veiculo em foco: ${state.vehicleContext.focus.label}`);
   else if (state.vehicleContext.focus?.key) facts.push(`veiculo em foco: ${state.vehicleContext.focus.key}`);
+  // item 1/2: veículo SELECIONADO pelo lead (ordinal/modelo) — use SEMPRE este para "ele/dele/desse/valor/foto/câmbio/cor".
+  if (state.vehicleContext.selected?.label) facts.push(`veiculo SELECIONADO pelo lead (use para "ele/dele/desse"): ${state.vehicleContext.selected.label} [${state.vehicleContext.selected.key}]`);
+  else if (state.vehicleContext.selected?.key) facts.push(`veiculo SELECIONADO pelo lead (use para "ele/dele/desse"): ${state.vehicleContext.selected.key}`);
   if (state.offers.last && state.offers.last.vehicleKeys.length > 0) facts.push(`ultima oferta: ${state.offers.last.vehicleKeys.length} veiculo(s)`);
   if (state.rejected.modelos.length > 0) facts.push(`modelos ja rejeitados: ${state.rejected.modelos.join(", ")}`);
 
@@ -99,8 +104,9 @@ export function deriveModelContext(
   const interestPrecoMax = hasCurrentCommercialIntent
     ? (currentFrame?.budgetMax ?? null)
     : (s.faixaPreco.status === "known" ? (s.faixaPreco.value?.max ?? null) : null);
-  const lastCommercialInterest = (interestModel || interestTipo || interestPrecoMax != null)
-    ? { model: interestModel, tipo: interestTipo, precoMax: interestPrecoMax }
+  const interestTransmission = currentFrame?.transmission ?? state.searchPreferences?.transmission ?? null;
+  const lastCommercialInterest = (interestModel || interestTipo || interestPrecoMax != null || interestTransmission)
+    ? { model: interestModel, tipo: interestTipo, precoMax: interestPrecoMax, transmission: interestTransmission }
     : null;
 
   return {

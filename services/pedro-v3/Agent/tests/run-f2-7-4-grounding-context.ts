@@ -170,7 +170,9 @@ async function main(): Promise<void> {
     const override: ComposeOverride = (decision, facts) => {
       attempts += 1;
       const corrected = decision.responsePlan.guidance.includes("CORRECAO");
-      if (!corrected) return { parts: [{ type: "text", content: "Temos o Onix sim, otima escolha!" }] }; // 1a: modelo em texto livre (erro)
+      // 1a: PRECO livre no texto (erro) -> deny. (Rodada 9: o modelo Onix, por estar aterrado nos fatos, pode ser
+      // citado em texto; o PRECO livre nao. Assim o teste do LOOP de retry continua valido: deny -> recupera.)
+      if (!corrected) return { parts: [{ type: "text", content: "Temos o Onix por R$ 50.000, otima escolha!" }] };
       const key = onixKeyFrom(facts);
       return { parts: [{ type: "text", content: "Temos esse modelo, quer agendar?" }, { type: "vehicle_ref", vehicleKey: key ?? "x", field: "modelo" }] };
     };

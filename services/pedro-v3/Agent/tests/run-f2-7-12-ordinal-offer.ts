@@ -1,5 +1,5 @@
 // ============================================================================
-// F2.7.12 (P0) — referencia ORDINAL de lista resolve contra a memoria ESTRUTURADA
+// F2.7.12 (P0) â€” referencia ORDINAL de lista resolve contra a memoria ESTRUTURADA
 // (lastRenderedOfferContext), nunca contra texto/modelo. "foto do 3" -> item 3, nunca C3.
 // Offline ($0).  npx tsx tests/run-f2-7-12-ordinal-offer.ts
 // ============================================================================
@@ -22,7 +22,7 @@ const TENANT = "icom", AGENT = "aloan";
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
   if (pass) { ok++; console.log(`  OK  ${name}`); }
-  else { fail++; fails.push(`${name} — ${detail}`); console.log(`  RED ${name}${detail ? ` — ${detail}` : ""}`); }
+  else { fail++; fails.push(`${name} â€” ${detail}`); console.log(`  RED ${name}${detail ? ` â€” ${detail}` : ""}`); }
 }
 
 const HB20_2015 = "hyundai|hb20|2015", HB20S_2017 = "hyundai|hb20s|2017", HB20_2021 = "hyundai|hb20|2021", C3 = "citroen|c3|2015", ONIX = "chevrolet|onix|2014";
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   // 3) lista ATUAL HB20 vence C3 ANTIGO do texto (memoria estruturada, nao recentTurns)
   {
     const st = offered(HB20_2015, HB20S_2017, HB20_2021);
-    st.recentTurns = [{ role: "agent", text: "Antes te mostrei: CITROEN C3 2015 — R$ 47.990", at: NOW }];
+    st.recentTurns = [{ role: "agent", text: "Antes te mostrei: CITROEN C3 2015 â€” R$ 47.990", at: NOW }];
     const r = await intent("foto do 3", st);
     check("3 lista atual HB20 vence C3 antigo do texto", r?.kind === "send" && r.vehicleKey === HB20_2021, JSON.stringify(r));
   }
@@ -98,16 +98,18 @@ async function main(): Promise<void> {
     check("6 'foto do 3' sem lista -> ask_which (fail-closed)", r?.kind === "ask_which", JSON.stringify(r));
     check("6 'foto do 3' sem lista NAO faz stock_search", !calls.some((c) => c.tool === "stock_search"), JSON.stringify(calls.map((c) => c.tool)));
   }
-  // 6b) ⭐ P1 do Codex: QUANTIDADE ("N fotos/imagens") NAO e ordinal; ordinal FORTE (item/opcao) vence
+  // 6b) â­ P1 do Codex: QUANTIDADE ("N fotos/imagens") NAO e ordinal; ordinal FORTE (item/opcao) vence
   {
     const r1 = await intent("manda 3 fotos do onix", hb20List);
     check("P1 'manda 3 fotos do onix' -> Onix (quantidade, NAO item 3)", r1?.kind === "send" && r1.vehicleKey === ONIX, JSON.stringify(r1));
     const r2 = await intent("quero 2 imagens do hb20", hb20List);
-    check("P1 'quero 2 imagens do hb20' -> HB20 (quantidade, NAO item 2)", r2?.kind === "send" && r2.vehicleKey !== HB20S_2017 && r2.vehicleKey.includes("hb20"), JSON.stringify(r2));
+    // P0-1 (Codex): "2 imagens" Ã© QUANTIDADE (nÃ£o item 2); "hb20" casa 3 HB20 sem seleÃ§Ã£o -> pergunta qual ANO
+    // (PROIBIDO items[0] com mÃºltiplos). Antes o handler mandava items[0] silenciosamente.
+    check("P0-1 'quero 2 imagens do hb20' -> ask_which (3 HB20, quantidadeâ‰ item 2, mÃºltiplos sem seleÃ§Ã£o)", r2?.kind === "ask_which", JSON.stringify(r2));
     const r3 = await intent("tem 3 fotos dele?", hb20List);
     check("P1 'tem 3 fotos dele?' (lista multipla) -> ask_which (NAO item 3)", r3?.kind === "ask_which", JSON.stringify(r3));
-    const r4 = await intent("manda a foto da opção 3", hb20List);
-    check("P1 'da opção 3' (ordinal forte) -> item 3 (HB20 2021)", r4?.kind === "send" && r4.vehicleKey === HB20_2021, JSON.stringify(r4));
+    const r4 = await intent("manda a foto da opÃ§Ã£o 3", hb20List);
+    check("P1 'da opÃ§Ã£o 3' (ordinal forte) -> item 3 (HB20 2021)", r4?.kind === "send" && r4.vehicleKey === HB20_2021, JSON.stringify(r4));
     const r5 = await intent("manda a foto do item 2", hb20List);
     check("P1 'do item 2' (ordinal forte) -> item 2 (HB20 S 2017)", r5?.kind === "send" && r5.vehicleKey === HB20S_2017, JSON.stringify(r5));
     // ordinal forte (palavra) vence ate modelo explicito no conflito
@@ -134,7 +136,7 @@ async function main(): Promise<void> {
     const offerCompose: ComposeOverride = (_d, facts) => {
       const s = facts.find((f) => f.ok && f.tool === "stock_search");
       const keys = s && s.ok && s.tool === "stock_search" ? s.data.items.map((v) => v.vehicleKey) : [];
-      return { parts: [{ type: "text", content: "Temos estas opções pra você:" }, { type: "vehicle_offer_list", vehicleKeys: keys }] };
+      return { parts: [{ type: "text", content: "Temos estas opÃ§Ãµes pra vocÃª:" }, { type: "vehicle_offer_list", vehicleKeys: keys }] };
     };
     const script: DecisionStep[] = [{ kind: "final", proposal: { proposedAction: "reply", facts: [], proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] }], responsePlan: { guidance: "ofertar hb20" }, reasonCode: "hb20", reasonSummary: "x", confidence: 1 } }];
     llm.setTurnScript(script, offerCompose);
@@ -150,8 +152,43 @@ async function main(): Promise<void> {
     check("8 e2e: 'foto do 3' -> send_media do HB20 2021 (nao C3)", !!media && (media.payload as any).vehicleKey === HB20_2021, JSON.stringify((media?.payload as any)?.vehicleKey));
   }
 
+
+  // 9) E2E: referencia ordinal invalida em lista curta nao vai para LLM inventar nem terminal-safe.
+  {
+    const clock = new FakeClock(NOW);
+    const p = new InMemoryPersistence(clock, new FakeIdGen());
+    const oneItemState = offered(ONIX);
+    (p as any).states.set("cInvalid", { state: oneItemState, version: 1 });
+    await p.tryInsert({ eventId: "eInvalid", conversationId: "cInvalid", raw: { __redacted: true, text: "Quero o terceiro" } as any, receivedAt: NOW });
+    calls = [];
+    const res = await runConversationTurn({
+      persistence: p,
+      clock,
+      llm: new FakeLlm(),
+      runQuery,
+      conversationId: "cInvalid",
+      tenantId: TENANT,
+      agentId: AGENT,
+      leadId: null,
+      workerId: "w",
+      turnId: "tInvalid",
+      leaseTtlMs: 60_000,
+      interpretation: { relation: "continues_offer" },
+      tenantCatalog: catalog,
+      claimExtractor: extractor,
+      limits: { maxSteps: 4, totalTimeoutMs: 5000 },
+      maxValidationAttempts: 2,
+      providerCapability: { send_message: "none", send_media: "none" } as any,
+    });
+    const outbox = await p.listOutbox("cInvalid");
+    check("9 ordinal invalido: committed sem terminal-safe", res.status === "committed" && res.decision.reasonCode === "ordinal_out_of_range" && res.terminalSafe === false, res.status === "committed" ? `${res.decision.reasonCode} ts=${res.terminalSafe}` : res.status);
+    check("9 ordinal invalido: nao envia media nem consulta estoque", outbox.every((r) => r.kind === "send_message") && !calls.some((c) => c.tool === "stock_search"), JSON.stringify({ outbox: outbox.map((r) => r.kind), calls }));
+    check("9 ordinal invalido: explica que nao existe item 3 na lista atual", res.status === "committed" && /item 3|terceir/i.test(res.composedText) && /apenas 1 opcao|1 opcao/i.test(res.composedText), res.status === "committed" ? res.composedText : res.status);
+  }
+
   console.log(`\n=== F2.7.12: ${ok} OK | ${fail} FALHA ===`);
   if (fail > 0) { for (const f of fails) console.error("  - " + f); process.exit(1); }
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });
+

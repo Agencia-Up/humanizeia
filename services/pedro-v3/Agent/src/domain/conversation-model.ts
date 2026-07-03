@@ -36,12 +36,13 @@ export type ModelConversationContext = {
   readonly alreadyIntroduced: boolean;
   readonly conversationFacts: readonly string[];
   readonly currentObjective: { readonly type: string; readonly slot: string | null; readonly status: string } | null;
-  readonly lastCommercialInterest: { readonly model: string | null; readonly tipo: string | null; readonly precoMax: number | null } | null;
+  readonly lastCommercialInterest: { readonly model: string | null; readonly tipo: string | null; readonly precoMax: number | null; readonly transmission: string | null } | null;
   readonly currentTurnFrame: {
     readonly explicitModels: readonly string[];
     readonly explicitBrands: readonly string[];
     readonly explicitTypes: readonly string[];
     readonly budgetMax: number | null;
+    readonly transmission: string | null;
     readonly isNewCommercialIntent: boolean;
     readonly isReferenceOnly: boolean;
   } | null;

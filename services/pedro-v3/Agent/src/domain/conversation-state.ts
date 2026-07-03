@@ -2,7 +2,7 @@
 // ConversationState versionado — única fonte operacional do turno (Brain/02 §2.1).
 // ============================================================================
 import type {
-  Id, Iso, VehicleType, PaymentMethod, EntityReference, ConversationStage,
+  Id, Iso, VehicleType, TransmissionPreference, PaymentMethod, EntityReference, ConversationStage,
   SlotName, ObjectiveType, AnswerKind, SensitiveValueRef,
 } from "./types.ts";
 
@@ -60,6 +60,7 @@ export type PendingObjective = {
   expectedAnswerKinds: AnswerKind[];
   status: "pending" | "satisfied" | "declined" | "superseded";
   attempts: number;
+  deferrals?: number; // item 5: quantas vezes o slot foi DEFERIDO (lead falou de outra coisa) — limite tipado.
 };
 
 export type OfferRecord = {
@@ -70,7 +71,10 @@ export type OfferRecord = {
   at: Iso;
 };
 export type OfferMemory = { last?: OfferRecord | null; presentedKeys: string[] };
-export type VehicleContext = { focus?: EntityReference | null };
+export type VehicleContext = {
+  focus?: EntityReference | null;     // veículo APRESENTADO (presentedVehicleFocus, após outcome/entrega)
+  selected?: EntityReference | null;  // ESCOLHA EXPLÍCITA do lead (selectedVehicleFocus, fato inbound no commit) — item 1 Codex
+};
 export type PhotoLedger = { sentByVehicle: Record<string, string[]> }; // vehicleKey -> photoIds confirmados
 export type RejectedMemory = { modelos: string[] };
 export type ConversationTurn = { role: "lead" | "agent"; text: string; at: Iso };
@@ -106,6 +110,8 @@ export type ConversationState = {
   vehicleContext: VehicleContext;      // foco apresentado (após entrega)
   offers: OfferMemory;
   lastRenderedOfferContext: LastRenderedOfferContext | null; // memória operacional p/ referência ordinal
+  moreOptionsExhausted?: number; // R10-4: nº de esgotamentos consecutivos de "mais opções" (progressão; reset=0 em nova oferta)
+  searchPreferences?: { transmission: TransmissionPreference | null };
   photoLedger: PhotoLedger;
   rejected: RejectedMemory;
   recentTurns: ConversationTurn[];
@@ -148,9 +154,10 @@ export function createInitialState(args: {
       conheceLoja: unknownSlot(now),
       interesseVisita: unknownSlot(now),
     },
-    vehicleContext: { focus: null },
+    vehicleContext: { focus: null, selected: null },
     offers: { last: null, presentedKeys: [] },
     lastRenderedOfferContext: null,
+    searchPreferences: { transmission: null },
     photoLedger: { sentByVehicle: {} },
     rejected: { modelos: [] },
     recentTurns: [],

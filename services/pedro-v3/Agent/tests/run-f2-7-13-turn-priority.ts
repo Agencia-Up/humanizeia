@@ -1,15 +1,15 @@
-ï»¿// ============================================================================
+// ============================================================================
 // F2.7.13 - PRIORIDADE DO TURNO ATUAL. O lead pediu AGORA -> resposta sobre o
 // pedido atual, com catalogo dinamico e filtros combinados. Nunca usa interesse
 // velho (Argo/Onix/lista antiga) para responder Jeep/Toyota/BYD/etc.
 //   npx tsx tests/run-f2-7-13-turn-priority.ts
 // ============================================================================
-import { computeTurnFrame, resolveExplicitSearchIntent, buildExplicitSearchTurnOutput } from "../src/engine/explicit-search.ts";
+import { computeTurnFrame, resolveExplicitSearchIntent, buildExplicitSearchTurnOutput, resolveMoreOptionsIntent } from "../src/engine/explicit-search.ts";
 import { detectContinuityIntent } from "../src/engine/continuity-fallback.ts";
 import { runConversationTurn } from "../src/engine/conversation-engine.ts";
 import { deriveModelContext } from "../src/engine/model-context-view.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
-import { FakeLlm } from "../src/adapters/llm/fake-llm.ts";
+import { FakeLlm, type ComposeOverride } from "../src/adapters/llm/fake-llm.ts";
 import { buildTenantCatalog, normalizeText } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
@@ -26,10 +26,11 @@ function check(name: string, pass: boolean, detail = ""): void {
   else { fail++; fails.push(`${name} - ${detail}`); console.log(`  RED ${name}${detail ? ` - ${detail}` : ""}`); }
 }
 
-const ONIX = "chevrolet|onix|2014", GOL = "vw|gol|2015", RENEGADE = "jeep|renegade|2018", COMPASS = "jeep|compass|2020", CRUZE = "chevrolet|cruze|2019", BYD = "byd|song|2024", COROLLA = "toyota|corolla|2018", STRADA = "fiat|strada|2018", TORO = "fiat|toro|2017";
+const ONIX = "chevrolet|onix|2014", GOL = "vw|gol|2015", HB20_AUTO = "hyundai|hb20|2021", RENEGADE = "jeep|renegade|2018", COMPASS = "jeep|compass|2020", CRUZE = "chevrolet|cruze|2019", BYD = "byd|song|2024", COROLLA = "toyota|corolla|2018", STRADA = "fiat|strada|2018", TORO = "fiat|toro|2017";
 const STOCK: VehicleFact[] = [
-  { vehicleKey: ONIX, marca: "Chevrolet", modelo: "Onix", ano: 2014, preco: 54990, km: 132000, tipo: "hatch" },
-  { vehicleKey: GOL, marca: "Volkswagen", modelo: "Gol", ano: 2015, preco: 38990, km: 95000, tipo: "hatch" },
+  { vehicleKey: ONIX, marca: "Chevrolet", modelo: "Onix", ano: 2014, preco: 54990, km: 132000, tipo: "hatch", cambio: "Manual" },
+  { vehicleKey: GOL, marca: "Volkswagen", modelo: "Gol", ano: 2015, preco: 38990, km: 95000, tipo: "hatch", cambio: "Manual" },
+  { vehicleKey: HB20_AUTO, marca: "Hyundai", modelo: "HB20", ano: 2021, preco: 69990, km: 50000, tipo: "hatch", cambio: "Automatico" },
   { vehicleKey: RENEGADE, marca: "Jeep", modelo: "Renegade", ano: 2018, preco: 72990, km: 80000, tipo: "suv" },
   { vehicleKey: COMPASS, marca: "Jeep", modelo: "Compass", ano: 2020, preco: 99990, km: 45000, tipo: "suv" },
   { vehicleKey: CRUZE, marca: "Chevrolet", modelo: "Cruze", ano: 2019, preco: 79990, km: 60000, tipo: "sedan" },
@@ -76,13 +77,23 @@ const seededState = (): ConversationState => baseState({
   lastRenderedOfferContext: { sourceTurnId: "told", createdAt: NOW, items: [{ ordinal: 1, vehicleKey: "fiat|argo|2018", marca: "Fiat", modelo: "Argo", ano: 2018 }, { ordinal: 2, vehicleKey: ONIX, marca: "Chevrolet", modelo: "Onix", ano: 2014 }] },
 });
 
+// 1B.7: dublê do compose do LLM real. Se há veículos nos fatos do turno, emite UM vehicle_offer_list
+// ancorado (o renderer resolve marca/modelo/preço/km) — como o LLM real faria seguindo o guidance; senão,
+// texto honesto SEM inventar marca. Prova o fluxo handler->fatos->compose sem depender de texto fixo.
+const fakeCompose: ComposeOverride = (_decision, facts) => {
+  const items = facts.filter((f) => f.ok && f.tool === "stock_search").flatMap((f) => (f as Extract<QueryResult, { ok: true; tool: "stock_search" }>).data.items ?? []);
+  if (items.length > 0) return { parts: [{ type: "text", content: "Encontrei estas opcoes pra voce:" }, { type: "vehicle_offer_list", vehicleKeys: items.slice(0, 5).map((v) => v.vehicleKey) }] };
+  return { parts: [{ type: "text", content: "No momento nao achei esse modelo no nosso estoque. Quer que eu amplie a faixa de valor ou veja outro tipo?" }] };
+};
+
 async function e2e(leadText: string, stock: VehicleFact[], state: ConversationState) {
   calls = [];
   const clock = new FakeClock(NOW); const p = new InMemoryPersistence(clock, new FakeIdGen());
   (p as any).states.set("cT", { state, version: 1 });
   await p.tryInsert({ eventId: "e1", conversationId: "cT", raw: { __redacted: true, text: leadText } as any, receivedAt: NOW });
+  const llm = new FakeLlm(); llm.setTurnScript([], fakeCompose);
   const res = await runConversationTurn({
-    persistence: p, clock, llm: new FakeLlm(), runQuery: runQueryFor(stock),
+    persistence: p, clock, llm, runQuery: runQueryFor(stock),
     conversationId: "cT", tenantId: TENANT, agentId: AGENT, leadId: null, workerId: "w", turnId: "tT", leaseTtlMs: 60_000,
     interpretation: { relation: "asks_vehicle_detail" }, tenantCatalog: catalog, claimExtractor: extractor,
     limits: { maxSteps: 4, totalTimeoutMs: 5000 }, maxValidationAttempts: 2, providerCapability: { send_message: "none" } as any,
@@ -100,6 +111,26 @@ async function main(): Promise<void> {
   check("frame: 'ate 60 mil' -> newIntent (faixa)", frame("tem algo ate 60 mil?").isNewCommercialIntent === true && frame("tem algo ate 60 mil?").budgetMax === 60000);
   check("frame: 'esse tem foto?' -> referenceOnly (nao newIntent)", frame("esse tem foto?").isNewCommercialIntent === false && frame("esse tem foto?").isReferenceOnly === true);
   check("frame: 'Boa noite' -> nem newIntent nem reference", frame("Boa noite").isNewCommercialIntent === false && frame("Boa noite").isReferenceOnly === false);
+  // P1 busca SEMÂNTICA (Codex): "hatch automático" = tipo hatch + câmbio (filtro), NUNCA modelo "hatch automatico".
+  {
+    const fH = computeTurnFrame({ leadMessage: "prefiro hatch automatico", claimExtractor: extractor, interpretation: { relation: "direction_change", extractedEntities: { model: "hatch automatico" } } });
+    check("busca semântica: 'hatch automático' -> tipo hatch, sem modelo com câmbio", fH.explicitTypes.includes("hatch") && fH.explicitModels.every((m) => !/automatic/i.test(m) && normalizeText(m) !== "hatch automatico"), JSON.stringify({ t: fH.explicitTypes, m: fH.explicitModels }));
+  }
+
+  {
+    const fAuto = frame("prefiro hatch automatico");
+    const fManual = frame("prefiro manual");
+    const fNoAuto = frame("nao quero automatico");
+    check("cambio: hatch automatico -> transmission automatic", fAuto.transmission === "automatic" && fAuto.explicitTypes.includes("hatch"), JSON.stringify(fAuto));
+    check("cambio: manual -> transmission manual", fManual.transmission === "manual", JSON.stringify(fManual));
+    check("cambio: nao quero automatico -> manual", fNoAuto.transmission === "manual", JSON.stringify(fNoAuto));
+  }
+
+  {
+    const autoHatch = await explicit("prefiro hatch automatico");
+    check("explicit: hatch automatico -> so automaticos mesmo se source devolver manuais", autoHatch?.kind === "offer" && autoHatch.vehicles.length === 1 && autoHatch.vehicles[0].vehicleKey === HB20_AUTO, JSON.stringify(autoHatch));
+    check("explicit: query carregou tipo hatch + cambio automatic", calls.some((c) => c.tool === "stock_search" && c.input.tipo === "hatch" && c.input.cambio === "automatic"), JSON.stringify(calls));
+  }
 
   {
     const jeep = await explicit("voces tem jeep?");
@@ -165,8 +196,9 @@ async function main(): Promise<void> {
   }
   {
     const res: any = await e2e("voces tem jeep?", NO_JEEP, seededState());
-    check("e2e jeep ausente: explicit_not_found", res.status === "committed" && res.decision.reasonCode === "explicit_not_found", res.status === "committed" ? res.decision.reasonCode : res.status);
-    check("e2e jeep ausente: honesto sem Argo/Desculpe", res.status === "committed" && /jeep/i.test(res.composedText) && !/argo/i.test(res.composedText) && !/desculpe a lentid/i.test(res.composedText), res.composedText);
+    check("e2e jeep ausente: explicit_not_found (compose honesto valida, NAO vira terminal_safe)", res.status === "committed" && res.decision.reasonCode === "explicit_not_found" && res.terminalSafe !== true, res.status === "committed" ? `${res.decision.reasonCode} ts=${res.terminalSafe}` : res.status);
+    // 1B.7 (Secao 8): NAO asserta texto literal do dube; assevera que NAO ofertou veiculo errado nem caiu no fallback tecnico.
+    check("e2e jeep ausente: sem Argo/Onix e sem 'Desculpe'", res.status === "committed" && !/argo|onix/i.test(res.composedText) && !/desculpe a lentid/i.test(res.composedText), res.composedText);
   }
 
   {
@@ -174,6 +206,19 @@ async function main(): Promise<void> {
     check("continuity: 'quero Jeep' -> NAO continuidade", detectContinuityIntent({ leadMessage: "quero Jeep", state: introduced, claimExtractor: extractor }) === false);
     check("continuity: 'tem gol?' -> NAO continuidade", detectContinuityIntent({ leadMessage: "tem gol?", state: introduced, claimExtractor: extractor }) === false);
     check("continuity: 'ok' -> continuidade", detectContinuityIntent({ leadMessage: "ok", state: introduced, claimExtractor: extractor }) === true);
+  }
+
+  {
+    const autoState = baseState({
+      slots: { ...baseState().slots, tipoVeiculo: { value: "hatch", status: "known", confidence: 0.9, updatedAt: NOW } } as any,
+      searchPreferences: { transmission: "automatic" },
+      offers: { last: null, presentedKeys: [ONIX, GOL] },
+      lastRenderedOfferContext: { sourceTurnId: "t-old", createdAt: NOW, items: [{ ordinal: 1, vehicleKey: ONIX, marca: "Chevrolet", modelo: "Onix", ano: 2014 }, { ordinal: 2, vehicleKey: GOL, marca: "Volkswagen", modelo: "Gol", ano: 2015 }] },
+    });
+    calls = [];
+    const moreAuto = await resolveMoreOptionsIntent({ leadMessage: "mais opcoes", state: autoState, runQuery: runQueryFor(STOCK), claimExtractor: extractor });
+    check("mais opções: herda cambio automatic e exclui manuais/listados", moreAuto?.kind === "offer" && moreAuto.vehicles.length === 1 && moreAuto.vehicles[0].vehicleKey === HB20_AUTO, JSON.stringify(moreAuto));
+    check("mais opções: query carregou cambio automatic", calls.some((c) => c.tool === "stock_search" && c.input.cambio === "automatic"), JSON.stringify(calls));
   }
 
   console.log(`\n=== F2.7.13: ${ok} OK | ${fail} FALHA ===`);

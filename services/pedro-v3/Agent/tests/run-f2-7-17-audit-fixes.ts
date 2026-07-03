@@ -7,7 +7,7 @@
 // ============================================================================
 import { runConversationTurn } from "../src/engine/conversation-engine.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
-import { FakeLlm } from "../src/adapters/llm/fake-llm.ts";
+import { FakeLlm, type ComposeOverride } from "../src/adapters/llm/fake-llm.ts";
 import { buildTenantCatalog, normalizeText } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import { buildSdrQualificationPolicy } from "../src/engine/sdr-conductor.ts";
@@ -45,13 +45,25 @@ const sourceFor = (stock: VehicleFact[]): QueryRunner => async (call: QueryCall)
 
 const sdrPolicy = buildSdrQualificationPolicy({ qualificationQuestions: null, agentName: "Aloan", companyName: null });
 
-async function e2e(leadText: string, stock: VehicleFact[], seed: Partial<ConversationState> = {}) {
+async function e2e(leadText: string, stock: VehicleFact[], seed: Partial<ConversationState> = {}, composeOverride?: ComposeOverride) {
   const clock = new FakeClock(NOW); const p = new InMemoryPersistence(clock, new FakeIdGen());
   const state = { ...createInitialState({ conversationId: "cT", tenantId: TENANT, agentId: AGENT, leadId: "l1", now: NOW }), ...seed };
   (p as any).states.set("cT", { state, version: 1 });
   await p.tryInsert({ eventId: "e1", conversationId: "cT", raw: { __redacted: true, text: leadText } as any, receivedAt: NOW });
+  // 1B.7: a oferta passa pelo compose (needsCompose). Dublê do LLM real: offer_list ancorado nos fatos; a
+  // APRESENTAÇÃO no 1º contato vem da rede de segurança determinística do engine (ensureInitialIntroduction).
+  const fakeCompose: ComposeOverride = (d, facts) => {
+    const items = facts.flatMap((f) => (f.ok && f.tool === "stock_search" ? f.data.items : []));
+    const qMatch = /pergunta sugerida[^:]*:\s*([^?\n]+\?)/i.exec(d.responsePlan.guidance ?? "");
+    const parts: any[] = items.length > 0
+      ? [{ type: "text", content: "Encontrei estas opcoes pra voce:" }, { type: "vehicle_offer_list", vehicleKeys: items.slice(0, 5).map((v) => v.vehicleKey) }]
+      : [{ type: "text", content: "Nao achei esse modelo agora." }];
+    if (qMatch) parts.push({ type: "text", content: qMatch[1].trim() });
+    return { parts };
+  };
+  const llm = new FakeLlm(); llm.setTurnScript([], composeOverride ?? fakeCompose);
   return runConversationTurn({
-    persistence: p, clock, llm: new FakeLlm(), runQuery: sourceFor(stock),
+    persistence: p, clock, llm, runQuery: sourceFor(stock),
     conversationId: "cT", tenantId: TENANT, agentId: AGENT, leadId: null, workerId: "w", turnId: "tT", leaseTtlMs: 60_000,
     interpretation: { relation: "asks_vehicle_detail" }, tenantCatalog: catalog, claimExtractor: extractor, sdrPolicy,
     limits: { maxSteps: 4, totalTimeoutMs: 5000 }, maxValidationAttempts: 2, providerCapability: { send_message: "none" },
@@ -97,6 +109,18 @@ async function main(): Promise<void> {
     check("Finding 2b e2e: APRESENTA o agente (Aloan) no 1o contato", !!txt && /aloan/i.test(txt), txt.slice(0, 130));
     check("Finding 2b e2e: ofertou SUV", !!txt && /renegade|2008/i.test(txt), txt.slice(0, 170));
     check("Finding 2b e2e: NAO repergunta 'modelo ou tipo'", !!txt && !/modelo ou tipo/i.test(txt), txt.slice(-130));
+  }
+
+  // P0-1 (Codex): compose que LANÇA (LLM indisponível/timeout) no explicit_offer — DEPOIS dos fatos obtidos —
+  // NÃO pode virar commit_failed nem silêncio. Deve: turno COMMITTED, terminal-safe com fallbackText do
+  // handler, EXATAMENTE 1 send_message, sem efeito duplicado.
+  {
+    const boom: ComposeOverride = () => { throw new Error("compose boom (LLM indisponivel)"); };
+    const res: any = await e2e("voces tem suv?", [RENEGADE, P2008, C3, GOL], {}, boom);
+    check("P0-1 compose throw -> turno COMMITTED (nao commit_failed)", res.status === "committed", res.status);
+    const sends = res.status === "committed" ? (res.outbox as any[]).filter((o) => o.kind === "send_message") : [];
+    check("P0-1 compose throw -> EXATAMENTE 1 send_message (sem duplicar)", sends.length === 1, JSON.stringify((res.outbox as any[])?.map((o) => o.kind)));
+    check("P0-1 compose throw -> texto = fallback do handler (oferta), nao silencio", res.status === "committed" && /encontrei|renegade|op[cç][oõ]es/i.test(res.composedText ?? ""), (res.composedText ?? "").slice(0, 80));
   }
 
   console.log(`\n${fail === 0 ? "PASS" : "FAIL"} - ${ok} ok, ${fail} red`);

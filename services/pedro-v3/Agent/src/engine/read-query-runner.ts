@@ -1,4 +1,5 @@
 import type { QueryCall, QueryResult, ToolError } from "../domain/decision.ts";
+import { normalizeStockSearchInput } from "../domain/decision.ts";
 import type {
   CrmReadSource,
   StockSource,
@@ -59,7 +60,9 @@ export function createReadQueryRunner(ref: TenantAgentRef, sources: ReadQueryRun
     try {
       switch (call.tool) {
         case "stock_search": {
-          const result = await sources.stock.search(ref, call.input);
+          const norm = normalizeStockSearchInput(call.input);
+          if (!norm.ok) return { ok: false, tool: "stock_search", error: validation(norm.conflict) };
+          const result = await sources.stock.search(ref, norm.input);
           return {
             ok: true,
             tool: "stock_search",

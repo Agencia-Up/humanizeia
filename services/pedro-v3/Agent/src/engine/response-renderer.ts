@@ -29,6 +29,10 @@ function renderVehicleRef(part: Extract<ResponsePart, { type: "vehicle_ref" }>, 
   if (part.field === "marca") return v.marca;
   if (part.field === "modelo") return v.modelo;
   if (part.field === "ano") return v.ano.toString();
+  // F-4: atributos estendidos — valor do VehicleFact EXATO; campo AUSENTE falha fechado (não inventa).
+  if (part.field === "km") { if (v.km == null) throw new Error(`vehicle_ref: km ausente no fato de '${part.vehicleKey}'`); return `${v.km.toLocaleString("pt-BR")} km`; }
+  if (part.field === "cambio") { if (!v.cambio) throw new Error(`vehicle_ref: câmbio ausente no fato de '${part.vehicleKey}'`); return v.cambio; }
+  if (part.field === "cor") { if (!v.cor) throw new Error(`vehicle_ref: cor ausente no fato de '${part.vehicleKey}'`); return v.cor; }
   throw new Error(`vehicle_ref: campo '${(part as any).field}' não é permitido`);
 }
 

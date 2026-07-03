@@ -77,7 +77,7 @@ export interface TenantConfigSource {
 // ============================================================================
 // ADIÇÕES F2.5.2B - ESTOQUE, DETALHES E FOTOS
 // ============================================================================
-import type { VehicleType, VehicleFact } from "./types.ts";
+import type { VehicleType, VehicleFact, TransmissionPreference } from "./types.ts";
 
 export type TypedVehicleType = {
   readonly value: VehicleType;
@@ -105,6 +105,7 @@ export type NormalizedVehicle = {
 
 export type StockSearchFilters = {
   readonly tipo?: VehicleType;
+  readonly cambio?: TransmissionPreference;
   readonly precoMax?: number;
   readonly modelo?: string;
   readonly broad?: boolean;

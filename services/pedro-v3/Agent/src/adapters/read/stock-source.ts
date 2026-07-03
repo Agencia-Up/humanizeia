@@ -56,6 +56,16 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
     }
 
     // C) Filtro rígido por teto de preço (broad não relaxa!)
+    if (filters.cambio) {
+      pool = pool.filter(v => {
+        const transmission = normalizeText(v.transmissionName ?? "");
+        if (!transmission) return false;
+        const automatic = /automatic|automatiz|cvt|dsg|dualogic|imotion|tiptronic/.test(transmission);
+        const manual = /manual/.test(transmission) && !automatic;
+        return filters.cambio === "automatic" ? automatic : manual;
+      });
+    }
+
     if (filters.precoMax && filters.precoMax > 0) {
       pool = pool.filter(v => v.saleValue !== null && v.saleValue <= filters.precoMax!);
     }

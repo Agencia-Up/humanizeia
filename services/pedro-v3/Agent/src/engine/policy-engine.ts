@@ -3,7 +3,18 @@ import type {
   QueryCall, QueryResult, ProposedDecision, PolicyVerdict, RenderedResponse,
   TurnDecision, EffectPlan, ProposedEffectPlan, MoneyRole,
 } from "../domain/decision.ts";
+import type { VehicleFact } from "../domain/types.ts";
 import { isVehicleKeyInCatalog, normalizeText } from "./catalog-utils.ts";
+import { slotQuestions } from "./question-classify.ts";
+
+// F-4: acha o VehicleFact EXATO nos fatos do turno (stock_search/vehicle_details) pelo vehicleKey.
+function factByKey(facts: QueryResult[], key: string): VehicleFact | null {
+  for (const f of facts) {
+    if (f.ok && f.tool === "stock_search") { const v = f.data.items.find((x) => x.vehicleKey === key); if (v) return v; }
+    if (f.ok && f.tool === "vehicle_details" && f.data.vehicle.vehicleKey === key) return f.data.vehicle;
+  }
+  return null;
+}
 
 export type MoneyMention = {
   value: number;
@@ -170,6 +181,20 @@ function getValidBrandsAndModels(facts: QueryResult[], decision: TurnDecision): 
   return { brands, models };
 }
 
+// Aterramento de modelo EXATO (Codex R10-3): colapsa só FORMATAÇÃO (espaço/hífen/case) — "HB 20"=="HB20",
+// "C 3"=="C3" — mas NUNCA por subconjunto de tokens. Assim "HB20" NÃO autoriza "HB20S", "Onix" NÃO autoriza
+// "Onix Plus", "C3" NÃO autoriza "C3 Aircross" (são vehicleKeys/modelos DIFERENTES). Um modelo citado só é
+// aterrado se, canonizado, for IDÊNTICO a um modelo REAL do turno (nunca "quase igual").
+function canonicalModel(m: string): string {
+  return normalizeText(m).replace(/[\s\-]+/g, ""); // "hb 20"->"hb20"; "hb 20 s"->"hb20s" (distinto de "hb20")
+}
+function modelGroundedExact(claimNorm: string, validModels: Set<string>): boolean {
+  const c = canonicalModel(claimNorm);
+  if (!c) return false;
+  for (const v of validModels) if (canonicalModel(v) === c) return true;
+  return false;
+}
+
 function priceMap(facts: QueryResult[]): Map<string, number> {
   const m = new Map<string, number>();
   for (const f of facts) {
@@ -251,19 +276,158 @@ export const PolicyEngine = {
 
   // (3) GROUNDING DA RESPOSTA RENDERIZADA: valida referências estruturadas e defende contra alucinações.
   validateResponse(composed: RenderedResponse, facts: QueryResult[], decision: TurnDecision, ctx: TurnContext): PolicyVerdict[] {
+    // POL-QUESTION-OBJECTIVE (R10-2 Codex): UMA pergunta por mensagem, SEM exceção. A classificação lê a ÚLTIMA
+    // cláusula interrogativa de cada sentença-com-"?" (question-classify) — reconhecer um dado antes de perguntar
+    // ("obrigado pelo nome, tem troca?") conta como a pergunta REAL (troca), não repergunta de nome. Barra:
+    // (a) MAIS DE UMA pergunta no turno — interesseVisita/diaHorario (CTA interrogativo) TAMBÉM contam; dado + CTA
+    // na mesma msg = duas perguntas -> deny (família de descoberta modelo/tipo conta como UMA). (b) CPF antes da
+    // hora. (c) REPERGUNTAR um slot JÁ conhecido (incl. visita/horário já respondidos). A congruência objetivo↔
+    // pergunta NÃO é imposta aqui — é RECONCILIADA pós-compose (reconcileObjectiveWithQuestion): o objetivo
+    // persistido passa a ser exatamente o slot da pergunta enviada.
+    {
+      const asked = slotQuestions(composed.text); // TODOS os slots perguntados (incl. visita/horário)
+      const slotKnown = (slot: string): boolean => {
+        const s = (ctx.state.slots as Record<string, { status?: string } | undefined>)[slot];
+        return s?.status != null && s.status !== "unknown";
+      };
+      const qDeny = (why: string): PolicyVerdict[] => [{ policyId: "POL-QUESTION-OBJECTIVE", outcome: "deny", violations: [why] }];
+      // (a) no MÁXIMO UMA pergunta por mensagem (sem exceção de CTA).
+      if (asked.length > 1) return qDeny(`mais de uma pergunta no mesmo turno (${asked.join(",")})`);
+      // (b) CPF só na HORA CERTA (Codex "antes da hora"): liberado quando o lead vai FINANCIAR/CONSORCIAR (precisa
+      // do CPF p/ simular). Antes disso (qualificação inicial) é intrusivo -> deny.
+      const fpg = (ctx.state.slots as { formaPagamento?: { status?: string; value?: unknown } }).formaPagamento;
+      const cpfDueNow = fpg?.status === "known" && (fpg.value === "financiamento" || fpg.value === "consorcio");
+      if (asked.includes("cpf") && !cpfDueNow) return qDeny(`pergunta CPF antes da hora (so na fase de financiamento/consorcio)`);
+      // (c) reperguntar um slot JÁ CONHECIDO (incl. visita/horário já respondidos — não reoferte visita se já quer).
+      const knownAsked = asked.find((s) => s !== "cpf" && slotKnown(s));
+      if (knownAsked) return qDeny(`pergunta o slot '${knownAsked}' que ja e conhecido`);
+    }
+
+    // POL-GROUND-DETAIL (item 2, Codex): afirmar ATRIBUTO de um veículo (câmbio/cor/ano/km/automático/…) exige
+    // que o veículo SELECIONADO pelo lead esteja ATERRADO nos FATOS DESTE TURNO (vehicle_details/stock_search do
+    // MESMO vehicleKey). "Algum veículo aterrado" NÃO basta; fato de OUTRO veículo não autoriza. Sem seleção ->
+    // pede esclarecimento. (O modelo citado no texto continua defendido pelo POL-GROUND-STOCK.) Declarativo (sem "?").
+    {
+      const t = normalizeText(composed.text);
+      // Gatilho ESTREITO: referência POSSESSIVA/pronominal SINGULAR a um veículo (não uma lista numerada de
+      // ofertas, que é aterrada por vehicle_offer_list) + afirmação de atributo. Evita falso-positivo em ofertas.
+      const possessiveRef =
+        /\b(ele|dele|nele|desse|deste|nesse|neste)\b/.test(t)
+        || /\b(esse|este|aquele|o|a)\s+(carro|veiculo|suv|sedan|hatch|picape|modelo)\s+que\s+(voce|vc)\s+\w+/.test(t);
+      const attributeClaim =
+        /\b(e|esta|fica|vem|sai)\s+(automatic|manual|flex|completo|seminovo|blindad|novo|zero)/.test(t)
+        || /\b(cambio|cor|motor|airbag|km|quilometragem|ano)\s+(e|esta|dele|deste|desse|de|:)/.test(t)
+        || /\b(automatic|manual)[^?]{0,20}\b(sim|mesmo|isso)\b/.test(t);
+      const claimsVehicleAttribute = possessiveRef && attributeClaim;
+      if (claimsVehicleAttribute) {
+        const selectedKey = ctx.state.vehicleContext.selected?.key ?? null;
+        const grounded = getValidVehicleKeys(facts);
+        if (!selectedKey) {
+          return [{ policyId: "POL-GROUND-DETAIL", outcome: "deny", violations: [`afirma atributo de veículo sem veículo SELECIONADO (pedir esclarecimento): "${composed.text.slice(0, 50)}"`] }];
+        }
+        if (!grounded.has(selectedKey)) {
+          return [{ policyId: "POL-GROUND-DETAIL", outcome: "deny", violations: [`atributo do veículo selecionado ${selectedKey} sem fato aterrado no turno (consultar vehicle_details antes)`] }];
+        }
+      }
+    }
+
+    // POL-ATTR-VALUE (F-4, Codex): em pergunta de DETALHE, o VALOR do atributo afirmado no texto deve BATER
+    // com o VehicleFact do veículo SELECIONADO. "ele é automático" com fato "Manual" -> deny (mismatch de valor).
+    if (ctx.interpretation.relation === "asks_vehicle_detail" && ctx.state.vehicleContext.selected?.key) {
+      const selFact = factByKey(facts, ctx.state.vehicleContext.selected.key);
+      if (selFact) {
+        const t = normalizeText(composed.text);
+        const attrDeny = (attr: string, why: string): PolicyVerdict[] => [{ policyId: "POL-ATTR-VALUE", outcome: "deny", violations: [`${attr}: ${why} (veículo ${selFact.vehicleKey})`] }];
+        const hasRef = (field: string): boolean => composed.draft.parts.some((p) => p.type === "vehicle_ref" && p.vehicleKey === selFact.vehicleKey && p.field === field);
+        // ── MISMATCH DE VALOR em texto livre (defesa): o valor afirmado contradiz o VehicleFact do selecionado.
+        if (selFact.cambio) {
+          const cambioAuto = /automatic/.test(normalizeText(selFact.cambio));
+          const claimsAuto = /\bautomatic/.test(t);
+          const claimsManual = /\bmanual\b/.test(t) && !claimsAuto;
+          if ((claimsAuto && !cambioAuto) || (claimsManual && cambioAuto)) return attrDeny("câmbio", "valor contradiz o fato");
+        }
+        if (selFact.cor) {
+          const factCor = normalizeText(selFact.cor);
+          const COLORS = ["branco", "branca", "preto", "preta", "prata", "cinza", "vermelho", "vermelha", "azul", "verde", "amarelo", "marrom", "bege", "dourado", "laranja", "vinho", "grafite"];
+          const claimed = COLORS.find((c) => new RegExp(`\\b${c}\\b`).test(t));
+          if (claimed && !factCor.includes(claimed.slice(0, 4))) return attrDeny("cor", "cor contradiz o fato");
+        }
+        const yr = /\b(?:ano\s+(?:e|de)?\s*|e\s+de\s+|de\s+)(20[0-2]\d|19\d\d)\b/.exec(t);
+        if (yr && Number(yr[1]) !== selFact.ano) return attrDeny("ano", "ano contradiz o fato");
+        // KM (P1 Codex): valor de km afirmado que diverge do fato (tolerância p/ arredondamento "uns 130 mil").
+        if (selFact.km != null) {
+          const kmM = /\b(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})\s*(?:mil\s*)?(?:km|quilometr)/.exec(t) || /\b(\d{1,3})\s*mil\s*(?:km|quilometr)/.exec(t);
+          if (kmM) {
+            let claimedKm = Number(kmM[1].replace(/[.\s]/g, ""));
+            if (/\bmil\b/.test(kmM[0]) && claimedKm < 1000) claimedKm *= 1000;
+            if (Math.abs(claimedKm - selFact.km) > selFact.km * 0.02 + 500) return attrDeny("km", `${claimedKm} contradiz o fato ${selFact.km}`);
+          }
+        }
+        // P1 (Codex): fail-closed contra o ESCAPE de "valor FORA da lista simples/hardcoded".
+        // COR e CÂMBIO são conjuntos fechados: uma lista de léxico nunca cobre tudo (Bordô, Grená, CVT…),
+        // então um valor errado FORA do léxico passaria por texto livre sem o mismatch acima disparar.
+        // Regra: se o lead perguntou COR/CÂMBIO, a resposta precisa ATERRAR o valor de UMA destas formas:
+        //   (a) vehicle_ref(campo) do vehicleKey exato (estruturado, sempre correto);
+        //   (b) o VALOR do fato presente no texto (ex.: fato "Bordô" -> texto contém "bordo");
+        //   (c) dizer explicitamente que vai confirmar depois.
+        // Caso contrário -> deny (dodge ou valor não verificável). Numéricos (ano/km) ficam no mismatch acima.
+        const asked = normalizeText(ctx.leadMessage);
+        const askedCor = /\bcores?\b|\bcor\b/.test(asked);
+        const askedCambio = /\bcambio\b|automatic|\bmanual\b/.test(asked);
+        const isDeferral = /vou confirmar|vou verificar|nao (tenho|sei).*(informa|confirma|certeza)|preciso confirmar|deixa eu (confirmar|ver)|te confirmo|ja te confirmo|verifico (isso|pra)/.test(t);
+        if (askedCor && selFact.cor && !hasRef("cor") && !isDeferral) {
+          const corToken = normalizeText(selFact.cor).split(/\s+/)[0] ?? "";
+          if (corToken && !t.includes(corToken)) return attrDeny("cor", "resposta de cor precisa aterrar o valor do fato (vehicle_ref, valor do fato no texto, ou confirmar depois)");
+        }
+        if (askedCambio && selFact.cambio && !hasRef("cambio") && !isDeferral) {
+          const cambioAuto = /automatic/.test(normalizeText(selFact.cambio));
+          const grounded = cambioAuto ? /automat/.test(t) : /manual/.test(t);
+          if (!grounded) return attrDeny("cambio", "resposta de câmbio precisa aterrar o valor do fato (vehicle_ref, valor do fato no texto, ou confirmar depois)");
+        }
+      }
+    }
+
     const brandModelViolations: string[] = [];
     const priceViolations: string[] = [];
+    // Valores monetários que o PRÓPRIO LEAD forneceu (faixa/entrada/parcela) NÃO são preço de veículo inventado —
+    // o agente pode referenciá-los no texto ("não temos até 10 mil", "parcela de 1.800"). Só preço de VEÍCULO
+    // precisa aterrar num fato do estoque. A exceção é aterrada nos slots monetários CONHECIDOS do estado.
+    const PRICE_TOL = 0.02;
+    const leadMoney: number[] = [];
+    {
+      const sl = ctx.state.slots as Record<string, { status?: string; value?: unknown } | undefined>;
+      const push = (v: unknown) => { if (typeof v === "number" && v > 0) leadMoney.push(v); };
+      const fp = sl.faixaPreco;
+      if (fp?.status === "known" && fp.value && typeof fp.value === "object") { const o = fp.value as { min?: number; max?: number }; push(o.min); push(o.max); }
+      if (sl.entrada?.status === "known") push(sl.entrada.value);
+      if (sl.parcelaDesejada?.status === "known") push(sl.parcelaDesejada.value);
+    }
+    const isLeadValue = (v: number): boolean => leadMoney.some((lv) => Math.abs(lv - v) <= lv * PRICE_TOL);
 
-    // 1. TextPart não pode conter marca/modelo/valor sem referência estruturada (ClaimExtractor)
+    // Marcas/modelos REAIS do turno (fatos + alvo + record_offer). Um modelo citado em texto livre é DANO só se
+    // NÃO estiver aterrado aqui (invenção); citar em texto um veículo que ESTÁ na oferta/fatos é conversa natural
+    // (ex.: abreviar "HB 20 S"→"HB 20"), não alucinação. A defesa contra invenção (modelo de fora) é preservada.
+    const { brands: validBrands, models: validModels } = getValidBrandsAndModels(facts, decision);
+    const modelGrounded = (norm: string): boolean => validModels.has(norm) || modelGroundedExact(norm, validModels);
+    const claimGrounded = (claim: { kind: string; normalized: string }): boolean => {
+      const brandOk = !(claim.kind === "brand" || claim.kind === "brand_model") || validBrands.has(claim.normalized);
+      const modelOk = !(claim.kind === "model" || claim.kind === "brand_model") || modelGrounded(claim.normalized);
+      return brandOk && modelOk;
+    };
+
+    // 1. TextPart não pode conter marca/modelo NÃO-ATERRADO (invenção). Modelo aterrado nos fatos do turno é
+    //    permitido em texto (conversa natural sobre o que foi ofertado); preço livre segue proibido (grounding).
     for (const part of composed.draft.parts) {
       if (part.type === "text") {
         const claims = ctx.claimExtractor.extractClaims(part.content);
         for (const claim of claims) {
-          brandModelViolations.push(`TextPart contém marca/modelo '${claim.text}' em texto livre`);
+          if (!claimGrounded(claim)) brandModelViolations.push(`TextPart contém marca/modelo não-aterrado '${claim.text}' em texto livre`);
         }
 
-        // Verifica se há valores numéricos ou monetários no TextPart (excluindo km)
-        const moneyMentionsText = parseMoneyMentions(part.content);
+        // Verifica se há valores monetários no TextPart (excluindo km e valores que o LEAD forneceu).
+        // R11-D1: valor 0 ("entrada zero"/"sem entrada") NUNCA é preço de veículo — é termo de pagamento do lead;
+        // não pode virar "valor monetário livre" (era terminal-safe falso-positivo). Valor do lead também isento.
+        const moneyMentionsText = parseMoneyMentions(part.content).filter((m) => m.value > 0 && !isLeadValue(m.value));
         if (moneyMentionsText.length > 0) {
           priceViolations.push(`TextPart contém valor monetário livre '${moneyMentionsText[0].raw}'`);
         }
@@ -290,7 +454,6 @@ export const PolicyEngine = {
     }
 
     // 2. Defender o texto final renderizado: marcas e modelos citados no texto final devem existir nos QueryResults (defesa em profundidade)
-    const { brands: validBrands, models: validModels } = getValidBrandsAndModels(facts, decision);
     const renderedClaims = ctx.claimExtractor.extractClaims(composed.text);
     for (const claim of renderedClaims) {
       const normVal = claim.normalized;
@@ -300,7 +463,8 @@ export const PolicyEngine = {
         }
       }
       if (claim.kind === "model" || claim.kind === "brand_model") {
-        if (!validModels.has(normVal)) {
+        // Aterrado só se EXATO (formatação colapsada) de um modelo REAL do turno — nunca por subconjunto (R10-3).
+        if (!validModels.has(normVal) && !modelGroundedExact(normVal, validModels)) {
           brandModelViolations.push(`modelo não-aterrado '${claim.text}' no texto renderizado`);
         }
       }
@@ -322,9 +486,8 @@ export const PolicyEngine = {
       if (f.ok && f.tool === "vehicle_details") realPrices.add(f.data.vehicle.preco);
     }
 
-    const tol = 0.02;
     const vehiclePriceMentions = mentions.filter(m => m.role === "vehicle_price");
-    const bad = vehiclePriceMentions.filter((m) => ![...realPrices].some((rp) => Math.abs(rp - m.value) <= rp * tol));
+    const bad = vehiclePriceMentions.filter((m) => !isLeadValue(m.value) && ![...realPrices].some((rp) => Math.abs(rp - m.value) <= rp * PRICE_TOL));
 
     if (bad.length > 0 || priceViolations.length > 0) {
       const allViolations = [...priceViolations, ...bad.map((m) => `preço não-aterrado R$${m.value} (${m.raw})`)];

@@ -18,10 +18,14 @@ import type { Id, Iso } from "../domain/types.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { finalize, effectIdFor } from "./finalizer.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { parseOrdinal } from "./ordinal.ts";
 
 const PHOTO_REQUEST = /\bfotos?\b|\bimagens?\b/iu;
 // Reenvio sob pedido CLARO: "mais/outras fotos", "de novo", "reenviar", "novamente".
 const WANTS_MORE = /\bmais\b|\boutr|\bde novo\b|\breenvi|\bnovamente\b/u;
+// R10-5 (Codex): REENVIO IMPLÍCITO — "manda de novo" / "reenvia" / "manda outra vez" SEM citar "foto", logo após
+// um envio de foto. Resolve deterministicamente (nunca vai ao LLM -> nunca MODEL_DECISION_INVALID/terminal-safe).
+const REPEAT_SEND = /\b(?:de novo|novamente|outra vez|de nvo)\b|\breenvi\w*|\bmanda\w*\s+(?:de novo|dnv|outra vez)\b|\brepete\b|\bmanda\s+ai\b/u;
 const PHOTO_WORD_NORM = /\b(?:fotos?|imagens?)\b/u;
 const NEGATION_BEFORE = /\b(?:nao|nem|sem)\b/u;
 const DEFERRAL = /\b(?:depois|mais tarde|outra hora|amanha|daqui a pouco)\b/u;
@@ -29,9 +33,6 @@ const CLAUSE_DELIM = /[.,;:!?\n]/g;
 // Promessa de envio de foto em TEXTO (verbo de envio + palavra de foto na mesma frase).
 const PHOTO_PROMISE_TEXT = /\b(?:vou|estou|irei|segue|seguem|mand\w*|envi\w*)\b[^.?!\n]{0,30}\b(?:fotos?|imagens?)\b/u;
 const PHOTO_SENT_MARKER = "aqui estao as fotos"; // marcador deterministico do texto de envio (ver buildPhotoTurnOutput)
-const ORDINALS: Record<string, number> = {
-  primeiro: 1, primeira: 1, segundo: 2, segunda: 2, terceiro: 3, terceira: 3, quarto: 4, quarta: 4, quinto: 5, quinta: 5,
-};
 
 function stripAccentsLower(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -103,18 +104,6 @@ function modelsInText(text: string, claimExtractor: ClaimExtractor): string[] {
 // F2.7.12.1 (Codex P1): digito so e ORDINAL em contexto ordinal EXPLICITO. Quantidade ("3 fotos") NAO e
 // ordinal. FORTE = palavra (primeiro/...) OU item/opcao/numero/posicao/# + N. FRACO = do/da/de/o/a + N
 // (so vence quando NAO ha modelo no texto do lead). Nunca "c3"/"hb20"/"2014"/"1.0".
-function parseOrdinal(msg: string): { value: number; strong: boolean } | null {
-  const norm = normalizeText(msg);
-  for (const [word, n] of Object.entries(ORDINALS)) {
-    if (new RegExp(`\\b${word}\\b`).test(norm)) return { value: n, strong: true };
-  }
-  const strong = /\b(?:item|opcao|numero|posicao|#)\s*([1-9])\b(?!\s*(?:fotos?|imagens?))/.exec(norm);
-  if (strong) return { value: Number(strong[1]), strong: true };
-  const weak = /\b(?:d[aeo]|[ao])\s+([1-9])\b(?!\s*(?:fotos?|imagens?))/.exec(norm);
-  if (weak) return { value: Number(weak[1]), strong: false };
-  return null;
-}
-
 function labelFromItem(item: RenderedOfferItem): string {
   return [item.marca, item.modelo, item.ano && item.ano > 0 ? String(item.ano) : null].filter(Boolean).join(" ") || item.vehicleKey;
 }
@@ -161,10 +150,14 @@ async function resolvePhotoTargetResult(args: {
   if (leadModels.length > 1) return { kind: "ask_which" };
   if (leadModels.length === 1) return resolveTargetPhotos(leadModels[0], { state, runQuery, wantsMore });
   if (ord) return resolveOrdinal(ord.value); // 3) ORDINAL FRACO (sem modelo no lead) -> lista estruturada
-  const interpModels = (interpretation?.extractedEntities?.models ?? []).filter((m) => typeof m === "string" && m.trim() !== ""); // 4) interpretacao
+  // 4) item 1 (Codex): veículo SELECIONADO pelo lead (vehicleKey EXATO). A INTERPRETAÇÃO da LLM NUNCA vence a
+  //    seleção explícita — pronome "dele/desse" sem ordinal/modelo escrito resolve AQUI, nunca o "primeiro similar".
+  const selected = state.vehicleContext.selected;
+  if (selected?.key) return resolvePhotosForKey(selected.key, selected.label ?? "", stripAccentsLower(selected.label ?? ""), { state, runQuery, wantsMore });
+  const interpModels = (interpretation?.extractedEntities?.models ?? []).filter((m) => typeof m === "string" && m.trim() !== ""); // 5) modelos INFERIDOS pela interpretação
   if (interpModels.length === 1) return resolveTargetPhotos(interpModels[0], { state, runQuery, wantsMore });
   if (interpModels.length > 1) return { kind: "ask_which" };
-  if (offerItems.length === 1) return resolveOrdinal(1); // 5) unico da lista estruturada
+  if (offerItems.length === 1) return resolveOrdinal(1); // 6) unico da lista estruturada
   if (offerItems.length > 1) return { kind: "ask_which" };
   for (const t of fallbackModelTexts) { // 6) fallback: modelo no texto do agente / composto
     const fm = modelsInText(t, claimExtractor);
@@ -183,21 +176,15 @@ async function resolveTargetPhotos(
   const stockRes = await runQuery({ tool: "stock_search", input: { modelo: targetModel } });
   const items = stockRes.ok && stockRes.tool === "stock_search" ? stockRes.data.items : [];
   if (items.length === 0) return { kind: "not_found", vehicleLabel: targetModel };
-  const vehicle = items[0];
-  const label = [vehicle.marca, vehicle.modelo, vehicle.ano && vehicle.ano > 0 ? String(vehicle.ano) : null].filter(Boolean).join(" ");
-
-  const photoRes = await runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: vehicle.vehicleKey } } });
-  if (!photoRes.ok || photoRes.tool !== "vehicle_photos_resolve") return { kind: "not_found", vehicleLabel: label };
-  if (photoRes.data.ambiguous) return { kind: "ask_which" };
-  const photoIds = photoRes.data.photoIds;
-  if (photoIds.length === 0) return { kind: "not_found", vehicleLabel: label };
-
-  const sent = state.photoLedger.sentByVehicle[vehicle.vehicleKey] ?? [];
-  const ledgerHasAll = photoIds.every((id) => sent.includes(id));
-  const recentlySent = recentlySentPhotos(state, stripAccentsLower(vehicle.modelo));
-  if (!wantsMore && (ledgerHasAll || recentlySent)) return { kind: "already_sent", vehicleLabel: label };
-
-  return { kind: "send", vehicleKey: vehicle.vehicleKey, vehicleLabel: label, photoIds };
+  const labelOf = (v: (typeof items)[number]): string => [v.marca, v.modelo, v.ano && v.ano > 0 ? String(v.ano) : null].filter(Boolean).join(" ");
+  // P0-1 (Codex): se o veículo SELECIONADO está entre os resultados (compatível com o modelo citado), usa o
+  // vehicleKey EXATO — nunca reenvia outro ano. 0 -> não encontrado; 1 -> usa; >1 sem seleção -> pergunta qual
+  // (PROIBIDO items[0]). O vehicleKey vem SEMPRE do estoque; o núcleo (fotos/anti-reenvio) é resolvePhotosForKey.
+  const selectedKey = state.vehicleContext.selected?.key;
+  const selectedItem = selectedKey ? items.find((v) => v.vehicleKey === selectedKey) : undefined;
+  const chosen = selectedItem ?? (items.length === 1 ? items[0] : null);
+  if (!chosen) return { kind: "ask_which" };
+  return resolvePhotosForKey(chosen.vehicleKey, labelOf(chosen), stripAccentsLower(chosen.modelo ?? ""), { state, runQuery, wantsMore });
 }
 
 // LAYER 1: pedido EXPLICITO de foto na fala do lead. null = nao e pedido (ou negacao) -> fluxo normal do LLM.
@@ -209,10 +196,21 @@ export async function resolvePhotoIntent(args: {
   readonly interpretation: TurnInterpretation | null | undefined;
 }): Promise<PhotoIntentResult | null> {
   const { leadMessage, state, claimExtractor, runQuery, interpretation } = args;
+  const norm = stripAccentsLower(leadMessage);
+  const lastAgent = lastAgentText(state);
+  // R10-5: REENVIO IMPLÍCITO — "manda de novo" (sem a palavra "foto") logo após o agente ter enviado foto
+  // ("Aqui estão as fotos do X"). Resolve deterministicamente o MESMO veículo (foco/selected → modelo da
+  // última fala), wantsMore=true (reenvia mesmo já-enviado). Respeita negação e ambiguidade fail-closed.
+  const repeatMatch = REPEAT_SEND.exec(norm);
+  if (!PHOTO_REQUEST.test(leadMessage) && repeatMatch && stripAccentsLower(lastAgent).includes(PHOTO_SENT_MARKER)) {
+    // negação/deferral escopada: "não manda de novo" / "depois manda de novo" -> NÃO reenvia (fluxo normal).
+    const negated = NEGATION_BEFORE.test(norm.slice(Math.max(0, repeatMatch.index - 24), repeatMatch.index)) || DEFERRAL.test(norm);
+    if (!negated) return resolvePhotoTargetResult({ leadMessage, state, claimExtractor, runQuery, interpretation, wantsMore: true, fallbackModelTexts: [lastAgent] });
+  }
   if (!PHOTO_REQUEST.test(leadMessage) || isNegatedPhotoRequest(leadMessage)) return null;
-  const wantsMore = WANTS_MORE.test(stripAccentsLower(leadMessage));
+  const wantsMore = WANTS_MORE.test(norm);
   // Fallback de modelo (quando nao ha ordinal nem modelo no lead) = ultima fala do agente.
-  return resolvePhotoTargetResult({ leadMessage, state, claimExtractor, runQuery, interpretation, wantsMore, fallbackModelTexts: [lastAgentText(state)] });
+  return resolvePhotoTargetResult({ leadMessage, state, claimExtractor, runQuery, interpretation, wantsMore, fallbackModelTexts: [lastAgent] });
 }
 
 // LAYER 2 (trava): a decisao do LLM promete foto sem `send_media`? Resolve o veiculo (prioridade: o que o

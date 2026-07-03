@@ -1,9 +1,12 @@
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
 import type { AnswerKind, ObjectiveType, SlotName } from "../domain/types.ts";
+import type { TurnDecision, ResponseDraft, ResponsePart, TurnInterpretation } from "../domain/decision.ts";
 import type { TurnOutput } from "./decision-engine.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { attachQualificationObjective } from "./finalizer.ts";
+import { classifyConfiguredQuestion as classifyQuestionSlot, trailingQuestion, slotQuestions } from "./question-classify.ts";
+import { buildSdrConductionFrame } from "./sdr-conduction-frame.ts";
 
 export type SdrQualificationSlot = Exclude<SlotName, "cpf">;
 
@@ -25,7 +28,7 @@ const CORE: readonly SdrQualificationSlot[] = [
   "nome", "interesse", "faixaPreco", "formaPagamento", "possuiTroca", "interesseVisita",
 ];
 
-const DEFAULT_QUESTIONS: Record<SdrQualificationSlot, string> = {
+export const DEFAULT_QUESTIONS: Record<SdrQualificationSlot, string> = {
   nome: "Qual é o seu nome?",
   interesse: "Qual modelo ou tipo de carro você procura?",
   tipoVeiculo: "Você procura SUV, sedan, hatch ou picape?",
@@ -41,22 +44,10 @@ const DEFAULT_QUESTIONS: Record<SdrQualificationSlot, string> = {
   interesseVisita: "Faz sentido agendarmos uma visita para você conhecer o veículo?",
 };
 
+// Wrapper local: delega ao módulo neutro (question-classify) e restringe a SdrQualificationSlot (sem "cpf").
 function classifyConfiguredQuestion(question: string): SdrQualificationSlot | null {
-  const q = normalizeText(question);
-  if (/\bnome\b|\bcomo.*cham/.test(q)) return "nome";
-  if (/\bcidade\b|\bonde mora\b|\bde onde/.test(q)) return "cidade";
-  if (/\bconhece.*loja\b|\bja veio.*loja|\bsabe.*onde.*loja\b|\bonde fica.*loja/.test(q)) return "conheceLoja";
-  if (/\bparcela\b|\bmensal/.test(q)) return "parcelaDesejada";
-  if (/\bentrada\b/.test(q)) return "entrada";
-  if (/\bmodelo.*ano\b|\bano.*quilometr|\bdados.*veiculo.*troca/.test(q)) return "veiculoTroca";
-  if (/\btroca\b/.test(q)) return "possuiTroca";
-  if (/\bdia\b|\bhorario\b|\bquando.*visita/.test(q)) return "diaHorario";
-  if (/\bvisita\b|\bagendar\b/.test(q)) return "interesseVisita";
-  if (/\bpagamento\b|\bfinanc|\ba vista\b|\bconsorcio\b/.test(q)) return "formaPagamento";
-  if (/\bfaixa.*valor\b|\borcamento\b|\bquanto.*invest/.test(q)) return "faixaPreco";
-  if (/\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\btipo.*carro/.test(q)) return "tipoVeiculo";
-  if (/\bmodelo\b|\bcarro.*procura\b|\bveiculo.*procura/.test(q)) return "interesse";
-  return null;
+  const s = classifyQuestionSlot(question);
+  return s != null && s !== "cpf" ? (s as SdrQualificationSlot) : null;
 }
 
 function configuredIntroduction(config: Partial<Pick<TenantRuntimeConfig, "agentName" | "companyName" | "promptText">>): string {
@@ -75,7 +66,7 @@ function hasAgentIntroduction(text: string, agentName: string): boolean {
   return normalizedName.length > 0 && normalizeText(text).includes(normalizedName);
 }
 
-function ensureInitialIntroduction(text: string, state: ConversationState, policy: SdrQualificationPolicy): string {
+export function ensureInitialIntroduction(text: string, state: ConversationState, policy: SdrQualificationPolicy): string {
   if (state.turnNumber > 0 || state.recentTurns.some((turn) => turn.role === "agent")) return text;
   if (hasAgentIntroduction(text, policy.agentName)) return text;
   const greeting = /^(bom dia|boa tarde|boa noite|oi|ola)(?:[!,.])?/i.exec(text.trim());
@@ -85,10 +76,7 @@ function ensureInitialIntroduction(text: string, state: ConversationState, polic
   return rest ? `${firstLine}\n\n${rest}` : firstLine;
 }
 
-function trailingQuestion(text: string): string | null {
-  const match = /(?:^|[\n.!]\s*)([^?\n]{2,240}\?)\s*$/u.exec(text.trim());
-  return match?.[1]?.trim() ?? null;
-}
+// trailingQuestion vem de question-classify.ts (módulo neutro; evita circular policy-engine↔sdr-conductor).
 function ensureQuestion(text: string): string {
   const trimmed = text.trim().replace(/\s+/g, " ").slice(0, 240);
   return trimmed.endsWith("?") ? trimmed : `${trimmed}?`;
@@ -226,7 +214,29 @@ export function applySdrConduction(args: {
   const preservePortalQuestion = modelQuestionSlot != null
     && !slotResolved(state, modelQuestionSlot)
     && (pendingSlot ? pendingSlot === modelQuestionSlot : modelQuestionSlot === view.nextSlot || firstConnectionQuestion);
-  const selectedSlot = preservePortalQuestion ? modelQuestionSlot : view.nextSlot;
+  let selectedSlot = preservePortalQuestion ? modelQuestionSlot : view.nextSlot;
+
+  // 1B.6 + item 5: ANTI-FIXAÇÃO com DEFERIMENTO TIPADO. Se o slot selecionado JÁ é o objetivo pendente
+  // (perguntado antes e ainda não respondido porque o lead falou de outra coisa) e o LLM não repergunta
+  // naturalmente, NÃO reescrever com a pergunta hardcoded. Até o limite: DEFERE (responde o assunto atual,
+  // mantém o objetivo pendente, conta o deferimento — sem nagging). No limite: AVANÇA para o próximo slot
+  // faltante DIFERENTE (não fica preso). Se o LLM repergunta (preservePortalQuestion), é decisão do prompt.
+  const MAX_DEFERRALS = 2;
+  let supersedeOldId: string | null = null;
+  if (!preservePortalQuestion && pendingSlot != null && pendingSlot === selectedSlot) {
+    const deferrals = state.currentObjective?.deferrals ?? 0;
+    if (deferrals < MAX_DEFERRALS) {
+      const objId = state.currentObjective?.id;
+      return objId
+        ? { ...contextualOutput, decision: { ...contextualOutput.decision, decisionMutations: [...contextualOutput.decision.decisionMutations, { op: "defer_objective", objectiveId: objId }] } }
+        : contextualOutput;
+    }
+    const nextDifferent = view.missingSlots.find((s) => s !== pendingSlot && slotApplicable(state, s));
+    if (!nextDifferent) return contextualOutput;
+    supersedeOldId = state.currentObjective?.id ?? null; // F-5: supersede o antigo ANTES de planejar o novo
+    selectedSlot = nextDifferent; // limite atingido -> avança o funil para outro slot
+  }
+
   const question = preservePortalQuestion
     ? modelQuestion!
     : policy.questions[selectedSlot] ?? DEFAULT_QUESTIONS[selectedSlot];
@@ -241,11 +251,17 @@ export function applySdrConduction(args: {
     expectedAnswerKinds: expectedAnswerKinds(selectedSlot),
   });
   if (!decision) return contextualOutput;
+  // F-5: no avanço pós-limite, SUPERSEDE o objetivo antigo ANTES do novo planejado (o slot antigo continua
+  // missing e pode ser perguntado de novo mais tarde — supersede != satisfied).
+  const decisionMutations = supersedeOldId
+    ? [{ op: "supersede_objective" as const, objectiveId: supersedeOldId }, ...decision.decisionMutations]
+    : decision.decisionMutations;
 
   return {
     ...contextualOutput,
     decision: {
       ...decision,
+      decisionMutations,
       responsePlan: {
         guidance: preservePortalQuestion
           ? decision.responsePlan.guidance
@@ -254,4 +270,156 @@ export function applySdrConduction(args: {
     },
     composed: { draft: { parts: [{ type: "text", content: text }] }, text },
   };
+}
+
+// ── 1B.7 (Seção 3): CONDUÇÃO POR GUIDANCE (o conductor NÃO redige nem reescreve texto) ────────────────────
+// Enriquece a DECISÃO com guidance (dados conhecidos, próximo do funil, o que NÃO repergunta, uma pergunta
+// útil, ordem do portal) + as MUTAÇÕES de objetivo/deferimento/supersede. O compose (LLM) redige seguindo o
+// prompt do portal + esse guidance; a policy é a autoridade final. Reusa a MESMA lógica de estado do
+// applySdrConduction (deriveSdrQualification, anti-fixação MAX_DEFERRALS=2, supersede-antes-de-avançar).
+function needsInitialIntroduction(state: ConversationState): boolean {
+  return state.turnNumber === 0 && !state.recentTurns.some((t) => t.role === "agent");
+}
+function withConductionGuidance(decision: TurnDecision, addendum: string): TurnDecision {
+  return { ...decision, responsePlan: { guidance: `${decision.responsePlan.guidance}${addendum}`.slice(0, 1600) } };
+}
+// P0-2 (Codex): o CONDUTOR é a ÚNICA autoridade sobre o objetivo de qualificação. Remove qualquer objetivo
+// emitido pelo MODELO/handler (set_planned_objective + activate_objective) antes de o conductor impor o seu —
+// senão `attachQualificationObjective` retornaria null (já há objetivo) e o objetivo do LLM ficaria escondido.
+export function stripModelObjectives(decision: TurnDecision): TurnDecision {
+  const hasObj = decision.decisionMutations.some((m) => m.op === "set_planned_objective")
+    || decision.effectPlan.some((p) => p.onSuccess.some((o) => o.op === "activate_objective"));
+  if (!hasObj) return decision;
+  return {
+    ...decision,
+    decisionMutations: decision.decisionMutations.filter((m) => m.op !== "set_planned_objective"),
+    effectPlan: decision.effectPlan.map((p) => ({ ...p, onSuccess: p.onSuccess.filter((o) => o.op !== "activate_objective") })),
+  };
+}
+// R10-1 (Codex): o conductor SÓ SUGERE guidance — NÃO grava mais objetivo. A persistência do objetivo é feita
+// pós-compose por `reconcileObjectiveWithQuestion` (objetivo = pergunta REALMENTE enviada).
+// R11 (Condução SDR): a guidance passa a vir do FRAME estruturado (`buildSdrConductionFrame`) — funil ancorado,
+// buy-signal, responder-lead-primeiro, uma pergunta, naturalidade. O conductor só resolve os INPUTS do funil
+// (view + próxima pergunta do portal) e delega a montagem da guidance ao frame. Continua sem redigir texto final.
+export function conductDecision(args: {
+  readonly decision: TurnDecision;
+  readonly state: ConversationState;
+  readonly policy: SdrQualificationPolicy;
+  readonly turnId: string;
+  readonly leadMessage?: string;
+  readonly interpretation?: TurnInterpretation | null;
+}): TurnDecision {
+  const { state, policy, leadMessage = "", interpretation } = args;
+  const decision = stripModelObjectives(args.decision); // remove objetivo emitido pelo modelo; conductor só guia
+  if (decision.action === "no_op") return decision;
+  if (decision.action === "clarify" || /clarif|ask_which|ambig|which_vehicle/.test(decision.reasonCode)) return decision;
+
+  const view = deriveSdrQualification(state, policy);
+  const nextQuestion = view.nextSlot ? (policy.questions[view.nextSlot] ?? DEFAULT_QUESTIONS[view.nextSlot]) : null;
+  const frame = buildSdrConductionFrame({
+    state, leadMessage, interpretation, view, nextQuestion,
+    reasonCode: decision.reasonCode, isFirstContact: needsInitialIntroduction(state),
+  });
+  return withConductionGuidance(decision, frame.composeGuidance);
+}
+
+// R10-1: strip de TODAS as mutações de objetivo (o texto real manda) — set/supersede/defer + activate no efeito.
+function stripAllObjectiveMutations(decision: TurnDecision): TurnDecision {
+  return {
+    ...decision,
+    decisionMutations: decision.decisionMutations.filter((m) => m.op !== "set_planned_objective" && m.op !== "supersede_objective" && m.op !== "defer_objective"),
+    effectPlan: decision.effectPlan.map((p) => ({ ...p, onSuccess: p.onSuccess.filter((o) => o.op !== "activate_objective") })),
+  };
+}
+// R10-1 (Codex): RECONCILIA o objetivo persistido com a pergunta EFETIVAMENTE renderizada (pós-compose, pré-commit).
+//  - 0 perguntas -> não cria objetivo novo (mantém o pendente); 1 pergunta de slot FALTANTE -> objetivo = esse slot
+//    com expectedAnswerKinds correspondentes; slot já CONHECIDO -> não cria (policy já negou; defesa); objetivo
+//    anterior DIFERENTE -> supersede antes do novo. A policy garante ≤1 pergunta e slot faltante; aqui persistimos.
+export function reconcileObjectiveWithQuestion(args: {
+  readonly decision: TurnDecision;
+  readonly composedText: string;
+  readonly state: ConversationState;
+  readonly turnId: string;
+}): TurnDecision {
+  const { composedText, state, turnId } = args;
+  const stripped = stripAllObjectiveMutations(args.decision);
+  if (stripped.action === "no_op") return stripped;
+  if (stripped.action === "clarify" || /clarif|ask_which|ambig|which_vehicle/.test(stripped.reasonCode)) return stripped;
+  const asked = slotQuestions(composedText).filter((s) => s !== "cpf");
+  if (asked.length === 0) return stripped; // 0 perguntas -> sem objetivo novo (pendente segue pendente)
+  const slot = asked[0] as SdrQualificationSlot;
+  if (slotResolved(state, slot)) return stripped; // slot já conhecido -> não cria (a policy deveria ter negado)
+  const pending = state.currentObjective?.status === "pending" && state.currentObjective.slot !== "cpf" ? state.currentObjective : null;
+  const withObj = attachQualificationObjective(stripped, {
+    id: `${turnId}:sdr:${slot}`, type: objectiveType(slot), slot, plannedInTurnId: turnId, expectedAnswerKinds: expectedAnswerKinds(slot),
+  });
+  if (!withObj) return stripped;
+  const decisionMutations = (pending && pending.slot !== slot)
+    ? [{ op: "supersede_objective" as const, objectiveId: pending.id }, ...withObj.decisionMutations]
+    : withObj.decisionMutations;
+  return { ...withObj, decisionMutations };
+}
+
+// ── 1B.7: TRAVA DETERMINÍSTICA anti-SLOT_FIXATION (pós-compose) ────────────────────────────────────────────
+// O guidance pede "não repergunte X", mas o LLM às vezes ignora e repete a MESMA pergunta de slot. Esta trava
+// (como a rede de apresentação) roda DEPOIS do compose: se o texto vai perguntar um slot que o agente JÁ
+// perguntou nas 2 falas anteriores (3ª vez consecutiva = SLOT_FIXATION), troca a pergunta pelo PRÓXIMO slot
+// faltante DIFERENTE. NÃO reescreve a resposta ao lead — só corrige a pergunta de condução repetida.
+export function enforceNoSlotFixation(args: {
+  readonly composedText: string;
+  readonly state: ConversationState;
+  readonly policy: SdrQualificationPolicy;
+}): string {
+  const { composedText, state, policy } = args;
+  const q = trailingQuestion(composedText);
+  if (!q) return composedText;
+  const askedSlot = classifyConfiguredQuestion(q);
+  if (!askedSlot) return composedText;
+  const recentAgent = (state.recentTurns ?? []).filter((t) => t.role === "agent").slice(-2);
+  const priorRepeats = recentAgent.filter((t) => {
+    const rq = trailingQuestion(t.text ?? "");
+    return rq != null && classifyConfiguredQuestion(rq) === askedSlot;
+  }).length;
+  if (priorRepeats < 2) return composedText; // 1ª/2ª vez: permitido (o LLM pode insistir uma vez)
+  const view = deriveSdrQualification(state, policy);
+  const nextDifferent = view.missingSlots.find((s) => s !== askedSlot && slotApplicable(state, s));
+  if (!nextDifferent) return composedText; // nada diferente p/ perguntar -> não piora
+  const base = stripTrailingQuestion(composedText);
+  const newQ = policy.questions[nextDifferent] ?? DEFAULT_QUESTIONS[nextDifferent];
+  return base ? `${base}\n\n${newQ}` : newQ;
+}
+
+// P1 (Codex): as travas determinísticas (apresentação no 1º contato + anti-SLOT_FIXATION) operam no DRAFT
+// (parts) ANTES de renderizar+validar — NÃO reescrevem o texto DEPOIS da policy. Assim preservam as parts
+// estruturadas (vehicle_offer_list) e o texto validado JÁ É o final. Chamado de dentro do composeAndVerify.
+export function adjustDraftSafeguards(draft: ResponseDraft, state: ConversationState, policy: SdrQualificationPolicy): ResponseDraft {
+  let parts: ResponsePart[] = draft.parts.slice();
+  // (1) apresentação no 1º contato: se nenhuma TextPart menciona o nome do agente, prefixa a introdução.
+  if (needsInitialIntroduction(state)) {
+    const name = normalizeText(policy.agentName);
+    const hasName = name.length > 0 && parts.some((p) => p.type === "text" && normalizeText(p.content).includes(name));
+    if (!hasName) parts = [{ type: "text", content: policy.introductionText }, ...parts];
+  }
+  // (2) anti-SLOT_FIXATION: a ÚLTIMA TextPart que é pergunta de slot repetida 3x -> troca pelo próximo faltante.
+  let idx = -1;
+  for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; if (p.type === "text" && trailingQuestion(p.content) != null) { idx = i; break; } }
+  if (idx >= 0) {
+    const content = (parts[idx] as Extract<ResponsePart, { type: "text" }>).content;
+    const q = trailingQuestion(content);
+    const askedSlot = q ? classifyConfiguredQuestion(q) : null;
+    if (q && askedSlot) {
+      const recent = (state.recentTurns ?? []).filter((t) => t.role === "agent").slice(-2);
+      const repeats = recent.filter((t) => { const rq = trailingQuestion(t.text ?? ""); return rq != null && classifyConfiguredQuestion(rq) === askedSlot; }).length;
+      if (repeats >= 2) {
+        const view = deriveSdrQualification(state, policy);
+        const next = view.missingSlots.find((s) => s !== askedSlot && slotApplicable(state, s));
+        if (next) {
+          const newQ = policy.questions[next] ?? DEFAULT_QUESTIONS[next];
+          const prefix = content.slice(0, content.lastIndexOf(q)).trimEnd();
+          parts = parts.map((pp, i) => (i === idx ? { type: "text" as const, content: prefix ? `${prefix} ${newQ}` : newQ } : pp));
+        }
+      }
+    }
+  }
+  return { parts };
 }

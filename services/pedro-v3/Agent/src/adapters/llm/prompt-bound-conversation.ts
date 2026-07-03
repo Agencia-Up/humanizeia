@@ -10,6 +10,7 @@ import type {
   TurnDecision,
   TurnInterpretation,
 } from "../../domain/decision.ts";
+import { normalizeStockSearchInput } from "../../domain/decision.ts";
 import type { DecisionLlm } from "../../domain/llm.ts";
 import type {
   ModelBinding,
@@ -155,6 +156,7 @@ function validQueryCall(value: unknown): value is QueryCall {
     case "stock_search":
       return (input.tipo === undefined || ["suv", "sedan", "hatch", "pickup", "unknown"].includes(String(input.tipo))) &&
         (input.precoMax === undefined || (typeof input.precoMax === "number" && Number.isFinite(input.precoMax) && input.precoMax > 0)) &&
+        (input.cambio === undefined || input.cambio === "automatic" || input.cambio === "manual") &&
         (input.modelo === undefined || isNonEmptyString(input.modelo)) &&
         (input.broad === undefined || typeof input.broad === "boolean") &&
         (input.excludeKeys === undefined || isStringArray(input.excludeKeys));
@@ -269,7 +271,17 @@ function decodeProposal(value: unknown): ProposedDecision {
 
 function decodeStep(value: unknown): DecisionStep {
   if (!isRecord(value)) throw new ModelOutputError("MODEL_DECISION_INVALID", "step_not_object");
-  if (value.kind === "query" && validQueryCall(value.call)) return immutableCopy({ kind: "query", call: value.call });
+  if (value.kind === "query" && validQueryCall(value.call)) {
+    // 1A.4: corrige a query do LLM no DECODE — termo de TIPO em `modelo` vira `tipo` antes de fluir p/ o
+    // engine/runner/registro (a proposta crua nunca carrega modelo:"suv" adiante). Modelo real fica intacto.
+    // Item 6: conflito tipo-em-modelo vs `tipo` divergente FALHA FECHADO (query inválida -> re-propõe).
+    if (value.call.tool === "stock_search") {
+      const norm = normalizeStockSearchInput(value.call.input);
+      if (!norm.ok) throw new ModelOutputError("MODEL_DECISION_INVALID", "stock_type_model_conflict");
+      return immutableCopy({ kind: "query", call: { ...value.call, input: norm.input } });
+    }
+    return immutableCopy({ kind: "query", call: value.call });
+  }
   if (value.kind === "final") return immutableCopy({ kind: "final", proposal: decodeProposal(value.proposal) });
   throw new ModelOutputError("MODEL_DECISION_INVALID", "kind|query.call");
 }
@@ -278,7 +290,7 @@ function validResponsePart(part: unknown): part is ResponsePart {
   if (!isRecord(part)) return false;
   if (part.type === "text") return typeof part.content === "string";
   if (part.type === "vehicle_ref") {
-    return isNonEmptyString(part.vehicleKey) && ["marca", "modelo", "ano"].includes(String(part.field));
+    return isNonEmptyString(part.vehicleKey) && ["marca", "modelo", "ano", "km", "cambio", "cor"].includes(String(part.field));
   }
   if (part.type === "money_ref") {
     if (!MONEY_ROLES.has(String(part.role)) || !isRecord(part.source)) return false;
