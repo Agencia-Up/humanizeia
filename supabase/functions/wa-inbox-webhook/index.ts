@@ -49,6 +49,98 @@ function phonesMatch(left: string | null | undefined, right: string | null | und
   return leftKeys.some((key) => rightKeys.has(key));
 }
 
+function extractProfilePictureUrl(payload: any): string | null {
+  const seen = new Set<any>();
+  const profileKey = /(profile|perfil|avatar|picture|photo|foto|pic)/i;
+  const urlLike = /^https?:\/\//i;
+
+  const visit = (value: any, path = ""): string | null => {
+    if (value == null) return null;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!urlLike.test(trimmed)) return null;
+      if (profileKey.test(path) || /pps\.whatsapp\.net|profile[-_]?pic|avatar|\/pp\//i.test(trimmed)) {
+        return trimmed;
+      }
+      return null;
+    }
+    if (typeof value !== "object" || seen.has(value)) return null;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        const found = visit(value[i], `${path}.${i}`);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      const found = visit(child, path ? `${path}.${key}` : key);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  return visit(payload);
+}
+
+async function upsertInboxContact(
+  supabase: any,
+  userId: string,
+  phone: string,
+  name: string | null,
+  profilePictureUrl: string | null,
+) {
+  if (!userId || !phone) return null;
+
+  const now = new Date().toISOString();
+  const { data: existing } = await supabase
+    .from("wa_contacts")
+    .select("id, name, metadata")
+    .eq("user_id", userId)
+    .eq("phone", phone)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const metadata = {
+    ...((existing?.metadata && typeof existing.metadata === "object") ? existing.metadata : {}),
+  };
+  if (profilePictureUrl) {
+    metadata.profile_picture_url = profilePictureUrl;
+    metadata.profile_picture_source = "uazapi";
+    metadata.profile_picture_synced_at = now;
+  }
+
+  if (existing?.id) {
+    const updatePayload: Record<string, any> = { last_message_at: now };
+    if (Object.keys(metadata).length > 0) updatePayload.metadata = metadata;
+    if (name && !existing.name) updatePayload.name = name;
+
+    await supabase
+      .from("wa_contacts")
+      .update(updatePayload)
+      .eq("id", existing.id);
+    return existing;
+  }
+
+  const { data: inserted } = await supabase
+    .from("wa_contacts")
+    .insert({
+      user_id: userId,
+      phone,
+      name: name || null,
+      source: "inbox",
+      metadata,
+      last_message_at: now,
+    })
+    .select("id")
+    .single();
+
+  return inserted || null;
+}
+
 // Este telefone pertence a um lead do CRM deste master? Usado p/ auditar SOMENTE as
 // conversas vendedor↔lead (nunca os contatos pessoais do vendedor). remote_jid em
 // ai_crm_leads e sempre "<digits>@s.whatsapp.net" (12-13 digitos, prefixo 55).
@@ -263,6 +355,7 @@ async function handleMetaWebhook(supabase: any, body: any) {
       for (const msg of messages) {
         const phone = msg.from;
         const pushName = value.contacts?.[0]?.profile?.name || null;
+        const profilePictureUrl = extractProfilePictureUrl(value.contacts?.[0] || value);
         const remoteMessageId = msg.id;
 
         let messageType = "text";
@@ -310,13 +403,13 @@ async function handleMetaWebhook(supabase: any, body: any) {
         const referral = msg.referral || value.referral || null;
         const utmParams = extractUTMParams(content, referral);
 
-        const { data: contact } = await supabase
-          .from("wa_contacts")
-          .select("id")
-          .eq("user_id", instance.user_id)
-          .eq("phone", phone)
-          .limit(1)
-          .maybeSingle();
+        const contact = await upsertInboxContact(
+          supabase,
+          instance.user_id,
+          phone,
+          pushName,
+          profilePictureUrl,
+        );
 
         // Update contact with UTM data if available
         if (contact?.id && Object.keys(utmParams).length > 0) {
@@ -513,6 +606,7 @@ async function processEvolutionIncomingMessage(
   if (!replyTarget) replyTarget = phone;
 
   const pushName = messageData.pushName || null;
+  const profilePictureUrl = extractProfilePictureUrl(messageData);
   const remoteMessageId = key.id || null;
 
   // Auditoria do vendedor: so captura o que o vendedor ENVIA para LEADS do CRM.
@@ -590,15 +684,23 @@ async function processEvolutionIncomingMessage(
     messageType = "sticker";
   }
 
+  // sellerAck so faz sentido p/ mensagens RECEBIDAS (vendedor confirmando transferencia).
+  if (direction === "incoming") {
+    const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
+    if (sellerAck.isSeller) {
+      return null;
+    }
+  }
+
   const utmParams = extractUTMParams(content, null);
 
-  const { data: contact } = await supabase
-    .from("wa_contacts")
-    .select("id")
-    .eq("user_id", instance.user_id)
-    .eq("phone", phone)
-    .limit(1)
-    .maybeSingle();
+  const contact = await upsertInboxContact(
+    supabase,
+    instance.user_id,
+    phone,
+    isFromMe ? null : pushName,
+    profilePictureUrl,
+  );
 
   if (contact?.id && Object.keys(utmParams).length > 0) {
     await supabase
@@ -606,14 +708,6 @@ async function processEvolutionIncomingMessage(
       .update(utmParams)
       .eq("id", contact.id);
     console.log(`[utm-extract] Updated contact ${phone} with:`, Object.keys(utmParams));
-  }
-
-  // sellerAck so faz sentido p/ mensagens RECEBIDAS (vendedor confirmando transferencia).
-  if (direction === "incoming") {
-    const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
-    if (sellerAck.isSeller) {
-      return null;
-    }
   }
 
   // Dedupe: se este envio do vendedor ja foi gravado (ex.: pelo painel via wa-send-reply),

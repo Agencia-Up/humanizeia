@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -170,6 +170,12 @@ function mediaPreviewText(messageType: string | null | undefined, content: strin
   return content || '';
 }
 
+function contactProfilePicture(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const value = (metadata as Record<string, unknown>).profile_picture_url;
+  return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : null;
+}
+
 /* ── Componente principal ────────────────────────────────────────── */
 /* Chave canônica de telefone p/ casar lead × conversa, tolerante ao 9º dígito BR.
    Ex.: "5512997423129" e "551297423129" → "1297423129". */
@@ -205,6 +211,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [loadingMsgs, setLoadingMsgs]         = useState(false);
   const [filterTags, setFilterTags]           = useState<string[]>([]);
   const [contactTags, setContactTags]         = useState<Record<string, string[]>>({});
+  const [contactProfilePictures, setContactProfilePictures] = useState<Record<string, string>>({});
   const [teamMembers, setTeamMembers]         = useState<any[]>([]);
   const [sendInstanceId, setSendInstanceId]   = useState<string>('');
   const [isMobileChat, setIsMobileChat]       = useState(false);
@@ -499,13 +506,23 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     const phones = [...new Set(convs.map(c => c.phone))];
     const { data } = await supabase
       .from('wa_contacts')
-      .select('phone, tags')
+      .select('phone, tags, metadata')
       .eq('user_id', effectiveUserId as string)
       .in('phone', phones);
     if (data) {
       const map: Record<string, string[]> = {};
-      for (const c of data) if (c.tags?.length) map[c.phone] = c.tags as string[];
+      const profileMap: Record<string, string> = {};
+      for (const c of data as any[]) {
+        if (c.tags?.length) map[c.phone] = c.tags as string[];
+        const picture = contactProfilePicture(c.metadata);
+        if (picture) {
+          profileMap[c.phone] = picture;
+          const canonical = leadKey(c.phone);
+          if (canonical) profileMap[canonical] = picture;
+        }
+      }
       setContactTags(map);
+      setContactProfilePictures(profileMap);
     }
   }, [effectiveUserId]); // conversations removido das deps — usa ref acima
 
@@ -899,6 +916,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   /* ── Dados derivados ───────────────────────────────────────────── */
   const selectedConv = conversations.find(c => c.key === selectedConvKey) ?? null;
+  const selectedProfilePicture = selectedConv
+    ? contactProfilePictures[selectedConv.phone] || contactProfilePictures[leadKey(selectedConv.phone)] || null
+    : null;
 
   const filteredConversations = conversations.filter(c => {
     if (filterTags.length > 0) {
@@ -1077,6 +1097,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                   {filteredConversations.map(conv => {
                     const label = conv.contact_name || conv.phone;
                     const tags  = contactTags[conv.phone] || [];
+                    const profilePicture = contactProfilePictures[conv.phone] || contactProfilePictures[leadKey(conv.phone)] || null;
                     const iName = instName(conv.instance_id);
                     const isSelected = selectedConvKey === conv.key;
 
@@ -1091,9 +1112,12 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         <div className="flex items-start gap-3">
                           {/* Avatar */}
                           <div className="relative shrink-0">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold ${avatarColor(label)}`}>
-                              {initials(label)}
-                            </div>
+                            <Avatar className="w-10 h-10 border border-white/10">
+                              {profilePicture && <AvatarImage src={profilePicture} alt={label} className="object-cover" />}
+                              <AvatarFallback className={`text-white text-sm font-semibold ${avatarColor(label)}`}>
+                                {initials(label)}
+                              </AvatarFallback>
+                            </Avatar>
                             {conv.has_ai_message && (
                               <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-violet-500 border-2 border-background flex items-center justify-center">
                                 <Bot className="h-2 w-2 text-white" />
@@ -1190,9 +1214,18 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
                   {/* Avatar */}
                   <div className="relative shrink-0">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-semibold ${avatarColor(selectedConv?.contact_name || selectedConv?.phone || '')}`}>
-                      {initials(selectedConv?.contact_name || selectedConv?.phone || '?')}
-                    </div>
+                    <Avatar className="w-9 h-9 border border-white/10">
+                      {selectedProfilePicture && (
+                        <AvatarImage
+                          src={selectedProfilePicture}
+                          alt={selectedConv?.contact_name || selectedConv?.phone || 'Contato'}
+                          className="object-cover"
+                        />
+                      )}
+                      <AvatarFallback className={`text-white text-sm font-semibold ${avatarColor(selectedConv?.contact_name || selectedConv?.phone || '')}`}>
+                        {initials(selectedConv?.contact_name || selectedConv?.phone || '?')}
+                      </AvatarFallback>
+                    </Avatar>
                   </div>
 
                   {/* Info */}
