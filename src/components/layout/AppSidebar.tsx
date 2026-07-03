@@ -337,10 +337,6 @@ export function AppSidebar() {
         {sellerLoading ? null : isSeller ? (
           /* ── SELLER: tudo agrupado em "Agentes" filtrado por visibleFeatures ── */
           <>
-            {/* Conversas — inbox UNIFICADO (Pedro tráfego + Marcos manuais). Ferramenta
-                central do vendedor; visível pra master e vendedor. */}
-            <NavItem collapsed={collapsed} item={{ title: 'Conversas', url: '/conversas', icon: MessageCircle }} />
-
             {(visibleFeatures.sidebar_dashboard || visibleFeatures.sidebar_painel_geral) && (
               <NavGroup label="Painel" collapsed={collapsed}>
                 {visibleFeatures.sidebar_dashboard && (

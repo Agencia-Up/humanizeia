@@ -244,7 +244,6 @@ const JoseDetail = lazy(() => import("./pages/JoseDetail"));
 const WhatsAppContacts = lazy(() => import("./pages/WhatsAppContacts"));
 const WhatsAppBroadcast = lazy(() => import("./pages/WhatsAppBroadcast"));
 const WhatsAppInbox = lazy(() => import("./pages/WhatsAppInbox"));
-const Conversas = lazy(() => import("./pages/Conversas"));
 const WhatsAppAnalytics = lazy(() => import("./pages/WhatsAppAnalytics"));
 const WhatsAppAutomations = lazy(() => import("./pages/WhatsAppAutomations"));
 const WhatsAppInstances = lazy(() => import("./pages/WhatsAppInstances"));
@@ -381,7 +380,6 @@ const App = () => (
                 <Route path="/treinamento"       element={<ProtectedRoute><Lazy><Treinamento /></Lazy></ProtectedRoute>} />
 
                 <Route path="/whatsapp/inbox"       element={<ProtectedRoute><Lazy><WhatsAppInbox /></Lazy></ProtectedRoute>} />
-                <Route path="/conversas"            element={<ProtectedRoute><Lazy><Conversas /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/contacts"    element={<ProtectedRoute><Lazy><WhatsAppContacts /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/broadcast"   element={<ProtectedRoute><Lazy><WhatsAppBroadcast /></Lazy></ProtectedRoute>} />
                 <Route path="/whatsapp/analytics"   element={<ProtectedRoute><Lazy><WhatsAppAnalytics /></Lazy></ProtectedRoute>} />
