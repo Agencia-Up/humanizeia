@@ -10,7 +10,7 @@ import { FEATURES } from '@/config/features';
 
 // Lazy load cada sub-página
 const FluxCRM           = lazy(() => import('./FluxCRM'));
-const WhatsAppInbox     = lazy(() => import('./WhatsAppInbox'));
+// WhatsAppInbox (aba Conversas) removido do Marcos — vive na aba lateral WhatsApp > Conversas.
 const WhatsAppBroadcast = lazy(() => import('./WhatsAppBroadcast'));
 const WhatsAppAutomations = lazy(() => import('./WhatsAppAutomations'));
 const CrmFormularios    = lazy(() => import('./CrmFormularios'));
@@ -31,7 +31,7 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
   { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋', featureKey: 'marcos_formularios' },
   { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥', featureKey: 'marcos_contatos' },
   { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤', featureKey: 'marcos_disparo' },
-  { id: 'inbox',       label: 'Conversas',        icon: Inbox,        emoji: '💬', featureKey: 'marcos_inbox' },
+  // Aba "Conversas" (inbox) REMOVIDA do Marcos — agora vive na aba lateral WhatsApp > Conversas (unificada).
   // Instâncias (números de robô) saíram daqui — agora vivem só na área de
   // Integração (menu "Instâncias", /whatsapp/instances). Refactor isolamento.
   { id: 'automations', label: 'Automações',       icon: Zap,          emoji: '⚡', featureKey: 'marcos_automacoes' },
@@ -166,9 +166,6 @@ export default function MarcosLeads() {
               </TabsContent>
               <TabsContent value="broadcast" className="mt-0 h-full">
                 <WhatsAppBroadcast embedded />
-              </TabsContent>
-              <TabsContent value="inbox" className="mt-0 h-full">
-                <WhatsAppInbox embedded />
               </TabsContent>
               <TabsContent value="automations" className="mt-0 h-full">
                 <WhatsAppAutomations embedded />
