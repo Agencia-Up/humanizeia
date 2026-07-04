@@ -13,6 +13,10 @@ import {
   parseVehiclePhotos,
   normalizeText
 } from "./stock-normalizer.ts";
+import {
+  isPopularVehicleFromTaxonomy,
+  resolveCanonicalVehicleModelFromTaxonomy,
+} from "./vehicle-taxonomy.ts";
 
 export class V2StockSource implements StockSource, VehicleDetailSource {
   constructor(
@@ -53,6 +57,16 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
         if (classified.value === "unknown") return false;
         return classified.value === filters.tipo;
       });
+    }
+
+    // "Carro popular" e um segmento de mercado brasileiro, nao sinonimo de
+    // qualquer veiculo barato. A taxonomia exclui SUV/picape e modelos medios.
+    if (filters.popular === true) {
+      pool = pool.filter((v) => isPopularVehicleFromTaxonomy({
+        brand: v.markName,
+        model: v.modelName,
+        version: v.versionName,
+      }));
     }
 
     // C) Filtro rígido por teto de preço (broad não relaxa!)
@@ -112,13 +126,14 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
 
       const isAmbiguous = (fingerprintCounts.get(key) || 0) > 1;
       const classifiedType = classifyVehicleType(v.category, v.bodyType, v.source, { brand: v.markName, model: v.modelName, version: v.versionName });
+      const canonicalModel = resolveCanonicalVehicleModelFromTaxonomy({ brand: v.markName, model: v.modelName, version: v.versionName });
       const photos = parseVehiclePhotos(key, v.pictureJs);
       const photoIds = isAmbiguous ? [] : photos.map(p => p.id);
 
       items.push({
         vehicleKey: key,
         marca: this.cleanPart(v.markName || ""),
-        modelo: this.cleanPart(v.modelName || ""),
+        modelo: canonicalModel || this.cleanPart(v.modelName || ""),
         ano: v.year!,
         preco: v.saleValue!,
         km: v.km !== null ? v.km : undefined,

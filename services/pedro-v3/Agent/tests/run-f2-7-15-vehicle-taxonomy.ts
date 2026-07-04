@@ -96,7 +96,7 @@ async function main(): Promise<void> {
   const suvModels = suvs.items.map((v) => v.modelo).sort().join(",");
   check("stock: filtro suv encontra Fastback/Pulse/Renegade mesmo com source ruim", /Fastback/.test(suvModels) && /Pulse/.test(suvModels) && /Renegade/.test(suvModels), suvModels);
   check("stock: filtro suv nao traz picapes", suvs.items.every((v) => v.tipo === "suv"), JSON.stringify(suvs.items));
-  check("stock: filtro suv agora acha CRV e Tiggo 2 (feed sem carroceria) - fim do 'nao tenho SUV'", /CRV/.test(suvModels) && /Tiggo 2/.test(suvModels), suvModels);
+  check("stock: filtro suv agora acha CR-V e Tiggo 2 (feed sem carroceria) - fim do 'nao tenho SUV'", /CR-?V/.test(suvModels) && /Tiggo 2/.test(suvModels), suvModels);
 
   const sedans = await source.search(ref, { tipo: "sedan" });
   check("stock: Onix Plus entra como sedan", sedans.items.some((v) => v.modelo === "Onix Plus"));

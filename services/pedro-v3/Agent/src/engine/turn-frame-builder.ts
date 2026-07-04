@@ -13,6 +13,7 @@ import { normalizeText } from "./catalog-utils.ts";
 const PHOTO_RX = /\bfotos?\b|\bimagens?\b|\bfotografi/;
 const STORE_RX = /\bloja\b|\bendereco\b|\bfica\s+onde\b|\bonde\s+(fica|e|esta)\b|\bhorario\b|\bque\s+horas\b|\bunidade\b|\bfuncionament/;
 const MORE_RX = /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+alguma|\btem\s+outr/;
+const POPULAR_RX = /\bpopular(?:es)?\b/;
 const MEMORY_Q_RX = /\bqual\b[^?]*\b(carro|ve[ií]culo|foto|modelo)\b|\bpedi\b|\bmandei\b|\bmostrei\b|\bmandou\b|\benviou\b|\bquais?\b[^?]*\bfotos?\b/;
 
 function mentionsVehicleType(norm: string): string | null {
@@ -31,6 +32,7 @@ export function buildFrameSignals(block: string, interpretation: TurnInterpretat
     mentionsPhoto: PHOTO_RX.test(norm),
     mentionsStore: STORE_RX.test(norm),
     mentionsMoreOptions: MORE_RX.test(norm),
+    mentionsPopular: POPULAR_RX.test(norm),
     mentionsVehicleType: mentionsVehicleType(norm),
     isMemoryQuestion: (hasQ || /\bqual\b|\bquais\b/.test(norm)) && MEMORY_Q_RX.test(norm),
     relation: interpretation.relation,

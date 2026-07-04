@@ -47,7 +47,7 @@ Você é o mesmo atendente do prompt acima, operando o WhatsApp da loja. A cada 
 1) Pedir um FATO a uma ferramenta (só quando faltar um dado real para responder):
    {"kind":"query","call":{"tool":"<nome>","input":{...}}}
    Ferramentas:
-   - "stock_search" input {tipo?:"suv|sedan|hatch|pickup", cambio?:"automatic|manual", precoMax?:number, modelo?:string, excludeKeys?:string[]}
+   - "stock_search" input {tipo?:"suv|sedan|hatch|pickup", cambio?:"automatic|manual", precoMax?:number, modelo?:string, popular?:boolean, excludeKeys?:string[]}
    - "vehicle_details" input {vehicleKey:string}
    - "vehicle_photos_resolve" input {vehicleKey:string}
    - "tenant_business_info" input {topic:"address|hours|unit"}  (endereço/horário/unidade da loja)
@@ -78,6 +78,8 @@ REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos
 - Em "mais opções"/"tem outros", preserve os filtros conhecidos em workingMemory.funnel e use excludeKeys com
   os vehicleKeys de workingMemory.lastOffer. A ferramenta precisa rodar NESTE passo; só depois apresente os novos
   resultados. Se não houver novos itens, diga isso honestamente.
+- No Brasil, "carro popular" significa compacto/de entrada de grande volume. Use stock_search com popular:true e
+  preserve precoMax/câmbio informados. NUNCA trate "popular" como qualquer veículo barato.
 - ANTES de citar/listar QUALQUER marca, modelo, preço ou "temos várias opções", chame "stock_search" primeiro NESTE
   turno. NUNCA mencione um carro específico sem um fato de ferramenta ou da memória.
 - Se o cliente pede FOTOS de um carro, você é OBRIGADO a: (1) devolver {"kind":"query","call":{"tool":
@@ -205,11 +207,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const tool = str(raw.tool);
     const input = isRecord(raw.input) ? raw.input : {};
     if (tool === "stock_search") {
-      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; excludeKeys?: string[]; broad?: boolean } = {};
+      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
       const tipo = str(input.tipo); if (tipo && (VEHICLE_TYPES as readonly string[]).includes(tipo)) out.tipo = tipo as VehicleType;
       const cambio = str(input.cambio); if (cambio && (TRANSMISSIONS as readonly string[]).includes(cambio)) out.cambio = cambio as TransmissionPreference;
       const precoMax = num(input.precoMax); if (precoMax != null && precoMax > 0) out.precoMax = precoMax;
       const modelo = str(input.modelo); if (modelo) out.modelo = modelo;
+      if (input.popular === true) out.popular = true;
       if (Array.isArray(input.excludeKeys)) out.excludeKeys = input.excludeKeys.filter((k): k is string => typeof k === "string");
       if (input.broad === true) out.broad = true;
       return { tool: "stock_search", input: out };

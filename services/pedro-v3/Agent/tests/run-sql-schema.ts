@@ -761,6 +761,29 @@ async function main(): Promise<void> {
   const starved = await findAt("2026-06-27T12:00:12.000Z", 999999, 12000);
   check("F2.7.6 SQL: starvation (oldest>=max) assenta mesmo sem quietar", starved.some((r) => r.conversation_id === RT));
 
+  const RT_STALE = "wa:deb:stale";
+  await db.query("select public.v3_upsert_conversation_routing($1::uuid, $2, $3, null, $4, $5::timestamptz)", [TENANT, RT_STALE, AGENT, "5511777770000", NOW]);
+  await db.query("select public.v3_ingest_inbox($1::uuid, 'deb-stale-e1', $2, $3::jsonb, $4::timestamptz)", [TENANT, RT_STALE, rawRedacted, NOW]);
+  await db.query("update public.v3_inbox set status='claimed', claimed_by='dead-worker', turn_id='dead-turn', claimed_at=$1::timestamptz where event_id='deb-stale-e1'", [NOW]);
+  await db.query(`
+    insert into public.v3_leases(conversation_id, tenant_id, owner, token, acquired_at, expires_at)
+    values ($1, $2::uuid, 'dead-worker', 'dead-token', $3::timestamptz, $4::timestamptz)
+  `, [RT_STALE, TENANT, NOW, "2026-06-27T12:01:00.000Z"]);
+  const recovered = await findAt("2026-06-27T12:03:01.000Z", 6000, 12000);
+  const recoveredInbox = await db.query<{ status: string; turn_id: string | null; last_error: string | null }>(
+    "select status, turn_id, last_error from public.v3_inbox where event_id='deb-stale-e1'",
+  );
+  const recoveredLease = await db.query<{ n: number }>("select count(*)::int n from public.v3_leases where conversation_id=$1", [RT_STALE]);
+  check(
+    "F2.19 SQL: claim orfao com lease expirado volta a pending e reaparece",
+    recoveredInbox.rows[0]?.status === "pending"
+      && recoveredInbox.rows[0]?.turn_id === null
+      && recoveredInbox.rows[0]?.last_error === "STALE_CLAIM_RECOVERED"
+      && recoveredLease.rows[0]?.n === 0
+      && recovered.some((row) => row.conversation_id === RT_STALE),
+    JSON.stringify({ inbox: recoveredInbox.rows[0], recovered, lease: recoveredLease.rows[0] }),
+  );
+
   await db.query("select public.v3_ingest_inbox($1::uuid, 'deb-orphan', 'wa:deb:orphan', $2::jsonb, $3::timestamptz)", [TENANT, rawRedacted, "2026-06-27T12:00:00.000Z"]);
   const withOrphan = await findAt("2026-06-27T12:00:09.000Z", 6000, 12000);
   check("F2.7.6 SQL: conversa SEM roteamento nao aparece (join exige routing)", !withOrphan.some((r) => r.conversation_id === "wa:deb:orphan"));

@@ -1,5 +1,14 @@
 # 01 - Status Atual do Pedro v3
 
+## 2026-07-04 - F2.19 Taxonomia de mercado + recuperacao de turnos
+
+- Corrigida a identidade comercial de variantes: `C3 Aircross` permanece SUV e e exibido como Aircross; `C3` comum permanece hatch.
+- `carro popular` agora e um filtro tipado de segmento brasileiro, baseado na planilha factual de categorias, e nao sinonimo de qualquer carro barato.
+- O cerebro central injeta `popular:true` na busca quando o lead pede popular, preservando teto, cambio e exclusoes.
+- Corrigido o silencio apos crash/restart: claims com lease expirada deixam de ficar eternamente em `claimed` e voltam ao poller sem redispatch externo.
+- Prova no estoque real do piloto: populares ate R$ 50 mil retornam Sandero, 208 e HB20; C3 Aircross/CR-V ficam excluidos.
+- Gates: `test:f219` 12 OK, `test:sql` 84 OK, `test:f2715` 25 OK, `test:all` EXIT 0 e `tsc --noEmit` limpo.
+
 > Atualize ao fim de cada etapa relevante. E o primeiro arquivo que qualquer executor le.
 > Ultima atualizacao: 2026-06-30 - por Codex. **F2.7.13 R1 APROVADA E ENDURECIDA: prioridade do turno atual vence memoria antiga.** Corrigido o fix parcial do Claude: busca explicita agora usa TenantCatalog dinamico + interpretacao somente quando o termo literal aparece na fala do lead; sem marcas hardcoded; filtros combinados (marca/modelo/tipo + teto); multi-modelo/multi-marca consultam todos; `slots.interesse` deixa de acumular historico/lixo e passa a representar a intencao comercial atual; `deriveModelContext` remove interesse velho quando o turno atual traz intencao nova. Testes: `tsc --noEmit` limpo; `test:f276` 27 OK; `test:f277` 21 OK; `test:f2713` 35 OK; vizinhas f274/f278/f2712 verdes; `test:all` EXIT=0. Scan engine sem `BRANDS`, listas hardcoded ou `msg.includes`. Aguardando commit/push controlado.
 
