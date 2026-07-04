@@ -393,8 +393,14 @@ export function extractLeadSlots(args: {
   const parcelaVal = roleVal("parcela", "parcelaDesejada");
   if (parcelaVal != null) add({ op: "set_slot", slot: "parcelaDesejada", value: parcelaVal, confidence: 0.9, sourceTurnId: turnId }, "parcelaDesejada");
 
-  if (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm)) {
-    add({ op: "set_slot", slot: "entrada", value: 0, confidence: 0.98, sourceTurnId: turnId }, "entrada");
+  // LLM-first (missão SDR): NEGAÇÃO a uma pergunta de ENTRADA = entrada zero (MEMÓRIA, p/ o cérebro não repergunta e
+  // seguir no financiamento). "não"/"tenho não"/"não tenho"/"não tenho dinheiro pra entrada"/"não dá"/"não consigo" -> 0.
+  // Bare "não"/"tenho não" só quando entrada foi PERGUNTADA (expected); "... entrada" explícito vale mesmo espontâneo.
+  const entradaNegada =
+    (expected === "entrada" && (/\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+da\b|\bnao\s+consigo\b|\bnao\s+posso\b|\bsem\s+(?:dinheiro|grana|condic)/.test(norm) || /^(?:nao|nem)\b/.test(norm)))
+    || /\bnao\s+(?:tenho|vou|posso|consigo|pretendo)\b[^.?!]{0,25}\bentrada\b|\bsem\s+condic[^.?!]{0,20}\bentrada\b/.test(norm);
+  if (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm) || entradaNegada) {
+    add({ op: "set_slot", slot: "entrada", value: 0, confidence: entradaNegada ? 0.9 : 0.98, sourceTurnId: turnId }, "entrada");
   } else {
     const entradaVal = roleVal("entrada", "entrada");
     if (entradaVal != null) add({ op: "set_slot", slot: "entrada", value: entradaVal, confidence: 0.9, sourceTurnId: turnId }, "entrada");
@@ -417,9 +423,14 @@ export function extractLeadSlots(args: {
   const mentionsVehicle = parseVehicleType(leadMessage) != null || /\b(carro|veiculo|modelo)\b/.test(norm) || /\b\d{1,3}\s*mil\b/.test(norm)
     || claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model");
   const looksLikeBuyRequest = buyVerb && mentionsVehicle;
+  // LLM-first (missão): "tenho não"/"não tenho"/"não possuo" respondendo à pergunta de TROCA = NÃO (possuiTroca=false).
+  // parseBooleanAnswer("tenho não") casaria "tenho"->true (ERRADO); por isso a negação explícita vem ANTES. Mata a
+  // repetição vista no eval real (agente repetia "tem carro pra troca?" porque não entendeu "tenho não").
+  const trocaNeg = /\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+possuo\b|\bpossuo\s+nao\b/.test(norm);
+  const trocaPos = !trocaNeg && /\btenho\s+sim\b|\bpossuo\s+sim\b/.test(norm);
   let deniedTradeVehicle = false;
   if (explicitTrade || explicitNoTrade || expected === "possuiTroca") {
-    const value = explicitNoTrade ? false : explicitTrade ? true : (looksLikeBuyRequest ? null : parseBooleanAnswer(leadMessage));
+    const value = (explicitNoTrade || trocaNeg) ? false : (explicitTrade || trocaPos) ? true : (looksLikeBuyRequest ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
       add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");

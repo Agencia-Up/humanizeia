@@ -589,10 +589,13 @@ async function main(): Promise<void> {
     const decBase = { action: "reply", target: null, reasonCode: "continuity_conduct", reasonSummary: "", confidence: 0.8, responsePlan: { guidance: "" }, effectPlan: [], decisionMutations: [], policyChecks: [] } as unknown as TurnDecision;
     const gV = conductDecision({ decision: decBase, state: stVisitaTrue, policy: policy2, turnId: "tV" }).responsePlan.guidance;
     check("R10-2 visita=true + falta só horário -> conductor sugere DIA/HORÁRIO", /hor[aá]rio|\bdia\b/i.test(gV), gV);
-    // CPF na HORA CERTA: liberado quando o lead vai FINANCIAR (precisa do CPF p/ simular); antes disso -> deny.
-    check("R10-2 CPF SEM financiamento (qualificação inicial) -> deny", denies(txt("Qual o seu CPF?")));
+    // CPF na HORA CERTA (missão SDR real): dado de FECHAMENTO — liberado SÓ ao AGENDAR a visita (interesseVisita=true
+    // ou diaHorario known). Intenção de financiamento NÃO libera (pedir CPF logo após "quero financiar" é robótico).
+    check("R10-2 CPF na qualificação inicial -> deny", denies(txt("Qual o seu CPF?")));
     const stFin = base({ slots: { ...base().slots, formaPagamento: { status: "known", value: "financiamento", confidence: 1, updatedAt: NOW } } as ConversationState["slots"] });
-    check("R10-2 CPF com financiamento definido -> SEM deny (hora certa)", !denies(txt("Para simular o financiamento, qual o seu CPF?"), stFin));
+    check("R10-2 CPF só com financiamento (sem agendar) -> DENY (CPF é do fechamento)", denies(txt("Para simular o financiamento, qual o seu CPF?"), stFin));
+    const stVisit = base({ slots: { ...base().slots, interesseVisita: { status: "known", value: true, confidence: 1, updatedAt: NOW } } as ConversationState["slots"] });
+    check("R10-2 CPF ao AGENDAR visita (interesseVisita=true) -> SEM deny (hora certa)", !denies(txt("Show! Pra confirmar a visita, qual o seu CPF?"), stVisit));
   }
 
   // POL-GROUND-STOCK (R10-3 Codex) — aterramento EXATO: formatação (espaço/case) colapsa, mas modelos DISTINTOS

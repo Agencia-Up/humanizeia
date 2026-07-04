@@ -44,7 +44,7 @@ import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
 import { extractLeadSlots, resolveSelectedVehicle } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
-import { reconcileObjectiveWithQuestion, type SdrQualificationPolicy } from "./sdr-conductor.ts";
+import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import {
@@ -92,16 +92,25 @@ export type CentralTurnArgs = {
   // AUTORIA ÚNICA (audit): quando true, o cérebro AUTORA um ResponseDraft e o engine RENDERIZA aterrado (sem 2º
   // LLM/compose); deny volta ao MESMO cérebro; esgotou -> fallback técnico honesto. central_active liga isto.
   readonly singleAuthor?: boolean;
+  // LLM-FIRST (missão SDR real): quando true, o engine NÃO gerencia objetivo de funil (nada de
+  // reconcileObjectiveWithQuestion) — o funil vira contexto read-only e o CÉREBRO decide a próxima pergunta/condução.
+  // Guardrails (grounding/foto/CPF/erro/≤1 pergunta) continuam. central_active liga isto; legado mantém false.
+  readonly llmFirst?: boolean;
 };
 
 export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "technical_fallback" | "legacy_compose";
 
-function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[]): string | null {
+function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], llmFirst: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
-  // "mais opções" SEMPRE exige uma nova busca (não há alternativa a listar). Uma busca genérica (só tipo/modelo) NÃO é
-  // forçada aqui: o SDR pode legitimamente ACOLHER e perguntar o nome antes de listar (Brain/protocolo). A trava de
-  // contexto do turno atual é garantida por clearStalePhotoIntent (P0-A) + guard de foto (P0-B), não por forçar busca.
+  // P0-search (missão): em LLM-first, uma pergunta de DISPONIBILIDADE/estoque do turno atual (tipo/modelo/popular/
+  // orçamento -> currentTurnIntent="search") EXIGE stock_search relevante antes do final — senão o cérebro responde o
+  // assunto anterior sem buscar ("tem Onix?" virava repetição da loja). Gated em llmFirst para não forçar busca no
+  // legado (onde o SDR pode acolher+perguntar o nome antes de listar — F2.13 [3c]).
+  if (llmFirst && frame.signals.currentTurnIntent === "search" && !wasObserved("stock_search")) {
+    return "O cliente está perguntando DISPONIBILIDADE/estoque NESTE turno (tipo/modelo/popular/orçamento). Chame stock_search com os filtros do turno atual ANTES de responder — não responda o assunto anterior; se não houver, seja honesto.";
+  }
+  // "mais opções" SEMPRE exige uma nova busca (vale nos dois modos).
   if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search")) {
     return "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final.";
   }
@@ -398,15 +407,20 @@ function authorFromBrainDraft(args: {
   readonly identities: readonly RememberedVehicleIdentity[]; // identidade (memória) só p/ NOMEAR (marca/modelo/ano)
   readonly ctx: TurnContext;
   readonly turnId: string;
+  readonly selectionTurn?: boolean;   // P0-sel: o lead está selecionando um veículo -> feedback específico se citar atributo
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
     return { ok: false, feedback: "Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre." };
   }
+  // P0-sel (missão): numa SELEÇÃO, quando o grounding falha (o cérebro citou km/cor/câmbio/preço sem vehicle_details), o
+  // feedback é ESPECÍFICO — acolha a escolha e ofereça o próximo passo, NÃO cite atributo sem consultar. (Sem isto o
+  // cérebro insistia em descrever o carro e degradava em technical_fallback.)
+  const SELECTION_ATTR_FEEDBACK = "Você pode ACOLHER a escolha do cliente e oferecer o próximo passo (fotos, detalhes ou condições), mas NÃO cite km/cor/câmbio/preço/ano sem antes consultar vehicle_details do carro selecionado. Responda curto e humano, sem atributos.";
   // P0-B (audit trava de contexto): o TURNO ATUAL não pede foto? Então a resposta não pode ter send_media nem reasonCode
   // de foto (o texto é checado após o render). Deny -> feedback ao MESMO cérebro (re-decide a busca/pergunta atual).
   const photoTurn = isPhotoRequestBlock(args.leadMessage) || isPhotoMemoryQuestionBlock(args.leadMessage);
-  if (!photoTurn && (args.finalDecision.proposedEffects.some((e) => e.kind === "send_media") || reasonCodeMentionsPhoto(args.finalDecision.reasonCode))) {
+  if (!photoTurn && (args.finalDecision.proposedEffects.some((e) => e.kind === "send_media") || reasonCodeIsPhotoSend(args.finalDecision.reasonCode))) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
   const brainEffects = isPhotoRequestBlock(args.leadMessage) ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
@@ -437,6 +451,7 @@ function authorFromBrainDraft(args: {
   try {
     composed = { draft, text: ResponseRenderer.render(draft, realFacts, args.ctx.state, args.identities) };
   } catch (err) {
+    if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
   }
   // P0-B (audit): mesmo sem send_media/reasonCode, o TEXTO renderizado não pode PROMETER foto num turno que não pede foto.
@@ -449,15 +464,20 @@ function authorFromBrainDraft(args: {
   }
   // Valida contra fatos REAIS (identidade de memória NÃO aterra atributo/oferta).
   const gv = PolicyEngine.validateResponse(composed, realFacts, decision0, args.ctx);
-  if (hasDeny(gv)) return { ok: false, feedback: sanitizePolicyFeedback(gv) };
+  if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
   return { ok: true, decision: decision0, composed, proposedEffects };
 }
 
 // B2 (audit): para pergunta de ATRIBUTO do veículo SELECIONADO, o turno EXIGE um vehicle_details BEM-SUCEDIDO do MESMO
 // vehicleKey antes do final. Sem esse fato -> mensagem que força a consulta (o cérebro devolve query). Detalhe de OUTRO
 // vehicleKey NÃO satisfaz. Sem veículo selecionado -> null (o cérebro pede esclarecimento; nunca consulta arbitrário).
+// P0-sel (missão): SÓ exige detalhe quando o lead REALMENTE pergunta um atributo (km/cor/câmbio/preço/ano/consumo/...).
+// Uma SELEÇÃO ("gostei do segundo", "esse") pode vir classificada como asks_vehicle_detail pelo preparer — mas sem
+// pergunta de atributo NÃO deve forçar vehicle_details (o cérebro acolhe a escolha; citar atributo é barrado no validate).
+const ATTR_QUESTION_RX = /\bkm\b|quilometr|rodad|\bcor\b|\bcambio\b|c[aâ]mbio|autom[aá]tic|\bmanual\b|\bpre[çc]o\b|\bvalor\b|quanto\s+(?:custa|sai|fica|e)\b|\bano\b|\bconsumo\b|\bmotor\b|\bversao\b|vers[aã]o|\bopcionais\b|\bcompleto\b|quantos?\s+(?:km|quilometr)/;
 function requireVehicleDetailBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[]): string | null {
   if (frame.signals.relation !== "asks_vehicle_detail") return null;
+  if (!ATTR_QUESTION_RX.test(normalizeText(frame.block))) return null;   // seleção pura -> não força detalhe
   const selectedKey = frame.workingMemory.selectedVehicle?.vehicleKey ?? null;
   if (!selectedKey) return null;
   const hasDetail = observations.some((o) => o.tool === "vehicle_details" && o.ok && o.data.vehicle.vehicleKey === selectedKey);
@@ -509,11 +529,18 @@ export function clearStalePhotoIntent(wm: WorkingMemoryV1, currentTurnIntent: Cu
 
 // ── P0-B (audit): num turno que NÃO pede foto, a resposta não pode PROMETER foto (texto), ter reasonCode de foto,
 //    nem send_media. Guarda determinística no author + fallback. ─────────────────────────────────────────────────
-const PHOTO_PROMISE_RX = /\baqui\s+est[aã]o?\s+as\s+fotos|\bsegue[m]?\s+as?\s+fotos?|\bte\s+(?:envio|mando|enviei|mandei|envie)\s+(?:as\s+)?fotos|\benviando\s+as\s+fotos|\bmandando\s+as\s+fotos|\bfotos\s+do\s+carro\s+que\s+voce\s+pediu|\bveja\s+as\s+fotos|\bconfira\s+as\s+fotos|\bestou\s+enviando/;
-function reasonCodeMentionsPhoto(code: string | null | undefined): boolean {
-  return typeof code === "string" && /send_(?:vehicle_)?photos|foto|photo/i.test(code);
+// Fix 1 (diag conv2): reasonCode por ALLOW/DENY EXATO — bloqueia SÓ códigos que significam ENVIO/promessa ATIVA de foto.
+// NUNCA bloqueia códigos de RECUSA/negação/continuidade ("respect_photo_decline_and_offer_next_step" etc.) que contêm a
+// substring "photo" mas NÃO enviam nada (era a causa do technical_fallback do T10).
+const PHOTO_SEND_REASON_CODES = new Set(["send_photos", "send_vehicle_photos", "photo_send", "vehicle_photo_send", "send_media_photo"]);
+function reasonCodeIsPhotoSend(code: string | null | undefined): boolean {
+  return typeof code === "string" && PHOTO_SEND_REASON_CODES.has(code.trim().toLowerCase());
 }
-function textPromisesPhoto(text: string): boolean { return PHOTO_PROMISE_RX.test(normalizeText(text)); }
+// Fix 2 (diag conv2): SÓ ENVIO ATIVO/promessa assertiva de foto — NUNCA uma OFERTA interrogativa ("quer que eu te envie
+// as fotos?", "posso te mandar fotos?", "prefere fotos ou condições?"). Verbos no INDICATIVO (vou/estou/enviei/mandei) +
+// "aqui estão"/"segue" = envio ativo; o subjuntivo "envie" (após "quer que eu te...") NÃO entra -> oferta passa.
+const PHOTO_ACTIVE_SEND_RX = /\baqui\s+est[aã]o?\s+as\s+fotos\b|\bseguem?\s+(?:as\s+)?fotos\b|\b(?:vou|irei|vamos)\s+(?:te\s+|lhe\s+)?(?:enviar|mandar)\s+(?:as\s+)?fotos\b|\bestou\s+(?:te\s+|lhe\s+)?(?:enviando|mandando)\s+(?:as\s+)?fotos\b|\b(?:te\s+|lhe\s+)?(?:enviei|mandei)\s+(?:as\s+)?fotos\b|\benviando\s+as\s+fotos\b|\bmandando\s+as\s+fotos\b|\bfotos\s+do\s+carro\s+que\s+voce\s+pediu\b/;
+function textPromisesPhoto(text: string): boolean { return PHOTO_ACTIVE_SEND_RX.test(normalizeText(text)); }
 const PHOTO_NOT_REQUESTED_FEEDBACK = "O cliente NÃO pediu fotos neste turno — ele pediu outra coisa (provavelmente uma busca). NÃO prometa nem envie fotos e NÃO use reasonCode de foto. Responda o que ele pediu AGORA: se for busca de carro (tipo/modelo/orçamento/popular/mais opções), devolva {\"kind\":\"query\",\"call\":{\"tool\":\"stock_search\",...}} e depois liste; senão responda a pergunta atual dele.";
 
 // ── P0-C (audit): EXECUTOR DETERMINÍSTICO de foto. Usado no single-author quando o cérebro NÃO autorou resposta
@@ -627,7 +654,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let brainSteps = 0;
       // AUTORIA ÚNICA (audit): estado do caminho single-author.
       const singleAuthor = args.singleAuthor ?? false;
+      const llmFirst = args.llmFirst ?? false;   // LLM-first: engine não gerencia objetivo de funil (só valida)
       const identities = buildRememberedIdentities(contextState); // identidade LEMBRADA (marca/modelo/ano) — só p/ NOMEAR
+      // P0-sel (missão): o lead está SELECIONANDO um veículo da última lista/foco ("gostei do segundo", "esse", ordinal)?
+      // Numa seleção o cérebro pode dar um final NATURAL sem vehicle_details (citar atributo é barrado no validate, com
+      // feedback específico "acolha a escolha, não cite atributo sem vehicle_details").
+      const selectionTurn = resolveSelectedVehicle(leadMessage, contextState, ctx.claimExtractor) != null;
       let authoredComposed: RenderedResponse | null = null;
       let authoredDecision: TurnDecision | null = null;
       let authoredProposedEffects: ProposedEffectPlan[] | null = null;
@@ -668,7 +700,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               if (brainSteps + 1 < brainMaxSteps) continue; else break;
             }
           }
-          const missingTool = requiredToolBeforeFinal(frame, observations);
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst);
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             observations.push({ tool: frame.signals.mentionsStore ? "tenant_business_info" : "stock_search", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
             continue;
@@ -682,7 +714,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -785,7 +817,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           responseSource = "deterministic_recall";
         }
         const degraded = responseSource === "technical_fallback";
-        if (sdrPolicy && !degraded) effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: sdrPolicy });
+        // LLM-FIRST (missão): o engine NÃO gerencia objetivo de funil. `stripAllObjectiveMutations` garante que nenhum
+        // objetivo de funil seja persistido (funil = contexto read-only; a LLM decide a condução). Fora do llm_first,
+        // `reconcileObjectiveWithQuestion` continua persistindo o objetivo = pergunta REALMENTE enviada (legado).
+        if (llmFirst) effectiveDecision = stripAllObjectiveMutations(effectiveDecision);
+        else if (sdrPolicy && !degraded) effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: sdrPolicy });
         turnOutput = { decision: effectiveDecision, composed, facts, loopExhausted: false, terminalSafe: degraded, steps: brainSteps };
       } else {
         // ── LEGACY (compose por DecisionLlm): caminho anterior, intocado (shadow/testes de engine). ──

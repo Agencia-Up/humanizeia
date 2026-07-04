@@ -13,7 +13,7 @@ import { OpenAiAgentBrain } from "../src/adapters/llm/openai-agent-brain.ts";
 import { PromptBoundConversationAdapter } from "../src/adapters/llm/prompt-bound-conversation.ts";
 import { createOpenAiModelFactory } from "../src/engine/openai-canary-root.ts";
 import { runCentralConversationTurn, applyAcceptedPhotoActionOutcome } from "../src/engine/central-engine.ts";
-import { RuntimeConfigBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
+import { RuntimeConfigBusinessInfoSource, type TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
 import { commitEffectOutcome } from "../src/engine/effect-outcome-commit.ts";
 import { loadPersistedWorkingMemory } from "../src/engine/working-memory.ts";
 import { InMemoryPersistence, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
@@ -85,12 +85,13 @@ function possuiTrocaStr(state: ConversationState | undefined): string {
   return s?.status && s.status !== "unknown" ? `${s.status}:${JSON.stringify(s.value)}` : "unknown";
 }
 
-export async function runCentralConversation(assembly: RealAssembly, stack: CentralStack, convId: string, steps: readonly (readonly string[])[], opts: { readonly maxLlmCalls?: number } = {}): Promise<CentralTurnCapture[]> {
+export async function runCentralConversation(assembly: RealAssembly, stack: CentralStack, convId: string, steps: readonly (readonly string[])[], opts: { readonly maxLlmCalls?: number; readonly singleAuthor?: boolean; readonly llmFirst?: boolean; readonly businessInfo?: TenantBusinessInfoSource } = {}): Promise<CentralTurnCapture[]> {
   const maxLlmCalls = opts.maxLlmCalls ?? Infinity;
   const base = { ms: Date.parse("2026-07-01T09:00:00.000Z") };
   const clock = { now: () => new Date(base.ms).toISOString() };
   const persistence = new InMemoryPersistence(clock as never, new FakeIdGen());
-  const businessInfo = new RuntimeConfigBusinessInfoSource(assembly.runtimeConfig);
+  // Fidelidade central_active: fonte de negócio do PROMPT (não RuntimeConfig que devolve null); parametrizável.
+  const businessInfo = opts.businessInfo ?? new RuntimeConfigBusinessInfoSource(assembly.runtimeConfig);
 
   const seed = persistence.begin();
   seed.casState(convId, 0, createInitialState({ conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: null, now: clock.now() }));
@@ -126,6 +127,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
         workerId: "central-eval", turnId, leaseTtlMs: 120_000, portalPromptSha256: assembly.promptSha,
         limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 4, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
         providerCapability: { send_message: "none", send_media: "none" },
+        singleAuthor: opts.singleAuthor ?? false, llmFirst: opts.llmFirst ?? false,
       });
     } catch (e) { error = String((e as Error)?.message ?? e).slice(0, 160); }
 
@@ -154,6 +156,8 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       response: sanitize(r?.status === "committed" ? r.composedText : ""),
       status: r?.status ?? (error ? "error" : "unknown"),
       reasonCode: r?.status === "committed" ? r.decision.reasonCode : (r?.status === "commit_failed" ? `commit_failed:${r.reason.slice(0, 40)}` : undefined),
+      responseSource: r?.status === "committed" ? r.responseSource : undefined,
+      policyFeedback: r?.status === "committed" ? r.policyFeedback.map((f) => sanitize(f).slice(0, 200)) : undefined,
       terminalSafe: r?.status === "committed" ? r.terminalSafe : false,
       brainSteps: r?.status === "committed" ? r.brainSteps : 0,
       llmCallsInTurn: allCalls.length,

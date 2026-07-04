@@ -366,7 +366,9 @@ export function conductDecision(args: {
 }
 
 // R10-1: strip de TODAS as mutações de objetivo (o texto real manda) — set/supersede/defer + activate no efeito.
-function stripAllObjectiveMutations(decision: TurnDecision): TurnDecision {
+// Exportado: o modo LLM-first do central_active usa isto NO LUGAR de reconcileObjectiveWithQuestion — nenhum objetivo
+// de funil é criado/gerenciado pelo engine; o funil vira contexto read-only e a LLM decide a próxima pergunta.
+export function stripAllObjectiveMutations(decision: TurnDecision): TurnDecision {
   return {
     ...decision,
     decisionMutations: decision.decisionMutations.filter((m) => m.op !== "set_planned_objective" && m.op !== "supersede_objective" && m.op !== "defer_objective"),

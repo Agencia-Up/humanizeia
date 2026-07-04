@@ -1272,3 +1272,24 @@ Corrigido por 4 camadas determinísticas (autoria única preservada):
   **tsc EXIT 0; test:all EXIT 0** (F2.13 46 recuperado, F2.20 21, F2.19 market OK, F2.17 14, F2.18 20, sem regressão).
 - **NÃO rodei OpenAI. Sem commit/push/deploy.** Working tree sobre `main` 73b3ccab. Parado para auditoria Codex.
   Detalhe: handoff `Brain/2026-07-04-claude-p0-trava-contexto-foto.md`.
+
+### MISSÃO LLM-first central_active (cérebro decide, engine só valida) — 2026-07-04 (NÃO commitado, aguarda Codex)
+Diagnóstico→Brain (o único sequestro no central_active era reconcileObjectiveWithQuestion criando objetivo de funil).
+FEITO: flag `llmFirst` (central_active passa singleAuthor+llmFirst); em llmFirst o engine NÃO gerencia objetivo de funil
+(strip em vez de reconcile) — funil vira contexto read-only, a LLM conduz; prompt LLM-first; captura de negação de
+entrada/troca; CPF virou dado de FECHAMENTO (só ao agendar visita, não por financiamento). Offline `run-f2-21-llm-first-sdr.ts`
+**20 OK** (prova-chave: llm-first não cria objetivo, legado cria) + test:all/tsc verdes (F2.8 CPF atualizado, F2.13 46
+intacto). **2 conversas reais gpt-4.1-mini** (efeitos OFF, compose=0, ~US$0,09 cada): 1ª rodada reprovou (CPF cedo,
+degradação seleção/popular, repetição troca); **corrigi 1x + re-rodei**: CPF/popular/troca/encoding FIXADOS, financiamento
+sem entrada natural. AINDA falha (brain-behavior): "gostei do segundo" degrada (technical_fallback — precisa EXECUTOR
+DETERMINÍSTICO de seleção, espelho do P0-C), "tem Onix?" repetiu loja sem buscar. **1 rodada de correção feita, PARO para
+Codex.** Detalhe: `Brain/2026-07-04-claude-diagnostico-llm-first-central.md` + `-llm-first-impl-e-eval.md`.
+
+### DIAG conv2 + 3 correções de guarda over-aggressive (T4/T10) = PASS — 2026-07-04 (NÃO commitado)
+Run diagnóstico `diag:conv2` (observabilidade pura) revelou que T4/T10 NÃO eram não-compliância do modelo — eram MINHAS
+GUARDAS bloqueando drafts bons. Dono autorizou 3 correções pontuais (só guardas): (1) `reasonCodeIsPhotoSend` = match
+EXATO (não substring "photo" — desbloqueia "respect_photo_decline"); (2) `textPromisesPhoto` = só envio ATIVO (não oferta
+"quer que eu te envie as fotos?"); (3) POL-GROUND-YEAR = ano do NOME de veículo aterrado passa ("Honda CR-V 2010"), ano
+inventado bloqueia ("Honda CR-V 2020"/"ele é 2020"). Offline `run-f2-21` 35 OK (dg1..dg8), test:all+tsc verdes. **Re-eval
+conv 2 (US$0,058): PASS, 0 degradados — T4 e T10 respondem naturalmente.** NÃO commitado. Parado para Codex. Detalhe:
+`Brain/2026-07-04-claude-diag-conv2-causa-raiz.md`.

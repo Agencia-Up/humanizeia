@@ -293,11 +293,13 @@ export const PolicyEngine = {
       const qDeny = (why: string): PolicyVerdict[] => [{ policyId: "POL-QUESTION-OBJECTIVE", outcome: "deny", violations: [why] }];
       // (a) no MÁXIMO UMA pergunta por mensagem (sem exceção de CTA).
       if (asked.length > 1) return qDeny(`mais de uma pergunta no mesmo turno (${asked.join(",")})`);
-      // (b) CPF só na HORA CERTA (Codex "antes da hora"): liberado quando o lead vai FINANCIAR/CONSORCIAR (precisa
-      // do CPF p/ simular). Antes disso (qualificação inicial) é intrusivo -> deny.
-      const fpg = (ctx.state.slots as { formaPagamento?: { status?: string; value?: unknown } }).formaPagamento;
-      const cpfDueNow = fpg?.status === "known" && (fpg.value === "financiamento" || fpg.value === "consorcio");
-      if (asked.includes("cpf") && !cpfDueNow) return qDeny(`pergunta CPF antes da hora (so na fase de financiamento/consorcio)`);
+      // (b) CPF é dado de FECHAMENTO (missão SDR real): só na hora de AGENDAR a visita / fechar — quando o lead QUER
+      // visitar ou já deu dia/horário. Intenção de financiamento NÃO libera CPF (pedir CPF logo após "quero financiar"
+      // é intrusivo/robótico; o dono quer entrada/parcela/estimativa primeiro). Antes do fechamento -> deny.
+      const iv = (ctx.state.slots as { interesseVisita?: { status?: string; value?: unknown } }).interesseVisita;
+      const dh = (ctx.state.slots as { diaHorario?: { status?: string } }).diaHorario;
+      const cpfDueNow = iv?.value === true || dh?.status === "known";
+      if (asked.includes("cpf") && !cpfDueNow) return qDeny(`pergunta CPF antes da hora (CPF so ao agendar visita/fechar)`);
       // (c) reperguntar um slot JÁ CONHECIDO (incl. visita/horário já respondidos — não reoferte visita se já quer).
       const knownAsked = asked.find((s) => s !== "cpf" && slotKnown(s));
       if (knownAsked) return qDeny(`pergunta o slot '${knownAsked}' que ja e conhecido`);
@@ -476,6 +478,43 @@ export const PolicyEngine = {
         outcome: "deny",
         violations: brandModelViolations
       }];
+    }
+
+    // Fix 3 (diag conv2 / POL-GROUND-YEAR): o ANO que faz parte do NOME de um veículo ATERRADO é IDENTIDADE e é
+    // PERMITIDO ("Honda CR-V 2010" quando o CR-V 2010 está nos fatos). Mas um ano JUNTO ao modelo de um veículo aterrado
+    // que NÃO corresponde a NENHUM par (modelo, ano) real do turno é HALUCINAÇÃO -> deny; idem um ano atribuído por
+    // referência possessiva ao veículo SELECIONADO ("ele é 2020") que diverge do fato. Ano CORRETO passa; inventado bloqueia.
+    {
+      const t = normalizeText(composed.text);
+      const grounded: { marca?: string | null; modelo?: string | null; ano?: number | null; key: string }[] = [];
+      for (const f of facts) {
+        if (!f.ok) continue;
+        if (f.tool === "stock_search") for (const v of f.data.items) grounded.push({ marca: v.marca, modelo: v.modelo, ano: v.ano, key: v.vehicleKey });
+        if (f.tool === "vehicle_details") { const v = f.data.vehicle; grounded.push({ marca: v.marca, modelo: v.modelo, ano: v.ano, key: v.vehicleKey }); }
+      }
+      const validModelYear = new Set<string>();            // "modeloCanonico|ano" válidos do turno
+      const modelTokens = new Map<string, string>();       // modeloCanonico -> token de regex (separadores flexíveis)
+      for (const g of grounded) {
+        if (typeof g.ano !== "number" || !g.modelo) continue;
+        const canon = normalizeText(g.modelo).replace(/[\s\-]+/g, "");
+        if (!canon) continue;
+        validModelYear.add(`${canon}|${g.ano}`);
+        const parts = normalizeText(g.modelo).split(/[\s\-]+/).filter(Boolean).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+        if (parts.length) modelTokens.set(canon, parts.join("[\\s\\-]*"));
+      }
+      const yearDeny = (y: number, label: string): PolicyVerdict[] => [{ policyId: "POL-GROUND-YEAR", outcome: "deny", violations: [`ano ${y} não confere com um veículo aterrado (${label})`] }];
+      for (const [canon, token] of modelTokens) {
+        const re = new RegExp(`\\b${token}\\b[^\\d]{0,8}((?:19|20)\\d\\d)\\b`, "g");
+        for (let m = re.exec(t); m; m = re.exec(t)) {
+          if (!validModelYear.has(`${canon}|${Number(m[1])}`)) return yearDeny(Number(m[1]), canon);
+        }
+      }
+      const selKey = ctx.state.vehicleContext.selected?.key ?? null;
+      const selFact = selKey ? grounded.find((g) => g.key === selKey) : null;
+      if (selFact && typeof selFact.ano === "number") {
+        const pm = /\b(?:ele|ela|esse|este|desse|deste|nesse|neste|isso)\b[^\d]{0,12}((?:19|20)\d\d)\b/.exec(t);
+        if (pm && Number(pm[1]) !== selFact.ano) return yearDeny(Number(pm[1]), "veículo selecionado");
+      }
     }
 
     // 3. Validação do grounding monetário no texto final renderizado

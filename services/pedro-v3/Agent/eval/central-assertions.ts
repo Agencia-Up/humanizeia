@@ -6,6 +6,8 @@
 export type CentralTurnCapture = {
   turnIndex: number; turnId: string; leadBlock: string; response: string; status: string;
   reasonCode?: string; terminalSafe: boolean; brainSteps: number; llmCallsInTurn: number; promptExactInTurn: boolean;
+  responseSource?: string;                 // diagnóstico: brain_final|brain_retry|deterministic_*|technical_fallback
+  policyFeedback?: readonly string[];      // diagnóstico: feedbacks de deny devolvidos ao cérebro (revela por que degradou)
   toolsRequested: string[];
   observations: { tool: string; ok: boolean }[];
   effects: { kind: string; vehicleKey?: string; photoCount?: number; status: string }[];

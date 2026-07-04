@@ -336,6 +336,8 @@ export class PilotActiveRoot {
       allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
       // AUTORIA ÚNICA (audit): central_active NUNCA usa o 2º compose (DecisionLlm) — o cérebro autora o ResponseDraft.
       singleAuthor: true,
+      // LLM-FIRST (missão SDR real): o engine NÃO gerencia objetivo de funil — o cérebro conduz; guardrails só validam.
+      llmFirst: true,
     });
     const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
     const dispatched = await this.#dispatchIfCommitted(input, engine.status === "committed");
