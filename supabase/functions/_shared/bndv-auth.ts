@@ -3,7 +3,7 @@
 //
 // A API de Estoque BNDV (https://api-estoque.azurewebsites.net) tem DOIS modos de credencial:
 //  - LOGIN (fluxo oficial, cliente novo): POST /login { externalKey, password } -> token; depois o /graphql usa
-//    `Authorization: <token>` (token cru, conforme a doc oficial).
+//    `Authorization: Bearer <token>` (o /graphql exige o prefixo Bearer — testado na API real 2026-07-03).
 //  - BEARER (legado, ex.: Bruno): um Bearer Token estático salvo direto -> `Authorization: Bearer <api_token>`.
 //
 // Este módulo resolve o header de Authorization a partir das credenciais salvas (JSON em
@@ -86,8 +86,10 @@ export async function resolveBndvAuthHeader(creds: BndvCredentials): Promise<Bnd
     if (!token) {
       return { ok: false, error: "BNDV /login respondeu OK, mas não consegui extrair o token da resposta (formato inesperado)." };
     }
-    // Doc oficial: Authorization = token cru (sem "Bearer").
-    return { ok: true, authHeader: token, mode: "login" };
+    // IMPORTANTE: o /graphql EXIGE "Bearer <token>" (testado na API real em 2026-07-03: token cru retorna
+    // 400 "Context creation failed: Token inválido, faça o login"). A doc oficial dizia "token cru", mas na
+    // prática precisa do prefixo Bearer — igual ao modo legado.
+    return { ok: true, authHeader: token.startsWith("Bearer ") ? token : `Bearer ${token}`, mode: "login" };
   }
 
   const apiToken = creds.api_token?.trim();
