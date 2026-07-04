@@ -29,7 +29,7 @@ function check(name: string, pass: boolean, detail = ""): void {
 
 // Estoque com atributos completos (câmbio/cor/km) p/ o grounding aterrar vehicle_details do selecionado.
 const STOCK: VehicleFact[] = [
-  { vehicleKey: "rm:1", marca: "Citroen", modelo: "C3", ano: 2015, preco: 47990, tipo: "suv", km: 116000, cambio: "Manual", cor: "Branco" } as VehicleFact,
+  { vehicleKey: "rm:1", marca: "Citroen", modelo: "C3 Aircross", ano: 2015, preco: 47990, tipo: "suv", km: 116000, cambio: "Manual", cor: "Branco" } as VehicleFact,
   { vehicleKey: "rm:2", marca: "Honda", modelo: "CRV", ano: 2010, preco: 62990, tipo: "suv", km: 158000, cambio: "Automatico", cor: "Preto" } as VehicleFact,
   { vehicleKey: "rm:3", marca: "Peugeot", modelo: "2008", ano: 2021, preco: 66990, tipo: "suv", km: 80000, cambio: "Automatico", cor: "Branco" } as VehicleFact,
 ];

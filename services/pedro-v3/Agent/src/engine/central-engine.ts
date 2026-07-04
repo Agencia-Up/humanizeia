@@ -359,6 +359,31 @@ function toolCallSignature(call: CentralQueryCall): string {
   return `${call.tool}:${JSON.stringify(norm)}`;
 }
 
+export function enrichStockSearchCall(
+  call: QueryCall,
+  options: {
+    readonly popular: boolean;
+    readonly moreOptions: boolean;
+    readonly previousVehicleKeys: readonly string[];
+  },
+): QueryCall {
+  if (call.tool !== "stock_search") return call;
+  const previous = options.moreOptions
+    ? options.previousVehicleKeys.filter((key): key is string => typeof key === "string" && key.length > 0)
+    : [];
+  const excludeKeys = previous.length > 0
+    ? [...new Set([...(Array.isArray(call.input.excludeKeys) ? call.input.excludeKeys : []), ...previous])]
+    : call.input.excludeKeys;
+  return {
+    ...call,
+    input: {
+      ...call.input,
+      ...(options.popular ? { popular: true } : {}),
+      ...(excludeKeys ? { excludeKeys } : {}),
+    },
+  };
+}
+
 // AUTORIA ÚNICA: o cérebro autora um ResponseDraft; o engine RENDERIZA aterrado (SEM 2º LLM), valida contra os
 // fatos REAIS do turno e devolve ok|feedback. Identidade de memória só NOMEIA (marca/modelo/ano); km/cor/câmbio/
 // preço só de fato REAL do MESMO vehicleKey — o renderer falha FECHADO (feedback -> o cérebro consulta ou difere).
@@ -599,15 +624,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         }
         // P0-4 (audit): "mais opções" -> o ENGINE enriquece excludeKeys com a UNIÃO das keys da última oferta (não
         // depende de a LLM lembrar); preserva tipo/câmbio/teto. A chamada EXECUTADA (não só a proposta) carrega os excludes.
-        let execCall: QueryCall = call;
-        if (call.tool === "stock_search" && frame.signals.mentionsMoreOptions) {
-          const prevKeys = (contextState.lastRenderedOfferContext?.items ?? []).map((i) => i.vehicleKey).filter((k): k is string => typeof k === "string" && k.length > 0);
-          if (prevKeys.length > 0) {
-            const input = (call.input ?? {}) as { excludeKeys?: string[] };
-            const merged = [...new Set([...(Array.isArray(input.excludeKeys) ? input.excludeKeys : []), ...prevKeys])];
-            execCall = { ...call, input: { ...call.input, excludeKeys: merged } } as QueryCall;
-          }
-        }
+        const execCall = enrichStockSearchCall(call, {
+          popular: frame.signals.mentionsPopular === true,
+          moreOptions: frame.signals.mentionsMoreOptions,
+          previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
+        });
         const started = Date.parse(clock.now());
         let res: QueryResult;
         try {

@@ -161,11 +161,49 @@ const TAXONOMY_BY_SPECIFICITY = [...VEHICLE_TAXONOMY].sort((a, b) => {
   return compactTaxonomyText(b.brand).length - compactTaxonomyText(a.brand).length;
 });
 
-export function resolveVehicleTypeFromTaxonomy(input: {
+// Segmento de mercado brasileiro: modelos compactos/de entrada de grande volume.
+// A carroceria continua vindo da taxonomia completa; esta lista apenas responde ao
+// sentido comercial de "carro popular" e nunca transforma SUV/picape em popular.
+// Fonte: modelos de volume das abas HATCH/SEDA do workbook que gerou este arquivo.
+const POPULAR_TAXONOMY: readonly { readonly brand: string; readonly model: string }[] = [
+  { brand: "Chevrolet", model: "Agile" },
+  { brand: "Chevrolet", model: "Celta" },
+  { brand: "Chevrolet", model: "Onix" },
+  { brand: "Chevrolet", model: "Onix Plus" },
+  { brand: "Chevrolet", model: "Prisma" },
+  { brand: "Citroen", model: "C3" },
+  { brand: "Fiat", model: "Argo" },
+  { brand: "Fiat", model: "Cronos" },
+  { brand: "Fiat", model: "Grand Siena" },
+  { brand: "Fiat", model: "Mobi" },
+  { brand: "Fiat", model: "Palio" },
+  { brand: "Fiat", model: "Siena" },
+  { brand: "Fiat", model: "Uno" },
+  { brand: "Ford", model: "Fiesta" },
+  { brand: "Ford", model: "Ka" },
+  { brand: "Ford", model: "Ka Sedan" },
+  { brand: "Hyundai", model: "HB20" },
+  { brand: "Hyundai", model: "HB20S" },
+  { brand: "Nissan", model: "March" },
+  { brand: "Peugeot", model: "207" },
+  { brand: "Peugeot", model: "208" },
+  { brand: "Renault", model: "Clio" },
+  { brand: "Renault", model: "Kwid" },
+  { brand: "Renault", model: "Logan" },
+  { brand: "Renault", model: "Sandero" },
+  { brand: "Toyota", model: "Etios" },
+  { brand: "Toyota", model: "Etios Sedan" },
+  { brand: "Volkswagen", model: "Fox" },
+  { brand: "Volkswagen", model: "Gol" },
+  { brand: "Volkswagen", model: "up!" },
+  { brand: "Volkswagen", model: "Voyage" },
+];
+
+function resolveVehicleTaxonomyEntry(input: {
   readonly brand?: string | null;
   readonly model?: string | null;
   readonly version?: string | null;
-}): VehicleType | null {
+}): VehicleTaxonomyEntry | null {
   const brandNorm = compactTaxonomyText(input.brand);
   const modelNorm = compactTaxonomyText(input.model);
   const fullNorm = compactTaxonomyText(`${input.model ?? ""} ${input.version ?? ""}`);
@@ -178,15 +216,35 @@ export function resolveVehicleTypeFromTaxonomy(input: {
 
     const entryModel = compactTaxonomyText(entry.model);
     if (!entryModel) continue;
-
-    if (modelNorm === entryModel || fullNorm === entryModel) {
-      return entry.type;
-    }
-
-    if (fullNorm.includes(entryModel)) {
-      return entry.type;
-    }
+    if (modelNorm === entryModel || fullNorm === entryModel || fullNorm.includes(entryModel)) return entry;
   }
-
   return null;
+}
+
+export function resolveVehicleTypeFromTaxonomy(input: {
+  readonly brand?: string | null;
+  readonly model?: string | null;
+  readonly version?: string | null;
+}): VehicleType | null {
+  return resolveVehicleTaxonomyEntry(input)?.type ?? null;
+}
+
+export function resolveCanonicalVehicleModelFromTaxonomy(input: {
+  readonly brand?: string | null;
+  readonly model?: string | null;
+  readonly version?: string | null;
+}): string | null {
+  return resolveVehicleTaxonomyEntry(input)?.model ?? null;
+}
+
+export function isPopularVehicleFromTaxonomy(input: {
+  readonly brand?: string | null;
+  readonly model?: string | null;
+  readonly version?: string | null;
+}): boolean {
+  const resolved = resolveVehicleTaxonomyEntry(input);
+  if (!resolved || (resolved.type !== "hatch" && resolved.type !== "sedan")) return false;
+  const brand = compactTaxonomyText(resolved.brand);
+  const model = compactTaxonomyText(resolved.model);
+  return POPULAR_TAXONOMY.some((entry) => compactTaxonomyText(entry.brand) === brand && compactTaxonomyText(entry.model) === model);
 }

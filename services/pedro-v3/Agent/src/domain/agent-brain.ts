@@ -166,6 +166,7 @@ export type FrameSignals = {
   readonly mentionsPhoto: boolean;
   readonly mentionsStore: boolean;
   readonly mentionsMoreOptions: boolean;
+  readonly mentionsPopular?: boolean;
   readonly mentionsVehicleType: string | null;
   readonly isMemoryQuestion: boolean;
   readonly relation: TurnRelation;

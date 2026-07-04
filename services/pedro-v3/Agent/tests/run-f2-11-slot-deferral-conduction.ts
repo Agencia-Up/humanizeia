@@ -27,7 +27,7 @@ function check(name: string, pass: boolean, detail = ""): void {
 }
 
 const STOCK: VehicleFact[] = [
-  { vehicleKey: "rm:1", marca: "Citroen", modelo: "C3", ano: 2015, preco: 47990, tipo: "suv", km: 116000, cambio: "Manual", cor: "Branco" } as VehicleFact,
+  { vehicleKey: "rm:1", marca: "Citroen", modelo: "C3 Aircross", ano: 2015, preco: 47990, tipo: "suv", km: 116000, cambio: "Manual", cor: "Branco" } as VehicleFact,
   { vehicleKey: "rm:2", marca: "Honda", modelo: "CRV", ano: 2010, preco: 62990, tipo: "suv", km: 158000, cambio: "Automatico", cor: "Preto" } as VehicleFact,
   { vehicleKey: "rm:3", marca: "Peugeot", modelo: "2008", ano: 2021, preco: 66990, tipo: "suv", km: 80000, cambio: "Automatico", cor: "Branco" } as VehicleFact,
   { vehicleKey: "rm:4", marca: "Volkswagen", modelo: "Golf", ano: 2016, preco: 59990, tipo: "hatch", km: 90000, cambio: "Automatico", cor: "Prata" } as VehicleFact,

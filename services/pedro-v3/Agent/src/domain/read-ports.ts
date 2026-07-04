@@ -108,6 +108,7 @@ export type StockSearchFilters = {
   readonly cambio?: TransmissionPreference;
   readonly precoMax?: number;
   readonly modelo?: string;
+  readonly popular?: boolean;
   readonly broad?: boolean;
   readonly excludeKeys?: readonly string[];
 };
