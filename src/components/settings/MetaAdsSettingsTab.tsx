@@ -36,6 +36,9 @@ export function MetaAdsSettingsTab() {
   const [showToken, setShowToken] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAnother, setShowAddAnother] = useState(false);
+  // Caminho manual (colar token) é AVANÇADO — fica escondido por padrão. O normal
+  // é só clicar "Conectar com Facebook" acima e ir direto pro OAuth, sem token.
+  const [showManual, setShowManual] = useState(false);
 
   // Handle OAuth callback
   useEffect(() => {
@@ -173,11 +176,21 @@ export function MetaAdsSettingsTab() {
                 {isConnecting ? (
                   <Loader2 className="h-5 w-5 mr-2 animate-spin" />
                 ) : (
-                  <span className="mr-2 text-lg">f</span>
+                  <span className="mr-2 text-lg font-bold">f</span>
                 )}
-                Conectar Meta
+                Conectar com o Facebook
               </Button>
 
+              {!showManual ? (
+                <button
+                  type="button"
+                  onClick={() => setShowManual(true)}
+                  className="w-full text-center text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+                >
+                  Conectar manualmente com token (avançado)
+                </button>
+              ) : (
+              <>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <div className="h-px flex-1 bg-border" />
                 <span>ou conecte manualmente</span>
@@ -245,13 +258,16 @@ export function MetaAdsSettingsTab() {
                   Conectar e Detectar Contas
                 </Button>
               </div>
+              </>
+              )}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Guide - only show when not connected and no assets detected */}
-      {!connectedAccount && !hasDetectedAssets && (
+      {/* Guia do token — só no caminho manual (avançado). No fluxo normal (OAuth)
+          o usuário não precisa de token, então esconde. */}
+      {showManual && !connectedAccount && !hasDetectedAssets && (
         <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
           <CardHeader>
             <CardTitle className="text-lg">📋 Como conectar</CardTitle>
