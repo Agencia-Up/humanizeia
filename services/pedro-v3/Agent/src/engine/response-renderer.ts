@@ -7,7 +7,7 @@
 // ============================================================================
 import type { ResponseDraft, ResponsePart, QueryResult } from "../domain/decision.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
-import type { VehicleFact } from "../domain/types.ts";
+import type { VehicleFact, RememberedVehicleIdentity } from "../domain/types.ts";
 import { renderVehicleOfferList, formatBRL } from "./vehicle-offer-render.ts";
 
 type Segment = { kind: "text" | "inline" | "block"; text: string };
@@ -23,13 +23,16 @@ function indexVehicles(facts: QueryResult[]): Map<string, VehicleFact> {
   return vehicles;
 }
 
-function renderVehicleRef(part: Extract<ResponsePart, { type: "vehicle_ref" }>, vehicles: Map<string, VehicleFact>): string {
+// audit autoria única: NOME (marca/modelo/ano) pode vir de um FATO real OU de uma identidade LEMBRADA; km/câmbio/
+// cor/preço SÓ do fato REAL do MESMO vehicleKey (identidade não os carrega -> falha fechado sem fetch).
+function renderVehicleRef(part: Extract<ResponsePart, { type: "vehicle_ref" }>, vehicles: Map<string, VehicleFact>, identities: Map<string, RememberedVehicleIdentity>): string {
   const v = vehicles.get(part.vehicleKey);
-  if (!v) throw new Error(`vehicle_ref: veículo '${part.vehicleKey}' não encontrado nos fatos do turno`);
-  if (part.field === "marca") return v.marca;
-  if (part.field === "modelo") return v.modelo;
-  if (part.field === "ano") return v.ano.toString();
-  // F-4: atributos estendidos — valor do VehicleFact EXATO; campo AUSENTE falha fechado (não inventa).
+  const id = identities.get(part.vehicleKey);
+  if (part.field === "marca") { const m = v?.marca ?? id?.marca; if (!m) throw new Error(`vehicle_ref: marca ausente para '${part.vehicleKey}'`); return m; }
+  if (part.field === "modelo") { const m = v?.modelo ?? id?.modelo; if (!m) throw new Error(`vehicle_ref: modelo ausente para '${part.vehicleKey}'`); return m; }
+  if (part.field === "ano") { const a = (v && v.ano > 0) ? v.ano : (id && id.ano != null ? id.ano : null); if (a == null) throw new Error(`vehicle_ref: ano ausente para '${part.vehicleKey}' (consultar vehicle_details)`); return a.toString(); }
+  // km/câmbio/cor: SÓ do fato REAL. Sem fato (ou campo ausente) -> falha fechada (força vehicle_details do MESMO key).
+  if (!v) throw new Error(`vehicle_ref: atributo '${part.field}' exige fato REAL de '${part.vehicleKey}' (vehicle_details não consultado)`);
   if (part.field === "km") { if (v.km == null) throw new Error(`vehicle_ref: km ausente no fato de '${part.vehicleKey}'`); return `${v.km.toLocaleString("pt-BR")} km`; }
   if (part.field === "cambio") { if (!v.cambio) throw new Error(`vehicle_ref: câmbio ausente no fato de '${part.vehicleKey}'`); return v.cambio; }
   if (part.field === "cor") { if (!v.cor) throw new Error(`vehicle_ref: cor ausente no fato de '${part.vehicleKey}'`); return v.cor; }
@@ -63,6 +66,9 @@ function renderMoneyRef(part: Extract<ResponsePart, { type: "money_ref" }>, vehi
   } else {
     throw new Error(`money_ref: role desconhecido ou incompatível`);
   }
+  // Grounding honesto (audit autoria única): preço só é afirmado se o fato REAL trouxer um valor > 0. Fato de
+  // identidade (memória) ou item "preço a confirmar" tem preco ausente/<=0 -> falha FECHADA (nunca "R$ 0"/"R$ -1").
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`money_ref: valor de preço ausente/inválido no fato (role '${part.role}')`);
   return formatBRL(value);
 }
 
@@ -98,15 +104,17 @@ function joinSegments(segments: Segment[]): string {
 }
 
 export const ResponseRenderer = {
-  render(draft: ResponseDraft, facts: QueryResult[], state: ConversationState): string {
+  render(draft: ResponseDraft, facts: QueryResult[], state: ConversationState, identities: readonly RememberedVehicleIdentity[] = []): string {
     const vehicles = indexVehicles(facts);
+    const identityMap = new Map<string, RememberedVehicleIdentity>();
+    for (const id of identities) if (!identityMap.has(id.vehicleKey)) identityMap.set(id.vehicleKey, id);
     const segments: Segment[] = [];
 
     for (const part of draft.parts) {
       if (part.type === "text") {
         segments.push({ kind: "text", text: part.content });
       } else if (part.type === "vehicle_ref") {
-        segments.push({ kind: "inline", text: renderVehicleRef(part, vehicles) });
+        segments.push({ kind: "inline", text: renderVehicleRef(part, vehicles, identityMap) });
       } else if (part.type === "money_ref") {
         segments.push({ kind: "inline", text: renderMoneyRef(part, vehicles, state) });
       } else if (part.type === "vehicle_offer_list") {

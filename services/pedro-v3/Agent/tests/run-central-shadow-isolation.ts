@@ -13,6 +13,8 @@ import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
+import type { DecisionLlm } from "../src/domain/llm.ts";
+import type { ResponseDraft } from "../src/domain/decision.ts";
 import type { AgentBrainStep } from "../src/domain/agent-brain.ts";
 import type { EffectResult, ProposedEffectPlan, QueryCall, QueryResult, TurnRelation } from "../src/domain/decision.ts";
 import type { OutboxRecord } from "../src/domain/effect-intent.ts";
@@ -41,7 +43,14 @@ const runQuery = async (_c: QueryCall): Promise<QueryResult> => ({ ok: false, to
 const plainText: ComposeOverride = (d) => ({ parts: [{ type: "text", content: d.responsePlan.guidance }] });
 function llmWith(o: ComposeOverride): FakeLlm { const l = new FakeLlm(); l.setTurnScript([], o); return l; }
 function finalGreeting(): AgentBrainStep {
-  return { kind: "final", decision: { reasonCode: "greeting", reasonSummary: "oi", confidence: 0.9, responsePlan: { guidance: "Oi! Como posso ajudar?" }, proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan], memoryMutations: [], stateMutations: [] } };
+  // autoria única: o cérebro autora um DRAFT estruturado (o shadow renderiza aterrado, sem 2º compose).
+  return { kind: "final", decision: { reasonCode: "greeting", reasonSummary: "oi", confidence: 0.9, responsePlan: { guidance: "saudar", draft: { parts: [{ type: "text", content: "Oi! Como posso ajudar?" }] } }, proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan], memoryMutations: [], stateMutations: [] } };
+}
+// Spy do 2º autor: em single-author NUNCA deve ser chamado (prova B6 no shadow).
+class ShadowComposeSpy implements DecisionLlm {
+  composeCalls = 0;
+  async proposeNextQueryOrFinal(): Promise<never> { throw new Error("shadow single-author não deve chamar proposeNextQueryOrFinal"); }
+  async compose(): Promise<ResponseDraft> { this.composeCalls++; return { parts: [{ type: "text", content: "[SPY_COMPOSE_PROIBIDO]" }] }; }
 }
 
 async function main(): Promise<void> {
@@ -99,6 +108,21 @@ async function main(): Promise<void> {
     check("[3] company/unit vêm do config", facts.company.value === "Icom Motors" && facts.company.provenance === "config" && facts.unit.value === "Icom Motors");
     const none = extractTenantBusinessFacts({ companyName: "", promptText: "Você é um vendedor simpático. Ajude o cliente a escolher um carro." });
     check("[3] sem rótulo -> null (NUNCA inventa)", none.address.value === null && none.address.provenance === "absent" && none.hours.value === null && none.company.value === null);
+  }
+
+  // [4] B6 (audit): shadow roda AUTORIA ÚNICA (singleAuthor) — renderiza o DRAFT do cérebro e NUNCA chama compose.
+  {
+    const clock = new FakeClock(NOW);
+    const canonical = new InMemoryPersistence(clock, new FakeIdGen());
+    const seed = canonical.begin(); seed.casState("c4", 0, createInitialState({ conversationId: "c4", tenantId: TENANT, agentId: AGENT, leadId: null, now: NOW })); seed.commit();
+    const brain = new ScriptedAgentBrain();
+    brain.setTurnScript([{ kind: "final", decision: { reasonCode: "reply", reasonSummary: "oi", confidence: 0.9, responsePlan: { guidance: "saudar", draft: { parts: [{ type: "text", content: "Bom dia! Sou o Aloan, como posso ajudar?" }] } }, proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan], memoryMutations: [], stateMutations: [] } }]);
+    const spy = new ShadowComposeSpy();
+    const r = await runCentralShadowTurn({
+      canonicalPersistence: canonical, conversationId: "c4", tenantId: TENANT, agentId: AGENT, leadId: null, messageBlock: "oi", turnId: "c4-shadow",
+      deps: { brain, llm: spy, runQuery, businessInfo: new FakeBusinessInfo(), contextPreparer: new FixedPreparer(), clock, portalPromptSha256: "sha", limits: { maxSteps: 4, totalTimeoutMs: 8000, proposeTimeoutMs: 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 }, maxValidationAttempts: 2 },
+    });
+    check("[4] shadow single-author: renderiza o DRAFT do cérebro, ZERO compose", r.ok === true && r.comparison.status === "committed" && r.comparison.responsePreview.includes("Bom dia! Sou o Aloan") && spy.composeCalls === 0, r.ok ? `preview="${r.comparison.responsePreview}" compose=${spy.composeCalls}` : "not-ok");
   }
 
   console.log(`\n== R13-D/2 SHADOW: ${ok} OK | ${fail} FALHA ==`);

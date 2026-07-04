@@ -278,6 +278,25 @@ function visitScheduleAnswer(text: string): string | null {
   return hasDateOrPeriod || hasTime ? answer : null;
 }
 
+// P0-5 + Hardening 2 (audit): VISITA em TRÊS estados — recusa (false), intenção (true), adiamento/incerteza (não grava).
+// Stem "visit" cobre visita/visitar/visitando; agendar; conhecer o carro/loja/de perto presencialmente; ir na loja.
+const VISIT_INTENT_RX = /\bvisit|\bagend|\bconhecer\s+(?:o\s+carro|a\s+loja|de\s+perto|pessoal?mente|voces?)|\bir\s+(?:a[ií]|na\s+loja|ate\s+a\s+loja|conhecer)|\bpassar\s+(?:a[ií]|na\s+loja|la)|\bpresencial/;
+// (1) RECUSA explícita: negação LIGADA ao ato de visitar ("não quero visitar", "não vou passar na loja",
+//     "não pretendo ir aí", "não quero presencial"). Só recusa quando o alvo é a visita — "não quero ir longe" NÃO conta.
+const VISIT_REFUSAL_RX = /\bnao\s+(?:quero|posso|vou|pretendo|preciso|gostaria|tenho\s+interesse)\b[^.?!]{0,30}\b(?:visit|agend|conhecer|presencial|na\s+loja|(?:ir|passar)\s+(?:a[ií]|na\s+loja|ate\s+a\s+loja|l[aá]))/;
+// (2) ADIAMENTO/INCERTEZA (sem o ato de visitar): "talvez", "agora não", "mais tarde", "depois", "outro dia",
+//     "qualquer dia", "não sei", "quem sabe". NÃO é recusa NEM intenção -> não grava interesseVisita (nem false nem true).
+const VISIT_POSTPONE_RX = /\btalvez\b|\bagora\s+nao\b|\bmais\s+(?:tarde|pra\s+frente|adiante)\b|\bdepois\s+(?:eu|vejo|a\s+gente|vemos|marco)\b|\boutro\s+dia\b|\bqualquer\s+dia\b|\bnao\s+sei\b|\bquem\s+sabe\b/;
+// dia/período (acento preservado do texto original) + hora. Guarda: "mais tarde"/"mais cedo" é período VAGO (adiamento),
+// não um horário concreto — não deve virar diaHorario="tarde".
+function extractDayPeriod(text: string): string | null {
+  const cleaned = text.replace(/\bmais\s+(?:tarde|cedo)\b/gi, " ");
+  const day = /\b(hoje|amanh[ãa]|segunda(?:-feira)?|ter[çc]a(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|s[áa]bado|domingo|manh[ãa]|tarde|noite|fim de semana|final de semana)\b/i.exec(cleaned)?.[1];
+  const time = /\b(\d{1,2}(?::\d{2}|h(?:\d{2})?))\b/i.exec(cleaned)?.[1];
+  const parts = [day, time].filter((x): x is string => !!x);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: string; modelo?: string; ano?: number; km?: number; estado?: string } | null {
   const norm = normalizeText(text);
   const claims = claimExtractor.extractClaims(text);
@@ -420,19 +439,30 @@ export function extractLeadSlots(args: {
     if (value != null) add({ op: "set_slot", slot: "conheceLoja", value, confidence: 0.9, sourceTurnId: turnId }, "conheceLoja");
   }
 
-  if (expected === "interesseVisita" || /\b(?:quero|gostaria|posso).{0,20}\b(?:visita|agendar|ir na loja)\b|\bnao quero.{0,20}\bvisita\b/.test(norm)) {
-    const explicitNo = /\bnao quero\b|\bagora nao\b/.test(norm);
-    const explicitYes = /\bvisita\b|\bagendar\b|\bir na loja\b/.test(norm);
-    // Guard: "quero o terceiro" / "quero fotos" = SELEÇÃO de veículo ou pedido de mídia, NÃO resposta booleana à
-    // pergunta de visita. Sem isso, o "quero" caía em parseBooleanAnswer -> interesseVisita=true espúrio (o lead
-    // mudou de assunto). Só interpreta como resposta de visita quando NÃO há referência a item/ordinal/mídia.
-    const refersVehicleOrMedia = /\b(?:primeir|segund|terceir|quart|quint|ultim)[oa]\b|\bo\s+\d+\b|\bop[cç][aã]o\b|\bfotos?\b|\bimagens?\b|\bv[ií]deos?\b/.test(norm);
-    const value = explicitNo ? false : explicitYes ? true : (refersVehicleOrMedia ? null : parseBooleanAnswer(leadMessage));
+  // P0-5 + H2 (audit): visita = FATO explícito do lead em TRÊS estados. "quero o terceiro"/"quero fotos" =
+  // seleção/mídia, NÃO visita (refersVehicleOrMedia).
+  const refersVehicleOrMedia = /\b(?:primeir|segund|terceir|quart|quint|ultim)[oa]\b|\bo\s+\d+\b|\bop[cç][aã]o\b|\bfotos?\b|\bimagens?\b|\bv[ií]deos?\b/.test(norm);
+  const visitIntentPresent = VISIT_INTENT_RX.test(norm);
+  const visitRefusal = VISIT_REFUSAL_RX.test(norm);
+  // Intenção POSITIVA: cita o ato de visitar E não é recusa E não é seleção/mídia. "quero visitar mais tarde" -> true
+  // ("mais tarde" é período vago, não recusa; só não vira diaHorario concreto — ver extractDayPeriod).
+  const positiveVisit = visitIntentPresent && !visitRefusal && !refersVehicleOrMedia;
+  // ADIAMENTO só conta quando NÃO há intenção positiva nem recusa (senão "quero visitar mais tarde" cairia aqui).
+  const postpone = !positiveVisit && !visitRefusal && VISIT_POSTPONE_RX.test(norm);
+  if (visitRefusal || positiveVisit || expected === "interesseVisita" || visitIntentPresent) {
+    // recusa -> false; intenção -> true; adiamento -> NÃO grava (null); senão booleana pura só se o slot foi perguntado.
+    const value = visitRefusal ? false
+      : positiveVisit ? true
+      : postpone ? null
+      : refersVehicleOrMedia ? null
+      : expected === "interesseVisita" ? parseBooleanAnswer(leadMessage)
+      : null;
     if (value != null) add({ op: "set_slot", slot: "interesseVisita", value, confidence: 0.9, sourceTurnId: turnId }, "interesseVisita");
   }
-
-  if (expected === "diaHorario") {
-    const answer = visitScheduleAnswer(leadMessage);
+  // diaHorario: captura o dia/período quando HÁ intenção POSITIVA de visita OU o agente perguntou o dia (mesmo turno).
+  // extractDayPeriod ignora "mais tarde"/"mais cedo" (período vago), então "quero visitar mais tarde" não grava horário.
+  if (expected === "diaHorario" || positiveVisit) {
+    const answer = extractDayPeriod(leadMessage) ?? (expected === "diaHorario" ? visitScheduleAnswer(leadMessage) : null);
     if (answer) add({ op: "set_slot", slot: "diaHorario", value: answer, confidence: 0.82, sourceTurnId: turnId }, "diaHorario");
   }
 

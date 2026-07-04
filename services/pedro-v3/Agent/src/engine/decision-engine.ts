@@ -11,6 +11,7 @@ import type { DecisionLlm } from "../domain/llm.ts";
 import type {
   QueryCall, QueryResult, ProposedDecision, TurnDecision, RenderedResponse, ResponseDraft, EffectPlan, SendMessagePlan, ProposedEffectPlan,
 } from "../domain/decision.ts";
+import type { RememberedVehicleIdentity } from "../domain/types.ts";
 import { normalizeStockSearchInput } from "../domain/decision.ts";
 import { PolicyEngine, hasDeny } from "./policy-engine.ts";
 import { finalize, emitTerminalSafe, emitErrorTerminalSafe } from "./finalizer.ts";
@@ -286,6 +287,9 @@ export async function composeAndVerify(args: {
   // P1 (Codex): ajuste determinístico do DRAFT (apresentação/anti-fixação) aplicado ANTES de renderizar+validar
   // — nada é reescrito DEPOIS da policy; o texto validado já é o final.
   readonly adjustDraft?: (draft: ResponseDraft) => ResponseDraft;
+  // audit autoria única: identidades LEMBRADAS (marca/modelo/ano) p/ NOMEAR veículo sem re-fetch; atributo/preço
+  // continua só de fato REAL. Default [] (caminho v2/handler não usa memória de identidade).
+  readonly identities?: readonly RememberedVehicleIdentity[];
 }): Promise<{ decision: TurnDecision; composed: RenderedResponse; terminalSafe: boolean }> {
   const { facts, ctx, llm, limits, maxValidationAttempts } = args;
   let decision = args.decision;
@@ -299,7 +303,7 @@ export async function composeAndVerify(args: {
       // P1 (Codex): as travas determinísticas ajustam o DRAFT (parts) ANTES de renderizar+validar. Assim o
       // texto validado JÁ É o final (nada é substituído depois da policy) e as parts estruturadas são preservadas.
       const draft = args.adjustDraft ? args.adjustDraft(rawDraft) : rawDraft;
-      composed = { draft, text: ResponseRenderer.render(draft, facts, ctx.state) };
+      composed = { draft, text: ResponseRenderer.render(draft, facts, ctx.state, args.identities ?? []) };
       gv = PolicyEngine.validateResponse(composed, facts, decision, ctx);
     } catch (err: any) {
       // P0-1 (Codex): QUALQUER falha técnica do compose (throw/timeout/schema inválido/erro de render) — DEPOIS

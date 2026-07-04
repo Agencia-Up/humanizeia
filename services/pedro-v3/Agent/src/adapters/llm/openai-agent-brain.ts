@@ -15,7 +15,7 @@ import type {
   DecisionWorkingMemoryMutation, TurnFrame, BusinessInfoTopic,
 } from "../../domain/agent-brain.ts";
 import { BUSINESS_INFO_TOPICS } from "../../domain/agent-brain.ts";
-import type { DecisionMutation, ProposedEffectPlan } from "../../domain/decision.ts";
+import type { DecisionMutation, ProposedEffectPlan, ResponseDraft, ResponsePart } from "../../domain/decision.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
 
 export type OpenAiAgentBrainConfig = {
@@ -51,11 +51,23 @@ Você é o mesmo atendente do prompt acima, operando o WhatsApp da loja. A cada 
    - "vehicle_details" input {vehicleKey:string}
    - "vehicle_photos_resolve" input {vehicleKey:string}
    - "tenant_business_info" input {topic:"address|hours|unit"}  (endereço/horário/unidade da loja)
-2) DECIDIR a resposta final (exatamente uma por turno):
+2) DECIDIR a resposta final (exatamente uma por turno). Você MONTA a fala em PARTES estruturadas ("draft.parts") e
+   o sistema materializa o texto. FATO (marca/modelo/ano/km/câmbio/cor/preço) SÓ sai de uma PARTE ancorada num
+   vehicleKey — NUNCA escreva número/atributo/preço em texto livre:
    {"kind":"final","reasonCode":"...","confidence":0.0-1.0,
-    "guidance":"o que dizer ao cliente, em 1ª pessoa, seguindo o prompt da loja (o sistema redige a partir disto)",
-    "effects":[{"kind":"send_message"}]  // e, SE o cliente pediu fotos agora: {"kind":"send_media","vehicleKey":"...","photoIds":["..."]}
-    "stateMutations":[...], "memoryMutations":[...]}  // opcionais; veja abaixo
+    "guidance":"resumo curto da intenção (1 linha; NÃO escreva fatos aqui)",
+    "draft":{"parts":[ ...na ordem da fala... ]},
+    "effects":[{"kind":"send_message"}],  // e, SE o cliente pediu fotos agora: {"kind":"send_media","vehicleKey":"...","photoIds":["..."]}
+    "stateMutations":[...], "memoryMutations":[...]}
+   PARTES de draft.parts:
+   - {"type":"text","content":"..."}  // conectivo humano; NUNCA contém km, cor, câmbio, ano ou preço
+   - {"type":"vehicle_ref","vehicleKey":"<chave EXATA>","field":"marca|modelo|ano|km|cambio|cor"}  // valor vem do FATO
+   - {"type":"money_ref","role":"vehicle_price","source":{"kind":"vehicle_fact","vehicleKey":"<chave>"}}  // preço do carro
+   - {"type":"vehicle_offer_list","vehicleKeys":["<chave1>","<chave2>"]}  // lista numerada (o sistema formata preço/km)
+   Para AFIRMAR km/cor/câmbio/ano/preço de um carro você é OBRIGADO a: (1) ter chamado vehicle_details daquele
+   vehicleKey NESTE turno; (2) usar vehicle_ref/money_ref do MESMO vehicleKey. Se ainda não tem o fato, devolva antes
+   {"kind":"query","call":{"tool":"vehicle_details","input":{"vehicleKey":"<a chave>"}}}. Se o fato vier SEM o campo,
+   diga em text que vai confirmar ("vou confirmar essa informação e já te falo") — NUNCA invente 0/valor.  // opcionais; veja abaixo
 
 REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos fatos — siga à risca):
 - O bloco ATUAL do cliente tem prioridade. RESPONDA a dúvida dele ANTES de qualificar.
@@ -74,12 +86,20 @@ REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos
   NUNCA vá direto ao "final" prometendo fotos sem antes resolver e sem o send_media com os photoIds reais.
 - Pergunta de MEMÓRIA ("qual carro eu pedi as fotos?"): responda CURTO citando workingMemory.lastPhotoAction.label
   (o nome do carro), SEM chamar ferramenta, SEM reenviar mídia, SEM listar preços.
-- Pergunta sobre a LOJA (endereço/horário/unidade): chame "tenant_business_info". Se retornar sem dado, seja honesto
-  ("vou confirmar e já te falo") — NUNCA invente. Uma pergunta institucional NUNCA altera dados de troca/pagamento.
-- NUNCA reapresente-se depois do 1º contato. NUNCA cite atributo (câmbio/cor/km) sem um fato do MESMO carro.
-- No MÁXIMO UMA pergunta ("?") na resposta inteira.
-- "guidance" é o CONTEÚDO da sua fala. Se for LISTAR carros, diga só a intenção ("tenho estas opções de SUV") — o
-  sistema formata a lista numerada com os preços a partir dos fatos. NÃO escreva preços você mesmo no guidance.
+- NUNCA repita uma ferramenta com os MESMOS argumentos que você JÁ observou nas "toolObservationsSoFar" — use o
+  resultado que voltou (repetir a mesma chamada é proibido e não traz nada novo).
+- Pergunta sobre a LOJA (endereço/horário/unidade): o sistema já traz as observações de "tenant_business_info" para
+  CADA tópico pedido. Responda os que vieram com dado (ok) e, para os que voltaram NOT_CONFIGURED, diga honestamente
+  que ESSA informação não está disponível na configuração (ex.: "o horário eu não tenho aqui, mas confirmo com a
+  equipe") — NUNCA invente e NUNCA fique repetindo a ferramenta. Se o cliente pediu VÁRIOS (endereço E horário),
+  responda TODOS num só texto: os disponíveis + os ausentes honestamente. NOT_CONFIGURED = o dado NÃO existe na
+  config (é resposta definitiva; não é para tentar de novo). Uma pergunta institucional NUNCA altera troca/pagamento.
+- NUNCA reapresente-se depois do 1º contato. NUNCA cite atributo (câmbio/cor/km/ano/preço) sem um fato do MESMO carro.
+- "ele/dele/desse/nele" = o carro SELECIONADO (workingMemory.selectedVehicle.vehicleKey). Pergunta de atributo sobre
+  "ele" sem o fato do turno -> chame vehicle_details(<selectedVehicle.vehicleKey>) ANTES do final.
+- No MÁXIMO UMA pergunta ("?") no draft inteiro.
+- Para LISTAR carros use uma parte vehicle_offer_list com os vehicleKeys (o sistema formata número/preço/km). NÃO
+  escreva preços nem monte a lista você mesmo em text.
 
 memoryMutations (opcional): [{"op":"set_active_topic","topic":"..","origin":"lead_message|agent_offer|recall|carryover"},
   {"op":"set_lead_intent","intent":"discover_stock|more_options|vehicle_detail|photo_request|photo_memory_question|institutional_question|funnel_answer|buy_now|objection|greeting|smalltalk|other","confidence":0-1,"evidence":["..."]},
@@ -206,6 +226,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
 
   #decodeFinal(raw: Record<string, unknown>, frame: TurnFrame): AgentBrainDecision {
     const guidance = str(raw.guidance) ?? str(raw.reasonSummary) ?? "Responda o cliente de forma útil, sem inventar informação.";
+    const draft = this.#decodeDraft(raw.draft);   // autoria única: o texto vem daqui (o engine renderiza aterrado)
     const effects = this.#decodeEffects(Array.isArray(raw.effects) ? raw.effects : []);
     const memoryMutations = this.#decodeMemoryMutations(Array.isArray(raw.memoryMutations) ? raw.memoryMutations : [], frame.turnId);
     const stateMutations = this.#decodeStateMutations(Array.isArray(raw.stateMutations) ? raw.stateMutations : [], frame.turnId);
@@ -213,9 +234,60 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       reasonCode: str(raw.reasonCode) ?? "brain_reply",
       reasonSummary: (str(raw.reasonSummary) ?? guidance).slice(0, 160),
       confidence: num(raw.confidence) ?? 0.8,
-      responsePlan: { guidance: guidance.slice(0, 1200) },
+      responsePlan: { guidance: guidance.slice(0, 1200), draft },
       proposedEffects: effects, memoryMutations, stateMutations,
     };
+  }
+
+  // Autoria única (audit): decodifica draft.parts. QUALQUER part inválida invalida o DRAFT INTEIRO (rejeição
+  // integral — nunca descarta parcialmente e envia o resto). O engine cobra retry/fallback. NUNCA fabrica fato.
+  #decodeDraft(raw: unknown): ResponseDraft | null {
+    if (!isRecord(raw) || !Array.isArray(raw.parts) || raw.parts.length === 0) return null;
+    const parts: ResponsePart[] = [];
+    for (const p of raw.parts) {
+      const part = this.#decodePart(p);
+      if (!part) return null;   // part inválida -> draft inteiro rejeitado
+      parts.push(part);
+    }
+    return { parts };
+  }
+
+  #decodePart(p: unknown): ResponsePart | null {
+    if (!isRecord(p)) return null;
+    if (p.type === "text") { const c = typeof p.content === "string" ? p.content : null; return c && c.trim() !== "" ? { type: "text", content: c.slice(0, 1200) } : null; }
+    if (p.type === "vehicle_ref") {
+      const key = str(p.vehicleKey); const field = str(p.field);
+      if (!key || !field) return null;
+      if (field === "marca" || field === "modelo" || field === "ano" || field === "km" || field === "cambio" || field === "cor") return { type: "vehicle_ref", vehicleKey: key, field };
+      return null;
+    }
+    if (p.type === "money_ref") return this.#decodeMoneyPart(p);
+    if (p.type === "vehicle_offer_list") {
+      if (!Array.isArray(p.vehicleKeys) || p.vehicleKeys.length === 0) return null;
+      const keys = p.vehicleKeys.filter((k): k is string => typeof k === "string" && k.trim() !== "");
+      return keys.length === p.vehicleKeys.length ? { type: "vehicle_offer_list", vehicleKeys: keys } : null;  // 1 key inválido invalida a lista
+    }
+    return null;   // tipo desconhecido -> inválido (invalida o draft)
+  }
+
+  // money_ref ESTRITO (audit): role+source validados SEM `as never` e SEM corrigir silenciosamente a saída do modelo.
+  // vehicle_price exige source vehicle_fact+vehicleKey; down_payment/installment/budget exigem source slot_value com o
+  // slotName EXATO. Source divergente/ausente -> null (não completa nem conserta a saída do modelo).
+  #decodeMoneyPart(p: Record<string, unknown>): ResponsePart | null {
+    const role = str(p.role);
+    if (!isRecord(p.source)) return null;
+    const kind = str(p.source.kind);
+    if (role === "vehicle_price") {
+      if (kind !== "vehicle_fact") return null;
+      const vehicleKey = str(p.source.vehicleKey);
+      return vehicleKey ? { type: "money_ref", role: "vehicle_price", source: { kind: "vehicle_fact", vehicleKey } } : null;
+    }
+    if (kind !== "slot_value") return null;
+    const slotName = str(p.source.slotName);
+    if (role === "down_payment") return slotName === "entrada" ? { type: "money_ref", role: "down_payment", source: { kind: "slot_value", slotName: "entrada" } } : null;
+    if (role === "installment") return slotName === "parcelaDesejada" ? { type: "money_ref", role: "installment", source: { kind: "slot_value", slotName: "parcelaDesejada" } } : null;
+    if (role === "budget") return slotName === "faixaPreco" ? { type: "money_ref", role: "budget", source: { kind: "slot_value", slotName: "faixaPreco" } } : null;
+    return null;
   }
 
   #decodeEffects(raw: unknown[]): ProposedEffectPlan[] {

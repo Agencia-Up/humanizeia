@@ -46,35 +46,43 @@ export type TenantBusinessFacts = {
   readonly unit: BusinessFact;
 };
 
-function cleanFragment(raw: string, max = 140): string {
-  return raw.replace(/\s+/g, " ").trim().replace(/[;.]+$/, "").slice(0, max).trim();
+// Remove markdown residual (**bold**, listas), colapsa espaços, tira separador inicial e pontuação final.
+function cleanValue(raw: string, max = 160): string {
+  return raw.replace(/[*_`>#]/g, "").replace(/\s+/g, " ").trim().replace(/^[:\-–—•\s]+/, "").replace(/[;.\s]+$/, "").slice(0, max).trim();
 }
 // Endereço plausível: tem vírgula OU uma palavra de logradouro (rua/av/avenida/rodovia/estrada/praça/alameda) + algo.
 function looksLikeAddress(v: string): boolean {
   const n = v.toLowerCase();
-  return v.length >= 8 && v.length <= 140 && (/,/.test(v) || /\b(rua|r\.|av\.?|avenida|rodovia|rod\.|estrada|praca|praça|alameda|travessa|bairro|jardim|centro)\b/.test(n));
+  return v.length >= 8 && v.length <= 160 && (/,/.test(v) || /\b(rua|r\.|av\.?|avenida|rodovia|rod\.|estrada|praca|praça|alameda|travessa|bairro|jardim|centro)\b/.test(n));
 }
 // Horário plausível: tem "h"/"hora" ou dias da semana ou faixa de horas.
 function looksLikeHours(v: string): boolean {
   const n = v.toLowerCase();
-  return v.length >= 4 && v.length <= 140 && (/\b\d{1,2}\s*h\b|\bhoras?\b|\b\d{1,2}:\d{2}\b|\bsegunda|\bseg\b|\bsabado|\bsábado|\bdomingo|\bdias? uteis|\bdias? úteis/.test(n));
+  return v.length >= 4 && v.length <= 160 && (/\b\d{1,2}\s*h\b|\bhoras?\b|\b\d{1,2}:\d{2}\b|\bsegunda|\bseg\b|\bsabado|\bsábado|\bdomingo|\bdias? uteis|\bdias? úteis/.test(n));
 }
-function firstLabeled(prompt: string, labels: RegExp, ok: (v: string) => boolean): string | null {
-  const m = labels.exec(prompt);
-  if (!m) return null;
-  // valor = do fim do rótulo até o fim da linha (ou 140 chars).
-  const rest = prompt.slice(m.index + m[0].length);
-  const line = rest.split(/\r?\n/)[0] ?? "";
-  const value = cleanFragment(line);
-  return value && ok(value) ? value : null;
+// P0-1 (audit): itera TODAS as ocorrências de um rótulo EXPLÍCITO (com separador ":"/"-") e devolve o 1º valor
+// PLAUSÍVEL. Uma REGRA (saudação "Se o horário for..." → "Bom dia", seta →/->) NUNCA vira valor comercial: (a) o
+// rótulo exige separador ":" logo após — "horário for" não casa; (b) linhas com "se ..."/→/saudação são puladas.
+function findLabeled(prompt: string, label: RegExp, ok: (v: string) => boolean): string | null {
+  const re = new RegExp(label.source, label.flags.includes("g") ? label.flags : label.flags + "g");
+  for (let m = re.exec(prompt); m; m = re.exec(prompt)) {
+    const lineStart = prompt.lastIndexOf("\n", Math.max(0, m.index - 1)) + 1;
+    const lineEndIdx = prompt.indexOf("\n", m.index);
+    const line = prompt.slice(lineStart, lineEndIdx < 0 ? undefined : lineEndIdx);
+    if (/\bse\s+(?:o|a)?\s*(?:hor|ender)|→|->|bom dia|boa tarde|boa noite/i.test(line)) continue; // regra/saudação, não é valor
+    const value = cleanValue((prompt.slice(m.index + m[0].length).split(/\r?\n/)[0] ?? ""));
+    if (value && ok(value)) return value;
+  }
+  return null;
 }
 
-// Extrai os fatos de negócio do config (estruturado) + prompt (rotulado, conservador). Nunca inventa.
+// Extrai os fatos de negócio do config (estruturado) + prompt ROTULADO (conservador). Nunca inventa. Exige rótulo
+// EXPLÍCITO com separador (Endereço: / Horário: / Horário de funcionamento:) — evita casar "horário" em regra de saudação.
 export function extractTenantBusinessFacts(config: Pick<TenantRuntimeConfig, "companyName" | "promptText">): TenantBusinessFacts {
   const prompt = typeof config.promptText === "string" ? config.promptText : "";
   const companyValue = config.companyName && config.companyName.trim() ? config.companyName.trim() : null;
-  const address = firstLabeled(prompt, /(?:endere[çc]o|localiza[çc][aã]o|fica(?:mos)?\s+(?:em|na|no|à|a))\s*[:\-]?\s*/i, looksLikeAddress);
-  const hours = firstLabeled(prompt, /(?:hor[áa]rio(?:\s+de\s+(?:atendimento|funcionamento))?|funcionamento|atendemos|hor[áa]rios?)\s*[:\-]?\s*/i, looksLikeHours);
+  const address = findLabeled(prompt, /(?:endere[çc]o|localiza[çc][aã]o)\s*[:\-–—]\s*/i, looksLikeAddress);
+  const hours = findLabeled(prompt, /(?:hor[áa]rio(?:s)?(?:\s+de\s+(?:atendimento|funcionamento))?|funcionamento)\s*[:\-–—]\s*/i, looksLikeHours);
   const fact = (value: string | null, prov: BusinessFactProvenance): BusinessFact => (value ? { value, provenance: prov } : { value: null, provenance: "absent" });
   return {
     company: fact(companyValue, "config"),

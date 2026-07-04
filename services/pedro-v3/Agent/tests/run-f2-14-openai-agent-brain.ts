@@ -7,8 +7,9 @@
 import { OpenAiAgentBrain } from "../src/adapters/llm/openai-agent-brain.ts";
 import { OpenAiRuntimeSecret } from "../src/engine/openai-canary-root.ts";
 import type { ModelHttpTransport, ModelHttpRequest, ModelHttpResponse } from "../src/adapters/llm/structured-json-model.ts";
-import type { TurnFrame } from "../src/domain/agent-brain.ts";
+import type { TurnFrame, AgentToolObservation } from "../src/domain/agent-brain.ts";
 import { createInitialPersistedWorkingMemory } from "../src/domain/agent-brain.ts";
+import type { VehicleFact } from "../src/domain/types.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -116,6 +117,49 @@ async function main(): Promise<void> {
     const step = await brain.proposeNextStep(frame("quero suv"), []);
     const mm = step.kind === "final" ? step.decision.memoryMutations : [];
     check("[8] memoryMutations: op válida mantida + turnId; desconhecida descartada", mm.length === 1 && mm[0].op === "set_lead_intent" && (mm[0] as { turnId?: string }).turnId === "t-brain-1");
+  }
+
+  // ── Autoria única (audit): decode de responsePlan.draft ────────────────────────────────────────────────────
+  // [9] draft VÁLIDO completo decodifica em responsePlan.draft (parts estruturadas na ordem).
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", reasonCode: "answer", confidence: 0.9, guidance: "resumo", draft: { parts: [{ type: "text", content: "Ele tem" }, { type: "vehicle_ref", vehicleKey: "rm:2", field: "km" }, { type: "text", content: "km." }] }, effects: [{ kind: "send_message" }] }));
+    const step = await brain.proposeNextStep(frame("quantos km"), []);
+    const d = step.kind === "final" ? step.decision.responsePlan.draft : null;
+    check("[9] draft válido completo decodifica em responsePlan.draft", step.kind === "final" && !!d && d.parts.length === 3 && d.parts[1].type === "vehicle_ref" && (d.parts[1] as { field?: string }).field === "km");
+  }
+  // [10] QUALQUER part inválida invalida o DRAFT INTEIRO (não descarta parcialmente e envia o resto).
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", guidance: "x", draft: { parts: [{ type: "text", content: "ok" }, { type: "vehicle_ref", vehicleKey: "rm:2", field: "PLACA_INVALIDA" }] } }));
+    const step = await brain.proposeNextStep(frame("x"), []);
+    check("[10] part inválida invalida o DRAFT inteiro (rejeição integral)", step.kind === "final" && step.decision.responsePlan.draft === null);
+  }
+  // [11] money_ref ESTRITO: role/source validados; source divergente invalida (sem correção silenciosa).
+  {
+    const bad1 = brainWith(JSON.stringify({ kind: "final", guidance: "x", draft: { parts: [{ type: "money_ref", role: "vehicle_price", source: { kind: "slot_value", slotName: "entrada" } }] } })).brain;
+    const s1 = await bad1.proposeNextStep(frame("preco"), []);
+    const bad2 = brainWith(JSON.stringify({ kind: "final", guidance: "x", draft: { parts: [{ type: "money_ref", role: "down_payment", source: { kind: "slot_value", slotName: "faixaPreco" } }] } })).brain;
+    const s2 = await bad2.proposeNextStep(frame("entrada"), []);
+    const good = brainWith(JSON.stringify({ kind: "final", guidance: "x", draft: { parts: [{ type: "money_ref", role: "vehicle_price", source: { kind: "vehicle_fact", vehicleKey: "rm:2" } }] } })).brain;
+    const s3 = await good.proposeNextStep(frame("preco"), []);
+    const d3 = s3.kind === "final" ? s3.decision.responsePlan.draft : null;
+    check("[11] money_ref role/source estrito: source divergente invalida; válido decodifica",
+      s1.kind === "final" && s1.decision.responsePlan.draft === null && s2.kind === "final" && s2.decision.responsePlan.draft === null && !!d3 && d3.parts[0].type === "money_ref");
+  }
+  // [12] query -> observação -> final CORRIGIDO com draft (loop de correção do MESMO cérebro).
+  {
+    const seq = [
+      JSON.stringify({ kind: "query", call: { tool: "vehicle_details", input: { vehicleKey: "rm:2" } } }),
+      JSON.stringify({ kind: "final", guidance: "ok", draft: { parts: [{ type: "text", content: "Tem" }, { type: "vehicle_ref", vehicleKey: "rm:2", field: "km" }, { type: "text", content: "km" }] } }),
+    ];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(_url: string, _req: ModelHttpRequest): Promise<ModelHttpResponse> { return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) }; } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1-mini" });
+    const s1 = await brain.proposeNextStep(frame("quantos km"), []);
+    const veh: VehicleFact = { vehicleKey: "rm:2", marca: "Chevrolet", modelo: "Onix", ano: 2014, preco: 42990, km: 132623, tipo: "hatch" };
+    const obs: AgentToolObservation[] = [{ tool: "vehicle_details", ok: true, data: { vehicle: veh } }];
+    const s2 = await brain.proposeNextStep(frame("quantos km"), obs);
+    const d2 = s2.kind === "final" ? s2.decision.responsePlan.draft : null;
+    check("[12] query -> observação -> final corrigido com draft", s1.kind === "query" && s1.call.tool === "vehicle_details" && s2.kind === "final" && !!d2 && d2.parts.some((p) => p.type === "vehicle_ref" && p.field === "km"));
   }
 
   console.log(`\n== F2.14: ${ok} OK | ${fail} FALHA ==`);

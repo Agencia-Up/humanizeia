@@ -209,6 +209,11 @@ export function applyDecision(
         // item 1: ESCOLHA explícita do lead -> selectedVehicleFocus (fato inbound, no commit). Substitui o anterior.
         if (m.sourceTurnId !== expectedTurnId) { rejected.push({ mutation: m, reason: `sourceTurnId '${m.sourceTurnId}' != turno esperado '${expectedTurnId}'` }); continue; }
         if (!m.vehicle?.key) { rejected.push({ mutation: m, reason: "select_vehicle_focus sem vehicle.key" }); continue; }
+        // Hardening 1 (audit): o label DEVE ser CANÔNICO (nome real "MARCA MODELO ANO"); NUNCA vazio nem == key (o
+        // engine canonicaliza antes de propor). Barra label fabricado pela LLM sem fato aterrado / chave crua vazando.
+        if (!m.vehicle.label || m.vehicle.label.trim() === "" || m.vehicle.label === m.vehicle.key) {
+          rejected.push({ mutation: m, reason: `select_vehicle_focus com label não-canônico (vazio ou == key '${m.vehicle.key}')` }); continue;
+        }
         next.vehicleContext.selected = m.vehicle;
         break;
       }

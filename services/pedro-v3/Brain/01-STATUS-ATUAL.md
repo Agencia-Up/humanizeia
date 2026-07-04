@@ -1139,3 +1139,112 @@ Tudo corrigido, so testes GRATIS. Detalhe: `Brain/2026-07-03-claude-r13d-audit-c
   avanca agendamento; (f) sem fixacao de slot. **O smoke pago NAO e o gate; este offline e.**
 - **6 Gates gratis:** tsc EXIT 0, test:all EXIT 0 (0 RED): KERNEL 68, POSTGRES 27, GATEWAY 11, F2.13 40, SHADOW 10,
   GATE OFFLINE 7, SQL SCHEMA/PGlite. Parado para nova auditoria Codex.
+
+---
+
+## Atualizacao Claude - P0 AUTORIA UNICA DO AGENTE CENTRAL (fim da dupla autoria) - 2026-07-03
+
+Corrige a falha de PRODUCAO do `central_active`: o AgentBrain decidia "132.623 km" (poll-11) mas o OUTBOX enviava
+"0 km"; no poll-12 enviava menu generico. Causa = DUPLA AUTORIA (brain so dava guidance, `DecisionLlm.compose` era 2o
+autor) + fabricacao de VehicleFact (km=0/preco=-1) que a policy aceitava como aterrado. **Sem commit/push/deploy/SQL/
+OpenAI.** Detalhe: `Brain/2026-07-03-claude-autoria-unica-central.md`.
+
+- **Desenho:** UM AgentBrain autora um `ResponseDraft.parts`; o engine RENDERIZA aterrado (SEM 2o compose), valida
+  contra fatos REAIS; deny/fato-ausente volta ao MESMO cerebro (retry); esgotou = fallback tecnico honesto (nunca
+  lista/menu/funil). Atras da flag `singleAuthor` (central_active liga; caminho legado/compose INTOCADO).
+- **Causas eliminadas:** (1) `labelToFact`/oferta km=undefined, cor/cambio null, preco sentinela — nunca fabrica
+  atributo; (2) sem auto-grounding no single-author (o cerebro consulta; render fail-closed forca); (3) `OpenAiAgentBrain`
+  emite draft.parts (protocolo reescrito) + `#decodeDraft`; (4) `renderDeterministicResponse` (muda assunto) NAO roda no
+  single-author; (5) novo gate assere em `outbox.payload.text`.
+- **Grounding honesto:** renderer ja falhava fechado em km==null/cor/cambio; +guard `money_ref` preco<=0. km/cor/cambio/
+  preco/ano so de fato REAL do MESMO vehicleKey. "0 km" so se a tool retornar 0. Ausente -> "vou confirmar".
+- **Observabilidade:** `responseSource` (brain_final|brain_retry|technical_fallback|legacy_compose) + `brainReason` (≠
+  texto enviado) + tools/selectedVehicleKey/policyFeedback no `decision_final`; texto no `response_composed`.
+- **Arquivos:** `response-renderer.ts` (money guard), `central-engine.ts` (labelToFact + autoria unica + observabilidade),
+  `openai-agent-brain.ts` (draft), `pilot-active-root.ts` (singleAuthor:true), `run-f2-15-central-authorship.ts` (NOVO),
+  `package.json`.
+- **Gates:** tsc EXIT 0; test:all EXIT 0 (0 RED) — F2.14 13, F2.13 46, SHADOW 10, GATE OFFLINE 7, F2.8 166, e
+  **F2.15 AUTORIA UNICA 15 OK** (prova zero-2o-compose por ComposeSpyLlm; km/cor/cambio/ano/preco da key certa no outbox;
+  ausente=defere; 0km so factual; deny->retry; esgotou->fallback sem menu; U+FFFD 0; pergunta simples sem tool; <=1
+  pergunta; prompt integral no unico brain).
+- **Risco restante:** NAO testado com OpenAI real (quota) — a qualidade das decisoes do cerebro REAL sera validada no
+  WhatsApp pelo dono apos deploy auditado; a rede fail-closed->retry->fallback impede envio errado. `central_active` OFF.
+- **Parado para auditoria Codex.**
+
+### 2a rodada — 7 BLOQUEADORES da auditoria Codex CORRIGIDOS (2026-07-03)
+Codex REPROVOU o deploy da F2.15. Todos corrigidos (sem OpenAI/SQL/commit). Detalhe no MESMO handoff acima.
+1. Fallback = DEGRADACAO observavel: terminalSafe=true + `degraded` (result+eventos); texto sem promessa de retorno;
+   gate FALHA se cenario-alvo cair em fallback. Novo responseSource `deterministic_recall` (recall != degradado).
+2. `vehicle_details` OBRIGATORIO: asks_vehicle_detail+selecionado exige detail bem-sucedido do MESMO key antes do
+   final (senao forca a consulta; esgotou->degradado); detalhe de outro key nao vale; sem selecionado->esclarece.
+3. postQuery deny NUNCA envia o draft original (checa hasDeny(post) antes de renderizar) -> feedback -> fallback;
+   nenhum efeito comercial original sobrevive.
+4. Decoder: part invalida invalida o DRAFT INTEIRO (rejeicao integral); money_ref role/source ESTRITO sem `as never`
+   nem correcao silenciosa. F2.14 agora cobre responsePlan.draft.
+5. Removido VehicleFact artificial (ano=0/preco=-1): novo tipo `RememberedVehicleIdentity` (so NOMEIA); atributo so
+   de fato REAL do mesmo vehicleKey.
+6. Shadow roda `singleAuthor=true` (espelha o ativo; zero compose).
+7. Gates: tsc EXIT 0; test:all EXIT 0 (0 RED) — F2.14 17, F2.15 18, SHADOW 11, F2.13 46, GATE OFFLINE 7, legado sem
+   regressao.
+
+### 3a rodada — SMOKE REAL rodado 1x: NAO PASSOU (3 violacoes; NAO re-rodado; NAO aprovado) — 2026-07-04
+Codex aprovou estruturalmente; smoke real (`smoke:audit`, gpt-4.1-mini, prompt/estoque reais, singleAuthor, efeitos OFF,
+sem judge). 29 chamadas OpenAI (BRAIN 29 2xx / COMPOSE 0), prompt integral SHA=true, 11/11 turnos, ~US$0,06. Detalhe no
+handoff `2026-07-03-claude-autoria-unica-central.md` (secao SMOKE).
+- **9/11 turnos PASS:** T2 pede qual carro sem tool arbitrario; T3 filtros certos; T4 seleciona o 2o; T5 vehicle_details
+  do MESMO key + km/cor REAIS; T6 fotos sem despacho; T7 recall nomeia; T10 nome+possuiTroca=false; T11 visita+sabado.
+  compose=0, terminal_safe=0 (exceto T8).
+- **T8 (real): degradado.** Harness usava `RuntimeConfigBusinessInfoSource` (address/hours SEMPRE null) != producao
+  (`PromptTenantBusinessInfoSource`). tenant_business_info deu NOT_CONFIGURED e a LLM FIXOU re-consultando address 4x
+  sem deferir -> esgotou -> fallback DEGRADADO (engine correto: nao inventou). Causas: (a) fidelidade do harness
+  CORRIGIDA (fonte de producao); (b) aberto p/ Codex: aderencia da LLM (deferir em NOT_CONFIGURED em vez de loop).
+- **T9 (falso-positivo da assertiva):** agente excluiu ofertados + disse "nao temos mais" (correto); minha assertiva
+  leu offer obsoleto. CORRIGIDA (offerFresh).
+- Correcoes do smoke aplicadas (fidelidade+medicao), tsc verde, **NAO re-rodado, NAO aprovado**. **Parado para Codex**
+  decidir o item aberto e autorizar (ou nao) novo smoke.
+
+### 5a rodada — 5 CAUSAS do smoke #2 corrigidas POR INVARIANTES + REPLAY DETERMINISTICO — 2026-07-04
+Codex do smoke #2: NAO rodar outro smoke pago; corrigir as 5 causas reais por invariantes (autoria unica preservada: o
+brain decide/redige, o engine valida/enriquece, nunca substitui a conversa por handlers). FEITO, so testes gratis.
+- **P0-1** `extractTenantBusinessFacts` por LINHA ROTULADA (exige separador ":"/"-"; itera candidatos; pula regra de
+  saudacao "Se o horario for..."; remove markdown) -> extrai o Bloco 9, nunca a saudacao.
+- **P0-2** NUNCA expor vehicleKey: `canonicalVehicleLabel` (nome real ou null, jamais a key); canonicaliza toda
+  select_vehicle_focus (label="MARCA MODELO ANO", nunca ==key); pendingPhotoAction so com nome humano; GUARD generico
+  rejeita qualquer vehicleKey conhecida no texto -> feedback ao mesmo brain.
+- **P0-3** busca com ITENS exige `vehicle_offer_list` no draft (ou send_media); "quer que eu mostre?" -> deny+feedback;
+  sem itens -> resposta livre; sem texto hardcoded.
+- **P0-4** mentionsMoreOptions -> engine ENRIQUECE `stock_search.input.excludeKeys` com a uniao das keys da ultima
+  oferta na chamada EXECUTADA (preserva tipo/cambio/teto); nao depende da LLM.
+- **P0-5** `extractLeadSlots` reconhece VISITA (stem "visit"/agendar/conhecer presencialmente) -> interesseVisita=true +
+  diaHorario (sabado) no MESMO turno sem objetivo pendente; negativos ("nao quero visitar","talvez depois","quero
+  fotos","quero o terceiro") nao viram visita.
+- **REPLAY** `run-f2-17-smoke-replay.ts` (offline, singleAuthor, brain SCRIPTADO reproduz os erros do smoke #2): 14 OK —
+  zero vehicleKey no texto; T3 lista; T4 seleciona 2o=Honda CRV 2010 (label humano); T5 km/cor reais; T6 foto+WM label
+  humano; T7 recall "Honda CRV 2010" nunca a chave; T8 endereco+horario reais; T9 stock_search EXECUTADO com excludeKeys;
+  T10 nome+troca=false; T11 visita+sabado; P0-1 fixture; P0-5 negativos. **tsc EXIT 0; test:all EXIT 0** (F2.17 14, F2.16
+  5, F2.15 18, F2.14 17, SHADOW 11, GATE OFFLINE 7, F2.13 46, sem regressao). Observabilidade nova: `institutionalResolved`
+  + `policyFeedback` no result/evento. **NAO rodei OpenAI. Sem commit/push/deploy/SQL. Parado para auditoria Codex.**
+
+### 4a rodada — fix INSTITUCIONAL + SMOKE #2: NAO PASSOU (7 violacoes; NAO re-rodado) — 2026-07-04
+Codex aprovou estruturalmente + pediu 1 fix institucional + re-rodar 1x. FEITO: deteccao geral de topicos + resolucao
+TERMINAL por topico (`resolveInstitutional`, cache 1x/topico, NOT_CONFIGURED terminal sem loop/fallback), protocolo do
+brain reforcado, `institutionalResolved` observavel, F2.16 5 OK, T8 endurecida. test:all+tsc verdes. Smoke #2 (23 chamadas,
+compose=0): **T8 melhorou de verdade** (honesto sobre endereco ausente + deu o horario, sem loop/degradado — o laco de 4x
+morreu). Mas 7 violacoes: 2 BUGS DE ENGINE (extractTenantBusinessFacts(hours) casa regra de saudacao; label do veiculo
+lembrado = CHAVE CRUA quando a oferta nao e renderizada -> T7 recall mandou a chave), 3 VARIACAO DA LLM (T3 nao listou, T9
+sem excludeKeys, T11 sem visita/sabado — single-author=LLM conduz), 2 FALSO-POSITIVO da assertiva T8. ACHADO CENTRAL:
+grounding solido, CONDUCAO LLM-dependente e variou entre runs. **NAO re-rodei, NAO apliquei fix, NAO aprovei. Parado para
+Codex** decidir (conduções deterministicas x aceitar variancia + 2 bugs de engine). Detalhe no handoff secao SMOKE #2.
+
+### 6a rodada — 2 HARDENINGS da auditoria (H1 seleção canônica + H2 visita 3 estados) — 2026-07-04
+Codex aprovou as 5 correções por invariantes e encomendou 2 hardenings gratuitos (sem OpenAI/commit). FEITOS:
+- **H1** `canonicalizeSelectMutations` (central-engine) NÃO aceita mais o label da LLM como fallback: label só de fonte
+  CANÔNICA (VehicleFact/RememberedVehicleIdentity/lastRenderedOfferContext); sem label canônico -> DESCARTA a seleção
+  (key -> `droppedSelectKeys` observável), nunca persiste vazio/da LLM. `state-reducer` (defesa 2ª) REJEITA
+  select_vehicle_focus com label vazio ou == key.
+- **H2** VISITA em 3 estados (lead-extraction): recusa "não quero visitar"->false; intenção "quero visitar sábado"->true
+  +sábado; adiamento "talvez depois"/"agora não"/"mais tarde" (sozinho)->NÃO grava; "quero visitar mais tarde"->true SEM
+  diaHorario (`extractDayPeriod` limpa "mais tarde"/"mais cedo"). Não quebra "quero fotos"/"quero o terceiro".
+- **Teste** `run-f2-18-canonical-select-visit.ts` (NOVO, offline) 20 OK; **test:f217 14 OK; tsc EXIT 0; test:all EXIT 0**
+  (F2.18 20, F2.17 14, F2.16 5, F2.15 18, F2.8 166, sem regressão). **NÃO rodei OpenAI. Sem commit/push/deploy/SQL. Parado
+  para auditoria Codex.**

@@ -42,6 +42,17 @@ export type VehicleFact = {
   photoIds?: string[];
 };
 
+// Identidade LEMBRADA de um veículo (audit autoria única): só marca/modelo (+ ano se conhecido) de uma oferta/
+// seleção/foto anterior. Autoriza APENAS NOMEAR o veículo no renderer — NUNCA carrega km/câmbio/cor/preço. Substitui
+// o antigo `labelToFact` (que fabricava VehicleFact com ano=0/preco=-1). Atributo só vem de QueryResult REAL do MESMO
+// vehicleKey. `ano: null` quando desconhecido -> vehicle_ref(ano) falha fechado (força vehicle_details).
+export type RememberedVehicleIdentity = {
+  readonly vehicleKey: string;
+  readonly marca: string;
+  readonly modelo: string;
+  readonly ano: number | null;
+};
+
 export type ConversationStage =
   | "greeting" | "discovery" | "offering" | "negotiating" | "scheduling" | "handoff" | "closed";
 

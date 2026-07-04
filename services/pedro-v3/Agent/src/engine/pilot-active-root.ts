@@ -334,6 +334,8 @@ export class PilotActiveRoot {
       limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 4,
       sdrPolicy: this.sdrPolicy,
       allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
+      // AUTORIA ÚNICA (audit): central_active NUNCA usa o 2º compose (DecisionLlm) — o cérebro autora o ResponseDraft.
+      singleAuthor: true,
     });
     const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
     const dispatched = await this.#dispatchIfCommitted(input, engine.status === "committed");

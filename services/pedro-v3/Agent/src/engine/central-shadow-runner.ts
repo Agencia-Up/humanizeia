@@ -111,6 +111,8 @@ export async function runCentralShadowTurn(args: {
     limits: deps.limits, maxValidationAttempts: deps.maxValidationAttempts, brainMaxSteps: deps.brainMaxSteps,
     allowedTools: deps.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
     providerCapability: { send_message: "none", send_media: "none" },
+    // B6 (audit): shadow espelha EXATAMENTE o caminho ativo (autoria única, sem 2º compose).
+    singleAuthor: true,
   });
 
   // 4) PROVA de não-interferência: o estado CANÔNICO não mudou de versão (nenhuma escrita no canônico).
