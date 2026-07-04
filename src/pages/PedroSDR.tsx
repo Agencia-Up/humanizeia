@@ -4,6 +4,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 // Fase 6.4 — Campos dinâmicos (cidades + origens cadastráveis pelo vendedor)
 import { DynamicSelect } from '@/components/dynamic-fields/DynamicSelect';
+import { LeadAttachments } from '@/components/leads/LeadAttachments';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -3847,6 +3848,9 @@ export function CrmAvancadoTab({
             </Button>
           </div>
         </div>
+
+        {/* Documentos anexados ao lead (RG, comprovante, simulacao, etc.) — Pedro e Marcos */}
+        <LeadAttachments leadId={selectedLead.id} leadSource={isMarcosCrm ? 'marcos' : 'pedro'} />
 
         {/* ── Feedback da IA ──────────────────────────────────────────────
             Mostra o que o Pedro escreveu sobre esse lead. Prioridade:
