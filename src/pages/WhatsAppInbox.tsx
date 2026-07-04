@@ -17,7 +17,8 @@ import {
   Sparkles, ArrowLeft, MessageCircle, Bot, Phone,
   Wifi, WifiOff, ChevronDown, MoreVertical, Smile,
   Paperclip, Tag, UserCheck, Mic, FileText, Download, Trash2,
-  CalendarDays, X, Image as ImageIcon, Video, AlertCircle
+  CalendarDays, X, Image as ImageIcon, Video, AlertCircle,
+  Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut
 } from 'lucide-react';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
@@ -224,6 +225,10 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   const [resolvingMediaIds, setResolvingMediaIds] = useState<Set<string>>(new Set());
   const [recording, setRecording]             = useState(false);
   const [recordSeconds, setRecordSeconds]     = useState(0);
+  const [chatExpanded, setChatExpanded]       = useState(false);
+  const [sidebarCompact, setSidebarCompact]   = useState(false);
+  const [chatZoom, setChatZoom]               = useState<'sm' | 'md' | 'lg'>('md');
+  const [syncingLabels, setSyncingLabels]     = useState(false);
   const lastFocusedPhoneRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -543,6 +548,27 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
     if (!effectiveUserId) return;
     await supabase.from('wa_contacts').update({ tags } as any).eq('user_id', effectiveUserId as string).eq('phone', phone);
     setContactTags(prev => ({ ...prev, [phone]: tags }));
+
+    const instanceId = selectedConv?.instance_id || sendInstanceId || instances[0]?.id || null;
+    if (!instanceId) return;
+
+    setSyncingLabels(true);
+    const { data, error } = await supabase.functions.invoke('wa-sync-chat-labels', {
+      body: {
+        user_id: effectiveUserId,
+        phone,
+        instance_id: instanceId,
+        labels: tags,
+      },
+    }).finally(() => setSyncingLabels(false));
+
+    if (error || (data as any)?.ok === false) {
+      toast({
+        title: 'Etiqueta salva na Logos',
+        description: 'Nao consegui refletir todas as etiquetas no WhatsApp. Verifique se elas existem na UAZAPI.',
+        variant: 'destructive',
+      });
+    }
   };
 
   /* ── Effects ───────────────────────────────────────────────────── */
@@ -968,6 +994,17 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   });
 
   const totalUnread = conversations.reduce((s, c) => s + c.unread_count, 0);
+  const zoomClasses = {
+    sm: { bubble: 'text-[13.5px]', input: 'text-sm', media: 'max-w-[240px] max-h-[280px]' },
+    md: { bubble: 'text-[14.5px]', input: 'text-sm', media: 'max-w-[280px] max-h-[320px]' },
+    lg: { bubble: 'text-[15.5px]', input: 'text-base', media: 'max-w-[340px] max-h-[380px]' },
+  }[chatZoom];
+  const sidebarWidthClass = sidebarCompact
+    ? 'md:w-[272px] lg:w-[296px]'
+    : 'md:w-[320px] lg:w-[360px]';
+  const shellClass = chatExpanded
+    ? 'fixed inset-3 md:inset-6 z-50 h-auto flex flex-col rounded-2xl border border-border/60 bg-background shadow-2xl'
+    : `flex flex-col ${embedded ? 'h-[calc(100vh-210px)]' : 'h-[calc(100vh-120px)]'}`;
 
   const instName = (id: string | null) => {
     if (!id) return null;
@@ -998,21 +1035,22 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
 
   return (
     <Wrapper>
-      <div className={`flex flex-col ${embedded ? 'h-[calc(100vh-210px)]' : 'h-[calc(100vh-120px)]'} overflow-hidden`}>
+      <div className={`${shellClass} overflow-hidden`}>
 
         {/* ══════════════════════════════════════════════════════════
             TOPO: seletor de instância (tabs)
         ══════════════════════════════════════════════════════════ */}
-        <div className="border-b border-border/40 bg-muted/20 px-4 pt-3 pb-0 shrink-0">
-          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+        <div className="border-b border-[#222d35] bg-[#111b21] px-4 pt-3 pb-0 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
 
             {/* Tab "Todas" */}
             <button
               onClick={() => { setActiveInstanceTab('all'); setSelectedConvKey(null); }}
               className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
                 activeInstanceTab === 'all'
-                  ? 'border-primary text-primary bg-background'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                  ? 'border-[#00a884] text-[#00a884] bg-[#202c33]'
+                  : 'border-transparent text-[#8696a0] hover:text-[#e9edef] hover:bg-[#202c33]/70'
               }`}
             >
               <MessageCircle className="h-3.5 w-3.5" />
@@ -1034,8 +1072,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                   onClick={() => { setActiveInstanceTab(inst.id); setSelectedConvKey(null); }}
                   className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-all whitespace-nowrap ${
                     activeInstanceTab === inst.id
-                      ? 'border-primary text-primary bg-background'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                      ? 'border-[#00a884] text-[#00a884] bg-[#202c33]'
+                      : 'border-transparent text-[#8696a0] hover:text-[#e9edef] hover:bg-[#202c33]/70'
                   }`}
                 >
                   {connected
@@ -1061,6 +1099,51 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
               );
             })}
           </div>
+          <div className="hidden md:flex items-center gap-1 pb-2 shrink-0">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-[#8696a0] hover:bg-[#202c33] hover:text-[#e9edef]"
+              onClick={() => setSidebarCompact(v => !v)}
+              title={sidebarCompact ? 'Aumentar lista lateral' : 'Diminuir lista lateral'}
+            >
+              {sidebarCompact ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-[#8696a0] hover:bg-[#202c33] hover:text-[#e9edef]"
+              onClick={() => setChatZoom(z => z === 'lg' ? 'md' : z === 'md' ? 'sm' : 'sm')}
+              disabled={chatZoom === 'sm'}
+              title="Diminuir zoom do chat"
+            >
+              <ZoomOut className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-[#8696a0] hover:bg-[#202c33] hover:text-[#e9edef]"
+              onClick={() => setChatZoom(z => z === 'sm' ? 'md' : z === 'md' ? 'lg' : 'lg')}
+              disabled={chatZoom === 'lg'}
+              title="Aumentar zoom do chat"
+            >
+              <ZoomIn className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-[#8696a0] hover:bg-[#202c33] hover:text-[#e9edef]"
+              onClick={() => setChatExpanded(v => !v)}
+              title={chatExpanded ? 'Sair do modo tela cheia' : 'Expandir conversas'}
+            >
+              {chatExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+          </div>
+          </div>
         </div>
 
         {/* ══════════════════════════════════════════════════════════
@@ -1069,28 +1152,28 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         <div className="flex flex-1 min-h-0 overflow-hidden">
 
           {/* ── Lista de conversas ─────────────────────────────────── */}
-          <div className={`w-full md:w-[320px] lg:w-[360px] border-r border-border/40 flex flex-col shrink-0 ${isMobileChat ? 'hidden md:flex' : 'flex'}`}>
+          <div className={`w-full ${sidebarWidthClass} border-r border-[#222d35] bg-[#111b21] flex flex-col shrink-0 transition-[width] duration-200 ${isMobileChat ? 'hidden md:flex' : 'flex'}`}>
 
             {/* Busca + filtro de tags */}
-            <div className="p-3 border-b border-border/40 space-y-2 bg-background">
+            <div className="p-3 border-b border-[#222d35] space-y-2 bg-[#111b21]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                 <Input
                   placeholder="Buscar contatos ou mensagens..."
-                  className="pl-8 h-8 text-xs bg-muted/30 border-0 focus-visible:ring-1"
+                  className="pl-8 h-9 text-xs bg-[#0b141a] border-[#222d35] text-[#e9edef] placeholder:text-[#8696a0] focus-visible:ring-[#00a884]"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                 />
               </div>
               <div className="flex items-center gap-2">
-                <div className="flex flex-1 items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
+                <div className="flex flex-1 items-center gap-2 rounded-lg border border-[#222d35] bg-[#0b141a] px-2.5 py-1.5">
                   <CalendarDays className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">Chegou em</span>
                   <Input
                     type="date"
                     value={arrivalDateFilter}
                     onChange={e => setArrivalDateFilter(e.target.value)}
-                    className="h-7 min-w-0 border-0 bg-transparent p-0 text-xs focus-visible:ring-0"
+                    className="h-7 min-w-0 border-0 bg-transparent p-0 text-xs text-[#e9edef] focus-visible:ring-0"
                   />
                 </div>
                 {arrivalDateFilter && (
@@ -1141,8 +1224,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                       <button
                         key={conv.key}
                         onClick={() => selectConversation(conv)}
-                        className={`w-full text-left px-4 py-3.5 transition-colors hover:bg-muted/50 ${
-                          isSelected ? 'bg-primary/5 border-l-2 border-l-primary' : 'border-l-2 border-l-transparent'
+                        className={`w-full text-left px-4 py-3.5 transition-colors hover:bg-[#202c33] ${
+                          isSelected ? 'bg-[#202c33] border-l-2 border-l-[#00a884]' : 'border-l-2 border-l-transparent'
                         }`}
                       >
                         <div className="flex items-start gap-3">
@@ -1239,10 +1322,10 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             ) : (
               <>
                 {/* ── Header do chat ── */}
-                <div className="px-4 py-3 border-b border-border/40 bg-background flex items-center gap-3 shrink-0">
+                <div className="px-4 py-3 border-b border-[#222d35] bg-[#202c33] flex items-center gap-3 shrink-0">
                   {/* Voltar mobile */}
                   <button
-                    className="md:hidden p-1.5 rounded-lg hover:bg-muted/50 text-muted-foreground"
+                    className="md:hidden p-1.5 rounded-lg hover:bg-[#111b21] text-[#8696a0]"
                     onClick={() => { setIsMobileChat(false); setSelectedConvKey(null); }}
                   >
                     <ArrowLeft className="h-4 w-4" />
@@ -1325,6 +1408,17 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                     <TagSelector
                       selectedTags={contactTags[selectedConv?.phone || ''] || []}
                       onTagsChange={(tags) => updateContactTags(selectedConv!.phone, tags)}
+                      trigger={
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1.5 border-[#00a884]/35 bg-[#00a884]/10 text-[#7ee2b8] hover:bg-[#00a884]/20"
+                          title="Etiquetas da conversa"
+                        >
+                          {syncingLabels ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
+                          <span className="hidden lg:inline">Etiquetas</span>
+                        </Button>
+                      }
                     />
                   </div>
                 </div>
@@ -1389,7 +1483,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                             src={msg.media_url!}
                                             alt="Imagem recebida"
                                             loading="lazy"
-                                            className="rounded-xl max-w-[280px] max-h-[320px] object-cover border border-white/10 group-hover:opacity-95 transition-opacity"
+                                            className={`rounded-xl ${zoomClasses.media} object-cover border border-white/10 group-hover:opacity-95 transition-opacity`}
                                           />
                                         </a>
                                       ) : kind === 'audio' && hasMedia ? (
@@ -1403,7 +1497,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                           <audio controls src={msg.media_url!} className="h-9 w-full max-w-[280px] accent-[#00a884]" />
                                         </div>
                                       ) : kind === 'video' && hasMedia ? (
-                                        <video controls src={msg.media_url!} className="rounded-xl max-w-[280px] max-h-[320px] border border-white/10" />
+                                        <video controls src={msg.media_url!} className={`rounded-xl ${zoomClasses.media} border border-white/10`} />
                                       ) : kind === 'document' && hasMedia ? (
                                         <a
                                           href={msg.media_url!} target="_blank" rel="noopener noreferrer"
@@ -1430,7 +1524,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                     </div>
                                   )}
                                   {showText && (
-                                    <p className="text-[14.5px] whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                                    <p className={`${zoomClasses.bubble} whitespace-pre-wrap break-words leading-relaxed`}>{msg.content}</p>
                                   )}
 
                                   {/* Rodapé da mensagem: hora + status */}
@@ -1469,7 +1563,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                 </div>
 
                 {/* ── Input de resposta ── */}
-                <div className="border-t border-border/40 bg-background shrink-0">
+                <div className="border-t border-[#222d35] bg-[#202c33] shrink-0">
                   {/* Seletor de instância (se há mais de uma) */}
                   {instances.length > 1 && (
                     <div className="px-4 pt-2.5 pb-0">
@@ -1482,8 +1576,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                               onClick={() => setSendInstanceId(inst.id)}
                               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-all border ${
                                 (sendInstanceId || instances[0]?.id) === inst.id
-                                  ? 'bg-primary text-primary-foreground border-primary'
-                                  : 'bg-muted/40 text-muted-foreground border-border/40 hover:border-primary/40 hover:text-foreground'
+                                  ? 'bg-[#00a884] text-[#111b21] border-[#00a884]'
+                                  : 'bg-[#111b21] text-[#8696a0] border-[#222d35] hover:border-[#00a884]/50 hover:text-[#e9edef]'
                               }`}
                             >
                               <Wifi className="h-2.5 w-2.5" />
@@ -1551,13 +1645,13 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={uploadingMedia || instances.length === 0}
-                        className="h-10 w-10 rounded-full text-muted-foreground flex items-center justify-center shrink-0 hover:bg-muted/60 hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="h-11 w-11 rounded-full text-[#8696a0] flex items-center justify-center shrink-0 hover:bg-[#111b21] hover:text-[#e9edef] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         title="Anexar arquivo"
                       >
                         {uploadingMedia ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
                       </button>
 
-                      <div className="flex-1 bg-muted/30 rounded-2xl border border-border/40 px-4 py-2.5 focus-within:border-primary/50 focus-within:bg-background transition-all">
+                      <div className="flex-1 bg-[#111b21] rounded-2xl border border-[#222d35] px-4 py-2.5 focus-within:border-[#00a884]/60 transition-all">
                         <Textarea
                           ref={textareaRef}
                           placeholder="Digite uma mensagem..."
@@ -1572,7 +1666,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                           onKeyDown={handleKeyDown}
                           disabled={sending || instances.length === 0}
                           rows={1}
-                          className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
+                          className={`resize-none border-0 bg-transparent p-0 ${zoomClasses.input} text-[#e9edef] placeholder:text-[#8696a0] focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto`}
                         />
                       </div>
 
@@ -1580,7 +1674,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         <button
                           onClick={handleSend}
                           disabled={sending || instances.length === 0}
-                          className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                          className="h-11 w-11 rounded-full bg-[#00a884] text-[#111b21] flex items-center justify-center shrink-0 hover:bg-[#06cf9c] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
                           title="Enviar"
                         >
                           {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -1589,7 +1683,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         <button
                           onClick={startRecording}
                           disabled={uploadingMedia || instances.length === 0}
-                          className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                          className="h-11 w-11 rounded-full bg-[#00a884] text-[#111b21] flex items-center justify-center shrink-0 hover:bg-[#06cf9c] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
                           title="Gravar áudio"
                         >
                           <Mic className="h-4 w-4" />
