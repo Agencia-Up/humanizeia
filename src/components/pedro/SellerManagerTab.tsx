@@ -535,7 +535,7 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Deseja excluir este vendedor da equipe? Os leads atribuídos a ele ficarão "sem vendedor". Esta ação não pode ser desfeita.')) return;
+    if (!confirm('Excluir este vendedor da equipe?\n\n• Os leads atribuídos a ele ficarão "sem vendedor".\n• O ACESSO (login) dele à plataforma será REMOVIDO na hora.\n\nSe você reconvidá-lo depois, o acesso volta automaticamente.')) return;
     try {
       const target = sellers.find(s => s.id === id);
 
