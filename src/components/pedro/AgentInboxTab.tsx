@@ -6,6 +6,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { TagBadge } from '@/components/whatsapp/TagBadge';
+import { TagSelector } from '@/components/whatsapp/TagSelector';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -13,6 +15,7 @@ import {
   Bot, Send, Loader2, Search, ArrowLeft, ArrowRight, Pause, Play,
   MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
   Paperclip, Mic, FileText, Download, Trash2, X, Square, Eye,
+  Tag, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -312,6 +315,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const recordCancelRef = useRef(false);
   const profilePhotoAttemptsRef = useRef<Set<string>>(new Set());
   const [leadProfilePictures, setLeadProfilePictures] = useState<Record<string, string>>({});
+  const [contactTags, setContactTags] = useState<Record<string, string[]>>({});
+  const [syncingLabels, setSyncingLabels] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const [sidebarCompact, setSidebarCompact] = useState(false);
+  const [chatZoom, setChatZoom] = useState<'sm' | 'md' | 'lg'>('md');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -458,20 +466,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     (async () => {
       const { data } = await (supabase as any)
         .from('wa_contacts')
-        .select('phone, metadata')
+        .select('phone, metadata, tags')
         .eq('user_id', userId)
         .in('phone', phones);
       if (cancelled) return;
 
       const next: Record<string, string> = {};
+      const tagMap: Record<string, string[]> = {};
       for (const c of (data || []) as any[]) {
         const picture = contactProfilePicture(c.metadata);
-        if (!picture) continue;
-        next[c.phone] = picture;
-        next[phoneCanonical(c.phone)] = picture;
+        if (picture) {
+          next[c.phone] = picture;
+          next[phoneCanonical(c.phone)] = picture;
+        }
+        if (Array.isArray(c.tags) && c.tags.length > 0) {
+          tagMap[c.phone] = c.tags;
+          tagMap[phoneCanonical(c.phone)] = c.tags;
+        }
       }
       if (Object.keys(next).length > 0) {
         setLeadProfilePictures(prev => ({ ...prev, ...next }));
+      }
+      if (Object.keys(tagMap).length > 0) {
+        setContactTags(prev => ({ ...prev, ...tagMap }));
       }
     })();
 
@@ -514,6 +531,72 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
     }
   }, [userId, leads, leadProfilePictures]);
+
+  const updateLeadTags = async (lead: Lead, tags: string[]) => {
+    const phone = cleanPhone(lead.remote_jid);
+    if (!phone) return;
+
+    const canonical = phoneCanonical(phone);
+    setContactTags(prev => ({
+      ...prev,
+      [phone]: tags,
+      ...(canonical ? { [canonical]: tags } : {}),
+    }));
+
+    const { data: existing } = await (supabase as any)
+      .from('wa_contacts')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('phone', phone)
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) {
+      await (supabase as any)
+        .from('wa_contacts')
+        .update({ tags })
+        .eq('id', existing.id);
+    } else {
+      await (supabase as any)
+        .from('wa_contacts')
+        .insert({
+          user_id: userId,
+          phone,
+          name: lead.lead_name || phone,
+          source: lead.origem === 'marcos' ? 'marcos_inbox' : 'pedro_inbox',
+          tags,
+          last_message_at: lead.last_interaction_at || new Date().toISOString(),
+        });
+    }
+
+    const latestInstanceId = [...messages].reverse().find(m => m.instance_id)?.instance_id || null;
+    const instanceId = lead.instance_id || sellerSendInstanceId || latestInstanceId;
+    if (!instanceId) {
+      toast({
+        title: 'Etiqueta salva na Logos',
+        description: 'Nao encontrei uma instancia conectada nessa conversa para refletir no WhatsApp.',
+      });
+      return;
+    }
+
+    setSyncingLabels(true);
+    const { data, error } = await supabase.functions.invoke('wa-sync-chat-labels', {
+      body: {
+        user_id: userId,
+        phone,
+        instance_id: instanceId,
+        labels: tags,
+      },
+    }).finally(() => setSyncingLabels(false));
+
+    if (error || (data as any)?.ok === false) {
+      toast({
+        title: 'Etiqueta salva na Logos',
+        description: 'Nao consegui refletir todas as etiquetas no WhatsApp. Verifique a conexao da UAZAPI.',
+        variant: 'destructive',
+      });
+    }
+  };
 
   useEffect(() => {
     if (!focusLeadId || loadingLeads || leads.length === 0) return;
@@ -1153,6 +1236,17 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const firstContactMs = firstContactMsg ? new Date(firstContactMsg.created_at).getTime() : null;
   const handoffDelayMs = transferAtMs == null ? null : (firstContactMs != null ? firstContactMs - transferAtMs : Date.now() - transferAtMs);
   const handoffColor = handoffDelayMs == null ? '' : handoffDelayMs <= 15 * 60000 ? 'text-emerald-300' : handoffDelayMs <= 60 * 60000 ? 'text-amber-300' : 'text-red-300';
+  const selectedLeadTags = selectedLead
+    ? (contactTags[cleanPhone(selectedLead.remote_jid)] || contactTags[phoneCanonical(selectedLead.remote_jid)] || [])
+    : [];
+  const zoomClasses = {
+    sm: { bubble: 'text-[13.5px]', input: 'text-sm', media: 'max-w-[240px] max-h-[260px]' },
+    md: { bubble: 'text-[14.5px]', input: 'text-sm', media: 'max-w-[300px] max-h-[320px]' },
+    lg: { bubble: 'text-[15.5px]', input: 'text-base', media: 'max-w-[360px] max-h-[390px]' },
+  }[chatZoom];
+  const shellClass = chatExpanded
+    ? 'fixed inset-3 md:inset-6 z-50 flex flex-col h-auto bg-card rounded-2xl border border-border/70 overflow-hidden shadow-2xl'
+    : 'flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden';
   const handoffCard = (transferAtMs != null && transferInfo) ? (
     <div className="flex justify-center my-3">
       <div className="max-w-[88%] text-center bg-[#182229] rounded-xl px-4 py-2.5 shadow-sm border border-white/5">
@@ -1181,7 +1275,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden">
+    <div className={shellClass}>
       {/* ── Top Bar: Seletor de Agente (Pedro) / titulo Conversas (unified) ── */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30">
         {unified ? (
@@ -1243,13 +1337,29 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] shrink-0">
           {arrivalDateFilter ? `${filteredLeads.length}/${leads.length}` : leads.length} conversa{leads.length !== 1 ? 's' : ''}
         </Badge>
+        {unified && (
+          <div className="hidden md:flex items-center gap-1 shrink-0">
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setSidebarCompact(v => !v)} title={sidebarCompact ? 'Aumentar lista lateral' : 'Diminuir lista lateral'}>
+              {sidebarCompact ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            </Button>
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setChatZoom(z => z === 'lg' ? 'md' : z === 'md' ? 'sm' : 'sm')} disabled={chatZoom === 'sm'} title="Diminuir zoom do chat">
+              <ZoomOut className="h-4 w-4" />
+            </Button>
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setChatZoom(z => z === 'sm' ? 'md' : z === 'md' ? 'lg' : 'lg')} disabled={chatZoom === 'lg'} title="Aumentar zoom do chat">
+              <ZoomIn className="h-4 w-4" />
+            </Button>
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setChatExpanded(v => !v)} title={chatExpanded ? 'Sair do modo tela cheia' : 'Expandir conversas'}>
+              {chatExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+          </div>
+        )}
       </div>
 
       <div ref={paneRef} className="flex flex-1 overflow-hidden">
         {/* ── Painel Esquerdo: Lista de Conversas ── */}
         <div
-          className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40 ${unified ? 'md:!w-[var(--conv-lw)] shrink-0' : ''}`}
-          style={unified ? ({ ['--conv-lw']: `${listW}px` } as any) : undefined}
+          className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40 ${unified ? 'md:!w-[var(--conv-lw)] shrink-0 bg-[#111b21]' : ''}`}
+          style={unified ? ({ ['--conv-lw']: `${sidebarCompact ? Math.min(listW, 300) : listW}px` } as any) : undefined}
         >
           {/* Search */}
           <div className="p-3 border-b border-border/30">
@@ -1322,6 +1432,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                 const st = statusLabel(lead.status);
                 const phone = cleanPhone(lead.remote_jid);
                 const profilePicture = leadProfilePictures[phone] || leadProfilePictures[phoneCanonical(phone)] || null;
+                const tags = contactTags[phone] || contactTags[phoneCanonical(phone)] || [];
                 return (
                   <button
                     key={lead.id}
@@ -1379,6 +1490,12 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary flex items-center gap-0.5">
                               <User className="h-2.5 w-2.5" /> {sellerNameById.get(lead.assigned_to_id)}
                             </span>
+                          )}
+                          {tags.slice(0, 2).map(tag => (
+                            <TagBadge key={tag} name={tag} color="#7c3aed" size="sm" />
+                          ))}
+                          {tags.length > 2 && (
+                            <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>
                           )}
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-1">
@@ -1461,9 +1578,39 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     <MessageCircle className="h-2.5 w-2.5" />
                     {selectedLead.message_count ?? 0} msgs
                   </p>
+                  {selectedLeadTags.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {selectedLeadTags.slice(0, 4).map(tag => (
+                        <TagBadge key={tag} name={tag} color="#7c3aed" size="sm" />
+                      ))}
+                      {selectedLeadTags.length > 4 && (
+                        <span className="text-[10px] text-muted-foreground">+{selectedLeadTags.length - 4}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Pause / Resume button — so no inbox do Pedro; escondido no modo Conversas e em consulta */}
+                {unified && (
+                  <TagSelector
+                    selectedTags={selectedLeadTags}
+                    onTagsChange={(tags) => updateLeadTags(selectedLead, tags)}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 border-[#2a3942] bg-[#111b21] text-[#e9edef] hover:bg-[#202c33] shrink-0"
+                        disabled={syncingLabels}
+                        title="Adicionar etiqueta na Logos e no WhatsApp"
+                      >
+                        {syncingLabels ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
+                        <span className="hidden lg:inline">Etiquetas</span>
+                      </Button>
+                    }
+                  />
+                )}
+
                 {!unified && (readOnly ? (
                   <Badge variant="outline" className="h-8 px-3 text-xs gap-1.5 shrink-0 border-border/60 text-muted-foreground">
                     <Eye className="h-3.5 w-3.5" />
@@ -1548,7 +1695,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           )}
                           {showHandoff && handoffCard}
                         <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[78%] rounded-lg px-3 py-2 text-[14.5px] leading-relaxed shadow-md ${
+                          <div className={`max-w-[78%] rounded-lg px-3 py-2 ${zoomClasses.bubble} leading-relaxed shadow-md ${
                             isOutgoing
                               ? (curIa ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm' : 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm')
                               : (curIa ? 'bg-[#241f33] text-[#e9edef] rounded-tl-sm border border-violet-500/20' : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5')
@@ -1558,7 +1705,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                                 {album.map((m: any, idx: number) => {
                                   const url = m.file || m.url;
                                   return (
-                                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="overflow-hidden rounded-xl block aspect-square border border-border/30 bg-muted/20">
+                                    <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className={`overflow-hidden rounded-xl block aspect-square border border-border/30 bg-muted/20 ${zoomClasses.media}`}>
                                       <img src={url} alt="" loading="lazy" className="w-full h-full object-cover hover:scale-105 transition-transform duration-200" />
                                     </a>
                                   );
@@ -1567,15 +1714,15 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             ) : (
                               mainOk && mt === 'image' && (
                                 <a href={msg.media_url!} target="_blank" rel="noopener noreferrer">
-                                  <img src={msg.media_url!} alt="" loading="lazy" className="max-w-full rounded-xl mb-2 max-h-72 object-cover" />
+                                  <img src={msg.media_url!} alt="" loading="lazy" className={`max-w-full rounded-xl mb-2 object-cover ${zoomClasses.media}`} />
                                 </a>
                               )
                             )}
                             {mainOk && isAudio && (
-                              <audio controls src={msg.media_url!} className="w-full min-w-[240px] mb-1.5 accent-[#00a884]" />
+                              <audio controls src={msg.media_url!} className={`w-full min-w-[240px] mb-1.5 accent-[#00a884] ${chatZoom === 'lg' ? 'min-w-[300px]' : ''}`} />
                             )}
                             {mainOk && mt === 'video' && (
-                              <video controls src={msg.media_url!} className="max-w-full rounded-xl mb-2 max-h-72" />
+                              <video controls src={msg.media_url!} className={`max-w-full rounded-xl mb-2 ${zoomClasses.media}`} />
                             )}
                             {mainOk && isDoc && (
                               <a
@@ -1679,7 +1826,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           }
                           rows={1}
                           disabled={uploadingMedia || pendingAttachment.mediaType === 'audio'}
-                          className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
+                          className={`resize-none border-0 bg-transparent p-0 ${zoomClasses.input} focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto`}
                         />
                       </div>
                       <Button
@@ -1765,7 +1912,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         }
                         disabled={!unified && !selectedLead.ai_paused}
                         rows={1}
-                        className="resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto"
+                        className={`resize-none border-0 bg-transparent p-0 ${zoomClasses.input} focus-visible:ring-0 min-h-0 max-h-32 leading-relaxed overflow-y-auto`}
                       />
                     </div>
                     {replyText.trim() ? (
