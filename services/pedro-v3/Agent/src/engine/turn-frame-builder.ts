@@ -6,7 +6,7 @@
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { TurnInterpretation } from "../domain/decision.ts";
-import type { FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
+import type { CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
 import type { Iso } from "../domain/types.ts";
 import { normalizeText } from "./catalog-utils.ts";
 
@@ -52,7 +52,9 @@ export function buildTurnFrame(args: {
   readonly workingMemory: WorkingMemoryV1;
   readonly interpretation: TurnInterpretation;
   readonly state: ConversationState;
+  readonly currentTurnIntent?: CurrentTurnIntent;   // P0 (audit): intenção do turno atual, computada pelo engine
 }): TurnFrame {
+  const signals = buildFrameSignals(args.block, args.interpretation);
   return {
     turnId: args.turnId,
     now: args.now,
@@ -60,6 +62,6 @@ export function buildTurnFrame(args: {
     portalPromptSha256: args.portalPromptSha256,
     workingMemory: args.workingMemory,
     recentTranscript: buildRecentTranscript(args.state),
-    signals: buildFrameSignals(args.block, args.interpretation),
+    signals: args.currentTurnIntent ? { ...signals, currentTurnIntent: args.currentTurnIntent } : signals,
   };
 }

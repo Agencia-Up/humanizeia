@@ -30,6 +30,11 @@ export const LEAD_INTENT_KINDS = [
   "institutional_question", "funnel_answer", "buy_now", "objection", "greeting", "smalltalk", "other",
 ] as const;
 export type LeadIntentKind = (typeof LEAD_INTENT_KINDS)[number];
+// P0 (audit trava de contexto): a INTENÇÃO do TURNO ATUAL, derivada SÓ do bloco corrente — separada da memória
+// (activeTopic/currentLeadIntent podem estar velhos). A decisão prioriza isto sobre a memória. "search" = qualquer
+// busca comercial nova (tipo/modelo/orçamento/popular/mais opções).
+export const CURRENT_TURN_INTENTS = ["search", "photo_request", "photo_memory", "institutional", "other"] as const;
+export type CurrentTurnIntent = (typeof CURRENT_TURN_INTENTS)[number];
 export const QUESTION_KINDS = ["price", "detail", "institutional", "photo_memory", "availability", "other"] as const;
 export type QuestionKind = (typeof QUESTION_KINDS)[number];
 export const COMMITMENT_STATUSES = ["open", "fulfilled", "cancelled"] as const;
@@ -170,6 +175,9 @@ export type FrameSignals = {
   readonly mentionsVehicleType: string | null;
   readonly isMemoryQuestion: boolean;
   readonly relation: TurnRelation;
+  // P0 (audit trava de contexto): intenção do TURNO ATUAL (só do bloco corrente). A decisão a prioriza sobre a
+  // memória; o engine limpa activeTopic/currentLeadIntent velhos de foto quando currentTurnIntent === "search".
+  readonly currentTurnIntent?: CurrentTurnIntent;
 };
 export type TurnFrame = {
   readonly turnId: string;

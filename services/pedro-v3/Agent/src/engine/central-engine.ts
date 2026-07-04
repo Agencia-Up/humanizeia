@@ -24,8 +24,9 @@ import type {
 } from "../domain/decision.ts";
 import type {
   AgentBrainPort, AgentBrainDecision, AgentToolObservation, CentralQueryCall, PersistedWorkingMemory,
-  PhotoActionDraft, ToolResultMemory, ToolTelemetry, WorkingMemoryV1, BusinessInfoTopic,
+  PhotoActionDraft, ToolResultMemory, ToolTelemetry, WorkingMemoryV1, BusinessInfoTopic, CurrentTurnIntent, FrameSignals,
 } from "../domain/agent-brain.ts";
+import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
 import { redact } from "../domain/effect-intent.ts";
@@ -44,7 +45,7 @@ import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts"
 import { extractLeadSlots, resolveSelectedVehicle } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, type SdrQualificationPolicy } from "./sdr-conductor.ts";
-import { buildTurnFrame } from "./turn-frame-builder.ts";
+import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
@@ -93,11 +94,14 @@ export type CentralTurnArgs = {
   readonly singleAuthor?: boolean;
 };
 
-export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "technical_fallback" | "legacy_compose";
+export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "technical_fallback" | "legacy_compose";
 
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[]): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
+  // "mais opções" SEMPRE exige uma nova busca (não há alternativa a listar). Uma busca genérica (só tipo/modelo) NÃO é
+  // forçada aqui: o SDR pode legitimamente ACOLHER e perguntar o nome antes de listar (Brain/protocolo). A trava de
+  // contexto do turno atual é garantida por clearStalePhotoIntent (P0-A) + guard de foto (P0-B), não por forçar busca.
   if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search")) {
     return "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final.";
   }
@@ -399,6 +403,12 @@ function authorFromBrainDraft(args: {
   if (!draft || draft.parts.length === 0) {
     return { ok: false, feedback: "Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre." };
   }
+  // P0-B (audit trava de contexto): o TURNO ATUAL não pede foto? Então a resposta não pode ter send_media nem reasonCode
+  // de foto (o texto é checado após o render). Deny -> feedback ao MESMO cérebro (re-decide a busca/pergunta atual).
+  const photoTurn = isPhotoRequestBlock(args.leadMessage) || isPhotoMemoryQuestionBlock(args.leadMessage);
+  if (!photoTurn && (args.finalDecision.proposedEffects.some((e) => e.kind === "send_media") || reasonCodeMentionsPhoto(args.finalDecision.reasonCode))) {
+    return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
+  }
   const brainEffects = isPhotoRequestBlock(args.leadMessage) ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
   const proposedEffects = ensureSendMessage(brainEffects);
   const proposal: ProposedDecision = {
@@ -428,6 +438,10 @@ function authorFromBrainDraft(args: {
     composed = { draft, text: ResponseRenderer.render(draft, realFacts, args.ctx.state, args.identities) };
   } catch (err) {
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
+  }
+  // P0-B (audit): mesmo sem send_media/reasonCode, o TEXTO renderizado não pode PROMETER foto num turno que não pede foto.
+  if (!photoTurn && textPromisesPhoto(composed.text)) {
+    return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
   // P0-2 (audit): a resposta ao lead NUNCA pode conter LITERALMENTE uma vehicleKey conhecida (chave/código interno).
   for (const k of knownVehicleKeys(realFacts, args.identities, args.ctx.state)) {
@@ -464,6 +478,84 @@ function institutionalTopicsRequested(block: string): BusinessInfoTopic[] {
   if (INST_HOURS_RX.test(n)) out.push("hours");
   if (INST_UNIT_RX.test(n)) out.push("unit");
   return out;
+}
+
+// ── P0 (audit TRAVA DE CONTEXTO): intenção do TURNO ATUAL (só do bloco corrente) e limpeza de foto stale ──────────
+// Orçamento/faixa de preço = evidência de busca comercial. normalizeText remove acentos.
+const BUDGET_RX = /\bate\s+\d|\br\$\s*\d|\b\d{2,3}\s*mil\b|\bbarat|\beconomic|\bfaixa\s+de\s+pre|\bor[çc]amento\b/;
+function isFreshSearchTurn(leadMessage: string, signals: FrameSignals, claimExtractor: ClaimExtractor): boolean {
+  if (signals.mentionsVehicleType != null || signals.mentionsMoreOptions || signals.mentionsPopular === true) return true;
+  if (BUDGET_RX.test(normalizeText(leadMessage))) return true;
+  return claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model" || c.kind === "brand");
+}
+// Precedência: memória de foto > pedido de foto > institucional > busca nova > outro. Deriva SÓ do bloco atual.
+export function deriveCurrentTurnIntent(leadMessage: string, signals: FrameSignals, claimExtractor: ClaimExtractor): CurrentTurnIntent {
+  if (isPhotoMemoryQuestionBlock(leadMessage)) return "photo_memory";
+  if (isPhotoRequestBlock(leadMessage)) return "photo_request";
+  if (institutionalTopicsRequested(leadMessage).length > 0) return "institutional";
+  if (isFreshSearchTurn(leadMessage, signals, claimExtractor)) return "search";
+  return "other";
+}
+// Quando o TURNO ATUAL é uma busca nova, memória velha de FOTO não pode conduzir: zera activeTopic/currentLeadIntent
+// de foto no FRAME que o cérebro vê. A memória PERSISTIDA fica intacta (o cérebro re-seta o tópico correto no turno).
+// Só afeta o frame. PURO.
+export function clearStalePhotoIntent(wm: WorkingMemoryV1, currentTurnIntent: CurrentTurnIntent): WorkingMemoryV1 {
+  if (currentTurnIntent !== "search") return wm;
+  const topicIsPhoto = wm.activeTopic != null && /foto|photo/i.test(wm.activeTopic.topic);
+  const intentIsPhoto = wm.currentLeadIntent?.intent === "photo_request" || wm.currentLeadIntent?.intent === "photo_memory_question";
+  if (!topicIsPhoto && !intentIsPhoto) return wm;
+  return { ...wm, activeTopic: topicIsPhoto ? null : wm.activeTopic, currentLeadIntent: intentIsPhoto ? null : wm.currentLeadIntent };
+}
+
+// ── P0-B (audit): num turno que NÃO pede foto, a resposta não pode PROMETER foto (texto), ter reasonCode de foto,
+//    nem send_media. Guarda determinística no author + fallback. ─────────────────────────────────────────────────
+const PHOTO_PROMISE_RX = /\baqui\s+est[aã]o?\s+as\s+fotos|\bsegue[m]?\s+as?\s+fotos?|\bte\s+(?:envio|mando|enviei|mandei|envie)\s+(?:as\s+)?fotos|\benviando\s+as\s+fotos|\bmandando\s+as\s+fotos|\bfotos\s+do\s+carro\s+que\s+voce\s+pediu|\bveja\s+as\s+fotos|\bconfira\s+as\s+fotos|\bestou\s+enviando/;
+function reasonCodeMentionsPhoto(code: string | null | undefined): boolean {
+  return typeof code === "string" && /send_(?:vehicle_)?photos|foto|photo/i.test(code);
+}
+function textPromisesPhoto(text: string): boolean { return PHOTO_PROMISE_RX.test(normalizeText(text)); }
+const PHOTO_NOT_REQUESTED_FEEDBACK = "O cliente NÃO pediu fotos neste turno — ele pediu outra coisa (provavelmente uma busca). NÃO prometa nem envie fotos e NÃO use reasonCode de foto. Responda o que ele pediu AGORA: se for busca de carro (tipo/modelo/orçamento/popular/mais opções), devolva {\"kind\":\"query\",\"call\":{\"tool\":\"stock_search\",...}} e depois liste; senão responda a pergunta atual dele.";
+
+// ── P0-C (audit): EXECUTOR DETERMINÍSTICO de foto. Usado no single-author quando o cérebro NÃO autorou resposta
+//    aterrada. Pedido de foto + alvo resolvido (ordinal/modelo da última lista ou selecionado) + vehicle_photos_resolve
+//    OK com photoIds -> materializa send_media (nunca fallback genérico). Sem alvo/lista -> pede qual veículo (não
+//    consulta arbitrário). Alvo resolvido mas sem photoIds -> honesto e específico. PURO. ───────────────────────────
+function buildDeterministicPhotoResponse(args: {
+  readonly leadMessage: string;
+  readonly ctx: TurnContext;
+  readonly facts: readonly QueryResult[];
+  readonly identities: readonly RememberedVehicleIdentity[];
+  readonly turnId: string;
+}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } | null {
+  if (!isPhotoRequestBlock(args.leadMessage)) return null;
+  const state = args.ctx.state;
+  const factsArr = [...args.facts];
+  const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number) => {
+    const proposal: ProposedDecision = { proposedAction: action, facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode, reasonSummary, confidence };
+    const post = PolicyEngine.postQuery(proposal, factsArr, args.ctx);
+    if (hasDeny(post)) return null;
+    const decision = finalize(args.turnId, proposal, post, factsArr);
+    return { decision, composed: { draft: { parts: [{ type: "text" as const, content: text }] }, text }, proposedEffects };
+  };
+  const selRef = resolveSelectedVehicle(args.leadMessage, state, args.ctx.claimExtractor);
+  const targetKey = selRef?.key ?? state.vehicleContext.selected?.key ?? null;
+  const hasList = (state.lastRenderedOfferContext?.items?.length ?? 0) > 0;
+  if (!targetKey) {
+    const text = hasList ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "Claro! De qual carro você quer ver as fotos?";
+    return build(ensureSendMessage([]), text, "clarify", "photo_clarify_which", "pedido de foto sem alvo resolvido", 0.5);
+  }
+  const label = canonicalVehicleLabel(targetKey, args.facts, args.identities, state);
+  const photos = args.facts.find(
+    (f): f is Extract<QueryResult, { ok: true; tool: "vehicle_photos_resolve" }> =>
+      f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === targetKey && f.data.photoIds.length > 0,
+  );
+  if (photos) {
+    const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: targetKey, photoIds: [...photos.data.photoIds] };
+    const text = label ? `Aqui estão as fotos do ${label}. Quer que eu te passe mais detalhes dele?` : "Aqui estão as fotos que você pediu. Quer que eu te passe mais detalhes desse carro?";
+    return build(ensureSendMessage([media]), text, "send_photos", "send_vehicle_photos", "executor determinístico de foto (alvo resolvido + photoIds reais)", 0.9);
+  }
+  const text = label ? `Não localizei as fotos do ${label} agora. Quer que eu te passe os detalhes dele por aqui?` : "Não localizei as fotos desse carro agora. Quer que eu te passe os detalhes dele por aqui?";
+  return build(ensureSendMessage([]), text, "clarify", "photo_unavailable", "pedido de foto sem photoIds resolvidos", 0.4);
 }
 
 // ── Turno central ────────────────────────────────────────────────────────────────────────────────────────────
@@ -517,7 +609,14 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // ── WorkingMemory: parte persistida (WM-owned) + view canônica derivada do estado. ──
       const persisted0: PersistedWorkingMemory = loadPersistedWorkingMemory(contextState.workingMemory).memory;
       const wmV1: WorkingMemoryV1 = { ...persisted0, ...deriveCanonicalViews(contextState) };
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmV1, interpretation: prepared.interpretation, state: contextState });
+      // P0 (audit TRAVA DE CONTEXTO): intenção do TURNO ATUAL (só do bloco corrente) separada da memória. Quando é uma
+      // busca nova, memória velha de FOTO é limpa do frame que o cérebro vê (activeTopic/currentLeadIntent) — a intenção
+      // atual vence a memória. O cérebro recebe currentTurnIntent nos signals e é obrigado (requiredToolBeforeFinal) a
+      // rodar stock_search numa busca. A memória persistida fica intacta (o cérebro re-seta o tópico correto no turno).
+      const baseSignals = buildFrameSignals(leadMessage, prepared.interpretation);
+      const currentTurnIntent = deriveCurrentTurnIntent(leadMessage, baseSignals, prepared.claimExtractor);
+      const wmForFrame = clearStalePhotoIntent(wmV1, currentTurnIntent);
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -657,12 +756,21 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         if (authoredComposed && authoredDecision && authoredProposedEffects) {
           effectiveDecision = authoredDecision; composed = authoredComposed; proposedEffects = authoredProposedEffects;
         } else {
-          responseSource = "technical_fallback";
-          composed = buildTechnicalFallback();
-          proposedEffects = ensureSendMessage([]);   // B3: nenhum efeito comercial original sobrevive (só a fala honesta)
-          const fbProposal: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects, responsePlan: { guidance: composed.text }, reasonCode: "technical_fallback", reasonSummary: "cérebro não produziu resposta aterrada no limite de passos", confidence: 0.3 };
-          effectiveDecision = finalize(turnId, fbProposal, PolicyEngine.postQuery(fbProposal, facts, ctx), facts);
-          finalDecision = finalDecision ?? { reasonCode: "technical_fallback", reasonSummary: "fallback técnico honesto", confidence: 0.3, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+          // P0-C (audit trava de contexto): ANTES do fallback genérico, EXECUTOR DETERMINÍSTICO de foto. Pedido de foto
+          // com alvo resolvido + vehicle_photos_resolve OK -> materializa send_media (nunca cai em technical_fallback).
+          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId });
+          if (detPhoto) {
+            responseSource = "deterministic_photo";
+            effectiveDecision = detPhoto.decision; composed = detPhoto.composed; proposedEffects = detPhoto.proposedEffects;
+            finalDecision = finalDecision ?? { reasonCode: detPhoto.decision.reasonCode, reasonSummary: "executor determinístico de foto", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+          } else {
+            responseSource = "technical_fallback";
+            composed = buildTechnicalFallback();
+            proposedEffects = ensureSendMessage([]);   // B3: nenhum efeito comercial original sobrevive (só a fala honesta)
+            const fbProposal: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects, responsePlan: { guidance: composed.text }, reasonCode: "technical_fallback", reasonSummary: "cérebro não produziu resposta aterrada no limite de passos", confidence: 0.3 };
+            effectiveDecision = finalize(turnId, fbProposal, PolicyEngine.postQuery(fbProposal, facts, ctx), facts);
+            finalDecision = finalDecision ?? { reasonCode: "technical_fallback", reasonSummary: "fallback técnico honesto", confidence: 0.3, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+          }
         }
         // ≤1 pergunta.
         const trimmedText = trimToOneQuestion(composed.text);

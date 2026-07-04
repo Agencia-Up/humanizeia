@@ -1257,3 +1257,18 @@ Codex aprovou as 5 correções por invariantes e encomendou 2 hardenings gratuit
 - **Teste** `run-f2-18-canonical-select-visit.ts` (NOVO, offline) 20 OK; **test:f217 14 OK; tsc EXIT 0; test:all EXIT 0**
   (F2.18 20, F2.17 14, F2.16 5, F2.15 18, F2.8 166, sem regressão). **NÃO rodei OpenAI. Sem commit/push/deploy/SQL. Parado
   para auditoria Codex.**
+
+### P0 TRAVA DE CONTEXTO (foto resolvida virava fallback + memória velha de foto conduzia busca) — 2026-07-04
+Codex achou no banco (central_active, Douglas): "me manda foto do 2" resolvido (photos+details OK) virava technical_fallback
+SEM send_media; turno seguinte "você tem SUV?" respondia FOTO (activeTopic/currentLeadIntent ainda em photo_request).
+Corrigido por 4 camadas determinísticas (autoria única preservada):
+- **P0-A** `currentTurnIntent` (só do bloco atual) nos signals + `clearStalePhotoIntent` zera foto stale do FRAME quando é
+  busca (memória persistida intacta); regra nova no protocolo do brain.
+- **P0-B** guard: turno que não pede foto -> deny de send_media/reasonCode/texto de foto + feedback ao cérebro.
+- **P0-C** `buildDeterministicPhotoResponse`: pedido de foto resolvido -> materializa send_media (nunca fallback); sem lista
+  -> pede qual veículo (sem query arbitrária). `responseSource=deterministic_photo`.
+- NÃO forcei stock_search em toda busca (quebraria "acolher+perguntar nome" do SDR / F2.13 [3c]); a trava vem de P0-A+P0-B.
+- **Teste** `run-f2-20-context-lock-photo.ts` (nº 19 já era market-taxonomy de outra sessão) 21 OK (UNIT + E1..E4).
+  **tsc EXIT 0; test:all EXIT 0** (F2.13 46 recuperado, F2.20 21, F2.19 market OK, F2.17 14, F2.18 20, sem regressão).
+- **NÃO rodei OpenAI. Sem commit/push/deploy.** Working tree sobre `main` 73b3ccab. Parado para auditoria Codex.
+  Detalhe: handoff `Brain/2026-07-04-claude-p0-trava-contexto-foto.md`.
