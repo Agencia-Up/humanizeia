@@ -1230,6 +1230,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // FASE 1: limite temporal da transferencia e nome do vendedor que recebeu, pro divisor da timeline.
   const transferAtMs = transferInfo ? new Date(transferInfo.at).getTime() : null;
   const transferSellerName = transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null;
+  const selectedAssignedSeller = selectedLead?.assigned_to_id ? (sellerNameById.get(selectedLead.assigned_to_id) || null) : null;
   // Metrica de tempo ate o 1o contato: do OK (confirmed_at) ate a 1a mensagem ENVIADA depois dele.
   const firstPostIdx = transferAtMs != null ? messages.findIndex(m => new Date(m.created_at).getTime() >= transferAtMs) : -1;
   const firstContactMsg = transferAtMs != null ? messages.find(m => m.direction === 'outgoing' && new Date(m.created_at).getTime() >= transferAtMs) : null;
@@ -1246,7 +1247,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   }[chatZoom];
   const shellClass = chatExpanded
     ? 'fixed inset-3 md:inset-6 z-50 flex flex-col h-auto bg-card rounded-2xl border border-border/70 overflow-hidden shadow-2xl'
-    : 'flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden';
+    : unified
+      ? 'flex flex-col h-full bg-[#0b141a] overflow-hidden border-y border-[#1f2c34]'
+      : 'flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden';
   const handoffCard = (transferAtMs != null && transferInfo) ? (
     <div className="flex justify-center my-3">
       <div className="max-w-[88%] text-center bg-[#182229] rounded-xl px-4 py-2.5 shadow-sm border border-white/5">
@@ -1277,7 +1280,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   return (
     <div className={shellClass}>
       {/* ── Top Bar: Seletor de Agente (Pedro) / titulo Conversas (unified) ── */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30">
+      <div className={`${unified ? 'hidden' : 'flex'} items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30`}>
         {unified ? (
           <div className="flex-1 min-w-0 flex items-center gap-2">
             <MessageCircle className="h-5 w-5 text-primary shrink-0" />
@@ -1361,15 +1364,48 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40 ${unified ? 'md:!w-[var(--conv-lw)] shrink-0 bg-[#111b21]' : ''}`}
           style={unified ? ({ ['--conv-lw']: `${sidebarCompact ? Math.min(listW, 300) : listW}px` } as any) : undefined}
         >
+          {unified && (
+            <div className="border-b border-[#1f2c34] bg-[#0f1722] px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-bold text-[#e9edef]">Conversas</h2>
+                <Badge className="shrink-0 border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold text-emerald-300">
+                  {arrivalDateFilter ? `${filteredLeads.length}/${leads.length}` : leads.length} conversas
+                </Badge>
+              </div>
+              {!isSeller && sellers.length > 0 && (
+                <Select value={sellerFilter} onValueChange={v => { setSellerFilter(v); setSelectedLead(null); }}>
+                  <SelectTrigger className="mt-3 h-9 w-full rounded-xl border-[#243241] bg-[#0b111d] text-sm text-[#d1d7db]">
+                    <SelectValue placeholder="Todos os vendedores" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_SELLERS} className="text-xs">
+                      <span className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                        Todos os vendedores
+                      </span>
+                    </SelectItem>
+                    {sellers.map(s => (
+                      <SelectItem key={s.key} value={s.key} className="text-xs">
+                        <span className="flex items-center gap-2">
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                          {s.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          )}
           {/* Search */}
-          <div className="p-3 border-b border-border/30">
+          <div className={`${unified ? 'border-b border-[#1f2c34] bg-[#0f1722] p-3' : 'p-3 border-b border-border/30'}`}>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar por nome ou telefone..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                className="h-9 pl-9 text-sm"
+                className={`${unified ? 'h-10 rounded-xl border-[#243241] bg-[#0a0f1a] pl-10 text-sm text-[#e9edef] placeholder:text-[#8696a0]' : 'h-9 pl-9 text-sm'}`}
               />
             </div>
             {unified && (
@@ -1437,12 +1473,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   <button
                     key={lead.id}
                     onClick={() => setSelectedLead(lead)}
-                    className={`w-full text-left px-3.5 py-3 border-b border-border/20 transition-colors hover:bg-accent/40 ${
-                      isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : ''
+                    className={`w-full text-left px-4 py-3.5 border-b transition-colors ${
+                      unified
+                        ? `border-[#1f2c34] hover:bg-[#17212b] ${isSelected ? 'bg-[#182536] border-l-2 border-l-[#3f5cff]' : 'border-l-2 border-l-transparent'}`
+                        : `border-border/20 hover:bg-accent/40 ${isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : ''}`
                     }`}
                   >
-                    <div className="flex items-start gap-2.5">
-                      <Avatar className="h-11 w-11 shrink-0">
+                    <div className="flex items-start gap-3">
+                      <Avatar className={`${unified ? 'h-12 w-12' : 'h-11 w-11'} shrink-0`}>
                         {profilePicture && (
                           <AvatarImage
                             src={profilePicture}
@@ -1461,15 +1499,25 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1">
-                          <p className="text-[15px] font-semibold truncate text-foreground">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className={`${unified ? 'text-[15px] text-[#f4f6f8]' : 'text-[15px] text-foreground'} font-semibold truncate`}>
                             {lead.lead_name || lead.remote_jid}
                           </p>
                           <span className="text-[11px] text-muted-foreground shrink-0">
                             {lead.last_interaction_at ? fmtTime(lead.last_interaction_at) : ''}
                           </span>
                         </div>
-                        <div className="flex items-center flex-wrap gap-1.5 gap-y-1 mt-0.5">
+                        <div className="mt-1 flex items-center gap-2">
+                          <p className={`${unified ? 'text-[13px] text-[#aebac1]' : 'text-xs text-muted-foreground'} min-w-0 flex-1 truncate`}>
+                            {lead.summary ? lead.summary.replace(/\r?\n|\r/g, ' ') : displayPhone(lead.remote_jid)}
+                          </p>
+                          {lead.message_count > 0 && (
+                            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-bold text-white">
+                              {lead.message_count}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center flex-wrap gap-1.5 gap-y-1 mt-1.5">
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${st.color}`}>
                             {st.label}
                           </span>
@@ -1498,10 +1546,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>
                           )}
                         </div>
-                        <p className="text-[11px] text-muted-foreground mt-1">
+                        {!unified && <p className="text-[11px] text-muted-foreground mt-1">
                           Chegou: {formatArrivalDate(leadArrivalIso(lead))}
-                        </p>
-                        {lead.summary && (
+                        </p>}
+                        {!unified && lead.summary && (
                           <p className="text-xs text-muted-foreground mt-1 truncate block whitespace-nowrap overflow-hidden text-ellipsis w-full" title={lead.summary}>
                             {lead.summary.replace(/\r?\n|\r/g, ' ')}
                           </p>
@@ -1541,7 +1589,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           ) : (
             <>
               {/* Chat header */}
-              <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/20">
+              <div className={`${unified ? 'bg-[#111b21] border-[#1f2c34] px-5 py-3' : 'bg-muted/20 border-border/50 px-4 py-3'} flex items-center gap-3 border-b`}>
                 <Button
                   variant="ghost" size="sm"
                   className="h-8 w-8 p-0 md:hidden"
@@ -1570,13 +1618,20 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                 </Avatar>
 
                 <div className="flex-1 min-w-0">
-                  <p className="text-base font-semibold truncate">{selectedLead.lead_name || selectedLead.remote_jid}</p>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <p className={`${unified ? 'text-[16px] text-[#f4f6f8]' : 'text-base'} font-semibold truncate`}>{selectedLead.lead_name || selectedLead.remote_jid}</p>
+                  <p className={`${unified ? 'text-[12px] text-[#aebac1]' : 'text-xs text-muted-foreground'} flex items-center gap-1`}>
                     <Phone className="h-2.5 w-2.5" />
                     {displayPhone(selectedLead.remote_jid)}
-                    <span className="mx-1">|</span>
-                    <MessageCircle className="h-2.5 w-2.5" />
-                    {selectedLead.message_count ?? 0} msgs
+                    {unified && (
+                      <>
+                        <span className="mx-1 text-[#3a4650]">|</span>
+                        <span className="inline-flex items-center gap-1 text-emerald-400">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Online
+                        </span>
+                      </>
+                    )}
+                    <span className="mx-1 text-[#3a4650]">|</span>
+                    {selectedAssignedSeller ? `Vendedor: ${selectedAssignedSeller}` : `${selectedLead.message_count ?? 0} msgs`}
                   </p>
                   {selectedLeadTags.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
@@ -1600,15 +1655,27 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-8 gap-1.5 border-[#2a3942] bg-[#111b21] text-[#e9edef] hover:bg-[#202c33] shrink-0"
+                        className="h-9 w-9 shrink-0 rounded-full border-[#2a3942] bg-transparent p-0 text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef]"
                         disabled={syncingLabels}
                         title="Adicionar etiqueta na Logos e no WhatsApp"
                       >
                         {syncingLabels ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
-                        <span className="hidden lg:inline">Etiquetas</span>
                       </Button>
                     }
                   />
+                )}
+                {unified && (
+                  <>
+                    <Button type="button" variant="ghost" size="icon" className="hidden h-9 w-9 rounded-full text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef] md:inline-flex" title="Buscar na conversa">
+                      <Search className="h-4 w-4" />
+                    </Button>
+                    <Button type="button" variant="ghost" size="icon" className="hidden h-9 w-9 rounded-full text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef] md:inline-flex" title="Abrir no WhatsApp">
+                      <Phone className="h-4 w-4" />
+                    </Button>
+                    <Button type="button" variant="ghost" size="icon" className="hidden h-9 w-9 rounded-full text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef] md:inline-flex" onClick={() => setChatExpanded(v => !v)} title={chatExpanded ? 'Sair do modo tela cheia' : 'Expandir conversa'}>
+                      {chatExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                    </Button>
+                  </>
                 )}
 
                 {!unified && (readOnly ? (
@@ -1656,7 +1723,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
               )}
 
               {/* Messages */}
-              <ScrollArea className="flex-1 px-4 py-3 bg-[#0b141a]">
+              <ScrollArea
+                className={`${unified ? 'bg-[#0b141a] px-8 py-4' : 'bg-[#0b141a] px-4 py-3'} flex-1`}
+                style={unified ? {
+                  backgroundImage:
+                    'radial-gradient(circle at 12px 12px, rgba(134,150,160,0.11) 1.2px, transparent 1.4px), linear-gradient(180deg, rgba(11,20,26,0.96), rgba(11,20,26,0.96))',
+                  backgroundSize: '32px 32px, auto',
+                } : undefined}
+              >
                 {loadingMessages ? (
                   <div className="flex justify-center py-12">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1695,9 +1769,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           )}
                           {showHandoff && handoffCard}
                         <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[78%] rounded-lg px-3 py-2 ${zoomClasses.bubble} leading-relaxed shadow-md ${
+                          <div className={`${unified ? 'max-w-[68%] rounded-2xl px-4 py-2.5' : 'max-w-[78%] rounded-lg px-3 py-2'} ${zoomClasses.bubble} leading-relaxed shadow-md ${
                             isOutgoing
-                              ? (curIa ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm' : 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm')
+                              ? (curIa ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm' : 'bg-[#075e54] text-[#e9edef] rounded-tr-sm')
                               : (curIa ? 'bg-[#241f33] text-[#e9edef] rounded-tl-sm border border-violet-500/20' : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5')
                           }`}>
                             {album.length > 0 ? (
@@ -1771,7 +1845,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
               {/* Reply input */}
               {!readOnly && (
-              <div className="px-4 py-3 border-t border-border/50 bg-muted/20">
+              <div className={`${unified ? 'border-[#1f2c34] bg-[#111b21] px-5 py-4' : 'border-border/50 bg-muted/20 px-4 py-3'} border-t`}>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1889,24 +1963,24 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex items-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-9 w-9 p-0 rounded-xl text-muted-foreground hover:text-foreground shrink-0"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
-                      title="Anexar arquivo"
+                    <div className="flex items-end gap-3">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className={`${unified ? 'h-11 w-11 rounded-full text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef]' : 'h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground'} p-0 shrink-0`}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
+                        title="Anexar arquivo"
                     >
                       {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
                     </Button>
-                    <div className="flex-1 rounded-xl border border-border/50 bg-background px-3 py-2">
+                    <div className={`${unified ? 'rounded-2xl border-[#243241] bg-[#0b111d] px-4 py-3 shadow-inner' : 'rounded-xl border-border/50 bg-background px-3 py-2'} flex-1 border`}>
                       <Textarea
                         value={replyText}
                         onChange={e => setReplyText(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder={
-                          unified ? 'Digite uma mensagem...'
+                          unified ? 'Digite uma mensagem'
                           : selectedLead.ai_paused ? 'Digite sua resposta manual...'
                           : 'Pause a IA para responder manualmente...'
                         }
@@ -1918,7 +1992,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     {replyText.trim() ? (
                       <Button
                         size="sm"
-                        className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
+                        className={`${unified ? 'h-11 w-11 rounded-full bg-[#00a884] hover:bg-[#06cf9c]' : 'h-9 w-9 rounded-xl bg-primary hover:bg-primary/90'} p-0 shrink-0`}
                         onClick={handleSend}
                         disabled={(!unified && !selectedLead.ai_paused) || sending}
                       >
@@ -1927,7 +2001,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     ) : (
                       <Button
                         size="sm"
-                        className="h-9 w-9 p-0 rounded-xl bg-primary hover:bg-primary/90 shrink-0"
+                        className={`${unified ? 'h-11 w-11 rounded-full bg-[#00a884] hover:bg-[#06cf9c]' : 'h-9 w-9 rounded-xl bg-primary hover:bg-primary/90'} p-0 shrink-0`}
                         onClick={startRecording}
                         disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
                         title="Gravar audio"

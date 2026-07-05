@@ -4,10 +4,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
 import { Loader2 } from 'lucide-react';
 
-// Inbox UNIFICADO de conversas (aba lateral "Conversas"): junta os leads do Pedro
-// (ai_crm_leads, tráfego pago) e do Marcos (crm_leads, manuais) num lugar só, com
-// filtro de origem (Todos/Pedro/Marcos). Reutiliza o AgentInboxTab (componente do
-// Pedro) em modo `unified` — o inbox do Pedro e do Marcos atuais seguem intactos.
 export default function Conversas() {
   const { user } = useAuth();
   const { isSeller, masterUserId, memberIds, loading } = useSellerProfile(user?.id);
@@ -15,15 +11,9 @@ export default function Conversas() {
 
   return (
     <MainLayout>
-      <div className="p-4 lg:p-6">
-        <div className="mb-4">
-          <h1 className="text-xl font-bold text-foreground">Conversas</h1>
-          <p className="text-sm text-muted-foreground">
-            Todas as conversas dos leads num lugar só — Pedro (tráfego) e Marcos (manuais).
-          </p>
-        </div>
+      <div className="h-[calc(100vh-78px)] overflow-hidden">
         {loading || !effectiveUserId ? (
-          <div className="flex items-center justify-center py-24">
+          <div className="flex h-full items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
         ) : (
