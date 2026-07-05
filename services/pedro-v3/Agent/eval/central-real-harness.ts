@@ -125,7 +125,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
         persistence, clock: clock as never, brain: recordingBrain, llm: stack.composeLlm, runQuery: assembly.runQuery, businessInfo,
         contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: null,
         workerId: "central-eval", turnId, leaseTtlMs: 120_000, portalPromptSha256: assembly.promptSha,
-        limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 4, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+        limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
         providerCapability: { send_message: "none", send_media: "none" },
         singleAuthor: opts.singleAuthor ?? false, llmFirst: opts.llmFirst ?? false,
       });

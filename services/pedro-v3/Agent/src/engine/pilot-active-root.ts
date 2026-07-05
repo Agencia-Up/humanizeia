@@ -309,7 +309,7 @@ export class PilotActiveRoot {
     return {
       brain: this.agentBrain!, llm: this.llm, runQuery: this.runQuery, businessInfo: this.businessInfo,
       contextPreparer: this.contextPreparer, clock: this.clock, portalPromptSha256: this.promptSha256,
-      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 4, allowedTools: CENTRAL_ALLOWED_TOOLS,
+      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: CENTRAL_ALLOWED_TOOLS,
     };
   }
 
@@ -331,7 +331,10 @@ export class PilotActiveRoot {
       businessInfo: this.businessInfo, contextPreparer: this.contextPreparer,
       conversationId: input.conversationId, tenantId: this.ref.tenantId, agentId: this.ref.agentId, leadId: this.leadId,
       workerId: input.workerId, turnId: input.turnId, leaseTtlMs: 60_000, portalPromptSha256: this.promptSha256,
-      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 4,
+      // brainMaxSteps=6: folga p/ o retry da guarda de completude num turno misto (ex.: "qual horário e me manda foto?"
+      // gasta passos com foto + resolução institucional + 1 retry se o cérebro responder o tópico errado). Guarda só
+      // consome passo extra quando NEGA (raro); o turno típico ainda finaliza em 1-2 passos.
+      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 6,
       sdrPolicy: this.sdrPolicy,
       allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
       // AUTORIA ÚNICA (audit): central_active NUNCA usa o 2º compose (DecisionLlm) — o cérebro autora o ResponseDraft.

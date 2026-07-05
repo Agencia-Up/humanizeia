@@ -46,6 +46,7 @@ import { extractLeadSlots, resolveSelectedVehicle } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
+import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
@@ -98,7 +99,7 @@ export type CentralTurnArgs = {
   readonly llmFirst?: boolean;
 };
 
-export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "technical_fallback" | "legacy_compose";
+export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "technical_fallback" | "legacy_compose";
 
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], llmFirst: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
@@ -408,6 +409,7 @@ function authorFromBrainDraft(args: {
   readonly ctx: TurnContext;
   readonly turnId: string;
   readonly selectionTurn?: boolean;   // P0-sel: o lead está selecionando um veículo -> feedback específico se citar atributo
+  readonly institutionalObs?: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;   // completude: tópicos institucionais resolvidos
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -465,6 +467,10 @@ function authorFromBrainDraft(args: {
   // Valida contra fatos REAIS (identidade de memória NÃO aterra atributo/oferta).
   const gv = PolicyEngine.validateResponse(composed, realFacts, decision0, args.ctx);
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
+  // COMPLETUDE (prompt-first): a resposta não pode IGNORAR um pedido explícito (horário/endereço/unidade/foto). Grounding
+  // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending" });
+  if (incomplete) return { ok: false, feedback: incomplete };
   return { ok: true, decision: decision0, composed, proposedEffects };
 }
 
@@ -485,20 +491,8 @@ function requireVehicleDetailBeforeFinal(frame: ReturnType<typeof buildTurnFrame
   return `O cliente perguntou um atributo do veículo SELECIONADO. Execute vehicle_details({"vehicleKey":"${selectedKey}"}) e use SÓ esse fato (de OUTRO carro não vale) antes da resposta final.`;
 }
 
-// audit institucional: detecção GERAL dos tópicos pedidos no bloco (address/hours/unit). Léxico = EVIDÊNCIA (não
-// regra por frase). Pode retornar VÁRIOS ("endereço E horário"). O engine garante UMA observação TERMINAL por tópico
-// (ok:true OU NOT_CONFIGURED). normalizeText remove acentos -> padrões sem acento.
-const INST_ADDRESS_RX = /\benderec|\bonde\s+(?:fica|e|esta|estao|fica\s+a\s+loja)|\blocaliza|\bcomo\s+(?:chego|chegar)|\bfica(?:m)?\s+(?:onde|em|na|no)/;
-const INST_HOURS_RX = /\bhorario|\bque\s+horas|\bfuncionamento|\baberto|\bfecha(?:m|do)?\b|\batende(?:m|ndo)?\b|\bhoras?\s+(?:de\s+)?(?:atend|funcion|abr|fech)/;
-const INST_UNIT_RX = /\bunidade|\bfilia|\bmatriz|\bqual\s+loja/;
-function institutionalTopicsRequested(block: string): BusinessInfoTopic[] {
-  const n = normalizeText(block);
-  const out: BusinessInfoTopic[] = [];
-  if (INST_ADDRESS_RX.test(n)) out.push("address");
-  if (INST_HOURS_RX.test(n)) out.push("hours");
-  if (INST_UNIT_RX.test(n)) out.push("unit");
-  return out;
-}
+// audit institucional: detecção GERAL dos tópicos pedidos no bloco (address/hours/unit) — agora em turn-domain.ts,
+// compartilhada com policy-engine para o ROTEAMENTO POR DOMÍNIO (institucional não aplica policy de veículo/funil).
 
 // ── P0 (audit TRAVA DE CONTEXTO): intenção do TURNO ATUAL (só do bloco corrente) e limpeza de foto stale ──────────
 // Orçamento/faixa de preço = evidência de busca comercial. normalizeText remove acentos.
@@ -543,6 +537,57 @@ const PHOTO_ACTIVE_SEND_RX = /\baqui\s+est[aã]o?\s+as\s+fotos\b|\bseguem?\s+(?:
 function textPromisesPhoto(text: string): boolean { return PHOTO_ACTIVE_SEND_RX.test(normalizeText(text)); }
 const PHOTO_NOT_REQUESTED_FEEDBACK = "O cliente NÃO pediu fotos neste turno — ele pediu outra coisa (provavelmente uma busca). NÃO prometa nem envie fotos e NÃO use reasonCode de foto. Responda o que ele pediu AGORA: se for busca de carro (tipo/modelo/orçamento/popular/mais opções), devolva {\"kind\":\"query\",\"call\":{\"tool\":\"stock_search\",...}} e depois liste; senão responda a pergunta atual dele.";
 
+// ── COMPLETUDE DO TURNO (missão prompt-first 2026-07-04): validação LEVE que NÃO decide a conversa nem reescreve —
+//    só impede que a resposta IGNORE um pedido EXPLÍCITO do lead. Se o lead pediu X e a resposta não trouxe X (o valor
+//    OU a ausência honesta), devolve feedback ao MESMO cérebro (retry). LLM-first: o cérebro re-autora respondendo o
+//    tópico pedido. Cobre address/hours/unit (institucional) e foto. km/cor/câmbio/preço e estoque JÁ são cobertos por
+//    requireVehicleDetailBeforeFinal + POL-ATTR-VALUE + requiredToolBeforeFinal (não duplicar aqui). ────────────────
+const INST_TOPIC_LABEL: Record<BusinessInfoTopic, string> = { address: "o ENDEREÇO/localização da loja", hours: "o HORÁRIO de funcionamento", unit: "a UNIDADE/loja" };
+// Sinal de que a resposta TOCOU o tópico (valor exato falhou, mas o cérebro respondeu o assunto — incl. ausência honesta
+// "não tenho o horário configurado"). normalizeText remove acentos.
+const INST_TOPIC_SIGNAL: Record<BusinessInfoTopic, RegExp> = {
+  address: /\benderec|\bfica(?:mos)?\s+(?:na|no|em)\b|\bavenida\b|\bav\.?\s|\brua\b|\brodovia\b|\bbairro\b|\bnumero\b|\blocaliza|\bmapa\b|\bestacionament|\bshopping\b/,
+  hours: /\bhorario|\bfuncion|\batende|\baberto|\bfecha|\d{1,2}\s*h\b|\bhoras?\b|\bsegunda\b|\bs[aá]bado\b|\bdomingo\b|\bdias?\s+[uú]tei/,
+  unit: /\bunidade|\bloja\b|\bfilial|\bmatriz/,
+};
+function respondsInstitutionalTopic(normResp: string, topic: BusinessInfoTopic, obs: AgentToolObservation | undefined): boolean {
+  // Tópico RESOLVIDO: aceita se a resposta cita um token significativo do VALOR (o cérebro usou o fato).
+  if (obs?.ok && obs.tool === "tenant_business_info") {
+    const val = normalizeText(obs.data.value);
+    const tokens = topic === "hours" ? (val.match(/\d{1,2}\s*h/g) ?? []) : val.split(/[\s,]+/).filter((w) => w.length >= 4).slice(0, 5);
+    if (tokens.some((tok) => normResp.includes(tok.trim()))) return true;
+  }
+  // Senão, aceita se a resposta ao menos TOCOU o tópico (paráfrase OU ausência honesta) — prompt-first: o cérebro pode
+  // responder do prompt mesmo quando a tool diz NOT_CONFIGURED; e a ausência honesta é resposta válida.
+  return INST_TOPIC_SIGNAL[topic].test(normResp);
+}
+// Foto pedida e não atendida: precisa send_media OU dizer honestamente que não localizou (oferta interrogativa não conta).
+const PHOTO_HONEST_ABSENCE_RX = /\bnao\s+(?:encontrei|localizei|achei|tenho|consegui|temos)\b[^.?!]{0,28}(?:fotos?|imagens?|midias?)|(?:fotos?|imagens?)[^.?!]{0,28}(?:nao\s+(?:disponiv|encontr|localiz)|indisponiv)/;
+function turnCompletenessFeedback(args: {
+  readonly leadMessage: string;
+  readonly composed: RenderedResponse;
+  readonly institutionalObs: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;
+  readonly proposedEffects: readonly ProposedEffectPlan[];
+  readonly pendingObjective: boolean;   // objetivo pendente (ex.: pagamento) -> policy pode ter prioridade sobre a foto
+}): string | null {
+  const normResp = normalizeText(args.composed.text);
+  // Institucional: cada tópico PEDIDO tem que aparecer na resposta (valor ou ausência honesta), senão foi ignorado.
+  for (const topic of institutionalTopicsRequested(args.leadMessage)) {
+    if (respondsInstitutionalTopic(normResp, topic, args.institutionalObs.get(topic))) continue;
+    return `O cliente pediu ${INST_TOPIC_LABEL[topic]} NESTE turno e a sua resposta não trouxe isso (respondeu outro assunto no lugar). Responda ${INST_TOPIC_LABEL[topic]} usando o dado do seu prompt/tenant_business_info — ou, se realmente não houver, diga honestamente que não tem essa informação. Se ele pediu MAIS de uma coisa no mesmo turno (ex.: horário E foto), responda TODAS, não só uma.`;
+  }
+  // Foto: pediu foto -> send_media OU ausência honesta. (A oferta "quer que eu te envie?" não satisfaz um pedido explícito.)
+  // CEDE quando há objetivo PENDENTE: uma policy de prioridade (ex.: POL-TRACK-001, responder pagamento não vira foto)
+  // pode ter legitimamente redirecionado o turno — não reexigir a foto que a policy acabou de barrar.
+  if (!args.pendingObjective
+      && isPhotoRequestBlock(args.leadMessage)
+      && !args.proposedEffects.some((e) => e.kind === "send_media")
+      && !PHOTO_HONEST_ABSENCE_RX.test(normResp)) {
+    return "O cliente pediu FOTO neste turno e a resposta não enviou (send_media) nem disse honestamente que não localizou. Resolva vehicle_photos_resolve do carro certo e inclua send_media com os photoIds — ou diga que não encontrou as fotos. NÃO responda só outro assunto ignorando o pedido de foto.";
+  }
+  return null;
+}
+
 // ── P0-C (audit): EXECUTOR DETERMINÍSTICO de foto. Usado no single-author quando o cérebro NÃO autorou resposta
 //    aterrada. Pedido de foto + alvo resolvido (ordinal/modelo da última lista ou selecionado) + vehicle_photos_resolve
 //    OK com photoIds -> materializa send_media (nunca fallback genérico). Sem alvo/lista -> pede qual veículo (não
@@ -583,6 +628,47 @@ function buildDeterministicPhotoResponse(args: {
   }
   const text = label ? `Não localizei as fotos do ${label} agora. Quer que eu te passe os detalhes dele por aqui?` : "Não localizei as fotos desse carro agora. Quer que eu te passe os detalhes dele por aqui?";
   return build(ensureSendMessage([]), text, "clarify", "photo_unavailable", "pedido de foto sem photoIds resolvidos", 0.4);
+}
+
+// ── P0 ROTEAMENTO POR DOMÍNIO (missão): RESPOSTA INSTITUCIONAL determinística. Se o lead pediu endereço/horário/loja e
+//    a tool tenant_business_info RESOLVEU o tópico, o turno NUNCA vira technical_fallback — responde com os FATOS da tool
+//    (não menu, não "não consegui confirmar"). Tópicos ok respondidos; NOT_CONFIGURED respondido honestamente. Não cita
+//    carro, não usa vehicle_details, não pergunta funil. É o fallback determinístico MÍNIMO que a missão autoriza (§4). PURO.
+function buildInstitutionalResponse(args: {
+  readonly leadMessage: string;
+  readonly institutionalObs: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;
+  readonly ctx: TurnContext;
+  readonly turnId: string;
+}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } | null {
+  const topics = institutionalTopicsRequested(args.leadMessage);
+  // audit Codex (§G): contato (instagram/site/telefone) não é topic da tool -> honesto (o prompt tem, mas o determinístico
+  // não parseia; a resposta natural do cérebro é a via principal, isto é só o backstop honesto — nunca fallback técnico).
+  if (topics.length === 0) {
+    if (!mentionsContact(args.leadMessage)) return null;
+    const text = "Sobre o nosso contato, deixa eu confirmar essa informação com a equipe e já te passo. Posso te ajudar em mais alguma coisa?";
+    const pe = ensureSendMessage([]);
+    const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "institutional_answer", reasonSummary: "contato institucional (honesto)", confidence: 0.7 };
+    return { decision: finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []), composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
+  }
+  const clauses: string[] = [];
+  for (const topic of topics) {
+    const obs = args.institutionalObs.get(topic);
+    if (obs?.ok && obs.tool === "tenant_business_info") {
+      const v = obs.data.value;
+      clauses.push(topic === "address" ? `a loja fica na ${v}` : topic === "hours" ? `nosso horário é ${v}` : `nossa unidade é ${v}`);
+    } else {
+      // NOT_CONFIGURED / falha -> honesto (nunca inventa). audit Codex (§F): mesmo TODOS ausentes gera resposta honesta.
+      clauses.push(topic === "address" ? "sobre o endereço, ainda não tenho ele configurado aqui, mas confirmo com a equipe"
+        : topic === "hours" ? "sobre o horário, ainda não tenho essa informação configurada aqui, mas confirmo com a equipe"
+        : "sobre a unidade, ainda não tenho isso configurado aqui");
+    }
+  }
+  const body = clauses.length === 1 ? clauses[0] : `${clauses.slice(0, -1).join(", ")} e ${clauses[clauses.length - 1]}`;
+  const text = `Claro! ${body.charAt(0).toUpperCase()}${body.slice(1)}. Posso te ajudar em mais alguma coisa?`;
+  const proposedEffects = ensureSendMessage([]);
+  const proposal: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode: "institutional_answer", reasonSummary: "resposta institucional determinística (fatos da tool)", confidence: 0.9 };
+  const decision = finalize(args.turnId, proposal, PolicyEngine.postQuery(proposal, [], args.ctx), []);
+  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects };
 }
 
 // ── Turno central ────────────────────────────────────────────────────────────────────────────────────────────
@@ -714,7 +800,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -796,12 +882,21 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             effectiveDecision = detPhoto.decision; composed = detPhoto.composed; proposedEffects = detPhoto.proposedEffects;
             finalDecision = finalDecision ?? { reasonCode: detPhoto.decision.reasonCode, reasonSummary: "executor determinístico de foto", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
           } else {
-            responseSource = "technical_fallback";
-            composed = buildTechnicalFallback();
-            proposedEffects = ensureSendMessage([]);   // B3: nenhum efeito comercial original sobrevive (só a fala honesta)
-            const fbProposal: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects, responsePlan: { guidance: composed.text }, reasonCode: "technical_fallback", reasonSummary: "cérebro não produziu resposta aterrada no limite de passos", confidence: 0.3 };
-            effectiveDecision = finalize(turnId, fbProposal, PolicyEngine.postQuery(fbProposal, facts, ctx), facts);
-            finalDecision = finalDecision ?? { reasonCode: "technical_fallback", reasonSummary: "fallback técnico honesto", confidence: 0.3, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            // P0 ROTEAMENTO POR DOMÍNIO: pergunta INSTITUCIONAL com tópico RESOLVIDO nunca vira technical_fallback —
+            // responde com os FATOS da tool (endereço/horário), honesto no ausente. Antes do fallback técnico.
+            const detInst = buildInstitutionalResponse({ leadMessage, institutionalObs, ctx, turnId });
+            if (detInst) {
+              responseSource = "deterministic_institutional";
+              effectiveDecision = detInst.decision; composed = detInst.composed; proposedEffects = detInst.proposedEffects;
+              finalDecision = finalDecision ?? { reasonCode: "institutional_answer", reasonSummary: "resposta institucional determinística", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            } else {
+              responseSource = "technical_fallback";
+              composed = buildTechnicalFallback();
+              proposedEffects = ensureSendMessage([]);   // B3: nenhum efeito comercial original sobrevive (só a fala honesta)
+              const fbProposal: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects, responsePlan: { guidance: composed.text }, reasonCode: "technical_fallback", reasonSummary: "cérebro não produziu resposta aterrada no limite de passos", confidence: 0.3 };
+              effectiveDecision = finalize(turnId, fbProposal, PolicyEngine.postQuery(fbProposal, facts, ctx), facts);
+              finalDecision = finalDecision ?? { reasonCode: "technical_fallback", reasonSummary: "fallback técnico honesto", confidence: 0.3, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            }
           }
         }
         // ≤1 pergunta.

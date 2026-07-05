@@ -6,6 +6,14 @@ import type {
 import type { VehicleFact } from "../domain/types.ts";
 import { isVehicleKeyInCatalog, normalizeText } from "./catalog-utils.ts";
 import { slotQuestions } from "./question-classify.ts";
+import { isInstitutionalTurn } from "./turn-domain.ts";
+
+// P0 audit Codex: a RESPOSTA é INSTITUCIONAL PURA (nenhum claim de marca/modelo no texto)? Só então as policies de
+// FUNIL se abstêm. Se o texto cita veículo (mesmo lembrado), NÃO é institucional-pura -> funil valida normalmente.
+function isInstitutionalOnlyResponse(composed: RenderedResponse, ctx: TurnContext): boolean {
+  if (composed.draft.parts.some((p) => p.type !== "text")) return false;   // parts estruturados de veículo -> não é pura
+  return ctx.claimExtractor.extractClaims(composed.text).every((c) => c.kind !== "brand" && c.kind !== "model" && c.kind !== "brand_model");
+}
 
 // F-4: acha o VehicleFact EXATO nos fatos do turno (stock_search/vehicle_details) pelo vehicleKey.
 function factByKey(facts: QueryResult[], key: string): VehicleFact | null {
@@ -276,6 +284,13 @@ export const PolicyEngine = {
 
   // (3) GROUNDING DA RESPOSTA RENDERIZADA: valida referências estruturadas e defende contra alucinações.
   validateResponse(composed: RenderedResponse, facts: QueryResult[], decision: TurnDecision, ctx: TurnContext): PolicyVerdict[] {
+    // P0 ROTEAMENTO POR DOMÍNIO (audit Codex): o bypass é pelo DOMÍNIO DA AFIRMAÇÃO, não da mensagem. Numa mensagem
+    // MISTA ("onde fica a loja e esse Onix é automático?") a parte institucional libera, MAS todo trecho que cite
+    // veículo/atributo/preço/foto continua validado normalmente. Aqui: `instOnlyResponse` = a RESPOSTA não contém NENHUM
+    // claim de veículo (marca/modelo) — só então as policies de FUNIL (reperguntar slot conhecido) se abstêm. As policies
+    // de ATRIBUTO/ESTOQUE (DETAIL/ATTR-VALUE/GROUND-STOCK) ficam SEMPRE ligadas (são claim-scoped por natureza); o NOME
+    // de um veículo LEMBRADO (selecionado/ofertado) é aterrado por memória (abaixo), então nomeá-lo no institucional passa.
+    const instOnlyResponse = isInstitutionalOnlyResponse(composed, ctx);
     // POL-QUESTION-OBJECTIVE (R10-2 Codex): UMA pergunta por mensagem, SEM exceção. A classificação lê a ÚLTIMA
     // cláusula interrogativa de cada sentença-com-"?" (question-classify) — reconhecer um dado antes de perguntar
     // ("obrigado pelo nome, tem troca?") conta como a pergunta REAL (troca), não repergunta de nome. Barra:
@@ -301,8 +316,12 @@ export const PolicyEngine = {
       const cpfDueNow = iv?.value === true || dh?.status === "known";
       if (asked.includes("cpf") && !cpfDueNow) return qDeny(`pergunta CPF antes da hora (CPF so ao agendar visita/fechar)`);
       // (c) reperguntar um slot JÁ CONHECIDO (incl. visita/horário já respondidos — não reoferte visita se já quer).
+      //     ROTEAMENTO POR DOMÍNIO (audit Codex): abstém-se SÓ quando a PERGUNTA do lead é institucional E a RESPOSTA é
+      //     institucional PURA (sem claim de veículo) — aí um CTA leve na resposta de endereço não derruba tudo. Numa
+      //     resposta MISTA (cita veículo) OU num turno de funil normal a trava continua (não mascara reask indevido).
+      const abstainFunnelReask = instOnlyResponse && isInstitutionalTurn(ctx.leadMessage);
       const knownAsked = asked.find((s) => s !== "cpf" && slotKnown(s));
-      if (knownAsked) return qDeny(`pergunta o slot '${knownAsked}' que ja e conhecido`);
+      if (knownAsked && !abstainFunnelReask) return qDeny(`pergunta o slot '${knownAsked}' que ja e conhecido`);
     }
 
     // POL-GROUND-DETAIL (item 2, Codex): afirmar ATRIBUTO de um veículo (câmbio/cor/ano/km/automático/…) exige
@@ -320,7 +339,7 @@ export const PolicyEngine = {
         /\b(e|esta|fica|vem|sai)\s+(automatic|manual|flex|completo|seminovo|blindad|novo|zero)/.test(t)
         || /\b(cambio|cor|motor|airbag|km|quilometragem|ano)\s+(e|esta|dele|deste|desse|de|:)/.test(t)
         || /\b(automatic|manual)[^?]{0,20}\b(sim|mesmo|isso)\b/.test(t);
-      const claimsVehicleAttribute = possessiveRef && attributeClaim;
+      const claimsVehicleAttribute = possessiveRef && attributeClaim;   // claim-scoped: vale sempre (inclui msg mista)
       if (claimsVehicleAttribute) {
         const selectedKey = ctx.state.vehicleContext.selected?.key ?? null;
         const grounded = getValidVehicleKeys(facts);
@@ -410,6 +429,15 @@ export const PolicyEngine = {
     // NÃO estiver aterrado aqui (invenção); citar em texto um veículo que ESTÁ na oferta/fatos é conversa natural
     // (ex.: abreviar "HB 20 S"→"HB 20"), não alucinação. A defesa contra invenção (modelo de fora) é preservada.
     const { brands: validBrands, models: validModels } = getValidBrandsAndModels(facts, decision);
+    // GROUNDING DE MEMÓRIA (audit Codex): o NOME de um veículo LEMBRADO (selecionado ou ofertado antes) é aterrado —
+    // nomeá-lo não é invenção mesmo sem stock_search NESTE turno; assim uma resposta institucional pode citar "o Onix"
+    // sem cair em POL-GROUND-STOCK. O ATRIBUTO dele continua exigindo vehicle_details (POL-GROUND-DETAIL/ATTR-VALUE).
+    {
+      const sel = ctx.state.vehicleContext.selected;
+      const addClaims = (s: string | null | undefined): void => { if (!s) return; for (const c of ctx.claimExtractor.extractClaims(s)) { if (c.kind === "brand" || c.kind === "brand_model") validBrands.add(c.normalized); if (c.kind === "model" || c.kind === "brand_model") validModels.add(c.normalized); } };
+      if (sel?.label) addClaims(sel.label);
+      for (const it of ctx.state.lastRenderedOfferContext?.items ?? []) { addClaims(it.marca ?? undefined); addClaims(it.modelo ?? undefined); if (it.marca && it.modelo) addClaims(`${it.marca} ${it.modelo}`); }
+    }
     const modelGrounded = (norm: string): boolean => validModels.has(norm) || modelGroundedExact(norm, validModels);
     const claimGrounded = (claim: { kind: string; normalized: string }): boolean => {
       const brandOk = !(claim.kind === "brand" || claim.kind === "brand_model") || validBrands.has(claim.normalized);
@@ -421,6 +449,8 @@ export const PolicyEngine = {
     //    permitido em texto (conversa natural sobre o que foi ofertado); preço livre segue proibido (grounding).
     for (const part of composed.draft.parts) {
       if (part.type === "text") {
+        // Um modelo citado em texto livre deve estar aterrado (fatos do turno OU memória: selecionado/ofertado). Inventar
+        // um modelo continua barrado; nomear o carro lembrado passa (grounding de memória acima).
         const claims = ctx.claimExtractor.extractClaims(part.content);
         for (const claim of claims) {
           if (!claimGrounded(claim)) brandModelViolations.push(`TextPart contém marca/modelo não-aterrado '${claim.text}' em texto livre`);
@@ -455,7 +485,8 @@ export const PolicyEngine = {
       }
     }
 
-    // 2. Defender o texto final renderizado: marcas e modelos citados no texto final devem existir nos QueryResults (defesa em profundidade)
+    // 2. Defender o texto final renderizado: marcas e modelos citados devem existir nos fatos do turno OU na MEMÓRIA
+    //    (selecionado/ofertado) — inventar continua barrado; nomear o carro lembrado passa.
     const renderedClaims = ctx.claimExtractor.extractClaims(composed.text);
     for (const claim of renderedClaims) {
       const normVal = claim.normalized;

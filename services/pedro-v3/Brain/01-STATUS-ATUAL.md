@@ -1,5 +1,24 @@
 # 01 - Status Atual do Pedro v3
 
+## 2026-07-04 - Completude do turno (prompt-first): fecha o gap "respondeu endereco no lugar do horario"
+
+- Dono reportou: correcao de dominio passou tecnicamente, mas o agente respondia ENDERECO quando o lead pedia HORARIO.
+- Correcao LLM-first + prompt-first (SEM policy pesada, SEM handler, SEM executor comercial):
+  1. **Prompt-first** no BRAIN_PROTOCOL: dados da empresa (horario/endereco/site/contato/faixa de preco/diferenciais)
+     sao do PROMPT (fonte primaria); `tenant_business_info` so confirma/organiza; RESPONDA O TOPICO PEDIDO (horario ->
+     horario, nao endereco); pediu varias coisas -> atende TODAS.
+  2. **Guarda de completude** (`turnCompletenessFeedback` no central-engine): validacao LEVE que nao decide a conversa,
+     so impede resposta que IGNORA pedido explicito -> deny + feedback ao MESMO cerebro (retry). Institucional
+     (address/hours/unit) + foto (send_media ou ausencia honesta; CEDE a objetivo pendente/POL-TRACK-001). km/estoque
+     ja cobertos por B2/POL-ATTR-VALUE/required-tool. `brainMaxSteps` 4->6 no piloto+eval (folga p/ o retry).
+- Gates: `test:f222` **21 OK** (16 + M/N/O/P de completude), `test:f215` **18 OK** (regressao [16] corrigida via
+  carve-out de objetivo pendente), `test:all` EXIT 0, `tsc --noEmit` limpo (0 regressao).
+- Real 5 turnos (`eval:institutional`, gpt-4.1-mini, compose=0, US$0,038): **PASS**. T4 endereco + km real (80.000 via
+  vehicle_details); **T5 "qual horario e me manda foto dele?" -> "funciona das 9h as 19h" + send_media** (GAP FECHADO);
+  0 technical_fallback, 0 pedido ignorado.
+- **NAO commitado** — segue na mesma leva do roteamento por dominio, sobre `8c05f251`, aguardando auditoria Codex.
+- Detalhe: `Brain/2026-07-04-claude-roteamento-por-dominio.md` (secao COMPLETUDE DO TURNO).
+
 ## 2026-07-04 - F2.19 Taxonomia de mercado + recuperacao de turnos
 
 - Corrigida a identidade comercial de variantes: `C3 Aircross` permanece SUV e e exibido como Aircross; `C3` comum permanece hatch.
@@ -1293,3 +1312,26 @@ EXATO (não substring "photo" — desbloqueia "respect_photo_decline"); (2) `tex
 inventado bloqueia ("Honda CR-V 2020"/"ele é 2020"). Offline `run-f2-21` 35 OK (dg1..dg8), test:all+tsc verdes. **Re-eval
 conv 2 (US$0,058): PASS, 0 degradados — T4 e T10 respondem naturalmente.** NÃO commitado. Parado para Codex. Detalhe:
 `Brain/2026-07-04-claude-diag-conv2-causa-raiz.md`.
+
+### ROTEAMENTO POR DOMÍNIO — institucional não travado por policy de veículo/funil — 2026-07-04 (NÃO commitado)
+Bug real (Douglas): "aonde fica a loja?" com estado íntegro + tenant_business_info ok caía em technical_fallback (validação
+domain-blind: POL-QUESTION-OBJECTIVE reperguntando slot conhecido + policy de atributo de veículo). Correção: novo
+`turn-domain.ts` (isInstitutionalTurn/institutionalTopicsRequested), `validateResponse` ABSTÉM POL-GROUND-STOCK/DETAIL/
+ATTR-VALUE + reperguntar-slot-conhecido em turno institucional (guardrails de dano real ficam: ≤1 pergunta, CPF, preço/ano);
+`buildInstitutionalResponse` (resposta institucional DETERMINÍSTICA dos fatos da tool → institucional resolvido NUNCA vira
+technical_fallback) + fix "aonde". Offline `run-f2-22` 14 OK (A-I); test:all+tsc verdes (sem regressão). Real (8 turnos,
+US$0,05): T8 "aonde fica a loja e qual horário?" respondeu endereço+horário via SÓ tenant_business_info, 0 technical_fallback,
+policy de veículo NÃO aplicada. Resta T3 "gostei do segundo" degradar (não-compliância de SELEÇÃO do modelo, domínio/escopo
+diferente). NÃO commitado (aguarda autorização). Detalhe: `Brain/2026-07-04-claude-roteamento-por-dominio.md`.
+
+### AUDITORIA CODEX (roteamento por domínio) — P0 do bypass global CORRIGIDO — 2026-07-04 (NÃO commitado)
+Codex vetou o push: `isInstitutionalTurn(ctx.leadMessage)` era bypass GLOBAL por MENSAGEM (msg mista "onde fica a loja e
+esse Onix é automático?" desligava grounding de veículo do turno inteiro). Corrigido: `validateResponse` gateia pelo
+DOMÍNIO DA RESPOSTA — DETAIL/ATTR-VALUE/GROUND-STOCK SEMPRE ligados (claim-scoped); funil abstém só em resposta
+institucional-pura (`isInstitutionalOnlyResponse` + lead institucional); GROUNDING DE MEMÓRIA aterra o nome do carro
+lembrado (inventar continua barrado, atributo exige vehicle_details); `buildInstitutionalResponse` nunca null (todos
+NOT_CONFIGURED = honesto; contato honesto). `run-f2-22` reescrito **16 OK** (mistos A-G + regressão L); test:all+tsc verdes.
+Real 5 turnos (US$0,033, 0 technical_fallback): T4 "aonde fica a loja e quantos km ele tem?" chamou tenant_business_info
+E vehicle_details (km 80.000 real — policy de veículo NÃO desligada); T5 foto via send_media. ⚠️T5 respondeu endereço em
+vez de horário (conteúdo do cérebro, não policy). NÃO commitado — aguarda Codex passar. Detalhe:
+`Brain/2026-07-04-claude-roteamento-por-dominio.md`.
