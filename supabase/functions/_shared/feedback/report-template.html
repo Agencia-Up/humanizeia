@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    --navy:#0B1E3A; --gold:#C6A15B;
+    --ink:#1d2430; --muted:#6b7482; --line:#e6e9ef; --bg-soft:#f7f9fc;
+    --green:#1f9d55; --green-bg:#e8f6ee;
+    --amber:#e08e0b; --amber-bg:#fdf4e3;
+    --red:#d0402e;  --red-bg:#fcecea;
+    --wa-in:#ffffff; --wa-out:#d9fdd3; --wa-bg:#eae6df;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  @page{ size:A4; margin:0; }
+  body{
+    font-family:'Inter','Helvetica Neue',Arial,sans-serif;
+    color:var(--ink); font-size:13px; line-height:1.55;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .page{ width:210mm; min-height:297mm; padding:0 0 20mm; position:relative; page-break-after:always; }
+  .page:last-child{ page-break-after:auto; }
+  .serif{ font-family:'Cormorant Garamond','Georgia',serif; }
+  .pad{ padding:0 15mm; }
+
+  /* header */
+  .masthead{ background:var(--navy); color:#fff; padding:16mm 15mm 11mm; position:relative; }
+  .masthead::after{ content:""; position:absolute; left:0; bottom:0; height:4px; width:38%; background:var(--gold); }
+  .brand{ font-size:11px; letter-spacing:3px; text-transform:uppercase; color:var(--gold); font-weight:600; }
+  .masthead h1{ font-size:33px; font-weight:600; margin-top:6px; }
+  .masthead .sub{ color:#c9d4e4; font-size:13px; margin-top:7px; }
+  .masthead .when{ color:#fff; font-size:13px; margin-top:12px; font-weight:600; }
+
+  .lead-line{ font-size:16px; margin:14mm 0 4px; }
+  .lead-line b{ color:var(--navy); }
+
+  /* team list */
+  .team{ margin-top:8px; }
+  .trow{ display:flex; align-items:center; gap:12px; padding:11px 14px; border:1px solid var(--line);
+    border-radius:10px; margin-bottom:8px; background:#fff; }
+  .dot{ width:14px; height:14px; border-radius:50%; flex-shrink:0; }
+  .d-green{ background:var(--green);} .d-amber{ background:var(--amber);} .d-red{ background:var(--red);}
+  .tname{ font-weight:700; font-size:15px; width:170px; }
+  .tstatus{ font-weight:600; font-size:13px; }
+  .s-green{ color:var(--green);} .s-amber{ color:var(--amber);} .s-red{ color:var(--red);}
+  .tnote{ color:var(--muted); font-size:12.5px; margin-left:auto; text-align:right; }
+
+  .callout{ border-radius:10px; padding:13px 16px; margin-top:14px; font-size:13.5px; }
+  .callout .ch{ font-weight:700; margin-bottom:3px; font-size:14px; }
+  .co-red{ background:var(--red-bg); border:1px solid #f2cdc7; }
+  .co-red .ch{ color:var(--red); }
+  .co-green{ background:var(--green-bg); border:1px solid #cbe9d6; }
+  .co-green .ch{ color:var(--green); }
+  .co-amber{ background:var(--amber-bg); border:1px solid #f0dcb2; }
+  .co-amber .ch{ color:var(--amber); }
+
+  /* vendedor block */
+  .vh{ display:flex; align-items:center; gap:12px; margin:16px 0 3px; }
+  .vh .dot{ width:16px; height:16px; }
+  .vh .vn{ font-size:20px; font-weight:700; color:var(--navy); }
+  .vh .vs{ font-weight:700; font-size:13px; padding:3px 11px; border-radius:20px; }
+  .vs.g{ background:var(--green-bg); color:var(--green);} .vs.a{ background:var(--amber-bg); color:var(--amber);} .vs.r{ background:var(--red-bg); color:var(--red);}
+  .vresumo{ font-size:14px; margin:4px 0 12px; color:#2a3340; }
+
+  .big-fact{ display:flex; align-items:center; gap:14px; background:var(--red-bg); border:1px solid #f2cdc7;
+    border-radius:11px; padding:12px 16px; margin-bottom:13px; }
+  .big-fact .num{ font-size:30px; font-weight:800; color:var(--red); line-height:1; white-space:nowrap; }
+  .big-fact .lbl{ font-size:13.5px; color:#5a3b37; }
+  .big-fact.ok{ background:var(--green-bg); border-color:#cbe9d6; }
+  .big-fact.ok .num{ color:var(--green); }
+  .big-fact.ok .lbl{ color:#315a41; }
+
+  .check-h{ font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); font-weight:700; margin:6px 0 6px; }
+  .chk{ display:flex; align-items:flex-start; gap:9px; font-size:13.5px; margin:5px 0; }
+  .chk .m{ width:18px; height:18px; border-radius:50%; color:#fff; text-align:center; line-height:18px; font-size:12px; font-weight:700; flex-shrink:0; margin-top:1px;}
+  .m-y{ background:var(--green);} .m-n{ background:var(--red);}
+
+  /* whatsapp print */
+  .wa-wrap{ margin:13px 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .wa-top{ background:var(--navy); color:#fff; padding:7px 14px; font-size:12px; font-weight:600; display:flex; justify-content:space-between; }
+  .wa-top .tag{ color:var(--gold); font-weight:600; }
+  .wa{ background:var(--wa-bg); padding:12px 12px 14px; }
+  .msg{ max-width:74%; padding:7px 11px 5px; border-radius:9px; margin:6px 0; font-size:13px; position:relative; box-shadow:0 1px 0 rgba(0,0,0,.06);}
+  .in{ background:var(--wa-in); border-top-left-radius:2px; }
+  .out{ background:var(--wa-out); margin-left:auto; border-top-right-radius:2px; }
+  .msg .t{ font-size:10px; color:#7c8794; text-align:right; margin-top:2px; }
+  .who-lbl{ font-size:10.5px; font-weight:700; margin-bottom:1px; }
+  .in .who-lbl{ color:#2E6BB0; } .out .who-lbl{ color:var(--green); }
+  .delay{ text-align:center; margin:9px 0; }
+  .delay span{ background:#f6d5cf; color:#a5301f; font-size:11.5px; font-weight:700; padding:4px 12px; border-radius:20px; display:inline-block; }
+  .annot{ background:#fff5cc; border:1px dashed #d9a400; border-radius:8px; padding:7px 11px; font-size:12.5px;
+    margin:6px 0 6px auto; max-width:82%; color:#6b5200; }
+  .annot b{ color:#a5301f; }
+
+  .say{ background:#eef4fb; border:1px solid #d7e6f6; border-left:4px solid #2E6BB0; border-radius:8px;
+    padding:11px 14px; margin-top:6px; font-size:13.5px; }
+  .say .sh{ font-weight:700; color:#215a95; margin-bottom:3px; }
+  .say .q{ font-style:italic; color:#2a3340; }
+
+  .footer{ position:absolute; bottom:0; left:0; width:100%; padding:6mm 15mm; border-top:1px solid var(--line);
+    display:flex; justify-content:space-between; font-size:9px; color:var(--muted); }
+  .footer .bf{ color:var(--navy); font-weight:700; letter-spacing:1px; }
+
+  /* leads / campanhas */
+  .sub-explain{ font-size:13.5px; color:#3a4350; margin:2px 0 14px; }
+  .qtype{ display:flex; align-items:center; gap:13px; padding:10px 15px; border:1px solid var(--line); border-radius:11px; margin-bottom:8px; }
+  .qpill{ min-width:42px; height:38px; border-radius:9px; color:#fff; font-weight:800; font-size:18px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .qtype .qt{ font-weight:700; font-size:14.5px; }
+  .qtype .qd{ color:var(--muted); font-size:12.5px; margin-left:auto; text-align:right; max-width:52%; line-height:1.4; }
+  .camp{ border:1px solid var(--line); border-radius:12px; padding:13px 16px; margin-bottom:10px; }
+  .camp-h{ display:flex; align-items:center; gap:9px; margin-bottom:4px; }
+  .camp-h .cname{ font-weight:700; font-size:15px; color:var(--navy); }
+  .camp-h .cn2{ color:var(--muted); font-size:12.5px; }
+  .camp-h .pill{ margin-left:auto; font-weight:700; font-size:12.5px; padding:4px 12px; border-radius:20px; }
+  .p-up{ background:var(--green-bg); color:var(--green); }
+  .p-ok{ background:#e9f0f8; color:#2E6BB0; }
+  .p-down{ background:var(--red-bg); color:var(--red); }
+  .camp .cdesc{ font-size:13px; color:#2a3340; }
+  .reason{ display:flex; align-items:flex-start; gap:12px; padding:10px 6px; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .reason:last-child{ border-bottom:none; }
+  .reason .ic{ font-size:20px; line-height:1.15; width:28px; text-align:center; flex-shrink:0; }
+  .reason .rt b{ color:var(--navy); }
+  .reason .rt .rd{ color:var(--muted); font-size:12.5px; }
+  .reason .cnt{ margin-left:auto; font-weight:800; color:var(--red); font-size:16px; padding-left:12px; white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<!-- ===== PAGE 1: RESUMO SIMPLES ===== -->
+<div class="page">
+  <div class="masthead">
+    <div class="brand">LOGOS IA</div>
+    <h1 class="serif">Como foi o atendimento hoje</h1>
+    <div class="sub">Um resumo rápido de como sua equipe atendeu os clientes</div>
+    <div class="when">AutoPrime Seminovos · Sexta, 04 de julho</div>
+  </div>
+
+  <div class="pad">
+    <div class="lead-line">Hoje sua equipe atendeu <b>12 clientes</b>. Veja como cada vendedor foi:</div>
+
+    <div class="team">
+      <div class="trow"><span class="dot d-green"></span><span class="tname">Ana Ribeiro</span>
+        <span class="tstatus s-green">Ótimo atendimento</span>
+        <span class="tnote">Rápida, atenciosa e agendou 4 test drives</span></div>
+      <div class="trow"><span class="dot d-red"></span><span class="tname">Carlos Mendes</span>
+        <span class="tstatus s-red">Precisa de atenção</span>
+        <span class="tnote">Demorou demais e perdeu clientes bons</span></div>
+      <div class="trow"><span class="dot d-red"></span><span class="tname">Marcos Silva</span>
+        <span class="tstatus s-red">Precisa de atenção</span>
+        <span class="tnote">Tratou um cliente bom como se não prestasse</span></div>
+    </div>
+
+    <div class="callout co-green">
+      <div class="ch">👏 Destaque do dia: Ana Ribeiro</div>
+      Respondeu os clientes em poucos minutos, foi simpática e já chamou todo mundo pra ver o carro na loja. Vale usar o jeito dela como exemplo pro time.
+    </div>
+
+    <div class="callout co-red">
+      <div class="ch">⚠ Precisa de atenção hoje: Carlos e Marcos</div>
+      Dois clientes bons foram perdidos — e não foi por causa do cliente, foi pela forma como foram atendidos. Nas próximas páginas você vê a conversa e o que conversar com cada um.
+    </div>
+
+    <div class="callout co-amber">
+      <div class="ch">📣 Sobre os anúncios (não é a equipe)</div>
+      3 pessoas que chamaram hoje não eram clientes de verdade (clique por engano / sem intenção de comprar). Isso é ajuste no anúncio, não no atendimento — já sinalizamos pro time de tráfego.
+    </div>
+  </div>
+
+  <div class="footer">
+    <div><span class="bf">LOGOS IA</span> · suporte@logosiabrasil.com</div>
+    <div>Página 1 de 5</div>
+  </div>
+</div>
+
+<!-- ===== PAGE 2: CARLOS (detalhe) ===== -->
+<div class="page">
+  <div class="pad" style="padding-top:14mm;">
+    <div class="vh"><span class="dot d-red"></span><span class="vn">Carlos Mendes</span><span class="vs r">Precisa de atenção</span></div>
+    <div class="vresumo">Perdeu <b>2 clientes bons</b> hoje. O motivo não foi o cliente — foi porque demorou muito para responder e não chamou de volta quem sumiu.</div>
+
+    <div class="big-fact">
+      <div class="num">3h20</div>
+      <div class="lbl">foi quanto ele demorou para responder o primeiro cliente. Cliente de carro decide rápido — nesse tempo ele já foi na concorrência.</div>
+    </div>
+
+    <div class="check-h">Como foi o atendimento</div>
+    <div class="chk"><span class="m m-y">✓</span><div>Foi educado e perguntou qual carro o cliente queria.</div></div>
+    <div class="chk"><span class="m m-n">✕</span><div><b>Demorou 3 horas e 20 minutos</b> para dar a primeira resposta.</div></div>
+    <div class="chk"><span class="m m-n">✕</span><div>Quando o cliente disse que estava caro, ele não respondeu nem ofereceu outra opção.</div></div>
+    <div class="chk"><span class="m m-n">✕</span><div>Não chamou o cliente de volta quando ele parou de responder.</div></div>
+
+    <div class="wa-wrap">
+      <div class="wa-top"><span>Conversa com o cliente (HB20)</span><span class="tag">04/07</span></div>
+      <div class="wa">
+        <div class="msg in"><div class="who-lbl">Cliente</div>Boa tarde, o HB20 prata ainda tá disponível?<div class="t">14:02</div></div>
+        <div class="delay"><span>⏱ o cliente esperou 3h20 pela resposta</span></div>
+        <div class="msg out"><div class="who-lbl">Carlos</div>opa, tá sim<div class="t">17:22</div></div>
+        <div class="msg in"><div class="who-lbl">Cliente</div>e qual o valor? achei um pouco caro no site<div class="t">17:40</div></div>
+        <div class="annot">❌ <b>Aqui o cliente ficou sem resposta.</b> Era o momento de explicar o valor do carro e oferecer um test drive — mas a conversa parou.</div>
+      </div>
+    </div>
+
+    <div class="say">
+      <div class="sh">💬 O que conversar com o Carlos</div>
+      <span class="q">"Responder rápido é o mais importante na venda de carro. Se demorar horas, o cliente já comprou em outro lugar. E sempre chame de volta quem parou de responder — muita venda tá parada só esperando um 'oi, ainda tá interessado?'."</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div><span class="bf">LOGOS IA</span> · suporte@logosiabrasil.com</div>
+    <div>Página 2 de 5</div>
+  </div>
+</div>
+
+<!-- ===== PAGE 3: MARCOS + ANA ===== -->
+<div class="page">
+  <div class="pad" style="padding-top:14mm;">
+    <div class="vh"><span class="dot d-red"></span><span class="vn">Marcos Silva</span><span class="vs r">Precisa de atenção</span></div>
+    <div class="vresumo">O Marcos marcou esse cliente como <b>"não prestava"</b>. Mas, olhando a conversa, o cliente tinha <b>carro para dar na troca e entrada</b> — era um <b>bom cliente</b> que acabou descartado.</div>
+
+    <div class="check-h">Como foi o atendimento</div>
+    <div class="chk"><span class="m m-y">✓</span><div>Respondeu dentro do horário, sem demora.</div></div>
+    <div class="chk"><span class="m m-n">✕</span><div>Não perguntou direito o que o cliente tinha (o cliente falou da troca sozinho).</div></div>
+    <div class="chk"><span class="m m-n">✕</span><div>Não mostrou o carro nem ofereceu test drive.</div></div>
+    <div class="chk"><span class="m m-n">✕</span><div>Encerrou com "vou ver e te retorno" — e marcou o cliente como ruim.</div></div>
+
+    <div class="wa-wrap">
+      <div class="wa-top"><span>Conversa com o cliente (Corolla)</span><span class="tag">04/07</span></div>
+      <div class="wa">
+        <div class="msg in"><div class="who-lbl">Cliente</div>Tenho um Civic 2019 pra dar de entrada e o resto eu financio. Consigo o Corolla?<div class="t">10:12</div></div>
+        <div class="msg out"><div class="who-lbl">Marcos</div>vou ver aqui e te retorno<div class="t">10:15</div></div>
+        <div class="annot">❌ <b>Cliente com carro na troca e entrada é cliente bom.</b> Aqui era pra puxar a conversa, avaliar o Civic e chamar pra loja — não encerrar.</div>
+      </div>
+    </div>
+
+    <div class="say">
+      <div class="sh">💬 O que conversar com o Marcos</div>
+      <span class="q">"Esse cliente era bom e foi tratado como se não fosse. Antes de descartar qualquer um, pergunte sempre sobre carro na troca e entrada — e chame pra loja. Cliente com troca é venda quase certa."</span>
+    </div>
+
+    <!-- ANA good, compacto -->
+    <div class="vh" style="margin-top:18px;"><span class="dot d-green"></span><span class="vn">Ana Ribeiro</span><span class="vs g">Ótimo atendimento</span></div>
+    <div class="vresumo">O jeito certo de atender, pra usar de exemplo com o time.</div>
+
+    <div class="big-fact ok">
+      <div class="num">2 min</div>
+      <div class="lbl">foi o tempo dela para responder. Foi simpática, mandou vídeo do carro e já agendou o test drive no mesmo dia — 4 clientes agendados hoje.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div><span class="bf">LOGOS IA</span> · suporte@logosiabrasil.com</div>
+    <div>Página 3 de 5</div>
+  </div>
+</div>
+
+<!-- ===== PAGE 4: QUE CLIENTES CHEGARAM + POR QUÊ + IDADE ===== -->
+<div class="page">
+  <div class="pad" style="padding-top:14mm;">
+    <div class="vh"><span class="vn">A qualidade dos clientes de hoje</span></div>
+    <div class="sub-explain">Aqui você vê se o anúncio está trazendo <b>gente com perfil de comprar</b> — ou clique à toa. É o que ajuda a acertar as campanhas.</div>
+
+    <div class="check-h">Que tipo de cliente chegou hoje</div>
+    <div class="qtype"><span class="qpill" style="background:var(--green)">2</span>
+      <span class="qt">Clientes fortes</span>
+      <span class="qd">Têm carro pra dar na troca e boa entrada. Venda quase certa.</span></div>
+    <div class="qtype"><span class="qpill" style="background:#2E6BB0">5</span>
+      <span class="qt">Clientes bons</span>
+      <span class="qd">Têm entrada e nome limpo. Fecham com um bom atendimento.</span></div>
+    <div class="qtype"><span class="qpill" style="background:var(--amber)">2</span>
+      <span class="qt">Clientes difíceis</span>
+      <span class="qd">Nome com restrição e sem entrada. Dá trabalho e nem sempre fecha.</span></div>
+    <div class="qtype"><span class="qpill" style="background:var(--red)">3</span>
+      <span class="qt">Nem eram clientes</span>
+      <span class="qd">Clique por engano ou sem intenção de comprar. Não é falha da equipe.</span></div>
+
+    <div class="check-h" style="margin-top:16px;">Por que alguns não eram clientes de verdade</div>
+    <div class="reason"><span class="ic">👆</span>
+      <span class="rt"><b>Clicaram sem querer</b><br><span class="rd">Disseram na conversa que abriram o anúncio por engano.</span></span>
+      <span class="cnt">2 pessoas</span></div>
+    <div class="reason"><span class="ic">🔀</span>
+      <span class="rt"><b>Procuravam outra coisa</b><br><span class="rd">Queriam uma moto — e a loja vende carros. Produto que não é o seu.</span></span>
+      <span class="cnt">1 pessoa</span></div>
+
+    <div class="check-h" style="margin-top:16px;">A idade de quem clicou</div>
+    <div class="callout co-green">
+      <div class="ch">👍 A maioria tem idade de comprar</div>
+      Quase todo mundo que clicou hoje tem entre <b>25 e 44 anos</b> — o perfil de quem compra carro.
+    </div>
+    <div class="callout co-amber" style="margin-top:9px;">
+      <div class="ch">⚠ Um anúncio está atraindo gente fora do perfil</div>
+      O anúncio <b>"Interesse Amplo"</b> trouxe bastante gente <b>abaixo de 18 e acima de 65 anos</b> sem intenção de compra. Foi daí que veio quase todo o clique à toa — é onde vale apertar a segmentação de idade.
+    </div>
+  </div>
+
+  <div class="footer">
+    <div><span class="bf">LOGOS IA</span> · suporte@logosiabrasil.com</div>
+    <div>Página 4 de 5</div>
+  </div>
+</div>
+
+<!-- ===== PAGE 5: DE ONDE VIERAM (POR ANÚNCIO) ===== -->
+<div class="page">
+  <div class="pad" style="padding-top:14mm;">
+    <div class="vh"><span class="vn">De onde vieram os clientes</span></div>
+    <div class="sub-explain">Cada anúncio e o tipo de gente que ele trouxe. Serve pra decidir <b>onde investir mais</b> e o que rever.</div>
+
+    <div class="camp">
+      <div class="camp-h"><span class="cname">Financiamento Facilitado</span><span class="cn2">· 4 clientes</span>
+        <span class="pill p-up">👍 Investir mais</span></div>
+      <div class="cdesc">Quase todos vieram bons — com entrada, nome limpo e idade de comprar. É o anúncio que mais traz cliente de verdade hoje.</div>
+    </div>
+
+    <div class="camp">
+      <div class="camp-h"><span class="cname">Página de Estoque</span><span class="cn2">· 3 clientes</span>
+        <span class="pill p-ok">👌 Manter</span></div>
+      <div class="cdesc">Trouxe de tudo um pouco — alguns bons, alguns difíceis, todos dentro do perfil. Está num ritmo ok, vale continuar acompanhando.</div>
+    </div>
+
+    <div class="camp">
+      <div class="camp-h"><span class="cname">Interesse Amplo</span><span class="cn2">· 5 clientes</span>
+        <span class="pill p-down">👎 Rever</span></div>
+      <div class="cdesc">É o problema do dia: trouxe gente <b>fora da idade</b>, 2 que <b>clicaram sem querer</b> e 1 que <b>queria outra coisa</b>. Gasta bastante pra trazer pouca venda — vale apertar a idade e o interesse do público.</div>
+    </div>
+
+    <div class="callout co-green" style="margin-top:14px;">
+      <div class="ch">🤖 O que o José faz com isso</div>
+      Com essa informação, o José ajusta os anúncios sozinho: coloca mais verba no "Financiamento Facilitado" (que traz cliente bom) e aperta a idade e o público do "Interesse Amplo" (que traz clique à toa). Assim, com o tempo, chega mais cliente forte e menos gente fora do perfil — sem você precisar mexer.
+    </div>
+  </div>
+
+  <div class="footer">
+    <div><span class="bf">LOGOS IA</span> · suporte@logosiabrasil.com</div>
+    <div>Página 5 de 5</div>
+  </div>
+</div>
+
+</body>
+</html>
