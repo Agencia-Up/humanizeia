@@ -46,6 +46,8 @@ export function LancarVendaDialog({
   const [form, setForm] = useState({
     seller_id: '', data_venda: hoje(), valor: '', origem: '' as '' | OrigemVenda,
     portal: '', veiculo: '', observacao: '',
+    // Dados do lead (usados só ao LANÇAR — a venda cria o lead no CRM).
+    nome: '', telefone: '', cidade: '',
   });
 
   // Ao abrir: modo EDIÇÃO pré-preenche com a venda; modo LANÇAR começa em branco
@@ -61,11 +63,13 @@ export function LancarVendaDialog({
           portal: venda.portal || '',
           veiculo: venda.veiculo || '',
           observacao: venda.observacao || '',
+          nome: '', telefone: '', cidade: '',
         });
       } else {
         setForm({
           seller_id: isSeller ? (currentSellerId || '') : '',
           data_venda: hoje(), valor: '', origem: '', portal: '', veiculo: '', observacao: '',
+          nome: '', telefone: '', cidade: '',
         });
       }
     }
@@ -81,24 +85,50 @@ export function LancarVendaDialog({
     if (!form.seller_id) { toast({ title: 'Selecione o vendedor', variant: 'destructive' }); return; }
     if (!form.data_venda) { toast({ title: 'Informe a data da venda', variant: 'destructive' }); return; }
     if (!form.origem) { toast({ title: 'Selecione a origem', variant: 'destructive' }); return; }
+    const telDigits = form.telefone.replace(/\D/g, '');
+    if (!isEdit && form.origem === 'trafego' && telDigits.length < 10) {
+      toast({ title: 'Telefone é obrigatório no tráfego pago', description: 'A venda de tráfego vira lead do Pedro (WhatsApp), que precisa do número.', variant: 'destructive' });
+      return;
+    }
 
     setSaving(true);
     try {
-      const payload = {
-        user_id: ownerUserId,
-        seller_id: form.seller_id,
-        data_venda: form.data_venda,
-        valor: valorNum,
-        origem: form.origem,
-        portal: form.origem === 'portais' ? (form.portal.trim() || null) : null,
-        veiculo: form.veiculo.trim() || null,
-        observacao: form.observacao.trim() || null,
-      };
-      const { error } = isEdit
-        ? await (supabase as any).from('comercial_vendas').update(payload).eq('id', venda!.id)
-        : await (supabase as any).from('comercial_vendas').insert(payload);
-      if (error) throw error;
-      toast({ title: isEdit ? 'Venda atualizada!' : 'Venda lançada!', description: 'O painel comercial já foi atualizado.' });
+      if (isEdit) {
+        // EDIÇÃO: só atualiza a própria venda (não mexe no lead).
+        const { error } = await (supabase as any).from('comercial_vendas').update({
+          seller_id: form.seller_id,
+          data_venda: form.data_venda,
+          valor: valorNum,
+          origem: form.origem,
+          portal: form.origem === 'portais' ? (form.portal.trim() || null) : null,
+          veiculo: form.veiculo.trim() || null,
+          observacao: form.observacao.trim() || null,
+        }).eq('id', venda!.id);
+        if (error) throw error;
+        toast({ title: 'Venda atualizada!', description: 'O painel comercial já foi atualizado.' });
+      } else {
+        // LANÇAR: cria o lead no CRM certo (Pedro se tráfego; Marcos senão), atribui ao
+        // vendedor e marca fechado -> o gatilho gera a venda LIGADA (nada fica solto).
+        const { error } = await (supabase as any).rpc('comercial_lancar_venda', {
+          p_seller_id: form.seller_id,
+          p_origem: form.origem,
+          p_data_venda: form.data_venda,
+          p_valor: valorNum,
+          p_nome: form.nome.trim() || null,
+          p_telefone: telDigits || null,
+          p_cidade: form.cidade.trim() || null,
+          p_veiculo: form.veiculo.trim() || null,
+          p_observacao: form.observacao.trim() || null,
+          p_portal: form.origem === 'portais' ? (form.portal.trim() || null) : null,
+        });
+        if (error) throw error;
+        toast({
+          title: 'Venda lançada!',
+          description: form.origem === 'trafego'
+            ? 'Lead criado no Pedro e venda atribuída ao vendedor.'
+            : 'Lead criado no Marcos (Venda concluída) e venda atribuída ao vendedor.',
+        });
+      }
       onSaved();
       onOpenChange(false);
     } catch (err: any) {
@@ -149,6 +179,24 @@ export function LancarVendaDialog({
               )}
             </div>
 
+            {/* Campos do lead — só ao LANÇAR (a venda cria o lead no CRM, não fica solta) */}
+            {!isEdit && (
+              <>
+                <p className="col-span-2 text-[11px] text-muted-foreground leading-snug -mt-1">
+                  Ao lançar, o cliente vira um lead no CRM (tráfego pago → Pedro; demais origens → Marcos), atribuído ao vendedor e marcado como venda concluída.
+                </p>
+                <div>
+                  <Label>Nome do cliente</Label>
+                  <Input placeholder="Nome do lead" value={form.nome} onChange={(e) => set({ nome: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Telefone{form.origem === 'trafego' ? ' *' : ''}</Label>
+                  <Input placeholder="5512999999999" value={form.telefone}
+                    onChange={(e) => set({ telefone: e.target.value.replace(/[^\d]/g, '') })} />
+                </div>
+              </>
+            )}
+
             {/* Data */}
             <div>
               <Label>Data da venda *</Label>
@@ -179,6 +227,14 @@ export function LancarVendaDialog({
                 <Label>Portal</Label>
                 <Input placeholder="Webmotors, OLX, iCarros…"
                   value={form.portal} onChange={(e) => set({ portal: e.target.value })} />
+              </div>
+            )}
+
+            {/* Cidade — só ao lançar (campo do lead) */}
+            {!isEdit && (
+              <div className="col-span-2">
+                <Label>Cidade</Label>
+                <Input placeholder="Cidade do cliente" value={form.cidade} onChange={(e) => set({ cidade: e.target.value })} />
               </div>
             )}
 
