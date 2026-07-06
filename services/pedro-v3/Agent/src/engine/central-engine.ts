@@ -30,9 +30,11 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized,
+  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedOrdinal,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
 } from "./turn-understanding.ts";
+import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
+import { detectQuestionRepetition } from "./question-repetition.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
@@ -104,6 +106,9 @@ export type CentralTurnArgs = {
   // reconcileObjectiveWithQuestion) — o funil vira contexto read-only e o CÉREBRO decide a próxima pergunta/condução.
   // Guardrails (grounding/foto/CPF/erro/≤1 pergunta) continuam. central_active liga isto; legado mantém false.
   readonly llmFirst?: boolean;
+  // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto de espera do bloco. Se chegou mensagem nova durante o processamento e o
+  // bloco ainda é mais jovem que isto, o turno é SUPERSEDED (não despacha; reagrupa). Default = maxWait do debounce.
+  readonly blockAwaitMaxMs?: number;
 };
 
 export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "deterministic_recovery" | "technical_fallback" | "legacy_compose";
@@ -161,7 +166,10 @@ export type CentralTurnResult =
       previousSelectedVehicleKey: string | null;
       recoveryReason: string | null;
     }
-  | { status: "commit_failed"; turnId: Id; claimedEventIds: Id[]; reason: string };
+  | { status: "commit_failed"; turnId: Id; claimedEventIds: Id[]; reason: string }
+  // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): chegou mensagem nova durante o processamento -> NÃO despachou (o claim foi
+  // devolvido; o poller reagrupa o bloco completo). Não é erro: o dispatcher ignora e o próximo tick reprocessa.
+  | { status: "superseded"; turnId: Id; claimedEventIds: Id[]; pendingCount: number };
 
 // ── helpers puros ──────────────────────────────────────────────────────────────────────────────────────────
 function payloadJson(value: unknown): JsonValue {
@@ -326,8 +334,14 @@ function canonicalVehicleLabel(vehicleKey: string, facts: readonly QueryResult[]
 export function canonicalizeSelectMutations(muts: readonly DecisionMutation[], facts: readonly QueryResult[], identities: readonly RememberedVehicleIdentity[], state: ConversationState): { mutations: DecisionMutation[]; droppedKeys: string[] } {
   const mutations: DecisionMutation[] = [];
   const droppedKeys: string[] = [];
-  for (const m of muts) {
+  // P0 (RESOLUÇÃO ÚNICA): DEDUP de select_vehicle_focus — para o MESMO vehicleKey, só a ÚLTIMA seleção do turno vale
+  // (o cérebro + o ordinal determinístico podiam emitir duas mutações idênticas). Preserva a ordem das demais mutações.
+  const lastSelectIdxByKey = new Map<string, number>();
+  muts.forEach((m, i) => { if (m.op === "select_vehicle_focus") lastSelectIdxByKey.set(m.vehicle.key, i); });
+  for (let i = 0; i < muts.length; i++) {
+    const m = muts[i];
     if (m.op !== "select_vehicle_focus") { mutations.push(m); continue; }
+    if (lastSelectIdxByKey.get(m.vehicle.key) !== i) continue;   // dedup: há uma seleção POSTERIOR do mesmo key
     const canon = canonicalVehicleLabel(m.vehicle.key, facts, identities, state);
     if (canon && canon !== m.vehicle.key) mutations.push({ ...m, vehicle: { ...m.vehicle, label: canon } });
     else droppedKeys.push(m.vehicle.key);
@@ -515,8 +529,27 @@ function authorFromBrainDraft(args: {
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
   // COMPLETUDE (prompt-first): a resposta não pode IGNORAR um pedido explícito (horário/endereço/unidade/foto). Grounding
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized });
+  // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
+  // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage) });
   if (incomplete) return { ok: false, feedback: incomplete };
+  // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
+  // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
+  // "Qual seu nome?"/"o que você procura?" reperguntados turno após turno mesmo com o nome já conhecido.)
+  if (args.requireBrain) {
+    const slots = args.ctx.state.slots;
+    const rep = detectQuestionRepetition({
+      finalText: composed.text,
+      slotsKnown: {
+        nome: slots.nome?.status === "known",
+        interesse: slots.interesse?.status === "known",
+        tipoVeiculo: slots.tipoVeiculo?.status === "known",
+        faixaPreco: slots.faixaPreco?.status === "known",
+      },
+      recentTurns: args.ctx.state.recentTurns ?? [],
+    });
+    if (rep) return { ok: false, feedback: rep.feedback };
+  }
   return { ok: true, decision: decision0, composed, proposedEffects };
 }
 
@@ -649,7 +682,9 @@ function buildDeterministicPhotoResponse(args: {
   readonly requireBrain: boolean;
   readonly target: TargetResolution;                 // P0-1: alvo do assunto (verificado por modelo)
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
-  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain)) return null;   // P0-2: em llmFirst sem cérebro NÃO envia (recuperação pergunta qual)
+  // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO quando o alvo veio de turn_ordinal (índice EXATO da última lista) +
+  // pedido explícito de foto: aí a resolução única autoriza (grounding máximo; nunca é "foto solta"). Some o "de qual carro?".
+  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage)) return null;
   const state = args.ctx.state;
   const factsArr = [...args.facts];
   const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
@@ -794,6 +829,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
   const ref: TenantAgentRef = { tenantId, agentId };
   const allowed = new Set(args.allowedTools ?? DEFAULT_ALLOWED_TOOLS);
   const brainMaxSteps = args.brainMaxSteps ?? 4;
+  const blockAwaitMaxMs = args.blockAwaitMaxMs ?? DEFAULT_DEBOUNCE_CONFIG.maxWaitMs;   // teto anti-parcial (P0 bloco-do-lead)
   let claimedEventIds: Id[] = [];
 
   return persistence.withLease(conversationId, workerId, leaseTtlMs, async (lease): Promise<CentralTurnResult> => {
@@ -1026,6 +1062,22 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let proposedEffects: ProposedEffectPlan[];
       let composeFacts: QueryResult[];   // fatos p/ resolver label do veículo (foto) no commit
       if (singleAuthor) {
+        // ── P0 (RESOLUÇÃO ÚNICA de veículo): completude determinística de FOTO por ORDINAL. Quando o cérebro NÃO autorou
+        //    resposta e o lead pediu foto de um item da última lista ("me manda foto do segundo"), o alvo resolve por
+        //    turn_ordinal (índice EXATO) mas o cérebro às vezes rotulou só como SELEÇÃO e não chamou vehicle_photos_resolve
+        //    — daí o turno degradava em "de qual carro?" (recovery). Aqui o ENGINE resolve as fotos do alvo EXATO (1x) p/ o
+        //    executor determinístico ter photoIds reais. NÃO é "foto solta": só dispara com ordinal resolvido + pedido
+        //    explícito de foto (grounding máximo). A mesma fonte de alvo (resolveTarget) alimenta seleção, foto e recall. ──
+        if (!authoredComposed) {
+          const photoTarget = resolveTarget();
+          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedOrdinal(photoTarget, leadMessage);
+          if (wantsPhotoNow && photoTarget.kind === "resolved" && !facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === photoTarget.vehicleKey)) {
+            try {
+              const photoRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: photoTarget.vehicleKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (ordinal) exceeded timeout");
+              facts.push(photoRes); observations.push(toAgentObservation(photoRes)); toolResultMems.push(toToolResultMemory(photoRes, turnId));
+            } catch { /* best-effort: sem fotos o executor cai no honesto "não localizei as fotos", nunca "de qual carro?" */ }
+          }
+        }
         // Usa a resposta que o cérebro AUTOROU+aterrou (render+validate já feitos no loop). Se nada passou no
         // limite, FALLBACK TÉCNICO DEGRADADO — honesto, responde à pergunta atual; NUNCA lista/menu/muda de assunto/
         // funil; NUNCA promete retorno. JAMAIS chama DecisionLlm.compose. terminalSafe=true (degradação observável).
@@ -1234,6 +1286,22 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         }, at: cutoff }),
         makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded: isDegradedSource(responseSource) }, at: cutoff }),
       ];
+
+      // ── TRAVA ANTI-PARCIAL (P0 bloco-do-lead): reconferência ANTES de despachar. Se chegou mensagem NOVA (pending)
+      //    enquanto o cérebro pensava, o bloco cresceu — a resposta pronta seria PARCIAL. Devolve o claim e NÃO commita
+      //    (logo nada é despachado): o poller reagrupa o bloco completo no próximo tick. Exceção: bloco já starved ->
+      //    processa mesmo assim (a msg nova vira o próximo turno), senão uma rajada infinita travaria a conversa. ──
+      // Codex F2.24 (P0): o "starved" é medido no CUTOFF (momento do CLAIM), NUNCA no horário pós-cérebro. Um cérebro
+      // LENTO (> maxWait) NÃO pode fazer o bloco parecer starved retroativamente e mascarar uma mensagem nova. Invariante:
+      // não-starved no cutoff + msg nova durante o processamento => SEMPRE supersede, por mais lento que o cérebro tenha
+      // sido; já-starved no cutoff => pode processar mesmo com pending (anti forever-lock).
+      const blockOldestMs = inboxRecords.reduce((min, r) => Math.min(min, Date.parse(r.receivedAt)), Number.POSITIVE_INFINITY);
+      const blockAgeAtClaimMs = Date.parse(cutoff) - blockOldestMs;
+      const newlyPending = await persistence.pendingCount(conversationId);
+      if (shouldSupersedeStaleBlock({ newlyPendingCount: newlyPending, blockAgeMs: blockAgeAtClaimMs, maxWaitMs: blockAwaitMaxMs })) {
+        await persistence.releaseClaim(claimedEventIds, workerId, turnId);
+        return { status: "superseded", turnId, claimedEventIds, pendingCount: newlyPending };
+      }
 
       // ── COMMIT ATÔMICO: state (com WorkingMemory embutida) + decisão + eventos + outbox na MESMA UnitOfWork CAS. ──
       const uow: UnitOfWork = persistence.begin({ lease });

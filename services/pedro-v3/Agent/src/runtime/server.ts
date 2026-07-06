@@ -233,6 +233,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       turnId,
       limits: PILOT_TURN_LIMITS,
       maxValidationAttempts: 3, // R10: 1 tentativa + 2 retries c/ guidance específico -> menos terminal-safe
+      blockAwaitMaxMs: this.#debounce.maxWaitMs, // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto = maxWait do debounce
     });
     if (processed.status === "commit_failed" && processed.engine.status === "commit_failed") {
       console.error(JSON.stringify({

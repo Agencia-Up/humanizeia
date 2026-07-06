@@ -99,10 +99,13 @@ export type PilotActiveProcessInput = {
   readonly turnId: Id;
   readonly limits: QueryLoopLimits;
   readonly maxValidationAttempts: number;
+  // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto de espera do bloco (= maxWait do debounce). Opcional; o engine cai no
+  // DEFAULT_DEBOUNCE_CONFIG.maxWaitMs quando ausente.
+  readonly blockAwaitMaxMs?: number;
 };
 
 export type PilotActiveProcessResult = {
-  readonly status: "committed" | "commit_failed" | "no_op";
+  readonly status: "committed" | "commit_failed" | "no_op" | "superseded";
   readonly engine: ConversationEngineResult;
   readonly outboxBeforeDispatch: readonly OutboxRecord[];
   readonly outboxAfterDispatch: readonly OutboxRecord[];
@@ -341,6 +344,8 @@ export class PilotActiveRoot {
       singleAuthor: true,
       // LLM-FIRST (missão SDR real): o engine NÃO gerencia objetivo de funil — o cérebro conduz; guardrails só validam.
       llmFirst: true,
+      // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto do bloco vindo do debounce (server); default no engine se ausente.
+      blockAwaitMaxMs: input.blockAwaitMaxMs,
     });
     const outboxBeforeDispatch = await input.persistence.listOutbox(input.conversationId);
     const dispatched = await this.#dispatchIfCommitted(input, engine.status === "committed");

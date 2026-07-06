@@ -83,6 +83,17 @@ export function authorizesPhotoSend(v: ValidatedUnderstanding | null, block: str
 export function isPhotoRecall(v: ValidatedUnderstanding | null): boolean {
   return v?.understanding.primaryIntent === "recall_photos" || (v?.understanding.requestedCapabilities.includes("recall") ?? false);
 }
+// ── P0 (RESOLUÇÃO ÚNICA de veículo): AUTORIZAÇÃO DETERMINÍSTICA por ORDINAL RESOLVIDO. Complementa authorizesPhotoSend
+//    NO caso "me manda foto do segundo": o alvo veio de turn_ordinal (índice EXATO da última lista renderizada pela loja
+//    = grounding MÁXIMO) E o texto do lead tem pedido EXPLÍCITO de foto (verbo de envio/ver + "foto"). Isto NÃO é o "foto
+//    solta" que o P0-2 rejeita — aqui o alvo é o item N que a loja ACABOU de mostrar, não um palpite de modelo. Some o
+//    "de qual carro?" quando o ordinal já respondeu isso. Fail-closed: negação de foto barra; SÓ turn_ordinal autoriza
+//    (nunca modelo inferido/pronome/selecionado antigo). PURO. (Definido com forward-ref a PHOTO_REQUEST_STEM abaixo.) ──
+export function authorizesPhotoByResolvedOrdinal(target: TargetResolution, block: string): boolean {
+  if (target.kind !== "resolved" || target.source !== "turn_ordinal") return false;
+  if (isPhotoDeclined(block)) return false;
+  return PHOTO_REQUEST_STEM.test(normalizeText(block));
+}
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──
 const TOOL_CAPABILITY: Record<string, TurnCapability> = {
