@@ -647,6 +647,19 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .lte('created_at', todayEnd);
         if (sellerMemberId) transfersQuery = transfersQuery.eq('to_member_id', sellerMemberId);
 
+        // Leads do Pedro que foram assumidos/confirmados no período também precisam
+        // entrar no Painel ao Vivo, mesmo quando o lead original nasceu ontem.
+        // Sem isso, um lead qualificado no dia anterior e aceito hoje pelo vendedor
+        // fica invisível na TV porque a query principal filtra por arrived_at/created_at.
+        let confirmedPedroTransfersQuery = (supabase as any)
+          .from('ai_lead_transfers')
+          .select('to_member_id, lead_id, created_at, confirmed_at')
+          .eq('user_id', effectiveUserId)
+          .eq('is_confirmed', true)
+          .gte('created_at', todayStart)
+          .lte('created_at', todayEnd);
+        if (sellerMemberId) confirmedPedroTransfersQuery = confirmedPedroTransfersQuery.eq('to_member_id', sellerMemberId);
+
         // Bolsão (Fase 2): leads sem dono, disponíveis pra o gestor atribuir.
         // No modo vendedor a RLS devolve vazio (a seção só aparece pro master).
         const poolQuery = (supabase as any)
@@ -673,8 +686,8 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           .is('seller_auth_id', null)
           .order('position', { ascending: true });
 
-        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, poolRes, agentsRes, stagesRes] = await Promise.all([
-          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery, poolQuery, agentsQuery, stagesQuery,
+        const [profileRes, sellersRes, pedroRes, marcosRes, costsRes, vendasRes, metasRes, transfersRes, confirmedPedroTransfersRes, poolRes, agentsRes, stagesRes] = await Promise.all([
+          profilePromise, sellersQuery, pedroQuery, marcosQuery, costsQuery, vendasQuery, metasQuery, transfersQuery, confirmedPedroTransfersQuery, poolQuery, agentsQuery, stagesQuery,
         ]);
         if (!cancelled) setPoolLeads((poolRes?.data as any[]) || []);
         if (!cancelled) setAgentsList((agentsRes?.data as any[]) || []);
@@ -740,10 +753,37 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         };
 
         // 4. Pedro: contar trafico_pago (precisa de assigned_to_id) E coletar dados pra qualidade/taxa
-        const pedroLeads = (pedroRes.data || []) as Array<{
+        const confirmedPedroTransferRows = (confirmedPedroTransfersRes?.data || []) as Array<{
+          to_member_id: string | null; lead_id: string | null; created_at: string | null; confirmed_at: string | null;
+        }>;
+        const transferAssigneeByLead = new Map<string, string>();
+        for (const tr of confirmedPedroTransferRows) {
+          if (tr.lead_id && tr.to_member_id) transferAssigneeByLead.set(tr.lead_id, tr.to_member_id);
+        }
+
+        let pedroLeads = (pedroRes.data || []) as Array<{
           id: string; lead_name: string | null; remote_jid: string | null; agent_id: string | null; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
         }>;
         const pedroLeadIds = pedroLeads.map(l => l.id);
+        const pedroLeadIdSet = new Set(pedroLeadIds);
+        const transferredTodayMissingIds = [...new Set(
+          confirmedPedroTransferRows
+            .map(tr => tr.lead_id)
+            .filter((id): id is string => !!id && !pedroLeadIdSet.has(id))
+        )];
+        if (transferredTodayMissingIds.length > 0) {
+          let extraTransferredQuery = (supabase as any)
+            .from('ai_crm_leads')
+            .select('id, lead_name, remote_jid, agent_id, assigned_to_id, status_crm, seller_notes_count')
+            .eq('user_id', effectiveUserId)
+            .in('id', transferredTodayMissingIds);
+          const { data: extraTransferredLeads, error: extraTransferredError } = await extraTransferredQuery;
+          if (extraTransferredError) {
+            console.warn('[DashboardTV] Falha ao incluir leads Pedro confirmados no periodo', extraTransferredError.message);
+          } else if (Array.isArray(extraTransferredLeads) && extraTransferredLeads.length > 0) {
+            pedroLeads = [...pedroLeads, ...extraTransferredLeads];
+          }
+        }
         const pendingOrConfirmedTransferIds = new Set<string>();
         if (pedroLeadIds.length > 0) {
           const { data: transferRows } = await (supabase as any)
@@ -761,9 +801,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         let naoAtribuidos = 0;    // leads (Pedro+Marcos) que não foram pra vendedor — contam no total mas não no card de vendedor
         for (const l of pedroLeads) {
           pedroTotal++;
-          if (l.assigned_to_id) {
+          const assignedToId = l.assigned_to_id || transferAssigneeByLead.get(l.id) || null;
+          if (assignedToId) {
             pedroAtribuidos++;
-            const v = agg[l.assigned_to_id];
+            const v = agg[assignedToId];
             if (v) {
               v.trafico_pago++; v.total++;
             } else {

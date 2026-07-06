@@ -1,4 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { confirmSellerAck } from "../_shared/pedro-v2/transferRouter.ts";
+import { isSellerAckText, resolveUazapiPhone } from "../_shared/pedro-v2/phone.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -190,6 +192,7 @@ async function maybeHandleSellerTransferAck(
   instance: any,
   instanceName: string,
   phone: string,
+  messageText: string,
 ) {
   const agent = await getActiveAgentForInstance(supabase, instance);
   const ownerId = agent?.user_id || instance.user_id;
@@ -213,49 +216,25 @@ async function maybeHandleSellerTransferAck(
   if (matches.length === 0) return { isSeller: false };
 
   const seller = matches[0];
-  const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
   console.log(`[wa-inbox-webhook] Seller message detected: ${seller.name} (${phone}). Blocking IA/lead creation.`);
 
-  const { data: pendingTransfer } = await supabase
-    .from("ai_lead_transfers")
-    .select("id, lead_id, to_member_id, transfer_status, is_confirmed, created_at")
-    .in("to_member_id", sellerIds)
-    .eq("transfer_status", "pending")
-    .eq("is_confirmed", false)
-    .not("lead_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const shouldConfirm = isSellerAckText(messageText);
+  const ack = await confirmSellerAck(supabase, {
+    user_id: ownerId,
+    agent_id: agent?.id || null,
+    seller_phone: phone,
+    commit: shouldConfirm,
+  });
 
-  if (!pendingTransfer) {
-    console.log(`[wa-inbox-webhook] Seller ${seller.name} has no pending transfer. Message ignored by IA.`);
-    return { isSeller: true, confirmed: false };
+  if (!shouldConfirm || !ack.confirmed) {
+    console.log(`[wa-inbox-webhook] Seller ${seller.name} message ignored by transfer ack. reason=${ack.reason || "not_ack"}`);
+    return { isSeller: true, confirmed: false, reason: ack.reason || "not_ack" };
   }
-
-  const now = new Date().toISOString();
-  await supabase
-    .from("ai_lead_transfers")
-    .update({ transfer_status: "confirmed", is_confirmed: true, confirmed_at: now })
-    .eq("id", pendingTransfer.id);
-
-  await supabase
-    .from("ai_team_members")
-    .update({ last_lead_received_at: now })
-    .eq("id", pendingTransfer.to_member_id || seller.id);
-
-  await supabase
-    .from("ai_crm_leads")
-    .update({
-      assigned_to_id: pendingTransfer.to_member_id || seller.id,
-      status: "em_atendimento",
-      last_interaction_at: now,
-    })
-    .eq("id", pendingTransfer.lead_id);
 
   try {
     const baseUrl = String(instance.api_url || "").replace(/\/$/, "");
     const instKey = instance.api_key_encrypted || "";
-    let sellerPhone = onlyDigits(seller.whatsapp_number || phone);
+    let sellerPhone = onlyDigits(ack.seller?.whatsapp_number || seller.whatsapp_number || phone);
     if (sellerPhone.length === 10 || sellerPhone.length === 11) sellerPhone = `55${sellerPhone}`;
     if (baseUrl && instKey && sellerPhone) {
       await fetch(`${baseUrl}/send/text`, {
@@ -271,8 +250,8 @@ async function maybeHandleSellerTransferAck(
     console.warn("[wa-inbox-webhook] Could not send seller confirmation:", err);
   }
 
-  console.log(`[wa-inbox-webhook] Transfer ${pendingTransfer.id} confirmed by seller ${seller.name}`);
-  return { isSeller: true, confirmed: true, transferId: pendingTransfer.id };
+  console.log(`[wa-inbox-webhook] Transfer ${ack.transfer?.id} confirmed by seller ${seller.name}`);
+  return { isSeller: true, confirmed: true, transferId: ack.transfer?.id };
 }
 
 Deno.serve(async (req) => {
@@ -604,6 +583,11 @@ async function processEvolutionIncomingMessage(
 
   if (!phone) phone = toDigits(remoteJidAlt || remoteJid);
   if (!replyTarget) replyTarget = phone;
+  const resolvedPhone = resolveUazapiPhone(messageData);
+  if (resolvedPhone) {
+    phone = resolvedPhone;
+    replyTarget = resolvedPhone;
+  }
 
   const pushName = messageData.pushName || null;
   const profilePictureUrl = extractProfilePictureUrl(messageData);
@@ -686,7 +670,7 @@ async function processEvolutionIncomingMessage(
 
   // sellerAck so faz sentido p/ mensagens RECEBIDAS (vendedor confirmando transferencia).
   if (direction === "incoming") {
-    const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone);
+    const sellerAck = await maybeHandleSellerTransferAck(supabase, instance, instanceName, phone, content);
     if (sellerAck.isSeller) {
       return null;
     }
@@ -1742,6 +1726,7 @@ async function handleAIAgentReply(
           remote_jid: phone,
           lead_name: pushName || phone,
           status: "novo",
+          origem: "trafico_pago",
           last_interaction_at: nowIso,
           message_count: 1,
         });
@@ -2375,6 +2360,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
             // Build structured update data from all available fields
             const updateData: any = {
               status: args.status,
+              origem: "trafico_pago",
               summary: args.resumo,
               last_interaction_at: new Date().toISOString(),
             };
@@ -2414,6 +2400,7 @@ REGRAS PARA FOTOS (PRIORIDADE MAXIMA):
                 instance_id: instance.id,
                 remote_jid: phone,
                 lead_name: args.nome_cliente || pushName || phone,
+                origem: "trafico_pago",
                 ...updateData,
               });
             }

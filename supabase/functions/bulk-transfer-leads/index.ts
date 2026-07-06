@@ -192,6 +192,7 @@ Deno.serve(async (req) => {
         const { error: leadErr } = await supabase.from("ai_crm_leads").update({
           status: "transferido",
           assigned_to_id: seller.id,
+          origem: "trafico_pago",
           last_interaction_at: now,
         }).eq("id", lead.id);
         if (leadErr) throw leadErr;

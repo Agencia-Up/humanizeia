@@ -239,6 +239,7 @@ Deno.serve(async (req) => {
     });
     await supabase.from('ai_crm_leads').update({
       assigned_to_id: seller.id,
+      origem: 'trafico_pago',
       disponivel_repasse: false,
       repasse_motivo: null,
       status: 'em_atendimento',

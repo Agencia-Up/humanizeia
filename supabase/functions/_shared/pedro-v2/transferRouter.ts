@@ -101,7 +101,14 @@ export async function confirmSellerAck(
     .eq("is_active", true)
     .limit(500);
 
-  const matches = (sellers || []).filter((seller: any) => phonesMatch(seller.whatsapp_number, input.seller_phone));
+  const matches = (sellers || [])
+    .filter((seller: any) => phonesMatch(seller.whatsapp_number, input.seller_phone))
+    .sort((a: any, b: any) => {
+      const aAgent = input.agent_id && a.agent_id === input.agent_id ? 1 : 0;
+      const bAgent = input.agent_id && b.agent_id === input.agent_id ? 1 : 0;
+      if (aAgent !== bAgent) return bAgent - aAgent;
+      return Number(Boolean(b.auth_user_id)) - Number(Boolean(a.auth_user_id));
+    });
   if (matches.length === 0) return { ok: false, reason: "seller_not_found" };
 
   const sellerIds = matches.map((seller: any) => seller.id);
@@ -129,6 +136,7 @@ export async function confirmSellerAck(
     .from("ai_crm_leads")
     .update({
       assigned_to_id: pendingTransfer.to_member_id || matches[0].id,
+      origem: "trafico_pago",
       status: "em_atendimento",
       last_interaction_at: now,
     })
@@ -335,7 +343,7 @@ export async function executePedroV2Handoff(
         confirmed_at: nowIso,
         confirmation_timeout_at: nowIso,
       });
-      await supabase.from("ai_crm_leads").update({ summary: briefing, last_interaction_at: nowIso }).eq("id", input.lead_id);
+      await supabase.from("ai_crm_leads").update({ summary: briefing, origem: "trafico_pago", last_interaction_at: nowIso }).eq("id", input.lead_id);
       await supabase.from("ai_team_members").update({ last_lead_received_at: nowIso }).eq("id", owner.id);
       return { ok: true, seller: owner, briefing, reason: "returning_lead_renotify" };
     }
@@ -388,7 +396,7 @@ export async function executePedroV2Handoff(
   //    Marca 'transferido' para o follow-up de inatividade parar.
   const { data: claimed } = await supabase
     .from("ai_crm_leads")
-    .update({ status: "transferido", last_interaction_at: nowIso })
+    .update({ status: "transferido", origem: "trafico_pago", last_interaction_at: nowIso })
     .eq("id", input.lead_id)
     .is("assigned_to_id", null)
     .select("id");

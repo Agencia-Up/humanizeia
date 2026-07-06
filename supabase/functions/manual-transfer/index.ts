@@ -856,6 +856,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
     //    Alinha comportamento com auto-transfer (que também não atribui até "Ok").
     await supabase.from("ai_crm_leads").update({
       status: "transferido",
+      origem: "trafico_pago",
       last_interaction_at: new Date().toISOString(),
     }).eq("id", lead.id);
 

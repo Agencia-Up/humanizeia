@@ -12,7 +12,7 @@ import { composeSellerMsg, composeGerenteMsg, buildEtiquetas, maybeStripEmojis }
 import { pickInterestVehicleFromState } from "../transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText, LeadTransferStatusKey } from "../transfer/leadStatus.ts";
 import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, mapQualificacaoToLeadColumns, classifyLeadSdr } from "../transfer/leadSdrCategory.ts";
-import { remoteJidToPhone } from "./phone.ts";
+import { isSellerAckText, remoteJidToPhone, resolveUazapiRemoteJid } from "./phone.ts";
 import { generatePedroBrainReply, buildDeterministicStockReply } from "./pedroBrainReply_20260525.ts";
 import { fetchPedroKnowledgeContext } from "./knowledgeBase.ts";
 import { planPedroTurn } from "./pedroBrainPlanner_20260525.ts";
@@ -170,21 +170,7 @@ async function alertOwnerLlmFailure(supabase: any, input: any, errors: ProviderE
 }
 
 function pickRemoteJid(payload: any): string {
-  const message = pickIncomingMessage(payload);
-  return (
-    message?.chatId ||
-    message?.chatid ||
-    message?.from ||
-    message?.key?.remoteJid ||
-    payload?.remoteJid ||
-    payload?.remote_jid ||
-    payload?.chatId ||
-    payload?.jid ||
-    payload?.message?.chatId ||
-    payload?.data?.key?.remoteJid ||
-    payload?.data?.remoteJid ||
-    ""
-  );
+  return resolveUazapiRemoteJid(payload);
 }
 
 function pickIncomingMessage(payload: any): any {
@@ -798,10 +784,7 @@ export async function processPedroV2Turn(
     // "assumo", "pode deixar", 👍...). Antes, QUALQUER mensagem do telefone do vendedor
     // (ate "quem e esse cliente?") confirmava a transferencia e atribuia o lead. Uma
     // duvida/pergunta do vendedor NAO pode atribuir o lead.
-    const _sellerMsg = String(rawText || "").toLowerCase().trim();
-    const _isSellerAck = /[👍✅🤝🙏]/.test(rawText || "")
-      || /^\s*(ok+|okay|k|blz|beleza|sim|isso|fechado|fechou|show|bora|certo|combinado|positivo|confirmo|confirmado)\b/.test(_sellerMsg)
-      || /\b(assumo|assumir|vou assumir|assumido|pode deixar|deixa comigo|deixa cmg|peguei|pego esse|pego ele|to indo|to nessa|vou atender|ja atendo|atendo ele|atendo esse|vou cuidar|cuido dele|consigo atender)\b/.test(_sellerMsg);
+    const _isSellerAck = isSellerAckText(rawText);
     const ack = await confirmSellerAck(supabase, {
       user_id: input.agent.user_id,
       agent_id: input.agent.id,
