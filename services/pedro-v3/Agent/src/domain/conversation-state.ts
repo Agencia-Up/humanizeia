@@ -111,6 +111,7 @@ export type ActiveSearchConstraints = {
   precoMax?: number;
   cambio?: TransmissionPreference;
   popular?: boolean;
+  anos?: number[];   // F2.28: anos RÍGIDOS ("13/14/15" -> [2013,2014,2015]; "2013 a 2015" -> range). Filtro duro.
 };
 
 export type ConversationState = {

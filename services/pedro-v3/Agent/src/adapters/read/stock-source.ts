@@ -84,6 +84,12 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       pool = pool.filter(v => v.saleValue !== null && v.saleValue <= filters.precoMax!);
     }
 
+    // C3) Filtro RÍGIDO por ANO (F2.28): "EcoSport 13/14/15" -> só 2013/2014/2015. Um carro fora do ano NUNCA é match.
+    if (filters.anos && filters.anos.length > 0) {
+      const anos = new Set(filters.anos);
+      pool = pool.filter(v => v.year != null && anos.has(v.year));
+    }
+
     // C2) Filtro por MARCA/fabricante (markName). O engine já canonicaliza (volks->volkswagen); o match é por inclusão
     // bidirecional p/ tolerar abreviação crua do cérebro ("volks" ⊂ "volkswagen").
     if (filters.marca) {

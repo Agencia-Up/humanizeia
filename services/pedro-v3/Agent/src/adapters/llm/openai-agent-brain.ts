@@ -69,7 +69,7 @@ Depois do understanding, use UMA das duas formas:
 1) Pedir um FATO a uma ferramenta (só quando faltar um dado real para responder):
    {"kind":"query","call":{"tool":"<nome>","input":{...}}}
    Ferramentas:
-   - "stock_search" input {tipo?:"suv|sedan|hatch|pickup", cambio?:"automatic|manual", precoMax?:number, modelo?:string, marca?:string, popular?:boolean, excludeKeys?:string[]}. Se o cliente disser a MARCA/fabricante (ex.: "da volks", "Volkswagen", "Fiat"), use marca. Se der TETO ("até 50 mil"), use precoMax. Assim que houver QUALQUER filtro (marca/modelo/tipo/preço/câmbio/popular), CHAME stock_search — nunca pergunte de novo o que ele já disse.
+   - "stock_search" input {tipo?:"suv|sedan|hatch|pickup", cambio?:"automatic|manual", precoMax?:number, modelo?:string, marca?:string, anos?:number[], popular?:boolean, excludeKeys?:string[]}. Se o cliente disser a MARCA/fabricante (ex.: "da volks", "Volkswagen", "Fiat"), use marca. Se der TETO ("até 50 mil"), use precoMax. Se der ANO/faixa de ano ("13/14/15", "2013 a 2015"), use anos (RÍGIDO — não ofereça outro ano como se fosse o pedido; se não houver, seja honesto e ofereça ampliar). Assim que houver QUALQUER filtro (marca/modelo/tipo/preço/câmbio/ano/popular), CHAME stock_search — nunca pergunte de novo o que ele já disse.
    - "vehicle_details" input {vehicleKey:string}
    - "vehicle_photos_resolve" input {vehicleKey:string}
    - "tenant_business_info" input {topic:"address|hours|unit"}  (endereço/horário/unidade da loja)
@@ -302,12 +302,13 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const tool = str(raw.tool);
     const input = isRecord(raw.input) ? raw.input : {};
     if (tool === "stock_search") {
-      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; marca?: string; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
+      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
       const tipo = str(input.tipo); if (tipo && (VEHICLE_TYPES as readonly string[]).includes(tipo)) out.tipo = tipo as VehicleType;
       const cambio = str(input.cambio); if (cambio && (TRANSMISSIONS as readonly string[]).includes(cambio)) out.cambio = cambio as TransmissionPreference;
       const precoMax = num(input.precoMax); if (precoMax != null && precoMax > 0) out.precoMax = precoMax;
       const modelo = str(input.modelo); if (modelo) out.modelo = modelo;
       const marca = str(input.marca); if (marca) out.marca = marca;
+      if (Array.isArray(input.anos)) { const anos = input.anos.map((y) => num(y)).filter((y): y is number => y != null && y >= 1990 && y <= 2035); if (anos.length > 0) out.anos = anos; }
       if (input.popular === true) out.popular = true;
       if (Array.isArray(input.excludeKeys)) out.excludeKeys = input.excludeKeys.filter((k): k is string => typeof k === "string");
       if (input.broad === true) out.broad = true;

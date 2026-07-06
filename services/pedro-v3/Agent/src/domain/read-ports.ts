@@ -109,6 +109,7 @@ export type StockSearchFilters = {
   readonly precoMax?: number;
   readonly modelo?: string;
   readonly marca?: string;   // busca por fabricante (markName). Canonicalizado pelo engine (volks->volkswagen).
+  readonly anos?: readonly number[];   // F2.28: anos RÍGIDOS (filtro duro; carro fora do ano nunca é match).
   readonly popular?: boolean;
   readonly broad?: boolean;
   readonly excludeKeys?: readonly string[];

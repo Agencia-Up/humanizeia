@@ -84,7 +84,7 @@ export type TurnInterpretation = {
 
 // ── Query loop (read-only) — Codex #4/r3 #6 ─────────────────────────────────
 export type QueryInputMap = {
-  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; marca?: string; popular?: boolean; broad?: boolean; excludeKeys?: string[] };
+  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; broad?: boolean; excludeKeys?: string[] };
   vehicle_details: { vehicleKey: string };
   vehicle_photos_resolve: { vehicleRef: EntityReference };
   crm_read: { leadId: string };

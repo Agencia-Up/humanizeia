@@ -14,6 +14,7 @@ import { normalizeText } from "./catalog-utils.ts";
 import type { ClaimExtractor, QueryInputMap, TurnInterpretation } from "../domain/decision.ts";
 import type { FrameSignals } from "../domain/agent-brain.ts";
 import type { ActiveSearchConstraints } from "../domain/conversation-state.ts";
+import type { VehicleType } from "../domain/types.ts";
 
 // A forma dos constraints é a MESMA do estado persistido (ActiveSearchConstraints) — domínio é a fonte do tipo.
 export type CommercialConstraints = ActiveSearchConstraints;
@@ -48,6 +49,42 @@ export function detectBrand(block: string): string | null {
   return null;
 }
 
+// ── CORREÇÕES explícitas do lead (Invariante 2 / Evidence 1): remoções de constraint do filtro ATIVO. "esquece o
+//    sedan", "não é sedan", "não quero sedan", "não precisa ser sedan", "Compass não é sedan", "tira o sedan". É EXTRAÇÃO
+//    DE FATO (não é if-por-frase de RESPOSTA): mapeia o TIPO negado -> remoção; o engine aplica no merge. PURO. ──
+const REMOVE_TYPE_RX = /\b(?:esquec\w*|tira|deixa\s+(?:o|a|de)|nao\s+(?:e|eh|quero|preciso|precisa\s+ser|to\s+querendo|to\s+atras\s+de))\b[^.?!]{0,24}?\b(suvs?|sedans?|hatch\w*|picapes?|pickups?)\b|\bnao\s+(?:e|eh)\s+(?:um[a]?\s+)?(suvs?|sedans?|hatch\w*|picapes?|pickups?)\b/g;
+function typeWordToVehicle(word: string): VehicleType | null {
+  if (/^suv/.test(word)) return "suv";
+  if (/^sedan/.test(word)) return "sedan";
+  if (/^hatch/.test(word)) return "hatch";
+  if (/^picape|^pickup/.test(word)) return "pickup";
+  return null;
+}
+export type CommercialCorrections = { readonly removedTypes: readonly VehicleType[] };
+export function detectCorrections(block: string): CommercialCorrections {
+  const norm = normalizeText(block);
+  const removed = new Set<VehicleType>();
+  REMOVE_TYPE_RX.lastIndex = 0;
+  for (let m = REMOVE_TYPE_RX.exec(norm); m; m = REMOVE_TYPE_RX.exec(norm)) {
+    const vt = typeWordToVehicle(m[1] ?? m[2] ?? "");
+    if (vt) removed.add(vt);
+  }
+  return { removedTypes: [...removed] };
+}
+
+// ── Anos RÍGIDOS (F2.28): "13/14/15" -> [2013,2014,2015]; "2013 a 2015" -> range; "2015" -> [2015]. parseBudget já ignora
+//    anos, e cilindrada ("1.6") não casa. PURO. Normalização LEVE (preserva "/" — o normalizeText do catálogo o troca por
+//    espaço, quebrando "13/14/15"). ──
+function detectYears(block: string): number[] {
+  const norm = block.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const years = new Set<number>();
+  const range = /\b(19|20)(\d{2})\s*(?:a|ate|-)\s*(19|20)(\d{2})\b/.exec(norm);
+  if (range) { const a = Number(range[1] + range[2]), b = Number(range[3] + range[4]); if (a <= b && b - a <= 15) for (let y = a; y <= b; y++) years.add(y); }
+  for (const grp of norm.match(/\b\d{2}(?:\s*\/\s*\d{2})+\b/g) ?? []) for (const d of grp.split("/")) { const n = Number(d.trim()); if (n >= 0 && n <= 99) years.add(2000 + n); }
+  for (const y of norm.match(/\b(?:19|20)\d{2}\b/g) ?? []) { const n = Number(y); if (n >= 1990 && n <= 2035) years.add(n); }
+  return [...years].sort((a, b) => a - b);
+}
+
 // Extrai os constraints comerciais do BLOCO ATUAL. PURO.
 export function detectCommercialConstraints(args: {
   readonly block: string;
@@ -60,30 +97,47 @@ export function detectCommercialConstraints(args: {
   const rawBrand = frame.explicitBrands[0] ?? detectBrand(args.block);
   if (rawBrand) c.marca = canonicalBrand(rawBrand);
   if (frame.explicitModels.length > 0) c.modelos = [...frame.explicitModels];
-  if (frame.explicitTypes[0]) c.tipo = frame.explicitTypes[0];
+  // Um TIPO NEGADO no bloco ("não é sedan", "esquece o sedan") NÃO vira tipo do turno (senão o merge re-injetaria o
+  // sedan que o lead acabou de remover). A remoção é aplicada no merge via detectCorrections.
+  const removedTypes = detectCorrections(args.block).removedTypes;
+  const tipoCandidate = frame.explicitTypes.find((t) => !removedTypes.includes(t));   // 1º tipo NÃO-negado ("não quero suv, quero hatch" -> hatch)
+  if (tipoCandidate) c.tipo = tipoCandidate;
   // Orçamento: computeTurnFrame cobre "50 mil"/dígitos; aqui completo o sufixo "k" ("até 50k" -> 50000).
   let precoMax = frame.budgetMax;
   if (precoMax == null) { const k = /\b(\d{1,3})\s*k\b/.exec(normalizeText(args.block)); if (k) precoMax = Number(k[1]) * 1000; }
   if (precoMax != null) c.precoMax = precoMax;
   if (frame.transmission) c.cambio = frame.transmission;
   if (args.signals.mentionsPopular === true) c.popular = true;
+  const anos = detectYears(args.block);
+  if (anos.length > 0) c.anos = anos;
   return c;
 }
 
-// MERGE CONSERVADOR (F2.26): cada dimensão do bloco ATUAL (current) substitui a do filtro ATIVO; ausente preserva.
-// Um MODELO novo "pelado" (sem marca no mesmo bloco) solta a marca antiga — é uma nova direção (ex.: depois de VW,
-// "tem Onix?" troca o foco para Onix). "que seja volks" (marca sem modelo) ESTREITA sobre os modelos ativos. PURO.
-export function mergeActiveConstraints(active: CommercialConstraints, current: CommercialConstraints): CommercialConstraints {
+// MERGE CONSERVADOR (F2.26 + F2.27): cada dimensão do bloco ATUAL (current) substitui a do filtro ATIVO; ausente preserva.
+// Invariantes (audit Codex — Evidence 1/6):
+//  - (Inv.2) CORREÇÃO explícita ("esquece sedan", "não é sedan") remove o TIPO do filtro ativo.
+//  - (Inv.1) MODELO específico novo é MAIS específico que categoria: solta o TIPO antigo (Compass ≠ sedan) E a marca
+//    antiga (modelo pelado = nova direção; "tem Onix?" após VW troca o foco).
+//  - TIPO novo é uma nova CATEGORIA: solta os MODELOS antigos (Evidence 6: "queria SUV" limpa o modelo anterior).
+//  - "que seja volks" (marca sem modelo) ESTREITA sobre os modelos ativos (mantém modelos, adiciona marca). PURO.
+export function mergeActiveConstraints(active: CommercialConstraints, current: CommercialConstraints, corrections?: CommercialCorrections): CommercialConstraints {
   const next: CommercialConstraints = { ...active };
+  if (corrections?.removedTypes.length && next.tipo && corrections.removedTypes.includes(next.tipo)) delete next.tipo;
   if (current.marca) next.marca = current.marca;
   if (current.modelos && current.modelos.length > 0) {
     next.modelos = [...current.modelos];
     if (!current.marca) delete next.marca;   // modelo novo pelado = nova direção -> descarta a marca antiga
+    if (!current.tipo) delete next.tipo;      // modelo específico supera tipo antigo (Compass não fica preso em sedan)
+    if (!current.anos?.length) delete next.anos;   // modelo novo = nova direção -> descarta os anos rígidos antigos
   }
-  if (current.tipo) next.tipo = current.tipo;
+  if (current.tipo) {
+    next.tipo = current.tipo;
+    if (!current.modelos || current.modelos.length === 0) delete next.modelos;   // tipo novo = nova categoria, limpa modelo
+  }
   if (current.precoMax != null) next.precoMax = current.precoMax;
   if (current.cambio) next.cambio = current.cambio;
   if (current.popular) next.popular = true;
+  if (current.anos && current.anos.length > 0) next.anos = [...current.anos];   // anos novos substituem os antigos (rígido)
   return next;
 }
 
@@ -104,6 +158,7 @@ export function constraintsToStockInput(c: CommercialConstraints): QueryInputMap
   if (c.precoMax != null) input.precoMax = c.precoMax;
   if (c.cambio) input.cambio = c.cambio;
   if (c.popular) input.popular = true;
+  if (c.anos && c.anos.length > 0) input.anos = [...c.anos];
   return input;
 }
 
@@ -113,6 +168,7 @@ export function describeConstraints(c: CommercialConstraints): string {
   if (c.marca) parts.push(c.marca.charAt(0).toUpperCase() + c.marca.slice(1));
   else if (c.modelos && c.modelos.length > 0) parts.push(c.modelos.join(" ou "));
   if (c.tipo) parts.push(c.tipo.toUpperCase());
+  if (c.anos && c.anos.length > 0) parts.push(c.anos.join("/"));
   if (c.popular && parts.length === 0) parts.push("carro popular");
   if (c.precoMax != null) parts.push(`até R$ ${c.precoMax.toLocaleString("pt-BR")}`);
   if (c.cambio) parts.push(c.cambio === "automatic" ? "automático" : "manual");

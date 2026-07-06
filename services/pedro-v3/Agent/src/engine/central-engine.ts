@@ -35,7 +35,8 @@ import {
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import { detectQuestionRepetition } from "./question-repetition.ts";
-import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
@@ -778,6 +779,18 @@ function buildInstitutionalResponse(args: {
   return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects };
 }
 
+// ── Fase 4 (Evidence H): DESINTERESSE. Lead desengajado -> resposta CURTA e humana, SEM lista/funil/pressão. Executor
+//    determinístico (como o institucional): usado quando o cérebro não autora. NÃO empurra venda; deixa a porta aberta. ──
+function buildDisengagementResponse(args: { readonly engagement: LeadEngagement; readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const text = args.engagement === "not_interested"
+    ? "Sem problema! Se precisar de qualquer informação sobre os nossos veículos, fico por aqui à disposição. 😊"
+    : "Tranquilo! Qualquer coisa que precisar sobre os veículos, é só me chamar. 😊";
+  const pe = ensureSendMessage([]);
+  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "lead_disengaged", reasonSummary: "desinteresse -> resposta curta, sem funil/lista", confidence: 0.85 };
+  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
+  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
+}
+
 // ── T5: RECUPERAÇÃO CONTEXTUAL. Só APÓS a falha do cérebro (esgotou passos OU deny repetido). Usa TurnUnderstanding +
 //    fatos REAIS do turno — NUNCA texto genérico ("não consegui confirmar"/"reformule"), NUNCA menu robótico fora de
 //    contexto. SEMPRE devolve algo aterrado. Não é um chatbot paralelo: atua só na falha e só com o que o turno tem. ──
@@ -916,13 +929,23 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // COM constraint comercial do BLOCO ATUAL, e que NÃO seja detalhe, dispara a força.
       const isVehicleDetailTurn = baseSignals.relation === "asks_vehicle_detail";
       const commercialSearchTurn = (currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints);
+      // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
+      // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
+      // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta.
+      const leadEngagement: LeadEngagement | null = detectDisengagement(leadMessage);
+      const disengagedActionable = leadEngagement != null && !sufficientForStockSearch(currentConstraints) && !baseSignals.mentionsMoreOptions
+        && currentTurnIntent !== "photo_request" && currentTurnIntent !== "photo_memory" && currentTurnIntent !== "institutional";
       // F2.26 (audit Codex): FILTRO ATIVO acumulado — o lead refina a MESMA intenção em turnos separados. Só turno de
       // BUSCA (constraint novo OU "mais opções") mergeia o bloco atual sobre o filtro persistido; foto/detalhe/institucional
       // PRESERVAM o ativo. O merge alimenta a busca (enrich + executor determinístico) e é persistido no commit.
       // GATE em llmFirst: é feature do central_active. Legado/shadow (compose) usam SÓ o bloco atual (comportamento antigo).
-      const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions;
       const activeConstraints: CommercialConstraints = contextState.activeSearchConstraints ?? {};
-      const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(activeConstraints, currentConstraints) : currentConstraints;
+      // Inv.1/2 (Evidence 1 Compass): correções explícitas ("esquece sedan", "não é sedan") removem o tipo no merge;
+      // um modelo específico novo solta o tipo antigo conflitante. detectCorrections é EXTRAÇÃO de fato, não handler.
+      // Uma correção também é turno de busca (aplica a remoção sobre o filtro ativo mesmo sem novo modelo/tipo).
+      const commercialCorrections = detectCorrections(leadMessage);
+      const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0;
+      const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(activeConstraints, currentConstraints, commercialCorrections) : currentConstraints;
       const wmForFrame = clearStalePhotoIntent(wmV1, currentTurnIntent);
       const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent });
 
@@ -1167,6 +1190,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               responseSource = "deterministic_institutional";
               effectiveDecision = detInst.decision; composed = detInst.composed; proposedEffects = detInst.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "institutional_answer", reasonSummary: "resposta institucional determinística", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            } else if (disengagedActionable && leadEngagement) {
+              // Fase 4 (Evidence H): lead DESENGAJADO sem pedido comercial -> resposta CURTA, sem lista/funil/pressão.
+              // Determinística e NÃO-degradada (honesta): nunca empurra venda; deixa a porta aberta.
+              const detDiseng = buildDisengagementResponse({ engagement: leadEngagement, ctx, turnId });
+              responseSource = "deterministic_institutional";
+              effectiveDecision = detDiseng.decision; composed = detDiseng.composed; proposedEffects = detDiseng.proposedEffects;
+              finalDecision = finalDecision ?? { reasonCode: "lead_disengaged", reasonSummary: "desinteresse -> resposta curta, sem funil", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
             } else {
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
@@ -1298,9 +1328,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
       reduced.next.workingMemory = nextWM;
       if (renderedOfferContext) reduced.next.lastRenderedOfferContext = renderedOfferContext;
-      // F2.26: persiste o FILTRO ATIVO mergeado — SÓ em turno de busca (constraint novo OU "mais opções") e SÓ em llmFirst
-      // (central_active). Foto/detalhe/institucional preservam o ativo (o reducer já clona o estado carregado).
-      if (llmFirst && isSearchishTurn && sufficientForStockSearch(commercialConstraints)) reduced.next.activeSearchConstraints = commercialConstraints;
+      // F2.26/F2.27: persiste o FILTRO ATIVO mergeado — SÓ em turno de busca (constraint novo, "mais opções" OU CORREÇÃO)
+      // e SÓ em llmFirst (central_active). Foto/detalhe/institucional preservam o ativo (o reducer já clona o estado).
+      // Uma CORREÇÃO que esvazia o filtro (ex.: "esquece o sedan") persiste o filtro LIMPO (remove o tipo do ativo).
+      if (llmFirst && isSearchishTurn && (sufficientForStockSearch(commercialConstraints) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = commercialConstraints;
 
       // ── B item 2: draft accepted-safe de foto por effectId (promovido à WM só no receipt accepted). ──
       const pending: Record<string, PhotoActionDraft> = { ...(reduced.next.pendingPhotoActions ?? {}) };
