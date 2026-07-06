@@ -1136,6 +1136,7 @@ interface TeamMember {
   last_lead_received_at: string | null;
   total_leads_received?: number | null;  // contador acumulado — chave da fila round-robin
   agent_id: string | null;
+  is_manager?: boolean;            // "Gerente" = conta master; segura o lead, NÃO é vendedor (fora de ranking/fila/redistribuição)
   leadsCount?: number;
   qualifiedCount?: number;
 }
@@ -2386,6 +2387,35 @@ export function CrmAvancadoTab({
   const reassignLead = async (leadId: string, newMemberId: string | null) => {
     setReassigning(leadId);
     try {
+      // GERENTE (conta master): atribuição DIRETA — não passa pela manual-transfer
+      // (não manda briefing no WhatsApp, porque o Gerente não é um vendedor com número).
+      // O lead fica com o gerente, não é repassado nem fica órfão.
+      const gerenteTarget = newMemberId ? teamMembers.find(m => m.id === newMemberId && m.is_manager) : null;
+      if (gerenteTarget) {
+        const lead = leads.find(l => l.id === leadId) || selectedLead;
+        if (isMarcosCrm) {
+          const nextCustomFields = {
+            ...(lead?.custom_fields || {}),
+            seller_member_id: newMemberId, seller_name: gerenteTarget.name,
+            seller_assigned_at: new Date().toISOString(),
+            seller_assigned_by_auth_user_id: userId || null,
+          };
+          const { error } = await (supabase as any).from('crm_leads')
+            .update({ assigned_to: newMemberId, custom_fields: nextCustomFields }).eq('id', leadId);
+          if (error) throw error;
+          setLeads(prev => prev.map(l => l.id === leadId ? { ...l, assigned_to_id: newMemberId, member: { id: gerenteTarget.id, name: gerenteTarget.name }, custom_fields: nextCustomFields } : l));
+          if (selectedLead?.id === leadId) setSelectedLead({ ...selectedLead, assigned_to_id: newMemberId, member: { id: gerenteTarget.id, name: gerenteTarget.name }, custom_fields: nextCustomFields } as any);
+        } else {
+          const { error } = await (supabase as any).from('ai_crm_leads')
+            .update({ assigned_to_id: newMemberId }).eq('id', leadId);
+          if (error) throw error;
+          setLeads(prev => prev.map(l => l.id === leadId ? { ...l, assigned_to_id: newMemberId, member: { id: gerenteTarget.id, name: gerenteTarget.name } } : l));
+          if (selectedLead?.id === leadId) setSelectedLead({ ...selectedLead, assigned_to_id: newMemberId, member: { id: gerenteTarget.id, name: gerenteTarget.name } } as any);
+        }
+        toast({ title: '✅ Lead com o Gerente', description: 'Fica com a conta master — não foi repassado a nenhum vendedor.' });
+        return;
+      }
+
       if (isMarcosCrm) {
         const lead = leads.find(l => l.id === leadId) || selectedLead;
         const newMember = newMemberId ? teamMembers.find(m => m.id === newMemberId) ?? null : null;
@@ -2549,7 +2579,7 @@ export function CrmAvancadoTab({
   // fila vendedores ATIVOS, visíveis no sistema e com WhatsApp cadastrado.
   const nextSellerInQueue = (): TeamMember | null => {
     const eligible = teamMembers.filter(m =>
-      m.is_active && m.active_in_system !== false && !!m.whatsapp_number
+      m.is_active && m.active_in_system !== false && !!m.whatsapp_number && !m.is_manager
     );
     if (eligible.length === 0) return null;
     return [...eligible].sort((a, b) => {
@@ -2806,7 +2836,7 @@ export function CrmAvancadoTab({
   const bulkFileRef = useRef<HTMLInputElement>(null);
 
   const activeBulkSellers = useMemo(
-    () => teamMembers.filter(m => m.active_in_system !== false),
+    () => teamMembers.filter(m => m.active_in_system !== false && !m.is_manager),
     [teamMembers],
   );
 
@@ -3816,7 +3846,11 @@ export function CrmAvancadoTab({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
-                  {teamMembers.filter(m => m.active_in_system !== false).map(m => (
+                  {/* Gerente (conta master): segura o lead com o dono, sem repassar a vendedor */}
+                  {teamMembers.filter(m => m.is_manager).map(m => (
+                    <SelectItem key={m.id} value={m.id} className="text-xs font-medium text-amber-300">Gerente (conta master)</SelectItem>
+                  ))}
+                  {teamMembers.filter(m => m.active_in_system !== false && !m.is_manager).map(m => (
                     <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
                   ))}
                 </SelectContent>
