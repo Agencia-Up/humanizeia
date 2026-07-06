@@ -35,6 +35,7 @@ import {
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import { detectQuestionRepetition } from "./question-repetition.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, type CommercialConstraints } from "./commercial-constraints.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
@@ -125,7 +126,7 @@ function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, obser
   // assunto anterior sem buscar (e a memória de foto não pode assumir a busca). Gated em llmFirst para não forçar busca
   // no legado (onde o SDR pode acolher+perguntar o nome antes de listar — F2.13 [3c]).
   if (searchTurn && !wasObserved("stock_search")) {
-    return "O cliente está perguntando DISPONIBILIDADE/estoque NESTE turno. Chame stock_search com os filtros/modelo do turno atual (corrija erros de digitação do modelo) ANTES de responder — não responda o assunto anterior; se não houver, seja honesto.";
+    return "O cliente deu filtro comercial suficiente NESTE turno (modelo, marca, tipo, faixa de preço, câmbio ou 'popular'). Chame stock_search com TODOS esses filtros (marca/modelo/tipo/precoMax/cambio/popular) ANTES de responder — corrija erros de digitação e NUNCA pergunte 'qual modelo/tipo você procura?' quando ele já informou. Se não houver estoque, seja honesto e ofereça algo parecido na mesma faixa.";
   }
   // "mais opções" SEMPRE exige uma nova busca (vale nos dois modos).
   if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search")) {
@@ -407,6 +408,9 @@ export function enrichStockSearchCall(
     readonly popular: boolean;
     readonly moreOptions: boolean;
     readonly previousVehicleKeys: readonly string[];
+    // P0 (LLM-first): constraints comerciais determinísticos do turno. O engine só PREENCHE LACUNAS da chamada — o
+    // valor explícito do cérebro SEMPRE vence (nunca sobrescreve marca/modelo/tipo/preço/câmbio que o cérebro já pôs).
+    readonly constraints?: CommercialConstraints;
   },
 ): QueryCall {
   if (call.tool !== "stock_search") return call;
@@ -416,11 +420,25 @@ export function enrichStockSearchCall(
   const excludeKeys = previous.length > 0
     ? [...new Set([...(Array.isArray(call.input.excludeKeys) ? call.input.excludeKeys : []), ...previous])]
     : call.input.excludeKeys;
+  // Lacunas preenchidas com o constraint do turno (o do cérebro vence; marca canonicalizada volks->volkswagen).
+  const c = options.constraints;
+  const filled: Partial<QueryCall["input"]> = {};
+  if (c) {
+    if (call.input.marca == null && c.marca) (filled as { marca?: string }).marca = canonicalBrand(c.marca);
+    if (call.input.modelo == null && c.modelos && c.modelos.length > 0) {
+      (filled as { modelo?: string }).modelo = c.modelos.join(" ");
+      if (c.modelos.length > 1 && call.input.broad == null) (filled as { broad?: boolean }).broad = true;
+    }
+    if (call.input.tipo == null && c.tipo) (filled as { tipo?: typeof c.tipo }).tipo = c.tipo;
+    if (call.input.precoMax == null && c.precoMax != null) (filled as { precoMax?: number }).precoMax = c.precoMax;
+    if (call.input.cambio == null && c.cambio) (filled as { cambio?: typeof c.cambio }).cambio = c.cambio;
+  }
   return {
     ...call,
     input: {
       ...call.input,
-      ...(options.popular ? { popular: true } : {}),
+      ...filled,
+      ...(options.popular || c?.popular ? { popular: true } : {}),
       ...(excludeKeys ? { excludeKeys } : {}),
     },
   };
@@ -771,6 +789,7 @@ function buildContextualRecovery(args: {
   readonly identities: readonly RememberedVehicleIdentity[];
   readonly ctx: TurnContext;
   readonly turnId: string;
+  readonly constraints?: CommercialConstraints;   // P0 (LLM-first): recuperação de busca NOMEIA o filtro (honesta, contextual)
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; recoveryReason: string; lastResort: boolean } {
   const u = args.vU.understanding;
   const state = args.ctx.state;
@@ -787,6 +806,8 @@ function buildContextualRecovery(args: {
   if (isPhotoDeclined(args.leadMessage)) return plain("Sem problema! Quando quiser as fotos ou mais detalhes é só me falar. 😊", "reply", "recovery_photo_declined", "negação de foto -> acolhe e segue");
   // BUSCA (hint do entendimento OU há itens). P1: DIFERENCIA — executada com itens -> lista; executada 0 -> ausência REAL;
   // tool FALHOU -> indisponibilidade temporária; NÃO executada -> nunca afirma ausência, pergunta específica.
+  // Busca (hint do entendimento OU há fato de estoque). NÃO usa constraint p/ rotear: o executor determinístico de busca
+  // (F2.26) já garante um FATO de stock_search sempre que o turno é comercial — a recuperação lista/honesto pelo fato REAL.
   const searchHint = u.primaryIntent === "search_stock" || u.requestedCapabilities.includes("stock_search") || factsArr.some((f) => f.ok && f.tool === "stock_search");
   if (searchHint) {
     const stockRanOk = factsArr.some((f) => f.ok && f.tool === "stock_search");
@@ -800,7 +821,11 @@ function buildContextualRecovery(args: {
       const draft: ResponseDraft = { parts: [{ type: "text", content: "Encontrei estas opções pra você:" }, { type: "vehicle_offer_list", vehicleKeys: itemKeys.slice(0, 6) }, { type: "text", content: "Quer ver as fotos de alguma?" }] };
       try { return mk(draft, ResponseRenderer.render(draft, factsArr, state, args.identities), "reply", "recovery_offer", "busca com itens -> lista aterrada"); } catch { /* cai no honesto */ }
     }
-    if (stockRanOk) return plain("Procurei aqui e não encontrei esse modelo no estoque no momento. Quer que eu procure algo parecido na mesma faixa de preço?", "clarify", "recovery_stock_empty", "busca executada com 0 itens -> ausência real + similar");
+    // P0: busca EXECUTADA com 0 itens -> honesto NOMEANDO o filtro (nunca "esse modelo"), com alternativa. O executor
+    // determinístico (F2.26) garante que um turno comercial SEMPRE tem fato de estoque aqui — nunca uma promessa "vou
+    // procurar" sem ação. Sem constraint (fato genérico) mantém o texto padrão.
+    const desc = args.constraints ? describeConstraints(args.constraints) : "";
+    if (stockRanOk) return plain(desc ? `Não achei ${desc} no estoque agora. Quer que eu amplie para outras opções parecidas na mesma faixa?` : "Procurei aqui e não encontrei esse modelo no estoque no momento. Quer que eu procure algo parecido na mesma faixa de preço?", "clarify", "recovery_stock_empty", "busca executada com 0 itens -> ausência real + similar");
     if (stockFailed) return plain("Tive uma instabilidade pra puxar o estoque agora. Me confirma o modelo que você procura que eu já verifico?", "clarify", "recovery_stock_failed", "tool de busca falhou -> indisponibilidade temporária");
     return plain("Qual modelo ou tipo de carro você procura? Já busco no nosso estoque pra você.", "clarify", "recovery_stock_not_run", "nenhuma busca executada -> não afirma ausência, pergunta específica");
   }
@@ -877,6 +902,27 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // rodar stock_search numa busca. A memória persistida fica intacta (o cérebro re-seta o tópico correto no turno).
       const baseSignals = buildFrameSignals(leadMessage, prepared.interpretation);
       const currentTurnIntent = deriveCurrentTurnIntent(leadMessage, baseSignals, prepared.claimExtractor);
+      // AUTORIA ÚNICA / LLM-first (declarados cedo p/ gatear o filtro comercial ativo abaixo).
+      const singleAuthor = args.singleAuthor ?? false;
+      const llmFirst = args.llmFirst ?? false;   // LLM-first: engine não gerencia objetivo de funil (só valida)
+      // P0 (LLM-first): constraint comercial DETERMINÍSTICO do bloco atual (marca/modelo/tipo/preçoMax/câmbio/popular).
+      // Base de dois invariantes: (1) força stock_search quando o lead deu filtro suficiente e nenhuma busca rodou;
+      // (2) enriquece a chamada executada preenchendo lacunas. NÃO decide a resposta — só descreve o filtro do turno.
+      const currentConstraints = detectCommercialConstraints({ block: leadMessage, signals: baseSignals, claimExtractor: prepared.claimExtractor, interpretation: prepared.interpretation });
+      // GATE por intenção do turno: NUNCA força busca num turno de FOTO/DETALHE/INSTITUCIONAL. deriveCurrentTurnIntent já
+      // dá a precedência certa (foto > institucional > busca). "me manda foto do Onix" = photo_request (não busca) mesmo
+      // citando um modelo. Pergunta de ATRIBUTO do veículo ("quanto custa o Onix?", relation asks_vehicle_detail) é DETALHE,
+      // não busca — usa a RELATION (não regex de atributo, senão "pode ser automático" viraria detalhe). Só search/other
+      // COM constraint comercial do BLOCO ATUAL, e que NÃO seja detalhe, dispara a força.
+      const isVehicleDetailTurn = baseSignals.relation === "asks_vehicle_detail";
+      const commercialSearchTurn = (currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints);
+      // F2.26 (audit Codex): FILTRO ATIVO acumulado — o lead refina a MESMA intenção em turnos separados. Só turno de
+      // BUSCA (constraint novo OU "mais opções") mergeia o bloco atual sobre o filtro persistido; foto/detalhe/institucional
+      // PRESERVAM o ativo. O merge alimenta a busca (enrich + executor determinístico) e é persistido no commit.
+      // GATE em llmFirst: é feature do central_active. Legado/shadow (compose) usam SÓ o bloco atual (comportamento antigo).
+      const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions;
+      const activeConstraints: CommercialConstraints = contextState.activeSearchConstraints ?? {};
+      const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(activeConstraints, currentConstraints) : currentConstraints;
       const wmForFrame = clearStalePhotoIntent(wmV1, currentTurnIntent);
       const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent });
 
@@ -887,9 +933,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const toolTelemetry: ToolTelemetry[] = [];
       let finalDecision: AgentBrainDecision | null = null;
       let brainSteps = 0;
-      // AUTORIA ÚNICA (audit): estado do caminho single-author.
-      const singleAuthor = args.singleAuthor ?? false;
-      const llmFirst = args.llmFirst ?? false;   // LLM-first: engine não gerencia objetivo de funil (só valida)
+      // AUTORIA ÚNICA (audit): singleAuthor/llmFirst já declarados acima (perto do currentTurnIntent) p/ o gate do filtro comercial.
       const identities = buildRememberedIdentities(contextState); // identidade LEMBRADA (marca/modelo/ano) — só p/ NOMEAR
       // P0-sel (missão): o lead está SELECIONANDO um veículo da última lista/foco ("gostei do segundo", "esse", ordinal)?
       // Numa seleção o cérebro pode dar um final NATURAL sem vehicle_details (citar atributo é barrado no validate, com
@@ -966,7 +1010,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             }
           }
           // T4: exigência de stock_search pela SEMÂNTICA do CÉREBRO (só brainVU força busca; fallback nunca força tool).
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && isStockSearchTurn(brainVU()));
+          // P0 (LLM-first): a busca é exigida pela SEMÂNTICA do cérebro OU por um constraint comercial DETERMINÍSTICO do
+          // bloco (marca/modelo/tipo/preço/câmbio/popular). Sem isto, quando o cérebro sub-classificava "até 50 mil e que
+          // seja da volks", o turno caía em recovery_stock_not_run e reperguntava o que o lead já disse.
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && (isStockSearchTurn(brainVU()) || commercialSearchTurn));
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             observations.push({ tool: frame.signals.mentionsStore ? "tenant_business_info" : "stock_search", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
             continue;
@@ -1042,6 +1089,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           popular: frame.signals.mentionsPopular === true,
           moreOptions: frame.signals.mentionsMoreOptions,
           previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
+          constraints: commercialConstraints,   // P0: preenche lacunas (marca/preço/tipo/câmbio) que o cérebro omitiu
         });
         const started = Date.parse(clock.now());
         let res: QueryResult;
@@ -1077,6 +1125,23 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               facts.push(photoRes); observations.push(toAgentObservation(photoRes)); toolResultMems.push(toToolResultMemory(photoRes, turnId));
             } catch { /* best-effort: sem fotos o executor cai no honesto "não localizei as fotos", nunca "de qual carro?" */ }
           }
+          // ── P0 (F2.26, audit Codex): busca comercial DETERMINÍSTICA. Se há constraint suficiente (bloco atual OU filtro
+          //    ATIVO mergeado) e o cérebro NÃO chamou stock_search, o ENGINE executa a busca com o filtro ativo — GARANTE
+          //    a ação. Elimina a promessa falsa "vou procurar" sem buscar: a recuperação então lista de verdade OU é honesta
+          //    sobre o vazio (nomeando o filtro). Foto/detalhe/institucional NÃO entram aqui (gate por commercialSearchTurn). ──
+          if (llmFirst && (commercialSearchTurn || frame.signals.mentionsMoreOptions) && sufficientForStockSearch(commercialConstraints) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+            try {
+              const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(commercialConstraints) }, {
+                popular: frame.signals.mentionsPopular === true || commercialConstraints.popular === true,
+                moreOptions: frame.signals.mentionsMoreOptions,
+                previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
+                constraints: commercialConstraints,
+              });
+              const startedS = Date.parse(clock.now());
+              const searchRes = await withTimeout(runQuery(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
+              facts.push(searchRes); observations.push(toAgentObservation(searchRes)); toolResultMems.push(toToolResultMemory(searchRes, turnId)); toolTelemetry.push(toToolTelemetry(searchRes, Math.max(0, Date.parse(clock.now()) - startedS)));
+            } catch { observations.push({ tool: "stock_search", ok: false, error: { code: "UPSTREAM", message: "tool indisponivel" } }); }
+          }
         }
         // Usa a resposta que o cérebro AUTOROU+aterrou (render+validate já feitos no loop). Se nada passou no
         // limite, FALLBACK TÉCNICO DEGRADADO — honesto, responde à pergunta atual; NUNCA lista/menu/muda de assunto/
@@ -1106,7 +1171,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
               // como MARCADOR interno de degradação (o cérebro falhou); o TEXTO ao lead é sempre contextual/honesto.
-              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId });
+              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId, constraints: commercialConstraints });
               // Recuperação CONTEXTUAL aterrada -> deterministic_recovery (texto útil, não "visível"); só o default genérico
               // (lastResort) é technical_fallback. Ambas são degradação (o cérebro não autorou).
               responseSource = rec.lastResort ? "technical_fallback" : "deterministic_recovery";
@@ -1233,6 +1298,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
       reduced.next.workingMemory = nextWM;
       if (renderedOfferContext) reduced.next.lastRenderedOfferContext = renderedOfferContext;
+      // F2.26: persiste o FILTRO ATIVO mergeado — SÓ em turno de busca (constraint novo OU "mais opções") e SÓ em llmFirst
+      // (central_active). Foto/detalhe/institucional preservam o ativo (o reducer já clona o estado carregado).
+      if (llmFirst && isSearchishTurn && sufficientForStockSearch(commercialConstraints)) reduced.next.activeSearchConstraints = commercialConstraints;
 
       // ── B item 2: draft accepted-safe de foto por effectId (promovido à WM só no receipt accepted). ──
       const pending: Record<string, PhotoActionDraft> = { ...(reduced.next.pendingPhotoActions ?? {}) };

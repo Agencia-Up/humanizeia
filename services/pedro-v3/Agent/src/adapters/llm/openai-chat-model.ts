@@ -114,7 +114,7 @@ function operationInstructions(operation: OpenAiChatOperation): string {
       "",
       "(A) Fetch read-only data BEFORE deciding (only when you still lack data you need):",
       '{"kind":"query","call":{"tool":<T>,"input":{...}}}  where:',
-      '  - tool="stock_search", input:{ "tipo"?: "suv"|"sedan"|"hatch"|"pickup"|"unknown", "cambio"?: "automatic"|"manual", "precoMax"?: number>0, "modelo"?: string, "broad"?: boolean, "excludeKeys"?: string[] }. An explicit automatic/manual preference is a HARD constraint: never omit or relax it.',
+      '  - tool="stock_search", input:{ "tipo"?: "suv"|"sedan"|"hatch"|"pickup"|"unknown", "cambio"?: "automatic"|"manual", "precoMax"?: number>0, "modelo"?: string, "marca"?: string, "broad"?: boolean, "excludeKeys"?: string[] }. Use "marca" for a manufacturer (e.g. "Volkswagen"). An explicit automatic/manual preference is a HARD constraint: never omit or relax it.',
       '  - tool="vehicle_details", input:{ "vehicleKey": string }',
       '  - tool="vehicle_photos_resolve", input:{ "vehicleRef":{ "kind":"vehicle", "key": string } }',
       '  - tool="crm_read", input:{ "leadId": string }',

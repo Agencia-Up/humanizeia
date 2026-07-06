@@ -84,6 +84,18 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       pool = pool.filter(v => v.saleValue !== null && v.saleValue <= filters.precoMax!);
     }
 
+    // C2) Filtro por MARCA/fabricante (markName). O engine já canonicaliza (volks->volkswagen); o match é por inclusão
+    // bidirecional p/ tolerar abreviação crua do cérebro ("volks" ⊂ "volkswagen").
+    if (filters.marca) {
+      const m = normalizeText(filters.marca);
+      if (m.length > 0) {
+        pool = pool.filter(v => {
+          const brand = normalizeText(v.markName ?? "");
+          return brand.length > 0 && (brand.includes(m) || m.includes(brand));
+        });
+      }
+    }
+
     // D) Filtro por modelo (textual, incluindo marca, modelo e versão!)
     if (filters.modelo) {
       const queryNorm = normalizeText(filters.modelo);

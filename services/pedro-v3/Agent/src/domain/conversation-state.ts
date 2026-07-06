@@ -100,6 +100,19 @@ export type LastRenderedOfferContext = {
   items: RenderedOfferItem[];
 };
 
+// P0 (F2.26): FILTRO DE BUSCA ATIVO acumulado ao longo dos turnos (o lead refina a MESMA intenção de estoque em turnos
+// separados). Mergeado de forma conservadora (cada dimensão do bloco atual substitui a antiga; ausente preserva). SÓ é
+// atualizado em turno de BUSCA (foto/detalhe/institucional não tocam). Tipo do DOMÍNIO; o engine (commercial-constraints)
+// reusa esta forma. modelos[] cobre "Palio ou Gol".
+export type ActiveSearchConstraints = {
+  marca?: string;
+  modelos?: string[];
+  tipo?: VehicleType;
+  precoMax?: number;
+  cambio?: TransmissionPreference;
+  popular?: boolean;
+};
+
 export type ConversationState = {
   schemaVersion: number;
   version: number; // CAS
@@ -115,6 +128,7 @@ export type ConversationState = {
   vehicleContext: VehicleContext;      // foco apresentado (após entrega)
   offers: OfferMemory;
   lastRenderedOfferContext: LastRenderedOfferContext | null; // memória operacional p/ referência ordinal
+  activeSearchConstraints?: ActiveSearchConstraints | null; // F2.26: filtro de busca acumulado (merge conservador entre turnos)
   moreOptionsExhausted?: number; // R10-4: nº de esgotamentos consecutivos de "mais opções" (progressão; reset=0 em nova oferta)
   searchPreferences?: { transmission: TransmissionPreference | null };
   photoLedger: PhotoLedger;
@@ -173,6 +187,7 @@ export function createInitialState(args: {
     vehicleContext: { focus: null, selected: null },
     offers: { last: null, presentedKeys: [] },
     lastRenderedOfferContext: null,
+    activeSearchConstraints: null,
     searchPreferences: { transmission: null },
     photoLedger: { sentByVehicle: {} },
     rejected: { modelos: [] },
