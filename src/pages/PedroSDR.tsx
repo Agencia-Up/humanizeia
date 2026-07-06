@@ -808,6 +808,18 @@ export const LEAD_ORIGEM_OPTIONS = [
 ] as const;
 const LEAD_ORIGEM_VALUES = LEAD_ORIGEM_OPTIONS.map(o => o.value) as readonly string[];
 
+const PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS = [
+  { value: 'meta_ads', label: 'Meta Ads' },
+  { value: 'google_ads', label: 'Google Ads' },
+  { value: 'tiktok_ads', label: 'TikTok Ads' },
+  { value: 'outras_fontes_trafego_pago', label: 'Outras fontes de trafego pago' },
+] as const;
+
+function pedroPaidTrafficOrigemLabel(value: string | null | undefined): string {
+  return PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.find(o => o.value === value)?.label
+    || PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS[0].label;
+}
+
 // ─── Origem do Lead — MARCOS CRM (spec 27/05/2026) ─────────────────────────
 // Lista FIXA pro form "Adicionar Lead" do Marcos. Substitui o DynamicSelect
 // que usava lead_sources (esse continua disponivel pro Pedro).
@@ -3189,6 +3201,9 @@ export function CrmAvancadoTab({
       // Spec 28/05/2026: Pedro form so aceita "Tráfego Pago" como origem
       // (campo eh um label read-only). Lead manual no Pedro = sempre vindo
       // de campanha de tráfego pago.
+      const selectedPedroPaidTrafficOrigem = addLeadOrigem || PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS[0].value;
+      const selectedPedroPaidTrafficOrigemLabel = pedroPaidTrafficOrigemLabel(selectedPedroPaidTrafficOrigem);
+
       const pedroManualLeadPayload = {
         user_id:     effectiveUserId,
         agent_id:    agentId,
@@ -3202,7 +3217,7 @@ export function CrmAvancadoTab({
         // conforme spec 28/05/2026.
         source_id:     null,
         origem:        'trafico_pago',
-        origem_outros: null,
+        origem_outros: selectedPedroPaidTrafficOrigemLabel,
         // Fase 6 Feature B + Item 2: cidade/carro/visita (visita agora salva texto + timestamp)
         client_city:        addLeadCity.trim() || null,
         vehicle_interest:   addLeadVehicle.trim() || null,
@@ -3743,11 +3758,10 @@ export function CrmAvancadoTab({
                     {selectedLead.remote_jid && ' · '}{sellerLabelForLead(selectedLead)} · {fmtDate(selectedLead.created_at)}
                   </p>
                   {/* Prompt 1.1: linha discreta de origem (badge bonita virá no Prompt 5.1) */}
-                  {(selectedLead as any).origem && (
+                  {((selectedLead as any).origem || (selectedLead as any).origem_outros) && (
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Origem: {leadOrigemLabel((selectedLead as any).origem)}
-                      {(selectedLead as any).origem === 'outros' && (selectedLead as any).origem_outros
-                        ? ` (${(selectedLead as any).origem_outros})` : ''}
+                      Origem: {(selectedLead as any).origem_outros?.trim()
+                        || leadOrigemLabel((selectedLead as any).origem)}
                     </p>
                   )}
                 </div>
@@ -4557,7 +4571,7 @@ export function CrmAvancadoTab({
         // Origem: Marcos usa crm_leads.source; Pedro usa crm_leads.origem.
         const origemLabel = isMarcosCrm
           ? (MARCOS_ORIGEM_OPTIONS.find(o => o.value === (l.source || '').toString())?.label || (l.source || '').toString() || 'manual')
-          : (leadOrigemLabel((l as any).origem) || 'manual');
+          : ((l as any).origem_outros?.trim() || leadOrigemLabel((l as any).origem) || 'manual');
         return {
           id: l.id,
           name: l.lead_name || phone,
@@ -4660,7 +4674,7 @@ export function CrmAvancadoTab({
           'Status CRM': row.status_crm || '',
           'Status bruto': row.status || '',
           Vendedor: sellerById.get(sellerId) || '',
-          Origem: leadOrigemLabel(row.origem) || row.origem || '',
+          Origem: row.origem_outros || leadOrigemLabel(row.origem) || row.origem || '',
           'Origem detalhe': row.origem_outros || '',
           Cidade: row.client_city || '',
           'Veiculo de interesse': row.vehicle_interest || '',
@@ -5041,9 +5055,27 @@ export function CrmAvancadoTab({
                 // Pedro: spec 28/05/2026 — somente "Tráfego Pago" como label read-only.
                 // Pedro CRM serve so pra leads vindos de campanhas de tráfego pago;
                 // outros canais ficam no Marcos CRM.
-                <div className="h-8 px-2.5 text-xs flex items-center rounded-md border border-input bg-muted/30 text-foreground/80 select-none">
-                  🎯 Tráfego Pago
-                </div>
+                <Select
+                  value={addLeadOrigem || PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS[0].value}
+                  onValueChange={(value) => {
+                    const label = pedroPaidTrafficOrigemLabel(value);
+                    setAddLeadOrigem(value);
+                    setAddLeadOrigemOutros(label);
+                    setAddLeadSourceId(null);
+                    setAddLeadSourceName(label);
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Origem do trafego pago" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </div>
             <Button

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isPedroV2EnabledForUser } from "../_shared/pedro-v2/server.ts";
 
 const UAZAPI_WEBHOOK_EVENTS = [
   "MESSAGES_UPSERT",
@@ -24,6 +25,32 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function shouldRouteToPedroV2(supabase: any, inst: any): Promise<{ route: boolean; reason: string }> {
+  if (!inst?.user_id || !inst?.id) return { route: false, reason: "missing_instance_context" };
+
+  const gate = await isPedroV2EnabledForUser(supabase, inst.user_id);
+  if (!gate.enabled) return { route: false, reason: gate.reason };
+
+  const { data: agents, error } = await supabase
+    .from("wa_ai_agents")
+    .select("id, instance_id, instance_ids, agent_type, is_active")
+    .eq("user_id", inst.user_id)
+    .eq("is_active", true)
+    .in("agent_type", ["sdr", "sdr_geral"]);
+
+  if (error) return { route: false, reason: `agent_lookup_failed:${error.message}` };
+
+  const linked = (agents || []).some((agent: any) => {
+    const primary = String(agent?.instance_id || "") === String(inst.id);
+    const multi = Array.isArray(agent?.instance_ids) && agent.instance_ids.map(String).includes(String(inst.id));
+    return primary || multi;
+  });
+
+  return linked
+    ? { route: true, reason: "active_sdr_agent_linked" }
+    : { route: false, reason: "no_active_sdr_agent_linked" };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -37,7 +64,7 @@ Deno.serve(async (req) => {
     const uazapiAdminToken = Deno.env.get("UAZAPI_ADMIN_TOKEN") || legacyUazapiToken || Deno.env.get("EVOLUTION_API_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const webhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
+    const defaultWebhookUrl = `${supabaseUrl}/functions/v1/wa-inbox-webhook`;
     const baseUrl = uazapiUrl.replace(/\/+$/, "");
 
     // Get all UazAPI instances
@@ -56,6 +83,11 @@ Deno.serve(async (req) => {
 
     for (const inst of instances) {
       try {
+        const pedroRoute = await shouldRouteToPedroV2(supabase, inst);
+        const webhookUrl = pedroRoute.route
+          ? `${supabaseUrl}/functions/v1/pedro-webhook-v2`
+          : defaultWebhookUrl;
+
         // Check current webhook
         const checkRes = await fetch(`${baseUrl}/webhook/find/${inst.instance_name}`, {
           method: "GET",
@@ -106,6 +138,8 @@ Deno.serve(async (req) => {
           instance: inst.instance_name,
           status: setRes.ok ? "configured" : "error",
           http_status: setRes.status,
+          webhook_url: webhookUrl,
+          route_reason: pedroRoute.reason,
           previous_webhook: currentWebhook,
           set_result: setData,
         });
@@ -118,7 +152,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, webhook_url: webhookUrl, results }), {
+    return new Response(JSON.stringify({ success: true, default_webhook_url: defaultWebhookUrl, results }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {
