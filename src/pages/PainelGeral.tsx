@@ -644,12 +644,16 @@ export default function PainelGeral() {
             </div>
             {period === 'custom' && (
               <div className="flex items-center gap-1.5 text-xs">
-                <input type="date" value={customRange.start} max={customRange.end}
-                  onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
+                {/* Sem min/max: o calendário nativo DESABILITA datas fora do limite e o
+                    clique do usuário não aplica nada (parece que "não filtra"). Em vez de
+                    travar, a outra ponta se ajusta sozinha quando as datas se cruzam —
+                    escolher um início depois do fim vira período de 1 dia (e vice-versa). */}
+                <input type="date" value={customRange.start}
+                  onChange={e => { const v = e.target.value; if (!v) return; setCustomRange(r => ({ start: v, end: r.end && r.end >= v ? r.end : v })); }}
                   className="bg-card/60 border border-border/50 rounded px-2 py-1" />
                 <span className="text-muted-foreground">até</span>
-                <input type="date" value={customRange.end} min={customRange.start}
-                  onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
+                <input type="date" value={customRange.end}
+                  onChange={e => { const v = e.target.value; if (!v) return; setCustomRange(r => ({ start: r.start && r.start <= v ? r.start : v, end: v })); }}
                   className="bg-card/60 border border-border/50 rounded px-2 py-1" />
               </div>
             )}

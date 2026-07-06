@@ -513,9 +513,11 @@ export function CabineCards({ configActions, adAccountId }: CabineCardsProps = {
         {periodo === 'custom' && (
           <div className="flex items-center gap-2 flex-wrap text-sm mt-3 pt-3 border-t border-border/50">
             <span className="text-muted-foreground">De</span>
-            <input type="date" value={desde} max={ate || undefined} onChange={(e) => setDesde(e.target.value)} className="h-9 rounded-lg border bg-background px-2.5 text-sm" />
+            {/* Sem min/max (datas fora do limite ficam desabilitadas no calendário e o clique não aplica);
+                a outra ponta se ajusta quando as datas se cruzam. */}
+            <input type="date" value={desde} onChange={(e) => { const v = e.target.value; if (!v) return; setDesde(v); if (ate && ate < v) setAte(v); }} className="h-9 rounded-lg border bg-background px-2.5 text-sm" />
             <span className="text-muted-foreground">até</span>
-            <input type="date" value={ate} min={desde || undefined} onChange={(e) => setAte(e.target.value)} className="h-9 rounded-lg border bg-background px-2.5 text-sm" />
+            <input type="date" value={ate} onChange={(e) => { const v = e.target.value; if (!v) return; setAte(v); if (desde && desde > v) setDesde(v); }} className="h-9 rounded-lg border bg-background px-2.5 text-sm" />
             {(!desde || !ate) && <span className="text-[11px] text-muted-foreground">escolha as duas datas pra aplicar</span>}
           </div>
         )}

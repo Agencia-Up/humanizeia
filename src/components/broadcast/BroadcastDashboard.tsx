@@ -196,9 +196,11 @@ export function BroadcastDashboard({ campaigns, userId }: { campaigns: WACampaig
         </div>
         {period === 'custom' && (
           <div className="flex items-center gap-1.5">
-            <Input type="date" value={customStart} max={customEnd || undefined} onChange={(e) => setCustomStart(e.target.value)} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
+            {/* Sem min/max (datas fora do limite ficam desabilitadas no calendário e o clique não aplica);
+                a outra ponta se ajusta quando as datas se cruzam. */}
+            <Input type="date" value={customStart} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomStart(v); if (customEnd && customEnd < v) setCustomEnd(v); }} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
             <span className="text-xs text-muted-foreground">até</span>
-            <Input type="date" value={customEnd} min={customStart || undefined} onChange={(e) => setCustomEnd(e.target.value)} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
+            <Input type="date" value={customEnd} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomEnd(v); if (customStart && customStart > v) setCustomStart(v); }} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
           </div>
         )}
         <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 sm:ml-auto" onClick={fetchData} disabled={loading}>

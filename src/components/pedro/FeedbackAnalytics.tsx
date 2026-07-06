@@ -243,9 +243,11 @@ export function FeedbackAnalytics({ feedbacks, sellers, hideSellerFilter }: Feed
         {period === 'custom' && (
           <div className="flex items-center gap-2 flex-wrap text-[11px] mt-2">
             <span className="text-muted-foreground">De</span>
-            <input type="date" value={customSince} max={customUntil || undefined} onChange={(e) => setCustomSince(e.target.value)} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
+            {/* Sem min/max (datas fora do limite ficam desabilitadas no calendário e o clique não aplica);
+                a outra ponta se ajusta quando as datas se cruzam. */}
+            <input type="date" value={customSince} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomSince(v); if (customUntil && customUntil < v) setCustomUntil(v); }} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
             <span className="text-muted-foreground">até</span>
-            <input type="date" value={customUntil} min={customSince || undefined} onChange={(e) => setCustomUntil(e.target.value)} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
+            <input type="date" value={customUntil} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomUntil(v); if (customSince && customSince > v) setCustomSince(v); }} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
           </div>
         )}
       </CardHeader>
