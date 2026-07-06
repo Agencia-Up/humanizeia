@@ -2793,7 +2793,6 @@ export function CrmAvancadoTab({
   const [editCity, setEditCity] = useState('');
   const [editVehicle, setEditVehicle] = useState('');
   const [editVisitAt, setEditVisitAt] = useState(''); // Item 2: datetime-local ISO (vazio = sem visita marcada)
-  const [editArrived, setEditArrived] = useState(''); // data real que o lead chegou (YYYY-MM-DD; vazio = usa created_at)
   const [editSaving, setEditSaving] = useState(false);
 
   // ── Bulk upload states ──
@@ -3326,9 +3325,6 @@ export function CrmAvancadoTab({
     } else {
       setEditVisitAt('');
     }
-    // Pre-popula a data real de chegada (arrived_at) no <input type="date"> (YYYY-MM-DD).
-    const arr = (selectedLead as any).arrived_at;
-    setEditArrived(arr ? String(arr).slice(0, 10) : '');
     setEditingLead(true);
   };
 
@@ -3360,12 +3356,8 @@ export function CrmAvancadoTab({
         updateData.visit_scheduled_at = newVisitIso;
       }
 
-      // Data real que o lead chegou (porta/manual). editArrived = 'YYYY-MM-DD'.
-      // Compara so a parte da data; salva meio-dia pra nao virar de dia por fuso.
-      const oldArrivedDay = (selectedLead as any).arrived_at ? String((selectedLead as any).arrived_at).slice(0, 10) : '';
-      if ((editArrived || '') !== oldArrivedDay) {
-        updateData.arrived_at = editArrived ? new Date(editArrived + 'T12:00:00').toISOString() : null;
-      }
+      // arrived_at NÃO é mais tocado no salvar do formulário — a data de chegada é gerida
+      // só pelo campo "Chegou:" do cabeçalho (evita dois controles divergindo).
 
       if (isMarcosCrm) {
         const crmUpdate: Record<string, string | null> = {};
@@ -3378,10 +3370,6 @@ export function CrmAvancadoTab({
         if (visitChanged) {
           crmUpdate.visit_scheduled    = newVisitText;
           crmUpdate.visit_scheduled_at = newVisitIso;
-        }
-        // Data real de chegada (corrige lead de porta/dia passado) tambem no Marcos.
-        if ((editArrived || '') !== oldArrivedDay) {
-          crmUpdate.arrived_at = editArrived ? new Date(editArrived + 'T12:00:00').toISOString() : null;
         }
         if (Object.keys(crmUpdate).length === 0) {
           setEditingLead(false);
@@ -3734,17 +3722,9 @@ export function CrmAvancadoTab({
                       className="h-8 text-sm max-w-[200px]"
                     />
                   </div>
-                  {/* Data real que o lead chegou (corrige lead de porta/dia passado) — com legenda */}
-                  <div className="flex flex-col gap-0.5">
-                    <label className="text-[9px] text-muted-foreground font-medium leading-none">📆 Chegou (data do lead)</label>
-                    <Input
-                      type="date"
-                      value={editArrived}
-                      onChange={e => setEditArrived(e.target.value)}
-                      title="Data que o lead realmente chegou (ex: porta no domingo). Vazio = data de cadastro."
-                      className="h-8 text-sm max-w-[160px]"
-                    />
-                  </div>
+                  {/* "Chegou (data do lead)" REMOVIDO daqui: era duplicado do campo "Chegou:"
+                      do cabeçalho (mesmo arrived_at) e divergia. A data de chegada fica só
+                      no cabeçalho, que já é sempre visível e editável. */}
                   <Button variant="ghost" size="sm" onClick={handleSaveLeadEdit} disabled={editSaving} className="h-8 px-3 gap-1.5 font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10">
                     {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                     Salvar
