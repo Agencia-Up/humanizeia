@@ -93,6 +93,9 @@ export type RenderedOfferItem = {
   // R13 Inc2/G: preço aterrado da oferta (para grounding de MEMÓRIA: um preço já ofertado pode ser citado num
   // turno posterior sem re-consultar). Aditivo/opcional.
   preco?: number | null;
+  // F2.29: tipo aterrado (classificado do fato) — permite DERIVAR escopo mínimo p/ "mais opções" quando a oferta é
+  // HOMOGÊNEA e não há activeSearchConstraints persistido (invariante 3). Aditivo/opcional.
+  tipo?: VehicleType | null;
 };
 export type LastRenderedOfferContext = {
   sourceTurnId: Id;

@@ -12,7 +12,9 @@ import { normalizeText } from "./catalog-utils.ts";
 
 const PHOTO_RX = /\bfotos?\b|\bimagens?\b|\bfotografi/;
 const STORE_RX = /\bloja\b|\bendereco\b|\bfica\s+onde\b|\bonde\s+(fica|e|esta)\b|\bhorario\b|\bque\s+horas\b|\bunidade\b|\bfuncionament/;
-const MORE_RX = /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+alguma|\btem\s+outr/;
+// F2.29 (invariante 2): cobre "mais opções", "outros/outras", "mais carros", "mais algum(a)", "tem outros", "tem mais"
+// (exceto "tem mais informações/detalhe/sobre/dados" — pedido de INFO do carro atual, não de outros veículos).
+const MORE_RX = /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+algum|\btem\s+outr|\btem\s+mais\b(?!\s+(?:informa|detalhe|sobre|dado))/;
 const POPULAR_RX = /\bpopular(?:es)?\b/;
 const MEMORY_Q_RX = /\bqual\b[^?]*\b(carro|ve[ií]culo|foto|modelo)\b|\bpedi\b|\bmandei\b|\bmostrei\b|\bmandou\b|\benviou\b|\bquais?\b[^?]*\bfotos?\b/;
 

@@ -35,7 +35,7 @@ import {
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import { detectQuestionRepetition } from "./question-repetition.ts";
-import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, type CommercialConstraints } from "./commercial-constraints.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
@@ -119,7 +119,7 @@ export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_reca
 const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback", "deterministic_recovery"]);
 function isDegradedSource(src: ResponseSource): boolean { return DEGRADED_SOURCES.has(src); }
 
-function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean): string | null {
+function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
   // T4 (fonte única): uma pergunta de DISPONIBILIDADE/estoque do turno atual (understanding.primaryIntent=search_stock,
@@ -129,8 +129,10 @@ function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, obser
   if (searchTurn && !wasObserved("stock_search")) {
     return "O cliente deu filtro comercial suficiente NESTE turno (modelo, marca, tipo, faixa de preço, câmbio ou 'popular'). Chame stock_search com TODOS esses filtros (marca/modelo/tipo/precoMax/cambio/popular) ANTES de responder — corrija erros de digitação e NUNCA pergunte 'qual modelo/tipo você procura?' quando ele já informou. Se não houver estoque, seja honesto e ofereça algo parecido na mesma faixa.";
   }
-  // "mais opções" SEMPRE exige uma nova busca (vale nos dois modos).
-  if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search")) {
+  // "mais opções" exige nova busca — MAS só quando há ESCOPO recuperável (F2.29). Sem escopo (nem filtro ativo, nem
+  // oferta homogênea derivável) NÃO se força busca genérica: o engine PERGUNTA o escopo (executor determinístico). Forçar
+  // uma busca sem filtro devolveria lista genérica (o bug do print: "tem outros?" -> carros baratos aleatórios + moto).
+  if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search") && !moreOptionsNeedsScope) {
     return "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final.";
   }
   if (frame.signals.mentionsStore && !wasObserved("tenant_business_info")) {
@@ -412,6 +414,8 @@ export function enrichStockSearchCall(
     // P0 (LLM-first): constraints comerciais determinísticos do turno. O engine só PREENCHE LACUNAS da chamada — o
     // valor explícito do cérebro SEMPRE vence (nunca sobrescreve marca/modelo/tipo/preço/câmbio que o cérebro já pôs).
     readonly constraints?: CommercialConstraints;
+    // F2.29: o lead pediu MOTO explicitamente -> libera moto na busca (default do estoque é EXCLUIR moto de lista de carro).
+    readonly wantsMotorcycle?: boolean;
   },
 ): QueryCall {
   if (call.tool !== "stock_search") return call;
@@ -441,6 +445,8 @@ export function enrichStockSearchCall(
       ...filled,
       ...(options.popular || c?.popular ? { popular: true } : {}),
       ...(excludeKeys ? { excludeKeys } : {}),
+      // F2.29: só libera moto se o lead pediu moto OU o cérebro já marcou includeMotorcycles. Senão, DEFAULT exclui.
+      ...(options.wantsMotorcycle || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
     },
   };
 }
@@ -791,6 +797,17 @@ function buildDisengagementResponse(args: { readonly engagement: LeadEngagement;
   return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
 }
 
+// F2.29 (invariante 5): "mais opções/tem outros?" SEM escopo recuperável (nem filtro comercial ativo, nem oferta homogênea
+// derivável) -> o engine PERGUNTA o escopo em vez de listar genérico. Determinístico, aterrado, honesto: não inventa lista,
+// não mostra moto/carros aleatórios. Só dispara quando o cérebro não autorou resposta aceitável (fallback do else-branch).
+function buildMoreOptionsScopeQuestion(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const text = "Claro! Pra te mostrar as opções certas, você quer ver outros de qual tipo (SUV, sedan, hatch, picape) ou faixa de valor?";
+  const pe = ensureSendMessage([]);
+  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "more_options_needs_scope", reasonSummary: "mais opções sem escopo recuperável -> pergunta tipo/faixa (nunca lista genérico)", confidence: 0.8 };
+  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
+  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
+}
+
 // ── T5: RECUPERAÇÃO CONTEXTUAL. Só APÓS a falha do cérebro (esgotou passos OU deny repetido). Usa TurnUnderstanding +
 //    fatos REAIS do turno — NUNCA texto genérico ("não consegui confirmar"/"reformule"), NUNCA menu robótico fora de
 //    contexto. SEMPRE devolve algo aterrado. Não é um chatbot paralelo: atua só na falha e só com o que o turno tem. ──
@@ -946,6 +963,19 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const commercialCorrections = detectCorrections(leadMessage);
       const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0;
       const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(activeConstraints, currentConstraints, commercialCorrections) : currentConstraints;
+      // F2.29 (invariante 4): moto NUNCA em lista de carro (default do estoque exclui). Só o lead pedindo moto EXPLICITAMENTE
+      // libera moto na busca. Conservador (palavra "moto/scooter/..."), não infere por modelo.
+      const wantsMotorcycle = mentionsMotorcycle(leadMessage);
+      // F2.29 (invariantes 3+5): "mais opções/tem outros?" PRECISA de escopo. Prioridade: filtro comercial mergeado
+      // (ativo+atual) se suficiente; senão deriva da ÚLTIMA OFERTA se HOMOGÊNEA (5 sedans -> tipo=sedan); senão nada
+      // recuperável -> o engine PERGUNTA o escopo (não lista genérico). Só em llmFirst e só quando o lead pede mais opções.
+      const moreOptionsDerivedScope = (llmFirst && baseSignals.mentionsMoreOptions && !sufficientForStockSearch(commercialConstraints))
+        ? deriveScopeFromHomogeneousOffer(contextState.lastRenderedOfferContext?.items ?? [])
+        : null;
+      // Escopo EFETIVO da busca do turno: o comercial (se suficiente) senão o derivado da oferta homogênea.
+      const effectiveSearchScope: CommercialConstraints = sufficientForStockSearch(commercialConstraints) ? commercialConstraints : (moreOptionsDerivedScope ?? commercialConstraints);
+      // "mais opções" sem NENHUM escopo recuperável (nem comercial, nem derivável da oferta) -> pergunta o escopo.
+      const moreOptionsNeedsScope = llmFirst && baseSignals.mentionsMoreOptions && !sufficientForStockSearch(effectiveSearchScope);
       const wmForFrame = clearStalePhotoIntent(wmV1, currentTurnIntent);
       const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent });
 
@@ -1036,7 +1066,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           // P0 (LLM-first): a busca é exigida pela SEMÂNTICA do cérebro OU por um constraint comercial DETERMINÍSTICO do
           // bloco (marca/modelo/tipo/preço/câmbio/popular). Sem isto, quando o cérebro sub-classificava "até 50 mil e que
           // seja da volks", o turno caía em recovery_stock_not_run e reperguntava o que o lead já disse.
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && (isStockSearchTurn(brainVU()) || commercialSearchTurn));
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && (isStockSearchTurn(brainVU()) || commercialSearchTurn), moreOptionsNeedsScope);
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             observations.push({ tool: frame.signals.mentionsStore ? "tenant_business_info" : "stock_search", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
             continue;
@@ -1113,6 +1143,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           moreOptions: frame.signals.mentionsMoreOptions,
           previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
           constraints: commercialConstraints,   // P0: preenche lacunas (marca/preço/tipo/câmbio) que o cérebro omitiu
+          wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
         });
         const started = Date.parse(clock.now());
         let res: QueryResult;
@@ -1152,13 +1183,16 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           //    ATIVO mergeado) e o cérebro NÃO chamou stock_search, o ENGINE executa a busca com o filtro ativo — GARANTE
           //    a ação. Elimina a promessa falsa "vou procurar" sem buscar: a recuperação então lista de verdade OU é honesta
           //    sobre o vazio (nomeando o filtro). Foto/detalhe/institucional NÃO entram aqui (gate por commercialSearchTurn). ──
-          if (llmFirst && (commercialSearchTurn || frame.signals.mentionsMoreOptions) && sufficientForStockSearch(commercialConstraints) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+          // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
+          // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
+          if (llmFirst && (commercialSearchTurn || frame.signals.mentionsMoreOptions) && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
             try {
-              const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(commercialConstraints) }, {
-                popular: frame.signals.mentionsPopular === true || commercialConstraints.popular === true,
+              const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, {
+                popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true,
                 moreOptions: frame.signals.mentionsMoreOptions,
                 previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
-                constraints: commercialConstraints,
+                constraints: effectiveSearchScope,
+                wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
               });
               const startedS = Date.parse(clock.now());
               const searchRes = await withTimeout(runQuery(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
@@ -1197,6 +1231,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               responseSource = "deterministic_institutional";
               effectiveDecision = detDiseng.decision; composed = detDiseng.composed; proposedEffects = detDiseng.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "lead_disengaged", reasonSummary: "desinteresse -> resposta curta, sem funil", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            } else if (moreOptionsNeedsScope && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+              // F2.29 (invariante 5): "mais opções" SEM escopo recuperável e SEM busca executada -> PERGUNTA o tipo/faixa.
+              // Nunca cai em recovery genérico nem lista aleatória. Aterrado e honesto.
+              const detScope = buildMoreOptionsScopeQuestion({ ctx, turnId });
+              responseSource = "deterministic_institutional";
+              effectiveDecision = detScope.decision; composed = detScope.composed; proposedEffects = detScope.proposedEffects;
+              finalDecision = finalDecision ?? { reasonCode: "more_options_needs_scope", reasonSummary: "mais opções sem escopo -> pergunta tipo/faixa", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
             } else {
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
@@ -1328,10 +1369,16 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
       reduced.next.workingMemory = nextWM;
       if (renderedOfferContext) reduced.next.lastRenderedOfferContext = renderedOfferContext;
-      // F2.26/F2.27: persiste o FILTRO ATIVO mergeado — SÓ em turno de busca (constraint novo, "mais opções" OU CORREÇÃO)
-      // e SÓ em llmFirst (central_active). Foto/detalhe/institucional preservam o ativo (o reducer já clona o estado).
-      // Uma CORREÇÃO que esvazia o filtro (ex.: "esquece o sedan") persiste o filtro LIMPO (remove o tipo do ativo).
-      if (llmFirst && isSearchishTurn && (sufficientForStockSearch(commercialConstraints) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = commercialConstraints;
+      // F2.26/F2.27/F2.29: persiste o FILTRO ATIVO — SÓ em llmFirst (central_active). Foto/detalhe/institucional preservam.
+      // ⭐F2.29 (P0 audit Codex — regressão "sedan -> tem outros?"): a FONTE DE VERDADE é a busca EXECUTADA (filtersUsed),
+      // não só o texto do lead. Se uma stock_search rodou (o cérebro OU o engine buscou {tipo:"sedan"} e listou), persiste o
+      // ESCOPO REAL — assim "tem outros?" no próximo turno herda tipo/marca/preço/câmbio/anos. Fallback: o filtro do texto.
+      const lastStockFact = [...facts].reverse().find((f): f is Extract<QueryResult, { ok: true; tool: "stock_search" }> => f.ok && f.tool === "stock_search");
+      const executedScope = lastStockFact ? activeConstraintsFromStockInput(lastStockFact.data.filtersUsed as Record<string, unknown>) : null;
+      if (llmFirst) {
+        if (executedScope && sufficientForStockSearch(executedScope)) reduced.next.activeSearchConstraints = executedScope;
+        else if (isSearchishTurn && (sufficientForStockSearch(commercialConstraints) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = commercialConstraints;
+      }
 
       // ── B item 2: draft accepted-safe de foto por effectId (promovido à WM só no receipt accepted). ──
       const pending: Record<string, PhotoActionDraft> = { ...(reduced.next.pendingPhotoActions ?? {}) };
@@ -1382,6 +1429,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           targetResolutionSource, recoveryReason,
           toolsExecuted: toolTelemetry.map((t) => t.tool), policyFeedback: policyFeedbackLog.slice(0, 5),
           institutionalResolved, droppedSelectKeys,
+          // F2.29 (observabilidade do escopo comercial — auditoria do "mais opções herda escopo"): filtro ativo ANTES/DEPOIS,
+          // input REAL da stock_search executada, e o escopo herdado por "mais opções" (null se pediu escopo).
+          activeSearchConstraintsBefore: contextState.activeSearchConstraints ?? null,
+          activeSearchConstraintsAfter: reduced.next.activeSearchConstraints ?? null,
+          stockSearchInputExecuted: lastStockFact ? lastStockFact.data.filtersUsed : null,
+          moreOptions: baseSignals.mentionsMoreOptions, moreOptionsNeedsScope,
+          moreOptionsInheritedScope: baseSignals.mentionsMoreOptions && sufficientForStockSearch(effectiveSearchScope) ? effectiveSearchScope : null,
         }, at: cutoff }),
         makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded: isDegradedSource(responseSource) }, at: cutoff }),
       ];
