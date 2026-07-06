@@ -25,6 +25,7 @@ import {
 
 const ZERO_ORIGEM = (): Record<OrigemVenda, number> => ({ trafego: 0, portais: 0, porta: 0, particular: 0 });
 function ymd(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function fmtData(ymdStr: string) { const [y, m, d] = (ymdStr || '').split('-'); return d ? `${d}/${m}/${y.slice(2)}` : (ymdStr || '—'); }
 function brl(n: number) { return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 function pctColor(p: number) { return p >= 100 ? 'text-emerald-400' : p >= 70 ? 'text-amber-400' : 'text-red-400'; }
 function pctBg(p: number) { return p >= 100 ? 'bg-emerald-500' : p >= 70 ? 'bg-amber-500' : 'bg-red-500'; }
@@ -66,6 +67,8 @@ export function ComercialSection({
   const { vendasAno, metas, sellers, loading, refresh, monthRef } = useComercialData({ ownerUserId, refDate, isSeller });
 
   const [addOpen, setAddOpen] = useState(false);
+  // Edição de uma venda já lançada (corrigir data/valor/origem, ou excluir).
+  const [editVenda, setEditVenda] = useState<VendaComercial | null>(null);
   // Edição da meta individual: vendedor na própria visão; gestor na tabela/drill-down.
   const [editMetaFor, setEditMetaFor] = useState<string | null>(null);
   const [metaInput, setMetaInput] = useState('');
@@ -197,7 +200,7 @@ export function ComercialSection({
               </SelectContent>
             </Select>
           )}
-          <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
+          <Button size="sm" onClick={() => { setEditVenda(null); setAddOpen(true); }} className="gap-1.5">
             <Plus className="h-3.5 w-3.5" /> Lançar venda
           </Button>
         </div>
@@ -322,19 +325,63 @@ export function ComercialSection({
             </Card>
           )}
 
+          {/* Vendas do período — lista individual, editável (corrigir data/valor/origem ou excluir) */}
+          {vendasPeriodo.length > 0 && (
+            <Card className="bg-card border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <DollarSign className="h-4 w-4 text-emerald-400" /> Vendas do período
+                  <span className="text-[11px] text-muted-foreground font-normal">· {vendasPeriodo.length} · clique no lápis pra corrigir a data{!isSeller ? ' ou excluir' : ''}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border/50">
+                      <th className="py-2 pr-2">Data</th>
+                      {!activeSellerId && <th className="py-2 px-2">Vendedor</th>}
+                      <th className="py-2 px-2">Origem</th>
+                      <th className="py-2 px-2">Veículo</th>
+                      <th className="py-2 px-2 text-right">Valor</th>
+                      <th className="py-2 pl-2 text-right">Editar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...vendasPeriodo].sort((a, b) => b.data_venda.localeCompare(a.data_venda)).map(v => (
+                      <tr key={v.id} className="border-b border-border/30 hover:bg-muted/40">
+                        <td className="py-2 pr-2 tabular-nums">{fmtData(v.data_venda)}</td>
+                        {!activeSellerId && <td className="py-2 px-2">{sellers.find(s => s.id === v.seller_id)?.nome || 'Vendedor'}</td>}
+                        <td className="py-2 px-2">{ORIGEM_LABEL[v.origem]}</td>
+                        <td className="py-2 px-2 text-muted-foreground">{v.veiculo || '—'}</td>
+                        <td className="py-2 px-2 text-right tabular-nums">{v.valor > 0 ? brl(v.valor) : '—'}</td>
+                        <td className="py-2 pl-2 text-right">
+                          <button onClick={() => setEditVenda(v)} title="Corrigir/excluir esta venda"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-amber-300 hover:bg-muted/60 transition-colors">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Gráficos */}
           <ComercialCharts vendasPeriodo={vendasPeriodo} vendasAno={vendasAnoView} metaRef={metaRef} refDate={refDate} />
         </>
       )}
 
       <LancarVendaDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
+        open={addOpen || !!editVenda}
+        onOpenChange={(o) => { if (!o) { setAddOpen(false); setEditVenda(null); } }}
         ownerUserId={ownerUserId}
         isSeller={isSeller}
         currentSellerId={currentSellerId}
         currentSellerName={currentSellerName}
         sellers={sellers}
+        venda={editVenda}
         onSaved={refresh}
       />
     </div>

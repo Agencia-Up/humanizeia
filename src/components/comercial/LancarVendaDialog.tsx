@@ -13,8 +13,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { ORIGENS, type OrigemVenda, type VendedorComercial } from '@/types/comercial';
-import { Loader2 } from 'lucide-react';
+import { ORIGENS, type OrigemVenda, type VendedorComercial, type VendaComercial } from '@/types/comercial';
+import { Loader2, Trash2 } from 'lucide-react';
 
 function hoje(): string {
   const d = new Date();
@@ -33,27 +33,43 @@ interface Props {
   /** lista de vendedores (gestor escolhe). */
   sellers: VendedorComercial[];
   onSaved: () => void;
+  /** Se passado, o modal entra em modo EDIÇÃO (corrige/exclui esta venda) em vez de lançar. */
+  venda?: VendaComercial | null;
 }
 
 export function LancarVendaDialog({
-  open, onOpenChange, ownerUserId, isSeller, currentSellerId, currentSellerName, sellers, onSaved,
+  open, onOpenChange, ownerUserId, isSeller, currentSellerId, currentSellerName, sellers, onSaved, venda,
 }: Props) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const isEdit = !!venda;
   const [form, setForm] = useState({
     seller_id: '', data_venda: hoje(), valor: '', origem: '' as '' | OrigemVenda,
     portal: '', veiculo: '', observacao: '',
   });
 
-  // Reseta ao abrir; pro vendedor já fixa o seller_id dele.
+  // Ao abrir: modo EDIÇÃO pré-preenche com a venda; modo LANÇAR começa em branco
+  // (pro vendedor já fixa o seller_id dele).
   useEffect(() => {
     if (open) {
-      setForm({
-        seller_id: isSeller ? (currentSellerId || '') : '',
-        data_venda: hoje(), valor: '', origem: '', portal: '', veiculo: '', observacao: '',
-      });
+      if (venda) {
+        setForm({
+          seller_id: venda.seller_id || '',
+          data_venda: venda.data_venda || hoje(),
+          valor: venda.valor != null ? String(venda.valor) : '',
+          origem: (venda.origem || '') as '' | OrigemVenda,
+          portal: venda.portal || '',
+          veiculo: venda.veiculo || '',
+          observacao: venda.observacao || '',
+        });
+      } else {
+        setForm({
+          seller_id: isSeller ? (currentSellerId || '') : '',
+          data_venda: hoje(), valor: '', origem: '', portal: '', veiculo: '', observacao: '',
+        });
+      }
     }
-  }, [open, isSeller, currentSellerId]);
+  }, [open, isSeller, currentSellerId, venda]);
 
   const set = (patch: Partial<typeof form>) => setForm(f => ({ ...f, ...patch }));
 
@@ -67,7 +83,7 @@ export function LancarVendaDialog({
 
     setSaving(true);
     try {
-      const { error } = await (supabase as any).from('comercial_vendas').insert({
+      const payload = {
         user_id: ownerUserId,
         seller_id: form.seller_id,
         data_venda: form.data_venda,
@@ -76,13 +92,34 @@ export function LancarVendaDialog({
         portal: form.origem === 'portais' ? (form.portal.trim() || null) : null,
         veiculo: form.veiculo.trim() || null,
         observacao: form.observacao.trim() || null,
-      });
+      };
+      const { error } = isEdit
+        ? await (supabase as any).from('comercial_vendas').update(payload).eq('id', venda!.id)
+        : await (supabase as any).from('comercial_vendas').insert(payload);
       if (error) throw error;
-      toast({ title: 'Venda lançada!', description: 'O painel comercial já foi atualizado.' });
+      toast({ title: isEdit ? 'Venda atualizada!' : 'Venda lançada!', description: 'O painel comercial já foi atualizado.' });
       onSaved();
       onOpenChange(false);
     } catch (err: any) {
-      toast({ title: 'Erro ao lançar venda', description: err?.message || 'Tente novamente.', variant: 'destructive' });
+      toast({ title: isEdit ? 'Erro ao salvar a venda' : 'Erro ao lançar venda', description: err?.message || 'Tente novamente.', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Excluir venda lançada (só gestor — RLS do vendedor não tem delete).
+  const handleDelete = async () => {
+    if (!venda) return;
+    if (!window.confirm('Excluir esta venda? Essa ação não pode ser desfeita.')) return;
+    setSaving(true);
+    try {
+      const { error } = await (supabase as any).from('comercial_vendas').delete().eq('id', venda.id);
+      if (error) throw error;
+      toast({ title: 'Venda excluída', description: 'O painel comercial já foi atualizado.' });
+      onSaved();
+      onOpenChange(false);
+    } catch (err: any) {
+      toast({ title: 'Erro ao excluir', description: err?.message || 'Tente novamente.', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -92,7 +129,7 @@ export function LancarVendaDialog({
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Lançar venda</DialogTitle>
+          <DialogTitle>{isEdit ? 'Editar venda' : 'Lançar venda'}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -160,9 +197,17 @@ export function LancarVendaDialog({
           </div>
 
           <div className="flex justify-between pt-1">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              {isEdit && !isSeller && (
+                <Button type="button" variant="ghost" className="text-red-500 hover:text-red-600 gap-1.5"
+                  onClick={handleDelete} disabled={saving}>
+                  <Trash2 className="h-4 w-4" /> Excluir
+                </Button>
+              )}
+            </div>
             <Button type="submit" disabled={saving}>
-              {saving ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Salvando…</> : 'Salvar venda'}
+              {saving ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Salvando…</> : (isEdit ? 'Salvar alterações' : 'Salvar venda')}
             </Button>
           </div>
         </form>
