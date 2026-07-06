@@ -75,11 +75,12 @@ export function LancarVendaDialog({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const valorNum = Number(String(form.valor).replace(',', '.'));
+    // Valor é OPCIONAL: vazio/inválido conta como 0 (a venda entra na quantidade/meta, só não puxa ticket médio).
+    const valorParsed = Number(String(form.valor).replace(',', '.'));
+    const valorNum = Number.isFinite(valorParsed) && valorParsed > 0 ? valorParsed : 0;
     if (!form.seller_id) { toast({ title: 'Selecione o vendedor', variant: 'destructive' }); return; }
     if (!form.data_venda) { toast({ title: 'Informe a data da venda', variant: 'destructive' }); return; }
     if (!form.origem) { toast({ title: 'Selecione a origem', variant: 'destructive' }); return; }
-    if (!(valorNum > 0)) { toast({ title: 'Informe um valor válido', variant: 'destructive' }); return; }
 
     setSaving(true);
     try {
@@ -156,7 +157,7 @@ export function LancarVendaDialog({
 
             {/* Valor */}
             <div>
-              <Label>Valor (R$) *</Label>
+              <Label>Valor (R$)</Label>
               <Input type="number" min="0" step="0.01" placeholder="0,00"
                 value={form.valor} onChange={(e) => set({ valor: e.target.value })} />
             </div>
