@@ -812,11 +812,18 @@ const PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS = [
   { value: 'meta_ads', label: 'Meta Ads' },
   { value: 'google_ads', label: 'Google Ads' },
   { value: 'tiktok_ads', label: 'TikTok Ads' },
-  { value: 'outras_fontes_trafego_pago', label: 'Outras fontes de trafego pago' },
+  { value: 'outras_fontes_trafego_pago', label: 'Outras fontes de tráfego pago' },
 ] as const;
 
+function normalizePedroPaidTrafficOrigem(value: string | null | undefined): string {
+  return PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.some(o => o.value === value)
+    ? String(value)
+    : PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS[0].value;
+}
+
 function pedroPaidTrafficOrigemLabel(value: string | null | undefined): string {
-  return PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.find(o => o.value === value)?.label
+  const normalized = normalizePedroPaidTrafficOrigem(value);
+  return PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.find(o => o.value === normalized)?.label
     || PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS[0].label;
 }
 
@@ -4949,13 +4956,22 @@ export function CrmAvancadoTab({
           <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
-          {/* Spec 28/05/2026: "Adicionar Lead" disponivel pra Pedro tambem
-              (antes era so Marcos). Pedro form mostra apenas origem
-              read-only "Trafego Pago"; Marcos mantem as 6 opcoes + custom. */}
+          {/* "Adicionar Lead": Pedro escolhe a fonte de trafego pago; Marcos mantem origens proprias + custom. */}
           <Button
             variant={addLeadOpen ? 'secondary' : 'outline'}
             size="sm"
-            onClick={() => setAddLeadOpen(!addLeadOpen)}
+            onClick={() => {
+              const nextOpen = !addLeadOpen;
+              if (nextOpen && !isMarcosCrm) {
+                const normalized = normalizePedroPaidTrafficOrigem(addLeadOrigem);
+                const label = pedroPaidTrafficOrigemLabel(normalized);
+                setAddLeadOrigem(normalized);
+                setAddLeadOrigemOutros(label);
+                setAddLeadSourceId(null);
+                setAddLeadSourceName(label);
+              }
+              setAddLeadOpen(nextOpen);
+            }}
             className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
           >
             {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
@@ -5055,27 +5071,25 @@ export function CrmAvancadoTab({
                 // Pedro: spec 28/05/2026 — somente "Tráfego Pago" como label read-only.
                 // Pedro CRM serve so pra leads vindos de campanhas de tráfego pago;
                 // outros canais ficam no Marcos CRM.
-                <Select
-                  value={addLeadOrigem || PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS[0].value}
-                  onValueChange={(value) => {
+                <select
+                  value={normalizePedroPaidTrafficOrigem(addLeadOrigem)}
+                  onChange={(event) => {
+                    const value = normalizePedroPaidTrafficOrigem(event.target.value);
                     const label = pedroPaidTrafficOrigemLabel(value);
                     setAddLeadOrigem(value);
                     setAddLeadOrigemOutros(label);
                     setAddLeadSourceId(null);
                     setAddLeadSourceName(label);
                   }}
+                  className="h-8 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
+                  aria-label="Origem do trafego pago"
                 >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Origem do trafego pago" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.map(opt => (
-                      <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {PEDRO_PAID_TRAFFIC_ORIGEM_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
             <Button
