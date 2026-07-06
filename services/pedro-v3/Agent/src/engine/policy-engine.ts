@@ -4,7 +4,7 @@ import type {
   TurnDecision, EffectPlan, ProposedEffectPlan, MoneyRole,
 } from "../domain/decision.ts";
 import type { VehicleFact } from "../domain/types.ts";
-import { isVehicleKeyInCatalog, normalizeText } from "./catalog-utils.ts";
+import { isVehicleKeyInCatalog, normalizeText, canonicalModel } from "./catalog-utils.ts";
 import { slotQuestions } from "./question-classify.ts";
 import { isInstitutionalTurn } from "./turn-domain.ts";
 
@@ -192,10 +192,8 @@ function getValidBrandsAndModels(facts: QueryResult[], decision: TurnDecision): 
 // Aterramento de modelo EXATO (Codex R10-3): colapsa só FORMATAÇÃO (espaço/hífen/case) — "HB 20"=="HB20",
 // "C 3"=="C3" — mas NUNCA por subconjunto de tokens. Assim "HB20" NÃO autoriza "HB20S", "Onix" NÃO autoriza
 // "Onix Plus", "C3" NÃO autoriza "C3 Aircross" (são vehicleKeys/modelos DIFERENTES). Um modelo citado só é
-// aterrado se, canonizado, for IDÊNTICO a um modelo REAL do turno (nunca "quase igual").
-function canonicalModel(m: string): string {
-  return normalizeText(m).replace(/[\s\-]+/g, ""); // "hb 20"->"hb20"; "hb 20 s"->"hb20s" (distinto de "hb20")
-}
+// aterrado se, canonizado, for IDÊNTICO a um modelo REAL do turno (nunca "quase igual"). canonicalModel = fonte ÚNICA
+// (catalog-utils), compartilhada com o TurnUnderstanding (audit Codex: uma só identidade de modelo).
 function modelGroundedExact(claimNorm: string, validModels: Set<string>): boolean {
   const c = canonicalModel(claimNorm);
   if (!c) return false;

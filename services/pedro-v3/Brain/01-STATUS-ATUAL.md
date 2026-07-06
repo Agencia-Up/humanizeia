@@ -1,5 +1,36 @@
 # 01 - Status Atual do Pedro v3
 
+## 2026-07-05 - FONTE ÚNICA (TurnUnderstanding): elimina fallbacks por conflito cérebro×regex×memória×alvo
+
+- Missão P0 (evidência Codex, tenant ecb26258): 3 incidentes reais — (1) foto do Kicks saiu como Onix (executor preferia
+  selected antigo ao fato do turno); (2) "E o kiks, tem?" (typo) virou foto + technical_fallback (regex de intenção +
+  memória velha); (3) "Me mande fotos" caiu em technical_fallback (`isPhotoRequestBlock` não pegava "mande").
+- Correção ARQUITETURAL (não if-por-frase): o cérebro emite `TurnUnderstanding` no MESMO ciclo (primaryIntent/
+  capabilities/subject/evidence/isTopicChange); o engine VALIDA que cada evidência ⊂ bloco e usa ESSE entendimento como
+  AUTORIDADE ÚNICA de foto/busca/alvo/recuperação. Regex vira só FALLBACK robusto (stems) quando o cérebro não emite.
+  Novo módulo `engine/turn-understanding.ts` (validate/authorizesPhotoSend/resolveTurnTarget/deriveFallback/fingerprint).
+  Precedência de alvo (turno>ordinal>fato do turno>selected antigo) corrige Inc1; foto por semântica corrige Inc2/Inc3;
+  recuperação contextual substitui o texto genérico ("não consegui confirmar" REMOVIDO do central_active).
+- Gates: `test:f223` **12 OK** (A-I, os 3 incidentes + guardas), `test:scan-fallback` **5 OK**, `test:all` EXIT 0, `tsc`
+  EXIT 0 (sem regressão). Real 5 turnos (`eval:understanding`, gpt-4.1-mini, compose=0, US$0,038): **PASS** — T3 foto do
+  3º selecionado, T4 "E o Onix, tem?" lista sem mídia (falso-envio proativo corrigido), T5 negação acolhe sem degradar.
+- ⭐**2ª AUDITORIA CODEX (2 P0 + 2 P1) CORRIGIDA (2026-07-05):** P0-1 foto VINCULADA ao assunto por modelo
+  (`candidateVehicleKeys` + `targetAcceptsKey`; foto do carro errado REJEITADA, nunca "1 photo fact vence"); P0-2
+  understanding do CÉREBRO obrigatório p/ ação comercial em llmFirst (`REQUIRED_TURN_UNDERSTANDING`+retry; fallback nunca
+  autoriza mídia/tool/foco); P1 evidência por capability + trava do assunto (`reconcileUnderstanding`); P1 recuperação de
+  busca diferencia executada-vazia/falha/não-executada; `deterministic_recovery` (contextual) distinto de
+  `technical_fallback` (genérico). `run-f2-23` **18 OK** (+ adversariais), test:all+tsc EXIT 0, `git diff --check` limpo.
+  Real 6 turnos (`eval:understanding`, US$0,058): **PASS** — T4 "gostei das fotos" 0 mídia, T6 "fotos do Onix" (2 variantes)
+  pergunta qual sem carro errado.
+- ⭐**3ª AUDITORIA CODEX (2 P0 estreitos + 1 P1) CORRIGIDA (2026-07-05):** P0-1 subjectValue corresponde ao claim ESCRITO
+  (precedência do texto; conflito->kind `conflict` inválido, zero mídia; inferência só vira candidato se confirmada por
+  stock_search/catálogo; photo fact nunca confirma modelo). P0-2 autorização TIPADA por tool (`toolCapabilityAuthorized`:
+  cap própria+evidência própria; exceção sistêmica `systemDetailKeys` p/ grounding; filtro de select_vehicle_focus sem cap
+  select; `deriveFallbackUnderstanding` multi-capability). P1 recuperação trata qualquer falha real de stock_search (não só
+  UPSTREAM). `run-f2-23` **25 OK** (+ W/X/Y/Z/AA/P4/P6), test:all+tsc EXIT 0, git diff --check limpo.
+- **NÃO commitado** — sobre `d0c35981`, aguardando NOVA auditoria Codex. Detalhe: `Brain/2026-07-05-claude-turn-understanding-fonte-unica.md` §6-7.
+- Follow-ups: v3_query_log é do bridge (gap documentado); cérebro às vezes omite understanding (gate barra ação comercial e recupera contextual).
+
 ## 2026-07-04 - Completude do turno (prompt-first): fecha o gap "respondeu endereco no lugar do horario"
 
 - Dono reportou: correcao de dominio passou tecnicamente, mas o agente respondia ENDERECO quando o lead pedia HORARIO.

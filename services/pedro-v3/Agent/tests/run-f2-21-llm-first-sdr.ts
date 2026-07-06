@@ -20,7 +20,8 @@ import type { TurnDecision, RenderedResponse } from "../src/domain/decision.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
-import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall } from "../src/domain/agent-brain.ts";
+import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall, AgentBrainPort, AgentToolObservation, TurnFrame } from "../src/domain/agent-brain.ts";
+import { deriveFallbackUnderstanding } from "../src/engine/turn-understanding.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 
@@ -92,8 +93,23 @@ function slotSummary(state: unknown): Record<string, string> {
   return out;
 }
 
+// Anexa um understanding DERIVADO do lead (trusted) aos steps sem understanding. F2.21 testa a CONDUÇÃO SDR (busca/
+// seleção/funil/CPF), não o gate P0-2 (que é a F2.23) — isto reflete "o cérebro emite understanding" sem reescrever os
+// 35 casos. fromBrain=true (é o step do brain), então em llmFirst a ação é autorizada normalmente pela semântica derivada.
+class UnderstandingBrain implements AgentBrainPort {
+  constructor(private readonly inner: ScriptedAgentBrain) {}
+  setResponder(fn: BrainResponder): void { this.inner.setResponder(fn); }
+  setTurnScript(steps: AgentBrainStep[]): void { this.inner.setTurnScript(steps); }
+  async proposeNextStep(frame: TurnFrame, obs: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const step = await this.inner.proposeNextStep(frame, obs);
+    if (step.understanding) return step;
+    let u = deriveFallbackUnderstanding(frame.block, frame.signals, extractor);
+    if (!u.evidence || u.evidence.length === 0) { const w = frame.block.trim().split(/\s+/).slice(0, 2).join(" ") || frame.block.slice(0, 3); u = { ...u, evidence: [{ quote: w }] }; }
+    return { ...step, understanding: u };
+  }
+}
 function makeConv(convId: string, opts: { llmFirst: boolean; businessInfo?: TenantBusinessInfoSource } = { llmFirst: true }) {
-  const brain = new ScriptedAgentBrain();
+  const brain = new UnderstandingBrain(new ScriptedAgentBrain());
   const preparer = new RelPreparer();
   const clock = new FakeClock(NOW);
   const persistence = new InMemoryPersistence(clock, new FakeIdGen());

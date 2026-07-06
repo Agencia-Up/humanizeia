@@ -232,9 +232,41 @@ export type BusinessInfoTopic = (typeof BUSINESS_INFO_TOPICS)[number];
 export type TenantBusinessInfoCall = { readonly tool: "tenant_business_info"; readonly input: { readonly topic: BusinessInfoTopic } };
 export type CentralQueryCall = QueryCall | TenantBusinessInfoCall;
 
+// ── TurnUnderstanding (P0 fonte única): a SEMÂNTICA do bloco atual, produzida pelo cérebro NO MESMO CICLO (sem
+//    chamada extra). É a AUTORIDADE ÚNICA do turno — precede activeTopic/currentLeadIntent/lastPhotoAction/
+//    selectedVehicle/última oferta. O engine VALIDA que cada evidence.quote existe no bloco atual (anti-alucinação),
+//    mas NÃO re-decide a conversa por lista de frases. Substitui a semântica espalhada em regex (isPhotoRequestBlock/
+//    deriveCurrentTurnIntent/...). Memória = contexto e resolução de pronome, nunca autoridade acima do pedido atual.
+export const PRIMARY_INTENTS = [
+  "search_stock", "request_photos", "recall_photos", "select_vehicle", "vehicle_detail",
+  "institutional", "financing", "visit", "smalltalk", "other",
+] as const;
+export type PrimaryIntent = (typeof PRIMARY_INTENTS)[number];
+// Capacidades que o turno PEDE (o engine só autoriza a que tem evidência no bloco).
+export const TURN_CAPABILITIES = ["stock_search", "send_photos", "vehicle_details", "institutional_info", "recall", "select"] as const;
+export type TurnCapability = (typeof TURN_CAPABILITIES)[number];
+export const TURN_SUBJECT_KINDS = ["explicit_model", "ordinal_from_last_offer", "selected_vehicle", "vehicle_type", "budget", "none"] as const;
+export type TurnSubjectKind = (typeof TURN_SUBJECT_KINDS)[number];
+// De onde vem o subject: escrito no turno atual, herdado da memória, ou inferido/corrigido pelo cérebro (typo kiks→Kicks).
+export const SUBJECT_SOURCES = ["current_turn", "memory", "inference", "none"] as const;
+export type SubjectSource = (typeof SUBJECT_SOURCES)[number];
+export type TurnUnderstandingEvidence = { readonly capability?: TurnCapability; readonly quote: string };
+export type TurnUnderstanding = {
+  readonly primaryIntent: PrimaryIntent;
+  readonly requestedCapabilities: readonly TurnCapability[];
+  readonly subject: TurnSubjectKind;
+  readonly subjectValue: string | null;    // modelo citado / número do ordinal / tipo / faixa — texto BRUTO p/ resolver alvo
+  readonly subjectSource: SubjectSource;
+  readonly evidence: readonly TurnUnderstandingEvidence[];   // cada quote TEM de existir no bloco atual
+  readonly isTopicChange: boolean;
+  readonly answeredLeadQuestions: readonly string[];
+};
+
 export type AgentBrainStep =
-  | { readonly kind: "query"; readonly call: CentralQueryCall }
-  | { readonly kind: "final"; readonly decision: AgentBrainDecision };
+  // understanding: OPCIONAL no tipo (adapters antigos/estágios), mas o engine trata o VALIDADO como autoridade e cai
+  // num fallback determinístico só quando ausente. Emitido em query|final (o engine usa o último não-nulo).
+  | { readonly kind: "query"; readonly call: CentralQueryCall; readonly understanding?: TurnUnderstanding }
+  | { readonly kind: "final"; readonly decision: AgentBrainDecision; readonly understanding?: TurnUnderstanding };
 
 export interface AgentBrainPort {
   // frame + observações factuais das tools já executadas -> próximo passo (query|final). Loop limitado no engine;

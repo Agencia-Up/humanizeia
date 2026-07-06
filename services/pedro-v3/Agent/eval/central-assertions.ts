@@ -8,6 +8,10 @@ export type CentralTurnCapture = {
   reasonCode?: string; terminalSafe: boolean; brainSteps: number; llmCallsInTurn: number; promptExactInTurn: boolean;
   responseSource?: string;                 // diagnóstico: brain_final|brain_retry|deterministic_*|technical_fallback
   policyFeedback?: readonly string[];      // diagnóstico: feedbacks de deny devolvidos ao cérebro (revela por que degradou)
+  primaryIntent?: string;                  // T6 fonte única: semântica do turno (do cérebro OU fallback validado)
+  targetResolutionSource?: string | null;  // T6: como o alvo do turno foi resolvido (turn_photo_fact/turn_ordinal/...)
+  resolvedVehicleKey?: string | null;      // T6: veículo do send_media do turno (alvo efetivo)
+  understandingFromBrain?: boolean;        // T6: o cérebro emitiu understanding? (senão caiu no fallback)
   toolsRequested: string[];
   observations: { tool: string; ok: boolean }[];
   effects: { kind: string; vehicleKey?: string; photoCount?: number; status: string }[];

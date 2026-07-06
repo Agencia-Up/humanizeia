@@ -27,6 +27,23 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
+// \u2500\u2500 Identidade CAN\u00d4NICA de MODELO (fonte \u00daNICA, usada por grounding E TurnUnderstanding). Normaliza S\u00d3 formata\u00e7\u00e3o
+//    (caixa/acento/espa\u00e7o/h\u00edfen/pontua\u00e7\u00e3o \u2014 normalizeText j\u00e1 faz) e PRESERVA tokens sem\u00e2nticos (Plus/S/Aircross/Sedan/
+//    Cross/Sport). Compara\u00e7\u00e3o \u00e9 por IGUALDADE EXATA, NUNCA substring: "hb 20"=="hb20" mas "hb20"!="hb20s"; "onix"!=
+//    "onix plus"; "c3"!="c3 aircross"; "cr-v"=="crv". Aliases reais = cat\u00e1logo/taxonomia, jamais includes. \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+export function canonicalModel(m: string): string {
+  return normalizeText(m).replace(/[\s-]+/g, "");
+}
+// Um modelo CITADO (bare "Onix" OU marca+modelo "Chevrolet Onix") tem a MESMA identidade de um ve\u00edculo estruturado?
+// Igualdade can\u00f4nica EXATA contra `modelo` e contra `marca modelo`. Sem `modelo` estruturado confi\u00e1vel -> nunca casa.
+export function modelIdentityMatches(subjectRaw: string, veh: { readonly marca: string | null; readonly modelo: string | null }): boolean {
+  if (!veh.modelo) return false;
+  const s = canonicalModel(subjectRaw);
+  if (!s) return false;
+  if (s === canonicalModel(veh.modelo)) return true;
+  return veh.marca != null && s === canonicalModel(`${veh.marca} ${veh.modelo}`);
+}
+
 export function normalizedTermInText(text: string, term: string): boolean {
   const normalizedTerm = normalizeText(term);
   if (!normalizedTerm) return false;

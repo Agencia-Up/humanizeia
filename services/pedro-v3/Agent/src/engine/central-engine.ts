@@ -20,12 +20,19 @@ import type { TurnContext } from "../domain/context.ts";
 import { createInitialState } from "../domain/conversation-state.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type {
-  DecisionMutation, ProposedDecision, ProposedEffectPlan, QueryCall, QueryResult, TurnAction, TurnDecision, EffectResult,
+  DecisionMutation, ProposedDecision, ProposedEffectPlan, QueryCall, QueryResult, TurnAction, TurnDecision, EffectResult, ResponseDraft,
 } from "../domain/decision.ts";
 import type {
   AgentBrainPort, AgentBrainDecision, AgentToolObservation, CentralQueryCall, PersistedWorkingMemory,
   PhotoActionDraft, ToolResultMemory, ToolTelemetry, WorkingMemoryV1, BusinessInfoTopic, CurrentTurnIntent, FrameSignals,
+  TurnUnderstanding,
 } from "../domain/agent-brain.ts";
+import {
+  validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
+  resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
+  toolCapabilityAuthorized, selectAuthorized,
+  type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
+} from "./turn-understanding.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
@@ -99,17 +106,21 @@ export type CentralTurnArgs = {
   readonly llmFirst?: boolean;
 };
 
-export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "technical_fallback" | "legacy_compose";
+export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "deterministic_recovery" | "technical_fallback" | "legacy_compose";
+// Fontes DEGRADADAS (o cérebro não autorou; o engine recuperou). deterministic_recovery = recuperação CONTEXTUAL aterrada
+// (oferta/qual/honesto — texto útil, não genérico); technical_fallback = último recurso genérico. Ambas contam degraded.
+const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback", "deterministic_recovery"]);
+function isDegradedSource(src: ResponseSource): boolean { return DEGRADED_SOURCES.has(src); }
 
-function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], llmFirst: boolean): string | null {
+function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
-  // P0-search (missão): em LLM-first, uma pergunta de DISPONIBILIDADE/estoque do turno atual (tipo/modelo/popular/
-  // orçamento -> currentTurnIntent="search") EXIGE stock_search relevante antes do final — senão o cérebro responde o
-  // assunto anterior sem buscar ("tem Onix?" virava repetição da loja). Gated em llmFirst para não forçar busca no
-  // legado (onde o SDR pode acolher+perguntar o nome antes de listar — F2.13 [3c]).
-  if (llmFirst && frame.signals.currentTurnIntent === "search" && !wasObserved("stock_search")) {
-    return "O cliente está perguntando DISPONIBILIDADE/estoque NESTE turno (tipo/modelo/popular/orçamento). Chame stock_search com os filtros do turno atual ANTES de responder — não responda o assunto anterior; se não houver, seja honesto.";
+  // T4 (fonte única): uma pergunta de DISPONIBILIDADE/estoque do turno atual (understanding.primaryIntent=search_stock,
+  // já corrige typo "kiks"→Kicks pelo cérebro) EXIGE stock_search relevante antes do final — senão o cérebro responde o
+  // assunto anterior sem buscar (e a memória de foto não pode assumir a busca). Gated em llmFirst para não forçar busca
+  // no legado (onde o SDR pode acolher+perguntar o nome antes de listar — F2.13 [3c]).
+  if (searchTurn && !wasObserved("stock_search")) {
+    return "O cliente está perguntando DISPONIBILIDADE/estoque NESTE turno. Chame stock_search com os filtros/modelo do turno atual (corrija erros de digitação do modelo) ANTES de responder — não responda o assunto anterior; se não houver, seja honesto.";
   }
   // "mais opções" SEMPRE exige uma nova busca (vale nos dois modos).
   if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search")) {
@@ -142,6 +153,13 @@ export type CentralTurnResult =
       institutionalResolved: readonly { readonly topic: string; readonly status: "ok" | "not_configured" | "failure" }[];
       policyFeedback: readonly string[];   // feedbacks de deny devolvidos ao cérebro no turno (observabilidade)
       droppedSelectKeys: readonly string[];   // Hardening 1: seleções descartadas por falta de label canônico
+      // T6 (fonte única): semântica do turno + resolução de alvo + recuperação (observabilidade e testes).
+      understanding: TurnUnderstanding;
+      understandingFromBrain: boolean;
+      targetResolutionSource: TargetResolutionSource | null;
+      resolvedVehicleKey: string | null;
+      previousSelectedVehicleKey: string | null;
+      recoveryReason: string | null;
     }
   | { status: "commit_failed"; turnId: Id; claimedEventIds: Id[]; reason: string };
 
@@ -357,13 +375,9 @@ function sanitizePolicyFeedback(verdicts: readonly { policyId?: string; outcome:
   return `Resposta REJEITADA pela validação (${msg}). Corrija: afirme km/cor/câmbio/ano/preço só via vehicle_ref/money_ref do vehicleKey EXATO já consultado por vehicle_details; no máximo UMA pergunta; não repita dado já conhecido.`;
 }
 
-// Fallback TÉCNICO honesto (DEGRADAÇÃO OBSERVÁVEL): o cérebro não conseguiu aterrar a resposta no limite. Uma única
-// fala honesta, SEM inventar fato, SEM listar carro/mudar de assunto/empurrar funil, e SEM prometer retorno proativo
-// (não existe mecanismo de retorno). PURO. Marcado como terminalSafe/degraded pelo chamador.
-function buildTechnicalFallback(): RenderedResponse {
-  const text = "Me desculpe, não consegui confirmar essa informação com segurança agora. Consegue reformular pra eu te ajudar melhor?";
-  return { draft: { parts: [{ type: "text", content: text }] }, text };
-}
+// DEGRADAÇÃO OBSERVÁVEL (T5): quando o cérebro não aterra no limite, o TEXTO ao lead vem de buildContextualRecovery
+// (contextual/honesto, nunca "não consegui confirmar"/"reformule"). O marcador interno technical_fallback fica só p/
+// observabilidade (degraded=true). Não existe mais fala genérica no outbox do central_active.
 
 // Assinatura da chamada de tool p/ PROIBIR loop idêntico (mesma tool + mesmos args). PURO.
 function toolCallSignature(call: CentralQueryCall): string {
@@ -410,6 +424,9 @@ function authorFromBrainDraft(args: {
   readonly turnId: string;
   readonly selectionTurn?: boolean;   // P0-sel: o lead está selecionando um veículo -> feedback específico se citar atributo
   readonly institutionalObs?: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;   // completude: tópicos institucionais resolvidos
+  readonly photoVU: ValidatedUnderstanding | null;   // FONTE ÚNICA: vU que autoriza foto (llmFirst=cérebro; senão fallback)
+  readonly requireBrain: boolean;                    // P0-2: em llmFirst, send_media exige understanding do cérebro
+  readonly target: TargetResolution;                 // P0-1: alvo do assunto (candidateVehicleKeys verificados por modelo)
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -419,17 +436,45 @@ function authorFromBrainDraft(args: {
   // feedback é ESPECÍFICO — acolha a escolha e ofereça o próximo passo, NÃO cite atributo sem consultar. (Sem isto o
   // cérebro insistia em descrever o carro e degradava em technical_fallback.)
   const SELECTION_ATTR_FEEDBACK = "Você pode ACOLHER a escolha do cliente e oferecer o próximo passo (fotos, detalhes ou condições), mas NÃO cite km/cor/câmbio/preço/ano sem antes consultar vehicle_details do carro selecionado. Responda curto e humano, sem atributos.";
-  // P0-B (audit trava de contexto): o TURNO ATUAL não pede foto? Então a resposta não pode ter send_media nem reasonCode
-  // de foto (o texto é checado após o render). Deny -> feedback ao MESMO cérebro (re-decide a busca/pergunta atual).
-  const photoTurn = isPhotoRequestBlock(args.leadMessage) || isPhotoMemoryQuestionBlock(args.leadMessage);
-  if (!photoTurn && (args.finalDecision.proposedEffects.some((e) => e.kind === "send_media") || reasonCodeIsPhotoSend(args.finalDecision.reasonCode))) {
+  const sendMediaKeys = args.finalDecision.proposedEffects.filter((e) => e.kind === "send_media").map((e) => e.vehicleKey).filter((k): k is string => typeof k === "string" && k !== "");
+  // P0-2 (audit Codex): em llmFirst, send_media exige understanding VÁLIDO DO CÉREBRO. Sem ele -> REQUIRED_TURN_UNDERSTANDING
+  // (retry); o fallback regex NUNCA autoriza mídia na produção.
+  if (args.requireBrain && sendMediaKeys.length > 0 && !(args.photoVU?.fromBrain && args.photoVU.trusted)) {
+    return { ok: false, feedback: "Para ENVIAR foto (send_media) você precisa declarar no MESMO passo um 'understanding' válido com requestedCapabilities incluindo 'send_photos' e uma evidence citando o TRECHO do bloco onde o cliente pediu foto. Sem isso, não envie mídia." };
+  }
+  // T2 (fonte única): a AUTORIDADE de enviar foto é a SEMÂNTICA (authorizesPhotoSend: capability send_photos com
+  // evidência PRÓPRIA que menciona foto, sem negação, não é memória) — nunca regex de frase. Recall nunca envia mídia.
+  const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain);
+  const photoRecall = isPhotoRecall(args.photoVU);
+  // P0-1 (audit Codex): CONFLITO — subjectValue do understanding não corresponde ao modelo ESCRITO pelo cliente ->
+  // entendimento INVÁLIDO. Nunca envia mídia; pede correção do subject (o claim escrito manda).
+  if (args.target.kind === "conflict" && (sendMediaKeys.length > 0 || photoAuthorized)) {
+    return { ok: false, feedback: "Seu 'understanding.subjectValue' NÃO corresponde ao modelo que o cliente ESCREVEU no bloco. O modelo do texto do cliente é a AUTORIDADE — corrija subject/subjectValue para ele antes de qualquer ação e NÃO envie foto de outro carro." };
+  }
+  if (!photoAuthorized && (sendMediaKeys.length > 0 || reasonCodeIsPhotoSend(args.finalDecision.reasonCode))) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
-  const brainEffects = isPhotoRequestBlock(args.leadMessage) ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
+  // P0-1 (audit Codex): a foto autorizada TEM de ser do ALVO do assunto (key ∈ candidateVehicleKeys verificados por
+  // modelo). Foto do carro ERRADO (ex.: pediu Kicks, resolveu Onix) -> REJEITA + feedback; nunca envia o carro errado.
+  if (photoAuthorized && sendMediaKeys.some((k) => !targetAcceptsKey(args.target, k))) {
+    const alvo = args.target.kind !== "conflict" && args.target.subjectModel ? `o ${args.target.subjectModel}` : "o carro que o cliente pediu";
+    return { ok: false, feedback: `A foto que você resolveu NÃO é de ${alvo}. Resolva vehicle_photos_resolve do vehicleKey CORRETO do assunto atual (o carro que o cliente citou/selecionou) — nunca envie a foto de outro veículo. Se houver mais de uma variante possível, pergunte QUAL antes de enviar.` };
+  }
+  const brainEffects = photoAuthorized ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
   const proposedEffects = ensureSendMessage(brainEffects);
+  // P0-2 (audit Codex): filtra select_vehicle_focus proposto pela LLM SEM capability select + evidência (descarta; o foco
+  // não muda). Ordinal determinístico válido (target=turn_ordinal do mesmo key) AINDA seleciona. Só em llmFirst (requireBrain).
+  const rawStateMutations = args.finalDecision.stateMutations ?? [];
+  const stateMutations = args.requireBrain
+    ? rawStateMutations.filter((m) => {
+        if (m.op !== "select_vehicle_focus") return true;
+        const ordinalOk = args.target.kind === "resolved" && args.target.source === "turn_ordinal" && args.target.vehicleKey === m.vehicle.key;
+        return ordinalOk || selectAuthorized(args.photoVU);
+      })
+    : rawStateMutations;
   const proposal: ProposedDecision = {
     proposedAction: deriveProposedAction(proposedEffects),
-    facts: [...(args.finalDecision.stateMutations ?? [])],
+    facts: [...stateMutations],
     proposedEffects,
     responsePlan: { guidance: args.finalDecision.responsePlan.guidance },
     reasonCode: args.finalDecision.reasonCode, reasonSummary: args.finalDecision.reasonSummary, confidence: args.finalDecision.confidence,
@@ -456,8 +501,9 @@ function authorFromBrainDraft(args: {
     if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
   }
-  // P0-B (audit): mesmo sem send_media/reasonCode, o TEXTO renderizado não pode PROMETER foto num turno que não pede foto.
-  if (!photoTurn && textPromisesPhoto(composed.text)) {
+  // T2: mesmo sem send_media/reasonCode, o TEXTO não pode PROMETER foto num turno que não autoriza foto (e não é recall,
+  // que legitimamente NOMEIA a foto lembrada). Guarda de OUTPUT (não classifica o turno) — a autoridade é photoAuthorized.
+  if (!photoAuthorized && !photoRecall && textPromisesPhoto(composed.text)) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
   // P0-2 (audit): a resposta ao lead NUNCA pode conter LITERALMENTE uma vehicleKey conhecida (chave/código interno).
@@ -469,7 +515,7 @@ function authorFromBrainDraft(args: {
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
   // COMPLETUDE (prompt-first): a resposta não pode IGNORAR um pedido explícito (horário/endereço/unidade/foto). Grounding
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending" });
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized });
   if (incomplete) return { ok: false, feedback: incomplete };
   return { ok: true, decision: decision0, composed, proposedEffects };
 }
@@ -569,6 +615,7 @@ function turnCompletenessFeedback(args: {
   readonly institutionalObs: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;
   readonly proposedEffects: readonly ProposedEffectPlan[];
   readonly pendingObjective: boolean;   // objetivo pendente (ex.: pagamento) -> policy pode ter prioridade sobre a foto
+  readonly photoRequested: boolean;     // T2 (fonte única): o turno autoriza foto pela semântica (não regex de frase)
 }): string | null {
   const normResp = normalizeText(args.composed.text);
   // Institucional: cada tópico PEDIDO tem que aparecer na resposta (valor ou ausência honesta), senão foi ignorado.
@@ -580,7 +627,7 @@ function turnCompletenessFeedback(args: {
   // CEDE quando há objetivo PENDENTE: uma policy de prioridade (ex.: POL-TRACK-001, responder pagamento não vira foto)
   // pode ter legitimamente redirecionado o turno — não reexigir a foto que a policy acabou de barrar.
   if (!args.pendingObjective
-      && isPhotoRequestBlock(args.leadMessage)
+      && args.photoRequested
       && !args.proposedEffects.some((e) => e.kind === "send_media")
       && !PHOTO_HONEST_ABSENCE_RX.test(normResp)) {
     return "O cliente pediu FOTO neste turno e a resposta não enviou (send_media) nem disse honestamente que não localizou. Resolva vehicle_photos_resolve do carro certo e inclua send_media com os photoIds — ou diga que não encontrou as fotos. NÃO responda só outro assunto ignorando o pedido de foto.";
@@ -598,36 +645,43 @@ function buildDeterministicPhotoResponse(args: {
   readonly facts: readonly QueryResult[];
   readonly identities: readonly RememberedVehicleIdentity[];
   readonly turnId: string;
-}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } | null {
-  if (!isPhotoRequestBlock(args.leadMessage)) return null;
+  readonly photoVU: ValidatedUnderstanding | null;   // P0-2: vU que autoriza foto (llmFirst=cérebro; senão fallback)
+  readonly requireBrain: boolean;
+  readonly target: TargetResolution;                 // P0-1: alvo do assunto (verificado por modelo)
+}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
+  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain)) return null;   // P0-2: em llmFirst sem cérebro NÃO envia (recuperação pergunta qual)
   const state = args.ctx.state;
   const factsArr = [...args.facts];
-  const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number) => {
+  const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
     const proposal: ProposedDecision = { proposedAction: action, facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode, reasonSummary, confidence };
     const post = PolicyEngine.postQuery(proposal, factsArr, args.ctx);
     if (hasDeny(post)) return null;
     const decision = finalize(args.turnId, proposal, post, factsArr);
-    return { decision, composed: { draft: { parts: [{ type: "text" as const, content: text }] }, text }, proposedEffects };
+    return { decision, composed: { draft: { parts: [{ type: "text" as const, content: text }] }, text }, proposedEffects, targetSource };
   };
-  const selRef = resolveSelectedVehicle(args.leadMessage, state, args.ctx.claimExtractor);
-  const targetKey = selRef?.key ?? state.vehicleContext.selected?.key ?? null;
+  // P0-1: o ALVO vem do ASSUNTO (ordinal/modelo verificado/pronome), NUNCA de um photo fact solto. Ambíguo/ausente -> pergunta.
+  const target = args.target;
   const hasList = (state.lastRenderedOfferContext?.items?.length ?? 0) > 0;
-  if (!targetKey) {
-    const text = hasList ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "Claro! De qual carro você quer ver as fotos?";
-    return build(ensureSendMessage([]), text, "clarify", "photo_clarify_which", "pedido de foto sem alvo resolvido", 0.5);
+  if (target.kind !== "resolved") {
+    const text = target.kind === "ambiguous"
+      ? `Temos mais de uma opção${target.subjectModel ? ` de ${target.subjectModel}` : ""}. De qual você quer as fotos? Me diz o número ou o ano.`
+      : (hasList ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "Claro! De qual carro você quer ver as fotos?");
+    return build(ensureSendMessage([]), text, "clarify", "photo_clarify_which", "pedido de foto sem alvo único do assunto", 0.5, target.kind === "ambiguous" ? "ambiguous" : "none");
   }
+  const targetKey = target.vehicleKey;
   const label = canonicalVehicleLabel(targetKey, args.facts, args.identities, state);
+  // P0-1: a foto SÓ vale se o vehicle_photos_resolve for do ALVO (key ∈ candidates). Fato de outro carro é IGNORADO.
   const photos = args.facts.find(
     (f): f is Extract<QueryResult, { ok: true; tool: "vehicle_photos_resolve" }> =>
-      f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === targetKey && f.data.photoIds.length > 0,
+      f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === targetKey && targetAcceptsKey(target, f.data.vehicleKey) && f.data.photoIds.length > 0,
   );
   if (photos) {
     const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: targetKey, photoIds: [...photos.data.photoIds] };
     const text = label ? `Aqui estão as fotos do ${label}. Quer que eu te passe mais detalhes dele?` : "Aqui estão as fotos que você pediu. Quer que eu te passe mais detalhes desse carro?";
-    return build(ensureSendMessage([media]), text, "send_photos", "send_vehicle_photos", "executor determinístico de foto (alvo resolvido + photoIds reais)", 0.9);
+    return build(ensureSendMessage([media]), text, "send_photos", "send_vehicle_photos", "executor determinístico de foto (alvo do assunto + photoIds reais)", 0.9, target.source);
   }
   const text = label ? `Não localizei as fotos do ${label} agora. Quer que eu te passe os detalhes dele por aqui?` : "Não localizei as fotos desse carro agora. Quer que eu te passe os detalhes dele por aqui?";
-  return build(ensureSendMessage([]), text, "clarify", "photo_unavailable", "pedido de foto sem photoIds resolvidos", 0.4);
+  return build(ensureSendMessage([]), text, "clarify", "photo_unavailable", "alvo resolvido mas sem photoIds do assunto", 0.4, target.source);
 }
 
 // ── P0 ROTEAMENTO POR DOMÍNIO (missão): RESPOSTA INSTITUCIONAL determinística. Se o lead pediu endereço/horário/loja e
@@ -669,6 +723,65 @@ function buildInstitutionalResponse(args: {
   const proposal: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode: "institutional_answer", reasonSummary: "resposta institucional determinística (fatos da tool)", confidence: 0.9 };
   const decision = finalize(args.turnId, proposal, PolicyEngine.postQuery(proposal, [], args.ctx), []);
   return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects };
+}
+
+// ── T5: RECUPERAÇÃO CONTEXTUAL. Só APÓS a falha do cérebro (esgotou passos OU deny repetido). Usa TurnUnderstanding +
+//    fatos REAIS do turno — NUNCA texto genérico ("não consegui confirmar"/"reformule"), NUNCA menu robótico fora de
+//    contexto. SEMPRE devolve algo aterrado. Não é um chatbot paralelo: atua só na falha e só com o que o turno tem. ──
+function buildContextualRecovery(args: {
+  readonly vU: ValidatedUnderstanding;
+  readonly leadMessage: string;
+  readonly facts: readonly QueryResult[];
+  readonly observations: readonly AgentToolObservation[];   // P1: diferenciar busca executada-vazia / falha / não-executada
+  readonly identities: readonly RememberedVehicleIdentity[];
+  readonly ctx: TurnContext;
+  readonly turnId: string;
+}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; recoveryReason: string; lastResort: boolean } {
+  const u = args.vU.understanding;
+  const state = args.ctx.state;
+  const factsArr = [...args.facts];
+  // lastResort = default GENÉRICO sem contexto (technical_fallback). Recuperações contextuais (oferta/qual/honesto) = false.
+  const mk = (draft: ResponseDraft, text: string, action: TurnAction, reasonCode: string, recoveryReason: string, lastResort = false) => {
+    const proposedEffects = ensureSendMessage([]);
+    const proposal: ProposedDecision = { proposedAction: action, facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode, reasonSummary: recoveryReason, confidence: 0.6 };
+    const decision = finalize(args.turnId, proposal, PolicyEngine.postQuery(proposal, factsArr, args.ctx), factsArr);
+    return { decision, composed: { draft, text } as RenderedResponse, proposedEffects, recoveryReason, lastResort };
+  };
+  const plain = (text: string, action: TurnAction, reasonCode: string, recoveryReason: string, lastResort = false) => mk({ parts: [{ type: "text", content: text }] }, text, action, reasonCode, recoveryReason, lastResort);
+  // NEGAÇÃO de foto ("não quero foto", "agora não"): ACOLHE e segue (não repergunta nada conhecido). Antes de tudo.
+  if (isPhotoDeclined(args.leadMessage)) return plain("Sem problema! Quando quiser as fotos ou mais detalhes é só me falar. 😊", "reply", "recovery_photo_declined", "negação de foto -> acolhe e segue");
+  // BUSCA (hint do entendimento OU há itens). P1: DIFERENCIA — executada com itens -> lista; executada 0 -> ausência REAL;
+  // tool FALHOU -> indisponibilidade temporária; NÃO executada -> nunca afirma ausência, pergunta específica.
+  const searchHint = u.primaryIntent === "search_stock" || u.requestedCapabilities.includes("stock_search") || factsArr.some((f) => f.ok && f.tool === "stock_search");
+  if (searchHint) {
+    const stockRanOk = factsArr.some((f) => f.ok && f.tool === "stock_search");
+    // P1 (audit Codex): QUALQUER falha REAL de stock_search = indisponibilidade — não só UPSTREAM. Exclui só erros de
+    // CONTROLE do engine (não são falha da tool).
+    const CONTROL_CODES = new Set(["REQUIRED_TOOL_MISSING", "DUP_TOOL", "FORBIDDEN", "REQUIRED_TURN_UNDERSTANDING"]);
+    const stockFailed = args.observations.some((o) => o.tool === "stock_search" && !o.ok && !CONTROL_CODES.has(o.error.code));
+    const itemKeys: string[] = [];
+    for (const f of factsArr) if (f.ok && f.tool === "stock_search") for (const v of f.data.items) if (!itemKeys.includes(v.vehicleKey)) itemKeys.push(v.vehicleKey);
+    if (itemKeys.length > 0) {
+      const draft: ResponseDraft = { parts: [{ type: "text", content: "Encontrei estas opções pra você:" }, { type: "vehicle_offer_list", vehicleKeys: itemKeys.slice(0, 6) }, { type: "text", content: "Quer ver as fotos de alguma?" }] };
+      try { return mk(draft, ResponseRenderer.render(draft, factsArr, state, args.identities), "reply", "recovery_offer", "busca com itens -> lista aterrada"); } catch { /* cai no honesto */ }
+    }
+    if (stockRanOk) return plain("Procurei aqui e não encontrei esse modelo no estoque no momento. Quer que eu procure algo parecido na mesma faixa de preço?", "clarify", "recovery_stock_empty", "busca executada com 0 itens -> ausência real + similar");
+    if (stockFailed) return plain("Tive uma instabilidade pra puxar o estoque agora. Me confirma o modelo que você procura que eu já verifico?", "clarify", "recovery_stock_failed", "tool de busca falhou -> indisponibilidade temporária");
+    return plain("Qual modelo ou tipo de carro você procura? Já busco no nosso estoque pra você.", "clarify", "recovery_stock_not_run", "nenhuma busca executada -> não afirma ausência, pergunta específica");
+  }
+  // DETALHE: com veículo selecionado -> pergunta qual atributo (sem inventar); sem veículo -> pergunta qual carro.
+  if (u.primaryIntent === "vehicle_detail" || u.requestedCapabilities.includes("vehicle_details")) {
+    const sel = state.vehicleContext.selected;
+    if (sel?.key) { const label = canonicalVehicleLabel(sel.key, factsArr, args.identities, state) ?? "esse carro"; return plain(`Sobre o ${label}, o que você quer saber — km, ano, preço ou condições? Já te confirmo.`, "clarify", "recovery_detail_attr", "detalhe sem fato -> pergunta o atributo"); }
+    return plain("De qual carro você quer os detalhes?", "clarify", "recovery_detail_no_vehicle", "detalhe sem veículo -> pergunta qual");
+  }
+  // FOTO sem alvo (o executor de foto não resolveu) -> pergunta qual (nunca envia mídia sem alvo).
+  if (u.primaryIntent === "request_photos" || u.requestedCapabilities.includes("send_photos")) {
+    const text = (state.lastRenderedOfferContext?.items?.length ?? 0) > 0 ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "De qual carro você quer ver as fotos?";
+    return plain(text, "clarify", "recovery_photo_which", "foto sem alvo -> pergunta qual");
+  }
+  // Default GENÉRICO (lastResort) — sem contexto acionável. É o ÚNICO caso marcado technical_fallback (não "reformule").
+  return plain("Me conta um pouco mais do que você procura que eu já te ajudo. 😊", "clarify", "recovery_ask_need", "sem contexto acionável -> pede o que procura", true);
 }
 
 // ── Turno central ────────────────────────────────────────────────────────────────────────────────────────────
@@ -750,9 +863,37 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let authoredDecision: TurnDecision | null = null;
       let authoredProposedEffects: ProposedEffectPlan[] | null = null;
       let responseSource: ResponseSource = singleAuthor ? "technical_fallback" : "legacy_compose";
+      let recoveryReason: string | null = null;                     // T6: motivo da recuperação contextual (observabilidade)
+      let targetResolutionSource: TargetResolutionSource | null = null;   // T6: como o alvo do turno foi resolvido
       let brainRetries = 0;
       const policyFeedbackLog: string[] = [];
+      // ── FONTE ÚNICA (audit Codex): SÓ o understanding DO CÉREBRO (fromBrain, evidência⊂bloco) autoriza ação comercial
+      //    (send_media/tool/foco). A 1ª compreensão válida TRAVA o assunto (reconcileUnderstanding). O fallback é HINT
+      //    conservador só p/ recuperação TEXTUAL — nunca autoriza. `knownModels` verifica o modelo do alvo (P0-1).
+      const fallbackUnderstanding = deriveFallbackUnderstanding(leadMessage, baseSignals, prepared.claimExtractor);
+      let lockedU: TurnUnderstanding | null = null;                 // base TRAVADA do turno (do cérebro)
+      const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true) : null);
+      const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false);
+      // key -> {marca,modelo} ESTRUTURADO (audit Codex P0): SÓ de fontes com modelo estruturado confiável — VehicleFact
+      // (stock_search/vehicle_details), oferta e identidade. NUNCA `selected.label` (texto livre; não infere modelo
+      // aproximado). A identidade do modelo é EXATA (catalog-utils.modelIdentityMatches), nunca substring.
+      const buildKnownModels = (): Map<string, KnownVehicleModel> => {
+        const m = new Map<string, KnownVehicleModel>();
+        for (const f of facts) { if (!f.ok) continue; if (f.tool === "stock_search") for (const v of f.data.items) m.set(v.vehicleKey, { marca: v.marca ?? null, modelo: v.modelo ?? null }); if (f.tool === "vehicle_details") m.set(f.data.vehicle.vehicleKey, { marca: f.data.vehicle.marca ?? null, modelo: f.data.vehicle.modelo ?? null }); }
+        for (const it of contextState.lastRenderedOfferContext?.items ?? []) m.set(it.vehicleKey, { marca: it.marca ?? null, modelo: it.modelo ?? null });
+        for (const id of identities) m.set(id.vehicleKey, { marca: id.marca ?? null, modelo: id.modelo ?? null });
+        return m;
+      };
+      const resolveTarget = (): TargetResolution => resolveTurnTarget({ understanding: brainVU()?.understanding ?? null, leadMessage, state: contextState, claimExtractor: ctx.claimExtractor, knownModels: buildKnownModels() });
+      // requireBrain = produção (central_active+llmFirst): só o cérebro autoriza foto. Sem llmFirst (replay/legado) o
+      // fallback validado autoriza (mantém a coerência de evidência de foto). photoVU escolhe a fonte por modo.
+      const requireBrain = llmFirst;
+      const photoVU = (): ValidatedUnderstanding | null => (llmFirst ? brainVU() : authoritativeVU());
+      const seenDenyFingerprints = new Set<string>();               // deny repetido -> recupera já (não gasta tentativas)
+      let repeatedDeny = false;
       const seenToolSigs = new Set<string>();
+      const COMMERCIAL_TOOLS = new Set(["stock_search", "vehicle_details", "vehicle_photos_resolve"]);
+      const systemDetailKeys = new Set<string>();                   // P0-2: keys cujo vehicle_details o ENGINE exigiu (grounding)
       // audit institucional: cache/observação TERMINAL por tópico. resolveInstitutional executa NO MÁXIMO 1x por
       // tópico (nunca repete a mesma chamada); NOT_CONFIGURED é terminal (ausência definitiva); READ_SOURCE_FAILURE
       // é falha técnica (permanece cacheada como tentada — não re-tenta, mas o cérebro pode degradar honestamente).
@@ -774,6 +915,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         try {
           step = await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout");
         } catch { break; } // falha técnica do cérebro -> sai do loop -> fallback seguro (nunca silêncio)
+        // Fonte única: captura+TRAVA o entendimento do turno (a 1ª compreensão válida é a base; refinamento só adiciona fato).
+        if (step.understanding) lockedU = reconcileUnderstanding(lockedU, step.understanding, leadMessage);
         if (step.kind === "final") {
           if (singleAuthor) {
             // audit institucional: garante UMA observação TERMINAL por tópico pedido no bloco ANTES de qualquer
@@ -786,7 +929,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               if (brainSteps + 1 < brainMaxSteps) continue; else break;
             }
           }
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst);
+          // T4: exigência de stock_search pela SEMÂNTICA do CÉREBRO (só brainVU força busca; fallback nunca força tool).
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && isStockSearchTurn(brainVU()));
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             observations.push({ tool: frame.signals.mentionsStore ? "tenant_business_info" : "stock_search", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
             continue;
@@ -796,17 +940,24 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             // B2 (audit): pergunta de atributo do SELECIONADO exige vehicle_details bem-sucedido do MESMO key ANTES
             // do final. Sem o fato -> força a consulta (retry); esgotou -> fallback degradado pós-loop.
             const needDetail = requireVehicleDetailBeforeFinal(frame, observations);
+            // P0-2 (exceção sistêmica TIPADA): necessidade de grounding do engine AUTORIZA vehicle_details do key selecionado
+            // (separada da intenção da LLM). Registra o key p/ o gate de tool liberar a consulta de aterramento.
+            if (needDetail) { const selKey = frame.workingMemory.selectedVehicle?.vehicleKey; if (selKey) systemDetailKeys.add(selKey); }
             if (needDetail && brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "vehicle_details", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: needDetail } }); continue; }
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTarget() });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
               break;
             }
             brainRetries += 1; policyFeedbackLog.push(authored.feedback);
+            // T5: fingerprint de deny REPETIDO -> não gasta as 3 tentativas idênticas; sai p/ RECUPERAÇÃO contextual.
+            const fp = denyFingerprint(authored.feedback);
+            if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
+            seenDenyFingerprints.add(fp);
             if (brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: authored.feedback } }); continue; }
             break;
           }
@@ -818,6 +969,16 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         // Allowlist: tool proibida NÃO executa (observação de erro; o cérebro segue com o que tem).
         if (!allowed.has(call.tool)) {
           observations.push({ tool: call.tool, ok: false, error: { code: "FORBIDDEN", message: `tool '${call.tool}' fora do allowlist` } });
+          continue;
+        }
+        // P0-2 (audit Codex): AUTORIZAÇÃO TIPADA POR TOOL — cada tool comercial exige a capability PRÓPRIA + evidência
+        // própria do CÉREBRO (stock_search->stock_search; vehicle_details->vehicle_details; vehicle_photos_resolve->
+        // send_photos). Exceção SISTÊMICA: vehicle_details do key que o engine exigiu p/ grounding (systemDetailKeys).
+        // Sem autorização -> rejeita (REQUIRED_TURN_UNDERSTANDING) e o cérebro re-emite. (tenant_business_info isento.)
+        const sysDetailOk = call.tool === "vehicle_details" && systemDetailKeys.has(((call.input as { vehicleKey?: string }).vehicleKey) ?? "");
+        if (singleAuthor && llmFirst && COMMERCIAL_TOOLS.has(call.tool) && !sysDetailOk && !toolCapabilityAuthorized(brainVU(), call.tool)) {
+          const capNeeded = call.tool === "vehicle_photos_resolve" ? "send_photos" : call.tool;
+          observations.push({ tool: call.tool, ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: `Para usar '${call.tool}' inclua NO MESMO passo um 'understanding' com requestedCapabilities contendo '${capNeeded}' e uma evidence (capability '${capNeeded}') citando o TRECHO LITERAL do bloco atual que justifica isso.` } });
           continue;
         }
         // Proíbe loop idêntico: mesma tool + mesmos args -> devolve o fato já obtido (nunca reexecuta).
@@ -874,28 +1035,33 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         if (authoredComposed && authoredDecision && authoredProposedEffects) {
           effectiveDecision = authoredDecision; composed = authoredComposed; proposedEffects = authoredProposedEffects;
         } else {
-          // P0-C (audit trava de contexto): ANTES do fallback genérico, EXECUTOR DETERMINÍSTICO de foto. Pedido de foto
-          // com alvo resolvido + vehicle_photos_resolve OK -> materializa send_media (nunca cai em technical_fallback).
-          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId });
+          // P0-C: EXECUTOR DETERMINÍSTICO de foto. SÓ com understanding do cérebro (P0-2) + alvo VERIFICADO do assunto
+          // (P0-1). Sem understanding OU foto do carro errado -> null (a recuperação pergunta qual; nunca envia errado).
+          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId, photoVU: photoVU(), requireBrain, target: resolveTarget() });
           if (detPhoto) {
-            responseSource = "deterministic_photo";
+            responseSource = "deterministic_photo"; targetResolutionSource = detPhoto.targetSource;
             effectiveDecision = detPhoto.decision; composed = detPhoto.composed; proposedEffects = detPhoto.proposedEffects;
             finalDecision = finalDecision ?? { reasonCode: detPhoto.decision.reasonCode, reasonSummary: "executor determinístico de foto", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
           } else {
             // P0 ROTEAMENTO POR DOMÍNIO: pergunta INSTITUCIONAL com tópico RESOLVIDO nunca vira technical_fallback —
-            // responde com os FATOS da tool (endereço/horário), honesto no ausente. Antes do fallback técnico.
+            // responde com os FATOS da tool (endereço/horário), honesto no ausente. Antes da recuperação.
             const detInst = buildInstitutionalResponse({ leadMessage, institutionalObs, ctx, turnId });
             if (detInst) {
               responseSource = "deterministic_institutional";
               effectiveDecision = detInst.decision; composed = detInst.composed; proposedEffects = detInst.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "institutional_answer", reasonSummary: "resposta institucional determinística", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
             } else {
-              responseSource = "technical_fallback";
-              composed = buildTechnicalFallback();
-              proposedEffects = ensureSendMessage([]);   // B3: nenhum efeito comercial original sobrevive (só a fala honesta)
-              const fbProposal: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects, responsePlan: { guidance: composed.text }, reasonCode: "technical_fallback", reasonSummary: "cérebro não produziu resposta aterrada no limite de passos", confidence: 0.3 };
-              effectiveDecision = finalize(turnId, fbProposal, PolicyEngine.postQuery(fbProposal, facts, ctx), facts);
-              finalDecision = finalDecision ?? { reasonCode: "technical_fallback", reasonSummary: "fallback técnico honesto", confidence: 0.3, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+              // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
+              // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
+              // como MARCADOR interno de degradação (o cérebro falhou); o TEXTO ao lead é sempre contextual/honesto.
+              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId });
+              // Recuperação CONTEXTUAL aterrada -> deterministic_recovery (texto útil, não "visível"); só o default genérico
+              // (lastResort) é technical_fallback. Ambas são degradação (o cérebro não autorou).
+              responseSource = rec.lastResort ? "technical_fallback" : "deterministic_recovery";
+              recoveryReason = repeatedDeny ? `repeated_deny:${rec.recoveryReason}` : rec.recoveryReason;
+              composed = rec.composed; proposedEffects = rec.proposedEffects;
+              effectiveDecision = rec.decision;
+              finalDecision = finalDecision ?? { reasonCode: "contextual_recovery", reasonSummary: rec.recoveryReason.slice(0, 120), confidence: 0.5, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
             }
           }
         }
@@ -911,7 +1077,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
           responseSource = "deterministic_recall";
         }
-        const degraded = responseSource === "technical_fallback";
+        const degraded = isDegradedSource(responseSource);
         // LLM-FIRST (missão): o engine NÃO gerencia objetivo de funil. `stripAllObjectiveMutations` garante que nenhum
         // objetivo de funil seja persistido (funil = contexto read-only; a LLM decide a condução). Fora do llm_first,
         // `reconcileObjectiveWithQuestion` continua persistindo o objetivo = pergunta REALMENTE enviada (legado).
@@ -1040,19 +1206,33 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const institutionalResolved = [...institutionalObs.entries()].map(([topic, obs]) => ({
         topic, status: (obs.ok ? "ok" : (obs.error.code === "NOT_CONFIGURED" ? "not_configured" : "failure")) as "ok" | "not_configured" | "failure",
       }));
+      const finalVU = authoritativeVU();   // T6: semântica autoritativa do turno (do cérebro OU fallback validado)
+      // T6: se houve send_media e o executor não registrou a fonte do alvo (foto AUTORADA pelo cérebro), registra aqui.
+      if (targetResolutionSource == null && proposedEffects.some((e) => e.kind === "send_media")) {
+        const tr = resolveTarget(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
+      }
 
       const events = [
         makeEvent({ conversationId, turnId, type: "turn_claimed", suffix: "claimed", payload: { eventIds: claimedEventIds }, at: cutoff }),
-        // Observabilidade (audit): responseSource distingue autoria; brainReason = intenção do cérebro (≠ texto
-        // enviado, que fica em response_composed); tools/selectedVehicleKey/policyFeedback p/ auditar o turno.
+        // Observabilidade (audit + T6 fonte única): responseSource distingue autoria; understanding = semântica do turno;
+        // previous/resolved vehicleKey + targetResolutionSource auditam a precedência de alvo; recoveryReason + feedback
+        // por tentativa auditam a recuperação. tools p/ o v3_query_log do central_active.
         makeEvent({ conversationId, turnId, type: "decision_final", suffix: "decision", payload: {
           action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId),
-          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded: responseSource === "technical_fallback", brainRetries,
-          brainReason: finalDecision.reasonSummary.slice(0, 160), selectedVehicleKey: contextState.vehicleContext.selected?.key ?? null,
-          toolsExecuted: toolTelemetry.map((t) => t.tool), policyFeedback: policyFeedbackLog.slice(0, 3),
+          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded: isDegradedSource(responseSource), brainRetries,
+          brainReason: finalDecision.reasonSummary.slice(0, 160),
+          // T6: semântica do turno (fonte única) + resolução de alvo.
+          primaryIntent: finalVU.understanding.primaryIntent, subject: finalVU.understanding.subject,
+          subjectSource: finalVU.understanding.subjectSource, understandingTrusted: finalVU.trusted,
+          understandingFromBrain: lockedU != null,
+          evidence: finalVU.understanding.evidence.slice(0, 4).map((e) => ({ capability: e.capability ?? null, quote: e.quote.slice(0, 48) })),
+          previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null,
+          resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
+          targetResolutionSource, recoveryReason,
+          toolsExecuted: toolTelemetry.map((t) => t.tool), policyFeedback: policyFeedbackLog.slice(0, 5),
           institutionalResolved, droppedSelectKeys,
         }, at: cutoff }),
-        makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded: responseSource === "technical_fallback" }, at: cutoff }),
+        makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded: isDegradedSource(responseSource) }, at: cutoff }),
       ];
 
       // ── COMMIT ATÔMICO: state (com WorkingMemory embutida) + decisão + eventos + outbox na MESMA UnitOfWork CAS. ──
@@ -1071,7 +1251,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       return {
         status: "committed", turnId, claimedEventIds, decision, composedText: composed.text, terminalSafe,
         facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, brainSteps, responseSource,
-        degraded: responseSource === "technical_fallback", institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
+        degraded: isDegradedSource(responseSource), institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
+        understanding: finalVU.understanding, understandingFromBrain: lockedU != null, targetResolutionSource,
+        resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
+        previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null, recoveryReason,
       };
     } catch (err) {
       await persistence.releaseClaim(claimedEventIds, workerId, turnId);

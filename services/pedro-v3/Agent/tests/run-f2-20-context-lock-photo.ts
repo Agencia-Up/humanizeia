@@ -217,7 +217,7 @@ async function main(): Promise<void> {
     const { turn } = await makeConv("E3");
     const c = await turn("Você tem SUV?", "ambiguous", () => finPhotoPromise());
     check("[E3] cérebro só promete foto -> NUNCA envia mídia e reasonCode não é de foto", !c.hasMedia && !/photo|foto/i.test(c.reasonCode), `media=${c.hasMedia} reason=${c.reasonCode}`);
-    check("[E3] resposta não promete foto (fallback técnico honesto/degradado)", !has(c.outbox, "aqui estao as fotos") && (c.src === "technical_fallback" || c.src === "brain_final" || c.src === "brain_retry"), `src=${c.src} text="${c.outbox}"`);
+    check("[E3] resposta não promete foto (recuperação honesta/degradado)", !has(c.outbox, "aqui estao as fotos") && (c.src === "technical_fallback" || c.src === "deterministic_recovery" || c.src === "brain_final" || c.src === "brain_retry"), `src=${c.src} text="${c.outbox}"`);
   }
 
   // ── E4: "me manda foto do 2" SEM lista anterior -> pede qual veículo, SEM consultar arbitrário. ───────────────────

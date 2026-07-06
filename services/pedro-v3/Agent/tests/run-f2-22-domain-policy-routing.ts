@@ -16,7 +16,8 @@ import { redact } from "../src/domain/effect-intent.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
 import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-info.ts";
-import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall } from "../src/domain/agent-brain.ts";
+import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall, AgentBrainPort, AgentToolObservation, TurnFrame } from "../src/domain/agent-brain.ts";
+import { deriveFallbackUnderstanding } from "../src/engine/turn-understanding.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 
@@ -62,7 +63,7 @@ type Cap = { outbox: string; src: string; degraded: boolean; committed: boolean;
 const has = (s: string, n: string): boolean => normalizeText(s).includes(normalizeText(n));
 const slotSummary = (state: unknown): Record<string, string> => { const out: Record<string, string> = {}; const slots = (state as { slots?: Record<string, { status?: string; value?: unknown }> })?.slots ?? {}; for (const k of Object.keys(slots)) { const s = slots[k]; if (s?.status && s.status !== "unknown") out[k] = `${s.status}:${JSON.stringify(s.value ?? null)}`; } return out; };
 
-async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, businessInfo: TenantBusinessInfoSource, convId: string, seq: number, lead: string, relation: TurnRelation, script: AgentBrainStep[] | BrainResponder): Promise<Cap> {
+async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: UnderstandingBrain, preparer: RelPreparer, businessInfo: TenantBusinessInfoSource, convId: string, seq: number, lead: string, relation: TurnRelation, script: AgentBrainStep[] | BrainResponder): Promise<Cap> {
   executed.length = 0; preparer.relation = relation;
   if (typeof script === "function") brain.setResponder(script); else brain.setTurnScript(script);
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
@@ -87,9 +88,22 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     policyFeedback: r.status === "committed" ? [...r.policyFeedback] : [],
   };
 }
+// Anexa understanding DERIVADO do lead (trusted) aos steps sem ele — F2.22 testa roteamento/completude, não o gate P0-2.
+class UnderstandingBrain implements AgentBrainPort {
+  constructor(private readonly inner: ScriptedAgentBrain) {}
+  setResponder(fn: BrainResponder): void { this.inner.setResponder(fn); }
+  setTurnScript(steps: AgentBrainStep[]): void { this.inner.setTurnScript(steps); }
+  async proposeNextStep(frame: TurnFrame, obs: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const step = await this.inner.proposeNextStep(frame, obs);
+    if (step.understanding) return step;
+    let u = deriveFallbackUnderstanding(frame.block, frame.signals, extractor);
+    if (!u.evidence || u.evidence.length === 0) { const w = frame.block.trim().split(/\s+/).slice(0, 2).join(" ") || frame.block.slice(0, 3); u = { ...u, evidence: [{ quote: w }] }; }
+    return { ...step, understanding: u };
+  }
+}
 let seq0 = 0;
 function conv(businessInfo: TenantBusinessInfoSource, seedState?: Partial<ConversationState>) {
-  const brain = new ScriptedAgentBrain(); const preparer = new RelPreparer(); const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
+  const brain = new UnderstandingBrain(new ScriptedAgentBrain()); const preparer = new RelPreparer(); const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
   const id = `conv-${seq0++}`;
   let s = 0;
   const seed = async (): Promise<void> => { if (!seedState) return; const base = { ...createInitialState({ conversationId: id, tenantId: TENANT, agentId: AGENT, leadId: null, now: NOW }), ...seedState } as ConversationState; const uow = persistence.begin(); uow.casState(id, 0, base); if (!(await uow.commit()).ok) throw new Error("seed_failed"); };
