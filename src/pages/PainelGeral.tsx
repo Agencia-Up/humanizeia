@@ -19,7 +19,7 @@
 // Sidebar: grupo "Painel", item "Painel Geral".
 // ============================================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
@@ -31,7 +31,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Loader2, Users, Trophy, ArrowRightLeft, BarChart3, Bot, Layers,
   Calendar as CalendarIcon, TrendingUp, CheckCircle2, AlertCircle,
-  UserCheck, Megaphone, Target, Clock, Sparkles,
+  UserCheck, Megaphone, Target, Clock, Sparkles, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -43,7 +43,7 @@ import { useCommercialDashboardData, CompactKpi, FunnelPanel } from './Commercia
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
-type PeriodPreset = 'today' | 'yesterday' | '7days' | '30days' | 'custom';
+type FiltroMode = 'mes' | 'ano' | 'custom';
 
 interface CustomRange { start: string; end: string }
 
@@ -96,31 +96,55 @@ interface CombinedData {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function resolveDateRange(preset: PeriodPreset, custom: CustomRange): { start: string; end: string; label: string } {
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function mesLabel(d: Date): string { return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
+function primeiroDiaMes(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), 1); }
+function ultimoDiaMes(d: Date): Date { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
+
+// Lente principal = MÊS. Range em horário local (BRT do navegador do lojista).
+function resolveDateRange(mode: FiltroMode, anchor: Date, custom: CustomRange): { start: string; end: string; label: string } {
   const now = new Date();
-  if (preset === 'today') {
-    const s = new Date(now); s.setHours(0, 0, 0, 0);
-    const e = new Date(now); e.setHours(23, 59, 59, 999);
-    return { start: s.toISOString(), end: e.toISOString(), label: 'Hoje' };
+  if (mode === 'ano') {
+    const s = new Date(anchor.getFullYear(), 0, 1); s.setHours(0, 0, 0, 0);
+    const isAtual = anchor.getFullYear() === now.getFullYear();
+    const e = isAtual ? new Date(now) : new Date(anchor.getFullYear(), 11, 31);
+    e.setHours(23, 59, 59, 999);
+    return { start: s.toISOString(), end: e.toISOString(), label: String(anchor.getFullYear()) };
   }
-  if (preset === 'yesterday') {
-    const s = new Date(now); s.setDate(s.getDate() - 1); s.setHours(0, 0, 0, 0);
-    const e = new Date(now); e.setDate(e.getDate() - 1); e.setHours(23, 59, 59, 999);
-    return { start: s.toISOString(), end: e.toISOString(), label: 'Ontem' };
+  if (mode === 'custom') {
+    const s = custom.start ? new Date(custom.start + 'T00:00:00') : new Date();
+    const e = custom.end   ? new Date(custom.end   + 'T23:59:59.999') : new Date();
+    return { start: s.toISOString(), end: e.toISOString(), label: 'Personalizado' };
   }
-  if (preset === '7days') {
-    const s = new Date(now); s.setDate(s.getDate() - 6); s.setHours(0, 0, 0, 0);
-    const e = new Date(now); e.setHours(23, 59, 59, 999);
-    return { start: s.toISOString(), end: e.toISOString(), label: 'Últimos 7 dias' };
+  // mês
+  const s = primeiroDiaMes(anchor); s.setHours(0, 0, 0, 0);
+  const isAtual = anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
+  const e = isAtual ? new Date(now) : ultimoDiaMes(anchor);
+  e.setHours(23, 59, 59, 999);
+  return { start: s.toISOString(), end: e.toISOString(), label: mesLabel(anchor) };
+}
+
+// Período anterior de MESMO tamanho (comparação justa). mês: mesmo nº de dias no mês−1.
+function resolvePrevRange(mode: FiltroMode, anchor: Date, atual: { start: string; end: string }): { start: string; end: string; label: string } {
+  const aStart = new Date(atual.start); const aEnd = new Date(atual.end);
+  if (mode === 'mes') {
+    const prevAnchor = new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1);
+    const ps = primeiroDiaMes(prevAnchor); ps.setHours(0, 0, 0, 0);
+    const diasNoAtual = Math.max(0, Math.round((aEnd.getTime() - aStart.getTime()) / 86400000));
+    const pe = new Date(ps); pe.setDate(pe.getDate() + diasNoAtual); pe.setHours(23, 59, 59, 999);
+    const fimPrev = ultimoDiaMes(prevAnchor); fimPrev.setHours(23, 59, 59, 999);
+    return { start: ps.toISOString(), end: (pe > fimPrev ? fimPrev : pe).toISOString(), label: mesLabel(prevAnchor) };
   }
-  if (preset === '30days') {
-    const s = new Date(now); s.setDate(s.getDate() - 29); s.setHours(0, 0, 0, 0);
-    const e = new Date(now); e.setHours(23, 59, 59, 999);
-    return { start: s.toISOString(), end: e.toISOString(), label: 'Últimos 30 dias' };
-  }
-  const s = custom.start ? new Date(custom.start + 'T00:00:00') : new Date();
-  const e = custom.end   ? new Date(custom.end   + 'T23:59:59.999') : new Date();
-  return { start: s.toISOString(), end: e.toISOString(), label: 'Personalizado' };
+  const durMs = aEnd.getTime() - aStart.getTime();
+  const pe = new Date(aStart.getTime() - 1);
+  const ps = new Date(pe.getTime() - durMs);
+  return { start: ps.toISOString(), end: pe.toISOString(), label: mode === 'ano' ? String(anchor.getFullYear() - 1) : 'período anterior' };
+}
+
+// Variação % vs período anterior. null = sem base (anterior = 0) -> mostra "novo".
+function pctDelta(atual: number, anterior: number): number | null {
+  if (!anterior) return null;
+  return Math.round(((atual - anterior) / anterior) * 100);
 }
 
 function toDateInput(d: Date): string {
@@ -198,10 +222,14 @@ function diasEntre(criado?: string | null, venda?: string | null): number | null
 // ─── MetricCard local (consistente com outros painéis) ─────────────────────
 
 function MetricCard({
-  label, value, sub, icon: Icon, color,
+  label, value, sub, icon: Icon, color, delta, deltaGoodWhenUp = true, deltaLabel,
 }: {
   label: string; value: string | number; sub?: string; icon: React.ElementType; color: string;
+  delta?: number | null; deltaGoodWhenUp?: boolean; deltaLabel?: string;
 }) {
+  const temDelta = typeof delta === 'number';
+  const subiu = temDelta && (delta as number) >= 0;
+  const bom = temDelta && (subiu === deltaGoodWhenUp);
   return (
     <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-card p-4 shadow-sm shadow-black/20 transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-md hover:shadow-black/30">
       {/* hairline de brilho no topo — toque premium */}
@@ -216,6 +244,14 @@ function MetricCard({
           <Icon className="h-5 w-5" />
         </div>
       </div>
+      {temDelta ? (
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold">
+          <span className={bom ? 'text-emerald-400' : 'text-red-400'}>{subiu ? '▲' : '▼'} {subiu ? '+' : ''}{delta}%</span>
+          <span className="font-normal text-muted-foreground">{deltaLabel || 'vs mês ant.'}</span>
+        </div>
+      ) : delta === null ? (
+        <div className="mt-2 text-[11px] font-medium text-muted-foreground">novo · sem base no período anterior</div>
+      ) : null}
     </div>
   );
 }
@@ -226,20 +262,37 @@ export default function PainelGeral() {
   const { user } = useAuth();
   const { isSeller, masterUserId, memberIds, loading: profileLoading } = useSellerProfile(user?.id);
 
-  const [period, setPeriod] = useState<PeriodPreset>('30days');
+  const [mode, setMode] = useState<FiltroMode>('mes');
+  const [anchorMonth, setAnchorMonth] = useState<Date>(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [customRange, setCustomRange] = useState<CustomRange>(() => {
-    const today = new Date(); const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 29);
-    return { start: toDateInput(weekAgo), end: toDateInput(today) };
+    const d = new Date(); const first = new Date(d.getFullYear(), d.getMonth(), 1);
+    return { start: toDateInput(first), end: toDateInput(d) };
   });
   const [data, setData] = useState<CombinedData | null>(null);
+  const [deltas, setDeltas] = useState<{ vendas: number | null; atendidos: number | null; conversao: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  // Só a 1ª carga mostra o spinner de tela cheia; trocar de filtro NÃO remonta (fix do "recarregar").
+  const hasLoadedOnce = useRef(false);
   // Realtime: incrementa pra forçar o load() a rodar de novo quando um lead/venda muda.
   const [reloadTrigger, setReloadTrigger] = useState(0);
   // Filtro GLOBAL de vendedor (só master): re-escopa o painel inteiro pra um vendedor.
   // null = todos (loja). Vendedor logado não usa (já vê só os próprios dados).
   const [globalSellerId, setGlobalSellerId] = useState<string | null>(null);
 
-  const dateRange = resolveDateRange(period, customRange);
+  const dateRange = resolveDateRange(mode, anchorMonth, customRange);
+  const prevRange = resolvePrevRange(mode, anchorMonth, dateRange);
+
+  // Helpers do filtro de mês
+  const _hoje = new Date();
+  const mesAtualAnchor = new Date(_hoje.getFullYear(), _hoje.getMonth(), 1);
+  const ehMesAtual = (a: Date) => a.getFullYear() === mesAtualAnchor.getFullYear() && a.getMonth() === mesAtualAnchor.getMonth();
+  const ehMesPassado = (a: Date) => { const p = new Date(_hoje.getFullYear(), _hoje.getMonth() - 1, 1); return a.getFullYear() === p.getFullYear() && a.getMonth() === p.getMonth(); };
+  const aplicarPreset = (id: 'este_mes' | 'mes_passado' | 'este_ano' | 'custom') => {
+    if (id === 'este_mes') { setMode('mes'); setAnchorMonth(mesAtualAnchor); }
+    else if (id === 'mes_passado') { setMode('mes'); setAnchorMonth(new Date(_hoje.getFullYear(), _hoje.getMonth() - 1, 1)); }
+    else if (id === 'este_ano') { setMode('ano'); setAnchorMonth(mesAtualAnchor); }
+    else { setMode('custom'); }
+  };
 
   // [Unificado] Dados extras do antigo Dashboard (funis, alertas, origem,
   // transferencias, retomadas), no MESMO periodo selecionado aqui.
@@ -523,6 +576,32 @@ export default function PainelGeral() {
           })
           .sort((a, b) => b.total - a.total);
 
+        // ── Comparação: período anterior de mesmo tamanho (mês−1) — contagens leves ──
+        try {
+          let qV = (supabase as any).from('comercial_vendas').select('id', { count: 'exact', head: true })
+            .eq('user_id', ownerId)
+            .gte('data_venda', toDateInput(new Date(prevRange.start)))
+            .lte('data_venda', toDateInput(new Date(prevRange.end)));
+          if (isSeller) qV = qV.in('seller_id', safeIds);
+          let qP = (supabase as any).from('ai_crm_leads').select('id', { count: 'exact', head: true })
+            .eq('user_id', ownerId).not('assigned_to_id', 'is', null)
+            .gte('created_at', prevRange.start).lte('created_at', prevRange.end);
+          if (isSeller) qP = qP.in('assigned_to_id', safeIds);
+          let qM = (supabase as any).from('crm_leads').select('id', { count: 'exact', head: true })
+            .eq('user_id', ownerId).not('assigned_to', 'is', null)
+            .gte('created_at', prevRange.start).lte('created_at', prevRange.end);
+          if (isSeller) qM = qM.in('assigned_to', safeIds);
+          const [rV, rP, rM] = await Promise.all([qV, qP, qM]);
+          const prevVendas = rV.count || 0;
+          const prevAtend = (rP.count || 0) + (rM.count || 0);
+          const prevConv = prevAtend > 0 ? Math.round((prevVendas / prevAtend) * 100) : 0;
+          if (!cancelled) setDeltas({
+            vendas: pctDelta(vendasTotal, prevVendas),
+            atendidos: pctDelta(atribuidos, prevAtend),
+            conversao: pctDelta(conversao, prevConv),
+          });
+        } catch { if (!cancelled) setDeltas(null); }
+
         setData({
           pedro, marcos,
           combined: {
@@ -538,13 +617,13 @@ export default function PainelGeral() {
       } catch (err) {
         console.error('[PainelGeral] erro:', err);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setLoading(false); hasLoadedOnce.current = true; }
       }
     }
 
     load();
     return () => { cancelled = true; };
-  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end, reloadTrigger, globalSellerId]);
+  }, [user?.id, profileLoading, isSeller, masterUserId, dateRange.start, dateRange.end, prevRange.start, reloadTrigger, globalSellerId]);
 
   // ── Realtime: atualiza o painel quando muda lead (Pedro/Marcos) ou venda.
   // Recarrega via reloadTrigger (debounce 1s pra agrupar bursts). Escopo = loja.
@@ -562,7 +641,9 @@ export default function PainelGeral() {
     return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel); };
   }, [user?.id, profileLoading, isSeller, masterUserId]);
 
-  if (loading || !data) {
+  // Spinner de tela cheia SÓ na 1ª carga (ou se ainda não há dados). Trocar de
+  // filtro NÃO remonta — mostra os cards atuais + um "atualizando…" inline.
+  if ((loading && !hasLoadedOnce.current) || !data) {
     return (
       <MainLayout>
         <div className="flex items-center justify-center py-24">
@@ -617,32 +698,46 @@ export default function PainelGeral() {
 
           {/* Filtro de período */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Período</span>
-            <div className="flex items-center gap-1 bg-card/60 rounded-lg p-1 border border-border/50">
+            {/* Navegador de mês — lente principal */}
+            {mode === 'mes' && (
+              <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-card/60 p-1">
+                <button onClick={() => setAnchorMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted/50 hover:text-foreground" title="Mês anterior">
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="min-w-[128px] text-center text-sm font-semibold">{mesLabel(anchorMonth)}</span>
+                <button onClick={() => setAnchorMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+                  disabled={ehMesAtual(anchorMonth)}
+                  className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted/50 hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent" title="Próximo mês">
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            {/* Presets de período (foco no mês) */}
+            <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-card/60 p-1">
               {([
-                { id: 'today',     label: 'Hoje' },
-                { id: 'yesterday', label: 'Ontem' },
-                { id: '7days',     label: '7 dias' },
-                { id: '30days',    label: '30 dias' },
-                { id: 'custom',    label: 'Custom' },
+                { id: 'este_mes',    label: 'Este mês' },
+                { id: 'mes_passado', label: 'Mês passado' },
+                { id: 'este_ano',    label: 'Este ano' },
+                { id: 'custom',      label: 'Personalizado' },
               ] as const).map(opt => {
-                const active = period === opt.id;
+                const active =
+                  (opt.id === 'este_mes'    && mode === 'mes' && ehMesAtual(anchorMonth)) ||
+                  (opt.id === 'mes_passado' && mode === 'mes' && ehMesPassado(anchorMonth)) ||
+                  (opt.id === 'este_ano'    && mode === 'ano') ||
+                  (opt.id === 'custom'      && mode === 'custom');
                 return (
-                  <button
-                    key={opt.id}
-                    onClick={() => setPeriod(opt.id)}
-                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
-                      active
-                        ? 'bg-primary/15 text-primary border border-primary/30'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'
-                    }`}
-                  >
+                  <button key={opt.id} onClick={() => aplicarPreset(opt.id)}
+                    className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${active ? 'bg-primary/15 text-primary border border-primary/30' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent'}`}>
                     {opt.label}
                   </button>
                 );
               })}
             </div>
-            {period === 'custom' && (
+            {loading && hasLoadedOnce.current && (
+              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> atualizando…</span>
+            )}
+            {mode === 'custom' && (
               <div className="flex items-center gap-1.5 text-xs">
                 {/* Sem min/max: o calendário nativo DESABILITA datas fora do limite e o
                     clique do usuário não aplica nada (parece que "não filtra"). Em vez de
@@ -696,11 +791,11 @@ export default function PainelGeral() {
 
           {/* Resumo do funil (período) */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <MetricCard label="Atendidos" value={combined.atribuidos} sub="leads atribuídos a vendedor" icon={UserCheck} color="bg-blue-500/15 text-blue-400" />
+            <MetricCard label="Atendidos" value={combined.atribuidos} sub="leads atribuídos a vendedor" icon={UserCheck} color="bg-blue-500/15 text-blue-400" delta={deltas?.atendidos} deltaLabel={`vs ${prevRange.label}`} />
             <MetricCard label="Qualificados" value={combined.qualificados} sub={`${combined.pctQualificados}% do total`} icon={CheckCircle2} color="bg-emerald-500/15 text-emerald-400" />
             <MetricCard label="Perdidos" value={combined.perdidos} sub="marcados como perdido" icon={AlertCircle} color="bg-red-500/15 text-red-400" />
-            <MetricCard label="Vendas" value={combined.vendas} sub="vendas concluídas" icon={TrendingUp} color="bg-violet-500/15 text-violet-400" />
-            <MetricCard label="Conversão média" value={`${combined.conversao}%`} sub="vendas / atendidos" icon={Target} color="bg-amber-500/15 text-amber-400" />
+            <MetricCard label="Vendas" value={combined.vendas} sub="vendas concluídas" icon={TrendingUp} color="bg-violet-500/15 text-violet-400" delta={deltas?.vendas} deltaLabel={`vs ${prevRange.label}`} />
+            <MetricCard label="Conversão média" value={`${combined.conversao}%`} sub="vendas / atendidos" icon={Target} color="bg-amber-500/15 text-amber-400" delta={deltas?.conversao} deltaLabel={`vs ${prevRange.label}`} />
             <MetricCard label="Tempo até vender" value={combined.tempoMedioDias > 0 ? `${combined.tempoMedioDias} d` : '—'} sub="média lead → venda" icon={Clock} color="bg-cyan-500/15 text-cyan-400" />
           </div>
 
