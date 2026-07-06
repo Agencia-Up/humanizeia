@@ -54,9 +54,17 @@ function periodBounds(period: Period, now: number, cs: string, ce: string): { st
   if (period === 'semana') return { start: now - 7 * 86400000, end: now };
   if (period === 'mes') return { start: now - 30 * 86400000, end: now };
   if (period === 'custom') {
-    const start = cs ? new Date(`${cs}T00:00:00.000-03:00`).getTime() : null;
-    const end = ce ? new Date(`${ce}T23:59:59.999-03:00`).getTime() : now;
-    return { start, end };
+    // 1 data marcada = aquele dia; 2 datas = intervalo (ordem normalizada); nenhuma
+    // = tudo até agora. Antes, marcar só uma ponta jogava a outra pra "agora"/"tudo"
+    // e puxava um período largo mesmo com uma data só selecionada.
+    const sk = cs || ce, ek = ce || cs;
+    if (!sk && !ek) return { start: null, end: now };
+    let s = sk, e = ek;
+    if (s > e) { const t = s; s = e; e = t; }
+    return {
+      start: new Date(`${s}T00:00:00.000-03:00`).getTime(),
+      end: new Date(`${e}T23:59:59.999-03:00`).getTime(),
+    };
   }
   return { start: null, end: now }; // tudo
 }
@@ -196,11 +204,11 @@ export function BroadcastDashboard({ campaigns, userId }: { campaigns: WACampaig
         </div>
         {period === 'custom' && (
           <div className="flex items-center gap-1.5">
-            {/* Sem min/max (datas fora do limite ficam desabilitadas no calendário e o clique não aplica);
-                a outra ponta se ajusta quando as datas se cruzam. */}
-            <Input type="date" value={customStart} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomStart(v); if (customEnd && customEnd < v) setCustomEnd(v); }} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
+            {/* Cada campo mexe só na própria ponta; periodBounds trata 1 data como dia
+                único e normaliza a ordem, então uma seleção só não puxa período largo. */}
+            <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
             <span className="text-xs text-muted-foreground">até</span>
-            <Input type="date" value={customEnd} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomEnd(v); if (customStart && customStart > v) setCustomStart(v); }} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
+            <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="h-8 text-xs w-36 [&::-webkit-calendar-picker-indicator]:invert" />
           </div>
         )}
         <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 sm:ml-auto" onClick={fetchData} disabled={loading}>

@@ -118,9 +118,17 @@ function resolveDateRange(preset: PeriodPreset, custom: CustomRange): { start: s
     const e = new Date(now); e.setHours(23, 59, 59, 999);
     return { start: s.toISOString(), end: e.toISOString(), label: 'Últimos 30 dias' };
   }
-  const s = custom.start ? new Date(custom.start + 'T00:00:00') : new Date();
-  const e = custom.end   ? new Date(custom.end   + 'T23:59:59.999') : new Date();
-  return { start: s.toISOString(), end: e.toISOString(), label: 'Personalizado' };
+  // Custom aceita 1 data (dia único) OU 2 datas (intervalo). Se o usuário marca só
+  // uma ponta, a outra assume o MESMO dia — senão ficava no default largo e "puxava
+  // o período inteiro mesmo selecionando uma data só". Ordem normalizada (fim < início
+  // vira intervalo válido). Sem nenhuma data marcada → hoje.
+  const nowKey = toDateInput(now);
+  let sKey = custom.start || custom.end || nowKey;
+  let eKey = custom.end   || custom.start || nowKey;
+  if (sKey > eKey) { const tmp = sKey; sKey = eKey; eKey = tmp; }
+  const s = new Date(sKey + 'T00:00:00');
+  const e = new Date(eKey + 'T23:59:59.999');
+  return { start: s.toISOString(), end: e.toISOString(), label: sKey === eKey ? 'Personalizado (1 dia)' : 'Personalizado' };
 }
 
 function toDateInput(d: Date): string {
@@ -227,10 +235,10 @@ export default function PainelGeral() {
   const { isSeller, masterUserId, memberIds, loading: profileLoading } = useSellerProfile(user?.id);
 
   const [period, setPeriod] = useState<PeriodPreset>('30days');
-  const [customRange, setCustomRange] = useState<CustomRange>(() => {
-    const today = new Date(); const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 29);
-    return { start: toDateInput(weekAgo), end: toDateInput(today) };
-  });
+  // Começa VAZIO: ao abrir o Custom o usuário escolhe as datas do zero (1 dia ou
+  // intervalo). Pré-preencher com "últimos 30 dias" fazia parecer que uma seleção
+  // única "puxava o período inteiro" (a outra ponta continuava no default largo).
+  const [customRange, setCustomRange] = useState<CustomRange>({ start: '', end: '' });
   const [data, setData] = useState<CombinedData | null>(null);
   const [loading, setLoading] = useState(true);
   // Realtime: incrementa pra forçar o load() a rodar de novo quando um lead/venda muda.
@@ -644,17 +652,19 @@ export default function PainelGeral() {
             </div>
             {period === 'custom' && (
               <div className="flex items-center gap-1.5 text-xs">
-                {/* Sem min/max: o calendário nativo DESABILITA datas fora do limite e o
-                    clique do usuário não aplica nada (parece que "não filtra"). Em vez de
-                    travar, a outra ponta se ajusta sozinha quando as datas se cruzam —
-                    escolher um início depois do fim vira período de 1 dia (e vice-versa). */}
+                {/* Cada campo mexe SÓ na própria ponta; sem min/max travando o outro.
+                    resolveDateRange trata 1 data como dia único e normaliza a ordem —
+                    então marcar uma data só filtra aquele dia (não o período inteiro). */}
                 <input type="date" value={customRange.start}
-                  onChange={e => { const v = e.target.value; if (!v) return; setCustomRange(r => ({ start: v, end: r.end && r.end >= v ? r.end : v })); }}
+                  onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))}
                   className="bg-card/60 border border-border/50 rounded px-2 py-1" />
                 <span className="text-muted-foreground">até</span>
                 <input type="date" value={customRange.end}
-                  onChange={e => { const v = e.target.value; if (!v) return; setCustomRange(r => ({ start: r.start && r.start <= v ? r.start : v, end: v })); }}
+                  onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))}
                   className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+                {!customRange.start && !customRange.end && (
+                  <span className="text-muted-foreground">escolha 1 data (dia) ou 2 (período)</span>
+                )}
               </div>
             )}
             {/* Filtro GLOBAL de vendedor — re-escopa o painel inteiro (só master). */}

@@ -94,10 +94,14 @@ function periodRange(period: Period, since: string, until: string): { since: num
     case 'yesterday': return { since: startOfToday - 86400000, until: startOfToday - 1 };
     case '7d': return { since: now - 7 * 86400000, until: now };
     case '30d': return { since: now - 30 * 86400000, until: now };
-    case 'custom': return {
-      since: since ? new Date(`${since}T00:00:00`).getTime() : 0,
-      until: until ? new Date(`${until}T23:59:59`).getTime() : now,
-    };
+    case 'custom': {
+      // 1 data marcada = aquele dia; 2 = intervalo (ordem normalizada); nenhuma = tudo.
+      const sk = since || until, ek = until || since;
+      if (!sk && !ek) return { since: 0, until: now };
+      let s = sk, e = ek;
+      if (s > e) { const t = s; s = e; e = t; }
+      return { since: new Date(`${s}T00:00:00`).getTime(), until: new Date(`${e}T23:59:59`).getTime() };
+    }
     case 'all': default: return { since: 0, until: now };
   }
 }
@@ -243,11 +247,11 @@ export function FeedbackAnalytics({ feedbacks, sellers, hideSellerFilter }: Feed
         {period === 'custom' && (
           <div className="flex items-center gap-2 flex-wrap text-[11px] mt-2">
             <span className="text-muted-foreground">De</span>
-            {/* Sem min/max (datas fora do limite ficam desabilitadas no calendário e o clique não aplica);
-                a outra ponta se ajusta quando as datas se cruzam. */}
-            <input type="date" value={customSince} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomSince(v); if (customUntil && customUntil < v) setCustomUntil(v); }} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
+            {/* Cada campo mexe só na própria ponta; periodRange trata 1 data como dia
+                único e normaliza a ordem, então uma seleção só não puxa período largo. */}
+            <input type="date" value={customSince} onChange={(e) => setCustomSince(e.target.value)} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
             <span className="text-muted-foreground">até</span>
-            <input type="date" value={customUntil} onChange={(e) => { const v = e.target.value; if (!v) return; setCustomUntil(v); if (customSince && customSince > v) setCustomSince(v); }} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
+            <input type="date" value={customUntil} onChange={(e) => setCustomUntil(e.target.value)} className="h-7 rounded-md border bg-background px-2 text-[11px]" />
           </div>
         )}
       </CardHeader>
