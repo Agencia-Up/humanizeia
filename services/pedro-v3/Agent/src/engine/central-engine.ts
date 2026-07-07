@@ -36,6 +36,7 @@ import {
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import { detectQuestionRepetition } from "./question-repetition.ts";
 import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, relaxSearchCascade, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
+import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
 import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey, resolveAdCandidateKeys } from "./ad-context.ts";
@@ -532,6 +533,8 @@ function authorFromBrainDraft(args: {
   readonly photoVU: ValidatedUnderstanding | null;   // FONTE ÚNICA: vU que autoriza foto (llmFirst=cérebro; senão fallback)
   readonly requireBrain: boolean;                    // P0-2: em llmFirst, send_media exige understanding do cérebro
   readonly target: TargetResolution;                 // P0-1: alvo do assunto (candidateVehicleKeys verificados por modelo)
+  readonly openingNeedsDiscovery?: boolean;          // PARTE A (missão): abertura sem alvo -> discovery, não pedir nome/telefone
+  readonly specificAdVehicle?: string | null;        // PARTE A (missão P0): entrada por anúncio ESPECÍFICO -> abertura DEVE falar do veículo
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -618,6 +621,28 @@ function authorFromBrainDraft(args: {
   // Valida contra fatos REAIS (identidade de memória NÃO aterra atributo/oferta).
   const gv = PolicyEngine.validateResponse(composed, realFacts, decision0, args.ctx);
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
+  // PARTE A (missão abertura SDR): abertura SEM alvo comercial (1º contato sem anúncio OU anúncio genérico) NÃO pode
+  // começar pedindo o NOME antes de descobrir a intenção comercial. Se o cérebro abriu pedindo nome sem descoberta (e sem
+  // listar/enviar carro) -> deny + feedback (o cérebro RE-AUTORA; LLM-first). Telefone já é barrado por POL-PHONE-KNOWN.
+  if (args.openingNeedsDiscovery
+      && !proposedEffects.some((e) => e.kind === "send_media")
+      && !draft.parts.some((p) => p.type === "vehicle_offer_list")
+      && asksLeadName(composed.text)
+      && !mentionsCommercialDiscovery(composed.text)) {
+    return { ok: false, feedback: "Esta é a ABERTURA e o cliente ainda não disse o que procura. NÃO comece pedindo o nome — faça uma DESCOBERTA comercial acolhedora: cumprimente, apresente-se conforme o seu prompt e pergunte o que ele procura (um modelo específico, um TIPO de carro — SUV/sedan/hatch/picape — ou uma FAIXA de preço). O nome vem só mais adiante, com naturalidade." };
+  }
+  // PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO — a abertura DEVE reconhecer/conduzir o VEÍCULO do anúncio (não uma
+  // saudação genérica pedindo nome/telefone/cidade/loja). INVARIANTE (o engine NÃO escreve a resposta, só NEGA): se o draft
+  // não mostra/lista/oferece o veículo E não cita a marca/modelo do anúncio conduzindo sobre ele -> deny + feedback (o
+  // cérebro RE-AUTORA). Aceita: send_media/vehicle_offer_list, OU citar o veículo + conduzir (foto/detalhe/condição/
+  // disponibilidade/pergunta sobre ele).
+  if (args.specificAdVehicle) {
+    const showsVehicle = proposedEffects.some((e) => e.kind === "send_media") || draft.parts.some((p) => p.type === "vehicle_offer_list");
+    const acknowledgesAndConducts = mentionsAdVehicle(composed.text, args.specificAdVehicle) && conductsAboutAdVehicle(composed.text);
+    if (!showsVehicle && !acknowledgesAndConducts) {
+      return { ok: false, feedback: `O cliente CHEGOU por um anúncio do ${args.specificAdVehicle}. NÃO abra com saudação genérica nem peça nome/telefone/cidade/loja: RECONHEÇA o ${args.specificAdVehicle} do anúncio e CONDUZA sobre ELE — cite a marca/modelo e ofereça fotos, detalhes, condições ou confirme a disponibilidade desse veículo.` };
+    }
+  }
   // COMPLETUDE (prompt-first): a resposta não pode IGNORAR um pedido explícito (horário/endereço/unidade/foto). Grounding
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
@@ -819,12 +844,40 @@ function buildDeterministicPhotoResponse(args: {
       f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === targetKey && targetAcceptsKey(target, f.data.vehicleKey) && f.data.photoIds.length > 0,
   );
   if (photos) {
-    const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: targetKey, photoIds: [...photos.data.photoIds] };
+    // PARTE B (missão): anexa mark_photos_sent para o photoLedger ACUMULAR os IDs enviados (dedup durável de "manda mais").
+    // Os photoIds aqui são o conjunto completo; a CURADORIA (cap 5 + dedup) é aplicada 1x no chokepoint capPhotoEffects,
+    // que reescreve ESTE onSuccess para os IDs realmente enviados. (Antes era onSuccess:[] e o ledger não populava.)
+    const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey: targetKey, photoIds: [...photos.data.photoIds] }], vehicleKey: targetKey, photoIds: [...photos.data.photoIds] };
     const text = label ? `Aqui estão as fotos do ${label}. Quer que eu te passe mais detalhes dele?` : "Aqui estão as fotos que você pediu. Quer que eu te passe mais detalhes desse carro?";
     return build(ensureSendMessage([media]), text, "send_photos", "send_vehicle_photos", "executor determinístico de foto (alvo do assunto + photoIds reais)", 0.9, target.source);
   }
   const text = label ? `Não localizei as fotos do ${label} agora. Quer que eu te passe os detalhes dele por aqui?` : "Não localizei as fotos desse carro agora. Quer que eu te passe os detalhes dele por aqui?";
   return build(ensureSendMessage([]), text, "clarify", "photo_unavailable", "alvo resolvido mas sem photoIds do assunto", 0.4, target.source);
+}
+
+// ── PARTE B (missão): CURADORIA de fotos no chokepoint ÚNICO da decisão finalizada. Limita o payload de send_media a
+//    até 5 fotos com DIVERSIDADE (photo-selection) e remove as JÁ ENVIADAS (dedup durável: photoLedger ∪ lastPhotoAction
+//    do MESMO veículo). NÃO muda a decisão do cérebro (mesmo carro, mesma fala) — só seleciona melhor o payload de mídia.
+//    Reescreve também o onSuccess mark_photos_sent para os IDs REALMENTE enviados (ledger consistente). PURO. ───────────
+type LastPhotoWM = { readonly lastPhotoAction?: { readonly vehicleKey: string; readonly photoIds: readonly string[] } | null };
+function photoIdsAlreadySent(state: ConversationState, wm: LastPhotoWM, vehicleKey: string): string[] {
+  const ledger = state.photoLedger?.sentByVehicle?.[vehicleKey] ?? [];
+  const last = (wm.lastPhotoAction && wm.lastPhotoAction.vehicleKey === vehicleKey) ? wm.lastPhotoAction.photoIds : [];
+  return [...new Set([...ledger, ...last])];
+}
+function capPhotoEffects(decision: TurnDecision, state: ConversationState, wm: LastPhotoWM): TurnDecision {
+  if (!decision.effectPlan.some((p) => p.kind === "send_media")) return decision;
+  const newPlan: (typeof decision.effectPlan)[number][] = [];
+  for (const p of decision.effectPlan) {
+    if (p.kind !== "send_media" || !p.photoIds || p.photoIds.length === 0) { newPlan.push(p); continue; }
+    const sent = photoIdsAlreadySent(state, wm, p.vehicleKey);
+    const sel = selectPhotos({ availablePhotoIds: p.photoIds, alreadySentPhotoIds: sent });
+    if (sel.selectedPhotoIds.length === 0) continue;   // tudo já enviado -> NÃO reenvia (drop; não manda 0 nem repete)
+    if (sel.selectedPhotoIds.length === p.photoIds.length) { newPlan.push(p); continue; }   // nada a recortar/dedupar
+    const onSuccess = (p.onSuccess ?? []).map((op) => op.op === "mark_photos_sent" ? { ...op, photoIds: [...sel.selectedPhotoIds] } : op);
+    newPlan.push({ ...p, photoIds: [...sel.selectedPhotoIds], onSuccess });
+  }
+  return { ...decision, effectPlan: newPlan };
 }
 
 // ── P0 ROTEAMENTO POR DOMÍNIO (missão): RESPOSTA INSTITUCIONAL determinística. Se o lead pediu endereço/horário/loja e
@@ -933,6 +986,16 @@ function asksLeadName(text: string): boolean { return ASKS_LEAD_NAME_RX.test(nor
 // O texto JÁ faz descoberta comercial (modelo/tipo/faixa/procura/opções)? Se sim, não precisa do backstop. PURO.
 const COMMERCIAL_DISCOVERY_RX = /\bmodelo\b|\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\bpickup\b|\btipo\s+de\s+(?:carro|veiculo)\b|\bfaixa\s+de\s+(?:preco|valor)\b|\bprocur\w+\b|\bopcoes\b|\bopcao\b|\bque\s+(?:tipo|carro|modelo)\b|\b(?:ta|esta)\s+buscando\b|\bpensando\s+em\b|\borcamento\b/;
 function mentionsCommercialDiscovery(text: string): boolean { return COMMERCIAL_DISCOVERY_RX.test(normalizeText(text)); }
+// ── PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO. A resposta menciona a marca/modelo do veículo do anúncio? PURO.
+//    O label do anúncio (ex.: "Jeep Compass") vem aterrado do engine (adVehicleHint). Considera qualquer token >=3 do label.
+function mentionsAdVehicle(text: string, adVehicleLabel: string): boolean {
+  const t = normalizeText(text);
+  const tokens = normalizeText(adVehicleLabel).split(/[\s/]+/).filter((w) => w.length >= 3);
+  return tokens.some((tok) => t.includes(tok));
+}
+// A resposta CONDUZ sobre o veículo do anúncio (oferece foto/detalhe/condição/disponibilidade/financiamento/continuidade)?
+const AD_CONDUCT_RX = /\bfoto|\bimagem|\bdetalhe|\bcondi[cç]|\bdispon|\bfinanc|\bparcel|\bvalor|\bpre[cç]|\bagenda|\bvisit|\btest|\bficha|\bvers[aã]o|\binteress|\bgost|\bmostr|\bcombina|\bpronta?\s+entrega/;
+function conductsAboutAdVehicle(text: string): boolean { const t = normalizeText(text); return AD_CONDUCT_RX.test(t) || t.includes("?"); }
 // Backstop: substitui uma abertura que pede NOME por uma DESCOBERTA comercial acolhedora (modelo/tipo/faixa) — SDR humano,
 // não formulário. UMA pergunta. PURO.
 function buildGenericAdDiscoveryResponse(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
@@ -1148,6 +1211,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // o lead engata (dá modelo/tipo/preço) ou seleciona. Sinal ao cérebro + backstop determinístico (se ele pedir nome).
       const adGenericEntry = llmFirst && effectiveAdContext != null && !adVehicle && currentTurnIntent !== "institutional"
         && leadEngagement == null && !sufficientForStockSearch(currentConstraints) && contextState.vehicleContext.selected == null;
+      // PARTE A (missão abertura SDR): turno de ABERTURA = 1ª mensagem (nenhum turno do agente ainda). PURO (do estado).
+      const isOpeningTurn = contextState.turnNumber === 0 && !(contextState.recentTurns ?? []).some((t) => t.role === "agent");
+      // PARTE A: PRIMEIRO contato SEM anúncio e SEM alvo comercial ("Boa tarde" cru) -> abrir com DESCOBERTA comercial, nunca
+      // pedindo nome/telefone. Complementa adGenericEntry (que exige anúncio): aqui NÃO há anúncio nenhum (porta fria).
+      const firstContactNoCommercialTarget = llmFirst && isOpeningTurn && effectiveAdContext == null && !adVehicle
+        && currentTurnIntent !== "institutional" && leadEngagement == null && !sufficientForStockSearch(currentConstraints)
+        && contextState.vehicleContext.selected == null;
+      // PARTE A: ENTRADA por anúncio de veículo ESPECÍFICO -> a abertura fala do veículo do anúncio e oferece
+      // fotos/detalhes/condições (o prompt conduz; é só orientação, não força resposta determinística).
+      const specificAdEntry = llmFirst && isOpeningTurn && adVehicle && currentTurnIntent !== "institutional"
+        && leadEngagement == null && !currentHasVehicle;
       // Turno de ENTRADA/REFERÊNCIA ao anúncio: "esse ainda tem?", saudação curta de entrada, foto/detalhe do anunciado,
       // ou um refino comercial (preço/câmbio) sobre o carro do anúncio -> o anúncio SEED-a a busca deste turno.
       const adEntryTurn = adDrivesTurn && (refersToAd(leadMessage) || isBareGreeting(leadMessage) || sufficientForStockSearch(currentConstraints)
@@ -1206,7 +1280,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const adVehicleHint = (llmFirst && effectiveAdContext && adVehicle)
         ? ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints))
         : undefined;
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry });
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry, firstContactNoCommercialTarget, specificAdEntry });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -1330,7 +1404,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd() });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -1598,14 +1672,18 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
           responseSource = "deterministic_recall";
         }
-        // Fix B (audit CTWA — condução SDR): backstop de ABERTURA por anúncio genérico. Se o lead veio de um anúncio SEM
-        // veículo e o cérebro abriu pedindo NOME (sem descoberta comercial), o engine troca por uma DESCOBERTA (modelo/tipo/
-        // faixa) — SDR humano, não formulário. Não mexe se já enviou/ofereceu carro nem se o cérebro já descobriu.
-        if (adGenericEntry && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && asksLeadName(composed.text) && !mentionsCommercialDiscovery(composed.text)) {
+        // PARTE A (missão abertura SDR) + Fix B (CTWA): backstop de ABERTURA sem alvo (anúncio genérico OU 1º contato sem
+        // anúncio). Último recurso — o caminho PRIMÁRIO é o cérebro re-autorar via deny+feedback (authorFromBrainDraft). Só
+        // dispara se o cérebro NÃO conduziu: (a) abriu pedindo NOME sem descoberta, OU (b) degradou em technical_fallback
+        // (fallback genérico "me conta mais"). Aí o engine entrega uma DESCOBERTA comercial enumerada (modelo/tipo/faixa) —
+        // SDR humano, não formulário. Não mexe se já enviou/ofereceu carro.
+        const openingAsksNameNoDiscovery = asksLeadName(composed.text) && !mentionsCommercialDiscovery(composed.text);
+        if ((adGenericEntry || firstContactNoCommercialTarget) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media")
+            && (openingAsksNameNoDiscovery || responseSource === "technical_fallback")) {
           const disc = buildGenericAdDiscoveryResponse({ ctx, turnId });
           responseSource = "deterministic_discovery"; targetResolutionSource = null;
           effectiveDecision = disc.decision; composed = disc.composed; proposedEffects = disc.proposedEffects;
-          finalDecision = { reasonCode: "ad_generic_discovery", reasonSummary: "anúncio genérico -> descoberta comercial", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+          finalDecision = { reasonCode: "ad_generic_discovery", reasonSummary: "abertura sem alvo -> descoberta comercial", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
         }
         degraded = isDegradedResponse(responseSource, recoveryReason);
         // LLM-FIRST (missão): o engine NÃO gerencia objetivo de funil. `stripAllObjectiveMutations` garante que nenhum
@@ -1661,7 +1739,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         turnOutput = { decision: effectiveDecision, composed, facts, loopExhausted: false, terminalSafe, steps: brainSteps };
       }
       if (!finalDecision) throw new Error("central: no final decision after authoring");
-      const decision = turnOutput.decision;
+      // PARTE B (missão): curadoria de fotos (cap 5 + diversidade + dedup) no chokepoint ÚNICO — antes do
+      // pendingPhotoActions (registra os IDs enviados) e do materializeEffectPlans (outbox). Só em llmFirst (central_active).
+      const decision = llmFirst ? capPhotoEffects(turnOutput.decision, contextState, persisted0) : turnOutput.decision;
       const composed = turnOutput.composed;
       const terminalSafe = turnOutput.terminalSafe;
 
