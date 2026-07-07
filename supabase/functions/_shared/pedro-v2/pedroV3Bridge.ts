@@ -256,6 +256,72 @@ export function classifyPedroV3BridgeResponse(httpStatus: number, body: unknown)
   return { kind: "uncertain", httpStatus, serviceStatus: parsed.status };
 }
 
+// ── INC1 (P0 STICKY ROUTING): uma conversa JÁ ASSUMIDA pelo v3 NUNCA pode cair pro v2 no meio. O fallback pro v2 só é
+//    legítimo ANTES do v3 assumir a conversa (sem routing/state) e SÓ num pre_ingest_failure PROVADO. Decisão PURA
+//    (testável offline). Incidente real: o lead mandou o telefone, o v3 devolveu ingested:false (pre_ingest_failure) e o
+//    bridge chamou o v2 -> saudação "Oi! Aqui é o Aloan" no meio da conversa. O routing PROVAVA que o v3 era dono. ──
+export function shouldFallbackToPedroV2(input: {
+  classification: PedroV3BridgeCallResult["kind"];
+  hasV3Routing: boolean;
+  hasV3State: boolean;
+}): { fallback: boolean; reason: string } {
+  // Só um pre_ingest_failure PROVADO pode deixar o v2 responder (evita lead silencioso). accepted/uncertain e os
+  // estados de sucesso do v3 (duplicate/no_op/superseded chegam como accepted) NUNCA caem pro v2.
+  if (input.classification !== "pre_ingest_failure") {
+    return { fallback: false, reason: `v3_no_fallback_${input.classification}` };
+  }
+  // ...e SÓ se a conversa NUNCA foi assumida pelo v3. Routing OU state presentes = v3 é dono -> STICKY, bloqueia o v2.
+  if (input.hasV3Routing || input.hasV3State) {
+    return { fallback: false, reason: "v3_sticky_route_blocked_v2_fallback" };
+  }
+  return { fallback: true, reason: "v3_pre_ingest_failure_no_route" };
+}
+
+// Lookup do routing do v3 (o v3 grava v3_conversation_routing ao INGERIR o 1º bloco). Presença = "v3 já assumiu esta
+// conversa". FAIL-SAFE contra o hijack: em erro/exceção devolve TRUE (bloqueia o v2) — coerente com "uncertain nunca
+// dá double-reply"; só um resultado LIMPO sem linha (v3 nunca assumiu) libera o fallback pro v2.
+export async function conversationHasV3Routing(
+  client: { from: (table: string) => any },
+  tenantId: string,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await client
+      .from("v3_conversation_routing")
+      .select("conversation_id")
+      .eq("tenant_id", tenantId)
+      .eq("conversation_id", conversationId)
+      .limit(1)
+      .maybeSingle();
+    if (error) return true;
+    return data != null;
+  } catch {
+    return true;
+  }
+}
+
+// Mesmo fail-safe do routing, mas olhando o estado canônico. Isto cobre conversas antigas/parciais onde o estado existe
+// mas a linha de routing está ausente por migração, bug anterior ou limpeza seletiva.
+export async function conversationHasV3State(
+  client: { from: (table: string) => any },
+  tenantId: string,
+  conversationId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await client
+      .from("v3_conversation_state")
+      .select("conversation_id")
+      .eq("tenant_id", tenantId)
+      .eq("conversation_id", conversationId)
+      .limit(1)
+      .maybeSingle();
+    if (error) return true;
+    return data != null;
+  } catch {
+    return true;
+  }
+}
+
 function serviceEndpoint(raw: string, path: "/v1/pilot/turn" | "/v1/pilot/receipt"): string | null {
   try {
     const url = new URL(raw);
