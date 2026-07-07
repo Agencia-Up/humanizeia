@@ -103,6 +103,16 @@ export function authorizesPhotoByAdReference(target: TargetResolution, block: st
   if (isPhotoDeclined(block)) return false;
   return PHOTO_REQUEST_STEM.test(normalizeText(block));
 }
+// ── P0 (audit Codex smoke CTWA #2): AUTORIZAÇÃO DE FOTO POR ALVO RESOLVIDO. Generaliza ordinal+ad_reference: quando o LEAD
+//    pede foto NESTE turno (verbo de envio/ver + "foto"; negação barra) E o alvo está RESOLVIDO por QUALQUER fonte aterrada
+//    (anúncio/ordinal/seleção/modelo — target.kind==="resolved"), o envio é autorizado — DIRIGIDO pelo pedido do lead, não
+//    pela cooperação do cérebro (que às vezes diz "não localizei" sem consultar). Mesma exigência de grounding (alvo ÚNICO):
+//    ambíguo/ausente -> não autoriza (o fluxo pergunta qual). Fail-closed. Superset de ByResolvedOrdinal/ByAdReference. PURO. ──
+export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string): boolean {
+  if (target.kind !== "resolved") return false;
+  if (isPhotoDeclined(block)) return false;
+  return PHOTO_REQUEST_STEM.test(normalizeText(block));
+}
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──
 const TOOL_CAPABILITY: Record<string, TurnCapability> = {

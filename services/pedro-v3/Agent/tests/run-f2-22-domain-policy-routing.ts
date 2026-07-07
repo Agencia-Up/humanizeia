@@ -224,12 +224,15 @@ async function main(): Promise<void> {
     const cap = await c.t("qual o horário?", "ambiguous", [nFin, nFin, nFin]);
     check("[N] horário respondido -> passa sem deny (completude satisfeita)", cap.committed && !cap.degraded && has(cap.outbox, "9h") && !cap.policyFeedback.some((f) => /horario/.test(normalizeText(f))), `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
-  // O) FOTO pedida, resposta SEM send_media e SEM ausência honesta -> REJEITADA; o retry diz honestamente que não achou.
+  // O) FOTO pedida: a não-resposta é REJEITADA pela completude E a ausência honesta FALSA é sobreposta — o Onix SELECIONADO
+  //    TEM fotos, então o engine força vehicle_photos_resolve do alvo e ENVIA send_media (invariante de foto determinístico;
+  //    audit Codex smoke CTWA #2). O cérebro dizer "não localizei" quando o carro tem foto era o bug; agora o engine corrige.
+  //    (A ausência honesta LEGÍTIMA — alvo sem fotos — segue honrada; coberto em F2.33 A-7.)
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
     let n = 0;
     const cap = await c.t("me manda foto do Onix", "ambiguous", () => { n++; return n >= 2 ? fin([txt("Poxa, não localizei as fotos do Onix agora, mas confirmo com a equipe e já te envio!")]) : fin([txt("Beleza! Deixa eu providenciar isso pra você.")]); });
-    check("[O] foto pedida sem mídia/ausência-honesta -> REJEITADA; retry responde honestamente", cap.committed && !cap.hasMedia && /nao localizei/.test(normalizeText(cap.outbox)) && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `text="${cap.outbox}" fb=${JSON.stringify(cap.policyFeedback)}`);
+    check("[O] não-resposta REJEITADA + ausência honesta FALSA (Onix tem fotos) -> engine OVERRIDE e ENVIA send_media", cap.committed && cap.hasMedia && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `text="${cap.outbox}" media=${cap.hasMedia} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
   // P) FOTO pura com send_media satisfaz a completude (passa) — não força ausência honesta quando há mídia.
   {

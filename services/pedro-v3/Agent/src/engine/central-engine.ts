@@ -30,7 +30,7 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedOrdinal, authorizesPhotoByAdReference,
+  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
@@ -613,7 +613,7 @@ function authorFromBrainDraft(args: {
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage) || authorizesPhotoByAdReference(args.target, args.leadMessage) });
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage) });
   if (incomplete) return { ok: false, feedback: incomplete };
   // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
   // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
@@ -766,7 +766,7 @@ function buildDeterministicPhotoResponse(args: {
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
   // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO quando o alvo veio de turn_ordinal (índice EXATO da última lista) +
   // pedido explícito de foto: aí a resolução única autoriza (grounding máximo; nunca é "foto solta"). Some o "de qual carro?".
-  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage) && !authorizesPhotoByAdReference(args.target, args.leadMessage)) return null;
+  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedTarget(args.target, args.leadMessage)) return null;
   const state = args.ctx.state;
   const factsArr = [...args.facts];
   const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
@@ -1276,6 +1276,29 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let proposedEffects: ProposedEffectPlan[];
       let composeFacts: QueryResult[];   // fatos p/ resolver label do veículo (foto) no commit
       if (singleAuthor) {
+        // ── P0 (audit Codex smoke CTWA #2): INVARIANTE DE FOTO DETERMINÍSTICO — o envio da foto do alvo NÃO pode depender do
+        //    humor do cérebro (gpt-4.1-mini às vezes escreve "não localizei as fotos" SEM consultar; ausência honesta FALSA).
+        //    Se o LEAD pede foto NESTE turno e o ALVO está RESOLVIDO (anúncio/ordinal/seleção/modelo), o engine OBRIGA a
+        //    resolução das fotos do alvo certo (bypassa o gate de autorização do cérebro) e, havendo photoIds>0, DESCARTA a
+        //    autoria que não enviou -> executor determinístico (Path B) materializa send_media. Ausência honesta só sobrevive
+        //    DEPOIS de consultar o alvo certo e vir VAZIO/erro. Fail-closed: alvo ambíguo/ausente -> não força nada. ──
+        const photoInvariantTarget = resolveTargetWithAd();
+        if (llmFirst && photoInvariantTarget.kind === "resolved" && authorizesPhotoByResolvedTarget(photoInvariantTarget, leadMessage)) {
+          const invKey = photoInvariantTarget.vehicleKey;
+          if (!facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === invKey)) {
+            try {
+              const invRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: invKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (photo invariant) exceeded timeout");
+              facts.push(invRes); observations.push(toAgentObservation(invRes)); toolResultMems.push(toToolResultMemory(invRes, turnId));
+            } catch { /* best-effort: sem fato de foto do alvo -> ausência honesta legítima abaixo */ }
+          }
+          const targetHasPhotos = facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === invKey && targetAcceptsKey(photoInvariantTarget, f.data.vehicleKey) && f.data.photoIds.length > 0);
+          const authoredHasMedia = !!authoredProposedEffects?.some((e) => e.kind === "send_media");
+          if (targetHasPhotos && !authoredHasMedia) {
+            // OVERRIDE: a autoria não enviou a foto de um alvo que TEM fotos (ausência honesta falsa/resposta sem foto) ->
+            // descarta -> cai no executor determinístico (buildDeterministicPhotoResponse) que envia send_media do alvo.
+            authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
+          }
+        }
         // ── P0 (RESOLUÇÃO ÚNICA de veículo): completude determinística de FOTO por ORDINAL. Quando o cérebro NÃO autorou
         //    resposta e o lead pediu foto de um item da última lista ("me manda foto do segundo"), o alvo resolve por
         //    turn_ordinal (índice EXATO) mas o cérebro às vezes rotulou só como SELEÇÃO e não chamou vehicle_photos_resolve
@@ -1284,7 +1307,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         //    explícito de foto (grounding máximo). A mesma fonte de alvo (resolveTarget) alimenta seleção, foto e recall. ──
         if (!authoredComposed) {
           const photoTarget = resolveTargetWithAd();   // P0-A: inclui a referência EXATA do anúncio p/ foto pronominal
-          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedOrdinal(photoTarget, leadMessage) || authorizesPhotoByAdReference(photoTarget, leadMessage);
+          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedTarget(photoTarget, leadMessage);
           if (wantsPhotoNow && photoTarget.kind === "resolved" && !facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === photoTarget.vehicleKey)) {
             try {
               const photoRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: photoTarget.vehicleKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (ordinal) exceeded timeout");
