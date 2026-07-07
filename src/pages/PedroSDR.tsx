@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, lazy, Suspense, useCallback, type ChangeEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 // Fase 6.4 — Campos dinâmicos (cidades + origens cadastráveis pelo vendedor)
@@ -1216,7 +1216,7 @@ export function CrmAvancadoTab({
   memberIdProp
 }: CrmAvancadoTabProps) {
   const { toast } = useToast();
-  const [, setCrmSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const isMarcosCrm = mode === 'marcos';
   const [isSeller, setIsSeller] = useState(isSellerProp ?? false);
   const [memberId, setMemberId] = useState<string | null>(memberIdProp ?? null);
@@ -3707,20 +3707,12 @@ export function CrmAvancadoTab({
   const canReassignLeadSeller = !isSeller && teamMembers.length > 0;
   const openSelectedLeadConversation = () => {
     if (!selectedLead) return;
-    setCrmSearchParams(prev => {
-      const next = new URLSearchParams(prev);
-      next.set('tab', isMarcosCrm ? 'inbox' : 'inbox-ia');
-      next.delete('leadId');
-      next.delete('phone');
-      if (isMarcosCrm) {
-        const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
-        if (phone) next.set('phone', phone);
-      } else {
-        next.set('leadId', selectedLead.id);
-      }
-      return next;
-    }, { replace: true });
-    setSelectedLead(null);
+    const params = new URLSearchParams();
+    const phone = selectedLead.remote_jid?.split('@')[0]?.replace(/\D/g, '') || '';
+    params.set('leadId', selectedLead.id);
+    params.set('origin', isMarcosCrm ? 'marcos' : 'pedro');
+    if (phone) params.set('phone', phone);
+    navigate(`/conversas?${params.toString()}`);
   };
 
   // Popup de venda extraido num elemento so pra ser renderizado NOS DOIS returns
