@@ -76,6 +76,7 @@ interface AgentInboxTabProps {
   readOnly?: boolean;
   // Abre automaticamente a conversa de um lead vindo do CRM.
   focusLeadId?: string | null;
+  focusPhone?: string | null;
   // UNIFICADO (aba "Conversas"): além dos leads do Pedro (ai_crm_leads), traz também
   // os leads MANUAIS do Marcos (crm_leads) e mostra o filtro de origem (Todos/Pedro/Marcos).
   // Default false = comportamento atual do Pedro inalterado.
@@ -231,7 +232,7 @@ const ALL_AGENTS = '__all__';
 const ALL_SELLERS = '__all_sellers__'; // filtro "todos" do dropdown de vendedor (só master)
 
 /* ── Componente Principal ──────────────────────────────────────────── */
-export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false, focusLeadId = null, unified = false }: AgentInboxTabProps) {
+export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], readOnly = false, focusLeadId = null, focusPhone = null, unified = false }: AgentInboxTabProps) {
   const { toast } = useToast();
   const lastFocusedLeadRef = useRef<string | null>(null);
 
@@ -599,14 +600,22 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   };
 
   useEffect(() => {
-    if (!focusLeadId || loadingLeads || leads.length === 0) return;
-    if (lastFocusedLeadRef.current === focusLeadId && selectedLead?.id === focusLeadId) return;
-    const lead = leads.find(l => l.id === focusLeadId);
+    const focusPhoneCanonical = phoneCanonical(focusPhone);
+    const focusKey = focusLeadId || focusPhoneCanonical;
+    if (!focusKey || loadingLeads || leads.length === 0) return;
+    if (lastFocusedLeadRef.current === focusKey && (
+      selectedLead?.id === focusLeadId
+      || (!!focusPhoneCanonical && phoneCanonical(selectedLead?.remote_jid) === focusPhoneCanonical)
+    )) return;
+    const lead = leads.find(l => (
+      (!!focusLeadId && l.id === focusLeadId)
+      || (!!focusPhoneCanonical && phoneCanonical(l.remote_jid) === focusPhoneCanonical)
+    ));
     if (!lead) return;
-    lastFocusedLeadRef.current = focusLeadId;
+    lastFocusedLeadRef.current = focusKey;
     setSelectedLead(lead);
     setSearchTerm('');
-  }, [focusLeadId, loadingLeads, leads, selectedLead?.id]);
+  }, [focusLeadId, focusPhone, loadingLeads, leads, selectedLead?.id, selectedLead?.remote_jid]);
 
   const selectedLeadId = selectedLead?.id || '';
   const selectedLeadPhone = selectedLead?.remote_jid || '';
