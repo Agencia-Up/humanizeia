@@ -175,6 +175,7 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
   if (current.tipo) {
     next.tipo = current.tipo;
     if (!current.modelos || current.modelos.length === 0) delete next.modelos;   // tipo novo = nova categoria, limpa modelo
+    if (!current.marca && (!current.modelos || current.modelos.length === 0)) delete next.marca; // tipo amplo = nova direção, limpa marca stale
   }
   if (current.precoMax != null) next.precoMax = current.precoMax;
   if (current.cambio) next.cambio = current.cambio;

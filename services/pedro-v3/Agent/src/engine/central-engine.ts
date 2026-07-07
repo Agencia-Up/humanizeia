@@ -643,12 +643,13 @@ function authorFromBrainDraft(args: {
 // Uma SELEÇÃO ("gostei do segundo", "esse") pode vir classificada como asks_vehicle_detail pelo preparer — mas sem
 // pergunta de atributo NÃO deve forçar vehicle_details (o cérebro acolhe a escolha; citar atributo é barrado no validate).
 const ATTR_QUESTION_RX = /\bkm\b|quilometr|rodad|\bcor\b|\bcambio\b|c[aâ]mbio|autom[aá]tic|\bmanual\b|\bpre[çc]o\b|\bvalor\b|quanto\s+(?:custa|sai|fica|e)\b|\bano\b|\bconsumo\b|\bmotor\b|\bversao\b|vers[aã]o|\bopcionais\b|\bcompleto\b|quantos?\s+(?:km|quilometr)/;
-function requireVehicleDetailBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[]): string | null {
+function requireVehicleDetailBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], target: TargetResolution): string | null {
   if (frame.signals.relation !== "asks_vehicle_detail") return null;
   if (!ATTR_QUESTION_RX.test(normalizeText(frame.block))) return null;   // seleção pura -> não força detalhe
-  const selectedKey = frame.workingMemory.selectedVehicle?.vehicleKey ?? null;
-  if (!selectedKey) return null;
-  const hasDetail = observations.some((o) => o.tool === "vehicle_details" && o.ok && o.data.vehicle.vehicleKey === selectedKey);
+  const targetKey = target.kind === "resolved" ? target.vehicleKey : (frame.workingMemory.selectedVehicle?.vehicleKey ?? null);
+  if (!targetKey) return null;
+  const selectedKey = targetKey;
+  const hasDetail = observations.some((o) => o.tool === "vehicle_details" && o.ok && o.data.vehicle.vehicleKey === targetKey);
   if (hasDetail) return null;
   return `O cliente perguntou um atributo do veículo SELECIONADO. Execute vehicle_details({"vehicleKey":"${selectedKey}"}) e use SÓ esse fato (de OUTRO carro não vale) antes da resposta final.`;
 }
@@ -1112,7 +1113,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // modelo/marca (do anúncio/ativo) e busca por TIPO. É turno de busca (força a tool) e o filtro é relaxado abaixo.
       const similarityTurn = llmFirst && detectSimilarityIntent(leadMessage) && currentTurnIntent !== "institutional" && leadEngagement == null;
       // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio, OU similaridade.
-      const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || adEntryTurn || similarityTurn;
+      const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
       // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
@@ -1209,7 +1210,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const resolveTargetWithAd = (): TargetResolution => {
         const base = resolveTarget();
         if (base.kind === "resolved") return base;
-        if (adReferenceKey && !currentHasVehicle && baseSignals.mentionsPhoto === true && !isPhotoDeclined(leadMessage)) {
+        const pronounDetailTurn = isVehicleDetailTurn && !currentHasVehicle;
+        if (adReferenceKey && !currentHasVehicle && ((baseSignals.mentionsPhoto === true && !isPhotoDeclined(leadMessage)) || pronounDetailTurn || refersToAd(leadMessage))) {
           return { kind: "resolved", vehicleKey: adReferenceKey, source: "ad_reference", candidateVehicleKeys: [adReferenceKey], subjectModel: adConstraints.modelos?.[0] ?? null };
         }
         return base;
@@ -1271,10 +1273,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           if (singleAuthor) {
             // B2 (audit): pergunta de atributo do SELECIONADO exige vehicle_details bem-sucedido do MESMO key ANTES
             // do final. Sem o fato -> força a consulta (retry); esgotou -> fallback degradado pós-loop.
-            const needDetail = requireVehicleDetailBeforeFinal(frame, observations);
+            const detailTarget = resolveTargetWithAd();
+            const needDetail = requireVehicleDetailBeforeFinal(frame, observations, detailTarget);
             // P0-2 (exceção sistêmica TIPADA): necessidade de grounding do engine AUTORIZA vehicle_details do key selecionado
             // (separada da intenção da LLM). Registra o key p/ o gate de tool liberar a consulta de aterramento.
-            if (needDetail) { const selKey = frame.workingMemory.selectedVehicle?.vehicleKey; if (selKey) systemDetailKeys.add(selKey); }
+            if (needDetail) { const detailKey = detailTarget.kind === "resolved" ? detailTarget.vehicleKey : frame.workingMemory.selectedVehicle?.vehicleKey; if (detailKey) systemDetailKeys.add(detailKey); }
             if (needDetail && brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "vehicle_details", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: needDetail } }); continue; }
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
