@@ -615,10 +615,17 @@ export function pickRoundRobinSeller(sellers: any[]): any | null {
     return Number.isFinite(t) ? t : 0;
   };
   return [...sellers].sort((a, b) => {
-    const ta = Number(a?.total_leads_received) || 0;
-    const tb = Number(b?.total_leads_received) || 0;
-    if (ta !== tb) return ta - tb;
-    return lastTs(a?.last_lead_received_at) - lastTs(b?.last_lead_received_at);
+    // REGRA DE OURO: quem recebeu ha MAIS tempo (ou NUNCA = epoca 0) vai PRIMEIRO —
+    // rotacao por TURNO (um pra cada, so depois volta), igual ao resto do sistema
+    // (cron-lead-followup / wa-inbox-webhook / DashboardTV) e respeitando a fila
+    // MANUAL (o "Editar fila" do master reescreve last_lead_received_at). ANTES
+    // ordenava por total_leads_received (cumulativo de vida) -> quem ja recebeu
+    // muito (ex.: Joao 171) ficava starved e o "Editar fila" era ignorado.
+    const la = lastTs(a?.last_lead_received_at);
+    const lb = lastTs(b?.last_lead_received_at);
+    if (la !== lb) return la - lb;
+    // Desempate (ex.: varios null): menor total primeiro.
+    return (Number(a?.total_leads_received) || 0) - (Number(b?.total_leads_received) || 0);
   })[0] || null;
 }
 

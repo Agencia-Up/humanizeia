@@ -65,13 +65,15 @@ function dedupeSellersByPhone<T extends { id?: string; whatsapp_number?: string 
 
 function sortSellersByQueue<T extends { total_leads_received?: number | null; last_lead_received_at?: string | null }>(sellers: T[]): T[] {
   return [...sellers].sort((a, b) => {
-    const totalA = a.total_leads_received ?? 0;
-    const totalB = b.total_leads_received ?? 0;
-    if (totalA !== totalB) return totalA - totalB;
-
+    // Fila = quem recebeu ha mais tempo (ou nunca = 0) vai primeiro (rotacao por
+    // turno; respeita o "Editar fila" que reescreve last_lead_received_at). Igual
+    // ao backend (pickRoundRobinSeller) e ao DashboardTV — antes ordenava por total.
     const lastA = a.last_lead_received_at ? new Date(a.last_lead_received_at).getTime() : 0;
     const lastB = b.last_lead_received_at ? new Date(b.last_lead_received_at).getTime() : 0;
-    return lastA - lastB;
+    if (lastA !== lastB) return lastA - lastB;
+    const totalA = a.total_leads_received ?? 0;
+    const totalB = b.total_leads_received ?? 0;
+    return totalA - totalB;
   });
 }
 
