@@ -50,7 +50,9 @@ const featKeys = Object.keys(DEFAULT_SELLER_FEATURES) as (keyof VisibleFeatures)
 const allTrue = (): VisibleFeatures => Object.fromEntries(featKeys.map((k) => [k, true])) as VisibleFeatures;
 const allFalse = (): VisibleFeatures => Object.fromEntries(featKeys.map((k) => [k, false])) as VisibleFeatures;
 const GERENTE_FEATURES = allTrue();                                           // acesso total
-const TRAFEGO_FEATURES: VisibleFeatures = { ...allFalse(), agent_jose: true, sidebar_dashboard: true }; // só José
+// Só José (acesso RESTRITO): o marcador __restrito faz o useSellerProfile respeitar
+// o que está OFF (senão o vendedor sempre veria o padrão Pedro+Marcos por cima).
+const TRAFEGO_FEATURES = { ...allFalse(), agent_jose: true, sidebar_dashboard: true, __restrito: true } as unknown as VisibleFeatures;
 
 const ENTREGAS: { campo: Entrega; label: string; icon: typeof FileText }[] = [
   { campo: 'recebe_atendimento', label: 'Atendimento', icon: FileText },
@@ -94,7 +96,8 @@ export function ResponsaveisTab({ userId }: Props) {
       const resp = respRes.data || [];
       const agentName = new Map<string, string>(agents.map((a: any) => [a.id, a.name || 'Agente']));
       setAgentesDisp(agents.map((a: any) => ({ id: a.id, nome: a.name || 'Agente' })));
-      setNGerentes(members.filter((m: any) => m.is_manager).length);
+      // Conta só gerentes REAIS (ignora os placeholders internos 'gerente-<uuid>').
+      setNGerentes(members.filter((m: any) => m.is_manager && !(m.whatsapp_number || '').startsWith('gerente-')).length);
 
       const map = new Map<string, Pessoa>();
       const ensure = (k: string, nome: string, wa: string, papel: Pessoa['papel']): Pessoa => {

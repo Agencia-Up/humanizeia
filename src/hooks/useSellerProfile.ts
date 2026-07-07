@@ -157,14 +157,26 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
       // Usa o registro ativo mais recente como dados base (nome, email, etc.)
       const seller = allRecords.length > 0 ? allRecords[0] : null;
 
-      // Merge features de TODOS os registros com lógica OR:
-      // se qualquer registro libera uma feature, o vendedor a vê
-      const features: VisibleFeatures = { ...DEFAULT_SELLER_FEATURES };
-      for (const rec of allRecords) {
-        const f = rec.visible_features;
-        if (!f) continue;
-        for (const key of Object.keys(DEFAULT_SELLER_FEATURES) as (keyof VisibleFeatures)[]) {
-          if (f[key]) features[key] = true;
+      // Merge features. Caso NORMAL (vendedor): base = padrão do vendedor + OR de
+      // cada registro — só ADICIONA acima do padrão (nunca restringe).
+      // Caso ACESSO RESTRITO (alguma linha com `__restrito`): o acesso é SÓ o que
+      // as linhas restritas liberam (respeita o que está OFF) — pra papéis como
+      // "só tráfego (José)". Marca opt-in: registros antigos (sem __restrito) NÃO
+      // mudam de comportamento.
+      const fkeys = Object.keys(DEFAULT_SELLER_FEATURES) as (keyof VisibleFeatures)[];
+      const restritas = allRecords.filter((r) => (r.visible_features as any)?.__restrito);
+      let features: VisibleFeatures;
+      if (restritas.length > 0) {
+        features = Object.fromEntries(fkeys.map((k) => [k, false])) as VisibleFeatures;
+        for (const rec of restritas) {
+          const f = rec.visible_features; if (!f) continue;
+          for (const key of fkeys) if (f[key]) features[key] = true;
+        }
+      } else {
+        features = { ...DEFAULT_SELLER_FEATURES };
+        for (const rec of allRecords) {
+          const f = rec.visible_features; if (!f) continue;
+          for (const key of fkeys) if (f[key]) features[key] = true;
         }
       }
 
