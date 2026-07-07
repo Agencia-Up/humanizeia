@@ -129,6 +129,7 @@ Deno.serve(async (req) => {
     }
 
     // 1) Troca o code do Embedded Signup por um token de negócio (sem redirect_uri).
+    const appIdTail = appId.slice(-4);
     const tokenUrl = new URL(`${META_GRAPH_URL}/oauth/access_token`);
     tokenUrl.searchParams.set("client_id", appId);
     tokenUrl.searchParams.set("client_secret", appSecret);
@@ -136,7 +137,27 @@ Deno.serve(async (req) => {
     const tokenRes = await fetch(tokenUrl);
     const tokenData = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok || tokenData.error || !tokenData.access_token) {
-      return json({ success: false, error: `Falha ao trocar o code: ${tokenData?.error?.message || tokenRes.status}` }, 200);
+      const metaMsg = tokenData?.error?.message || `HTTP ${tokenRes.status}`;
+      // Auto-diagnóstico: valida o PAR client_id+client_secret via client_credentials
+      // (não usa o code). Distingue as duas causas de "Error validating client secret":
+      //   (a) secret não pertence ao WHATSAPP_APP_ID  -> par inválido aqui também;
+      //   (b) code veio de OUTRO app (VITE_META_APP_ID != WHATSAPP_APP_ID) -> par válido.
+      let diag = "";
+      try {
+        const ccUrl = new URL(`${META_GRAPH_URL}/oauth/access_token`);
+        ccUrl.searchParams.set("client_id", appId);
+        ccUrl.searchParams.set("client_secret", appSecret);
+        ccUrl.searchParams.set("grant_type", "client_credentials");
+        const ccRes = await fetch(ccUrl);
+        const ccData = await ccRes.json().catch(() => ({}));
+        if (ccRes.ok && ccData.access_token) {
+          diag = ` — DIAGNÓSTICO: as credenciais do app ...${appIdTail} SÃO válidas, então o code foi gerado por OUTRO app. Garanta que o VITE_META_APP_ID do frontend seja o MESMO app ...${appIdTail} do WHATSAPP_APP_ID.`;
+        } else {
+          diag = ` — DIAGNÓSTICO: o par WHATSAPP_APP_ID(...${appIdTail}) + WHATSAPP_APP_SECRET é INVÁLIDO na Meta. Copie o App Secret exato do app ...${appIdTail} (Configurações > Básico) e atualize o secret WHATSAPP_APP_SECRET.`;
+        }
+      } catch { /* diagnóstico é best-effort */ }
+      console.error("[meta-embedded-signup] token exchange falhou; appId=...", appIdTail, "meta=", metaMsg, diag);
+      return json({ success: false, error: `Falha ao trocar o code: ${metaMsg}${diag}` }, 200);
     }
     const accessToken: string = tokenData.access_token;
     const authHeaders = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
