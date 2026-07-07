@@ -62,6 +62,7 @@ import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQua
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { parseOrdinal } from "./ordinal.ts";
 import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
   applySystemWorkingMemoryMutations, applyEffectOutcomeToWorkingMemory, isValidPhotoActionDraft,
@@ -117,10 +118,17 @@ export type CentralTurnArgs = {
 };
 
 export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "deterministic_recovery" | "deterministic_discovery" | "deterministic_conduct" | "technical_fallback" | "legacy_compose";
-// Fontes DEGRADADAS (o cérebro não autorou; o engine recuperou). deterministic_recovery = recuperação CONTEXTUAL aterrada
-// (oferta/qual/honesto — texto útil, não genérico); technical_fallback = último recurso genérico. Ambas contam degraded.
-const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback", "deterministic_recovery"]);
+// Degradação não é "o engine ajudou"; é falha técnica/último recurso.
+// Recuperações contextuais (`deterministic_recovery`) continuam sendo respostas úteis ao lead
+// (perguntar qual veículo, ausência honesta, lista aterrada, etc.). O último recurso genérico já sai como
+// `technical_fallback`, então só ele deve acionar terminalSafe/degraded.
+const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback"]);
 function isDegradedSource(src: ResponseSource): boolean { return DEGRADED_SOURCES.has(src); }
+function isDegradedResponse(src: ResponseSource, recoveryReason: string | null): boolean {
+  void recoveryReason;
+  if (isDegradedSource(src)) return true;
+  return false;
+}
 
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
@@ -614,7 +622,7 @@ function authorFromBrainDraft(args: {
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage) });
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage) || leadRequestsPhoto(args.leadMessage) });
   if (incomplete) return { ok: false, feedback: incomplete };
   // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
   // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
@@ -644,7 +652,6 @@ function authorFromBrainDraft(args: {
 // pergunta de atributo NÃO deve forçar vehicle_details (o cérebro acolhe a escolha; citar atributo é barrado no validate).
 const ATTR_QUESTION_RX = /\bkm\b|quilometr|rodad|\bcor\b|\bcambio\b|c[aâ]mbio|autom[aá]tic|\bmanual\b|\bpre[çc]o\b|\bvalor\b|quanto\s+(?:custa|sai|fica|e)\b|\bano\b|\bconsumo\b|\bmotor\b|\bversao\b|vers[aã]o|\bopcionais\b|\bcompleto\b|quantos?\s+(?:km|quilometr)/;
 function requireVehicleDetailBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], target: TargetResolution): string | null {
-  if (frame.signals.relation !== "asks_vehicle_detail") return null;
   if (!ATTR_QUESTION_RX.test(normalizeText(frame.block))) return null;   // seleção pura -> não força detalhe
   const targetKey = target.kind === "resolved" ? target.vehicleKey : (frame.workingMemory.selectedVehicle?.vehicleKey ?? null);
   if (!targetKey) return null;
@@ -726,6 +733,7 @@ function respondsInstitutionalTopic(normResp: string, topic: BusinessInfoTopic, 
 }
 // Foto pedida e não atendida: precisa send_media OU dizer honestamente que não localizou (oferta interrogativa não conta).
 const PHOTO_HONEST_ABSENCE_RX = /\bnao\s+(?:encontrei|localizei|achei|tenho|consegui|temos)\b[^.?!]{0,28}(?:fotos?|imagens?|midias?)|(?:fotos?|imagens?)[^.?!]{0,28}(?:nao\s+(?:disponiv|encontr|localiz)|indisponiv)/;
+const PHOTO_ORDINAL_CLARIFY_RX = /\b(?:qual|quais|numero|n[uú]mero|op[cç][aã]o|item|lista|primeir|segund|terceir|quart|quint)\b/;
 function turnCompletenessFeedback(args: {
   readonly leadMessage: string;
   readonly composed: RenderedResponse;
@@ -748,6 +756,13 @@ function turnCompletenessFeedback(args: {
       && !args.proposedEffects.some((e) => e.kind === "send_media")
       && !PHOTO_HONEST_ABSENCE_RX.test(normResp)) {
     return "O cliente pediu FOTO neste turno e a resposta não enviou (send_media) nem disse honestamente que não localizou. Resolva vehicle_photos_resolve do carro certo e inclua send_media com os photoIds — ou diga que não encontrou as fotos. NÃO responda só outro assunto ignorando o pedido de foto.";
+  }
+  if (!args.pendingObjective
+      && args.photoRequested
+      && parseOrdinal(args.leadMessage) != null
+      && !args.proposedEffects.some((e) => e.kind === "send_media")
+      && !PHOTO_ORDINAL_CLARIFY_RX.test(normResp)) {
+    return "O cliente pediu FOTO por uma referencia ordinal (ex.: primeiro/segundo/item 2), mas nao ha item resolvido para enviar. Responda explicitamente que nao ha uma lista/item ordinal valido neste contexto OU pergunte qual carro ele quer, mencionando o ordinal/lista. Nao repita apenas a busca anterior.";
   }
   return null;
 }
@@ -970,6 +985,28 @@ function buildContextualRecovery(args: {
   const plain = (text: string, action: TurnAction, reasonCode: string, recoveryReason: string, lastResort = false) => mk({ parts: [{ type: "text", content: text }] }, text, action, reasonCode, recoveryReason, lastResort);
   // NEGAÇÃO de foto ("não quero foto", "agora não"): ACOLHE e segue (não repergunta nada conhecido). Antes de tudo.
   if (isPhotoDeclined(args.leadMessage)) return plain("Sem problema! Quando quiser as fotos ou mais detalhes é só me falar. 😊", "reply", "recovery_photo_declined", "negação de foto -> acolhe e segue");
+  // DETALHE já consultado: se o cérebro executou vehicle_details do alvo certo e mesmo assim não conseguiu autorar
+  // uma resposta válida, recupera usando o FATO real da tool. Não inventa e não volta para pergunta genérica.
+  const detailVehicle = factsArr.find((f) => f.ok && f.tool === "vehicle_details")?.data.vehicle ?? null;
+  if (detailVehicle && ATTR_QUESTION_RX.test(normalizeText(args.leadMessage))) {
+    const n = normalizeText(args.leadMessage);
+    const label = canonicalVehicleLabel(detailVehicle.vehicleKey, factsArr, args.identities, state)
+      ?? [detailVehicle.marca, detailVehicle.modelo, detailVehicle.ano].filter(Boolean).join(" ");
+    const values: string[] = [];
+    if (/\bpreco\b|\bvalor\b|quanto\s+(?:custa|sai|fica|e)\b/.test(n)) {
+      values.push(detailVehicle.preco > 0 ? `valor de R$ ${detailVehicle.preco.toLocaleString("pt-BR")}` : "valor a confirmar");
+    }
+    if (/\bkm\b|quilometr|rodad|quantos?\s+(?:km|quilometr)/.test(n)) {
+      values.push(detailVehicle.km != null ? `${detailVehicle.km.toLocaleString("pt-BR")} km rodados` : "quilometragem a confirmar");
+    }
+    if (/\bcor\b/.test(n)) values.push(detailVehicle.cor ? `cor ${detailVehicle.cor}` : "cor a confirmar");
+    if (/\bcambio\b|c[aâ]mbio|autom[aá]tic|\bmanual\b/.test(n)) values.push(detailVehicle.cambio ? `câmbio ${detailVehicle.cambio}` : "câmbio a confirmar");
+    if (/\bano\b/.test(n)) values.push(`ano ${detailVehicle.ano}`);
+    if (values.length === 0) {
+      values.push(detailVehicle.preco > 0 ? `valor de R$ ${detailVehicle.preco.toLocaleString("pt-BR")}` : "valor a confirmar");
+    }
+    return plain(`O ${label} está com ${values.join(", ")}.`, "reply", "recovery_vehicle_detail_fact", "vehicle_details executado -> responde atributo com fato real");
+  }
   // BUSCA (hint do entendimento OU há itens). P1: DIFERENCIA — executada com itens -> lista; executada 0 -> ausência REAL;
   // tool FALHOU -> indisponibilidade temporária; NÃO executada -> nunca afirma ausência, pergunta específica.
   // Busca (hint do entendimento OU há fato de estoque). NÃO usa constraint p/ rotear: o executor determinístico de busca
@@ -1183,6 +1220,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let authoredProposedEffects: ProposedEffectPlan[] | null = null;
       let responseSource: ResponseSource = singleAuthor ? "technical_fallback" : "legacy_compose";
       let recoveryReason: string | null = null;                     // T6: motivo da recuperação contextual (observabilidade)
+      let degraded = false;                                         // Falha técnica/último recurso; lista aterrada não é degradação.
       let targetResolutionSource: TargetResolutionSource | null = null;   // T6: como o alvo do turno foi resolvido
       let brainRetries = 0;
       const policyFeedbackLog: string[] = [];
@@ -1210,7 +1248,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const resolveTargetWithAd = (): TargetResolution => {
         const base = resolveTarget();
         if (base.kind === "resolved") return base;
-        const pronounDetailTurn = isVehicleDetailTurn && !currentHasVehicle;
+        const normLead = normalizeText(leadMessage);
+        const pronounAttributeTurn = /\b(?:ele|dele|desse|deste|esse|este)\b/.test(normLead)
+          && ATTR_QUESTION_RX.test(normLead)
+          && !currentHasVehicle;
+        const pronounDetailTurn = (isVehicleDetailTurn || pronounAttributeTurn) && !currentHasVehicle;
         if (adReferenceKey && !currentHasVehicle && ((baseSignals.mentionsPhoto === true && !isPhotoDeclined(leadMessage)) || pronounDetailTurn || refersToAd(leadMessage))) {
           return { kind: "resolved", vehicleKey: adReferenceKey, source: "ad_reference", candidateVehicleKeys: [adReferenceKey], subjectModel: adConstraints.modelos?.[0] ?? null };
         }
@@ -1559,7 +1601,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           effectiveDecision = disc.decision; composed = disc.composed; proposedEffects = disc.proposedEffects;
           finalDecision = { reasonCode: "ad_generic_discovery", reasonSummary: "anúncio genérico -> descoberta comercial", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
         }
-        const degraded = isDegradedSource(responseSource);
+        degraded = isDegradedResponse(responseSource, recoveryReason);
         // LLM-FIRST (missão): o engine NÃO gerencia objetivo de funil. `stripAllObjectiveMutations` garante que nenhum
         // objetivo de funil seja persistido (funil = contexto read-only; a LLM decide a condução). Fora do llm_first,
         // `reconcileObjectiveWithQuestion` continua persistindo o objetivo = pergunta REALMENTE enviada (legado).
@@ -1609,6 +1651,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         if (sdrPolicy && !terminalSafe) {
           effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: sdrPolicy });
         }
+        degraded = terminalSafe;
         turnOutput = { decision: effectiveDecision, composed, facts, loopExhausted: false, terminalSafe, steps: brainSteps };
       }
       if (!finalDecision) throw new Error("central: no final decision after authoring");
@@ -1729,7 +1772,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         // por tentativa auditam a recuperação. tools p/ o v3_query_log do central_active.
         makeEvent({ conversationId, turnId, type: "decision_final", suffix: "decision", payload: {
           action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId),
-          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded: isDegradedSource(responseSource), brainRetries,
+          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded, brainRetries,
           brainReason: finalDecision.reasonSummary.slice(0, 160),
           // T6: semântica do turno (fonte única) + resolução de alvo.
           primaryIntent: finalVU.understanding.primaryIntent, subject: finalVU.understanding.subject,
@@ -1749,7 +1792,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           moreOptions: baseSignals.mentionsMoreOptions, moreOptionsNeedsScope,
           moreOptionsInheritedScope: baseSignals.mentionsMoreOptions && sufficientForStockSearch(effectiveSearchScope) ? effectiveSearchScope : null,
         }, at: cutoff }),
-        makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded: isDegradedSource(responseSource) }, at: cutoff }),
+        makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded }, at: cutoff }),
       ];
 
       // ── TRAVA ANTI-PARCIAL (P0 bloco-do-lead): reconferência ANTES de despachar. Se chegou mensagem NOVA (pending)
@@ -1784,7 +1827,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       return {
         status: "committed", turnId, claimedEventIds, decision, composedText: composed.text, terminalSafe,
         facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, brainSteps, responseSource,
-        degraded: isDegradedSource(responseSource), institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
+        degraded, institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
         understanding: finalVU.understanding, understandingFromBrain: lockedU != null, targetResolutionSource,
         resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
         previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null, recoveryReason,

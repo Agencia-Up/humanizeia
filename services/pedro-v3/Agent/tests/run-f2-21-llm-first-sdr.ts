@@ -245,7 +245,7 @@ async function main(): Promise<void> {
       fin([txt("O Onix sai por"), moneyRef(POP2.vehicleKey)]),
     ]);
     check("[10] preço não-aterrado é BLOQUEADO -> fallback honesto (sem valor inventado)", c.committed && !/R\$|\d{2}\.\d{3}|49\.?990/.test(c.outbox), `src=${c.src} text="${c.outbox}"`);
-    check("[10] degradação observável (não finge sucesso)", c.degraded, `degraded=${c.degraded} src=${c.src}`);
+    check("[10] recuperação contextual segura (não finge preço e não vira falha técnica)", c.committed && !c.degraded && c.src === "deterministic_recovery", `degraded=${c.degraded} src=${c.src}`);
   }
 
   // 11) CPF CEDO: cérebro pede CPF na qualificação (sem visita agendada) -> BLOQUEADO (não vai CPF no outbox).

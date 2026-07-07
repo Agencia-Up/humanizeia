@@ -71,7 +71,7 @@ const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const searchPickupU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "vehicle_type", subjectValue: "pickup", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "picape" }], isTopicChange: false, answeredLeadQuestions: [] } as TurnUnderstanding;
 
-type Cap = { outbox: string; committed: boolean; reasonCode: string | null; src: string | null; stockInputs: Record<string, unknown>[]; hasMedia: boolean };
+type Cap = { outbox: string; committed: boolean; reasonCode: string | null; src: string | null; degraded: boolean; terminalSafe: boolean; stockInputs: Record<string, unknown>[]; hasMedia: boolean };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder): Promise<Cap> {
   executed.length = 0; preparer.relation = relation; brain.setResponder(responder);
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
@@ -89,6 +89,8 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "",
     committed: r.status === "committed", reasonCode: r.status === "committed" ? r.decision.reasonCode : null,
     src: r.status === "committed" ? r.responseSource : null,
+    degraded: r.status === "committed" ? r.degraded : false,
+    terminalSafe: r.status === "committed" ? r.terminalSafe : false,
     stockInputs: executed.filter((e) => e.tool === "stock_search").map((e) => e.input as Record<string, unknown>),
     hasMedia: outbox.some((o) => o.kind === "send_media"),
   };
@@ -132,6 +134,7 @@ async function main(): Promise<void> {
     check("[A-3] NÃO termina em 'quer que eu veja outras opções?' solto", !/quer que eu veja outras op(c|ç)oes\?\s*$/i.test(norm(t1.outbox)) && !has(t1.outbox, "nao temos"), `outbox="${t1.outbox}"`);
     check("[A-4] reasonCode = recovery_relaxed_offer", t1.reasonCode === "recovery_relaxed_offer", `reason=${t1.reasonCode} src=${t1.src}`);
     check("[A-5] rodou a busca relaxada por TIPO na faixa (tipo=suv, precoMax=100000)", t1.stockInputs.some((i) => i.tipo === "suv" && i.precoMax === 100000), `inputs=${JSON.stringify(t1.stockInputs)}`);
+    check("[A-6] recuperação relaxada com lista REAL NÃO é terminalSafe/degraded", t1.terminalSafe === false && t1.degraded === false, `ts=${t1.terminalSafe} degraded=${t1.degraded} src=${t1.src}`);
   }
 
   // ── drop_ceiling: "tem Compass até 50 mil?" (nenhum SUV ≤50k) -> Compass um pouco acima ──
@@ -175,6 +178,7 @@ async function main(): Promise<void> {
     const t1 = await c.t("tem picape até 30 mil?", { responder: beco });
     check("[E-1] beco 'quer que eu veja outras opções?' é SUBSTITUÍDO", !/quer que eu (veja|mostre) outras op/.test(norm(t1.outbox)), `outbox="${t1.outbox}"`);
     check("[E-2] recuperação condutora: nomeia o filtro + pergunta específica (ampliar/outro), rc=recovery_stock_empty_conduct", (has(t1.outbox, "picape") || has(t1.outbox, "pickup") || has(t1.outbox, "30")) && /ampliar|outro modelo|outro tipo|prefere|me diz/.test(norm(t1.outbox)) && t1.reasonCode === "recovery_stock_empty_conduct", `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
+    check("[E-2b] beco vazio conduzido NÃO é terminalSafe/degraded", t1.terminalSafe === false && t1.degraded === false, `ts=${t1.terminalSafe} degraded=${t1.degraded} src=${t1.src}`);
   }
 
   // ── E-3 (bug do audit real): "tem X até Y?" às vezes é classificado relation=asks_vehicle_detail, mas rodou stock_search(0)

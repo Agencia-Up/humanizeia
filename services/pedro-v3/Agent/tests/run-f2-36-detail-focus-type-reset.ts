@@ -178,6 +178,14 @@ async function main(): Promise<void> {
   check("[P0-1b] responde o valor aterrado, sem technical_fallback", has(p1.outbox, "73.990") && p1.src !== "technical_fallback", `src=${p1.src} reason=${p1.reason} outbox=${p1.outbox}`);
   check("[P0-1c] nao roda stock_search em pergunta de atributo do veiculo focado", p1.stockInputs.length === 0, `stock=${JSON.stringify(p1.stockInputs)}`);
 
+  const p1Amb = await runTurn({
+    state: { adContext: ad, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
+    lead: "qual o valor dele?",
+    relation: "ambiguous",
+    responder: detailBrain,
+  });
+  check("[P0-1d] detalhe pronominal nao depende do classificador relation=asks_vehicle_detail", p1Amb.detailKeys.length === 1 && p1Amb.detailKeys[0] === HB20_2020.vehicleKey && has(p1Amb.outbox, "73.990") && p1Amb.src !== "technical_fallback", `detailKeys=${JSON.stringify(p1Amb.detailKeys)} src=${p1Amb.src} outbox=${p1Amb.outbox}`);
+
   const p2 = await runTurn({
     state: { activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"], precoMax: 80000 } as ActiveSearchConstraints },
     lead: "na verdade quero um SUV automatico ate 100 mil",
@@ -187,6 +195,14 @@ async function main(): Promise<void> {
   const input = p2.stockInputs[0] ?? {};
   check("[P0-2a] busca executada como SUV automatico ate 100k, sem marca/modelo stale", input.tipo === "suv" && input.cambio === "automatic" && input.precoMax === 100000 && input.marca == null && input.modelo == null, `input=${JSON.stringify(input)}`);
   check("[P0-2b] lista SUVs reais e nao fala Hyundai SUV", (has(p2.outbox, "CR-V") || has(p2.outbox, "Renegade")) && !has(p2.outbox, "Hyundai SUV"), `outbox=${p2.outbox}`);
+
+  const photoU = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "2", evidence: [{ capability: "send_photos", quote: "me manda fotos do segundo" }] });
+  const p3 = await runTurn({
+    lead: "me manda fotos do segundo",
+    relation: "ambiguous",
+    responder: () => final([txt("Nao temos Compass ate 100 mil no estoque para mostrar fotos. Quer que eu te mostre outras opcoes disponiveis?")], "bad_photo_absence", photoU),
+  });
+  check("[P0-3a] foto por ordinal sem lista valida nao repete busca antiga; pede qual/lista/ordinal", /qual|segundo|lista|item/i.test(p3.outbox) && !/nao temos compass ate 100 mil/i.test(norm(p3.outbox)), `outbox=${p3.outbox} src=${p3.src} reason=${p3.reason}`);
 
   console.log(`\n== F2.36: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n - " + fails.join("\n - ")); process.exit(1); }
