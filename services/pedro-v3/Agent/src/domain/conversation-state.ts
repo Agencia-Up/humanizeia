@@ -93,6 +93,9 @@ export type RenderedOfferItem = {
   // R13 Inc2/G: preço aterrado da oferta (para grounding de MEMÓRIA: um preço já ofertado pode ser citado num
   // turno posterior sem re-consultar). Aditivo/opcional.
   preco?: number | null;
+  // F2.29: tipo aterrado (classificado do fato) — permite DERIVAR escopo mínimo p/ "mais opções" quando a oferta é
+  // HOMOGÊNEA e não há activeSearchConstraints persistido (invariante 3). Aditivo/opcional.
+  tipo?: VehicleType | null;
 };
 export type LastRenderedOfferContext = {
   sourceTurnId: Id;
@@ -114,6 +117,21 @@ export type ActiveSearchConstraints = {
   anos?: number[];   // F2.28: anos RÍGIDOS ("13/14/15" -> [2013,2014,2015]; "2013 a 2015" -> range). Filtro duro.
 };
 
+// F2.32 (CTWA/Facebook Ads): CONTEXTO de anúncio Click-to-WhatsApp. É CONTEXTO da conversa, NÃO resposta do lead. Vem
+// sanitizado do externalAdReply do Meta (bridge). Persiste no state; herda em rajada (mensagens seguintes sem referral).
+// O ENGINE resolve o veículo do anúncio a partir do TEXTO (title/body/greeting) aterrado no catálogo — nunca inventa; o
+// turno atual e correções do lead SEMPRE vencem o anúncio. imageUrls guardadas p/ uma futura Layer de visão (não usada ainda).
+export type AdContext = {
+  adId: string | null;          // externalAdReply.sourceID (ad_id do Meta — sinal determinístico p/ futura Layer 0)
+  source: string | null;        // conversionSource (FB_Ads) OU host (facebook/instagram/fb.me)
+  sourceUrl: string | null;     // externalAdReply.sourceURL (fb.me/…)
+  title: string | null;         // externalAdReply.title
+  body: string | null;          // externalAdReply.body
+  greeting: string | null;      // externalAdReply.greetingMessageBody (saudação — costuma ser genérica)
+  imageUrls: string[];          // [originalImageURL, thumbnailURL] — p/ futura visão (Layer 2)
+  capturedAtTurn: number;       // turnNumber quando capturado (herança/expiração em rajada)
+};
+
 export type ConversationState = {
   schemaVersion: number;
   version: number; // CAS
@@ -130,6 +148,7 @@ export type ConversationState = {
   offers: OfferMemory;
   lastRenderedOfferContext: LastRenderedOfferContext | null; // memória operacional p/ referência ordinal
   activeSearchConstraints?: ActiveSearchConstraints | null; // F2.26: filtro de busca acumulado (merge conservador entre turnos)
+  adContext?: AdContext | null;        // F2.32: contexto do anúncio CTWA (persiste + herda em rajada; turno atual sempre vence)
   moreOptionsExhausted?: number; // R10-4: nº de esgotamentos consecutivos de "mais opções" (progressão; reset=0 em nova oferta)
   searchPreferences?: { transmission: TransmissionPreference | null };
   photoLedger: PhotoLedger;
@@ -189,6 +208,7 @@ export function createInitialState(args: {
     offers: { last: null, presentedKeys: [] },
     lastRenderedOfferContext: null,
     activeSearchConstraints: null,
+    adContext: null,
     searchPreferences: { transmission: null },
     photoLedger: { sentByVehicle: {} },
     rejected: { modelos: [] },

@@ -30,3 +30,20 @@ export function mentionsContact(block: string): boolean { return INST_CONTACT_RX
 export function isInstitutionalTurn(block: string): boolean {
   return institutionalTopicsRequested(block).length > 0 || mentionsContact(block);
 }
+
+// ── INC2 (P0): no canal WhatsApp o telefone de contato JÁ é conhecido pelo envelope (conversationId "wa:<hash-do-fone>").
+//    O agente NÃO deve pedir o telefone do LEAD. Dois helpers PUROS: ──
+// (1) canal com telefone conhecido (conversationId prefixado "wa:").
+export function contactPhoneKnownFromChannel(conversationId: string | null | undefined): boolean {
+  return typeof conversationId === "string" && conversationId.startsWith("wa:");
+}
+// (2) a RESPOSTA do agente está pedindo o telefone/número de contato DO LEAD? Conservador — pega "seu telefone/número",
+//     "telefone/número para contato", "me passa/informa seu telefone". EXCEÇÃO: pedido explícito de número ALTERNATIVO/
+//     secundário/fixo (aí o prompt do portal pode ter pedido de propósito) NÃO dispara o guard.
+const ASK_OWN_PHONE_RX = /\b(seu|teu)\s+(telefone|numero|whats(?:app)?|contato\s+telefonico)\b|\b(telefone|numero|contato)\s+(?:para|pra|de)\s+contato\b|\bme\s+(?:passa|passar|informa|informar|manda|mandar|de|d[êe]|diz|dizer|fornec\w+)\s+(?:o\s+)?(?:seu|um)\s+(?:telefone|numero)\b|\bqual\s+(?:e\s+)?(?:o\s+)?(?:seu|teu)\s+(?:telefone|numero|whats)/;
+const ALT_PHONE_RX = /\balternativ|\boutro\s+(?:telefone|numero)|\bsegundo\s+(?:telefone|numero)|\btelefone\s+fixo|\bnumero\s+fixo|\bfixo\s+(?:de\s+)?contato/;
+export function asksLeadContactPhone(responseText: string): boolean {
+  const n = normalizeText(responseText);
+  if (ALT_PHONE_RX.test(n)) return false;   // número alternativo pedido de propósito -> não é o bug
+  return ASK_OWN_PHONE_RX.test(n);
+}

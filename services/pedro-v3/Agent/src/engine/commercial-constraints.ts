@@ -49,6 +49,14 @@ export function detectBrand(block: string): string | null {
   return null;
 }
 
+// F2.29: o lead pediu MOTO explicitamente? Só então o engine LIBERA moto na busca (default do estoque é EXCLUIR moto de
+// lista de carro). Conservador: exige a palavra "moto/motocicleta/scooter/..." — não infere por modelo (evita falso
+// positivo com carro). PURO.
+const MOTORCYCLE_INTENT_RX = /\b(moto|motos|motocicleta|motocicletas|motoca|scooter|scooters|ciclomotor|triciclo|quadriciclo)\b/;
+export function mentionsMotorcycle(block: string): boolean {
+  return MOTORCYCLE_INTENT_RX.test(normalizeText(block));
+}
+
 // ── CORREÇÕES explícitas do lead (Invariante 2 / Evidence 1): remoções de constraint do filtro ATIVO. "esquece o
 //    sedan", "não é sedan", "não quero sedan", "não precisa ser sedan", "Compass não é sedan", "tira o sedan". É EXTRAÇÃO
 //    DE FATO (não é if-por-frase de RESPOSTA): mapeia o TIPO negado -> remoção; o engine aplica no merge. PURO. ──
@@ -113,6 +121,40 @@ export function detectCommercialConstraints(args: {
   return c;
 }
 
+// ── P0-B (audit Codex smoke CTWA): intenção de SIMILARIDADE. Depois de um anúncio/oferta SEM match exato, o lead pede
+//    ALTERNATIVAS: "algo parecido", "opções semelhantes", "outras parecidas", "algo do tipo". Nesse turno, o filtro deve
+//    RELAXAR modelo/marca (do anúncio) e manter só as dimensões SEGURAS de similaridade: tipo/categoria + precoMax +
+//    popular (câmbio só se o LEAD pediu neste turno). Sem isso, "algo parecido" continua preso no modelo do anúncio
+//    (bug real: "tem algo parecido até 100 mil?" seguia buscando modelo=Ranger). PURO. ──
+const SIMILARITY_RX = /\bparecid[oa]s?\b|\bsemelhante[s]?\b|\bsimilar(?:es)?\b|\balgo\s+(?:do\s+)?(?:tipo|assim)\b|\bnesse\s+estilo\b|\bnessa\s+linha\b|\bde\s+mesmo\s+estilo\b|\bque\s+seja\s+parecid|\boutr[oa]s?\s+(?:parecid|semelhant|similar)/;
+export function detectSimilarityIntent(block: string): boolean {
+  return SIMILARITY_RX.test(normalizeText(block));
+}
+// Relaxa um filtro para SIMILARIDADE: mantém tipo/precoMax/popular; DROPA marca/modelos/anos; câmbio só se keepCambio
+// (o lead pediu câmbio no turno atual). PURO.
+export function relaxToSimilar(c: CommercialConstraints, keepCambio: boolean): CommercialConstraints {
+  const out: CommercialConstraints = {};
+  if (c.tipo) out.tipo = c.tipo;
+  if (c.precoMax != null) out.precoMax = c.precoMax;
+  if (c.popular === true) out.popular = true;
+  if (keepCambio && c.cambio) out.cambio = c.cambio;
+  return out;
+}
+
+// F2.29 (invariante 3): quando NÃO há filtro ativo persistido, deriva o escopo MÍNIMO da última oferta renderizada —
+// SOMENTE se HOMOGÊNEA (todos os itens do MESMO tipo aterrado). Mista (SUV+sedan+hatch) ou algum sem tipo -> null (não
+// inventa escopo). Deriva só o TIPO (a oferta não carrega o precoMax/marca da busca original de forma confiável). PURO.
+export function deriveScopeFromHomogeneousOffer(items: ReadonlyArray<{ readonly tipo?: VehicleType | null }>): CommercialConstraints | null {
+  if (!items || items.length === 0) return null;
+  const types = items
+    .map((it) => it.tipo)
+    .filter((t): t is VehicleType => t === "suv" || t === "sedan" || t === "hatch" || t === "pickup");
+  if (types.length !== items.length) return null;      // algum item sem tipo aterrado -> não confiável
+  const first = types[0];
+  if (!types.every((t) => t === first)) return null;   // tipos mistos -> não deriva
+  return { tipo: first };
+}
+
 // MERGE CONSERVADOR (F2.26 + F2.27): cada dimensão do bloco ATUAL (current) substitui a do filtro ATIVO; ausente preserva.
 // Invariantes (audit Codex — Evidence 1/6):
 //  - (Inv.2) CORREÇÃO explícita ("esquece sedan", "não é sedan") remove o TIPO do filtro ativo.
@@ -160,6 +202,26 @@ export function constraintsToStockInput(c: CommercialConstraints): QueryInputMap
   if (c.popular) input.popular = true;
   if (c.anos && c.anos.length > 0) input.anos = [...c.anos];
   return input;
+}
+
+// F2.29 (P0 audit Codex): ESCOPO comercial da busca EXECUTADA (filtersUsed) — o que foi REALMENTE buscado/ofertado. É a
+// FONTE DE VERDADE do activeSearchConstraints (não só o texto do lead): quando o cérebro busca {tipo:"sedan"} e lista, o
+// próximo "tem outros?" precisa herdar tipo=sedan. Ignora excludeKeys/broad (não são escopo). PURO.
+export function activeConstraintsFromStockInput(input: Record<string, unknown> | null | undefined): CommercialConstraints {
+  const c: CommercialConstraints = {};
+  if (!input) return c;
+  const marca = typeof input.marca === "string" ? input.marca : "";
+  if (marca) c.marca = canonicalBrand(marca);
+  const modelo = typeof input.modelo === "string" ? input.modelo.trim() : "";
+  if (modelo) c.modelos = modelo.split(/\s+/).filter(Boolean);
+  const tipo = typeof input.tipo === "string" ? input.tipo : "";
+  if (tipo === "suv" || tipo === "sedan" || tipo === "hatch" || tipo === "pickup") c.tipo = tipo;
+  if (typeof input.precoMax === "number" && input.precoMax > 0) c.precoMax = input.precoMax;
+  const cambio = typeof input.cambio === "string" ? input.cambio : "";
+  if (cambio === "automatic" || cambio === "manual") c.cambio = cambio;
+  if (Array.isArray(input.anos)) { const anos = input.anos.filter((y): y is number => typeof y === "number" && y >= 1990 && y <= 2035); if (anos.length > 0) c.anos = anos; }
+  if (input.popular === true) c.popular = true;
+  return c;
 }
 
 // Rótulo humano curto do constraint (p/ recuperação honesta: "Não achei Volkswagen até 50 mil agora"). PURO.

@@ -94,6 +94,25 @@ export function authorizesPhotoByResolvedOrdinal(target: TargetResolution, block
   if (isPhotoDeclined(block)) return false;
   return PHOTO_REQUEST_STEM.test(normalizeText(block));
 }
+// ── P0-A (audit Codex smoke CTWA): FOTO PRONOMINAL do veículo EXATO do anúncio. Quando o anúncio tem marca/modelo/ANO e o
+//    estoque tem EXATAMENTE esse veículo (match único, aterrado), o alvo do anúncio (source="ad_reference") é a referência
+//    do pedido pronominal de foto ("me manda fotos dele/desse/esse"). Grounding MÁXIMO (o anúncio nomeou o carro, o estoque
+//    tem exatamente ele) — narrow, como o turn_ordinal. Fail-closed: negação de foto barra; só ad_reference autoriza. ──
+export function authorizesPhotoByAdReference(target: TargetResolution, block: string): boolean {
+  if (target.kind !== "resolved" || target.source !== "ad_reference") return false;
+  if (isPhotoDeclined(block)) return false;
+  return PHOTO_REQUEST_STEM.test(normalizeText(block));
+}
+// ── P0 (audit Codex smoke CTWA #2): AUTORIZAÇÃO DE FOTO POR ALVO RESOLVIDO. Generaliza ordinal+ad_reference: quando o LEAD
+//    pede foto NESTE turno (verbo de envio/ver + "foto"; negação barra) E o alvo está RESOLVIDO por QUALQUER fonte aterrada
+//    (anúncio/ordinal/seleção/modelo — target.kind==="resolved"), o envio é autorizado — DIRIGIDO pelo pedido do lead, não
+//    pela cooperação do cérebro (que às vezes diz "não localizei" sem consultar). Mesma exigência de grounding (alvo ÚNICO):
+//    ambíguo/ausente -> não autoriza (o fluxo pergunta qual). Fail-closed. Superset de ByResolvedOrdinal/ByAdReference. PURO. ──
+export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string): boolean {
+  if (target.kind !== "resolved") return false;
+  if (isPhotoDeclined(block)) return false;
+  return PHOTO_REQUEST_STEM.test(normalizeText(block));
+}
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──
 const TOOL_CAPABILITY: Record<string, TurnCapability> = {
@@ -118,7 +137,7 @@ export function isStockSearchTurn(v: ValidatedUnderstanding | null): boolean {
 //    precedência); subjectValue que CONFLITA com o claim escrito torna o entendimento INVÁLIDO (kind=conflict, zero mídia);
 //    inferência (typo, sem claim exato) só vira candidato se CONFIRMADA por stock_search/catálogo. vehicle_photos_resolve
 //    NUNCA confirma o modelo sozinho (knownModels só vem de stock_search/vehicle_details/oferta/identidade/seleção). ──
-export type TargetResolutionSource = "turn_ordinal" | "turn_explicit_model" | "carryover_selected" | "ambiguous" | "none";
+export type TargetResolutionSource = "turn_ordinal" | "turn_explicit_model" | "carryover_selected" | "ad_reference" | "ambiguous" | "none";
 export type TargetResolution =
   | { readonly kind: "resolved"; readonly vehicleKey: string; readonly source: TargetResolutionSource; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
   | { readonly kind: "ambiguous"; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }

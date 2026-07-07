@@ -10,7 +10,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
 const PEDRO_V2_BUILD = "2026-06-29-pedro-v3-no-dispatch-fallback-v222";
@@ -583,7 +583,18 @@ Deno.serve(async (req) => {
           turn: bridgeTurn.turn,
         });
         if (bridgeResult.kind === "pre_ingest_failure") {
-          console.error(`[pedro-v3-bridge] pre_ingest_failure status=${bridgeResult.httpStatus ?? "none"}; fallback=v2`);
+          // INC1 (P0 STICKY ROUTING): uma conversa JÁ ASSUMIDA pelo v3 (routing/state presente) NUNCA cai pro v2 no meio.
+          // O fallback pro v2 só ocorre ANTES do v3 assumir a conversa (sem routing) — senão o v2 responde por cima do v3
+          // (saudação "Oi! Aqui é o Aloan" no meio). Duplicado/no_op/accepted/superseded já não entram aqui (não são
+          // pre_ingest_failure). Observabilidade: reason + conversationId + hasV3Routing.
+          const hasV3Routing = await conversationHasV3Routing(supabase, bridgeTurn.turn.tenantId, bridgeTurn.turn.conversationId);
+          const hasV3State = await conversationHasV3State(supabase, bridgeTurn.turn.tenantId, bridgeTurn.turn.conversationId);
+          const decision = shouldFallbackToPedroV2({ classification: bridgeResult.kind, hasV3Routing, hasV3State });
+          if (!decision.fallback) {
+            console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false`);
+            return;
+          }
+          console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false; fallback=v2`);
           await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
           return;
         }

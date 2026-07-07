@@ -18,6 +18,21 @@ import {
   resolveCanonicalVehicleModelFromTaxonomy,
 } from "./vehicle-taxonomy.ts";
 
+// F2.29 (P0): detecção de MOTO por FATO da fonte (categoria/carroceria) + modelo de moto conhecido. Roda ANTES dos
+// filtros de tipo. A taxonomia de CARRO não conhece motos (resolveVehicleTypeFromTaxonomy => null p/ moto), então um
+// Honda CB com categoria errada ("carro") ainda é pego pelo modelo — o fato/heurística VENCE um `tipo` errado da API.
+// Objetivo: moto NUNCA aparece em lista de carro, salvo o lead pedir moto (includeMotorcycles=true).
+const MOTORCYCLE_CATEGORY_RX = /\b(moto|motocicleta|motoneta|scooter|triciclo|quadriciclo|ciclomotor|motorcycle|motorbike)\b/;
+const MOTORCYCLE_MODEL_RX = /\b(cb\d{0,4}|cg\d{0,3}|biz|pop\d{2,3}|fan\d{0,3}|titan|bros|xre\d{0,3}|nxr|cbr\d{0,4}|twister|hornet|fazer|ybr\d{0,3}|factor|xtz\d{0,3}|lander|tenere|crosser|fz15|fz25|mt03|mt07|mt09|nmax|xmax|pcx|adv150|burgman|bandit|gsr\d{0,3}|intruder|boulevard|vstrom|dl650|shineray|dk150|next300|citycom)\b/;
+
+function isMotorcycleVehicle(category: string | null, bodyType: string | null, modelName: string | null): boolean {
+  const cat = normalizeText(`${category ?? ""} ${bodyType ?? ""}`);
+  if (cat && MOTORCYCLE_CATEGORY_RX.test(cat)) return true;
+  const model = normalizeText(`${modelName ?? ""}`);
+  if (model && MOTORCYCLE_MODEL_RX.test(model)) return true;
+  return false;
+}
+
 export class V2StockSource implements StockSource, VehicleDetailSource {
   constructor(
     private readonly loader: StockLoader
@@ -47,6 +62,12 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
         const { key } = generateVehicleKey(v);
         return !excludeSet.has(key);
       });
+    }
+
+    // A2) F2.29 (P0): MOTO NUNCA entra em lista de carro. Filtro DEFAULT (salvo o lead pedir moto: includeMotorcycles).
+    // Fato da fonte (categoria/carroceria) OU modelo de moto conhecido — a taxonomia/fato vence um `tipo` errado da API.
+    if (!filters.includeMotorcycles) {
+      pool = pool.filter(v => !isMotorcycleVehicle(v.category, v.bodyType, v.modelName));
     }
 
     // B) Filtro rígido por tipo/carroceria (broad não relaxa!)

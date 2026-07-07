@@ -208,13 +208,17 @@ async function main(): Promise<void> {
     check("[H] fingerprint de deny repetido -> não gasta as 8 tentativas (brainSteps<=3)", cap.committed && cap.brainSteps <= 3, `brainSteps=${cap.brainSteps} src=${cap.src}`);
     check("[H] recuperação contextual: lista aterrada, SEM texto genérico no outbox", has(cap.outbox, "Kicks") && !/nao consegui confirmar|reformul/.test(norm(cap.outbox)) && (cap.recoveryReason ?? "").includes("repeated_deny"), `text="${cap.outbox}" reason=${cap.recoveryReason}`);
   }
-  // I) P0-2: SEM understanding do cérebro, "me mande fotos do Onix" NÃO autoriza mídia (o fallback nunca autoriza) ->
-  //    rejeita a tool/efeito, retry, e no fim RECUPERA sem mídia (pergunta qual). ZERO mídia.
+  // I) Invariante de foto (audit Codex CTWA #2) vs. P0-2: o cérebro propõe mídia SEM understanding (step malformado) -> a
+  //    proposta CRUA do cérebro é rejeitada (P0-2: fromBrain=false), MAS o alvo está resolvido (Onix SELECIONADO) e o lead
+  //    pediu foto explicitamente, então o ENGINE resolve as fotos do alvo e envia a mídia ATERRADA (src=deterministic_photo,
+  //    verificada por vehicle_photos_resolve + targetAcceptsKey). O envio vem do grounding do engine, não do palpite do
+  //    cérebro — recuperação robusta. Codex: alvo resolvido por seleção + pedido explícito + photoIds>0 => DEVE enviar.
+  //    (A trava P0-2 p/ alvo AMBÍGUO/ERRADO segue coberta em [J] carro errado e [L] variantes sem seleção.)
   {
     const c = conv({ ...sel(ONIX) }); await c.seed();
     const noU = (): AgentBrainStep => ({ kind: "final", decision: { reasonCode: "send_photos", reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estão as fotos:")] } }, proposedEffects: [reply, mediaEff(ONIX)], memoryMutations: [], stateMutations: [] } as AgentBrainDecision });
     const cap = await c.t("me mande fotos do Onix", "ambiguous", () => noU());
-    check("[I] P0-2: SEM understanding do cérebro -> ZERO mídia (fallback nunca autoriza)", !cap.hasMedia && !cap.fromBrain, `media=${cap.hasMedia} fromBrain=${cap.fromBrain} src=${cap.src}`);
+    check("[I] cérebro sem understanding: proposta crua rejeitada, mas engine ATERRA e envia a foto do alvo resolvido (Onix)", cap.hasMedia && cap.mediaKey === ONIX.vehicleKey && cap.src === "deterministic_photo" && !cap.fromBrain, `media=${cap.hasMedia} mediaKey=${cap.mediaKey} fromBrain=${cap.fromBrain} src=${cap.src}`);
   }
   // O) P0-2: "gostei das fotos" (menção, não pedido) com understanding smalltalk -> ZERO mídia (mesmo se o cérebro errar).
   {

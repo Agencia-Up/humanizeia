@@ -9,10 +9,13 @@ import type { TurnInterpretation } from "../domain/decision.ts";
 import type { CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
 import type { Iso } from "../domain/types.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { contactPhoneKnownFromChannel } from "./turn-domain.ts";
 
 const PHOTO_RX = /\bfotos?\b|\bimagens?\b|\bfotografi/;
 const STORE_RX = /\bloja\b|\bendereco\b|\bfica\s+onde\b|\bonde\s+(fica|e|esta)\b|\bhorario\b|\bque\s+horas\b|\bunidade\b|\bfuncionament/;
-const MORE_RX = /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+alguma|\btem\s+outr/;
+// F2.29 (invariante 2): cobre "mais opções", "outros/outras", "mais carros", "mais algum(a)", "tem outros", "tem mais"
+// (exceto "tem mais informações/detalhe/sobre/dados" — pedido de INFO do carro atual, não de outros veículos).
+const MORE_RX = /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+algum|\btem\s+outr|\btem\s+mais\b(?!\s+(?:informa|detalhe|sobre|dado))/;
 const POPULAR_RX = /\bpopular(?:es)?\b/;
 const MEMORY_Q_RX = /\bqual\b[^?]*\b(carro|ve[ií]culo|foto|modelo)\b|\bpedi\b|\bmandei\b|\bmostrei\b|\bmandou\b|\benviou\b|\bquais?\b[^?]*\bfotos?\b/;
 
@@ -53,8 +56,16 @@ export function buildTurnFrame(args: {
   readonly interpretation: TurnInterpretation;
   readonly state: ConversationState;
   readonly currentTurnIntent?: CurrentTurnIntent;   // P0 (audit): intenção do turno atual, computada pelo engine
+  readonly adVehicleHint?: string | null;           // F2.32 (CTWA): veículo do anúncio (resolvido/aterrado pelo engine)
 }): TurnFrame {
-  const signals = buildFrameSignals(args.block, args.interpretation);
+  const base = buildFrameSignals(args.block, args.interpretation);
+  // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
+  const signals = {
+    ...base,
+    ...(args.currentTurnIntent ? { currentTurnIntent: args.currentTurnIntent } : {}),
+    contactPhoneKnown: contactPhoneKnownFromChannel(args.state.conversationId),
+    ...(args.adVehicleHint ? { adVehicle: args.adVehicleHint } : {}),
+  };
   return {
     turnId: args.turnId,
     now: args.now,
@@ -62,6 +73,6 @@ export function buildTurnFrame(args: {
     portalPromptSha256: args.portalPromptSha256,
     workingMemory: args.workingMemory,
     recentTranscript: buildRecentTranscript(args.state),
-    signals: args.currentTurnIntent ? { ...signals, currentTurnIntent: args.currentTurnIntent } : signals,
+    signals,
   };
 }

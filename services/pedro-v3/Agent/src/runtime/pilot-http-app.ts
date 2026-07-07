@@ -37,6 +37,9 @@ export type PilotTurnPayload = {
   readonly messageText: string;
   readonly receivedAt: string;
   readonly leadId?: string | null;
+  // F2.32 (CTWA): contexto de anúncio SANITIZADO forwardado pelo bridge (só na 1ª mensagem do anúncio). Opaco (o engine
+  // valida/sanitiza o shape via sanitizeAdContext).
+  readonly adReferral?: unknown;
 };
 
 export interface PilotTurnRunner {
@@ -143,6 +146,9 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
   if (!Number.isFinite(Date.parse(receivedAt))) return null;
   if (leadId !== null && !SAFE_ID.test(leadId)) return null;
 
+  // F2.32 (CTWA): adReferral opaco (só objeto simples). O engine sanitiza/clampa os campos via sanitizeAdContext.
+  const adReferral = (raw.adReferral && typeof raw.adReferral === "object" && !Array.isArray(raw.adReferral)) ? raw.adReferral : undefined;
+
   return {
     tenantId,
     agentId,
@@ -154,6 +160,7 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
     messageText,
     receivedAt: new Date(receivedAt).toISOString(),
     leadId,
+    ...(adReferral ? { adReferral } : {}),
   };
 }
 
