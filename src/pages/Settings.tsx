@@ -13,7 +13,9 @@ import {
   ArrowRight,
   Tv,
   KanbanSquare,
+  Users,
 } from 'lucide-react';
+import { ResponsaveisTab } from '@/components/pedro/ResponsaveisTab';
 import { CompanySettingsTab } from '@/components/settings/CompanySettingsTab';
 import { AISettingsTab } from '@/components/settings/AISettingsTab';
 import { DataSyncSettingsTab } from '@/components/settings/DataSyncSettingsTab';
@@ -30,7 +32,7 @@ export default function SettingsPage() {
   const { user, profile } = useAuth();
   const { isSeller } = useSellerProfile(user?.id);
   const tabParam = searchParams.get('tab');
-  const validTabs = ['company', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'kanban-marcos', 'kanban-pedro', 'admin'];
+  const validTabs = ['company', 'responsaveis', 'ai', 'whatsapp', 'sync', 'dashboard-tv', 'kanban-marcos', 'kanban-pedro', 'admin'];
   const [activeTab, setActiveTab] = useState(
     tabParam && validTabs.includes(tabParam) ? tabParam : 'company'
   );
@@ -39,7 +41,7 @@ export default function SettingsPage() {
   // Vendedor não precisa de: Dados da empresa, Configurar IA, Dashboard TV
   // (nem o checklist de setup, nem "Conectar anúncios"). Some das contas de todos
   // os vendedores e dos novos automaticamente (gate por profiles.role='seller').
-  const sellerHiddenTabs = ['company', 'ai', 'dashboard-tv'];
+  const sellerHiddenTabs = ['company', 'responsaveis', 'ai', 'dashboard-tv'];
   const isTabHidden = (t: string) => isSeller && sellerHiddenTabs.includes(t);
 
   // Se o vendedor cair numa aba escondida (ex.: default 'company'), joga pra
@@ -139,6 +141,12 @@ export default function SettingsPage() {
               Empresa
             </TabsTrigger>
             )}
+            {!isTabHidden('responsaveis') && (
+            <TabsTrigger value="responsaveis" className="gap-2">
+              <Users className="h-4 w-4" />
+              Responsáveis
+            </TabsTrigger>
+            )}
             {!isTabHidden('ai') && (
             <TabsTrigger value="ai" className="gap-2">
               <Sparkles className="h-4 w-4" />
@@ -172,6 +180,7 @@ export default function SettingsPage() {
           </TabsList>
 
           {!isTabHidden('company') && <TabsContent value="company"><CompanySettingsTab /></TabsContent>}
+          {!isTabHidden('responsaveis') && user?.id && <TabsContent value="responsaveis"><ResponsaveisTab userId={user.id} /></TabsContent>}
           {!isTabHidden('ai') && <TabsContent value="ai"><AISettingsTab /></TabsContent>}
           <TabsContent value="sync"><DataSyncSettingsTab /></TabsContent>
           {!isTabHidden('dashboard-tv') && <TabsContent value="dashboard-tv"><DashboardTVSettingsTab /></TabsContent>}

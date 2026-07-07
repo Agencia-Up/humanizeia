@@ -45,7 +45,6 @@ import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder'
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
 import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
-import { ResponsaveisTab } from '@/components/pedro/ResponsaveisTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -6446,8 +6445,6 @@ export default function PedroSDR() {
             {/* Vendedores */}
             {(!isSeller || visibleFeatures.tab_vendedores) && (
               <TabsContent value="vendedores" className="mt-0 space-y-4">
-                {/* Responsáveis & entregas — fonte única de "quem recebe o quê" (só master) */}
-                {!isSeller && user?.id && <ResponsaveisTab userId={user.id} />}
                 {/* Config de entrega de feedbacks ao gerente — só pra master */}
                 {!isSeller && <ManagerFeedbackConfigCard />}
                 {user?.id && <SellerManagerTab userId={user.id} />}

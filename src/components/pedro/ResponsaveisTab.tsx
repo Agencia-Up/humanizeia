@@ -11,23 +11,29 @@ import {
 } from 'lucide-react';
 
 // ── Responsáveis & entregas ──────────────────────────────────────────────────
-// Fonte ÚNICA de "quem recebe o quê" na conta. Cada pessoa aparece UMA vez
-// (dedup pelos últimos 8 dígitos do WhatsApp); as entregas de conta (relatório
-// de atendimento do Cérebro, relatório do tráfego do José, alertas) ficam em
-// `conta_responsaveis`. Os leads continuam na matriz por agente (aba Vendedores),
-// aqui aparecem só como referência. Substitui o número do gerente espalhado em
-// wa_ai_agents.gerente_phone / feedback_config.numero_gerente.
+// Fonte ÚNICA de "quem recebe o quê" na conta (mora em Configurações). Cada
+// pessoa aparece UMA vez (dedup pelos últimos 8 dígitos do WhatsApp). As entregas
+// de conta (relatório de atendimento do Cérebro, relatório do tráfego do José,
+// alertas) ficam em `conta_responsaveis`. Os LEADS são por agente (matriz
+// `ai_team_members.is_active`) e dá pra ligar/desligar por agente aqui mesmo.
 
 interface Props { userId: string; }
 
 type Entrega = 'recebe_atendimento' | 'recebe_trafego' | 'recebe_alertas';
+
+interface AgenteLead {
+  agentId: string;
+  nome: string;
+  memberId: string;   // id da linha ai_team_members (por agente)
+  ativo: boolean;     // is_active — recebe lead nesse agente
+}
 
 interface Pessoa {
   key: string;              // últimos 8 dígitos (chave de pessoa)
   nome: string;
   whatsapp: string;         // dígitos canônicos
   papel: 'gerente' | 'vendedor' | 'externo';
-  agentesLead: string[];    // agentes onde recebe lead (is_active)
+  agentes: AgenteLead[];    // agentes onde a pessoa é membro (com liga/desliga)
   recebe_atendimento: boolean;
   recebe_trafego: boolean;
   recebe_alertas: boolean;
@@ -66,7 +72,7 @@ export function ResponsaveisTab({ userId }: Props) {
     try {
       const [membersRes, agentsRes, respRes] = await Promise.all([
         (supabase as any).from('ai_team_members')
-          .select('name, whatsapp_number, is_manager, is_active, agent_id').eq('user_id', userId),
+          .select('id, name, whatsapp_number, is_manager, is_active, agent_id').eq('user_id', userId),
         (supabase as any).from('wa_ai_agents')
           .select('id, name, gerente_phone, gerente_phone_2').eq('user_id', userId),
         (supabase as any).from('conta_responsaveis')
@@ -82,7 +88,7 @@ export function ResponsaveisTab({ userId }: Props) {
         let p = map.get(k);
         if (!p) {
           p = { key: k, nome: nome || '', whatsapp: onlyDigits(wa), papel,
-            agentesLead: [], recebe_atendimento: false, recebe_trafego: false, recebe_alertas: false };
+            agentes: [], recebe_atendimento: false, recebe_trafego: false, recebe_alertas: false };
           map.set(k, p);
         }
         if (!p.nome && nome) p.nome = nome;
@@ -96,9 +102,8 @@ export function ResponsaveisTab({ userId }: Props) {
         const k = last8(wn);
         if (!k) continue;
         const p = ensure(k, m.name || '', wn, 'vendedor');
-        if (m.is_active && m.agent_id) {
-          const an = agentName.get(m.agent_id);
-          if (an && !p.agentesLead.includes(an)) p.agentesLead.push(an);
+        if (m.agent_id) {
+          p.agentes.push({ agentId: m.agent_id, nome: agentName.get(m.agent_id) || 'Agente', memberId: m.id, ativo: !!m.is_active });
         }
       }
       // 2) Número(s) do gerente (hoje soltos em wa_ai_agents).
@@ -119,6 +124,8 @@ export function ResponsaveisTab({ userId }: Props) {
         p.recebe_trafego = !!r.recebe_trafego;
         p.recebe_alertas = !!r.recebe_alertas;
       }
+      // ordena agentes de cada pessoa por nome
+      for (const p of map.values()) p.agentes.sort((a, b) => a.nome.localeCompare(b.nome));
 
       const arr = [...map.values()].sort((a, b) => {
         const rank = (x: Pessoa) => (x.papel === 'gerente' ? 0 : x.papel === 'vendedor' ? 1 : 2);
@@ -134,7 +141,7 @@ export function ResponsaveisTab({ userId }: Props) {
 
   useEffect(() => { if (userId) load(); }, [userId, load]);
 
-  const toggle = async (p: Pessoa, campo: Entrega) => {
+  const toggleEntrega = async (p: Pessoa, campo: Entrega) => {
     const novo = !p[campo];
     setSaving(p.key + campo);
     setPessoas(prev => prev.map(x => x.key === p.key ? { ...x, [campo]: novo } : x));
@@ -146,6 +153,27 @@ export function ResponsaveisTab({ userId }: Props) {
     } catch (e: any) {
       setPessoas(prev => prev.map(x => x.key === p.key ? { ...x, [campo]: !novo } : x));
       toast({ title: 'Não deu pra salvar', description: e?.message, variant: 'destructive' });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  // Liga/desliga o recebimento de LEAD da pessoa NAQUELE agente (matriz ai_team_members).
+  const toggleLead = async (p: Pessoa, ag: AgenteLead) => {
+    const novo = !ag.ativo;
+    setSaving(p.key + ag.memberId);
+    setPessoas(prev => prev.map(x => x.key !== p.key ? x : {
+      ...x, agentes: x.agentes.map(a => a.memberId === ag.memberId ? { ...a, ativo: novo } : a),
+    }));
+    try {
+      const { error } = await (supabase as any).from('ai_team_members')
+        .update({ is_active: novo }).eq('id', ag.memberId);
+      if (error) throw error;
+    } catch (e: any) {
+      setPessoas(prev => prev.map(x => x.key !== p.key ? x : {
+        ...x, agentes: x.agentes.map(a => a.memberId === ag.memberId ? { ...a, ativo: !novo } : a),
+      }));
+      toast({ title: 'Não deu pra alterar o lead', description: e?.message, variant: 'destructive' });
     } finally {
       setSaving(null);
     }
@@ -196,7 +224,7 @@ export function ResponsaveisTab({ userId }: Props) {
 
       <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-muted/30 border border-border/40 rounded-lg px-3 py-2">
         <Info className="h-3.5 w-3.5 shrink-0" />
-        Os leads continuam sendo distribuídos pelos agentes (aba Vendedores). Aqui você controla os relatórios e alertas — o disparo sai sempre do número da IA.
+        Clique nos botões pra ligar/desligar. Leads são por agente; relatórios e alertas saem sempre do número da IA.
       </div>
 
       {loading ? (
@@ -226,13 +254,27 @@ export function ResponsaveisTab({ userId }: Props) {
               </div>
 
               <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                {/* Leads (referência, controlado na aba Vendedores) */}
-                <span className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border
-                  ${p.agentesLead.length ? 'bg-sky-500/10 text-sky-300 border-sky-500/25' : 'text-muted-foreground/60 border-border/40'}`}
-                  title={p.agentesLead.length ? `Recebe lead em: ${p.agentesLead.join(', ')}` : 'Não recebe leads'}>
-                  <Users className="h-3 w-3" />
-                  {p.agentesLead.length ? `Leads · ${p.agentesLead.join(', ')}` : 'Leads'}
-                </span>
+                {/* Leads por agente (liga/desliga) */}
+                {p.agentes.length > 0 ? p.agentes.map((ag) => {
+                  const busy = saving === p.key + ag.memberId;
+                  return (
+                    <button
+                      key={ag.memberId}
+                      onClick={() => toggleLead(p, ag)}
+                      disabled={busy}
+                      className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors
+                        ${ag.ativo ? 'bg-sky-500/15 text-sky-300 border-sky-500/40' : 'text-muted-foreground border-border/50 hover:bg-accent/40'} ${busy ? 'opacity-60' : ''}`}
+                      title={`${ag.ativo ? 'Recebe' : 'Não recebe'} lead no agente ${ag.nome}`}
+                    >
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Users className="h-3 w-3" />}
+                      Leads · {ag.nome}
+                    </button>
+                  );
+                }) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border text-muted-foreground/60 border-border/40" title="Não é vendedor (não recebe leads)">
+                    <Users className="h-3 w-3" /> Sem leads
+                  </span>
+                )}
 
                 {/* Entregas de conta (toggle) */}
                 {ENTREGAS.map(({ campo, label, icon: Icon }) => {
@@ -241,7 +283,7 @@ export function ResponsaveisTab({ userId }: Props) {
                   return (
                     <button
                       key={campo}
-                      onClick={() => toggle(p, campo)}
+                      onClick={() => toggleEntrega(p, campo)}
                       disabled={busy}
                       className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors
                         ${on ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
@@ -266,7 +308,7 @@ export function ResponsaveisTab({ userId }: Props) {
             <DialogTitle>Adicionar responsável</DialogTitle>
             <DialogDescription>
               Para alguém que só recebe relatórios/alertas (ex.: gestor de tráfego parceiro).
-              Vendedores continuam sendo adicionados na aba Vendedores.
+              Vendedores que recebem leads são adicionados na equipe do agente.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
