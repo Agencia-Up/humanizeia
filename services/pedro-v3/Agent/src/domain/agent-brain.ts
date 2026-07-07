@@ -183,6 +183,9 @@ export type FrameSignals = {
   // F2.32 (CTWA): o lead veio de um ANÚNCIO cujo veículo (resolvido do texto, aterrado) é este label. CONTEXTO, não
   // resposta do lead — o turno atual e correções vencem. Não pergunte "qual modelo?" se o anúncio já deixou claro.
   readonly adVehicle?: string | null;
+  // Fix B (audit CTWA): o lead veio de um anúncio GENÉRICO (sem veículo específico) e ainda não disse o que quer. A
+  // ABERTURA deve ser DESCOBERTA comercial (modelo/tipo/faixa), NÃO pedir nome/dado de contato.
+  readonly adGenericEntry?: boolean;
 };
 export type TurnFrame = {
   readonly turnId: string;

@@ -146,12 +146,13 @@ async function main(): Promise<void> {
     check("[C-1] busca tipo=suv precoMax=100000 (anúncio SUV + refino do lead)", r.stockInput?.tipo === "suv" && r.stockInput?.precoMax === 100000, `input=${JSON.stringify(r.stockInput)}`);
     check("[C-2] lista SUVs (não pergunta o tipo — o anúncio já disse SUV)", (has(r.outbox, "Compass") || has(r.outbox, "Tracker") || has(r.outbox, "Renegade")) && !has(r.outbox, "Onix"), `outbox="${r.outbox}"`);
   }
-  // D) CTWA veículo FORA de estoque (Kicks) -> honesto + alternativas, NUNCA carro aleatório.
+  // D) CTWA veículo FORA de estoque (Kicks=SUV) -> honesto sobre não ter o do anúncio + oferece MESMO TIPO (SUV), nunca
+  //    cruza de tipo (Onix hatch) nem inventa. Fix A (audit CTWA condução SDR): "ofereça algo parecido na mesma faixa/tipo".
   {
     const c = conv();
     const r = await c.t("esse ainda tem?", { ad: adKicks });
-    check("[D-1] busca o Kicks/Nissan do anúncio (mesmo fora de estoque)", has(String(r.stockInput?.modelo ?? ""), "kicks") || has(String(r.stockInput?.marca ?? ""), "nissan"), `input=${JSON.stringify(r.stockInput)}`);
-    check("[D-2] resposta HONESTA (não achou) e NÃO empurra carro aleatório", r.reasonCode === "recovery_stock_empty" && !has(r.outbox, "Compass") && !has(r.outbox, "Onix") && !r.hasMedia, `rc=${r.reasonCode} outbox="${r.outbox}"`);
+    check("[D-1] o veículo do anúncio (Nissan/Kicks) dirige o turno (cérebro vê adVehicle)", has(r.adVehicleSeen ?? "", "kicks") || has(r.adVehicleSeen ?? "", "nissan") || has(String(r.stockInput?.tipo ?? ""), "suv"), `adVehicle=${r.adVehicleSeen} input=${JSON.stringify(r.stockInput)}`);
+    check("[D-2] honesto (não achou o do anúncio) + oferece MESMO TIPO (SUV), SEM cruzar p/ Onix hatch, sem media", (r.reasonCode === "recovery_relaxed_offer" || r.reasonCode === "recovery_stock_empty") && !has(r.outbox, "Onix") && !r.hasMedia && /nao encontrei|nao achei|nao temos/.test(norm(r.outbox)), `rc=${r.reasonCode} outbox="${r.outbox}"`);
   }
   // E) Correção: anúncio Compass, lead "na verdade quero Onix" -> Onix vence.
   {
@@ -182,6 +183,20 @@ async function main(): Promise<void> {
     check("[H-1] saudação curta de anúncio -> busca o Compass (entrada por anúncio)", has(String(r.stockInput?.modelo ?? ""), "compass"), `input=${JSON.stringify(r.stockInput)}`);
     check("[H-2] sem handoff/transferência automática", !r.hasHandoff);
     check("[H-3] não pede telefone (WhatsApp)", !asksLeadContactPhone(r.outbox), `outbox="${r.outbox}"`);
+  }
+  // F) Fix B (audit CTWA): anúncio GENÉRICO (sem veículo) + abertura -> se o cérebro pede NOME, o engine troca por DESCOBERTA.
+  {
+    const c = conv();
+    const askName: BrainResponder = () => finU([txt("Olá! Para te ajudar melhor, qual é o seu nome?")], "reply", U("other"));
+    const r = await c.t("Olá! Tenho interesse e queria mais informações, por favor.", { ad: adInstitucional, responder: askName });
+    check("[ADGEN-1] abertura de anúncio genérico NÃO abre pedindo nome", !/\bseu\s+nome\b/.test(norm(r.outbox)), `outbox="${r.outbox}"`);
+    check("[ADGEN-2] abre com DESCOBERTA comercial (modelo/tipo/faixa) via backstop", (has(r.outbox, "modelo") || has(r.outbox, "tipo") || has(r.outbox, "suv")) && r.reasonCode === "ad_generic_discovery", `rc=${r.reasonCode} outbox="${r.outbox}"`);
+  }
+  // ADGEN-3) Fix B: anúncio genérico mas o lead JÁ especifica (SUV) -> NÃO força discovery (o lead engatou); segue comercial.
+  {
+    const c = conv();
+    const r = await c.t("quero um SUV", { ad: adInstitucional });
+    check("[ADGEN-3] lead que já especifica não recebe discovery genérico (busca o tipo)", r.reasonCode !== "ad_generic_discovery" && (has(r.outbox, "Compass") || has(r.outbox, "Tracker") || has(r.outbox, "Renegade") || r.exec.includes("stock_search")), `rc=${r.reasonCode} outbox="${r.outbox}" exec=${r.exec.join(",")}`);
   }
 
   console.log(`\n== F2.32: ${ok} OK | ${fail} FALHA ==`);

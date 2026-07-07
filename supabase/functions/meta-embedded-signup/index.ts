@@ -27,6 +27,17 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Diagnostico best-effort: grava a tentativa/falha em meta_onboarding_log pra
+// dar pra ver por SQL em que passo o Embedded Signup quebra (e o erro cru da
+// Meta). NUNCA lanca — se o insert falhar, o fluxo de conexao segue igual.
+async function logAttempt(supabase: any, row: Record<string, unknown>) {
+  try {
+    await supabase.from("meta_onboarding_log").insert(row);
+  } catch (_e) {
+    /* diagnostico e best-effort — jamais interrompe a conexao */
+  }
+}
+
 // App DEDICADO do WhatsApp Cloud API — separado do app de Anúncios/Marketing.
 // Lê secrets próprios (WHATSAPP_APP_ID/SECRET) pra NUNCA usar por engano as
 // credenciais do app de anúncios (META_APP_ID / platform_app_credentials).
@@ -129,7 +140,6 @@ Deno.serve(async (req) => {
     }
 
     // 1) Troca o code do Embedded Signup por um token de negócio (sem redirect_uri).
-    const appIdTail = appId.slice(-4);
     const tokenUrl = new URL(`${META_GRAPH_URL}/oauth/access_token`);
     tokenUrl.searchParams.set("client_id", appId);
     tokenUrl.searchParams.set("client_secret", appSecret);
@@ -138,10 +148,11 @@ Deno.serve(async (req) => {
     const tokenData = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok || tokenData.error || !tokenData.access_token) {
       const metaMsg = tokenData?.error?.message || `HTTP ${tokenRes.status}`;
-      // Auto-diagnóstico: valida o PAR client_id+client_secret via client_credentials
-      // (não usa o code). Distingue as duas causas de "Error validating client secret":
-      //   (a) secret não pertence ao WHATSAPP_APP_ID  -> par inválido aqui também;
-      //   (b) code veio de OUTRO app (VITE_META_APP_ID != WHATSAPP_APP_ID) -> par válido.
+      // Auto-diagnostico: valida o PAR client_id+client_secret via client_credentials
+      // (nao usa o code). Distingue as duas causas de "Error validating client secret":
+      //   (a) secret nao pertence ao WHATSAPP_APP_ID  -> par invalido aqui tambem;
+      //   (b) code veio de OUTRO app (VITE_META_APP_ID != WHATSAPP_APP_ID) -> par valido.
+      const appIdTail = appId.slice(-4);
       let diag = "";
       try {
         const ccUrl = new URL(`${META_GRAPH_URL}/oauth/access_token`);
@@ -151,12 +162,17 @@ Deno.serve(async (req) => {
         const ccRes = await fetch(ccUrl);
         const ccData = await ccRes.json().catch(() => ({}));
         if (ccRes.ok && ccData.access_token) {
-          diag = ` — DIAGNÓSTICO: as credenciais do app ...${appIdTail} SÃO válidas, então o code foi gerado por OUTRO app. Garanta que o VITE_META_APP_ID do frontend seja o MESMO app ...${appIdTail} do WHATSAPP_APP_ID.`;
+          diag = ` — DIAGNOSTICO: as credenciais do app ...${appIdTail} SAO validas, entao o code foi gerado por OUTRO app. Garanta que o VITE_META_APP_ID do frontend seja o MESMO app ...${appIdTail} do WHATSAPP_APP_ID.`;
         } else {
-          diag = ` — DIAGNÓSTICO: o par WHATSAPP_APP_ID(...${appIdTail}) + WHATSAPP_APP_SECRET é INVÁLIDO na Meta. Copie o App Secret exato do app ...${appIdTail} (Configurações > Básico) e atualize o secret WHATSAPP_APP_SECRET.`;
+          diag = ` — DIAGNOSTICO: o par WHATSAPP_APP_ID(...${appIdTail}) + WHATSAPP_APP_SECRET e INVALIDO na Meta. Copie o App Secret exato do app ...${appIdTail} (Configuracoes > Basico) e atualize o secret WHATSAPP_APP_SECRET.`;
         }
-      } catch { /* diagnóstico é best-effort */ }
-      console.error("[meta-embedded-signup] token exchange falhou; appId=...", appIdTail, "meta=", metaMsg, diag);
+      } catch { /* diagnostico e best-effort */ }
+      await logAttempt(supabase, {
+        user_id, seller_member_id: seller_member_id || null, phone_number_id, waba_id: waba_id || null,
+        step: "token_exchange", success: false, meta_status: tokenRes.status,
+        error_text: `${metaMsg}${diag}`,
+        raw: { meta: tokenData?.error || tokenData || null, app_id_tail: appIdTail, diagnostico: diag },
+      });
       return json({ success: false, error: `Falha ao trocar o code: ${metaMsg}${diag}` }, 200);
     }
     const accessToken: string = tokenData.access_token;
@@ -169,6 +185,10 @@ Deno.serve(async (req) => {
       if (!subRes.ok) {
         subscribeWarning = `subscribed_apps HTTP ${subRes.status} ${await subRes.text().catch(() => "")}`;
         console.warn("[meta-embedded-signup]", subscribeWarning);
+        await logAttempt(supabase, {
+          user_id, seller_member_id: seller_member_id || null, phone_number_id, waba_id: waba_id || null,
+          step: "subscribe", success: false, meta_status: subRes.status, error_text: subscribeWarning, raw: null,
+        });
       }
     } else {
       subscribeWarning = "waba_id ausente — App não assinado (inbound pode não chegar)";
@@ -196,6 +216,12 @@ Deno.serve(async (req) => {
     );
     const phoneData = await phoneRes.json().catch(() => ({}));
     if (!phoneRes.ok || phoneData.error) {
+      await logAttempt(supabase, {
+        user_id, seller_member_id: seller_member_id || null, phone_number_id, waba_id: waba_id || null,
+        step: "read_phone", success: false, meta_status: phoneRes.status,
+        error_text: phoneData?.error?.message || `HTTP ${phoneRes.status}`,
+        raw: phoneData?.error || phoneData || null,
+      });
       return json({ success: false, error: `Não foi possível ler o número: ${phoneData?.error?.message || phoneRes.status}` }, 200);
     }
     const phoneNumber = phoneData.display_phone_number || null;
@@ -231,8 +257,18 @@ Deno.serve(async (req) => {
 
     if (insertErr) {
       console.error("[meta-embedded-signup] insert error:", insertErr);
+      await logAttempt(supabase, {
+        user_id, seller_member_id: seller_member_id || null, phone_number_id, waba_id: waba_id || null,
+        step: "insert", success: false, error_text: insertErr.message, raw: insertErr as any,
+      });
       return json({ success: false, error: insertErr.message }, 500);
     }
+
+    await logAttempt(supabase, {
+      user_id, seller_member_id: seller_member_id || null, phone_number_id, waba_id: waba_id || null,
+      step: "success", success: true, error_text: subscribeWarning,
+      raw: { instance_id: newInstance.id, verified_name: verifiedName, phone_number: phoneNumber, quality_rating: phoneData.quality_rating || null },
+    });
 
     return json({
       success: true,
@@ -244,6 +280,13 @@ Deno.serve(async (req) => {
     });
   } catch (error: unknown) {
     console.error("[meta-embedded-signup] Error:", error);
+    // Exceção crua (best-effort). user_id/phone estão em escopo do try acima, então
+    // aqui registramos só o essencial pra saber que caiu por exceção e o porquê.
+    await logAttempt(supabase, {
+      step: "exception", success: false,
+      error_text: error instanceof Error ? error.message : "Unknown error",
+      raw: error instanceof Error ? { name: error.name, stack: error.stack } : { error: String(error) },
+    });
     return json({ success: false, error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
 });

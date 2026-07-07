@@ -102,8 +102,8 @@ const media = (v: VehicleFact, photoIds: string[]): ProposedEffectPlan => ({ kin
 const producedTexts: string[] = [];
 const srcOf = (r: CentralTurnResult): string => (r.status === "committed" ? r.responseSource : r.status);
 const degradedOf = (r: CentralTurnResult): boolean => r.status === "committed" && r.degraded;
-// degradação = o cérebro não autorou: technical_fallback (genérico) OU deterministic_recovery (contextual). Ambos degraded.
-const isDegSrc = (r: CentralTurnResult): boolean => srcOf(r) === "technical_fallback" || srcOf(r) === "deterministic_recovery";
+// Recuperação fechada pode ser contextual (não degradada) ou técnica (degradada). O ponto é nunca inventar atributo.
+const isRecoverySrc = (r: CentralTurnResult): boolean => srcOf(r) === "technical_fallback" || srcOf(r) === "deterministic_recovery";
 const hasMedia = (r: CentralTurnResult): boolean => r.status === "committed" && r.outbox.some((o) => o.kind === "send_media");
 
 let seq = 0;
@@ -187,7 +187,7 @@ async function main(): Promise<void> {
   const r5b = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "quantos km?", brainMaxSteps: 1, script: [
     finalDraft([txt("Tem"), vref(ONIX2, "km"), txt("km")]),  // sem fetch -> identidade sem km -> falha fechada
   ] });
-  check("[5b] sem fato real km NÃO vira '0 km' nem valor do transcript", r5b.result.status === "committed" && !r5b.outboxText.includes("0 km") && !r5b.outboxText.includes("132.623") && isDegSrc(r5b.result), `text="${r5b.outboxText}"`);
+  check("[5b] sem fato real km NÃO vira '0 km' nem valor do transcript", r5b.result.status === "committed" && !r5b.outboxText.includes("0 km") && !r5b.outboxText.includes("132.623") && isRecoverySrc(r5b.result), `text="${r5b.outboxText}"`);
 
   // [7] draft AUTORADO rejeitado (render/policy deny) -> feedback ao MESMO cérebro -> re-autora aterrado (brain_retry).
   // (Já tem o vehicle_details do selecionado; o 1º draft cita a KM de OUTRO carro NÃO consultado -> render falha.)
@@ -203,7 +203,7 @@ async function main(): Promise<void> {
     finalDraft([vref(ONIX2, "km")]), finalDraft([vref(ONIX2, "km")]), finalDraft([vref(ONIX2, "km")]), finalDraft([vref(ONIX2, "km")]),
   ] });
   const r8NoMenu = !/opç|opcoes|opções|tenho estas|essas opç|\n\s*\d\.\s/i.test(r8.outboxText);
-  check("[8] retry falha -> fallback técnico honesto, SEM menu comercial", r8.result.status === "committed" && isDegSrc(r8.result) && r8NoMenu && r8.outboxText.length > 0 && r8.composeCalls === 0, `src=${srcOf(r8.result)} text="${r8.outboxText}"`);
+  check("[8] retry falha -> fallback técnico honesto, SEM menu comercial", r8.result.status === "committed" && isRecoverySrc(r8.result) && r8NoMenu && r8.outboxText.length > 0 && r8.composeCalls === 0, `src=${srcOf(r8.result)} text="${r8.outboxText}"`);
 
   // [12] pergunta simples sem necessidade NÃO chama tool.
   const r12 = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "bom dia!", relation: "ambiguous", script: [
@@ -223,12 +223,12 @@ async function main(): Promise<void> {
   const q14 = (r14.outboxText.match(/\?/g) ?? []).length;
   check("[14] no máximo UMA pergunta ao lead", r14.result.status === "committed" && q14 <= 1 && r14.outboxText.includes("132.623 km") && r14.outboxText.includes("Branco"), `perguntas=${q14} text="${r14.outboxText}"`);
 
-  // [15] B2: pergunta de atributo do selecionado SEM vehicle_details -> nunca afirma o atributo -> degradação observável.
+  // [15] B2: pergunta de atributo do selecionado SEM vehicle_details -> nunca afirma o atributo -> recuperação contextual.
   const r15 = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "quantos km ele tem?", script: [
     finalDraft([txt("Tem"), vref(ONIX2, "km"), txt("km")]), finalDraft([txt("Tem"), vref(ONIX2, "km"), txt("km")]),
     finalDraft([txt("Tem"), vref(ONIX2, "km"), txt("km")]), finalDraft([txt("Tem"), vref(ONIX2, "km"), txt("km")]),
   ] });
-  check("[15] B2: final sem vehicle_details do selecionado -> nunca envia atributo -> DEGRADADO", r15.result.status === "committed" && isDegSrc(r15.result) && degradedOf(r15.result) === true && !r15.outboxText.includes("132.623") && r15.composeCalls === 0, `src=${srcOf(r15.result)} degraded=${degradedOf(r15.result)} text="${r15.outboxText}"`);
+  check("[15] B2: final sem vehicle_details do selecionado -> nunca envia atributo -> recuperação contextual", r15.result.status === "committed" && isRecoverySrc(r15.result) && degradedOf(r15.result) === false && !r15.outboxText.includes("132.623") && r15.composeCalls === 0, `src=${srcOf(r15.result)} degraded=${degradedOf(r15.result)} text="${r15.outboxText}"`);
 
   // [16] postQuery deny (POL-TRACK-001: responder pagamento não vira envio de foto) -> draft original NÃO vai;
   //      feedback -> re-autora sem o efeito comercial. NENHUM send_media original sobrevive no outbox.
@@ -248,7 +248,7 @@ async function main(): Promise<void> {
   const r17b = await runTurn({ state: noYearState, leadText: "qual o preço?", relation: "ambiguous", brainMaxSteps: 1, script: [finalDraft([txt("Sai por"), price(ONIX2)])] });
   const r17aNoZero = !/\b0\b/.test(r17a.outboxText) && !/\b-?1\b/.test(r17a.outboxText);
   const r17bNoZero = !/R\$\s*-?1\b/.test(r17b.outboxText) && !/R\$\s*0\b/.test(r17b.outboxText);
-  check("[17] identidade sem ano/preço não vira 0/-1 (falha fechada -> degradado)", degradedOf(r17a.result) && degradedOf(r17b.result) && r17aNoZero && r17bNoZero && r17a.composeCalls === 0 && r17b.composeCalls === 0, `ano="${r17a.outboxText}" preco="${r17b.outboxText}"`);
+  check("[17] identidade sem ano/preço não vira 0/-1 (falha fechada contextual)", isRecoverySrc(r17a.result) && isRecoverySrc(r17b.result) && degradedOf(r17a.result) === false && degradedOf(r17b.result) === false && r17aNoZero && r17bNoZero && r17a.composeCalls === 0 && r17b.composeCalls === 0, `ano="${r17a.outboxText}" preco="${r17b.outboxText}"`);
 
   // [9] fonte autoritativa = outbox.payload.text (todos os checks acima leram outboxText, nunca reasonSummary).
   check("[9] asserções examinam outbox.payload.text (não reasonSummary)", producedTexts.length >= 12 && producedTexts.every((t) => typeof t === "string"));

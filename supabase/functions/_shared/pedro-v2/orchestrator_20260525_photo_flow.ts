@@ -83,6 +83,171 @@ async function recordPedroV2TurnLog(supabase: any, entry: Record<string, any>) {
   }
 }
 
+function firstNonEmpty(...values: any[]): string | null {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function vehicleDisplayName(vehicle: any): string {
+  return firstNonEmpty(vehicle?.label, vehicle?.nome, vehicle?.modelo, vehicle?.name, "esse veiculo") || "esse veiculo";
+}
+
+function formattedMoney(value: any): string | null {
+  const explicit = firstNonEmpty(value?.preco_formatado, value?.price_formatted, value?.valor_formatado);
+  if (explicit) return explicit;
+  const raw = Number(value?.preco ?? value?.price ?? value?.valor);
+  return Number.isFinite(raw) && raw > 0 ? raw.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : null;
+}
+
+function formattedKm(value: any): string | null {
+  const explicit = firstNonEmpty(value?.km_formatado, value?.quilometragem_formatada, value?.mileage_formatted);
+  if (explicit) return explicit;
+  const raw = Number(value?.km ?? value?.quilometragem ?? value?.mileage);
+  return Number.isFinite(raw) && raw >= 0 ? `${raw.toLocaleString("pt-BR")} km` : null;
+}
+
+function leadAsksFocusedVehicleFacts(message?: string | null): boolean {
+  const t = normalizePlannerText(message);
+  return /\b(km|quilometragem|rodado|rodados|preco|valor|quanto custa|cor|cambio|automatico|manual|ano|revisao|revisoes|concessionaria)\b/.test(t)
+    && /\b(dele|dela|desse|dessa|esse|essa|do carro|do veiculo|qual|quanto|tem|feita|feitas)\b/.test(t);
+}
+
+function buildFocusedVehicleFactReply(input: {
+  message?: string | null;
+  memory?: any;
+  stockResult?: any;
+  nextQuestion?: string | null;
+}): string | null {
+  if (!leadAsksFocusedVehicleFacts(input.message)) return null;
+
+  const stockItems = Array.isArray(input.stockResult?.items) ? input.stockResult.items : [];
+  const focus = input.memory?.veiculo_em_foco || (stockItems.length === 1 ? stockItems[0] : null);
+  if (!focus) return null;
+
+  const t = normalizePlannerText(input.message);
+  const name = vehicleDisplayName(focus);
+  const parts: string[] = [];
+
+  if (/\b(preco|valor|quanto custa)\b/.test(t)) {
+    const price = formattedMoney(focus);
+    if (price) parts.push(`O ${name} esta por ${price}.`);
+  }
+  if (/\b(km|quilometragem|rodado|rodados)\b/.test(t)) {
+    const km = formattedKm(focus);
+    if (km) parts.push(`Ele esta com ${km}.`);
+  }
+  if (/\bcor\b/.test(t)) {
+    const color = firstNonEmpty(focus?.cor, focus?.color);
+    if (color) parts.push(`A cor dele e ${color}.`);
+  }
+  if (/\b(cambio|automatico|manual)\b/.test(t)) {
+    const cambio = firstNonEmpty(focus?.cambio, focus?.transmissao, focus?.transmission);
+    if (cambio) parts.push(`O cambio e ${cambio}.`);
+  }
+  if (/\bano\b/.test(t)) {
+    const ano = firstNonEmpty(focus?.ano, focus?.year, focus?.ano_modelo);
+    if (ano) parts.push(`O ano dele e ${ano}.`);
+  }
+  if (/\b(revisao|revisoes|concessionaria)\b/.test(t)) {
+    const revisoes = firstNonEmpty(focus?.revisoes, focus?.revisao, focus?.historico_revisoes);
+    parts.push(revisoes
+      ? `Sobre revisoes: ${revisoes}.`
+      : "Sobre revisoes em concessionaria, nao tenho essa confirmacao registrada aqui; o consultor confirma certinho pra voce.");
+  }
+
+  if (parts.length === 0) return null;
+  const next = input.nextQuestion ? `\n\n${input.nextQuestion}` : "";
+  return `${parts.join(" ")}${next}`;
+}
+
+function isEarlyLowIntentStockAsk(message?: string | null, priorAgentTurns = 0): boolean {
+  if (priorAgentTurns > 0) return false;
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+
+  const broadBrowse = /\b(opcoes|modelos|quais carros|quais veiculos|me mostra|mostra ai|manda opcoes|lista|automatico|suv|sedan|hatch|picape|caminhonete|ate \d|faixa de|mais barato|menor km|km mais baixo)\b/.test(t);
+  if (broadBrowse) return false;
+
+  return /\b(tenho interesse|queria mais informacoes|mais informacoes|qual o valor|qual valor|valor desse|preco desse|preco do|quanto custa)\b/.test(t);
+}
+
+function nextConfiguredFunnelQuestion(input: {
+  agent?: any;
+  reply?: any;
+  memory?: any;
+  lead?: any;
+  pushName?: string | null;
+}): string | null {
+  const b4 = input.agent?.funnel_bloco4;
+  if (!b4) return null;
+  const q = { ...((input.reply as any)?.qualificacao_coletada || {}) };
+  const hasName = Boolean(q.nome || input.lead?.lead_name || (input.pushName && /\p{L}{2,}/u.test(String(input.pushName))));
+  const hasInterest = Boolean(q.interesse || input.memory?.interesse?.modelo_desejado || input.memory?.interesse?.tipo_veiculo);
+  const merged = {
+    ...q,
+    carro_troca: q.carro_troca || input.memory?.negociacao?.carro_troca || null,
+    valor_entrada: q.valor_entrada || input.memory?.negociacao?.valor_entrada || null,
+    forma_pagamento: q.forma_pagamento || input.memory?.negociacao?.forma_pagamento || null,
+  };
+  return nextFunnelQuestion(b4, merged, { hasName, hasInterest });
+}
+
+function maybeApplyTemporaryFunnelGuard(input: {
+  reply: any;
+  message?: string | null;
+  agent?: any;
+  memory?: any;
+  lead?: any;
+  pushName?: string | null;
+  stockResult?: any;
+  priorAgentTurns?: number;
+}) {
+  const reply = input.reply || {};
+  if (Array.isArray(reply.media) && reply.media.length > 0) return reply;
+  if (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true) return reply;
+
+  const nextQuestion = nextConfiguredFunnelQuestion({
+    agent: input.agent,
+    reply,
+    memory: input.memory,
+    lead: input.lead,
+    pushName: input.pushName,
+  });
+
+  const focused = buildFocusedVehicleFactReply({
+    message: input.message,
+    memory: input.memory,
+    stockResult: input.stockResult,
+    nextQuestion,
+  });
+  if (focused) {
+    return { ...reply, text: focused, source: "focused_vehicle_fact_reply", media: [], presented_vehicle_indices: [] };
+  }
+
+  const items = Array.isArray(input.stockResult?.items) ? input.stockResult.items : [];
+  const stockListReply = items.length >= 2
+    && typeof reply?.text === "string"
+    && replyMentionsAnyVehicle(reply.text, items);
+  if (!nextQuestion || !stockListReply) return reply;
+  if (!isEarlyLowIntentStockAsk(input.message, input.priorAgentTurns || 0)) return reply;
+
+  const agentName = firstNonEmpty(input.agent?.name, "Carvalho") || "Carvalho";
+  const companyName = firstNonEmpty(input.agent?.company_name, input.agent?.company, "Icom Motors") || "Icom Motors";
+  const intro = (input.priorAgentTurns || 0) === 0
+    ? `Oi! Eu sou o ${agentName}, consultor da ${companyName}.`
+    : "Pra eu te indicar certinho:";
+  return {
+    ...reply,
+    text: `${intro}\n\n${nextQuestion}`,
+    source: "temporary_funnel_stock_gate",
+    media: [],
+    presented_vehicle_indices: [],
+  };
+}
+
 // BYOK: alerta o dono (1x a cada 6h) quando uma conta NOVA recebe lead mas NAO tem chave de IA
 // propria configurada -> o agente nao responde (nao usa a nossa chave). Throttle em memoria.
 const _noKeyAlertCache = new Map<string, number>();
@@ -2464,6 +2629,28 @@ export async function processPedroV2Turn(
         reply = { ...(reply as any), text: `${String(_cleaned).replace(/\s+$/, "")}\n\n${_nextQ}` };
         log("info", "pedro_v2_funnel_question_forced", { lead_id: lead?.id || null });
       }
+    }
+    // HOTFIX V2 -> V3: preserva o funil configurado pelo cliente sem tocar em transferencia/follow-up.
+    // 1) Se o lead perguntou dado de um carro em foco, responde o dado em vez de re-listar estoque.
+    // 2) Se e primeiro contato fraco ("tenho interesse"/"qual valor desse carro") e ainda ha pergunta
+    // obrigatoria do funil, evita despejar catalogo de 5 carros antes da qualificacao.
+    const _beforeGuardSource = (reply as any)?.source;
+    reply = maybeApplyTemporaryFunnelGuard({
+      reply,
+      message: text,
+      agent: input.agent,
+      memory: nextMemory,
+      lead,
+      pushName,
+      stockResult,
+      priorAgentTurns: _priorAgentTurns,
+    }) as any;
+    if ((reply as any)?.source !== _beforeGuardSource) {
+      log("info", "pedro_v2_temporary_funnel_guard_applied", {
+        lead_id: lead?.id || null,
+        from: _beforeGuardSource || null,
+        to: (reply as any)?.source || null,
+      });
     }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 

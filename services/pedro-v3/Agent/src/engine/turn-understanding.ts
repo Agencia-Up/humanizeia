@@ -108,10 +108,14 @@ export function authorizesPhotoByAdReference(target: TargetResolution, block: st
 //    (anúncio/ordinal/seleção/modelo — target.kind==="resolved"), o envio é autorizado — DIRIGIDO pelo pedido do lead, não
 //    pela cooperação do cérebro (que às vezes diz "não localizei" sem consultar). Mesma exigência de grounding (alvo ÚNICO):
 //    ambíguo/ausente -> não autoriza (o fluxo pergunta qual). Fail-closed. Superset de ByResolvedOrdinal/ByAdReference. PURO. ──
-export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string): boolean {
-  if (target.kind !== "resolved") return false;
+// O LEAD pediu foto NESTE turno (verbo de envio/ver + "foto"; negação barra)? Source-agnostic — não depende de alvo nem
+// do cérebro. Base de authorizesPhotoByResolvedTarget e do clarify de conjunto-candidato do anúncio (Fix C). PURO.
+export function leadRequestsPhoto(block: string): boolean {
   if (isPhotoDeclined(block)) return false;
   return PHOTO_REQUEST_STEM.test(normalizeText(block));
+}
+export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string): boolean {
+  return target.kind === "resolved" && leadRequestsPhoto(block);
 }
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──

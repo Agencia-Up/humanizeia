@@ -175,6 +175,7 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
   if (current.tipo) {
     next.tipo = current.tipo;
     if (!current.modelos || current.modelos.length === 0) delete next.modelos;   // tipo novo = nova categoria, limpa modelo
+    if (!current.marca && (!current.modelos || current.modelos.length === 0)) delete next.marca; // tipo amplo = nova direção, limpa marca stale
   }
   if (current.precoMax != null) next.precoMax = current.precoMax;
   if (current.cambio) next.cambio = current.cambio;
@@ -235,4 +236,40 @@ export function describeConstraints(c: CommercialConstraints): string {
   if (c.precoMax != null) parts.push(`até R$ ${c.precoMax.toLocaleString("pt-BR")}`);
   if (c.cambio) parts.push(c.cambio === "automatic" ? "automático" : "manual");
   return parts.join(" ");
+}
+
+// ── Fix A (audit CTWA — condução SDR): CASCATA DE RELAXAMENTO para a busca EXATA que voltou 0. Dado o filtro que zerou,
+//    produz filtros relaxados EM ORDEM (do mais próximo ao mais amplo), cada um rotulado pelo que foi afrouxado. O engine
+//    roda cada passo até achar itens REAIS; a recuperação NOMEIA o filtro original + a alternativa (nunca inventa). Ordem:
+//    (1) mesmo TIPO na faixa [dropa modelo/marca, mantém tipo+preço] = alternativas que CABEM no orçamento;
+//    (2) mesmo MODELO/marca SEM teto [dropa preço] = o carro pedido, um pouco acima; (3) mesma MARCA na faixa;
+//    (4) só o TIPO (sem teto); (5) só a FAIXA. Pula passos sem a dimensão. Dedup + nunca re-propõe o filtro que zerou. PURO. ──
+export type RelaxKind = "same_type_in_range" | "drop_ceiling" | "same_brand_in_range" | "same_type" | "in_range";
+export type RelaxedSearch = { readonly kind: RelaxKind; readonly constraints: CommercialConstraints };
+export function relaxSearchCascade(zeroed: CommercialConstraints, tipoHint?: VehicleType | null): RelaxedSearch[] {
+  const tipo = zeroed.tipo ?? tipoHint ?? null;
+  const hasModelOrBrand = (zeroed.modelos != null && zeroed.modelos.length > 0) || zeroed.marca != null;
+  // A relaxação afrouxa PREÇO e amplia MODELO->tipo/marca, mas PRESERVA câmbio e ano RÍGIDOS do lead (F2.28: "EcoSport 2019
+  // manual" nunca vira 2020 automático). Se o único filtro a afrouxar for câmbio/ano, a cascata fica vazia -> honesto.
+  const keep = (base: CommercialConstraints): CommercialConstraints => {
+    const c: CommercialConstraints = { ...base };
+    if (zeroed.cambio) c.cambio = zeroed.cambio;
+    if (zeroed.anos && zeroed.anos.length > 0) c.anos = [...zeroed.anos];
+    return c;
+  };
+  const steps: RelaxedSearch[] = [];
+  if (tipo && zeroed.precoMax != null) steps.push({ kind: "same_type_in_range", constraints: keep({ tipo, precoMax: zeroed.precoMax }) });
+  if (zeroed.precoMax != null && hasModelOrBrand) {
+    const dc: CommercialConstraints = {};
+    if (zeroed.marca) dc.marca = zeroed.marca;
+    if (zeroed.modelos && zeroed.modelos.length > 0) dc.modelos = [...zeroed.modelos];
+    if (zeroed.tipo) dc.tipo = zeroed.tipo;
+    steps.push({ kind: "drop_ceiling", constraints: keep(dc) });
+  }
+  if (zeroed.marca && zeroed.precoMax != null) steps.push({ kind: "same_brand_in_range", constraints: keep({ marca: zeroed.marca, precoMax: zeroed.precoMax }) });
+  if (tipo) steps.push({ kind: "same_type", constraints: keep({ tipo }) });
+  if (zeroed.precoMax != null) steps.push({ kind: "in_range", constraints: keep({ precoMax: zeroed.precoMax }) });
+  const sig = (c: CommercialConstraints): string => JSON.stringify(constraintsToStockInput(c));
+  const seen = new Set<string>([sig(zeroed)]);   // nunca re-propõe o filtro que já zerou
+  return steps.filter((s) => { const k = sig(s.constraints); if (seen.has(k)) return false; seen.add(k); return true; });
 }
