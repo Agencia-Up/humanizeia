@@ -216,6 +216,119 @@ function isEarlyLowIntentStockAsk(message?: string | null, priorAgentTurns = 0):
   return /\b(tenho interesse|queria mais informacoes|mais informacoes|qual o valor|qual valor|valor desse|preco desse|preco do|quanto custa)\b/.test(t);
 }
 
+function shouldGateStockListUntilFunnel(input: {
+  message?: string | null;
+  priorAgentTurns?: number;
+  nextQuestion?: string | null;
+  stockListReply?: boolean;
+}): boolean {
+  if (!input.nextQuestion || !input.stockListReply) return false;
+  const t = normalizePlannerText(input.message);
+  if (!t || leadExplicitlyDeclined(input.message)) return false;
+
+  const prior = input.priorAgentTurns || 0;
+  if (prior <= 1) return true;
+
+  const broadStockAsk = leadMessageAsksBroadStock(input.message)
+    || /\b(opcoes|modelos|quais carros|quais veiculos|me mostra|mostra ai|manda opcoes|lista|automatico|suv|sedan|hatch|picape|caminhonete|mais barato|menor km|km mais baixo)\b/.test(t);
+
+  if (prior <= 2 && broadStockAsk) return true;
+  if (prior <= 2 && isEarlyLowIntentStockAsk(input.message, 0)) return true;
+
+  return false;
+}
+
+function configuredTransferRules(agent?: any): string[] {
+  const b4 = agent?.funnel_bloco4;
+  const raw = b4?.transfer_now_rules || b4?.handoff_triggers || [];
+  return Array.isArray(raw)
+    ? raw.map((item: any) => String(item || "").trim()).filter(Boolean).slice(0, 20)
+    : [];
+}
+
+function configuredTransferRuleMatches(rule: string, contextText: string): boolean {
+  const r = normalizePlannerText(rule);
+  const c = normalizePlannerText(contextText);
+  if (!r || !c) return false;
+
+  const checks = [
+    { inRule: /\b(financ|parcel|prestac|simul|entrada)\b/.test(r), inContext: /\b(financ|parcel|prestac|simul|entrada)\b/.test(c) },
+    { inRule: /\b(troca|carro na troca|veiculo na troca|usado)\b/.test(r), inContext: /\b(troca|dar como entrada|como entrada|meu carro|minha troca|meu usado|tenho um|tenho uma)\b/.test(c) },
+    { inRule: /\b(agendar|visita|loja|ver o carro|ir ai|passar ai)\b/.test(r), inContext: /\b(agendar|visita|loja|ver o carro|ir ai|passar ai|vou ai|posso ir)\b/.test(c) },
+    { inRule: /\b(vendedor|consultor|humano|atendente)\b/.test(r), inContext: /\b(vendedor|consultor|humano|atendente|alguem me liga|me liga|pode ligar)\b/.test(c) },
+    { inRule: /\b(comprar|fechar|reservar|quero esse|gostei desse)\b/.test(r), inContext: /\b(comprar|fechar|reservar|quero esse|gostei desse|fico com esse)\b/.test(c) },
+  ];
+
+  const selected = checks.filter((check) => check.inRule);
+  if (selected.length > 0) return selected.every((check) => check.inContext);
+
+  const words = r.split(/\s+/).filter((word) => word.length >= 4).slice(0, 8);
+  if (words.length === 0) return false;
+  const hits = words.filter((word) => c.includes(word)).length;
+  return hits >= Math.max(2, Math.ceil(words.length * 0.7));
+}
+
+function maybeApplyConfiguredTransferNowGuard(input: {
+  reply: any;
+  message?: string | null;
+  history?: any[];
+  memory?: any;
+  lead?: any;
+  pushName?: string | null;
+  agent?: any;
+}) {
+  const reply = input.reply || {};
+  if (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true) return reply;
+  if (Array.isArray(reply.media) && reply.media.length > 0) return reply;
+  if (leadExplicitlyDeclined(input.message)) return reply;
+
+  const rules = configuredTransferRules(input.agent);
+  if (rules.length === 0) return reply;
+
+  const q = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : {};
+  const memory = input.memory || {};
+  const contextText = `${recentLeadText(input.history, 12)}\n${String(input.message || "")}`;
+  const matchedRule = rules.find((rule) => configuredTransferRuleMatches(rule, contextText));
+  if (!matchedRule) return reply;
+
+  const interest = firstNonEmpty(
+    q.interesse,
+    memory?.interesse?.modelo_desejado,
+    memory?.interesse?.tipo_veiculo,
+    memory?.veiculo_em_foco?.label,
+    input.lead?.vehicle_interest,
+  );
+  const hasCommercialContext = Boolean(interest)
+    || /\b(financ|parcel|prestac|simul|entrada|troca|agendar|visita|loja|comprar|fechar|reservar|vendedor|consultor|humano)\b/.test(normalizePlannerText(contextText));
+  if (!hasCommercialContext) return reply;
+
+  const name = firstNonEmpty(
+    q.nome,
+    memory?.lead?.nome,
+    isLikelyRealLeadName(input.lead?.client_name) ? input.lead?.client_name : null,
+    isLikelyRealLeadName(input.lead?.lead_name) ? input.lead?.lead_name : null,
+    isLikelyRealLeadName(input.pushName) ? input.pushName : null,
+  );
+  const firstName = name ? String(name).split(/\s+/)[0] : null;
+  const interestText = interest ? ` sobre ${String(interest).trim()}` : "";
+
+  return {
+    ...reply,
+    pronto_para_transferir: true,
+    transferir_silencioso: false,
+    force_transfer_now: true,
+    media: [],
+    source: "configured_transfer_now_enforced",
+    text: `Perfeito${firstName ? ", " + firstName : ""}. Ja tenho o contexto principal${interestText}. Vou te encaminhar agora para um consultor continuar com voce do jeito certo.`,
+    qualificacao_coletada: {
+      ...q,
+      nome: q.nome || name || null,
+      interesse: q.interesse || interest || null,
+      gatilho_transferencia: matchedRule,
+    },
+  };
+}
+
 function nextConfiguredFunnelQuestion(input: {
   agent?: any;
   reply?: any;
@@ -274,7 +387,12 @@ function maybeApplyTemporaryFunnelGuard(input: {
     && typeof reply?.text === "string"
     && replyMentionsAnyVehicle(reply.text, items);
   if (!nextQuestion || !stockListReply) return reply;
-  if (!isEarlyLowIntentStockAsk(input.message, input.priorAgentTurns || 0)) return reply;
+  if (!shouldGateStockListUntilFunnel({
+    message: input.message,
+    priorAgentTurns: input.priorAgentTurns || 0,
+    nextQuestion,
+    stockListReply,
+  })) return reply;
 
   const agentName = firstNonEmpty(input.agent?.name, "Carvalho") || "Carvalho";
   const companyName = firstNonEmpty(input.agent?.company_name, input.agent?.company, "Icom Motors") || "Icom Motors";
@@ -335,22 +453,23 @@ function maybeApplyFinanceTradeTransferGuard(input: {
   const replyRepeatsTrade = /\b(tem|possui|voce tem|você tem|algum)\b.{0,35}\b(carro|veiculo|veículo)\b.{0,35}\btroca\b/.test(normalizedReply);
   const replyRepeatsCashEntry = /\b(valor|dinheiro)\b.{0,30}\bentrada\b|\bentrada\b.{0,30}\b(dinheiro|valor)\b/.test(normalizedReply);
 
-  if (!realName || !interest || !hasTradeAsEntrySignal) return reply;
+  if (!interest || !hasTradeAsEntrySignal) return reply;
   if (!hasFinanceSignal && !replyRepeatsTrade && !replyRepeatsCashEntry) return reply;
   if (leadExplicitlyDeclined(input.message)) return reply;
 
-  const name = String(realName).split(/\s+/)[0] || String(realName);
+  const name = realName ? String(realName).split(/\s+/)[0] || String(realName) : null;
   const tradeText = tradeVehicle ? `o ${String(tradeVehicle).trim()}` : "seu carro";
   return {
     ...reply,
     pronto_para_transferir: true,
     transferir_silencioso: false,
+    force_transfer_now: true,
     media: [],
     source: "finance_trade_transfer_enforced",
-    text: `Perfeito, ${name}. Ja anotei que voce tem interesse no ${String(interest).trim()} e quer usar ${tradeText} como entrada/troca. Vou te encaminhar agora para um consultor avaliar certinho e simular as melhores condicoes com voce.`,
+    text: `Perfeito${name ? ", " + name : ""}. Ja anotei que voce tem interesse no ${String(interest).trim()} e quer usar ${tradeText} como entrada/troca. Vou te encaminhar agora para um consultor avaliar certinho e simular as melhores condicoes com voce.`,
     qualificacao_coletada: {
       ...q,
-      nome: q.nome || realName,
+      nome: q.nome || realName || null,
       interesse: q.interesse || interest,
       tem_troca: true,
       carro_troca: q.carro_troca || q.veiculo_troca || tradeVehicle || null,
@@ -2779,6 +2898,23 @@ export async function processPedroV2Turn(
         to: (reply as any)?.source || null,
       });
     }
+    const _beforeConfiguredTransferSource = (reply as any)?.source;
+    reply = maybeApplyConfiguredTransferNowGuard({
+      reply,
+      message: text,
+      history: recentHistory,
+      memory: nextMemory,
+      lead,
+      pushName,
+      agent: input.agent,
+    }) as any;
+    if ((reply as any)?.source !== _beforeConfiguredTransferSource) {
+      log("info", "pedro_v2_configured_transfer_now_guard_applied", {
+        lead_id: lead?.id || null,
+        from: _beforeConfiguredTransferSource || null,
+        to: (reply as any)?.source || null,
+      });
+    }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 
   let effectiveMemory = nextMemory;
@@ -3298,7 +3434,9 @@ export async function processPedroV2Turn(
   if (!ownedLeadAssistantMode
       && contextualIntent?.needs_handoff !== true
       && reply?.temperatura !== "desqualificado"
+      && reply?.force_transfer_now !== true
       && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced" && reply?.source !== "finance_trade_transfer_enforced"
+      && reply?.source !== "configured_transfer_now_enforced"
       && (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true)) {
     const _b4Handoff = (input.agent as any)?.funnel_bloco4;
     const _fqHandoff: any = {
@@ -3325,7 +3463,9 @@ export async function processPedroV2Turn(
       log("info", "pedro_v2_handoff_blocked_pending_funnel", { lead_id: lead?.id || null, question: _nextFunnelBeforeHandoff });
     }
   }
-  let brainReadyToTransfer = reply?.pronto_para_transferir === true && _hasNome && _hasContext;
+  let brainReadyToTransfer = reply?.force_transfer_now === true
+    ? reply?.pronto_para_transferir === true
+    : reply?.pronto_para_transferir === true && _hasNome && _hasContext;
   // Transferencia SILENCIOSA: lead desqualificado (recusou EXPLICITAMENTE) -> vai para o
   // vendedor para follow-up futuro, SEM anunciar ao lead (a msg do cerebro ja e uma
   // despedida gentil, sem dizer que vai transferir). NUNCA encerramos sem encaminhar.
