@@ -44,7 +44,7 @@ import {
 // ── Tipos dos blocos ────────────────────────────────────────────────────────
 interface Bloco1 { agent_name: string; role: string; company: string; niche: string; }
 interface Bloco3 { objective: string; presentation: string; first_question: string; avoid: string[]; }
-interface Bloco4 { objective: string; questions: string[]; required_data: string[]; }
+interface Bloco4 { objective: string; questions: string[]; required_data: string[]; transfer_now_rules: string[]; }
 interface Branch { trigger: string; questions: string[]; }
 interface Bloco5 { branches: Branch[]; }
 interface Bloco6 { qualified_when: string[]; disqualified_when: string[]; closing_message: string; }
@@ -66,7 +66,15 @@ interface FunnelConfig {
 const DEFAULT_CONFIG: FunnelConfig = {
   bloco1_identidade: { agent_name: '', role: '', company: '', niche: '' },
   bloco3_abordagem: { objective: '', presentation: '', first_question: '', avoid: [] },
-  bloco4_qualificacao: { objective: '', questions: [], required_data: [] },
+  bloco4_qualificacao: {
+    objective: '',
+    questions: [],
+    required_data: [],
+    transfer_now_rules: [
+      'Cliente informou que quer financiar e tem carro para troca',
+      'Cliente pediu para falar com vendedor ou consultor',
+    ],
+  },
   bloco5_ramificacoes: { branches: [] },
   bloco6_criterios: { qualified_when: [], disqualified_when: [], closing_message: '' },
   bloco7_transferencia: { required_data: [], customer_message: '', internal_summary_template: '' },
@@ -105,6 +113,10 @@ function seedConfigFromAgent(agent: any): FunnelConfig {
       objective: 'Entender o perfil e necessidade do cliente',
       questions: qq.length > 0 ? qq : ['Qual é o seu nome?', 'O que você está procurando?'],
       required_data: ['Nome completo', 'Contato (telefone)', 'Interesse específico'],
+      transfer_now_rules: [
+        'Cliente informou que quer financiar e tem carro para troca',
+        'Cliente pediu para falar com vendedor ou consultor',
+      ],
     },
     bloco5_ramificacoes: { branches: [] },
     bloco6_criterios: {
@@ -730,6 +742,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               items={cfg.bloco4_qualificacao.required_data}
               onChange={(required_data) => setCfg({ ...cfg, bloco4_qualificacao: { ...cfg.bloco4_qualificacao, required_data } })}
               placeholder="Ex: Nome completo"
+            />
+            <ArrayEditor
+              label="Hora de transferir (gatilhos imediatos)"
+              items={cfg.bloco4_qualificacao.transfer_now_rules || []}
+              onChange={(transfer_now_rules) => setCfg({ ...cfg, bloco4_qualificacao: { ...cfg.bloco4_qualificacao, transfer_now_rules } })}
+              placeholder="Ex: Cliente informou que quer financiar e tem carro para troca"
             />
           </AccordionContent>
         </AccordionItem>

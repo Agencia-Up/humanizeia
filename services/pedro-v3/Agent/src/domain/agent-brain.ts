@@ -186,6 +186,13 @@ export type FrameSignals = {
   // Fix B (audit CTWA): o lead veio de um anúncio GENÉRICO (sem veículo específico) e ainda não disse o que quer. A
   // ABERTURA deve ser DESCOBERTA comercial (modelo/tipo/faixa), NÃO pedir nome/dado de contato.
   readonly adGenericEntry?: boolean;
+  // PARTE A (missão abertura SDR): PRIMEIRO contato SEM anúncio e SEM alvo comercial ("Boa tarde" cru). A ABERTURA deve
+  // cumprimentar, apresentar-se conforme o prompt e fazer DESCOBERTA comercial (modelo/tipo/faixa) — NUNCA começar
+  // pedindo nome/telefone. Complementa adGenericEntry (que exige anúncio); cobre a "porta fria".
+  readonly firstContactNoCommercialTarget?: boolean;
+  // PARTE A (missão): ENTRADA por anúncio de veículo ESPECÍFICO. Na abertura, fale do veículo do anúncio e ofereça
+  // fotos/detalhes/condições (acolhedor), em vez de despejar uma lista crua ou pedir dados pessoais.
+  readonly specificAdEntry?: boolean;
 };
 export type TurnFrame = {
   readonly turnId: string;

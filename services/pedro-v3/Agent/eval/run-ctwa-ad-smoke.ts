@@ -45,7 +45,7 @@ type Scenario = {
 
 type ToolReq = { readonly tool: string; readonly input: Record<string, unknown> };
 type ExecutedTool = { readonly tool: string; readonly input: Record<string, unknown>; readonly ok: boolean; readonly itemCount?: number; readonly keys?: readonly string[] };
-type EffectLog = { readonly kind: string; readonly vehicleKey?: string; readonly photoCount?: number; readonly status: string };
+type EffectLog = { readonly kind: string; readonly vehicleKey?: string; readonly photoCount?: number; readonly photoIds?: readonly string[]; readonly status: string };
 type TurnCapture = {
   readonly turn: number;
   readonly lead: string;
@@ -147,9 +147,14 @@ function baseViolations(turns: readonly TurnCapture[]): string[] {
     if (phoneAskRx.test(t.response)) out.push(`T${t.turn}: pediu telefone em conversa WhatsApp`);
     if (t.response.includes("\uFFFD")) out.push(`T${t.turn}: U+FFFD/mojibake`);
     if (t.turn > 1 && v2IntroRx.test(t.response)) out.push(`T${t.turn}: reintroducao/reset parecido com v2`);
+    // PARTE B (missao): curadoria de fotos \u2014 NUNCA enviar mais de 5 fotos num lote (send_media com photoCount>5).
+    for (const e of t.effects) {
+      if (e.kind === "send_media" && typeof e.photoCount === "number" && e.photoCount > 5) out.push(`T${t.turn}: send_media com ${e.photoCount} fotos (>5) \u2014 sem curadoria`);
+    }
   }
   return out;
 }
+const nameAskRx = /\bqual\s+(?:e\s+)?(?:o\s+)?(?:seu|teu)\s+nome\b|\bseu\s+nome\b\s*\??|\bsobrenome\b|\bcomo\s+(?:voce|vc|o\s+senhor|a\s+senhora)\s+se\s+chama/i;
 
 const scenarios: readonly Scenario[] = [
   {
@@ -165,6 +170,13 @@ const scenarios: readonly Scenario[] = [
       const compassMentioned = t12.some((t) => has(t.response, "compass"));
       if (!firstStock) v.push("T1/T2: entrada por anuncio nao chamou stock_search");
       if (!compassMentioned) v.push("T1/T2: resposta nao tratou o Compass do anuncio");
+      // PARTE A (missão P0): T1 vem de anuncio ESPECIFICO (Jeep Compass 2019). A ABERTURA precisa reconhecer/conduzir o
+      // veiculo do anuncio — reprova se for saudacao generica que NAO cita Compass/Jeep nem mostra/conduz sobre o veiculo.
+      const t1 = turns[0];
+      const t1TalksAd = !!t1 && (has(t1.response, "compass") || has(t1.response, "jeep")
+        || t1.effects.some((e) => e.kind === "send_media" || e.kind === "vehicle_offer_list")
+        || /\bfoto|\bimagem|\bdetalhe|\bcondi[cç]|\bdispon|\bfinanc|\bvalor|\bpre[cç]o|pronta?\s+entrega/i.test(t1.response));
+      if (t1 && !t1TalksAd) v.push(`T1: abertura de anuncio ESPECIFICO (Compass 2019) foi saudacao generica, sem reconhecer/conduzir o veiculo do anuncio (resp="${sanitize(t1.response).slice(0, 80)}")`);
       const t3 = turns[2];
       if (t3 && !t3.effects.some((e) => e.kind === "send_media")) {
         v.push("T3: anuncio cita Compass 2019 disponivel, mas pedido 'fotos dele' nao gerou send_media do alvo do anuncio");
@@ -219,6 +231,35 @@ const scenarios: readonly Scenario[] = [
       if (t1 && /qual modelo|qual tipo/i.test(t1.response)) v.push("T1: perguntou tipo/modelo apesar do anuncio SUV + filtro");
       const t2 = turns[1];
       if (t2 && !t2.toolsExecuted.some((tool) => tool.tool === "stock_search")) v.push("T2: 'tem mais?' nao acionou stock_search mantendo escopo do anuncio");
+      return v;
+    },
+  },
+  {
+    // PARTE C (missao abertura+fotos): abertura sem alvo -> discovery (nao nome); busca; foto com curadoria (<=5); "manda
+    // mais" -> proximo lote sem repetir. Anuncio generico (adGenericEntry) representa a abertura de descoberta.
+    id: "opening-photos",
+    title: "Abertura generica -> discovery, SUV ate 100k, fotos do 2o (<=5), manda mais sem repetir",
+    ad: adGenericSuv,
+    maxCalls: 22,
+    steps: [["Ola, tenho interesse"], ["Quero SUV ate 100 mil"], ["me manda fotos do segundo"], ["manda mais fotos"]],
+    assert(turns) {
+      const v = baseViolations(turns);
+      const t1 = turns[0];
+      if (t1 && nameAskRx.test(t1.response)) v.push("T1: abertura pediu o NOME antes de descobrir a intencao comercial");
+      const t2 = turns[1];
+      const t2stock = t2?.toolsExecuted.find((x) => x.tool === "stock_search");
+      if (!t2stock) v.push("T2: 'SUV ate 100 mil' nao acionou stock_search");
+      if (t2stock && !has(JSON.stringify(t2stock.input), "suv")) v.push(`T2: stock_search nao preservou tipo=suv (input=${JSON.stringify(t2stock.input)})`);
+      const t3 = turns[2];
+      const t3media = t3?.effects.find((e) => e.kind === "send_media");
+      if (t3 && !t3media) v.push("T3: 'fotos do segundo' nao gerou send_media (nem candidato/ausencia honesta)");
+      if (t3media && typeof t3media.photoCount === "number" && t3media.photoCount > 5) v.push(`T3: enviou ${t3media.photoCount} fotos (>5) no 1o lote`);
+      const t4 = turns[3];
+      const t4media = t4?.effects.find((e) => e.kind === "send_media");
+      if (t3media?.photoIds && t4media?.photoIds) {
+        const overlap = t4media.photoIds.filter((id) => t3media.photoIds!.includes(id));
+        if (overlap.length > 0) v.push(`T4: 'manda mais' repetiu ${overlap.length} foto(s) do lote de T3`);
+      }
       return v;
     },
   },
@@ -320,7 +361,7 @@ async function runScenario(assembly: Awaited<ReturnType<typeof buildRealAssembly
       adVehicle: recordingBrain.lastAdVehicle,
       toolsRequested: [...recordingBrain.requestedTools],
       toolsExecuted: toolLog,
-      effects: outbox.map((o) => ({ kind: o.kind, status: o.status, vehicleKey: o.payload?.vehicleKey, photoCount: Array.isArray(o.payload?.photoIds) ? o.payload.photoIds.length : undefined })),
+      effects: outbox.map((o) => ({ kind: o.kind, status: o.status, vehicleKey: o.payload?.vehicleKey, photoCount: Array.isArray(o.payload?.photoIds) ? o.payload.photoIds.length : undefined, photoIds: Array.isArray(o.payload?.photoIds) ? o.payload.photoIds : undefined })),
       llmCalls: (stack.brainTransport.count - brainBefore) + (stack.composeTransport.count - composeBefore),
     });
     base.ms += 30_000;

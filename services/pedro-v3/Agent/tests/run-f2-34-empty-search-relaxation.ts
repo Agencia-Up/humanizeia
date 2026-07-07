@@ -200,8 +200,10 @@ async function main(): Promise<void> {
   }
   {
     const c = conv();
+    await c.t("Boa tarde");   // turno 1 (abertura) — tira do 1º contato p/ isolar a semântica de technical_fallback (senão o
+                              // backstop de abertura da PARTE A vira discovery, corretamente). Aqui provamos SÓ o degradado.
     const empty: BrainResponder = () => finU([], "reply", U("other"));   // draft VAZIO p/ turno genérico -> rejeitado -> lastResort
-    const t1 = await c.t("e aí, tudo certo por aí?", { responder: empty });
+    const t1 = await c.t("e aí, tudo certo por aí?", { responder: empty });   // turno 2 (NÃO-abertura)
     check("[TS-2] technical_fallback genérico -> DEGRADADO (terminalSafe=true, degraded=true)", t1.src !== "technical_fallback" || (t1.terminalSafe === true && t1.degraded === true), `src=${t1.src} ts=${t1.terminalSafe} deg=${t1.degraded}`);
     check("[TS-2b] o fallback técnico REALMENTE dispara (turno genérico sem contexto acionável)", t1.src === "technical_fallback", `src=${t1.src} outbox="${t1.outbox}"`);
   }

@@ -122,6 +122,9 @@ ${listOrEmpty(b4.questions, '1. ').replace(/^1\. /gm, (_m, ..._args) => '').spli
 **Dados obrigatórios a coletar antes da transferência:**
 ${listOrEmpty(b4.required_data, '✅ ')}
 
+**Hora de transferir imediatamente** (se acontecer qualquer regra abaixo, pare de perguntar e encaminhe ao vendedor):
+${listOrEmpty(b4.transfer_now_rules, '⚡ ')}
+
 ---
 
 # BLOCO 5 — RAMIFICAÇÕES DO FUNIL
