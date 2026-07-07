@@ -30,14 +30,14 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedOrdinal,
+  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedOrdinal, authorizesPhotoByAdReference,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import { detectQuestionRepetition } from "./question-repetition.ts";
-import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type CommercialConstraints } from "./commercial-constraints.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
-import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext } from "./ad-context.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey } from "./ad-context.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
@@ -439,6 +439,9 @@ export function enrichStockSearchCall(
     readonly wantsMotorcycle?: boolean;
     // INC3 (F2.30): clampa o excludeKeys ao APRESENTADO (só central_active/llmFirst; shadow/legado mantém a união antiga).
     readonly enforceShownClamp?: boolean;
+    // P0-B (audit Codex smoke): turno de SIMILARIDADE ("algo parecido") -> a busca ignora modelo/marca do cérebro e roda
+    // só por tipo/preço (constraints já relaxado). Mercado por TIPO, não preso ao modelo do anúncio.
+    readonly relaxToType?: boolean;
   },
 ): QueryCall {
   if (call.tool !== "stock_search") return call;
@@ -460,6 +463,22 @@ export function enrichStockSearchCall(
       : [];
     const merged = previous.length > 0 ? [...new Set([...brainExcludeInput, ...previous])] : brainExcludeInput;
     excludeKeys = merged.length > 0 ? merged : undefined;
+  }
+  // P0-B (SIMILARIDADE): a busca sai SÓ do escopo relaxado (tipo/preço/câmbio/popular) — IGNORA modelo/marca/anos que o
+  // cérebro tenha posto. "Algo parecido" nunca fica preso no modelo do anúncio; busca por TIPO no mercado.
+  if (options.relaxToType) {
+    const rc = options.constraints ?? {};
+    return {
+      ...call,
+      input: {
+        ...(rc.tipo ? { tipo: rc.tipo } : {}),
+        ...(rc.precoMax != null ? { precoMax: rc.precoMax } : {}),
+        ...(rc.cambio ? { cambio: rc.cambio } : {}),
+        ...(rc.popular ? { popular: true } : {}),
+        ...(excludeKeys ? { excludeKeys } : {}),
+        ...(options.wantsMotorcycle || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
+      },
+    };
   }
   // Lacunas preenchidas com o constraint do turno (o do cérebro vence; marca canonicalizada volks->volkswagen).
   const c = options.constraints;
@@ -594,7 +613,7 @@ function authorFromBrainDraft(args: {
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage) });
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage) || authorizesPhotoByAdReference(args.target, args.leadMessage) });
   if (incomplete) return { ok: false, feedback: incomplete };
   // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
   // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
@@ -747,7 +766,7 @@ function buildDeterministicPhotoResponse(args: {
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
   // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO quando o alvo veio de turn_ordinal (índice EXATO da última lista) +
   // pedido explícito de foto: aí a resolução única autoriza (grounding máximo; nunca é "foto solta"). Some o "de qual carro?".
-  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage)) return null;
+  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedOrdinal(args.target, args.leadMessage) && !authorizesPhotoByAdReference(args.target, args.leadMessage)) return null;
   const state = args.ctx.state;
   const factsArr = [...args.facts];
   const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
@@ -993,14 +1012,21 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const effectiveAdContext: AdContext | null = burstAdContext ?? contextState.adContext ?? null;
       const adConstraints: CommercialConstraints = (llmFirst && effectiveAdContext) ? extractAdVehicleConstraints(effectiveAdContext, prepared.claimExtractor, prepared.interpretation) : {};
       const adVehicle = adHasVehicle(adConstraints);
+      // P0-A (audit Codex smoke): REFERÊNCIA EXATA do anúncio — o veículo (dentre os JÁ APRESENTADOS) que casa modelo+ANO do
+      // anúncio (match único, aterrado). Alimenta a foto PRONOMINAL ("me manda fotos dele/desse/esse"): o alvo do pedido é
+      // esse veículo exato, não uma re-listagem. Sem modelo+ano no anúncio ou 0/>1 matches -> null (cai no "de qual carro?").
+      const adReferenceKey = (llmFirst && effectiveAdContext) ? resolveAdReferenceKey(effectiveAdContext, contextState.lastRenderedOfferContext?.items ?? []) : null;
       const currentHasVehicle = !!(currentConstraints.marca || (currentConstraints.modelos && currentConstraints.modelos.length > 0) || currentConstraints.tipo);
       const adDrivesTurn = llmFirst && effectiveAdContext != null && adVehicle && currentTurnIntent !== "institutional" && leadEngagement == null && !currentHasVehicle;
       // Turno de ENTRADA/REFERÊNCIA ao anúncio: "esse ainda tem?", saudação curta de entrada, foto/detalhe do anunciado,
       // ou um refino comercial (preço/câmbio) sobre o carro do anúncio -> o anúncio SEED-a a busca deste turno.
       const adEntryTurn = adDrivesTurn && (refersToAd(leadMessage) || isBareGreeting(leadMessage) || sufficientForStockSearch(currentConstraints)
         || currentTurnIntent === "photo_request" || currentTurnIntent === "photo_memory" || isVehicleDetailTurn || baseSignals.mentionsPhoto === true);
-      // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio.
-      const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || adEntryTurn;
+      // P0-B (audit Codex smoke): "algo parecido/opções semelhantes/outras parecidas" -> turno de SIMILARIDADE: relaxa
+      // modelo/marca (do anúncio/ativo) e busca por TIPO. É turno de busca (força a tool) e o filtro é relaxado abaixo.
+      const similarityTurn = llmFirst && detectSimilarityIntent(leadMessage) && currentTurnIntent !== "institutional" && leadEngagement == null;
+      // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio, OU similaridade.
+      const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || adEntryTurn || similarityTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
       // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
@@ -1019,8 +1045,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // F2.32: em turno de ENTRADA de anúncio, o veículo do anúncio é a BASE do escopo (acima do filtro ativo antigo —
       // prioridade anúncio>ativo); o bloco atual (ex.: "até 100k") REFINA por cima. Fora de anúncio, base = filtro ativo.
       const searchBase: CommercialConstraints = (llmFirst && adEntryTurn) ? mergeActiveConstraints(activeConstraints, adConstraints) : activeConstraints;
-      const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0;
-      const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(searchBase, currentConstraints, commercialCorrections) : currentConstraints;
+      const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0 || similarityTurn;
+      const mergedConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(searchBase, currentConstraints, commercialCorrections) : currentConstraints;
+      // P0-B: SIMILARIDADE relaxa o merge -> só tipo/preço/popular (câmbio só se o LEAD pediu no turno atual). "Algo parecido"
+      // nunca fica preso no modelo/marca do anúncio; a recuperação honesta nomeia o TIPO (picapes), não o modelo do anúncio.
+      const commercialConstraints: CommercialConstraints = (llmFirst && similarityTurn) ? relaxToSimilar(mergedConstraints, !!currentConstraints.cambio) : mergedConstraints;
       // F2.29 (invariante 4): moto NUNCA em lista de carro (default do estoque exclui). Só o lead pedindo moto EXPLICITAMENTE
       // libera moto na busca. Conservador (palavra "moto/scooter/..."), não infere por modelo.
       const wantsMotorcycle = mentionsMotorcycle(leadMessage);
@@ -1088,6 +1117,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         return m;
       };
       const resolveTarget = (): TargetResolution => resolveTurnTarget({ understanding: brainVU()?.understanding ?? null, leadMessage, state: contextState, claimExtractor: ctx.claimExtractor, knownModels: buildKnownModels() });
+      // P0-A (audit Codex smoke): o alvo EXPLÍCITO do turno (ordinal/modelo/selecionado) SEMPRE vence. Só quando NÃO há alvo
+      // resolvido, o pedido é PRONOMINAL de foto (sem outro veículo no bloco) e há REFERÊNCIA EXATA do anúncio (modelo+ano
+      // aterrado num veículo único) -> o alvo é esse veículo do anúncio (source="ad_reference"). Narrow, grounding máximo.
+      const resolveTargetWithAd = (): TargetResolution => {
+        const base = resolveTarget();
+        if (base.kind === "resolved") return base;
+        if (adReferenceKey && !currentHasVehicle && baseSignals.mentionsPhoto === true && !isPhotoDeclined(leadMessage)) {
+          return { kind: "resolved", vehicleKey: adReferenceKey, source: "ad_reference", candidateVehicleKeys: [adReferenceKey], subjectModel: adConstraints.modelos?.[0] ?? null };
+        }
+        return base;
+      };
       // requireBrain = produção (central_active+llmFirst): só o cérebro autoriza foto. Sem llmFirst (replay/legado) o
       // fallback validado autoriza (mantém a coerência de evidência de foto). photoVU escolhe a fonte por modo.
       const requireBrain = llmFirst;
@@ -1153,7 +1193,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTarget() });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd() });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -1215,6 +1255,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           constraints: commercialConstraints,   // P0: preenche lacunas (marca/preço/tipo/câmbio) que o cérebro omitiu
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
           enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
+          relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
         });
         const started = Date.parse(clock.now());
         let res: QueryResult;
@@ -1242,8 +1283,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         //    executor determinístico ter photoIds reais. NÃO é "foto solta": só dispara com ordinal resolvido + pedido
         //    explícito de foto (grounding máximo). A mesma fonte de alvo (resolveTarget) alimenta seleção, foto e recall. ──
         if (!authoredComposed) {
-          const photoTarget = resolveTarget();
-          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedOrdinal(photoTarget, leadMessage);
+          const photoTarget = resolveTargetWithAd();   // P0-A: inclui a referência EXATA do anúncio p/ foto pronominal
+          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedOrdinal(photoTarget, leadMessage) || authorizesPhotoByAdReference(photoTarget, leadMessage);
           if (wantsPhotoNow && photoTarget.kind === "resolved" && !facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === photoTarget.vehicleKey)) {
             try {
               const photoRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: photoTarget.vehicleKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (ordinal) exceeded timeout");
@@ -1265,6 +1306,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
                 constraints: effectiveSearchScope,
                 wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
                 enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
+                relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
               });
               const startedS = Date.parse(clock.now());
               const searchRes = await withTimeout(runQuery(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
@@ -1283,7 +1325,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         } else {
           // P0-C: EXECUTOR DETERMINÍSTICO de foto. SÓ com understanding do cérebro (P0-2) + alvo VERIFICADO do assunto
           // (P0-1). Sem understanding OU foto do carro errado -> null (a recuperação pergunta qual; nunca envia errado).
-          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId, photoVU: photoVU(), requireBrain, target: resolveTarget() });
+          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd() });
           if (detPhoto) {
             responseSource = "deterministic_photo"; targetResolutionSource = detPhoto.targetSource;
             effectiveDecision = detPhoto.decision; composed = detPhoto.composed; proposedEffects = detPhoto.proposedEffects;
@@ -1497,7 +1539,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const finalVU = authoritativeVU();   // T6: semântica autoritativa do turno (do cérebro OU fallback validado)
       // T6: se houve send_media e o executor não registrou a fonte do alvo (foto AUTORADA pelo cérebro), registra aqui.
       if (targetResolutionSource == null && proposedEffects.some((e) => e.kind === "send_media")) {
-        const tr = resolveTarget(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
+        const tr = resolveTargetWithAd(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
       }
 
       const events = [

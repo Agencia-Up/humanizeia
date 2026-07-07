@@ -64,6 +64,30 @@ export function extractAdVehicleConstraints(
   return c;
 }
 
+// P0-A (audit Codex smoke): anos do texto do anúncio (só 4 dígitos plausíveis). Dica que, ATERRADA num veículo EXATO do
+// estoque, vira a IDENTIDADE de referência do anúncio (marca/modelo/ano). PURO.
+function adYears(text: string): number[] {
+  const out: number[] = [];
+  for (const m of normalizeText(text).match(/\b(?:19|20)\d{2}\b/g) ?? []) { const n = Number(m); if (n >= 1990 && n <= 2035) out.push(n); }
+  return out;
+}
+// Resolve a REFERÊNCIA EXATA do anúncio: o veículo (dentre os JÁ APRESENTADOS) que casa modelo + ANO do anúncio. Só com
+// match ÚNICO (grounding máximo). Sem modelo+ano no anúncio, ou 0/>1 matches -> null. Alimenta a foto pronominal. PURO.
+export function resolveAdReferenceKey(
+  ad: AdContext | null | undefined,
+  offeredItems: ReadonlyArray<{ readonly vehicleKey: string; readonly modelo?: string | null; readonly ano?: number | null }>,
+): string | null {
+  if (!ad || offeredItems.length === 0) return null;
+  const text = adText(ad);
+  const model = resolveAdVehicleFromMarket(text)?.modelo ?? null;
+  const years = adYears(text);
+  if (!model || years.length === 0) return null;
+  const year = years[years.length - 1];
+  const nModel = normalizeText(model);
+  const matches = offeredItems.filter((it) => it.ano === year && typeof it.modelo === "string" && normalizeText(it.modelo) === nModel);
+  return matches.length === 1 ? matches[0].vehicleKey : null;
+}
+
 // TRUE se o anúncio tem um VEÍCULO resolvível (marca/modelo/tipo/preço). Anúncio institucional (só "encontre o carro
 // ideal…") -> false -> contexto LEVE, não força busca.
 export function adHasVehicle(constraints: CommercialConstraints): boolean {

@@ -121,6 +121,26 @@ export function detectCommercialConstraints(args: {
   return c;
 }
 
+// ── P0-B (audit Codex smoke CTWA): intenção de SIMILARIDADE. Depois de um anúncio/oferta SEM match exato, o lead pede
+//    ALTERNATIVAS: "algo parecido", "opções semelhantes", "outras parecidas", "algo do tipo". Nesse turno, o filtro deve
+//    RELAXAR modelo/marca (do anúncio) e manter só as dimensões SEGURAS de similaridade: tipo/categoria + precoMax +
+//    popular (câmbio só se o LEAD pediu neste turno). Sem isso, "algo parecido" continua preso no modelo do anúncio
+//    (bug real: "tem algo parecido até 100 mil?" seguia buscando modelo=Ranger). PURO. ──
+const SIMILARITY_RX = /\bparecid[oa]s?\b|\bsemelhante[s]?\b|\bsimilar(?:es)?\b|\balgo\s+(?:do\s+)?(?:tipo|assim)\b|\bnesse\s+estilo\b|\bnessa\s+linha\b|\bde\s+mesmo\s+estilo\b|\bque\s+seja\s+parecid|\boutr[oa]s?\s+(?:parecid|semelhant|similar)/;
+export function detectSimilarityIntent(block: string): boolean {
+  return SIMILARITY_RX.test(normalizeText(block));
+}
+// Relaxa um filtro para SIMILARIDADE: mantém tipo/precoMax/popular; DROPA marca/modelos/anos; câmbio só se keepCambio
+// (o lead pediu câmbio no turno atual). PURO.
+export function relaxToSimilar(c: CommercialConstraints, keepCambio: boolean): CommercialConstraints {
+  const out: CommercialConstraints = {};
+  if (c.tipo) out.tipo = c.tipo;
+  if (c.precoMax != null) out.precoMax = c.precoMax;
+  if (c.popular === true) out.popular = true;
+  if (keepCambio && c.cambio) out.cambio = c.cambio;
+  return out;
+}
+
 // F2.29 (invariante 3): quando NÃO há filtro ativo persistido, deriva o escopo MÍNIMO da última oferta renderizada —
 // SOMENTE se HOMOGÊNEA (todos os itens do MESMO tipo aterrado). Mista (SUV+sedan+hatch) ou algum sem tipo -> null (não
 // inventa escopo). Deriva só o TIPO (a oferta não carrega o precoMax/marca da busca original de forma confiável). PURO.
