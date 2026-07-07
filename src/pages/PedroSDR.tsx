@@ -3540,6 +3540,27 @@ export function CrmAvancadoTab({
     setVendaValor('');
     setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead' });
   };
+  // Reabre o popup pra EDITAR a venda já existente (corrigir data/carro/valor depois).
+  // Pré-preenche com os valores ATUAIS da venda (não reseta pra hoje).
+  const editVendaFor = async (leadId: string) => {
+    const tipo = isMarcosCrm ? 'marcos' : 'pedro';
+    const { data: venda, error } = await (supabase as any)
+      .from('comercial_vendas')
+      .select('data_venda, valor, veiculo')
+      .eq('origem_lead_tipo', tipo)
+      .eq('origem_lead_id', leadId)
+      .maybeSingle();
+    if (error) { toast({ title: 'Erro ao abrir a venda', description: descricaoErro(error), variant: 'destructive' }); return; }
+    if (!venda) {
+      toast({ title: 'Sem venda registrada', description: 'Este lead ainda não tem uma venda. Mova para "Venda concluída" primeiro.' });
+      return;
+    }
+    const lead = leads.find(l => l.id === leadId);
+    setVendaCarro(venda.veiculo || (lead as any)?.vehicle_interest || '');
+    setVendaData(venda.data_venda || '');
+    setVendaValor(venda.valor ? String(venda.valor).replace('.', ',') : '');
+    setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead' });
+  };
   // Salva carro + data (+ valor) na venda derivada do lead (criada pelo gatilho).
   const saveVenda = async () => {
     if (!vendaDialog) return;
@@ -3871,6 +3892,16 @@ export function CrmAvancadoTab({
                 Confirmar lead
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => editVendaFor(selectedLead.id)}
+              disabled={vendaSaving}
+              className="h-8 gap-1.5 text-xs border-green-500/40 text-green-400 hover:text-green-300 hover:bg-green-500/10"
+              title="Alterar a data / carro / valor da venda deste lead"
+            >
+              <span>✅</span> Editar venda
+            </Button>
             <Button
               variant="ghost"
               size="sm"
