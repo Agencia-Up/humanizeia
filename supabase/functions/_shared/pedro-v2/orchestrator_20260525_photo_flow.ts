@@ -109,6 +109,47 @@ function formattedKm(value: any): string | null {
   return Number.isFinite(raw) && raw >= 0 ? `${raw.toLocaleString("pt-BR")} km` : null;
 }
 
+function isLikelyRealLeadName(value?: any): boolean {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  const normalized = normalizePlannerText(text);
+  if (!normalized || /\d/.test(normalized)) return false;
+  if (["lead", "cliente", "contato", "particular", "desconhecido", "sem nome", "usuario"].includes(normalized)) return false;
+  return /\p{L}{2,}/u.test(text);
+}
+
+function recentLeadText(history?: any[], maxTurns = 8): string {
+  if (!Array.isArray(history)) return "";
+  return history
+    .filter((item: any) => {
+      const role = String(item?.role || item?.direction || "").toLowerCase();
+      return role === "user" || role === "lead" || role === "client" || role === "cliente";
+    })
+    .slice(-maxTurns)
+    .map((item: any) => String(item?.content || item?.text || item?.message || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function inferTradeVehicleFromText(message?: string | null): string | null {
+  const raw = String(message || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+  const match = raw.match(/\btenho\s+(?:um|uma|o|a)?\s*([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 .\/-]{1,45}?)(?=,|\.|\n| e | que | pra | para |$)/i);
+  if (!match?.[1]) return null;
+  const candidate = match[1].trim();
+  if (!candidate || /^(carro|veiculo|veículo)$/i.test(candidate)) return null;
+  return candidate;
+}
+
+function leadTalksAboutTradeInValue(message?: string | null, memory?: any): boolean {
+  const t = normalizePlannerText(message);
+  if (!t) return false;
+  const hasTradeContext = Boolean(memory?.negociacao?.carro_troca)
+    || /\b(meu carro|minha troca|meu usado|meu veiculo|meu veículo|dar como entrada|como entrada|tenho um|tenho uma)\b/.test(t);
+  if (!hasTradeContext) return false;
+  return /\b(desvalorizar|desvaloriz|fipe|tabela|cotam|cota|avaliacao|avaliação|avaliar|valor do meu|meu carro.*valor|valor.*meu carro|r\$|setenta|mil)\b/.test(t);
+}
+
 function leadAsksFocusedVehicleFacts(message?: string | null): boolean {
   const t = normalizePlannerText(message);
   return /\b(km|quilometragem|rodado|rodados|preco|valor|quanto custa|cor|cambio|automatico|manual|ano|revisao|revisoes|concessionaria)\b/.test(t)
@@ -121,6 +162,7 @@ function buildFocusedVehicleFactReply(input: {
   stockResult?: any;
   nextQuestion?: string | null;
 }): string | null {
+  if (leadTalksAboutTradeInValue(input.message, input.memory)) return null;
   if (!leadAsksFocusedVehicleFacts(input.message)) return null;
 
   const stockItems = Array.isArray(input.stockResult?.items) ? input.stockResult.items : [];
@@ -245,6 +287,75 @@ function maybeApplyTemporaryFunnelGuard(input: {
     source: "temporary_funnel_stock_gate",
     media: [],
     presented_vehicle_indices: [],
+  };
+}
+
+function maybeApplyFinanceTradeTransferGuard(input: {
+  reply: any;
+  message?: string | null;
+  history?: any[];
+  memory?: any;
+  lead?: any;
+  pushName?: string | null;
+}) {
+  const reply = input.reply || {};
+  if (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true) return reply;
+  if (Array.isArray(reply.media) && reply.media.length > 0) return reply;
+
+  const q = (reply?.qualificacao_coletada && typeof reply.qualificacao_coletada === "object") ? reply.qualificacao_coletada : {};
+  const memory = input.memory || {};
+  const contextText = `${recentLeadText(input.history)}\n${String(input.message || "")}`;
+  const normalizedContext = normalizePlannerText(contextText);
+  const normalizedReply = normalizePlannerText(reply?.text);
+
+  const realName = firstNonEmpty(
+    q.nome,
+    memory?.lead?.nome,
+    isLikelyRealLeadName(input.lead?.client_name) ? input.lead?.client_name : null,
+    isLikelyRealLeadName(input.lead?.lead_name) ? input.lead?.lead_name : null,
+    isLikelyRealLeadName(input.pushName) ? input.pushName : null,
+  );
+  const interest = firstNonEmpty(
+    q.interesse,
+    memory?.interesse?.modelo_desejado,
+    memory?.veiculo_em_foco?.label,
+    input.lead?.vehicle_interest,
+  );
+  const tradeVehicle = firstNonEmpty(
+    q.carro_troca,
+    q.veiculo_troca,
+    memory?.negociacao?.carro_troca,
+    input.lead?.trade_in_vehicle,
+    inferTradeVehicleFromText(contextText),
+  );
+
+  const hasFinanceSignal = /\b(financ|parcel|prestac|simul|entrada)\b/.test(normalizedContext);
+  const hasTradeAsEntrySignal = Boolean(tradeVehicle)
+    || /\b(dar como entrada|como entrada|meu carro|minha troca|meu usado|so o meu carro|só o meu carro|em dinheiro nao|em dinheiro não)\b/.test(normalizedContext);
+  const replyRepeatsTrade = /\b(tem|possui|voce tem|você tem|algum)\b.{0,35}\b(carro|veiculo|veículo)\b.{0,35}\btroca\b/.test(normalizedReply);
+  const replyRepeatsCashEntry = /\b(valor|dinheiro)\b.{0,30}\bentrada\b|\bentrada\b.{0,30}\b(dinheiro|valor)\b/.test(normalizedReply);
+
+  if (!realName || !interest || !hasTradeAsEntrySignal) return reply;
+  if (!hasFinanceSignal && !replyRepeatsTrade && !replyRepeatsCashEntry) return reply;
+  if (leadExplicitlyDeclined(input.message)) return reply;
+
+  const name = String(realName).split(/\s+/)[0] || String(realName);
+  const tradeText = tradeVehicle ? `o ${String(tradeVehicle).trim()}` : "seu carro";
+  return {
+    ...reply,
+    pronto_para_transferir: true,
+    transferir_silencioso: false,
+    media: [],
+    source: "finance_trade_transfer_enforced",
+    text: `Perfeito, ${name}. Ja anotei que voce tem interesse no ${String(interest).trim()} e quer usar ${tradeText} como entrada/troca. Vou te encaminhar agora para um consultor avaliar certinho e simular as melhores condicoes com voce.`,
+    qualificacao_coletada: {
+      ...q,
+      nome: q.nome || realName,
+      interesse: q.interesse || interest,
+      tem_troca: true,
+      carro_troca: q.carro_troca || q.veiculo_troca || tradeVehicle || null,
+      forma_pagamento: q.forma_pagamento || "financiamento",
+    },
   };
 }
 
@@ -2652,6 +2763,22 @@ export async function processPedroV2Turn(
         to: (reply as any)?.source || null,
       });
     }
+    const _beforeFinanceTradeGuardSource = (reply as any)?.source;
+    reply = maybeApplyFinanceTradeTransferGuard({
+      reply,
+      message: text,
+      history: recentHistory,
+      memory: nextMemory,
+      lead,
+      pushName,
+    }) as any;
+    if ((reply as any)?.source !== _beforeFinanceTradeGuardSource) {
+      log("info", "pedro_v2_finance_trade_transfer_guard_applied", {
+        lead_id: lead?.id || null,
+        from: _beforeFinanceTradeGuardSource || null,
+        to: (reply as any)?.source || null,
+      });
+    }
   } catch (_vErr) { /* verificacao best-effort: nunca derruba o turno */ }
 
   let effectiveMemory = nextMemory;
@@ -3039,7 +3166,7 @@ export async function processPedroV2Turn(
   if (!ownedLeadAssistantMode && _tradeIntent && _hasTradeVehicle && _hasNome
       && !_leadDescrevendoTroca && !_tradeMidiaTurn && !_ofertaTrocaFresca
       && contextualIntent.needs_handoff !== true
-      && reply?.source !== "finance_transfer_enforced") {
+      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "finance_trade_transfer_enforced") {
     const _nm = (_q.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
     reply.pronto_para_transferir = true;
     reply.transferir_silencioso = false; // troca e HOT: anuncia o handoff, NAO encerra em silencio
@@ -3067,7 +3194,7 @@ export async function processPedroV2Turn(
       && reply?.temperatura !== "desqualificado"
       && !leadExplicitlyDeclined(text)
       && contextualIntent?.needs_handoff !== true
-      && reply?.source !== "trade_in_transfer_enforced" && reply?.source !== "finance_transfer_enforced") {
+      && reply?.source !== "trade_in_transfer_enforced" && reply?.source !== "finance_transfer_enforced" && reply?.source !== "finance_trade_transfer_enforced") {
     const _nm = (_q.nome || lead?.lead_name || pushName || "").toString().split(/\s+/)[0] || "";
     reply.transferir_silencioso = false;
     reply.pronto_para_transferir = true;
@@ -3099,7 +3226,7 @@ export async function processPedroV2Turn(
   const _inVisitFlow = _visitBuyIntent || _askedSchedule;
   const _visitFlowActive = !ownedLeadAssistantMode && _inVisitFlow && reply?.pronto_para_transferir === true
       && reply?.transferir_silencioso !== true
-      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced"
+      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced" && reply?.source !== "finance_trade_transfer_enforced"
       && contextualIntent?.needs_handoff !== true;
   if (_visitFlowActive && !_hasSchedule && !_askedSchedule) {
     // ETAPA 1 — dia/hora (+ nome se faltar)
@@ -3130,6 +3257,7 @@ export async function processPedroV2Turn(
   // (lead pediu humano) nem em lead JÁ atribuído (assistant mode).
   if (!ownedLeadAssistantMode && contextualIntent?.needs_handoff !== true
       && (_tradeIntent || _hasTradeVehicle) && (_leadDescrevendoTroca || _tradeMidiaTurn)
+      && reply?.source !== "finance_trade_transfer_enforced"
       && (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true)) {
     reply.pronto_para_transferir = false;
     reply.transferir_silencioso = false;
@@ -3151,7 +3279,7 @@ export async function processPedroV2Turn(
   // defesa é IGNORAR a reação no webhook; isto cobre uma reação que escape da detecção OU um emoji ENVIADO.
   const _loneAck = String(text || "").trim().length > 0 && !/[\p{L}\d]/u.test(String(text || ""));
   if (_loneAck && (reply?.pronto_para_transferir === true
-      || ["trade_in_transfer_enforced", "finance_transfer_enforced"].includes((reply as any)?.source))) {
+      || ["trade_in_transfer_enforced", "finance_transfer_enforced", "finance_trade_transfer_enforced"].includes((reply as any)?.source))) {
     reply.pronto_para_transferir = false;
     reply.transferir_silencioso = false;
     const _focoEmoji = (effectiveMemory as any)?.interesse?.modelo_desejado || null;
@@ -3170,7 +3298,7 @@ export async function processPedroV2Turn(
   if (!ownedLeadAssistantMode
       && contextualIntent?.needs_handoff !== true
       && reply?.temperatura !== "desqualificado"
-      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced"
+      && reply?.source !== "finance_transfer_enforced" && reply?.source !== "trade_in_transfer_enforced" && reply?.source !== "finance_trade_transfer_enforced"
       && (reply?.pronto_para_transferir === true || reply?.transferir_silencioso === true)) {
     const _b4Handoff = (input.agent as any)?.funnel_bloco4;
     const _fqHandoff: any = {
