@@ -9,6 +9,7 @@ import type { TurnInterpretation } from "../domain/decision.ts";
 import type { CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
 import type { Iso } from "../domain/types.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { contactPhoneKnownFromChannel } from "./turn-domain.ts";
 
 const PHOTO_RX = /\bfotos?\b|\bimagens?\b|\bfotografi/;
 const STORE_RX = /\bloja\b|\bendereco\b|\bfica\s+onde\b|\bonde\s+(fica|e|esta)\b|\bhorario\b|\bque\s+horas\b|\bunidade\b|\bfuncionament/;
@@ -56,7 +57,13 @@ export function buildTurnFrame(args: {
   readonly state: ConversationState;
   readonly currentTurnIntent?: CurrentTurnIntent;   // P0 (audit): intenção do turno atual, computada pelo engine
 }): TurnFrame {
-  const signals = buildFrameSignals(args.block, args.interpretation);
+  const base = buildFrameSignals(args.block, args.interpretation);
+  // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
+  const signals = {
+    ...base,
+    ...(args.currentTurnIntent ? { currentTurnIntent: args.currentTurnIntent } : {}),
+    contactPhoneKnown: contactPhoneKnownFromChannel(args.state.conversationId),
+  };
   return {
     turnId: args.turnId,
     now: args.now,
@@ -64,6 +71,6 @@ export function buildTurnFrame(args: {
     portalPromptSha256: args.portalPromptSha256,
     workingMemory: args.workingMemory,
     recentTranscript: buildRecentTranscript(args.state),
-    signals: args.currentTurnIntent ? { ...signals, currentTurnIntent: args.currentTurnIntent } : signals,
+    signals,
   };
 }

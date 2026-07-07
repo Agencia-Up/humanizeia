@@ -6,7 +6,7 @@ import type {
 import type { VehicleFact } from "../domain/types.ts";
 import { isVehicleKeyInCatalog, normalizeText, canonicalModel } from "./catalog-utils.ts";
 import { slotQuestions } from "./question-classify.ts";
-import { isInstitutionalTurn } from "./turn-domain.ts";
+import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone } from "./turn-domain.ts";
 
 // P0 audit Codex: a RESPOSTA é INSTITUCIONAL PURA (nenhum claim de marca/modelo no texto)? Só então as policies de
 // FUNIL se abstêm. Se o texto cita veículo (mesmo lembrado), NÃO é institucional-pura -> funil valida normalmente.
@@ -289,6 +289,13 @@ export const PolicyEngine = {
     // de ATRIBUTO/ESTOQUE (DETAIL/ATTR-VALUE/GROUND-STOCK) ficam SEMPRE ligadas (são claim-scoped por natureza); o NOME
     // de um veículo LEMBRADO (selecionado/ofertado) é aterrado por memória (abaixo), então nomeá-lo no institucional passa.
     const instOnlyResponse = isInstitutionalOnlyResponse(composed, ctx);
+    // INC2 (P0): no canal WhatsApp o telefone de contato JÁ é conhecido pelo envelope (conversationId "wa:<hash-do-fone>").
+    // O agente NUNCA deve pedir o telefone do LEAD (o prompt do portal não coleta telefone) — usa o número do WhatsApp e
+    // avança o funil. Se a resposta pede o telefone do lead num canal onde ele já é conhecido -> deny + retry. A exceção
+    // (número ALTERNATIVO/secundário pedido de propósito) já é tratada em asksLeadContactPhone (não dispara).
+    if (contactPhoneKnownFromChannel(ctx.state.conversationId) && asksLeadContactPhone(composed.text)) {
+      return [{ policyId: "POL-PHONE-KNOWN", outcome: "deny", violations: ["nao peca o telefone do lead: no WhatsApp o numero de contato ja e conhecido pelo canal. Use-o como contato e avance o funil (nao pergunte telefone salvo se o prompt pedir um numero alternativo)"] }];
+    }
     // POL-QUESTION-OBJECTIVE (R10-2 Codex): UMA pergunta por mensagem, SEM exceção. A classificação lê a ÚLTIMA
     // cláusula interrogativa de cada sentença-com-"?" (question-classify) — reconhecer um dado antes de perguntar
     // ("obrigado pelo nome, tem troca?") conta como a pergunta REAL (troca), não repergunta de nome. Barra:

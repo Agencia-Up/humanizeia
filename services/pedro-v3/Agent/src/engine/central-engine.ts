@@ -416,15 +416,30 @@ export function enrichStockSearchCall(
     readonly constraints?: CommercialConstraints;
     // F2.29: o lead pediu MOTO explicitamente -> libera moto na busca (default do estoque é EXCLUIR moto de lista de carro).
     readonly wantsMotorcycle?: boolean;
+    // INC3 (F2.30): clampa o excludeKeys ao APRESENTADO (só central_active/llmFirst; shadow/legado mantém a união antiga).
+    readonly enforceShownClamp?: boolean;
   },
 ): QueryCall {
   if (call.tool !== "stock_search") return call;
-  const previous = options.moreOptions
-    ? options.previousVehicleKeys.filter((key): key is string => typeof key === "string" && key.length > 0)
-    : [];
-  const excludeKeys = previous.length > 0
-    ? [...new Set([...(Array.isArray(call.input.excludeKeys) ? call.input.excludeKeys : []), ...previous])]
-    : call.input.excludeKeys;
+  const brainExcludeInput = (Array.isArray(call.input.excludeKeys) ? call.input.excludeKeys : []).filter((k): k is string => typeof k === "string" && k.length > 0);
+  let excludeKeys: string[] | undefined;
+  if (options.enforceShownClamp) {
+    // INC3 (F2.30): o excludeKeys é CLAMPADO ao que o lead REALMENTE viu (previousVehicleKeys = conjunto CUMULATIVO de
+    // veículos APRESENTADOS). O cérebro NUNCA pode esconder estoque que não mostrou: a proposta dele é filtrada ao
+    // apresentado. Em "mais opções" exclui TODO o apresentado (não re-mostra). Bug do Compass: o cérebro passava as 17
+    // keys que VIU no resultado da busca — escondendo os 2 Compass nunca exibidos ("não temos outros" falso).
+    const shown = new Set(options.previousVehicleKeys.filter((key): key is string => typeof key === "string" && key.length > 0));
+    const brainExcludes = brainExcludeInput.filter((k) => shown.has(k));
+    const excludeList = options.moreOptions ? [...shown] : brainExcludes;
+    excludeKeys = excludeList.length > 0 ? excludeList : undefined;
+  } else {
+    // Legado/shadow (comportamento antigo): honra o excludeKeys do cérebro e une as keys da última oferta em "mais opções".
+    const previous = options.moreOptions
+      ? options.previousVehicleKeys.filter((key): key is string => typeof key === "string" && key.length > 0)
+      : [];
+    const merged = previous.length > 0 ? [...new Set([...brainExcludeInput, ...previous])] : brainExcludeInput;
+    excludeKeys = merged.length > 0 ? merged : undefined;
+  }
   // Lacunas preenchidas com o constraint do turno (o do cérebro vence; marca canonicalizada volks->volkswagen).
   const c = options.constraints;
   const filled: Partial<QueryCall["input"]> = {};
@@ -438,10 +453,12 @@ export function enrichStockSearchCall(
     if (call.input.precoMax == null && c.precoMax != null) (filled as { precoMax?: number }).precoMax = c.precoMax;
     if (call.input.cambio == null && c.cambio) (filled as { cambio?: typeof c.cambio }).cambio = c.cambio;
   }
+  // INC3: DROPA o excludeKeys ORIGINAL do cérebro (nunca passa verbatim) — só entra o CLAMPADO (ou nada).
+  const { excludeKeys: _brainExcludeDropped, ...restInput } = call.input;
   return {
     ...call,
     input: {
-      ...call.input,
+      ...restInput,
       ...filled,
       ...(options.popular || c?.popular ? { popular: true } : {}),
       ...(excludeKeys ? { excludeKeys } : {}),
@@ -966,6 +983,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // F2.29 (invariante 4): moto NUNCA em lista de carro (default do estoque exclui). Só o lead pedindo moto EXPLICITAMENTE
       // libera moto na busca. Conservador (palavra "moto/scooter/..."), não infere por modelo.
       const wantsMotorcycle = mentionsMotorcycle(leadMessage);
+      // INC3 (F2.30): conjunto CUMULATIVO do que o lead JÁ VIU (offers.presentedKeys acumulado + última oferta renderizada).
+      // É a fonte da verdade do excludeKeys em "mais opções": clampa a proposta do cérebro (nunca esconde estoque não
+      // mostrado) e garante que nada já visto reapareça entre rodadas. presentedKeys é populado no commit abaixo.
+      const shownVehicleKeys = [...new Set([
+        ...((contextState.offers?.presentedKeys ?? []) as string[]),
+        ...(contextState.lastRenderedOfferContext?.items ?? []).map((i) => i.vehicleKey),
+      ].filter((k): k is string => typeof k === "string" && k.length > 0))];
       // F2.29 (invariantes 3+5): "mais opções/tem outros?" PRECISA de escopo. Prioridade: filtro comercial mergeado
       // (ativo+atual) se suficiente; senão deriva da ÚLTIMA OFERTA se HOMOGÊNEA (5 sedans -> tipo=sedan); senão nada
       // recuperável -> o engine PERGUNTA o escopo (não lista genérico). Só em llmFirst e só quando o lead pede mais opções.
@@ -1141,9 +1165,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         const execCall = enrichStockSearchCall(call, {
           popular: frame.signals.mentionsPopular === true,
           moreOptions: frame.signals.mentionsMoreOptions,
-          previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
+          previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys do cérebro)
           constraints: commercialConstraints,   // P0: preenche lacunas (marca/preço/tipo/câmbio) que o cérebro omitiu
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
+          enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
         });
         const started = Date.parse(clock.now());
         let res: QueryResult;
@@ -1190,9 +1215,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, {
                 popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true,
                 moreOptions: frame.signals.mentionsMoreOptions,
-                previousVehicleKeys: (contextState.lastRenderedOfferContext?.items ?? []).map((item) => item.vehicleKey),
+                previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys)
                 constraints: effectiveSearchScope,
                 wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
+                enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
               });
               const startedS = Date.parse(clock.now());
               const searchRes = await withTimeout(runQuery(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
@@ -1368,7 +1394,18 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         if (!reduced.ok) throw new Error(`central: decision mutations rejected: ${reduced.rejected.map((r) => r.reason).join("; ")}`);
       }
       reduced.next.workingMemory = nextWM;
-      if (renderedOfferContext) reduced.next.lastRenderedOfferContext = renderedOfferContext;
+      if (renderedOfferContext) {
+        reduced.next.lastRenderedOfferContext = renderedOfferContext;
+        // INC3 (F2.30): mantém offers.presentedKeys CUMULATIVO em central_active (llmFirst) — a fonte da verdade do "que o
+        // lead JÁ VIU". Só as keys REALMENTE renderizadas na oferta entram (computeRenderedOfferContext lê o
+        // vehicle_offer_list exibido). O excludeKeys de "mais opções" é clampado a este conjunto: nunca esconde estoque não
+        // mostrado (bug do Compass) e nada já visto reaparece entre rodadas. No legado/shadow o record_offer já faz isso.
+        if (llmFirst) {
+          const presented = new Set<string>((reduced.next.offers?.presentedKeys ?? []) as string[]);
+          for (const it of renderedOfferContext.items) if (typeof it.vehicleKey === "string" && it.vehicleKey.length > 0) presented.add(it.vehicleKey);
+          reduced.next.offers = { last: reduced.next.offers?.last ?? null, presentedKeys: [...presented] };
+        }
+      }
       // F2.26/F2.27/F2.29: persiste o FILTRO ATIVO — SÓ em llmFirst (central_active). Foto/detalhe/institucional preservam.
       // ⭐F2.29 (P0 audit Codex — regressão "sedan -> tem outros?"): a FONTE DE VERDADE é a busca EXECUTADA (filtersUsed),
       // não só o texto do lead. Se uma stock_search rodou (o cérebro OU o engine buscou {tipo:"sedan"} e listou), persiste o

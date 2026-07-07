@@ -178,6 +178,8 @@ export type FrameSignals = {
   // P0 (audit trava de contexto): intenção do TURNO ATUAL (só do bloco corrente). A decisão a prioriza sobre a
   // memória; o engine limpa activeTopic/currentLeadIntent velhos de foto quando currentTurnIntent === "search".
   readonly currentTurnIntent?: CurrentTurnIntent;
+  // INC2 (P0): no canal WhatsApp o telefone de contato JÁ é conhecido pelo envelope — o cérebro NÃO deve pedir telefone.
+  readonly contactPhoneKnown?: boolean;
 };
 export type TurnFrame = {
   readonly turnId: string;
