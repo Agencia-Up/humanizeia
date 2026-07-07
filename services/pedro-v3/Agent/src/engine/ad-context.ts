@@ -88,6 +88,26 @@ export function resolveAdReferenceKey(
   return matches.length === 1 ? matches[0].vehicleKey : null;
 }
 
+// Fix C (audit CTWA smoke): CONJUNTO CANDIDATO do anúncio — os veículos JÁ APRESENTADOS que casam o MODELO do anúncio
+// (+ANO quando o anúncio traz um). Único -> vira a referência (resolveAdReferenceKey). >1 (ex.: 2 Onix 2025) -> o pedido
+// PRONOMINAL de foto pergunta QUAL desses, listando SÓ o conjunto do anúncio (nunca o estoque todo, nunca escolhe errado).
+// Sem modelo resolvível no anúncio -> vazio. PURO.
+export function resolveAdCandidateKeys(
+  ad: AdContext | null | undefined,
+  offeredItems: ReadonlyArray<{ readonly vehicleKey: string; readonly modelo?: string | null; readonly ano?: number | null }>,
+): string[] {
+  if (!ad || offeredItems.length === 0) return [];
+  const text = adText(ad);
+  const model = resolveAdVehicleFromMarket(text)?.modelo ?? null;
+  if (!model) return [];
+  const nModel = normalizeText(model);
+  const years = adYears(text);
+  const year = years.length > 0 ? years[years.length - 1] : null;
+  return offeredItems
+    .filter((it) => typeof it.modelo === "string" && normalizeText(it.modelo) === nModel && (year == null || it.ano === year))
+    .map((it) => it.vehicleKey);
+}
+
 // TRUE se o anúncio tem um VEÍCULO resolvível (marca/modelo/tipo/preço). Anúncio institucional (só "encontre o carro
 // ideal…") -> false -> contexto LEVE, não força busca.
 export function adHasVehicle(constraints: CommercialConstraints): boolean {

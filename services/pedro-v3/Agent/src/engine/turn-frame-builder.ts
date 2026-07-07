@@ -57,6 +57,7 @@ export function buildTurnFrame(args: {
   readonly state: ConversationState;
   readonly currentTurnIntent?: CurrentTurnIntent;   // P0 (audit): intenção do turno atual, computada pelo engine
   readonly adVehicleHint?: string | null;           // F2.32 (CTWA): veículo do anúncio (resolvido/aterrado pelo engine)
+  readonly adGenericEntry?: boolean;                // Fix B (audit CTWA): entrada por anúncio genérico -> abre com discovery
 }): TurnFrame {
   const base = buildFrameSignals(args.block, args.interpretation);
   // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
@@ -65,6 +66,7 @@ export function buildTurnFrame(args: {
     ...(args.currentTurnIntent ? { currentTurnIntent: args.currentTurnIntent } : {}),
     contactPhoneKnown: contactPhoneKnownFromChannel(args.state.conversationId),
     ...(args.adVehicleHint ? { adVehicle: args.adVehicleHint } : {}),
+    ...(args.adGenericEntry ? { adGenericEntry: true } : {}),
   };
   return {
     turnId: args.turnId,

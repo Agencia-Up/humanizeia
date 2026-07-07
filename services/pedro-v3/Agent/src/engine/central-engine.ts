@@ -30,14 +30,15 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget,
+  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
 import { detectQuestionRepetition } from "./question-repetition.ts";
-import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, relaxSearchCascade, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
+import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
-import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey } from "./ad-context.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey, resolveAdCandidateKeys } from "./ad-context.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
@@ -115,7 +116,7 @@ export type CentralTurnArgs = {
   readonly blockAwaitMaxMs?: number;
 };
 
-export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "deterministic_recovery" | "technical_fallback" | "legacy_compose";
+export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "deterministic_recovery" | "deterministic_discovery" | "deterministic_conduct" | "technical_fallback" | "legacy_compose";
 // Fontes DEGRADADAS (o cérebro não autorou; o engine recuperou). deterministic_recovery = recuperação CONTEXTUAL aterrada
 // (oferta/qual/honesto — texto útil, não genérico); technical_fallback = último recurso genérico. Ambas contam degraded.
 const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback", "deterministic_recovery"]);
@@ -763,10 +764,11 @@ function buildDeterministicPhotoResponse(args: {
   readonly photoVU: ValidatedUnderstanding | null;   // P0-2: vU que autoriza foto (llmFirst=cérebro; senão fallback)
   readonly requireBrain: boolean;
   readonly target: TargetResolution;                 // P0-1: alvo do assunto (verificado por modelo)
+  readonly adCandidateKeys: readonly string[];       // Fix C: candidatos do anúncio (>1 -> pergunta qual, lista só eles)
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
-  // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO quando o alvo veio de turn_ordinal (índice EXATO da última lista) +
-  // pedido explícito de foto: aí a resolução única autoriza (grounding máximo; nunca é "foto solta"). Some o "de qual carro?".
-  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedTarget(args.target, args.leadMessage)) return null;
+  // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO alvo resolvido (ordinal/anúncio/seleção/modelo) + pedido de foto (grounding
+  // máximo; nunca "foto solta"), OU conjunto CANDIDATO do anúncio (>1) + pedido de foto (aí pergunta QUAL, não escolhe errado).
+  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedTarget(args.target, args.leadMessage) && !(args.adCandidateKeys.length > 1 && leadRequestsPhoto(args.leadMessage))) return null;
   const state = args.ctx.state;
   const factsArr = [...args.facts];
   const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
@@ -780,6 +782,14 @@ function buildDeterministicPhotoResponse(args: {
   const target = args.target;
   const hasList = (state.lastRenderedOfferContext?.items?.length ?? 0) > 0;
   if (target.kind !== "resolved") {
+    // Fix C: pedido de foto do anúncio com >1 CANDIDATO (ex.: 2 Onix 2025) -> lista SÓ os candidatos do anúncio e pergunta
+    // qual, NUNCA re-lista o estoque todo nem escolhe errado. Aterrado nos itens já ofertados (marca/modelo/ano/preço reais).
+    const candItems = (state.lastRenderedOfferContext?.items ?? []).filter((it) => args.adCandidateKeys.includes(it.vehicleKey));
+    if (candItems.length > 1) {
+      const lines = candItems.slice(0, 4).map((it, i) => { const lbl = [it.marca, it.modelo, it.ano].filter(Boolean).join(" "); const price = typeof it.preco === "number" && it.preco > 0 ? ` — R$ ${it.preco.toLocaleString("pt-BR")}` : ""; return `${i + 1}. ${lbl}${price}`; });
+      const text = `Do anúncio, temos essas opções:\n${lines.join("\n")}\nDe qual você quer as fotos? Me diz o número ou o ano.`;
+      return build(ensureSendMessage([]), text, "clarify", "photo_clarify_ad_candidates", "pedido de foto do anúncio com >1 candidato -> lista só os candidatos do anúncio", 0.6, "ambiguous");
+    }
     const text = target.kind === "ambiguous"
       ? `Temos mais de uma opção${target.subjectModel ? ` de ${target.subjectModel}` : ""}. De qual você quer as fotos? Me diz o número ou o ano.`
       : (hasList ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "Claro! De qual carro você quer ver as fotos?");
@@ -861,6 +871,74 @@ function buildMoreOptionsScopeQuestion(args: { readonly ctx: TurnContext; readon
   const text = "Claro! Pra te mostrar as opções certas, você quer ver outros de qual tipo (SUV, sedan, hatch, picape) ou faixa de valor?";
   const pe = ensureSendMessage([]);
   const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "more_options_needs_scope", reasonSummary: "mais opções sem escopo recuperável -> pergunta tipo/faixa (nunca lista genérico)", confidence: 0.8 };
+  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
+  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
+}
+
+// ── Fix A (audit CTWA — condução SDR): resposta de RECUPERAÇÃO por RELAXAMENTO. A busca EXATA zerou; o engine já rodou a
+//    cascata (async) e achou itens REAIS num filtro relaxado. Aqui monta a resposta que CONDUZ: nomeia o filtro original que
+//    não achou + apresenta a lista relaxada ATERRADA + uma pergunta única. Nunca "quer que eu veja outras opções?" solto. PURO. ──
+// Fix A: a autoria do cérebro JÁ apresenta veículo (lista de oferta OU foto)? Se sim, não sobrepõe com o relaxamento. PURO.
+function authoredPresentsVehicles(composed: RenderedResponse | null, effects: readonly ProposedEffectPlan[] | null): boolean {
+  if (effects?.some((e) => e.kind === "send_media")) return true;
+  return (composed?.draft?.parts ?? []).some((p) => (p as { type?: string }).type === "vehicle_offer_list");
+}
+const RELAX_LEADIN: Record<RelaxKind, string> = {
+  same_type_in_range: "eu não encontrei agora, mas nessa faixa achei estas opções pra você",
+  drop_ceiling: "eu não encontrei exatamente nessa faixa, mas tenho estas bem próximas, um pouco acima",
+  same_brand_in_range: "eu não encontrei, mas nessa faixa tenho outras opções da mesma marca",
+  same_type: "eu não encontrei nessa faixa, mas tenho estas do mesmo tipo",
+  in_range: "eu não encontrei, mas nessa faixa tenho estas opções",
+};
+function buildRelaxedOfferResponse(args: {
+  readonly zeroedDesc: string;
+  readonly kind: RelaxKind;
+  readonly items: readonly VehicleFact[];
+  readonly facts: readonly QueryResult[];
+  readonly identities: readonly RememberedVehicleIdentity[];
+  readonly ctx: TurnContext;
+  readonly turnId: string;
+}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const keys = args.items.slice(0, 4).map((v) => v.vehicleKey);
+  const lead = args.zeroedDesc ? `${args.zeroedDesc} ${RELAX_LEADIN[args.kind]}:` : `Não achei exatamente isso, mas ${RELAX_LEADIN[args.kind]}:`;
+  const draft: ResponseDraft = { parts: [{ type: "text", content: lead }, { type: "vehicle_offer_list", vehicleKeys: keys }, { type: "text", content: "Quer que eu te mostre as fotos ou os detalhes de alguma?" }] };
+  const factsArr = [...args.facts];
+  const text = ResponseRenderer.render(draft, factsArr, args.ctx.state, args.identities);
+  const pe = ensureSendMessage([]);
+  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "recovery_relaxed_offer", reasonSummary: `busca vazia -> relaxamento ${args.kind} com itens reais`, confidence: 0.7 };
+  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, factsArr, args.ctx), factsArr);
+  return { decision, composed: { draft, text }, proposedEffects: pe };
+}
+
+// ── Fix B (audit CTWA — condução SDR): ABERTURA por anúncio genérico. Detectores + resposta de DESCOBERTA. ──
+// O texto ABRE pedindo o NOME/dado de contato do lead (abertura burocrática de formulário)? PURO.
+const ASKS_LEAD_NAME_RX = /\b(?:qual|quais|como)\b[^?]*\b(?:seu|teu|o\s+seu)\s+nome\b|\bseu\s+nome\b\s*\??$|\bcomo\s+(?:voce|vc|tu|o\s+senhor|a\s+senhora)\s+se\s+chama|\bme\s+(?:diz|fala|informa|passa|dizer)\b[^?]*\bnome\b|\bpode\s+me\s+(?:dizer|passar|informar|falar)\b[^?]*\bnome\b|\bcom\s+quem\s+(?:eu\s+)?(?:falo|estou\s+falando)\b|\bqual\s+(?:e\s+)?o\s+seu\s+nome\b/;
+function asksLeadName(text: string): boolean { return ASKS_LEAD_NAME_RX.test(normalizeText(text)); }
+// O texto JÁ faz descoberta comercial (modelo/tipo/faixa/procura/opções)? Se sim, não precisa do backstop. PURO.
+const COMMERCIAL_DISCOVERY_RX = /\bmodelo\b|\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\bpickup\b|\btipo\s+de\s+(?:carro|veiculo)\b|\bfaixa\s+de\s+(?:preco|valor)\b|\bprocur\w+\b|\bopcoes\b|\bopcao\b|\bque\s+(?:tipo|carro|modelo)\b|\b(?:ta|esta)\s+buscando\b|\bpensando\s+em\b|\borcamento\b/;
+function mentionsCommercialDiscovery(text: string): boolean { return COMMERCIAL_DISCOVERY_RX.test(normalizeText(text)); }
+// Backstop: substitui uma abertura que pede NOME por uma DESCOBERTA comercial acolhedora (modelo/tipo/faixa) — SDR humano,
+// não formulário. UMA pergunta. PURO.
+function buildGenericAdDiscoveryResponse(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const text = "Que bom te ver por aqui! 😊 Pra eu te ajudar certinho, você já tem algum modelo em mente, um tipo de carro (SUV, sedan, hatch ou picape) ou uma faixa de preço?";
+  const pe = ensureSendMessage([]);
+  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "ad_generic_discovery", reasonSummary: "abertura por anúncio genérico -> descoberta comercial (não nome)", confidence: 0.8 };
+  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
+  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
+}
+
+// ── Fix A+ (audit CTWA, aprovado pelo dono): BECO de busca vazia. O cérebro autora "quer que eu veja/mostre outras opções?"
+//    numa busca que zerou SEM alternativa. Detecta o beco + monta uma recuperação HONESTA+CONDUTORA (nomeia o filtro +
+//    pergunta específica: ampliar faixa? outro modelo/tipo?) — resposta BOA (deterministic_conduct, não degradada), nunca o
+//    beco vago. PURO. ──
+const EMPTY_SEARCH_BECO_RX = /quer que eu (veja|procure|busque|mostre|te mostre) (outr|mais|algo|outro)|quer (ver|que eu veja) outras op|outras op(c|ç)oes (pra|para) voce/;
+function isEmptySearchBeco(text: string): boolean { return EMPTY_SEARCH_BECO_RX.test(normalizeText(text)); }
+function buildEmptySearchConductingRecovery(args: { readonly ctx: TurnContext; readonly turnId: string; readonly desc: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const text = args.desc
+    ? `Não achei ${args.desc} no estoque agora. Posso ampliar a faixa de preço ou te mostrar outro modelo ou tipo de carro — o que você prefere?`
+    : "Não achei isso no estoque agora. Me diz um modelo, tipo de carro ou faixa de preço que eu já procuro pra você.";
+  const pe = ensureSendMessage([]);
+  const prop: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "recovery_stock_empty_conduct", reasonSummary: "busca vazia sem alternativa -> honesto nomeando o filtro + pergunta condutora (não beco)", confidence: 0.6 };
   const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
   return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
 }
@@ -1016,8 +1094,16 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // anúncio (match único, aterrado). Alimenta a foto PRONOMINAL ("me manda fotos dele/desse/esse"): o alvo do pedido é
       // esse veículo exato, não uma re-listagem. Sem modelo+ano no anúncio ou 0/>1 matches -> null (cai no "de qual carro?").
       const adReferenceKey = (llmFirst && effectiveAdContext) ? resolveAdReferenceKey(effectiveAdContext, contextState.lastRenderedOfferContext?.items ?? []) : null;
+      // Fix C (audit CTWA smoke): conjunto CANDIDATO do anúncio (itens ofertados que casam modelo+ano do anúncio). >1 (ex.:
+      // 2 Onix 2025) -> o pedido PRONOMINAL de foto pergunta QUAL desses, listando SÓ os candidatos (não re-lista o estoque).
+      const adCandidateKeys = (llmFirst && effectiveAdContext) ? resolveAdCandidateKeys(effectiveAdContext, contextState.lastRenderedOfferContext?.items ?? []) : [];
       const currentHasVehicle = !!(currentConstraints.marca || (currentConstraints.modelos && currentConstraints.modelos.length > 0) || currentConstraints.tipo);
       const adDrivesTurn = llmFirst && effectiveAdContext != null && adVehicle && currentTurnIntent !== "institutional" && leadEngagement == null && !currentHasVehicle;
+      // Fix B (audit CTWA): entrada por anúncio GENÉRICO (sem veículo específico) e o lead AINDA não especificou nada
+      // comercial nem selecionou carro -> a abertura deve DESCOBRIR (modelo/tipo/faixa), NUNCA abrir pedindo nome. Sai quando
+      // o lead engata (dá modelo/tipo/preço) ou seleciona. Sinal ao cérebro + backstop determinístico (se ele pedir nome).
+      const adGenericEntry = llmFirst && effectiveAdContext != null && !adVehicle && currentTurnIntent !== "institutional"
+        && leadEngagement == null && !sufficientForStockSearch(currentConstraints) && contextState.vehicleContext.selected == null;
       // Turno de ENTRADA/REFERÊNCIA ao anúncio: "esse ainda tem?", saudação curta de entrada, foto/detalhe do anunciado,
       // ou um refino comercial (preço/câmbio) sobre o carro do anúncio -> o anúncio SEED-a a busca deste turno.
       const adEntryTurn = adDrivesTurn && (refersToAd(leadMessage) || isBareGreeting(leadMessage) || sufficientForStockSearch(currentConstraints)
@@ -1076,7 +1162,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const adVehicleHint = (llmFirst && effectiveAdContext && adVehicle)
         ? ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints))
         : undefined;
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint });
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -1276,6 +1362,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let proposedEffects: ProposedEffectPlan[];
       let composeFacts: QueryResult[];   // fatos p/ resolver label do veículo (foto) no commit
       if (singleAuthor) {
+        // Fix A (audit CTWA): alternativa RELAXADA encontrada p/ uma busca comercial que zerou (preenchida após o loop; consumida na recuperação).
+        let relaxedOffer: { readonly zeroedDesc: string; readonly kind: RelaxKind; readonly items: readonly VehicleFact[] } | null = null;
+        // Fix A+ (dono): descrição do filtro que zerou (busca vazia) + flag de beco descartado -> recuperação honesta+condutora.
+        let emptySearchZeroedDesc: string | null = null;
+        let emptySearchConduct = false;
         // ── P0 (audit Codex smoke CTWA #2): INVARIANTE DE FOTO DETERMINÍSTICO — o envio da foto do alvo NÃO pode depender do
         //    humor do cérebro (gpt-4.1-mini às vezes escreve "não localizei as fotos" SEM consultar; ausência honesta FALSA).
         //    Se o LEAD pede foto NESTE turno e o ALVO está RESOLVIDO (anúncio/ordinal/seleção/modelo), o engine OBRIGA a
@@ -1298,6 +1389,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             // descarta -> cai no executor determinístico (buildDeterministicPhotoResponse) que envia send_media do alvo.
             authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
           }
+        }
+        // Fix C (audit CTWA smoke): pedido de foto + conjunto CANDIDATO do anúncio (>1, ex.: 2 Onix 2025) + alvo NÃO resolvido
+        // -> descarta a autoria (que re-lista o estoque todo ou escolhe errado) para o executor PERGUNTAR qual dos candidatos.
+        if (llmFirst && adCandidateKeys.length > 1 && leadRequestsPhoto(leadMessage) && resolveTargetWithAd().kind !== "resolved") {
+          authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
         }
         // ── P0 (RESOLUÇÃO ÚNICA de veículo): completude determinística de FOTO por ORDINAL. Quando o cérebro NÃO autorou
         //    resposta e o lead pediu foto de um item da última lista ("me manda foto do segundo"), o alvo resolve por
@@ -1337,6 +1433,41 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             } catch { observations.push({ tool: "stock_search", ok: false, error: { code: "UPSTREAM", message: "tool indisponivel" } }); }
           }
         }
+        // ── Fix A (audit CTWA — condução SDR): RELAXAMENTO de busca vazia. Roda INDEPENDENTE de o cérebro ter autorado: se o
+        //    turno é comercial e TODA busca executada voltou 0 itens, o engine roda a cascata relaxada (mesmo tipo na faixa /
+        //    mesmo modelo sem teto / mesma marca / tipo / faixa) até achar itens REAIS. Achou E o cérebro não apresentou
+        //    veículo (autoria = beco "não temos X, quer outras?") -> DESCARTA a autoria -> a recuperação CONDUZ com a lista
+        //    relaxada nomeando o filtro. Foto/detalhe/institucional não entram. Cap de 3 buscas. Só central_active. ──
+        // GATE = existe uma busca EXECUTADA que voltou 0 (é o sinal REAL de busca vazia, robusto à classificação de relação do
+        // interpretador — "tem Compass até 100 mil?" às vezes vira asks_vehicle_detail, mas rodou stock_search de verdade).
+        // "mais opções"/"tem mais?" tem semântica PRÓPRIA (F2.29: herda escopo+excludeKeys) — fica FORA.
+        if (llmFirst && !frame.signals.mentionsMoreOptions) {
+          const stockFacts = facts.filter((f): f is Extract<QueryResult, { ok: true; tool: "stock_search" }> => f.ok && f.tool === "stock_search");
+          if (stockFacts.length > 0 && !stockFacts.some((f) => f.data.items.length > 0)) {
+            const zeroed = activeConstraintsFromStockInput(stockFacts[stockFacts.length - 1].data.filtersUsed as Record<string, unknown>);
+            if (sufficientForStockSearch(zeroed)) {
+              emptySearchZeroedDesc = describeConstraints(zeroed);   // Fix A+: filtro que zerou, p/ recuperação condutora se não houver alternativa
+              const tipoHint = zeroed.tipo ?? (zeroed.modelos && zeroed.modelos.length > 0 ? resolveVehicleTypeFromTaxonomy({ model: zeroed.modelos[0], brand: zeroed.marca ?? null }) : null);
+              for (const step of relaxSearchCascade(zeroed, tipoHint).slice(0, 3)) {
+                try {
+                  const relaxCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(step.constraints) }, { popular: false, moreOptions: false, previousVehicleKeys: shownVehicleKeys, constraints: step.constraints, wantsMotorcycle, enforceShownClamp: llmFirst });
+                  const relaxRes = await withTimeout(runQuery(relaxCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (relax) exceeded timeout");
+                  facts.push(relaxRes); observations.push(toAgentObservation(relaxRes)); toolResultMems.push(toToolResultMemory(relaxRes, turnId));
+                  if (relaxRes.ok && relaxRes.tool === "stock_search" && relaxRes.data.items.length > 0) { relaxedOffer = { zeroedDesc: describeConstraints(zeroed), kind: step.kind, items: relaxRes.data.items }; break; }
+                } catch { /* best-effort: sem relaxamento cai na recuperação honesta abaixo */ }
+              }
+            }
+          }
+        }
+        if (relaxedOffer && !authoredPresentsVehicles(authoredComposed, authoredProposedEffects)) {
+          // OVERRIDE: o cérebro finalizou sem apresentar carro num turno de busca que zerou, mas há alternativa relaxada real.
+          authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
+        }
+        if (!relaxedOffer && emptySearchZeroedDesc != null && authoredComposed && isEmptySearchBeco(authoredComposed.text)) {
+          // Fix A+ (dono): busca vazia SEM alternativa + o cérebro autorou um BECO ("quer outras opções?") -> descarta -> a
+          // recuperação abaixo conduz HONESTA (nomeia o filtro + oferece ampliar/outro modelo), nunca o beco vago.
+          authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null; emptySearchConduct = true;
+        }
         // Usa a resposta que o cérebro AUTOROU+aterrou (render+validate já feitos no loop). Se nada passou no
         // limite, FALLBACK TÉCNICO DEGRADADO — honesto, responde à pergunta atual; NUNCA lista/menu/muda de assunto/
         // funil; NUNCA promete retorno. JAMAIS chama DecisionLlm.compose. terminalSafe=true (degradação observável).
@@ -1348,7 +1479,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         } else {
           // P0-C: EXECUTOR DETERMINÍSTICO de foto. SÓ com understanding do cérebro (P0-2) + alvo VERIFICADO do assunto
           // (P0-1). Sem understanding OU foto do carro errado -> null (a recuperação pergunta qual; nunca envia errado).
-          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd() });
+          const detPhoto = buildDeterministicPhotoResponse({ leadMessage, ctx, facts, identities, turnId, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), adCandidateKeys });
           if (detPhoto) {
             responseSource = "deterministic_photo"; targetResolutionSource = detPhoto.targetSource;
             effectiveDecision = detPhoto.decision; composed = detPhoto.composed; proposedEffects = detPhoto.proposedEffects;
@@ -1375,6 +1506,20 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               responseSource = "deterministic_institutional";
               effectiveDecision = detScope.decision; composed = detScope.composed; proposedEffects = detScope.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "more_options_needs_scope", reasonSummary: "mais opções sem escopo -> pergunta tipo/faixa", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            } else if (emptySearchConduct) {
+              // Fix A+ (dono): busca vazia SEM alternativa -> recuperação HONESTA+CONDUTORA (nomeia o filtro + pergunta específica:
+              // ampliar faixa? outro modelo/tipo?), resposta BOA (deterministic_conduct, não degradada), nunca o beco vago.
+              const detConduct = buildEmptySearchConductingRecovery({ ctx, turnId, desc: emptySearchZeroedDesc ?? "" });
+              responseSource = "deterministic_conduct"; recoveryReason = "empty_search_conduct";
+              effectiveDecision = detConduct.decision; composed = detConduct.composed; proposedEffects = detConduct.proposedEffects;
+              finalDecision = finalDecision ?? { reasonCode: "recovery_stock_empty_conduct", reasonSummary: "busca vazia sem alternativa -> honesto + condutor", confidence: 0.6, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
+            } else if (relaxedOffer) {
+              // Fix A: busca EXATA zerou mas a cascata relaxada achou itens REAIS -> CONDUZ com a lista relaxada nomeando o
+              // filtro original + o relaxamento (nunca "quer que eu veja outras opções?" solto). NÃO é degradação (aterrado).
+              const detRelax = buildRelaxedOfferResponse({ zeroedDesc: relaxedOffer.zeroedDesc, kind: relaxedOffer.kind, items: relaxedOffer.items, facts, identities, ctx, turnId });
+              responseSource = "deterministic_recovery"; recoveryReason = `relaxed_offer:${relaxedOffer.kind}`;
+              effectiveDecision = detRelax.decision; composed = detRelax.composed; proposedEffects = detRelax.proposedEffects;
+              finalDecision = finalDecision ?? { reasonCode: "recovery_relaxed_offer", reasonSummary: `busca vazia -> relaxamento ${relaxedOffer.kind}`, confidence: 0.7, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
             } else {
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
@@ -1401,6 +1546,15 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           const recall = `Você pediu as fotos do ${recalledLabel}. Quer que eu te passe mais detalhes dele?`;
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
           responseSource = "deterministic_recall";
+        }
+        // Fix B (audit CTWA — condução SDR): backstop de ABERTURA por anúncio genérico. Se o lead veio de um anúncio SEM
+        // veículo e o cérebro abriu pedindo NOME (sem descoberta comercial), o engine troca por uma DESCOBERTA (modelo/tipo/
+        // faixa) — SDR humano, não formulário. Não mexe se já enviou/ofereceu carro nem se o cérebro já descobriu.
+        if (adGenericEntry && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && asksLeadName(composed.text) && !mentionsCommercialDiscovery(composed.text)) {
+          const disc = buildGenericAdDiscoveryResponse({ ctx, turnId });
+          responseSource = "deterministic_discovery"; targetResolutionSource = null;
+          effectiveDecision = disc.decision; composed = disc.composed; proposedEffects = disc.proposedEffects;
+          finalDecision = { reasonCode: "ad_generic_discovery", reasonSummary: "anúncio genérico -> descoberta comercial", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
         }
         const degraded = isDegradedSource(responseSource);
         // LLM-FIRST (missão): o engine NÃO gerencia objetivo de funil. `stripAllObjectiveMutations` garante que nenhum
