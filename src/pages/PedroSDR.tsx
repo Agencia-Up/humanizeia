@@ -1257,7 +1257,7 @@ export function CrmAvancadoTab({
   }, [isMarcosCrm, effectiveUserIdState]);
   // Popup "Registrar venda" — aberto quando um lead entra em "Venda concluída".
   // Grava carro + data (+ valor) na venda criada pelo gatilho (comercial_vendas).
-  const [vendaDialog, setVendaDialog] = useState<{ leadId: string; nome: string } | null>(null);
+  const [vendaDialog, setVendaDialog] = useState<{ leadId: string; nome: string; modo: 'novo' | 'editar' } | null>(null);
   const [vendaCarro, setVendaCarro] = useState('');
   const [vendaData, setVendaData] = useState('');
   const [vendaValor, setVendaValor] = useState('');
@@ -3538,7 +3538,7 @@ export function CrmAvancadoTab({
     setVendaCarro((lead as any)?.vehicle_interest || '');
     setVendaData(today);
     setVendaValor('');
-    setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead' });
+    setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead', modo: 'novo' });
   };
   // Reabre o popup pra EDITAR a venda já existente (corrigir data/carro/valor depois).
   // Pré-preenche com os valores ATUAIS da venda (não reseta pra hoje).
@@ -3559,7 +3559,7 @@ export function CrmAvancadoTab({
     setVendaCarro(venda.veiculo || (lead as any)?.vehicle_interest || '');
     setVendaData(venda.data_venda || '');
     setVendaValor(venda.valor ? String(venda.valor).replace('.', ',') : '');
-    setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead' });
+    setVendaDialog({ leadId, nome: lead?.lead_name || 'Lead', modo: 'editar' });
   };
   // Salva carro + data (+ valor) na venda derivada do lead (criada pelo gatilho).
   const saveVenda = async () => {
@@ -3892,16 +3892,20 @@ export function CrmAvancadoTab({
                 Confirmar lead
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => editVendaFor(selectedLead.id)}
-              disabled={vendaSaving}
-              className="h-8 gap-1.5 text-xs border-green-500/40 text-green-400 hover:text-green-300 hover:bg-green-500/10"
-              title="Alterar a data / carro / valor da venda deste lead"
-            >
-              <span>✅</span> Editar venda
-            </Button>
+            {/* Editar venda: so aparece pra lead JA vendido. Reabre o popup com a
+                data/carro/valor ATUAIS pra corrigir (ex: subiu hoje uma venda de semana passada). */}
+            {isWinStatus(selectedLead.status_crm || '') && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => editVendaFor(selectedLead.id)}
+                disabled={vendaSaving}
+                className="h-8 gap-1.5 text-xs border-green-500/40 text-green-400 hover:text-green-300 hover:bg-green-500/10"
+                title="Alterar a data / carro / valor da venda deste lead"
+              >
+                <span>✅</span> Editar venda
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -5445,10 +5449,12 @@ export function CrmAvancadoTab({
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <span>✅</span> Registrar venda
+              <span>✅</span> {vendaDialog?.modo === 'editar' ? 'Editar venda' : 'Registrar venda'}
             </DialogTitle>
             <DialogDescription>
-              {vendaDialog?.nome} — preencha o carro e a data da venda. Isso atualiza o Painel Geral.
+              {vendaDialog?.nome} — {vendaDialog?.modo === 'editar'
+                ? 'corrija o carro, a data (dia real da venda) ou o valor.'
+                : 'preencha o carro e a data da venda.'} Isso atualiza o Painel Geral.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
@@ -5491,7 +5497,7 @@ export function CrmAvancadoTab({
               Agora não
             </Button>
             <Button size="sm" onClick={saveVenda} disabled={vendaSaving || !vendaData}>
-              {vendaSaving ? 'Salvando...' : 'Salvar venda'}
+              {vendaSaving ? 'Salvando...' : (vendaDialog?.modo === 'editar' ? 'Salvar alteração' : 'Salvar venda')}
             </Button>
           </DialogFooter>
         </DialogContent>
