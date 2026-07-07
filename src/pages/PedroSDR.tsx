@@ -3723,9 +3723,75 @@ export function CrmAvancadoTab({
     setSelectedLead(null);
   };
 
+  // Popup de venda extraido num elemento so pra ser renderizado NOS DOIS returns
+  // (detalhe do lead E kanban/lista). Antes so existia no return principal, entao
+  // no detalhe o setVendaDialog nao mostrava nada ("botao travado").
+  const vendaDialogEl = (
+    <Dialog open={!!vendaDialog} onOpenChange={(o) => { if (!o) setVendaDialog(null); }}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span>✅</span> {vendaDialog?.modo === 'editar' ? 'Editar venda' : 'Registrar venda'}
+          </DialogTitle>
+          <DialogDescription>
+            {vendaDialog?.nome} — {vendaDialog?.modo === 'editar'
+              ? 'corrija o carro, a data (dia real da venda) ou o valor.'
+              : 'preencha o carro e a data da venda.'} Isso atualiza o Painel Geral.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Carro vendido</label>
+            <input
+              type="text"
+              value={vendaCarro}
+              onChange={(e) => setVendaCarro(e.target.value)}
+              placeholder="Ex.: Onix 2022 prata"
+              className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              autoFocus
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Data da venda</label>
+              <input
+                type="date"
+                value={vendaData}
+                onChange={(e) => setVendaData(e.target.value)}
+                className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Valor (opcional)</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={vendaValor}
+                onChange={(e) => setVendaValor(e.target.value)}
+                placeholder="Ex.: 65000"
+                className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => setVendaDialog(null)} disabled={vendaSaving}>
+            Agora não
+          </Button>
+          <Button size="sm" onClick={saveVenda} disabled={vendaSaving || !vendaData}>
+            {vendaSaving ? 'Salvando...' : (vendaDialog?.modo === 'editar' ? 'Salvar alteração' : 'Salvar venda')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (selectedLead) {
     return (
       <div className="p-4 lg:p-6 space-y-5">
+        {/* Popup de venda tambem montado aqui (detalhe do lead) — senao o botao
+            "Editar venda" e o "Registrar venda" ao concluir nao mostravam nada. */}
+        {vendaDialogEl}
         {/* Header */}
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setSelectedLead(null)} className="h-8 px-2 gap-1 text-xs text-muted-foreground">
@@ -5444,64 +5510,8 @@ export function CrmAvancadoTab({
         </DragDropContext>
       )}
 
-      {/* ── Popup: registrar venda (carro + data) ao concluir ──────────── */}
-      <Dialog open={!!vendaDialog} onOpenChange={(o) => { if (!o) setVendaDialog(null); }}>
-        <DialogContent className="sm:max-w-[420px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <span>✅</span> {vendaDialog?.modo === 'editar' ? 'Editar venda' : 'Registrar venda'}
-            </DialogTitle>
-            <DialogDescription>
-              {vendaDialog?.nome} — {vendaDialog?.modo === 'editar'
-                ? 'corrija o carro, a data (dia real da venda) ou o valor.'
-                : 'preencha o carro e a data da venda.'} Isso atualiza o Painel Geral.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-1">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Carro vendido</label>
-              <input
-                type="text"
-                value={vendaCarro}
-                onChange={(e) => setVendaCarro(e.target.value)}
-                placeholder="Ex.: Onix 2022 prata"
-                className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-                autoFocus
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Data da venda</label>
-                <input
-                  type="date"
-                  value={vendaData}
-                  onChange={(e) => setVendaData(e.target.value)}
-                  className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Valor (opcional)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={vendaValor}
-                  onChange={(e) => setVendaValor(e.target.value)}
-                  placeholder="Ex.: 65000"
-                  className="w-full bg-background border border-border/60 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" size="sm" onClick={() => setVendaDialog(null)} disabled={vendaSaving}>
-              Agora não
-            </Button>
-            <Button size="sm" onClick={saveVenda} disabled={vendaSaving || !vendaData}>
-              {vendaSaving ? 'Salvando...' : (vendaDialog?.modo === 'editar' ? 'Salvar alteração' : 'Salvar venda')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── Popup: registrar/editar venda (carro + data + valor) ─────────── */}
+      {vendaDialogEl}
 
       {/* ── LISTA de Leads ──────────────────────────────────────────── */}
       {view === 'leads' && (
