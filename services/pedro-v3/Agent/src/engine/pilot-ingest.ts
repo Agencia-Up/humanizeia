@@ -6,6 +6,7 @@
 // estava no runTurn: retry do webhook em evento ainda 'pending' = idempotente (sem 2o turno).
 // ============================================================================
 import type { Clock, ConversationRoutingStore, Persistence } from "../domain/ports.ts";
+import type { JsonValue } from "../domain/types.ts";
 import { redact } from "../domain/effect-intent.ts";
 
 export type PilotIngestInput = {
@@ -16,6 +17,9 @@ export type PilotIngestInput = {
   readonly toAddr: string;
   readonly messageText: string;
   readonly receivedAt?: string;
+  // F2.32 (CTWA): contexto de anúncio SANITIZADO (do bridge). Guardado no raw do inbox; o engine resolve o veículo e
+  // persiste no state (herda em rajada). CONTEXTO, não resposta do lead. Opaco aqui (o engine valida o shape).
+  readonly adContext?: unknown;
 };
 
 // "proceed" = mensagem nova OU retry de evento ainda pendente (entra/segue na fila do poller).
@@ -35,7 +39,8 @@ export async function ingestPilotMessage(
   const inserted = await persistence.tryInsert({
     eventId: input.eventId,
     conversationId: input.conversationId,
-    raw: redact({ text: input.messageText }),
+    // F2.32: adContext viaja no raw (só quando presente) -> o engine o lê da rajada e persiste no state.
+    raw: redact((input.adContext != null ? { text: input.messageText, adContext: input.adContext } : { text: input.messageText }) as Record<string, JsonValue>),
     receivedAt: input.receivedAt ?? clock.now(),
   });
   if (!inserted) {

@@ -145,6 +145,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         toAddr: payload.to,
         messageText: payload.messageText,
         receivedAt: payload.receivedAt,
+        adContext: payload.adReferral,   // F2.32 (CTWA): forwardado pelo bridge; guardado no raw do inbox
       });
       if (ingest.decision === "duplicate") {
         return { status: "duplicate" as const, inserted: false as const, turnId: payload.turnId, dispatched: 0 as const };

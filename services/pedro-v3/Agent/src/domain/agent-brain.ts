@@ -180,6 +180,9 @@ export type FrameSignals = {
   readonly currentTurnIntent?: CurrentTurnIntent;
   // INC2 (P0): no canal WhatsApp o telefone de contato JÁ é conhecido pelo envelope — o cérebro NÃO deve pedir telefone.
   readonly contactPhoneKnown?: boolean;
+  // F2.32 (CTWA): o lead veio de um ANÚNCIO cujo veículo (resolvido do texto, aterrado) é este label. CONTEXTO, não
+  // resposta do lead — o turno atual e correções vencem. Não pergunte "qual modelo?" se o anúncio já deixou claro.
+  readonly adVehicle?: string | null;
 };
 export type TurnFrame = {
   readonly turnId: string;

@@ -37,6 +37,8 @@ import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-p
 import { detectQuestionRepetition } from "./question-repetition.ts";
 import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, type CommercialConstraints } from "./commercial-constraints.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext } from "./ad-context.ts";
+import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
 import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
@@ -187,6 +189,25 @@ function textFromInbox(rec: InboxRecord): string {
   const raw = rec.raw as Record<string, unknown>;
   const text = raw.text ?? raw.message ?? raw.body ?? raw.transcription ?? "";
   return typeof text === "string" ? text.trim() : "";
+}
+// F2.32 (CTWA): o contexto de anúncio viaja no `raw.adContext` do inbox (o bridge o coloca na 1ª mensagem). Lê o PRIMEIRO
+// da rajada (sanitizado). Ausente -> null (o engine herda do state = recuperação de rajada).
+function adContextFromInbox(records: InboxRecord[]): AdContext | null {
+  const ordered = [...records].sort((a, b) => {
+    const ta = Date.parse(a.receivedAt), tb = Date.parse(b.receivedAt);
+    if (ta !== tb) return ta - tb;
+    return a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0;
+  });
+  for (const rec of ordered) {
+    const raw = rec.raw as Record<string, unknown>;
+    const ad = raw.adContext;
+    if (ad && typeof ad === "object") {
+      const capturedRaw = (ad as Record<string, unknown>).capturedAtTurn;
+      const sanitized = sanitizeAdContext(ad, typeof capturedRaw === "number" ? capturedRaw : 0);
+      if (sanitized) return sanitized;
+    }
+  }
+  return null;
 }
 function aggregateLeadMessage(records: InboxRecord[]): string {
   const ordered = [...records].sort((a, b) => {
@@ -962,11 +983,28 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // não busca — usa a RELATION (não regex de atributo, senão "pode ser automático" viraria detalhe). Só search/other
       // COM constraint comercial do BLOCO ATUAL, e que NÃO seja detalhe, dispara a força.
       const isVehicleDetailTurn = baseSignals.relation === "asks_vehicle_detail";
-      const commercialSearchTurn = (currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints);
+      const leadEngagement: LeadEngagement | null = detectDisengagement(leadMessage);
+      // ── F2.32 (CTWA/Facebook Ads): o anúncio é CONTEXTO da conversa (não resposta do lead). Vem sanitizado na rajada
+      //    (raw.adContext) ou herda do state. O engine resolve o VEÍCULO do anúncio do TEXTO aterrado no catálogo (nunca
+      //    inventa) e o usa como SEED do escopo de busca. PRIORIDADE: atual > correção > anúncio > ativo. O anúncio DIRIGE
+      //    o turno só se: há veículo no anúncio, o turno NÃO é institucional/desinteresse, e o bloco atual NÃO nomeia um
+      //    veículo DIFERENTE (aí o atual/correção vence). Anúncio institucional (sem carro) -> contexto leve, não força busca. ──
+      const burstAdContext = adContextFromInbox(inboxRecords);
+      const effectiveAdContext: AdContext | null = burstAdContext ?? contextState.adContext ?? null;
+      const adConstraints: CommercialConstraints = (llmFirst && effectiveAdContext) ? extractAdVehicleConstraints(effectiveAdContext, prepared.claimExtractor, prepared.interpretation) : {};
+      const adVehicle = adHasVehicle(adConstraints);
+      const currentHasVehicle = !!(currentConstraints.marca || (currentConstraints.modelos && currentConstraints.modelos.length > 0) || currentConstraints.tipo);
+      const adDrivesTurn = llmFirst && effectiveAdContext != null && adVehicle && currentTurnIntent !== "institutional" && leadEngagement == null && !currentHasVehicle;
+      // Turno de ENTRADA/REFERÊNCIA ao anúncio: "esse ainda tem?", saudação curta de entrada, foto/detalhe do anunciado,
+      // ou um refino comercial (preço/câmbio) sobre o carro do anúncio -> o anúncio SEED-a a busca deste turno.
+      const adEntryTurn = adDrivesTurn && (refersToAd(leadMessage) || isBareGreeting(leadMessage) || sufficientForStockSearch(currentConstraints)
+        || currentTurnIntent === "photo_request" || currentTurnIntent === "photo_memory" || isVehicleDetailTurn || baseSignals.mentionsPhoto === true);
+      // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio.
+      const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || adEntryTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
-      // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta.
-      const leadEngagement: LeadEngagement | null = detectDisengagement(leadMessage);
+      // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
+      // adDrivesTurn já exige leadEngagement==null, então "não solicitei" não vira busca de anúncio.)
       const disengagedActionable = leadEngagement != null && !sufficientForStockSearch(currentConstraints) && !baseSignals.mentionsMoreOptions
         && currentTurnIntent !== "photo_request" && currentTurnIntent !== "photo_memory" && currentTurnIntent !== "institutional";
       // F2.26 (audit Codex): FILTRO ATIVO acumulado — o lead refina a MESMA intenção em turnos separados. Só turno de
@@ -978,8 +1016,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // um modelo específico novo solta o tipo antigo conflitante. detectCorrections é EXTRAÇÃO de fato, não handler.
       // Uma correção também é turno de busca (aplica a remoção sobre o filtro ativo mesmo sem novo modelo/tipo).
       const commercialCorrections = detectCorrections(leadMessage);
+      // F2.32: em turno de ENTRADA de anúncio, o veículo do anúncio é a BASE do escopo (acima do filtro ativo antigo —
+      // prioridade anúncio>ativo); o bloco atual (ex.: "até 100k") REFINA por cima. Fora de anúncio, base = filtro ativo.
+      const searchBase: CommercialConstraints = (llmFirst && adEntryTurn) ? mergeActiveConstraints(activeConstraints, adConstraints) : activeConstraints;
       const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0;
-      const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(activeConstraints, currentConstraints, commercialCorrections) : currentConstraints;
+      const commercialConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(searchBase, currentConstraints, commercialCorrections) : currentConstraints;
       // F2.29 (invariante 4): moto NUNCA em lista de carro (default do estoque exclui). Só o lead pedindo moto EXPLICITAMENTE
       // libera moto na busca. Conservador (palavra "moto/scooter/..."), não infere por modelo.
       const wantsMotorcycle = mentionsMotorcycle(leadMessage);
@@ -1001,7 +1042,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // "mais opções" sem NENHUM escopo recuperável (nem comercial, nem derivável da oferta) -> pergunta o escopo.
       const moreOptionsNeedsScope = llmFirst && baseSignals.mentionsMoreOptions && !sufficientForStockSearch(effectiveSearchScope);
       const wmForFrame = clearStalePhotoIntent(wmV1, currentTurnIntent);
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent });
+      // F2.32: o cérebro vê o veículo do anúncio (label aterrado) sempre que há anúncio COM veículo — mesmo fora de turno
+      // de entrada — para conduzir LLM-first (o prompt deixa claro que o turno atual/correção vencem o anúncio).
+      const adVehicleHint = (llmFirst && effectiveAdContext && adVehicle)
+        ? ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints))
+        : undefined;
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -1415,6 +1461,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       if (llmFirst) {
         if (executedScope && sufficientForStockSearch(executedScope)) reduced.next.activeSearchConstraints = executedScope;
         else if (isSearchishTurn && (sufficientForStockSearch(commercialConstraints) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = commercialConstraints;
+      }
+      // F2.32 (CTWA): persiste o CONTEXTO do anúncio — a 1ª mensagem traz o externalAdReply; as seguintes herdam do state
+      // (recuperação de rajada). Anúncio NOVO (veio na rajada) é carimbado com o turnNumber atual; senão preserva o do state.
+      if (llmFirst && effectiveAdContext) {
+        reduced.next.adContext = burstAdContext
+          ? { ...effectiveAdContext, capturedAtTurn: effectiveAdContext.capturedAtTurn || reduced.next.turnNumber }
+          : effectiveAdContext;
       }
 
       // ── B item 2: draft accepted-safe de foto por effectId (promovido à WM só no receipt accepted). ──
