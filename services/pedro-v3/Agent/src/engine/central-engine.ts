@@ -949,10 +949,16 @@ function buildGenericAdDiscoveryResponse(args: { readonly ctx: TurnContext; read
 //    beco vago. PURO. ──
 const EMPTY_SEARCH_BECO_RX = /quer que eu (veja|procure|busque|mostre|te mostre) (outr|mais|algo|outro)|quer (ver|que eu veja) outras op|outras op(c|ç)oes (pra|para) voce/;
 function isEmptySearchBeco(text: string): boolean { return EMPTY_SEARCH_BECO_RX.test(normalizeText(text)); }
-function buildEmptySearchConductingRecovery(args: { readonly ctx: TurnContext; readonly turnId: string; readonly desc: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
-  const text = args.desc
-    ? `Não achei ${args.desc} no estoque agora. Posso ampliar a faixa de preço ou te mostrar outro modelo ou tipo de carro — o que você prefere?`
+// Fix P0-4 (audit condução): texto ÚNICO de condução de busca vazia SEM alternativa real. NOMEIA o filtro que zerou +
+// oferece DUAS direções específicas (ampliar a faixa OU trocar modelo/tipo) — nunca o beco vago "quer outras opções?".
+// Usado no executor de condução (cérebro autorou beco/não autorou) E no recovery_stock_empty de buildContextualRecovery. PURO.
+function emptySearchConductingText(desc: string): string {
+  return desc
+    ? `Não achei ${desc} no estoque agora. Posso ampliar a faixa de preço ou te mostrar outro modelo ou tipo de carro — o que você prefere?`
     : "Não achei isso no estoque agora. Me diz um modelo, tipo de carro ou faixa de preço que eu já procuro pra você.";
+}
+function buildEmptySearchConductingRecovery(args: { readonly ctx: TurnContext; readonly turnId: string; readonly desc: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const text = emptySearchConductingText(args.desc);
   const pe = ensureSendMessage([]);
   const prop: ProposedDecision = { proposedAction: "clarify", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "recovery_stock_empty_conduct", reasonSummary: "busca vazia sem alternativa -> honesto nomeando o filtro + pergunta condutora (não beco)", confidence: 0.6 };
   const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
@@ -1028,7 +1034,7 @@ function buildContextualRecovery(args: {
     // determinístico (F2.26) garante que um turno comercial SEMPRE tem fato de estoque aqui — nunca uma promessa "vou
     // procurar" sem ação. Sem constraint (fato genérico) mantém o texto padrão.
     const desc = args.constraints ? describeConstraints(args.constraints) : "";
-    if (stockRanOk) return plain(desc ? `Não achei ${desc} no estoque agora. Quer que eu amplie para outras opções parecidas na mesma faixa?` : "Procurei aqui e não encontrei esse modelo no estoque no momento. Quer que eu procure algo parecido na mesma faixa de preço?", "clarify", "recovery_stock_empty", "busca executada com 0 itens -> ausência real + similar");
+    if (stockRanOk) return plain(emptySearchConductingText(desc), "clarify", "recovery_stock_empty", "busca executada com 0 itens -> honesto nomeando o filtro + condução específica (ampliar faixa / outro modelo-tipo)");
     if (stockFailed) return plain("Tive uma instabilidade pra puxar o estoque agora. Me confirma o modelo que você procura que eu já verifico?", "clarify", "recovery_stock_failed", "tool de busca falhou -> indisponibilidade temporária");
     return plain("Qual modelo ou tipo de carro você procura? Já busco no nosso estoque pra você.", "clarify", "recovery_stock_not_run", "nenhuma busca executada -> não afirma ausência, pergunta específica");
   }
