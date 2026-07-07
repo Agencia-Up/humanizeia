@@ -243,6 +243,9 @@ verify_jwt = false
 [functions.wa-sync-profile-photo]
 verify_jwt = false
 
+[functions.platform-daily-audit]
+verify_jwt = false
+
 [functions.knowledge-embed]
 verify_jwt = false
 
