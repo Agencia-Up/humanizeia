@@ -22,7 +22,7 @@ import {
   ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Upload, X, Trash2, Download,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
-  Pencil, Check, Trophy,
+  Pencil, Check, Trophy, FileText,
 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -45,6 +45,7 @@ import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder'
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
 import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
+import { RelatoriosHistoricoTab } from '@/components/pedro/RelatoriosHistoricoTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -4868,9 +4869,9 @@ export function CrmAvancadoTab({
             ...(!isMarcosCrm ? [
               { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
             ] : []),
-            // Feedbacks: master E vendedor (o vendedor vê só os DELE, pra bater com o master).
-            ...(!isMarcosCrm ? [
-              { id: 'feedbacks', label: 'Feedbacks',  icon: BellRing,       badge: unreadFeedbacks.length },
+            // Relatórios: histórico dos relatórios que a IA produziu — só master.
+            ...(!isSeller && !isMarcosCrm ? [
+              { id: 'feedbacks', label: 'Relatórios',  icon: FileText,       badge: 0 },
             ] : []),
             // Diagnóstico e Vendedores: ferramentas do gerente — só master.
             ...(!isSeller && !isMarcosCrm ? [
@@ -5758,8 +5759,13 @@ export function CrmAvancadoTab({
         </DialogContent>
       </Dialog>
 
-      {/* ── Feedbacks ── Master: todos + comparação + filtro por vendedor. Vendedor: SÓ os DELE. */}
-      {view === 'feedbacks' && (
+      {/* ── Relatórios: histórico dos relatórios que a IA produziu — só master ── */}
+      {view === 'feedbacks' && !isSeller && (
+        <RelatoriosHistoricoTab />
+      )}
+      {/* Bloco antigo (feedback manual do vendedor) DESATIVADO — mantido só como
+          referência; o novo histórico de relatórios substitui esta aba. */}
+      {false && view === 'feedbacks' && (
         <div className="space-y-3">
           {/* Resumo da qualificação de TODOS os leads pela IA — só master */}
           {!isSeller && (

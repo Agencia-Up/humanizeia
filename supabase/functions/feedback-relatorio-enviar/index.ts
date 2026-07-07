@@ -108,6 +108,37 @@ Deno.serve(async (req) => {
       }
     }
     const enviados = results.filter((x) => x.ok).length;
+
+    // 6) Registra no HISTORICO (feedback_relatorios) — alimenta a aba de relatorios.
+    try {
+      const inicioMes = new Date();
+      inicioMes.setUTCDate(1); inicioMes.setUTCHours(0, 0, 0, 0);
+      const { data: convs } = await admin.from('feedback_conversas')
+        .select('qualidade_lead')
+        .eq('tenant_id', tenant).eq('status', 'concluido')
+        .gte('created_at', inicioMes.toISOString());
+      const porQ: Record<string, number> = {};
+      for (const c of (convs || [])) { const k = (c as any).qualidade_lead || 'sem'; porQ[k] = (porQ[k] || 0) + 1; }
+      const resumo = {
+        paginas: gen.paginas ?? null,
+        enviados,
+        destinatarios: dests.map((d) => ({ nome: d.nome, num: d.num })),
+        leads_analisados: (convs || []).length,
+        por_qualidade: porQ,
+      };
+      await admin.from('feedback_relatorios').insert({
+        tenant_id: tenant,
+        data_ref: new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10),
+        loja: String(body?.loja || 'Sua loja'),
+        storage_path: uploadNome,
+        resumo,
+        status: enviados > 0 ? 'enviado' : 'gerado',
+        enviado_em: enviados > 0 ? new Date().toISOString() : null,
+      });
+    } catch (e: any) {
+      console.warn('[feedback-relatorio-enviar] falha ao registrar historico:', e?.message || e);
+    }
+
     return json({ ok: enviados > 0, enviados, total: dests.length, arquivo: uploadNome, paginas: gen.paginas, results });
   } catch (e: any) {
     return json({ ok: false, error: String(e?.message || e), stack: String(e?.stack || '').slice(0, 800) }, 200);
