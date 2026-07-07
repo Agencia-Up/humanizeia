@@ -7,6 +7,18 @@ import {
 const MAX_RESPONSE_BYTES = 32 * 1024;
 const BRIDGE_TIMEOUT_MS = 95_000;
 
+// F2.32 (CTWA): contexto de anúncio SANITIZADO extraído do externalAdReply do Meta. É CONTEXTO (não resposta do lead);
+// o v3 resolve o veículo do texto e o usa como intenção inicial. capturedAtTurn é carimbado pelo engine (aqui não).
+export type PedroV3AdReferral = {
+  adId: string | null;
+  source: string | null;
+  sourceUrl: string | null;
+  title: string | null;
+  body: string | null;
+  greeting: string | null;
+  imageUrls: string[];
+};
+
 export type PedroV3BridgeTurn = {
   tenantId: string;
   agentId: string;
@@ -18,6 +30,7 @@ export type PedroV3BridgeTurn = {
   messageText: string;
   receivedAt: string;
   leadId: null;
+  adReferral?: PedroV3AdReferral;   // F2.32: só quando o payload traz externalAdReply (1ª msg do anúncio)
 };
 
 export type PedroV3BridgeBuildResult =
@@ -144,6 +157,46 @@ async function sha256(value: string): Promise<string> {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+// F2.32 (CTWA): extrai o externalAdReply do payload (lookup em cascata — o contextInfo/adReply aparece em vários níveis
+// do payload uazapi/Meta). Sanitiza os campos (aliases: greetingMessageBody/greetingMessage/greeting; sourceId/source_id/
+// ad_id/sourceID; body/description; sourceUrl/source_url/sourceURL; imagens original/thumbnail/media). null se não houver
+// anúncio. NÃO carrega blobs (thumbnail base64). PURO.
+function firstStr(...vals: unknown[]): string | null {
+  for (const v of vals) if (typeof v === "string" && v.trim()) return v.trim();
+  return null;
+}
+export function extractAdReferral(payload: any): PedroV3AdReferral | null {
+  const message = pickIncoming(payload);
+  const msg = message?.message || message;
+  const ext = msg?.extendedTextMessage || message?.extendedTextMessage;
+  const ctxOf = (o: any) => (o && typeof o === "object" && o.contextInfo && typeof o.contextInfo === "object") ? o.contextInfo : null;
+  const contextInfo = ext?.contextInfo
+    || msg?.contextInfo
+    || message?.contextInfo
+    || ctxOf(message?.content)
+    || ctxOf(msg?.content)
+    || ctxOf(payload?.message?.content)
+    || ctxOf(payload?.data?.message?.content)
+    || payload?.contextInfo
+    || {};
+  const adReply = contextInfo?.externalAdReply || message?.externalAdReply || payload?.externalAdReply || payload?.data?.externalAdReply || null;
+  if (!adReply || typeof adReply !== "object") return null;
+  const clamp = (s: string | null, max: number): string | null => (s ? s.slice(0, max) : null);
+  const greeting = clamp(firstStr(adReply.greetingMessageBody, adReply.greetingMessage, adReply.greeting), 400);
+  const title = clamp(firstStr(adReply.title), 400);
+  const body = clamp(firstStr(adReply.body, adReply.description), 1000);
+  const sourceUrl = clamp(firstStr(adReply.sourceUrl, adReply.source_url, adReply.sourceURL), 512);
+  const adId = clamp(firstStr(adReply.sourceId, adReply.source_id, adReply.ad_id, adReply.sourceID), 128);
+  const source = clamp(firstStr(adReply.sourceApp, contextInfo?.conversionSource, adReply.sourceType), 64);
+  const imageUrls = [
+    firstStr(adReply.originalImageURL, adReply.originalImageUrl),
+    firstStr(adReply.thumbnailUrl, adReply.thumbnailURL),
+    firstStr(adReply.mediaUrl, adReply.mediaURL),
+  ].filter((u): u is string => typeof u === "string").map((u) => u.slice(0, 512)).slice(0, 3);
+  if (!adId && !title && !body && !greeting && !sourceUrl) return null;
+  return { adId, source, sourceUrl, title, body, greeting, imageUrls };
+}
+
 export async function buildPedroV3BridgeTurn(input: {
   payload: any;
   tenantId: string | null | undefined;
@@ -160,6 +213,7 @@ export async function buildPedroV3BridgeTurn(input: {
 
   const eventHash = await sha256(`${PEDRO_V3_PILOT_TENANT_ID}|${PEDRO_V3_PILOT_AGENT_ID}|${messageId}`);
   const conversationHash = await sha256(`${PEDRO_V3_PILOT_TENANT_ID}|${PEDRO_V3_PILOT_AGENT_ID}|${phone}`);
+  const adReferral = extractAdReferral(input.payload);   // F2.32 (CTWA): só na 1ª msg do anúncio; senão null.
   return {
     ok: true,
     turn: {
@@ -173,6 +227,7 @@ export async function buildPedroV3BridgeTurn(input: {
       messageText: text.slice(0, 12_000),
       receivedAt: receivedAt(input.payload),
       leadId: null,
+      ...(adReferral ? { adReferral } : {}),
     },
   };
 }
