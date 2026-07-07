@@ -23,6 +23,23 @@ function normNum(s?: string | null): string {
   return d;
 }
 
+// Data de hoje em BRT (UTC-3), formato dd/mm/aaaa.
+function dataBRT(): string {
+  const d = new Date(Date.now() - 3 * 3600e3);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+}
+
+// Mensagem padrão que vai junto do PDF todo dia.
+function captionPadrao(): string {
+  return [
+    `Relatório de atendimento - ${dataBRT()}`,
+    ``,
+    `Segue o resumo do dia: o feedback dos atendimentos dos vendedores e a qualidade dos leads que chegaram.`,
+    ``,
+    `Logos IA`,
+  ].join('\n');
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -75,7 +92,7 @@ Deno.serve(async (req) => {
     if (sErr || !signed?.signedUrl) return json({ ok: false, error: `falha ao assinar URL: ${sErr?.message || 'sem url'}` }, 200);
 
     // 5) Envia o documento a cada destinatario, pelo numero da IA.
-    const caption = String(body?.caption || 'Relatorio de atendimento do dia. Segue em anexo o resumo dos atendimentos da equipe.');
+    const caption = String(body?.caption || captionPadrao());
     const base = String(inst.api_url).replace(/\/+$/, '');
     const results: any[] = [];
     for (const d of dests) {
