@@ -192,6 +192,42 @@ async function main(): Promise<void> {
     check("[E-3] classificado asks_vehicle_detail mas busca vazia EXECUTADA -> ainda substitui o beco (conduct)", t1.reasonCode === "recovery_stock_empty_conduct" && !/quer que eu veja outras op/.test(norm(t1.outbox)), `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
   }
 
+  // ── P0-3 (semântica terminalSafe/degraded): recuperação ATERRADA com carros reais NÃO é degradada; só technical_fallback é. ──
+  {
+    const c = conv();
+    const t1 = await c.t("tem SUV até 100 mil?");   // resist -> engine força busca -> lista Creta/Renegade via recovery_offer (deterministic_recovery)
+    check("[TS-1] recovery_offer com carros REAIS -> NÃO degradado (terminalSafe=false, degraded=false)", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && t1.terminalSafe === false && t1.degraded === false, `src=${t1.src} ts=${t1.terminalSafe} deg=${t1.degraded} outbox="${t1.outbox}"`);
+  }
+  {
+    const c = conv();
+    const empty: BrainResponder = () => finU([], "reply", U("other"));   // draft VAZIO p/ turno genérico -> rejeitado -> lastResort
+    const t1 = await c.t("e aí, tudo certo por aí?", { responder: empty });
+    check("[TS-2] technical_fallback genérico -> DEGRADADO (terminalSafe=true, degraded=true)", t1.src !== "technical_fallback" || (t1.terminalSafe === true && t1.degraded === true), `src=${t1.src} ts=${t1.terminalSafe} deg=${t1.degraded}`);
+    check("[TS-2b] o fallback técnico REALMENTE dispara (turno genérico sem contexto acionável)", t1.src === "technical_fallback", `src=${t1.src} outbox="${t1.outbox}"`);
+  }
+  {
+    const c = conv();
+    const t1 = await c.t("tem picape até 30 mil?");   // sem picape no estoque; cérebro resist (não autora beco) -> recovery_stock_empty
+    check("[TS-3] busca vazia sem alternativa (cérebro não autora) -> recovery_stock_empty CONDUZ + NÃO degradado", t1.reasonCode === "recovery_stock_empty" && /ampliar|outro modelo|outro tipo|prefere/.test(norm(t1.outbox)) && !/quer que eu (veja|mostre) outras op/.test(norm(t1.outbox)) && t1.terminalSafe === false && t1.degraded === false, `rc=${t1.reasonCode} ts=${t1.terminalSafe} deg=${t1.degraded} outbox="${t1.outbox}"`);
+  }
+  // ── P0-4 (intent-change): "SUV até 90" depois "na verdade tem Onix?" -> busca ONIX (nova intenção vence), NÃO fica preso em SUV, conduz. ──
+  {
+    const c = conv();
+    await c.t("quero SUV até 90 mil");
+    const t2 = await c.t("na verdade tem Onix?");
+    check("[IC-1] T2 busca ONIX (intent nova vence) e NÃO fica preso em tipo=suv", t2.stockInputs.some((i) => has(String(i.modelo ?? ""), "onix")) && t2.stockInputs.every((i) => i.tipo !== "suv"), `inputs=${JSON.stringify(t2.stockInputs)}`);
+    check("[IC-2] T2 conduz nomeando Onix (relaxa/condução), não relista os SUVs como se ainda fosse SUV", has(t2.outbox, "Onix") && (t2.reasonCode === "recovery_relaxed_offer" || t2.reasonCode === "recovery_stock_empty" || t2.reasonCode === "recovery_stock_empty_conduct") && !has(t2.outbox, "Creta") && !has(t2.outbox, "Renegade"), `rc=${t2.reasonCode} outbox="${t2.outbox}"`);
+  }
+
+  // ── P0-4/audit: "me manda fotos do segundo" SEM lista válida -> NUNCA envia mídia inventada; pergunta qual (não finge sucesso). ──
+  {
+    const c = conv();
+    const noAuthor: BrainResponder = () => finU([], "reply", U("request_photos"));   // cérebro não autora -> executor determinístico
+    const t1 = await c.t("me manda fotos do segundo", { responder: noAuthor });
+    check("[FS-1] foto ordinal SEM lista renderizada -> NUNCA envia mídia (não inventa item)", t1.hasMedia === false, `hasMedia=${t1.hasMedia} outbox="${t1.outbox}"`);
+    check("[FS-2] pergunta QUAL carro (esclarecimento útil), não fica em beco", /qual carro|de qual|qual (voce|você)|me diz o (numero|número|modelo)/.test(norm(t1.outbox)), `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
+  }
+
   console.log(`\n== F2.34: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n - " + fails.join("\n - ")); process.exit(1); }
 }

@@ -46,6 +46,7 @@ type EffectLog = { kind: string; vehicleKey?: string; photoCount?: number; statu
 type TurnLog = {
   turn: number; lead: string; response: string; status: string; reasonCode?: string; responseSource?: string;
   adVehicle?: string | null; tools: ToolLog[]; effects: EffectLog[]; llmCalls: number; terminalSafe: boolean;
+  selectedKey?: string | null; stockInput?: string;
 };
 type Scenario = {
   id: string; label: string; ref: TenantAgentRef; ad: AdContext; steps: string[][];
@@ -272,11 +273,13 @@ async function runScenario(s: Scenario): Promise<TurnLog[]> {
       status: r.status,
       reasonCode: r.status === "committed" ? r.decision.reasonCode : undefined,
       responseSource: r.status === "committed" ? r.responseSource : undefined,
-      adVehicle: r.status === "committed" ? r.adVehicle : null,
+      adVehicle: r.status === "committed" ? brain.adVehicle : null,
       tools: toolLog,
       effects: outbox.map((o) => ({ kind: o.kind, vehicleKey: o.payload?.vehicleKey, photoCount: o.payload?.photoIds?.length, status: o.status })),
       llmCalls: a.brainTransport.count + a.composeTransport.count - beforeCalls,
       terminalSafe: r.status === "committed" ? r.terminalSafe : true,
+      selectedKey: r.status === "committed" ? r.resolvedVehicleKey : null,
+      stockInput: JSON.stringify(toolLog.filter((x) => x.tool === "stock_search").slice(-1)[0]?.input ?? {}),
     });
     base.ms += 30_000;
   }
@@ -309,11 +312,14 @@ function scenariosFromAds(icomAds: AdContext[], avantAds: AdContext[]): Scenario
       steps: [["Olá! Tenho interesse e queria mais informações, por favor."], ["esse ainda tem?"], ["me manda fotos dele"], ["na verdade quero HB20 até 80 mil"]],
       expect(turns) {
         const v = baseViolations(turns);
+        if (!turns.slice(0, 2).some((t) => has(t.adVehicle ?? "", "onix"))) v.push("o cérebro não recebeu signals.adVehicle=Onix do anúncio");
         if (!turns.slice(0, 2).some((t) => t.tools.some((x) => x.tool === "stock_search"))) v.push("não buscou estoque para o anúncio Onix");
         if (!turns.slice(0, 2).some((t) => has(t.response, "onix"))) v.push("não tratou o Onix do anúncio");
         // Fix C: "fotos dele" do anúncio -> envia (match único) OU pergunta qual dos candidatos (>1). NUNCA re-lista genérico.
         if (turns[2] && !turns[2].effects.some((e) => e.kind === "send_media") && !/de qual|qual (voc|vc)|op(c|ç)(o|õ)es do an|essas op(c|ç)|qual (você|voce)/i.test(turns[2].response)) v.push("T3 pedido de fotos do anúncio: nem send_media nem clarify de candidatos (re-listou/ignorou)");
         if (!turns[3]?.tools.some((x) => x.tool === "stock_search" && has(JSON.stringify(x.input), "hb20"))) v.push("mudança para HB20 não acionou busca HB20");
+        // Turno atual VENCE o anúncio: não pode ficar preso no Onix quando o lead pediu HB20.
+        if (turns[3] && has(turns[3].response, "onix") && !has(turns[3].response, "hb20")) v.push("T4: ficou PRESO no Onix do anúncio em vez de conduzir o HB20 pedido");
         return v;
       },
     },
@@ -322,6 +328,7 @@ function scenariosFromAds(icomAds: AdContext[], avantAds: AdContext[]): Scenario
       steps: [["Olá! Tenho interesse e queria mais informações, por favor."], ["qual o valor dele?"], ["na verdade quero um SUV automático até 100 mil"]],
       expect(turns) {
         const v = baseViolations(turns);
+        if (!turns.slice(0, 2).some((t) => has(t.adVehicle ?? "", "hb20") || has(t.adVehicle ?? "", "hyundai"))) v.push("o cérebro não recebeu signals.adVehicle=HB20 do anúncio");
         if (!turns.slice(0, 2).some((t) => t.tools.some((x) => x.tool === "stock_search" || x.tool === "vehicle_details"))) v.push("não usou tool para o veículo do anúncio HB20");
         if (!turns.slice(0, 2).some((t) => has(t.response, "hb20") || has(t.response, "hyundai"))) v.push("não tratou o HB20 do anúncio");
         const t3Input = JSON.stringify(turns[2]?.tools.find((x) => x.tool === "stock_search")?.input ?? {});
@@ -356,6 +363,8 @@ function scenariosFromAds(icomAds: AdContext[], avantAds: AdContext[]): Scenario
         if (!has(t2Input, "suv")) v.push(`pedido SUV não acionou busca SUV (${t2Input})`);
         const t3Input = JSON.stringify(turns[2]?.tools.find((x) => x.tool === "stock_search")?.input ?? {});
         if (!has(t3Input, "onix")) v.push(`mudança para Onix não acionou busca Onix (${t3Input})`);
+        // P0-4: ao trocar para um MODELO específico (Onix), o tipo antigo (suv) não pode ficar STALE na busca.
+        if (has(t3Input, `"tipo":"suv"`) || has(t3Input, `"tipo": "suv"`)) v.push(`T3: manteve tipo=suv STALE ao trocar para Onix (não largou o tipo antigo) (${t3Input})`);
         if (!turns[3]?.tools.some((x) => x.tool === "tenant_business_info") && !/loja|endereco|endereço|avenida|rua/i.test(turns[3]?.response ?? "")) v.push("pergunta de loja não respondeu institucional");
         return v;
       },
@@ -367,9 +376,10 @@ function mdTable(turns: TurnLog[]): string {
   const rows = turns.map((t) => {
     const tools = t.tools.map((x) => `${x.tool}${x.itemCount != null ? `(${x.itemCount})` : ""}`).join(", ") || "-";
     const effects = t.effects.map((e) => `${e.kind}${e.vehicleKey ? `(${e.vehicleKey})` : ""}${e.photoCount != null ? `[${e.photoCount}]` : ""}`).join(", ") || "-";
-    return `| ${t.turn} | ${sanitize(t.lead).replace(/\|/g, "\\|")} | ${sanitize(t.response).replace(/\|/g, "\\|").slice(0, 220)} | ${tools} | ${effects} | ${t.adVehicle ?? "-"} | ${t.responseSource ?? "-"} |`;
+    const stockIn = t.stockInput && t.stockInput !== "{}" ? sanitize(t.stockInput).replace(/\|/g, "\\|").slice(0, 90) : "-";
+    return `| ${t.turn} | ${sanitize(t.lead).replace(/\|/g, "\\|")} | ${sanitize(t.response).replace(/\|/g, "\\|").slice(0, 200)} | ${tools} | ${effects} | ${t.adVehicle ?? "-"} | ${stockIn} | ${t.selectedKey ?? "-"} | ${t.responseSource ?? "-"} | ${t.terminalSafe ? "SIM" : "não"} |`;
   });
-  return ["| T | lead | resposta | tools | effects | adVehicle | source |", "|---:|---|---|---|---|---|---|", ...rows].join("\n");
+  return ["| T | lead | resposta | tools | effects | adVehicle | stockInput | selectedKey | source | terminalSafe |", "|---:|---|---|---|---|---|---|---|---|---|", ...rows].join("\n");
 }
 
 async function main(): Promise<void> {
