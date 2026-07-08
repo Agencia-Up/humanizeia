@@ -57,7 +57,7 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
-import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession } from "./lead-extraction.ts";
+import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession, isAnswerToFinancialQuestion } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
@@ -669,7 +669,7 @@ function authorFromBrainDraft(args: {
       return { ok: false, feedback: `Você JÁ sabe o nome do cliente${typeof known === "string" && known ? ` (${known})` : ""}. NÃO pergunte o nome de novo — use-o e siga a conversa (o que ele procura, opções, condições ou visita).` };
     }
     if (isPaymentTurn(args.leadMessage)) {
-      return { ok: false, feedback: "O cliente pediu as CONDIÇÕES DE PAGAMENTO. NÃO peça o nome — pagamento não é cadastro. Avance a qualificação financeira: pergunte se ele tem carro para dar de TROCA, se pretende dar ENTRADA, uma PARCELA mensal confortável, ou ofereça simular o financiamento." };
+      return { ok: false, feedback: "O cliente pediu as CONDIÇÕES DE PAGAMENTO. NÃO peça o nome — pagamento não é cadastro. Avance a qualificação financeira perguntando UMA coisa por vez (não empilhe): comece pela TROCA (tem carro para dar na troca?), senão ENTRADA, senão PARCELA mensal — só UMA pergunta." };
     }
   }
   // ⭐T8 (audit Codex, LLM-first): turno de PAGAMENTO com veículo JÁ ESCOLHIDO (selecionado OU há oferta na última lista) ->
@@ -680,7 +680,13 @@ function authorFromBrainDraft(args: {
       && asksDiscoveryQuestion(composed.text)) {
     const sel = args.ctx.state.vehicleContext.selected;
     const selLabel = sel?.label && sel.label !== sel.key ? sel.label : "o veículo que ele já escolheu";
-    return { ok: false, feedback: `O cliente pediu as CONDIÇÕES DE PAGAMENTO de ${selLabel} — ele JÁ escolheu o carro. NÃO volte para a descoberta ("o que você procura"/"que tipo"). CONDUZA o financiamento: pergunte se ele tem um valor para dar de ENTRADA, uma PARCELA mensal confortável, ou um carro na TROCA. NÃO afirme valores específicos (pergunte-os).` };
+    return { ok: false, feedback: `O cliente pediu as CONDIÇÕES DE PAGAMENTO de ${selLabel} — ele JÁ escolheu o carro. NÃO volte para a descoberta ("o que você procura"/"que tipo"). CONDUZA o financiamento perguntando UMA coisa por vez (não empilhe): TROCA, ou ENTRADA, ou PARCELA mensal — só UMA. NÃO afirme valores específicos (pergunte-os).` };
+  }
+  // ── MISSÃO P0 (Financial Question Context, caso F): NUNCA empilhe DUAS perguntas financeiras no mesmo texto ("tem
+  //    entrada ou vai financiar?"). Em pagamento pergunte UMA dimensão por vez. Deny + feedback -> o cérebro RE-AUTORA
+  //    com UMA pergunta (o engine NÃO escreve a resposta). Ordem SDR sugerida: troca -> entrada -> parcela.
+  if (financialDimensionsAsked(composed.text).size > 1) {
+    return { ok: false, feedback: "Você empilhou DUAS perguntas financeiras no mesmo texto (ex.: entrada E financiamento/parcela). Em pagamento pergunte UMA coisa por vez: escolha a MAIS importante agora — nesta ordem, se ainda não sabe: carro na TROCA, senão valor de ENTRADA, senão PARCELA mensal confortável — e REMOVA a outra pergunta. Acolha o que ele já disse antes de perguntar." };
   }
   // PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO — a abertura DEVE reconhecer/conduzir o VEÍCULO do anúncio (não uma
   // saudação genérica pedindo nome/telefone/cidade/loja). INVARIANTE (o engine NÃO escreve a resposta, só NEGA): se o draft
@@ -1052,6 +1058,23 @@ function isPaymentTurn(leadMessage: string): boolean { return PAYMENT_TURN_RX.te
 // que procura", "qual faixa?")? NARROW (não pega "opções de financiamento"). PURO. normalizeText remove acentos.
 const ASKS_DISCOVERY_RX = /\bo\s+que\s+(?:voce|vc|tu|o\s+senhor|a\s+senhora)\s+(?:procur|busc|quer|deseja|precis|ta\s+buscando)|\bque\s+tipo\s+de\s+(?:carro|veiculo)\b|\bqual\s+(?:modelo|tipo)\b[^?]*\b(?:procur|quer|interess|busc)|\bme\s+conta\s+(?:um\s+pouco\s+)?mais\s+do\s+que\s+voce\s+(?:procur|busc)|\bqual\s+(?:a\s+)?faixa\s+de\s+(?:preco|valor)\b/;
 function asksDiscoveryQuestion(text: string): boolean { return ASKS_DISCOVERY_RX.test(normalizeText(text)); }
+// ── MISSÃO P0 (Financial Question Context, caso F): quantas DIMENSÕES financeiras DISTINTAS o texto PERGUNTA (só nas
+//    sentenças interrogativas, p/ um statement "com entrada zero." não contar). Dimensões: entrada / parcela / troca /
+//    forma de pagamento. "à vista ou financiado?" = 1 dimensão (pagamento, 2 opções). "tem entrada ou vai financiar?" =
+//    2 dimensões (entrada + pagamento) = pergunta DUPLA. Invariante p/ "uma pergunta financeira por vez". PURO.
+function financialDimensionsAsked(text: string): Set<string> {
+  const dims = new Set<string>();
+  // Separa por FIM DE FRASE (. ! ?) e mantém só as sentenças INTERROGATIVAS. Assim um acolhimento ("Com essa parcela
+  // dá pra montar um plano.") NÃO conta — só o que está de fato sendo PERGUNTADO ("Você tem carro na troca?").
+  const qClauses = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.endsWith("?"));
+  const scope = normalizeText(qClauses.join(" "));
+  if (!scope) return dims;
+  if (/\bentrada\b/.test(scope)) dims.add("entrada");
+  if (/\bparcela\b|\bmensal|\bprestac/.test(scope)) dims.add("parcela");
+  if (/\btroca\b/.test(scope)) dims.add("troca");
+  if (/\bfinanci|\ba\s+vista\b|\bconsorci/.test(scope)) dims.add("pagamento");
+  return dims;
+}
 // Missão P0 INC2/F: o texto pede SOBRENOME / nome completo? (nunca deve, nessa fase). PURO.
 const ASKS_SURNAME_RX = /\bsobrenome\b|\bnome\s+completo\b|\bnome\s+e\s+sobrenome\b/;
 function asksLeadSurname(text: string): boolean { return ASKS_SURNAME_RX.test(normalizeText(text)); }
@@ -1333,6 +1356,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // "Tenho um Renegade 2019 86km" respondendo sobre entrada/financiamento é TROCA, não busca de estoque.
       const leadOffersTradeVehicle = llmFirst && statesTradeVehiclePossession(leadMessage, prepared.claimExtractor);
       const tradeInAnswerTurn = llmFirst && !explicitBuyIntent && (pendingTradeQuestion || leadOffersTradeVehicle);
+      // ── MISSÃO P0 (Financial Question Context): TURNO DE RESPOSTA FINANCEIRA. A última pergunta do agente foi financeira
+      //    (parcela/entrada/forma de pagamento) e o lead está RESPONDENDO com valor/negação/pagamento ("até 1200"
+      //    respondendo parcela, "tenho não" respondendo entrada) — SEM intenção de COMPRA nova explícita. Isso NUNCA é
+      //    busca de estoque: "até 1200" é a PARCELA, não um teto de preço de veículo. Paralelo ao tradeInAnswerTurn (que
+      //    cobre troca): bloqueia stock_search/detalhe/foto + é turno de CONDUÇÃO (o cérebro conduz o financiamento do
+      //    carro já escolhido). !explicitBuyIntent deixa "na verdade quero Onix até 80 mil" voltar a ser busca. Gate por
+      //    intenção do turno: foto/institucional/detalhe do lead NÃO são bloqueados (ele pivotou; segue o fluxo normal).
+      const pendingFinancialQuestion = pendingQuestionSlot === "parcelaDesejada" || pendingQuestionSlot === "entrada" || pendingQuestionSlot === "formaPagamento";
+      const financialAnswerTurn = llmFirst && !explicitBuyIntent && !tradeInAnswerTurn && pendingFinancialQuestion
+        && isAnswerToFinancialQuestion(leadMessage, pendingQuestionSlot)
+        && currentTurnIntent !== "photo_request" && currentTurnIntent !== "photo_memory" && currentTurnIntent !== "institutional" && !isVehicleDetailTurn;
       // ── Missão P0 INC1/B: RETOMADA de busca prometida/pendente ("cadê?/e aí?/achou?/me mostra"). Só vira busca quando há
       //    FILTRO ATIVO suficiente (activeSearchConstraints) -> força a busca com esse filtro, sem reperguntar modelo/tipo. ──
       const resumeSearchTurn = llmFirst && !tradeInAnswerTurn && wantsResumeSearch(leadMessage) && sufficientForStockSearch(contextState.activeSearchConstraints ?? {});
@@ -1395,9 +1429,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const dropAdYear = llmFirst && asksAdAlternatives(leadMessage) && !(currentConstraints.anos && currentConstraints.anos.length > 0);
       // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio, OU similaridade.
       // Missão P0: turno de RESPOSTA DE TROCA nunca força busca (o carro é do lead); "cadê?" (retomada) força a busca ativa.
-      const commercialSearchTurn = (!tradeInAnswerTurn && (((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn)) || resumeSearchTurn;
-      // Missão P0 INC1/A: turno em que a busca é ESPERADA (comercial/retomada, NÃO resposta de troca) -> proíbe promessa sem tool.
-      const searchExpectedThisTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && !tradeInAnswerTurn;
+      // Missão P0 (Financial Question Context): turno de RESPOSTA FINANCEIRA nunca é busca (o valor responde parcela/
+      //    entrada, não é pedido de estoque) — mesma exclusão do tradeInAnswerTurn.
+      const commercialSearchTurn = !financialAnswerTurn && ((!tradeInAnswerTurn && (((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn)) || resumeSearchTurn);
+      // Missão P0 INC1/A: turno em que a busca é ESPERADA (comercial/retomada, NÃO resposta de troca/financeira) -> proíbe promessa sem tool.
+      const searchExpectedThisTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && !tradeInAnswerTurn && !financialAnswerTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
       // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
@@ -1596,7 +1632,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           // NÃO pode EXIGIR stock_search antes do final. Senão o cérebro fica preso numa contradição (proíbe-se buscar E
           // exige-se buscar) e CADA REQUIRED_TOOL_MISSING empurra uma observação de stock_search (o "obs=8" do relatório).
           // O carro citado é a TROCA; o turno avança sem busca. (O primaryIntent do resultado já é reconciliado p/ trade_in.)
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && (isStockSearchTurn(brainVU()) || commercialSearchTurn), moreOptionsNeedsScope);
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && (isStockSearchTurn(brainVU()) || commercialSearchTurn), moreOptionsNeedsScope);
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             const stockReq = !frame.signals.mentionsStore;
             // ⭐Fase 1 (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SÓ na RETOMADA ("cadê?/e aí?/achou?/
@@ -1652,7 +1688,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
             const listTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             const moneyDeny = /monet[aá]ri|money_ref|valor\s+monetario|\bR\$/i.test(authored.feedback);
-            const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn);
+            const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn);
             let effFeedback = authored.feedback;
             let keepRetrying = false;
             if (listTurn) {
@@ -1701,6 +1737,18 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         if (call.tool === "stock_search" && tradeInAnswerTurn) {
           duplicateStockCallsBlocked += 1;
           observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: "O cliente está RESPONDENDO à sua pergunta sobre o VEÍCULO DE TROCA dele — o carro que ele citou (modelo/ano/km) é a troca, NÃO um pedido de estoque. NÃO chame stock_search. Confirme que anotou a troca e siga para a próxima etapa (entrada/condições/visita). Só busque estoque se ele disser explicitamente que quer COMPRAR outro carro." } });
+          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+          continue;
+        }
+        // ── MISSÃO P0 (Financial Question Context): em TURNO DE RESPOSTA FINANCEIRA (o lead responde parcela/entrada/
+        //    pagamento com valor/negação — "até 1200", "tenho não") NENHUMA tool comercial roda: o valor responde a
+        //    pergunta financeira, NÃO é pedido de estoque nem novo orçamento de compra. Bloqueia stock_search/
+        //    vehicle_details/vehicle_photos_resolve ANTES da autorização de capability (senão evidence inválida infla a
+        //    contagem) + feedback tipado -> o cérebro re-decide e CONDUZ o financiamento. LLM-first: o engine só orienta.
+        if (financialAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
+          duplicateStockCallsBlocked += 1;
+          const finSlot = pendingQuestionSlot === "parcelaDesejada" ? "a PARCELA mensal" : pendingQuestionSlot === "entrada" ? "a ENTRADA" : "a forma de pagamento";
+          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `O cliente está RESPONDENDO à sua pergunta financeira anterior (${finSlot}). O valor/negação dele responde ESSA pergunta — NÃO é pedido de estoque nem novo orçamento de compra de veículo. NÃO chame stock_search/vehicle_details/vehicle_photos_resolve. Interprete a resposta como ${finSlot} e CONDUZA o financiamento do veículo que ele JÁ escolheu com UMA pergunta curta (o próximo dado que falta: troca/entrada/parcela, ou ofereça passar ao consultor). Só busque estoque se ele pedir EXPLICITAMENTE um carro/modelo/tipo/faixa de preço de compra NOVO.` } });
           if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
           continue;
         }
@@ -2086,7 +2134,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const renderedOfferContext = computeRenderedOfferContext(turnOutput, turnId, cutoff);
       const renderedItems = renderedOfferContext?.items ?? [];
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0 ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }] : [];
-      const brainStateMutations = decision.decisionMutations.filter((m) => m.op !== "append_lead_turn");
+      // ── MISSÃO P0 (Financial Question Context): o engine (extractLeadSlots) é a FONTE DE VERDADE dos VALORES monetários
+      //    que o LEAD forneceu (entrada/parcela/faixaPreco). Se a extração determinística já atribuiu um slot financeiro
+      //    neste turno, DESCARTA a atribuição financeira CONFLITANTE do cérebro — evita "até 1200" virar entrada=1200 por
+      //    palpite do LLM (o lead deu uma PARCELA). Slots não-financeiros do cérebro seguem intactos. ────────────────────
+      const FINANCIAL_SLOTS = new Set(["entrada", "parcelaDesejada", "faixaPreco"]);
+      const engineOwnedFinancialSlot = safeExtractedSlots.some((m) => m.op === "set_slot" && FINANCIAL_SLOTS.has(m.slot));
+      const brainStateMutations = decision.decisionMutations.filter((m) => {
+        if (m.op === "append_lead_turn") return false;
+        if (engineOwnedFinancialSlot && m.op === "set_slot" && FINANCIAL_SLOTS.has(m.slot)) return false;
+        return true;
+      });
       const newSearchExecuted = isNewSearchTurn({
         isPhotoIntent: proposedEffects.some((e) => e.kind === "send_media"),
         relation: prepared.interpretation.relation, renderedItemCount: renderedItems.length, explicitSearchKind: null,
@@ -2184,8 +2242,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // Missão P0 (audit Codex): em TURNO DE RESPOSTA DE TROCA o entendimento é RESPOSTA DE TROCA — reconcilia primaryIntent
       // para "trade_in" (mesmo que o cérebro tenha rotulado search_stock). O understanding reflete a conversa (briefing/CRM),
       // não a intenção crua do LLM. Guardrail não basta — o entendimento precisa estar certo. Só afeta a semântica, não o efeito.
+      // Missão P0 (Financial Question Context): resposta financeira (parcela/entrada/pagamento) reconcilia primaryIntent
+      // para "financing" — o entendimento reflete que é qualificação de financiamento, NÃO busca de estoque.
       const reconciledUnderstanding: TurnUnderstanding = tradeInAnswerTurn
         ? { ...finalVU.understanding, primaryIntent: "trade_in" }
+        : financialAnswerTurn
+        ? { ...finalVU.understanding, primaryIntent: "financing" }
         : finalVU.understanding;
       // T6: se houve send_media e o executor não registrou a fonte do alvo (foto AUTORADA pelo cérebro), registra aqui.
       if (targetResolutionSource == null && proposedEffects.some((e) => e.kind === "send_media")) {
@@ -2224,7 +2286,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           toolMs: toolTelemetry.reduce((sum, t) => sum + (t.ms ?? 0), 0),
           firstFailureReason: policyFeedbackLog[0] ? policyFeedbackLog[0].slice(0, 140) : null,
           // Missão P0 INC3/1/2: intenção do turno p/ auditoria de troca vs busca vs abertura.
-          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn, pendingQuestionSlot, tradeBuyTurn,
+          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn, pendingQuestionSlot, tradeBuyTurn, financialAnswerTurn,
           // Missão P0 (audit Codex): separação compra/troca + dedup de busca.
           buyConstraints: tradeBuyTurn ? buyConstraints : null,
           interesseBefore: contextState.slots.interesse.value ?? null,

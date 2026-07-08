@@ -402,7 +402,7 @@ async function main(): Promise<void> {
     const c = conv();
     await c.t("quero SUV", { responder: listSuv });   // contexto comercial (não é abertura)
     const askNameInPayment: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Claro! Você tem algum carro para dar de troca ou pretende dar entrada?")], "reply", U("financing"))
+      ? finU([txt("Claro! Você tem algum carro para dar de troca?")], "reply", U("financing"))   // UMA pergunta financeira (F2.40 caso F)
       : finU([txt("Para as condições, qual é o seu nome?")], "reply", U("financing"));
     const t2 = await c.t("Me passa as condições de pagamento", { responder: askNameInPayment });
     check("[T8b] pagamento -> engine NEGA pedido de nome -> re-autora sem pedir nome", !has(t2.outbox, "seu nome") && (has(t2.outbox, "troca") || has(t2.outbox, "entrada")), `outbox="${t2.outbox}"`);
@@ -456,7 +456,7 @@ async function main(): Promise<void> {
     await c.t("você tem SUV?", { responder: listSuv });   // lista SUVs
     await c.t("gostei do segundo", { responder: () => finU([txt("Ótima escolha! O Renault Duster 2015 é uma boa. Quer fotos ou condições?")], "reply", selectU) });   // seleciona -> persiste selectedVehicle
     const payBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Claro! Você tem algum valor para dar de entrada ou prefere que eu simule o financiamento?")], "reply", U("financing"))   // conduz após feedback
+      ? finU([txt("Claro! Você tem algum valor para dar de entrada?")], "reply", U("financing"))   // conduz após feedback (UMA pergunta — F2.40 caso F)
       : finU([txt("Me conta o que você procura?")], "reply", U("financing"));   // discovery -> NEGADO
     const t3 = await c.t("Me passa as condições de pagamento", { responder: payBrain });
     check("[T8P] pagamento c/ veículo escolhido: engine NEGA discovery -> LLM conduz (brain_retry, não technical_fallback)", (t3.src === "brain_final" || t3.src === "brain_retry") && !t3.terminalSafe && !has(t3.outbox, "o que você procura"), `src=${t3.src} outbox="${t3.outbox}"`);

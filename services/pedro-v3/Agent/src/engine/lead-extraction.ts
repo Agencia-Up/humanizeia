@@ -153,9 +153,16 @@ export function detectInterestModels(
 
 const NAME_CONFIDENCE_MIN = 0.7;
 
+// A ÚLTIMA cláusula INTERROGATIVA da fala do agente (o que ele de fato PERGUNTOU). Assim um acolhimento em statement
+// ("Entendi que você não tem entrada. ...") NÃO domina a inferência do slot — só o que termina em "?". PURO.
+function lastAgentQuestionText(state: ConversationState): string {
+  const full = lastAgentText(state);
+  const questions = full.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.endsWith("?"));
+  return questions.length > 0 ? questions[questions.length - 1] : full;
+}
 export function inferredQuestionSlot(state: ConversationState): keyof ConversationState["slots"] | null {
   if (state.currentObjective?.status === "pending" && state.currentObjective.slot) return state.currentObjective.slot;
-  const text = normalizeText(lastAgentText(state));
+  const text = normalizeText(lastAgentQuestionText(state));
   if (/\bnome\b|\bcomo.*cham/.test(text)) return "nome";
   if (/\bcidade\b|\bde onde/.test(text)) return "cidade";
   if (/\bconhece.*loja\b/.test(text)) return "conheceLoja";
@@ -170,6 +177,61 @@ export function inferredQuestionSlot(state: ConversationState): keyof Conversati
   if (/\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b/.test(text)) return "tipoVeiculo";
   if (/\bmodelo\b|\bcarro.*procura\b/.test(text)) return "interesse";
   return null;
+}
+
+// ── MISSÃO P0 (Financial Question Context): a RESPOSTA a uma pergunta financeira do agente (parcela/entrada/
+//    pagamento/troca) NUNCA é uma nova busca de estoque. Estes três helpers PUROS formam o contrato do "contexto
+//    esperado": (1) qual pergunta o agente acabou de fazer + de que TIPO; (2) a fala do lead traz intenção de COMPRA
+//    NOVA (vence o contexto); (3) a fala do lead RESPONDE à pergunta financeira (valor/negação/pagamento). ──────────
+export type ExpectedAnswerKind = "financial" | "trade" | "discovery" | "other";
+export interface ExpectedAnswerContext {
+  readonly slot: keyof ConversationState["slots"] | null;
+  readonly kind: ExpectedAnswerKind | null;
+}
+export function inferExpectedAnswerContext(state: ConversationState): ExpectedAnswerContext {
+  const slot = inferredQuestionSlot(state);
+  if (slot == null) return { slot: null, kind: null };
+  if (slot === "parcelaDesejada" || slot === "entrada" || slot === "formaPagamento") return { slot, kind: "financial" };
+  if (slot === "possuiTroca" || slot === "veiculoTroca") return { slot, kind: "trade" };
+  if (slot === "interesse" || slot === "tipoVeiculo" || slot === "faixaPreco") return { slot, kind: "discovery" };
+  return { slot, kind: "other" };
+}
+
+// Intenção EXPLÍCITA de COMPRA/BUSCA NOVA (vence o contexto financeiro anterior): verbo de compra/mostrar + referência a
+// veículo (modelo/tipo/"carro"), OU "tem <veículo>?", OU "outro carro/modelo/mais opções". NÃO casa valor solto ("até
+// 1200"), negação ("tenho não"), afirmação curta ("sim"/"pode ser") nem forma de pagamento ("financiar"). PURO.
+const NEW_SEARCH_VERB_RX = /\b(quero|procuro|busco|prefiro|mostra|me\s+(?:mostra|ve|mostr\w*)|ver|gostaria\s+de\s+(?:ver|comprar))\b/;
+const ANOTHER_CAR_RX = /\boutr[oa]s?\s+(?:carro|modelo|veiculo|op[cç])|\bmais\s+op[cç]|\bmais\s+um\s+(?:carro|modelo)\b/;
+export function hasExplicitNewCommercialSearchIntent(
+  leadMessage: string,
+  interpretation: TurnInterpretation | null | undefined,
+  claimExtractor: ClaimExtractor,
+): boolean {
+  const norm = normalizeText(leadMessage);
+  const availability = /\btem\s+\w/.test(norm);            // "tem SUV?", "tem Onix?" = disponibilidade (compra)
+  const anotherCar = ANOTHER_CAR_RX.test(norm);
+  const hasType = parseVehicleType(leadMessage) != null;
+  const hasModel = detectInterestModels(leadMessage, interpretation, claimExtractor).length > 0;
+  const vehicleRef = hasType || hasModel || /\b(carro|veiculo|modelo)\b/.test(norm);
+  const buyVerb = NEW_SEARCH_VERB_RX.test(norm);
+  return anotherCar || ((buyVerb || availability) && vehicleRef);
+}
+
+// A fala do lead RESPONDE à pergunta financeira pendente (parcela/entrada/pagamento)? = valor monetário, negação de
+// entrada, forma de pagamento, ou afirmação curta — e NÃO é uma pergunta nova. Não decide a resposta; só classifica a
+// intenção da fala p/ o engine bloquear tool comercial errada. PURO.
+export function isAnswerToFinancialQuestion(
+  leadMessage: string,
+  expected: (keyof ConversationState["slots"]) | null,
+): boolean {
+  if (expected !== "parcelaDesejada" && expected !== "entrada" && expected !== "formaPagamento") return false;
+  if (/\?\s*$/.test(leadMessage.trim())) return false;    // termina em "?" = pergunta nova, não resposta
+  const norm = normalizeText(leadMessage).trim();
+  const hasMoney = moneyByClause(leadMessage).length > 0;
+  const negation = /^(?:nao|nem)\b|\btenho\s+nao\b|\bnao\s+tenho\b|\bsem\s+(?:entrada|dinheiro|grana|condic)/.test(norm);
+  const affirm = /^(?:sim|isso|ok|beleza|claro|pode\s+ser|com\s+certeza|isso\s+mesmo)\b/.test(norm);
+  const paymentMethod = parsePayment(leadMessage) != null; // "financiar", "à vista", "consórcio"
+  return hasMoney || negation || affirm || paymentMethod;
 }
 
 function parseAmount(raw: string): number | null {
@@ -433,8 +495,26 @@ export function extractLeadSlots(args: {
   const unknownMoney = money.find((r) => r.role === "unknown")?.value;
   const roleVal = (role: MoneyRoleTag, slotForExpected: keyof ConversationState["slots"]): number | undefined =>
     money.find((r) => r.role === role)?.value ?? (expected === slotForExpected ? unknownMoney : undefined);
+  // ── MISSÃO P0 (Financial Question Context): quando o lead RESPONDE a uma pergunta financeira pendente (parcela/
+  //    entrada) e NÃO traz intenção de COMPRA nova, o valor pertence a ESSE slot — mesmo com o cue fraco de "budget"
+  //    ("até 1200" respondendo parcela = PARCELA até 1200, NÃO orçamento de compra). Sem isto, o "até" desviava o valor
+  //    para faixaPreco.max e disparava um stock_search indevido (listava o mesmo carro). A intenção comercial nova
+  //    ("quero Onix até 80 mil") VENCE o contexto e volta a alimentar faixaPreco. PURO.
+  const newBuyIntent = hasExplicitNewCommercialSearchIntent(leadMessage, interpretation, claimExtractor);
+  // Contexto de FINANCIAMENTO ativo: carro SELECIONADO + pagamento em andamento (entrada/pagamento/parcela já
+  // conhecidos). Nesse contexto, um valor solto que o lead volunteia — mesmo quando a pergunta pendente é TROCA/outra
+  // e mesmo com o cue "até" — é a PARCELA (mensal), NUNCA orçamento de compra (faixaPreco). Cobre o caso real do lead
+  // dizendo "até 1200" logo após entrada zero, enquanto o agente perguntava troca. Trade real ("tenho um Renegade...")
+  // é excluído (statesTradeVehiclePossession) p/ não virar parcela.
+  const paymentInProgress = state.vehicleContext.selected != null
+    && (state.slots.entrada.status !== "unknown" || state.slots.formaPagamento.status !== "unknown" || state.slots.parcelaDesejada.status !== "unknown");
+  const financingValue = paymentInProgress && expected !== "entrada" && expected !== "faixaPreco"
+    && money.length > 0 && !statesTradeVehiclePossession(leadMessage, claimExtractor);
+  const answeringParcela = !newBuyIntent && (expected === "parcelaDesejada" || financingValue);
+  const answeringEntrada = !newBuyIntent && expected === "entrada";
+  const firstMoney = money[0]?.value;
 
-  const parcelaVal = roleVal("parcela", "parcelaDesejada");
+  const parcelaVal = answeringParcela && firstMoney != null ? firstMoney : roleVal("parcela", "parcelaDesejada");
   if (parcelaVal != null) add({ op: "set_slot", slot: "parcelaDesejada", value: parcelaVal, confidence: 0.9, sourceTurnId: turnId }, "parcelaDesejada");
 
   // LLM-first (missão SDR): NEGAÇÃO a uma pergunta de ENTRADA = entrada zero (MEMÓRIA, p/ o cérebro não repergunta e
@@ -446,11 +526,13 @@ export function extractLeadSlots(args: {
   if (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm) || entradaNegada) {
     add({ op: "set_slot", slot: "entrada", value: 0, confidence: entradaNegada ? 0.9 : 0.98, sourceTurnId: turnId }, "entrada");
   } else {
-    const entradaVal = roleVal("entrada", "entrada");
+    const entradaVal = answeringEntrada && firstMoney != null ? firstMoney : roleVal("entrada", "entrada");
     if (entradaVal != null) add({ op: "set_slot", slot: "entrada", value: entradaVal, confidence: 0.9, sourceTurnId: turnId }, "entrada");
   }
 
-  const budgetVal = roleVal("budget", "faixaPreco");
+  // faixaPreco (orçamento de COMPRA) NUNCA recebe o valor quando o lead está respondendo parcela/entrada (ver acima):
+  // "até 1200" é a parcela/entrada, não um teto de preço de veículo. Só compra/busca/orçamento explícito alimenta faixaPreco.
+  const budgetVal = (answeringParcela || answeringEntrada) ? undefined : roleVal("budget", "faixaPreco");
   if (budgetVal != null) add({ op: "set_slot", slot: "faixaPreco", value: { max: budgetVal }, confidence: 0.92, sourceTurnId: turnId }, "faixaPreco");
 
   const payment = parsePayment(leadMessage);
