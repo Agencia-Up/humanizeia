@@ -857,7 +857,7 @@ Deno.serve(async (req) => {
               let expSellerNum = expiredSeller.whatsapp_number.replace(/\D/g, '');
               if (expSellerNum.length === 10 || expSellerNum.length === 11) expSellerNum = `55${expSellerNum}`;
 
-              const missedMsg = `*LEAD REPASSADO*\n\nO lead *${lead.lead_name || 'Desconhecido'}* nao teve sua confirmacao dentro de 10 minutos e foi passado para o proximo da fila.\n\n*Por favor, NAO entre em contato com este cliente.*`;
+              const missedMsg = `*AVISO AO VENDEDOR ANTERIOR*\n\nO lead *${lead.lead_name || 'Desconhecido'}* (+${String(lead.remote_jid || '').split('@')[0] || 'sem telefone'}) foi repassado porque nao houve confirmacao dentro do prazo.\n\n*Por favor, NAO entre em contato com este cliente.*`;
 
               await sendUazapiTextMessage(expBaseUrl, expInstKey, expiredInstance.instance_name, expSellerNum, `${expSellerNum}@s.whatsapp.net`, missedMsg);
               console.log(`[Cron] Aviso enviado para ${expiredSeller.name} (perdeu o lead por inatividade).`);

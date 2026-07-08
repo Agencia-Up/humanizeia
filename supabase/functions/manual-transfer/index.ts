@@ -729,6 +729,68 @@ Deno.serve(async (req) => {
       });
     }
 
+    const { data: existingConfirmedForSeller } = await supabase
+      .from("ai_lead_transfers")
+      .select("id, confirmed_at, created_at")
+      .eq("lead_id", lead.id)
+      .eq("to_member_id", member.id)
+      .eq("transfer_status", "confirmed")
+      .eq("is_confirmed", true)
+      .order("confirmed_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingConfirmedForSeller) {
+      if (!lead.assigned_to_id) {
+        await supabase.from("ai_crm_leads").update({
+          assigned_to_id: member.id,
+          status: "em_atendimento",
+          origem: "trafico_pago",
+          last_interaction_at: new Date().toISOString(),
+        }).eq("id", lead.id);
+      }
+
+      console.warn(`[manual-transfer] Lead ${lead.id} ja tinha transferencia confirmada para ${member.name}. Evitando reenvio/duplicidade.`);
+      return new Response(JSON.stringify({
+        success: true,
+        leadId: lead.id,
+        memberId: member.id,
+        alreadyConfirmed: true,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { data: existingPendingForSeller } = await supabase
+      .from("ai_lead_transfers")
+      .select("id, created_at")
+      .eq("lead_id", lead.id)
+      .eq("to_member_id", member.id)
+      .eq("transfer_status", "pending")
+      .eq("is_confirmed", false)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingPendingForSeller) {
+      console.warn(`[manual-transfer] Lead ${lead.id} ja tem transferencia pendente para ${member.name}. Evitando reenvio duplicado.`);
+      return new Response(JSON.stringify({
+        success: true,
+        leadId: lead.id,
+        memberId: member.id,
+        alreadyPending: true,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { count: previousTransferCount } = await supabase
+      .from("ai_lead_transfers")
+      .select("id", { count: "exact", head: true })
+      .eq("lead_id", lead.id);
+    const shouldCountAsNewAssignment = (previousTransferCount || 0) === 0;
+
     // 3. Fetch agent config (for gerente_phone + instance_ids)
     const { data: agentConfig } = await supabase
       .from("wa_ai_agents")
@@ -891,11 +953,14 @@ _Gerado automaticamente pelo Pedro SDR_`;
       resolved_by: `manual-transfer:${member.name || member.id}`,
     });
 
-    // 9. Update member stats
-    await supabase.from("ai_team_members").update({
-      last_lead_received_at: new Date().toISOString(),
-      total_leads_received: (member.total_leads_received || 0) + 1,
-    }).eq("id", member.id);
+    // 9. Update member stats. Reenvio/repasse do mesmo lead nao deve inflar
+    // total_leads_received como se fosse lead novo; ainda atualiza o ponteiro do
+    // rodizio para nao escolher o mesmo vendedor de novo imediatamente.
+    const memberStats: Record<string, any> = { last_lead_received_at: new Date().toISOString() };
+    if (shouldCountAsNewAssignment) {
+      memberStats.total_leads_received = (member.total_leads_received || 0) + 1;
+    }
+    await supabase.from("ai_team_members").update(memberStats).eq("id", member.id);
 
     // 10. Sync lead to Marcos contact list (non-blocking)
     syncLeadToMarcos(supabase, ownerUserId, lead, member);

@@ -356,7 +356,7 @@ Deno.serve(async (req) => {
     // Busca todos os transfers pendentes que já expiraram
     const { data: expired, error: fetchErr } = await supabase
       .from('ai_lead_transfers')
-      .select('id,user_id,lead_id,to_member_id,created_at')
+      .select('id,user_id,lead_id,to_member_id,created_at,confirmation_timeout_at')
       .eq('transfer_status', 'pending')
       .eq('is_confirmed', false)
       .lt('confirmation_timeout_at', now);
@@ -462,10 +462,23 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // 1. Marca transfer atual como expirado
-        await supabase.from('ai_lead_transfers')
+        // 1. Claim atomico: evita que dois crons processem o mesmo transfer
+        // e mandem aviso duplicado para o vendedor anterior.
+        const { data: claimed, error: claimErr } = await supabase.from('ai_lead_transfers')
           .update({ transfer_status: 'expired' })
-          .eq('id', transfer.id);
+          .eq('id', transfer.id)
+          .eq('transfer_status', 'pending')
+          .eq('is_confirmed', false)
+          .select('id');
+
+        if (claimErr) {
+          console.error(`[Timeout] Falha ao claimar transfer ${transfer.id}:`, claimErr);
+          continue;
+        }
+        if (!Array.isArray(claimed) || claimed.length === 0) {
+          console.log(`[Timeout] Transfer ${transfer.id} ja foi processado por outro worker. Pulando.`);
+          continue;
+        }
 
         // 2. Busca instância da API para poder enviar WhatsApp
         let waInstance: any = null;
@@ -558,8 +571,9 @@ Deno.serve(async (req) => {
 
         // Atualiza lead com novo responsável
         await supabase.from('ai_crm_leads')
-          .update({ assigned_to_id: nextSeller.id })
-          .eq('id', lead.id);
+          .update({ assigned_to_id: null, status: 'transferido' })
+          .eq('id', lead.id)
+          .in('status', ['qualificado', 'transferido']);
 
         // Diagnostico: lead ganhou um novo vendedor -> resolve falhas abertas.
         await resolveTransferFailures({
@@ -579,14 +593,37 @@ Deno.serve(async (req) => {
           const nextMsg = `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n*Nome:* ${lead.lead_name || ''}\n\n📝 *Resumo:*\n${lead.summary || ''}\n\n⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo.*`;
 
           try {
-            await fetch(`${baseUrl}/send/text`, {
+            const sendRes = await fetch(`${baseUrl}/send/text`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'token': instKey },
               body: JSON.stringify({ number: nextNum, text: nextMsg }),
             });
+            if (!sendRes.ok) {
+              const body = await sendRes.text().catch(() => '');
+              throw new Error(`UAZAPI ${sendRes.status}: ${body}`);
+            }
             console.log(`[Timeout] Lead repassado para ${nextSeller.name}`);
           } catch (sendErr) {
             console.error(`[Timeout] Erro ao enviar para ${nextSeller.name}:`, sendErr);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'expired' })
+              .eq('lead_id', lead.id)
+              .eq('to_member_id', nextSeller.id)
+              .eq('transfer_status', 'pending');
+            await logTransferFailure({
+              user_id: transfer.user_id,
+              reason_code: 'notificacao_falhou',
+              mode: 'pedro',
+              lead_id: lead.id,
+              agent_id: lead.agent_id,
+              member_id: nextSeller.id,
+              lead_name: lead.lead_name,
+              remote_jid: lead.remote_jid,
+              attempted_transfer: true,
+              source: 'transfer-timeout-checker',
+              reason_detail: `Envio para o proximo vendedor (${nextSeller.name || nextSeller.id}) falhou apos criar o repasse; transfer pendente foi expirado para evitar confirmacao fantasma.`,
+            });
+            continue;
           }
         }
 

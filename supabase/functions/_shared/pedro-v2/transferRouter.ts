@@ -127,12 +127,7 @@ export async function confirmSellerAck(
   if (!input.commit) return { ok: true, seller: matches[0], transfer: pendingTransfer, confirmed: false, dry_run: true };
 
   const now = new Date().toISOString();
-  await supabase
-    .from("ai_lead_transfers")
-    .update({ transfer_status: "confirmed", is_confirmed: true, confirmed_at: now })
-    .eq("id", pendingTransfer.id);
-
-  await supabase
+  const { data: updatedLead, error: leadUpdateErr } = await supabase
     .from("ai_crm_leads")
     .update({
       assigned_to_id: pendingTransfer.to_member_id || matches[0].id,
@@ -140,7 +135,33 @@ export async function confirmSellerAck(
       status: "em_atendimento",
       last_interaction_at: now,
     })
-    .eq("id", pendingTransfer.lead_id);
+    .eq("id", pendingTransfer.lead_id)
+    .select("id, assigned_to_id")
+    .maybeSingle();
+
+  if (leadUpdateErr || !updatedLead?.id) {
+    console.error("[TransferGuard] Falha ao fixar vendedor no lead antes de confirmar transferencia", {
+      transfer_id: pendingTransfer.id,
+      lead_id: pendingTransfer.lead_id,
+      seller_id: pendingTransfer.to_member_id || matches[0].id,
+      error: leadUpdateErr?.message || "lead_not_updated",
+    });
+    return { ok: false, seller: matches[0], transfer: pendingTransfer, confirmed: false, reason: "lead_update_failed" };
+  }
+
+  const { error: transferUpdateErr } = await supabase
+    .from("ai_lead_transfers")
+    .update({ transfer_status: "confirmed", is_confirmed: true, confirmed_at: now })
+    .eq("id", pendingTransfer.id);
+
+  if (transferUpdateErr) {
+    console.error("[TransferGuard] Lead recebeu vendedor, mas falhou ao marcar transferencia como confirmada", {
+      transfer_id: pendingTransfer.id,
+      lead_id: pendingTransfer.lead_id,
+      error: transferUpdateErr.message,
+    });
+    return { ok: false, seller: matches[0], transfer: pendingTransfer, confirmed: false, reason: "transfer_update_failed" };
+  }
 
   // Lead finalmente tem dono firme (vendedor confirmou "Ok") — resolve
   // qualquer falha de transferencia ABERTA deste lead no painel de
