@@ -57,7 +57,7 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
-import { extractLeadSlots, resolveSelectedVehicle } from "./lead-extraction.ts";
+import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
@@ -543,6 +543,8 @@ function authorFromBrainDraft(args: {
   readonly target: TargetResolution;                 // P0-1: alvo do assunto (candidateVehicleKeys verificados por modelo)
   readonly openingNeedsDiscovery?: boolean;          // PARTE A (missão): abertura sem alvo -> discovery, não pedir nome/telefone
   readonly specificAdVehicle?: string | null;        // PARTE A (missão P0): entrada por anúncio ESPECÍFICO -> abertura DEVE falar do veículo
+  readonly searchExpectedThisTurn?: boolean;         // Missão P0 INC1/A: turno comercial/busca -> proíbe promessa "vou buscar" sem stock_search
+  readonly noCommercialContextYet?: boolean;         // Missão P0 INC2/F: sem intenção comercial ainda -> não pedir nome (nem sobrenome)
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -629,15 +631,21 @@ function authorFromBrainDraft(args: {
   // Valida contra fatos REAIS (identidade de memória NÃO aterra atributo/oferta).
   const gv = PolicyEngine.validateResponse(composed, realFacts, decision0, args.ctx);
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
-  // PARTE A (missão abertura SDR): abertura SEM alvo comercial (1º contato sem anúncio OU anúncio genérico) NÃO pode
-  // começar pedindo o NOME antes de descobrir a intenção comercial. Se o cérebro abriu pedindo nome sem descoberta (e sem
-  // listar/enviar carro) -> deny + feedback (o cérebro RE-AUTORA; LLM-first). Telefone já é barrado por POL-PHONE-KNOWN.
-  if (args.openingNeedsDiscovery
+  // Missão P0 INC2/F: NUNCA peça SOBRENOME / nome completo — o primeiro nome basta e só mais adiante. deny SEMPRE (o carro
+  // é o assunto, não cadastro). O cérebro RE-AUTORA avançando a intenção comercial.
+  if (asksLeadSurname(composed.text)) {
+    return { ok: false, feedback: "NÃO peça sobrenome nem nome completo — nunca nessa fase; o primeiro nome já basta. Em vez de coletar cadastro, avance a conversa: pergunte o que ele procura, ofereça opções, ou trate condições/visita." };
+  }
+  // PARTE A (missão abertura SDR) + Missão P0 INC2/F: NÃO peça o NOME antes de haver intenção comercial — abertura sem alvo
+  // (1º contato/anúncio genérico) OU ainda sem NENHUM contexto comercial (sem interesse/tipo/faixa, sem carro ofertado/
+  // selecionado). Se pediu nome sem descoberta (e sem listar/enviar carro) -> deny + feedback (o cérebro RE-AUTORA). INC2:
+  // "Sim, conheço" não deve virar pedido de nome. Telefone já é barrado por POL-PHONE-KNOWN.
+  if ((args.openingNeedsDiscovery || args.noCommercialContextYet)
       && !proposedEffects.some((e) => e.kind === "send_media")
       && !draft.parts.some((p) => p.type === "vehicle_offer_list")
       && asksLeadName(composed.text)
       && !mentionsCommercialDiscovery(composed.text)) {
-    return { ok: false, feedback: "Esta é a ABERTURA e o cliente ainda não disse o que procura. NÃO comece pedindo o nome — faça uma DESCOBERTA comercial acolhedora: cumprimente, apresente-se conforme o seu prompt e pergunte o que ele procura (um modelo específico, um TIPO de carro — SUV/sedan/hatch/picape — ou uma FAIXA de preço). O nome vem só mais adiante, com naturalidade." };
+    return { ok: false, feedback: "O cliente ainda NÃO disse o que procura. NÃO peça o nome agora — primeiro entenda a intenção comercial: pergunte o que ele procura (um modelo, um TIPO de carro — SUV/sedan/hatch/picape — ou uma FAIXA de preço). O nome vem depois, com naturalidade, quando já houver interesse." };
   }
   // PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO — a abertura DEVE reconhecer/conduzir o VEÍCULO do anúncio (não uma
   // saudação genérica pedindo nome/telefone/cidade/loja). INVARIANTE (o engine NÃO escreve a resposta, só NEGA): se o draft
@@ -650,6 +658,15 @@ function authorFromBrainDraft(args: {
     if (!showsVehicle && !acknowledgesAndConducts) {
       return { ok: false, feedback: `O cliente CHEGOU por um anúncio do ${args.specificAdVehicle}. NÃO abra com saudação genérica nem peça nome/telefone/cidade/loja: RECONHEÇA o ${args.specificAdVehicle} do anúncio e CONDUZA sobre ELE — cite a marca/modelo e ofereça fotos, detalhes, condições ou confirme a disponibilidade desse veículo.` };
     }
+  }
+  // Missão P0 INC1/A: em turno COMERCIAL/BUSCA (ou retomada "cadê?"), PROIBIDO prometer buscar ("vou buscar/procurar/
+  // verificar/já busco") sem ter chamado stock_search NESTE turno. Prometeu e não buscou -> deny + feedback (chama a tool
+  // AGORA, nunca "busco depois"). Guarda de OUTPUT (o texto ao lead), como textPromisesPhoto.
+  if (args.searchExpectedThisTurn
+      && !args.facts.some((f) => f.ok && f.tool === "stock_search")
+      && !proposedEffects.some((e) => e.kind === "send_media")
+      && textPromisesSearch(composed.text)) {
+    return { ok: false, feedback: "Você PROMETEU buscar mas NÃO chamou stock_search neste turno. Você já tem filtro suficiente — chame stock_search AGORA (com marca/modelo/tipo/preço/câmbio que o cliente informou) e responda com a lista no MESMO turno. NUNCA diga 'vou buscar/procurar/verificar' sem executar a busca antes." };
   }
   // COMPLETUDE (prompt-first): a resposta não pode IGNORAR um pedido explícito (horário/endereço/unidade/foto). Grounding
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
@@ -991,6 +1008,27 @@ function buildRelaxedOfferResponse(args: {
 // O texto ABRE pedindo o NOME/dado de contato do lead (abertura burocrática de formulário)? PURO.
 const ASKS_LEAD_NAME_RX = /\b(?:qual|quais|como)\b[^?]*\b(?:seu|teu|o\s+seu)\s+nome\b|\bseu\s+nome\b\s*\??$|\bcomo\s+(?:voce|vc|tu|o\s+senhor|a\s+senhora)\s+se\s+chama|\bme\s+(?:diz|fala|informa|passa|dizer)\b[^?]*\bnome\b|\bpode\s+me\s+(?:dizer|passar|informar|falar)\b[^?]*\bnome\b|\bcom\s+quem\s+(?:eu\s+)?(?:falo|estou\s+falando)\b|\bqual\s+(?:e\s+)?o\s+seu\s+nome\b/;
 function asksLeadName(text: string): boolean { return ASKS_LEAD_NAME_RX.test(normalizeText(text)); }
+// Missão P0 INC2/F: o texto pede SOBRENOME / nome completo? (nunca deve, nessa fase). PURO.
+const ASKS_SURNAME_RX = /\bsobrenome\b|\bnome\s+completo\b|\bnome\s+e\s+sobrenome\b/;
+function asksLeadSurname(text: string): boolean { return ASKS_SURNAME_RX.test(normalizeText(text)); }
+// Missão P0 INC1/A: o texto PROMETE buscar/verificar sem executar a tool ("vou buscar/procurar/verificar/já busco/deixa
+// eu ver/já te trago as opções"). É a promessa vazia que a missão proíbe quando há filtro suficiente e nenhuma busca. PURO.
+const SEARCH_PROMISE_RX = /\b(?:vou|irei|vamos|ja|deixa\s+eu|deixe?\s+me|posso)\s+(?:ja\s+)?(?:buscar|procurar|verificar|conferir|checar|olhar|ver|pesquisar|dar\s+uma\s+olhada|te\s+trazer|trazer|levantar|separar)\b|\bja\s+(?:busco|procuro|verifico|confiro|te\s+trago|te\s+mostro)\b|\bvou\s+ver\s+(?:as\s+)?opcoes\b|\bja\s+te\s+(?:trago|mostro|passo)\s+(?:as\s+)?opcoes\b/;
+function textPromisesSearch(text: string): boolean { return SEARCH_PROMISE_RX.test(normalizeText(text)); }
+// Missão P0 INC1/B: o lead pede o RESULTADO de uma busca prometida/pendente ("cadê?/e aí?/achou?/me mostra/manda/e então").
+// Sem constraint comercial próprio no bloco — é retomada, não busca nova. PURO.
+const RESUME_SEARCH_RX = /^\s*(?:cad[eê]|e\s+a[ií]|e\s+entao|entao\??|achou|encontrou|kd|show|manda(?:\s+(?:a[ií]|ver|entao))?|me\s+mostra|mostra(?:\s+(?:a[ií]|entao))?|e\s+ai\s+achou|beleza\??)[\s!?.]*$/;
+function wantsResumeSearch(block: string): boolean { return RESUME_SEARCH_RX.test(normalizeText(block)); }
+// Missão P0 E: intenção EXPLÍCITA de COMPRA (vira busca mesmo com pergunta de troca pendente): "quero comprar X", "tem X?",
+// "procuro/busco X", "quero um/uma X". NÃO casa "tenho" (posse=troca). PURO.
+const EXPLICIT_BUY_RX = /\bquero\s+comprar\b|\bprocuro\b|\bbusco\b|\bto\s+procurando\b|\bestou\s+procurando\b|\bgostaria\s+de\s+(?:comprar|ver)\b|\btem\s+\w|\bquero\s+(?:um|uma|ver|comprar)\b|\bme\s+mostra\b|\bmostra\s+(?:um|uma|as|os)\b/;
+function hasExplicitBuyIntent(block: string): boolean { return EXPLICIT_BUY_RX.test(normalizeText(block)); }
+// Missão P0 (audit Codex): o verbo de COMPRA (quero/procuro/busco/prefiro/gostaria) separa o ALVO DE COMPRA do veículo de
+// TROCA no MESMO bloco. buyClauseOf devolve o trecho A PARTIR do verbo de compra -> "tenho um Onix para troca, mas quero
+// SUV" => "quero SUV" (o filtro de busca é SUV; o Onix é troca, capturado à parte). Sem verbo -> bloco inteiro. Verbos sem
+// acento (case-insensitive no ORIGINAL, sem depender de normalizeText que muda índices). PURO.
+const BUY_VERB_ORIG_RX = /\b(quero|procuro|busco|prefiro|gostaria\s+de|estou\s+procurando|to\s+procurando)\b/i;
+function buyClauseOf(block: string): string { const m = BUY_VERB_ORIG_RX.exec(block); return m ? block.slice(m.index) : block; }
 // O texto JÁ faz descoberta comercial (modelo/tipo/faixa/procura/opções)? Se sim, não precisa do backstop. PURO.
 const COMMERCIAL_DISCOVERY_RX = /\bmodelo\b|\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\bpickup\b|\btipo\s+de\s+(?:carro|veiculo)\b|\bfaixa\s+de\s+(?:preco|valor)\b|\bprocur\w+\b|\bopcoes\b|\bopcao\b|\bque\s+(?:tipo|carro|modelo)\b|\b(?:ta|esta)\s+buscando\b|\bpensando\s+em\b|\borcamento\b/;
 function mentionsCommercialDiscovery(text: string): boolean { return COMMERCIAL_DISCOVERY_RX.test(normalizeText(text)); }
@@ -1194,7 +1232,21 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // P0 (LLM-first): constraint comercial DETERMINÍSTICO do bloco atual (marca/modelo/tipo/preçoMax/câmbio/popular).
       // Base de dois invariantes: (1) força stock_search quando o lead deu filtro suficiente e nenhuma busca rodou;
       // (2) enriquece a chamada executada preenchendo lacunas. NÃO decide a resposta — só descreve o filtro do turno.
-      const currentConstraints = detectCommercialConstraints({ block: leadMessage, signals: baseSignals, claimExtractor: prepared.claimExtractor, interpretation: prepared.interpretation });
+      const currentConstraintsRaw = detectCommercialConstraints({ block: leadMessage, signals: baseSignals, claimExtractor: prepared.claimExtractor, interpretation: prepared.interpretation });
+      // ── Missão P0 (audit Codex): separa o ALVO DE COMPRA do veículo de TROCA no MESMO bloco. Se há pergunta de troca
+      //    pendente E o lead expressa COMPRA (verbo de compra + filtro comercial suficiente no TRECHO de compra, OU "tem X?"),
+      //    o filtro de BUSCA é o do alvo de compra (buyClause), NÃO o veículo de troca. "tenho X" (posse) sozinho continua
+      //    sendo TROCA (não busca). Detecta por INTENÇÃO+constraints, não por regex estreito. ──────────────────────────────
+      const pendingQuestionSlot = inferredQuestionSlot(contextState);
+      const pendingTradeQuestion = pendingQuestionSlot === "possuiTroca" || pendingQuestionSlot === "veiculoTroca";
+      const buyClauseText = buyClauseOf(leadMessage);
+      const buyConstraints = buyClauseText !== leadMessage
+        ? detectCommercialConstraints({ block: buyClauseText, signals: buildFrameSignals(buyClauseText, prepared.interpretation), claimExtractor: prepared.claimExtractor, interpretation: prepared.interpretation })
+        : currentConstraintsRaw;
+      const explicitBuyIntent = hasExplicitBuyIntent(leadMessage) || (BUY_VERB_ORIG_RX.test(leadMessage) && sufficientForStockSearch(buyConstraints));
+      // Turno de TROCA com COMPRA no mesmo bloco -> o filtro de busca é o do ALVO DE COMPRA (buyClause), nunca o carro de troca.
+      const tradeBuyTurn = llmFirst && pendingTradeQuestion && explicitBuyIntent && buyClauseText !== leadMessage && sufficientForStockSearch(buyConstraints);
+      const currentConstraints = tradeBuyTurn ? buyConstraints : currentConstraintsRaw;
       // GATE por intenção do turno: NUNCA força busca num turno de FOTO/DETALHE/INSTITUCIONAL. deriveCurrentTurnIntent já
       // dá a precedência certa (foto > institucional > busca). "me manda foto do Onix" = photo_request (não busca) mesmo
       // citando um modelo. Pergunta de ATRIBUTO do veículo ("quanto custa o Onix?", relation asks_vehicle_detail) é DETALHE,
@@ -1202,6 +1254,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // COM constraint comercial do BLOCO ATUAL, e que NÃO seja detalhe, dispara a força.
       const isVehicleDetailTurn = baseSignals.relation === "asks_vehicle_detail";
       const leadEngagement: LeadEngagement | null = detectDisengagement(leadMessage);
+      // ── Missão P0 INC3/G: TURNO DE RESPOSTA DE TROCA. A última pergunta do agente foi sobre TROCA (possuiTroca/veiculoTroca)
+      //    e o lead NÃO está pedindo COMPRA explícita ("tem X?", "quero comprar X") -> o bloco é RESPOSTA DE TROCA: o carro
+      //    citado ("tenho um Renegade 2019 86km") é do LEAD, não pedido de estoque. NUNCA vira stock_search. gate llmFirst. ──
+      const tradeInAnswerTurn = llmFirst && pendingTradeQuestion && !explicitBuyIntent;
+      // ── Missão P0 INC1/B: RETOMADA de busca prometida/pendente ("cadê?/e aí?/achou?/me mostra"). Só vira busca quando há
+      //    FILTRO ATIVO suficiente (activeSearchConstraints) -> força a busca com esse filtro, sem reperguntar modelo/tipo. ──
+      const resumeSearchTurn = llmFirst && !tradeInAnswerTurn && wantsResumeSearch(leadMessage) && sufficientForStockSearch(contextState.activeSearchConstraints ?? {});
       // ── F2.32 (CTWA/Facebook Ads): o anúncio é CONTEXTO da conversa (não resposta do lead). Vem sanitizado na rajada
       //    (raw.adContext) ou herda do state. O engine resolve o VEÍCULO do anúncio do TEXTO aterrado no catálogo (nunca
       //    inventa) e o usa como SEED do escopo de busca. PRIORIDADE: atual > correção > anúncio > ativo. O anúncio DIRIGE
@@ -1219,6 +1278,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // 2 Onix 2025) -> o pedido PRONOMINAL de foto pergunta QUAL desses, listando SÓ os candidatos (não re-lista o estoque).
       const adCandidateKeys = (llmFirst && effectiveAdContext) ? resolveAdCandidateKeys(effectiveAdContext, contextState.lastRenderedOfferContext?.items ?? []) : [];
       const currentHasVehicle = !!(currentConstraints.marca || (currentConstraints.modelos && currentConstraints.modelos.length > 0) || currentConstraints.tipo);
+      // Missão P0 INC2/F: SEM contexto comercial ainda = nenhum interesse/tipo/faixa conhecido, nenhum carro ofertado/
+      // selecionado, nenhum veículo de anúncio. Nesse estado o agente NÃO pede nome/sobrenome — primeiro entende a intenção.
+      const noCommercialContextYet = llmFirst && contextState.slots.interesse.status !== "known" && contextState.slots.tipoVeiculo.status !== "known"
+        && contextState.slots.faixaPreco.status !== "known" && contextState.vehicleContext.selected == null
+        && (contextState.lastRenderedOfferContext?.items?.length ?? 0) === 0 && !adVehicle;
       const adDrivesTurn = llmFirst && effectiveAdContext != null && adVehicle && currentTurnIntent !== "institutional" && leadEngagement == null && !currentHasVehicle;
       // Fix B (audit CTWA): entrada por anúncio GENÉRICO (sem veículo específico) e o lead AINDA não especificou nada
       // comercial nem selecionou carro -> a abertura deve DESCOBRIR (modelo/tipo/faixa), NUNCA abrir pedindo nome. Sai quando
@@ -1255,7 +1319,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // anos=[2019] por ver adVehicle="Jeep Compass 2019"). Se o lead citar ano ("outro Compass 2018"), respeita o dele.
       const dropAdYear = llmFirst && asksAdAlternatives(leadMessage) && !(currentConstraints.anos && currentConstraints.anos.length > 0);
       // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio, OU similaridade.
-      const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn;
+      // Missão P0: turno de RESPOSTA DE TROCA nunca força busca (o carro é do lead); "cadê?" (retomada) força a busca ativa.
+      const commercialSearchTurn = (!tradeInAnswerTurn && (((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn)) || resumeSearchTurn;
+      // Missão P0 INC1/A: turno em que a busca é ESPERADA (comercial/retomada, NÃO resposta de troca) -> proíbe promessa sem tool.
+      const searchExpectedThisTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && !tradeInAnswerTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
       // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
@@ -1395,6 +1462,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         return obs;
       };
 
+      const turnStartMs = Date.parse(clock.now());   // Missão P0 (doc 2): observabilidade de latência do turno.
       for (; brainSteps < brainMaxSteps; brainSteps++) {
         let step;
         try {
@@ -1436,7 +1504,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn, noCommercialContextYet });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -1477,6 +1545,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           continue;
         }
         seenToolSigs.add(sig);
+        // Missão P0 INC3/G: em TURNO DE RESPOSTA DE TROCA o stock_search NÃO roda (o carro citado é a TROCA do lead, não
+        // pedido de estoque). Não executa a tool — devolve feedback ao cérebro (LLM-first: o cérebro re-decide, sem handler).
+        if (call.tool === "stock_search" && tradeInAnswerTurn) {
+          observations.push({ tool: "stock_search", ok: false, error: { code: "FORBIDDEN", message: "O cliente está RESPONDENDO à sua pergunta sobre o VEÍCULO DE TROCA dele — o carro que ele citou (modelo/ano/km) é a troca, NÃO um pedido de estoque. NÃO chame stock_search. Confirme que anotou a troca e siga para a próxima etapa (entrada/condições/visita). Só busque estoque se ele disser explicitamente que quer COMPRAR outro carro." } });
+          continue;
+        }
         if (call.tool === "tenant_business_info") {
           // resolveInstitutional dedup por tópico (1x); repetição do MESMO tópico devolve o cache (nunca reexecuta).
           await resolveInstitutional(call.input.topic);
@@ -1918,6 +1992,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           stockSearchInputExecuted: lastStockFact ? lastStockFact.data.filtersUsed : null,
           moreOptions: baseSignals.mentionsMoreOptions, moreOptionsNeedsScope,
           moreOptionsInheritedScope: baseSignals.mentionsMoreOptions && sufficientForStockSearch(effectiveSearchScope) ? effectiveSearchScope : null,
+          // Missão P0 (doc 2): observabilidade de latência/retry. turnLatencyMs = tempo de parede do turno (RealClock em prod);
+          // toolMs = soma do tempo das tools; firstFailureReason = 1º feedback/rejeição (por que houve retry). attempts=brainRetries.
+          turnLatencyMs: Math.max(0, Date.parse(clock.now()) - turnStartMs),
+          toolMs: toolTelemetry.reduce((sum, t) => sum + (t.ms ?? 0), 0),
+          firstFailureReason: policyFeedbackLog[0] ? policyFeedbackLog[0].slice(0, 140) : null,
+          // Missão P0 INC3/1/2: intenção do turno p/ auditoria de troca vs busca vs abertura.
+          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn, pendingQuestionSlot,
         }, at: cutoff }),
         makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded }, at: cutoff }),
       ];

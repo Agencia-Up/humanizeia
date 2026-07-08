@@ -141,7 +141,7 @@ export function detectInterestModels(
 
 const NAME_CONFIDENCE_MIN = 0.7;
 
-function inferredQuestionSlot(state: ConversationState): keyof ConversationState["slots"] | null {
+export function inferredQuestionSlot(state: ConversationState): keyof ConversationState["slots"] | null {
   if (state.currentObjective?.status === "pending" && state.currentObjective.slot) return state.currentObjective.slot;
   const text = normalizeText(lastAgentText(state));
   if (/\bnome\b|\bcomo.*cham/.test(text)) return "nome";
@@ -310,7 +310,9 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
   if (yearMatch) result.ano = Number(yearMatch[1]);
   if (kmMatch) {
     let km = Number(kmMatch[1].replace(/[.,]/g, ""));
-    if (kmMatch[2] && km < 1000) km *= 1000;
+    // Normalização BR (missão P0 D): no veículo de TROCA (usado), um km BAIXO é abreviação de milhares — "86km"/"86 km"/
+    // "86 mil km" = 86.000. Um usado com <1000 km real é implausível. "86.000 km"/"86000 km" já vêm em milhares (>=1000).
+    if (km < 1000) km *= 1000;
     result.km = km;
   }
   if (/\bbom estado\b|\bbem conservad/.test(norm)) result.estado = "bom estado";
@@ -415,7 +417,9 @@ export function extractLeadSlots(args: {
   }
 
   const explicitNoTrade = /\b(?:nao tenho|sem).{0,40}\b(?:carro|veiculo|troca)\b|\bnao.{0,60}\btroca\b/.test(norm);
-  const explicitTrade = !explicitNoTrade && /\b(?:tenho|possuo).{0,25}\b(?:carro|veiculo).{0,20}\btroca\b|\b(?:carro|veiculo)\s+(?:para|pra)\s+troca\b/.test(norm);
+  // Missão P0: "X para/de/na troca", "dar/dou de/na troca" também é TROCA (test 10: "tenho um Onix para troca, mas quero SUV").
+  const explicitTrade = !explicitNoTrade && (/\b(?:tenho|possuo).{0,25}\b(?:carro|veiculo).{0,20}\btroca\b|\b(?:carro|veiculo)\s+(?:para|pra)\s+troca\b/.test(norm)
+    || /\b(?:para|pra|de|na)\s+troca\b|\bdar\s+(?:de\s+|na\s+)?troca\b|\bdou\s+(?:de\s+|na\s+)?troca\b/.test(norm));
   // R11-A1 (Codex): um PEDIDO de compra ("Quero SUV até 70 mil", "quero um Gol") NÃO é resposta booleana de troca.
   // Sem isto, com objetivo 'possuiTroca' pendente, parseBooleanAnswer("quero...") virava possuiTroca=true ESPÚRIO
   // (memória corrompida -> objetivo trocava sem base). "tenho um Gol" (verbo de POSSE) continua sendo troca=sim.
@@ -437,7 +441,12 @@ export function extractLeadSlots(args: {
     }
   }
 
-  if (expected === "veiculoTroca" || (state.slots.possuiTroca.value === true && /\b(?:ano|km|quilometr|troca)\b/.test(norm))) {
+  // Missão P0 INC3/C: captura o VEÍCULO de troca no MESMO turno em que o lead confirma a troca e já dá o carro ("Tenho / um
+  // Renegade / 2019 / 86km" respondendo "tem carro pra troca?"). Antes o gate lia possuiTroca PRÉ-turno e perdia o veículo.
+  // Contexto de troca ATIVO = pergunta pendente de troca (possuiTroca/veiculoTroca) OU já confirmou OU frase explícita de
+  // troca no bloco. NÃO captura quando negou a troca ("não tenho"). O tradeVehicle já retorna null sem dados de veículo.
+  const tradeContextActive = expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade;
+  if (tradeContextActive && !deniedTradeVehicle) {
     const vehicle = tradeVehicle(leadMessage, claimExtractor);
     if (vehicle) add({ op: "set_slot", slot: "veiculoTroca", value: vehicle, confidence: 0.86, sourceTurnId: turnId }, "veiculoTroca");
   }
