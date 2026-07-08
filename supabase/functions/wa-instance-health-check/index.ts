@@ -1,15 +1,17 @@
 /**
  * wa-instance-health-check
  *
- * Roda 1x/dia (cron). Para CADA instância de WhatsApp (UazAPI) que deveria estar no ar,
+ * Roda a cada 5 min (cron). Para CADA instância de WhatsApp (UazAPI) que deveria estar no ar,
  * consulta o status REAL no UazAPI e atualiza o banco — porque o `wa_instances.status`
  * fica DESATUALIZADO (a sessão cai e ninguém marca 'disconnected'; foi a causa do follow-up
  * do vendedor não disparar: instância "connected" no banco mas morta no WhatsApp).
  *
- * Para instâncias de VENDEDOR (seller_member_id != null) que estiverem DESCONECTADAS, o agente
- * do Pedro (instância master conectada da loja) manda uma mensagem PRO VENDEDOR avisando que o
- * número dele caiu da loja. Throttle de ~20h (disconnect_alert_sent_at) pra avisar no máximo 1x/dia;
- * quando reconecta, o aviso é zerado (próxima queda avisa de novo).
+ * Para instâncias de VENDEDOR (seller_member_id != null) que estiverem DESCONECTADAS, a IA
+ * (instância master conectada da loja) manda um LEMBRETE PRO VENDEDOR pedindo pra reconectar —
+ * A CADA ~1 HORA (throttle de 55 min em disconnect_alert_sent_at), dentro da janela 07h–21h BRT,
+ * até ele reconectar. Quando reconecta, o aviso é zerado (próxima queda recomeça).
+ * A mensagem deixa claro que os LEADS CONTINUAM CHEGANDO — o que para são os follow-ups
+ * automáticos dele e o acompanhamento das conversas (relatórios/feedbacks).
  *
  * Reusa o padrão de checagem de status do verify-instance-status.
  */
@@ -107,10 +109,13 @@ Deno.serve(async (req) => {
       if (inst.status !== realStatus) status_mudou++;
       await admin.from("wa_instances").update(upd).eq("id", inst.id);
 
-      // VENDEDOR desconectado -> avisa o vendedor (1x/dia) pela instância master da loja.
+      // VENDEDOR desconectado -> lembrete a cada ~1h (07h–21h BRT) pela instância master da loja,
+      // até reconectar. Reconectou -> disconnect_alert_sent_at zera (bloco isConnected acima).
       if (!isConnected && inst.seller_member_id) {
+        const horaBRT = new Date(Date.now() - 3 * 3600 * 1000).getUTCHours();
+        if (horaBRT < 7 || horaBRT >= 21) continue; // não acordar o vendedor de madrugada
         const jaAvisou = inst.disconnect_alert_sent_at &&
-          (Date.now() - new Date(inst.disconnect_alert_sent_at).getTime() < 20 * 3600 * 1000);
+          (Date.now() - new Date(inst.disconnect_alert_sent_at).getTime() < 55 * 60 * 1000);
         if (jaAvisou) continue;
 
         const { data: vend } = await admin.from("ai_team_members")
@@ -129,7 +134,16 @@ Deno.serve(async (req) => {
         if (!master?.api_url) continue; // loja sem master conectada -> não há de onde avisar
 
         const nome = String(vend.name || "").trim().split(/\s+/)[0] || "vendedor";
-        const msg = `⚠️ Oi ${nome}! Seu WhatsApp foi *desconectado da loja* e parou de receber e atender os clientes — e os follow-ups agendados não estão saindo. Reconecte o quanto antes pelo painel pra voltar a receber os leads. Se precisar de ajuda, fale com o gestor.`;
+        const msg = `Oi ${nome}! Aqui é a assistente da loja.
+
+Seu WhatsApp está *desconectado da plataforma*. Fica tranquilo: *seus leads continuam chegando normalmente*. Mas, enquanto estiver desconectado:
+
+— seus *follow-ups automáticos* não estão saindo pros seus clientes;
+— a plataforma *não acompanha suas conversas*, então seu atendimento fica de fora dos relatórios e feedbacks da loja.
+
+Reconectar leva 1 minuto: entre no painel da Logos, em *WhatsApp > Instâncias*, e escaneie o QR Code.
+
+Vou te lembrar a cada 1 hora até você reconectar. Qualquer dificuldade, chama o gerente.`;
         const ok = await sendText(String(master.api_url), master.api_key_encrypted || "", vend.whatsapp_number, msg);
         if (ok) {
           avisos++;
