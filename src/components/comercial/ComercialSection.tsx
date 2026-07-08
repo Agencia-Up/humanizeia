@@ -47,10 +47,10 @@ function Kpi({ label, value, sub, icon: Icon, accent }: {
   label: string; value: string; sub?: string; icon: React.ElementType; accent: string;
 }) {
   return (
-    <Card className="bg-card border-border/50">
+    <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.20)]">
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-1.5">
-          <span className={`h-7 w-7 rounded-lg flex items-center justify-center ${accent}`}><Icon className="h-4 w-4" /></span>
+          <span className={`h-8 w-8 rounded-xl flex items-center justify-center ring-1 ring-white/10 ${accent}`}><Icon className="h-4 w-4" /></span>
           <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">{label}</span>
         </div>
         <p className="text-2xl font-black tabular-nums leading-none">{value}</p>
@@ -172,9 +172,9 @@ export function ComercialSection({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 rounded-3xl border border-white/10 bg-gradient-to-br from-card/70 via-card/45 to-slate-950/55 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.20)]">
       {/* Header do bloco comercial */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-3 rounded-2xl border border-white/10 bg-slate-950/35 px-4 py-3">
         <div className="flex items-center gap-2 flex-wrap">
           <TrendingUp className="h-5 w-5 text-emerald-400" />
           <h2 className="text-lg font-bold">Gestão Comercial</h2>
@@ -256,7 +256,7 @@ export function ComercialSection({
 
           {/* Tabela de desempenho (só geral + gestor) */}
           {!isSeller && !activeSellerId && (
-            <Card className="bg-card border-border/50">
+            <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.22)]">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Users className="h-4 w-4 text-blue-400" /> Desempenho por vendedor
@@ -327,7 +327,7 @@ export function ComercialSection({
 
           {/* Vendas do período — lista individual, editável (corrigir data/valor/origem ou excluir) */}
           {vendasPeriodo.length > 0 && (
-            <Card className="bg-card border-border/50">
+            <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.22)]">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <DollarSign className="h-4 w-4 text-emerald-400" /> Vendas do período

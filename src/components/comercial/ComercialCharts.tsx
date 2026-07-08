@@ -51,7 +51,7 @@ export function ComercialCharts({ vendasPeriodo, vendasAno, metaRef, refDate }: 
     return { dia, acumulado: acc };
   });
 
-  const cardCls = 'bg-card border-border/50';
+  const cardCls = 'overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.20)]';
   const titleCls = 'text-sm font-semibold';
   const vazio = (txt: string) => <div className="h-[180px] flex items-center justify-center text-xs text-muted-foreground">{txt}</div>;
 

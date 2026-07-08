@@ -165,14 +165,15 @@ export function CompactKpi({
   accent: string;
 }) {
   return (
-    <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 p-5 shadow-[0_18px_55px_rgba(0,0,0,0.22)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
           <p className="mt-3 text-3xl font-bold leading-none text-foreground">{value}</p>
           <p className="mt-2 text-xs text-muted-foreground">{sub}</p>
         </div>
-        <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${accent}`}>
+        <div className={`flex h-11 w-11 items-center justify-center rounded-xl ring-1 ring-white/10 ${accent}`}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -190,7 +191,8 @@ export function FunnelPanel({
   items: FunnelMetric[];
 }) {
   return (
-    <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 p-5 shadow-[0_18px_55px_rgba(0,0,0,0.22)]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
       <div className="mb-4 flex items-center justify-between gap-3">
         <h3 className="text-base font-bold text-foreground">{title}</h3>
         <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold text-primary">
@@ -199,7 +201,7 @@ export function FunnelPanel({
       </div>
       <div className="space-y-2.5">
         {items.map(item => (
-          <div key={item.label} className="flex items-center justify-between gap-4 rounded-xl border border-border/40 bg-background/35 px-4 py-3">
+          <div key={item.label} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-slate-950/45 px-4 py-3 shadow-inner shadow-black/10 transition-colors hover:bg-slate-950/60">
             <div className="flex min-w-0 items-center gap-3">
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.accent}`} />
               <div className="min-w-0">

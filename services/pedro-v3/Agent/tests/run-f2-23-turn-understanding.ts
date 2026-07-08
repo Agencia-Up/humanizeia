@@ -205,7 +205,9 @@ async function main(): Promise<void> {
     const c = conv(); await c.seed();
     const uH = U("search_stock", { caps: ["stock_search"], subject: "vehicle_type", subjectValue: "suv", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "quero um suv" }] });
     const cap = await c.t("quero um suv automatico", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "stock_search" && o.ok) ? finU([], [reply], "reply", uH) /* draft VAZIO repetido -> mesmo deny */ : qU({ tool: "stock_search", input: { tipo: "suv", cambio: "automatic" } } as CentralQueryCall, uH));
-    check("[H] fingerprint de deny repetido -> não gasta as 8 tentativas (brainSteps<=3)", cap.committed && cap.brainSteps <= 3, `brainSteps=${cap.brainSteps} src=${cap.src}`);
+    // Fase 1 (LLM-first): num turno de LISTAGEM a LLM ganha retries EXTRAS (bounded, LIST_MONEY_RETRY_CAP) para tentar listar
+    // antes de recuperar — então usa mais passos que antes, mas ainda NÃO gasta todos os 8 (teto). Recupera com repeated_deny.
+    check("[H] deny repetido em listagem -> retries bounded, NÃO gasta todos os passos (brainSteps<=6)", cap.committed && cap.brainSteps <= 6, `brainSteps=${cap.brainSteps} src=${cap.src}`);
     check("[H] recuperação contextual: lista aterrada, SEM texto genérico no outbox", has(cap.outbox, "Kicks") && !/nao consegui confirmar|reformul/.test(norm(cap.outbox)) && (cap.recoveryReason ?? "").includes("repeated_deny"), `text="${cap.outbox}" reason=${cap.recoveryReason}`);
   }
   // I) Invariante de foto (audit Codex CTWA #2) vs. P0-2: o cérebro propõe mídia SEM understanding (step malformado) -> a

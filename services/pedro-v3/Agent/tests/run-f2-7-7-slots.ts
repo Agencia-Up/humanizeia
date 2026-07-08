@@ -79,11 +79,19 @@ async function main(): Promise<void> {
     check("1b sem objetivo pendente -> nao emite resolve_objective", !muts.some((m) => m.op === "resolve_objective"));
   }
 
-  // 1c) "dOUGLAS" SEM objetivo E SEM o agente ter perguntado nome -> NAO captura (sem sinal).
+  // 1c) "Douglas" pelado SEM pergunta de nome -> captura OPORTUNÍSTICA (audit Codex smoke real T8: o lead SE APRESENTA
+  //     espontaneamente; "Douglas" não é preço/tipo/comando -> é o nome). Guardas: 1-2 tokens, isNameToken, sem outro
+  //     answer-kind, e não em pergunta de cidade. Antes o comportamento era "não captura" (invertido pelo requisito novo).
   {
     const st = baseState({ recentTurns: [{ role: "agent", text: "Temos varios SUVs. Qual faixa de preco?", at: NOW }] });
     const muts = extractLeadSlots({ leadMessage: "Douglas", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1c" });
-    check("1c 'Douglas' sem sinal de pergunta de nome -> NAO captura", !slot(muts, "nome"), JSON.stringify(muts));
+    check("1c 'Douglas' pelado sem pergunta de nome -> captura OPORTUNÍSTICA (auto-apresentação)", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
+  }
+  // 1c-neg) resposta pelada a pergunta de CIDADE NÃO vira nome (a extração de cidade cuida do valor).
+  {
+    const st = baseState({ recentTurns: [{ role: "agent", text: "De qual cidade você é?", at: NOW }] });
+    const muts = extractLeadSlots({ leadMessage: "Taubaté", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1cn" });
+    check("1c-neg 'Taubaté' em pergunta de cidade -> NÃO captura nome", !slot(muts, "nome"), JSON.stringify(muts));
   }
 
   // 2) "Meu nome e douglas" (sem objetivo) -> nome "Douglas" (padrao explicito)
