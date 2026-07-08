@@ -297,6 +297,30 @@ async function runEngine(): Promise<void> {
     check("[G5] pergunta dupla foi NEGADA -> reautoria (brain_retry)", t.src === "brain_retry", `src=${t.src}`);
     check("[G5b] texto final tem UMA pergunta financeira (não entrada E financiamento juntos)", t.committed && !(has(t.outbox, "entrada") && has(t.outbox, "financ")), `outbox="${t.outbox}"`);
   }
+
+  // CASO ENCODING (incidente real): a gpt-4.1-mini emite a resposta com CARACTERES DE CONTROLE embutidos (corrompida) ->
+  //  o engine REJEITA -> a LLM REAUTORA limpo (brain_retry) -> o texto final NAO tem caracteres de controle.
+  {
+    const c = conv();
+    const corruptThenClean: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
+      ? finU([txt("Ola! Eu sou o Carvalho, consultor da Icom. Voce e de Taubate mesmo?")], "reply", U("other"))   // retry: limpo
+      : finU([txt("Ola! Eu sou o Carvalho " + String.fromCharCode(0x1f,0x1f) + "Voc" + String.fromCharCode(0) + "ê é de Taubaté?")], "reply", U("other"));   // 1a: corrompido (controle)
+    const t = await c.t("Boa tarde", corruptThenClean);
+    const hasCtrl = /[ --�]/.test(t.outbox);
+    check("[G-enc] resposta com caracteres de controle -> engine rejeita -> reautora (brain_retry)", t.src === "brain_retry", `src=${t.src}`);
+    check("[G-enc-b] texto final LIMPO (sem caracteres de controle)", t.committed && !hasCtrl && has(t.outbox, "Taubate"), `outbox=${JSON.stringify(t.outbox)}`);
+  }
+
+  // CASO ENCODING B (incidente real do WhatsApp): mojibake visível ("Voceaa e9... Taubate9... je1") é reparado no
+  // chokepoint final de saída. Não é decisão comercial, é limpeza de encoding do payload/texto persistido.
+  {
+    const c = conv();
+    const visibleMojibake: BrainResponder = () => finU([txt("Boa tarde! Ola eu sou o Carvalho, consultor aqui de IA da Icom Motors Voceaa e9 aqui de Taubate9 mesmo je1 conhece a nossa loja?")], "reply", U("other"));
+    const t = await c.t("Boa tarde", visibleMojibake);
+    const leaked = /Voceaa|\be9\b|Taubate9|je1/.test(t.outbox);
+    check("[G-enc-c] mojibake visível reparado antes do WhatsApp", t.committed && !leaked, `outbox=${JSON.stringify(t.outbox)}`);
+    check("[G-enc-d] texto reparado contém acentos esperados", t.committed && t.outbox.includes("Você é") && t.outbox.includes("Taubaté") && t.outbox.includes("já"), `outbox=${JSON.stringify(t.outbox)}`);
+  }
 }
 
 async function main(): Promise<void> {

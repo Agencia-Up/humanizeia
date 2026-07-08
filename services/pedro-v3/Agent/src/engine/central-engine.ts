@@ -142,6 +142,30 @@ function stripControlChars(text: string): string {
   }
   return out;
 }
+// Encoding guard: corrupted model/provider text can contain control chars
+// embedded in normal words. Detect before stripping so the brain can rewrite.
+function hasCorruptedControlChars(text: string): boolean {
+  for (const ch of text) { const c = ch.codePointAt(0) ?? 0; if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0x7f || c === 0xfffd) return true; } return false;
+}
+
+function repairVisibleLatin1Escapes(text: string): string {
+  if (!/(?:ðŸ|Voceaa|Taubate9|\bje1\b|\p{L}(?:eaa|e7|e9|e1|e0|e2|e3|f3|f4|f5)\b)/u.test(text)) return text;
+  return text
+    .replace(/ðŸ.{0,2}/g, "")
+    .replace(/eaa/g, "ê")
+    .replace(/e7/g, "ç")
+    .replace(/e9/g, "é")
+    .replace(/e1/g, "á")
+    .replace(/e0/g, "à")
+    .replace(/e2/g, "â")
+    .replace(/e3/g, "ã")
+    .replace(/f3/g, "ó")
+    .replace(/f4/g, "ô")
+    .replace(/f5/g, "õ");
+}
+function sanitizeOutgoingText(text: string): string {
+  return repairVisibleLatin1Escapes(stripControlChars(text)).normalize("NFC");
+}
 
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
@@ -631,6 +655,11 @@ function authorFromBrainDraft(args: {
   } catch (err) {
     if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
+  }
+  // Corrupted text should be rewritten by the brain, not silently stripped into
+  // visible mojibake that can leak to WhatsApp.
+  if (hasCorruptedControlChars(composed.text)) {
+    return { ok: false, feedback: "Sua resposta veio CORROMPIDA (caracteres de controle/quebrados embutidos — acentos e emoji viraram lixo). Reescreva EXATAMENTE a mesma mensagem em português limpo e correto, com acentuação normal (á é ê ã õ ç) e SEM emojis nem caracteres especiais/de controle." };
   }
   // T2: mesmo sem send_media/reasonCode, o TEXTO não pode PROMETER foto num turno que não autoriza foto (e não é recall,
   // que legitimamente NOMEIA a foto lembrada). Guarda de OUTPUT (não classifica o turno) — a autoridade é photoAuthorized.
@@ -1688,10 +1717,15 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
             const listTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             const moneyDeny = /monet[aá]ri|money_ref|valor\s+monetario|\bR\$/i.test(authored.feedback);
+            const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
             const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn);
             let effFeedback = authored.feedback;
             let keepRetrying = false;
-            if (listTurn) {
+            if (corruptionDeny) {
+              // Encoding corruption is transient; retry with the same intent and
+              // an explicit cleanup instruction before any commercial feedback.
+              keepRetrying = true;
+            } else if (listTurn) {
               const listKeys: string[] = [];
               for (const f of facts) if (f.ok && f.tool === "stock_search") for (const it of f.data.items) if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
               effFeedback = `Turno de LISTAGEM: devolva um draft com EXATAMENTE 3 partes — [{"type":"text","content":"Encontrei estas opções:"},{"type":"vehicle_offer_list","vehicleKeys":${JSON.stringify(listKeys)}},{"type":"text","content":"Quer ver as fotos, os detalhes ou as condições?"}]. Use ESSES vehicleKeys. NUNCA escreva nomes de carro, "R$", preços ou km em "text" (o sistema formata a lista pela vehicle_offer_list). NÃO chame stock_search de novo.`;
@@ -2231,7 +2265,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
 
       // T1 (audit Codex smoke): SANITIZA control chars do texto de saída num chokepoint ÚNICO — cobre o send_message
       // (materializeEffectPlans), o composedText do resultado e o evento response_composed. O LLM às vezes emite U+001F etc.
-      const outComposed = { ...composed, text: stripControlChars(composed.text) };
+      const outComposed = { ...composed, text: sanitizeOutgoingText(composed.text) };
       const outbox = materializeEffectPlans(decision, outComposed, { conversationId, createdAt: cutoff, providerCapability });
 
       // Observabilidade institucional (audit): status TERMINAL por tópico resolvido no turno.
