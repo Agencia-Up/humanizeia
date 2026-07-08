@@ -231,9 +231,10 @@ function MetricCard({
   const subiu = temDelta && (delta as number) >= 0;
   const bom = temDelta && (subiu === deltaGoodWhenUp);
   return (
-    <div className="group relative overflow-hidden rounded-xl border border-border/60 bg-card p-4 shadow-sm shadow-black/20 transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-md hover:shadow-black/30">
+    <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-950/80 via-card to-slate-900/70 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.28)] transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_22px_70px_rgba(37,99,235,0.12)]">
       {/* hairline de brilho no topo — toque premium */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+      <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary/10 blur-2xl transition-opacity group-hover:opacity-90" />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 space-y-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -684,12 +685,14 @@ export default function PainelGeral() {
 
   return (
     <MainLayout>
-      <div className="space-y-6 p-4 lg:p-6">
+      <div className="space-y-6 rounded-[28px] border border-white/10 bg-gradient-to-br from-slate-950/80 via-background to-slate-900/55 p-4 shadow-[0_28px_90px_rgba(0,0,0,0.35)] lg:p-6">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/80 p-5 shadow-[0_18px_55px_rgba(0,0,0,0.24)]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
+          <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold lg:text-3xl">Painel Geral</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-2xl font-black tracking-tight lg:text-3xl">Painel Geral</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               {isSeller
                 ? 'Seus leads — Pedro (Tráfego Pago) + Marcos (Outros canais)'
                 : 'Soma e média Pedro (Tráfego Pago) + Marcos (Outros canais)'}
@@ -700,7 +703,7 @@ export default function PainelGeral() {
           <div className="flex items-center gap-2 flex-wrap">
             {/* Navegador de mês — lente principal */}
             {mode === 'mes' && (
-              <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-card/60 p-1">
+              <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/55 p-1 shadow-inner shadow-black/20">
                 <button onClick={() => setAnchorMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
                   className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted/50 hover:text-foreground" title="Mês anterior">
                   <ChevronLeft className="h-4 w-4" />
@@ -714,7 +717,7 @@ export default function PainelGeral() {
               </div>
             )}
             {/* Presets de período (foco no mês) */}
-            <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-card/60 p-1">
+            <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/55 p-1 shadow-inner shadow-black/20">
               {([
                 { id: 'este_mes',    label: 'Este mês' },
                 { id: 'mes_passado', label: 'Mês passado' },
@@ -745,11 +748,11 @@ export default function PainelGeral() {
                     escolher um início depois do fim vira período de 1 dia (e vice-versa). */}
                 <input type="date" value={customRange.start}
                   onChange={e => { const v = e.target.value; if (!v) return; setCustomRange(r => ({ start: v, end: r.end && r.end >= v ? r.end : v })); }}
-                  className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+                  className="rounded-lg border border-white/10 bg-slate-950/60 px-2 py-1 shadow-inner shadow-black/20" />
                 <span className="text-muted-foreground">até</span>
                 <input type="date" value={customRange.end}
                   onChange={e => { const v = e.target.value; if (!v) return; setCustomRange(r => ({ start: r.start && r.start <= v ? r.start : v, end: v })); }}
-                  className="bg-card/60 border border-border/50 rounded px-2 py-1" />
+                  className="rounded-lg border border-white/10 bg-slate-950/60 px-2 py-1 shadow-inner shadow-black/20" />
               </div>
             )}
             {/* Filtro GLOBAL de vendedor — re-escopa o painel inteiro (só master). */}
@@ -757,7 +760,7 @@ export default function PainelGeral() {
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Vendedor</span>
                 <Select value={globalSellerId || '__all__'} onValueChange={(v) => setGlobalSellerId(v === '__all__' ? null : v)}>
-                  <SelectTrigger className="h-9 w-[190px]"><SelectValue placeholder="Vendedor" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[190px] border-white/10 bg-slate-950/60 shadow-inner shadow-black/20"><SelectValue placeholder="Vendedor" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">Todos os vendedores</SelectItem>
                     {vendedores.map(v => <SelectItem key={v.id} value={v.id}>{v.nome}</SelectItem>)}
@@ -769,6 +772,8 @@ export default function PainelGeral() {
         </div>
 
         {/* ── Gestão Comercial (vendas/metas) — bloco integrado ────────────── */}
+        </div>
+
         {!profileLoading && (isSeller ? masterUserId : user?.id) && (
           <ComercialSection
             periodStart={dateRange.start}
@@ -801,7 +806,7 @@ export default function PainelGeral() {
 
           {/* Desempenho por vendedor — só master */}
           {!isSeller && (
-            <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
+            <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.24)]">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Users className="h-4 w-4 text-blue-400" /> Desempenho por vendedor
@@ -845,7 +850,7 @@ export default function PainelGeral() {
           )}
 
           {/* Rastreamento de vendas concluídas (auditoria: data + vendedor) */}
-          <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
+          <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.24)]">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Vendas concluídas no período
@@ -944,7 +949,7 @@ export default function PainelGeral() {
         {/* ── Comparativo Pedro vs Marcos ───────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Pedro */}
-          <Card className="bg-card border-blue-500/30">
+          <Card className="overflow-hidden rounded-2xl border-blue-400/25 bg-gradient-to-br from-blue-500/12 via-card/90 to-slate-950/75 shadow-[0_18px_55px_rgba(37,99,235,0.10)]">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Bot className="h-4 w-4 text-blue-400" />
@@ -969,7 +974,7 @@ export default function PainelGeral() {
           </Card>
 
           {/* Marcos */}
-          <Card className="bg-card border-purple-500/30">
+          <Card className="overflow-hidden rounded-2xl border-purple-400/25 bg-gradient-to-br from-purple-500/12 via-card/90 to-slate-950/75 shadow-[0_18px_55px_rgba(147,51,234,0.10)]">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <Layers className="h-4 w-4 text-purple-400" />
@@ -1008,14 +1013,14 @@ export default function PainelGeral() {
 
         {/* ── [Unificado] Origem e conversão + Alertas inteligentes ────────── */}
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+          <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 p-5 shadow-[0_18px_55px_rgba(0,0,0,0.22)]">
             <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
               <Target className="h-4 w-4 text-primary" />
               Origem e conversao
             </h3>
             <div className="grid gap-3">
               {originCards.map(card => (
-                <div key={card.label} className="flex items-center justify-between rounded-xl border border-border/40 bg-background/35 px-4 py-3">
+                <div key={card.label} className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-950/45 px-4 py-3 shadow-inner shadow-black/10">
                   <div>
                     <p className="text-sm font-semibold text-foreground">{card.label}</p>
                     <p className="text-xs text-muted-foreground">{card.sub}</p>
@@ -1026,7 +1031,7 @@ export default function PainelGeral() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-border/50 bg-card/70 p-5">
+          <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 p-5 shadow-[0_18px_55px_rgba(0,0,0,0.22)]">
             <h3 className="mb-4 flex items-center gap-2 text-base font-bold text-foreground">
               <AlertCircle className="h-4 w-4 text-amber-300" />
               Alertas inteligentes
@@ -1054,7 +1059,7 @@ export default function PainelGeral() {
         </div>
 
         {/* ── Gráfico de atividade sobreposto ──────────────────────────────── */}
-        <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
+        <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.24)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-blue-400" />
@@ -1084,7 +1089,7 @@ export default function PainelGeral() {
 
         {/* ── Ranking de Vendedores (unificado) — só master (vendedor não vê colegas) ── */}
         {!isSeller && (
-        <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
+        <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.24)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Users className="h-4 w-4 text-cyan-400" />
@@ -1132,7 +1137,7 @@ export default function PainelGeral() {
         )}
 
         {/* ── [Unificado] Ações sugeridas ──────────────────────────────────── */}
-        <Card className="bg-card border-border/60 shadow-sm shadow-black/20">
+        <Card className="overflow-hidden rounded-2xl border-white/10 bg-gradient-to-br from-card/95 via-card/80 to-slate-950/70 shadow-[0_18px_55px_rgba(0,0,0,0.24)]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-yellow-300" />

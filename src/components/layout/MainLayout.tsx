@@ -62,16 +62,16 @@ export function MainLayout({ children }: MainLayoutProps) {
             id="main-scroll-container"
             className={`flex-1 flex flex-col ${
               isFullPageApp
-                ? 'overflow-hidden px-4 pb-2 pt-2 lg:px-6 lg:pb-3 lg:pt-3'
+                ? 'overflow-hidden px-2 pb-2 pt-2 sm:px-4 lg:px-6 lg:pb-3 lg:pt-3'
                 : isAgentHubHome
-                ? 'overflow-auto px-4 pb-4 pt-5 lg:px-10 lg:pb-6 lg:pt-7'
-                : 'overflow-auto p-4 lg:p-6'
+                ? 'overflow-auto px-3 pb-4 pt-4 sm:px-4 sm:pt-5 lg:px-10 lg:pb-6 lg:pt-7'
+                : 'overflow-auto p-3 sm:p-4 lg:p-6'
             }`}
           >
             {/* Botão Voltar — aparece em todas as páginas exceto no Dashboard */}
             {showBackButton && (
               <div
-                className={`px-4 lg:px-6 ${
+                className={`${isFullPageApp ? 'px-1 sm:px-4 lg:px-6' : 'px-4 lg:px-6'} ${
                   isFullPageApp ? 'mb-2 -mt-2 pt-0' : 'mb-3 -mt-1 pt-2'
                 }`}
               >

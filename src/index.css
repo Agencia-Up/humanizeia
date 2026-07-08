@@ -706,4 +706,21 @@
     align-items: center;
     justify-content: center;
   }
+
+  @media (max-width: 640px) {
+    #main-scroll-container {
+      scroll-padding-bottom: 96px;
+    }
+
+    #main-scroll-container .overflow-x-auto,
+    #main-scroll-container [class*="overflow-x-auto"] {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+    }
+
+    #main-scroll-container .overflow-x-auto > table,
+    #main-scroll-container [class*="overflow-x-auto"] > table {
+      min-width: max-content;
+    }
+  }
 }
