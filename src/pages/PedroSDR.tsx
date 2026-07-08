@@ -3781,16 +3781,16 @@ export function CrmAvancadoTab({
 
   if (selectedLead) {
     return (
-      <div className="p-4 lg:p-6 space-y-5">
+      <div className="mobile-lead-detail space-y-3 p-2 sm:space-y-5 sm:p-4 lg:p-6">
         {/* Popup de venda tambem montado aqui (detalhe do lead) — senao o botao
             "Editar venda" e o "Registrar venda" ao concluir nao mostravam nada. */}
         {vendaDialogEl}
         {/* Header */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Button variant="ghost" size="sm" onClick={() => setSelectedLead(null)} className="h-8 px-2 gap-1 text-xs text-muted-foreground">
             <ChevronRight className="h-3.5 w-3.5 rotate-180" /> Voltar
           </Button>
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-1">
             {editingLead ? (
               <div className="flex flex-col gap-1.5">
                 {/* Fase 6 Feature D: agora 4 inputs (nome + tel + cidade + carro). flex-wrap pra quebrar bem em mobile */}
@@ -3878,7 +3878,7 @@ export function CrmAvancadoTab({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex w-full shrink-0 items-center gap-1.5 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
             {canManageLeadStatus ? (
               <>
                 <span className="text-[10px] text-muted-foreground hidden sm:inline">Status:</span>
@@ -4838,19 +4838,19 @@ export function CrmAvancadoTab({
   };
 
   return (
-    <div className="p-4 lg:p-6 space-y-4">
+    <div className="mobile-crm-shell space-y-3 p-2 sm:space-y-4 sm:p-4 lg:p-6">
       {/* ── Métricas ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         {[
           { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       color: 'text-blue-400' },
           { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       color: 'text-emerald-400' },
           { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  color: 'text-cyan-400' },
           { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   color: 'text-purple-400' },
         ].map(m => (
-          <div key={m.label} className="bg-card border border-border/50 rounded-xl px-4 py-3 flex items-center gap-3">
-            <m.icon className={`h-5 w-5 ${m.color} shrink-0`} />
-            <div>
-              <p className="text-xl font-bold text-foreground leading-none">{m.value}</p>
+          <div key={m.label} className="flex items-center gap-2 rounded-xl border border-border/50 bg-card px-3 py-3 sm:gap-3 sm:px-4">
+            <m.icon className={`h-4 w-4 sm:h-5 sm:w-5 ${m.color} shrink-0`} />
+            <div className="min-w-0">
+              <p className="text-lg font-bold leading-none text-foreground sm:text-xl">{m.value}</p>
               <p className="text-[10px] text-muted-foreground mt-0.5">{m.label}</p>
             </div>
           </div>
@@ -4858,8 +4858,8 @@ export function CrmAvancadoTab({
       </div>
 
       {/* ── Sub-nav + busca + refresh ────────────────────────────────── */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex gap-1 bg-muted/40 rounded-lg p-1">
+      <div className="mobile-crm-actions flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="mobile-tabs-scroll flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted/40 p-1">
           {[
             { id: 'pipeline',  label: 'CRM',        icon: ArrowRightLeft, badge: 0 },
             // TAREFA 1 (29/05/2026): no painel do Marcos (isMarcosCrm) o CRM mostra
@@ -4882,7 +4882,7 @@ export function CrmAvancadoTab({
             <button
               key={v.id}
               onClick={() => setView(v.id as any)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              className={`flex min-h-9 shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 view === v.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -4894,7 +4894,7 @@ export function CrmAvancadoTab({
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="mobile-crm-tools flex w-full items-center gap-1.5 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
           {!isSeller && (
             <Button
               type="button"
@@ -4902,7 +4902,7 @@ export function CrmAvancadoTab({
               size="sm"
               onClick={handleDownloadBackup}
               disabled={backupDownloading}
-              className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10"
+              className="h-9 shrink-0 gap-1.5 border-emerald-500/30 px-3 text-xs text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 sm:h-7 sm:px-2.5"
               title={`Baixar backup completo dos leads do ${isMarcosCrm ? 'Marcos' : 'Pedro'}`}
             >
               {backupDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
@@ -4913,13 +4913,13 @@ export function CrmAvancadoTab({
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             placeholder="🔍 Buscar..."
-            className="h-7 text-xs w-40"
+            className="h-9 min-w-[180px] shrink-0 text-sm sm:h-7 sm:w-40 sm:text-xs"
           />
           {/* Filtro de data — vendedor E master, pipeline e lista de leads */}
           {(view === 'pipeline' || view === 'leads') && (
             <>
               <Select value={dateFilter} onValueChange={v => setDateFilter(v as LeadDatePreset)}>
-                <SelectTrigger className="h-7 text-xs w-36" title="Filtra os leads por quando chegaram">
+                <SelectTrigger className="h-9 w-40 shrink-0 text-xs sm:h-7 sm:w-36" title="Filtra os leads por quando chegaram">
                   <span className="flex items-center gap-1.5">
                     <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
                     <SelectValue placeholder="Período" />
@@ -4937,7 +4937,7 @@ export function CrmAvancadoTab({
                     type="date"
                     value={dateFrom}
                     onChange={e => setDateFrom(e.target.value)}
-                    className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    className="h-9 shrink-0 rounded-md border border-input bg-background px-2 text-xs sm:h-7"
                     title="Data inicial"
                   />
                   <span className="text-xs text-muted-foreground">até</span>
@@ -4945,7 +4945,7 @@ export function CrmAvancadoTab({
                     type="date"
                     value={dateTo}
                     onChange={e => setDateTo(e.target.value)}
-                    className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    className="h-9 shrink-0 rounded-md border border-input bg-background px-2 text-xs sm:h-7"
                     title="Data final"
                   />
                 </div>
@@ -4954,7 +4954,7 @@ export function CrmAvancadoTab({
           )}
           {!isSeller && teamMembers.length > 0 && (view === 'pipeline' || view === 'leads') && (
             <Select value={filterSeller} onValueChange={setFilterSeller}>
-              <SelectTrigger className="h-7 text-xs w-36">
+              <SelectTrigger className="h-9 w-40 shrink-0 text-xs sm:h-7 sm:w-36">
                 <SelectValue placeholder="Vendedor" />
               </SelectTrigger>
               <SelectContent>
@@ -4973,7 +4973,7 @@ export function CrmAvancadoTab({
                 <Button
                   variant="outline" size="sm"
                   onClick={enterSelectionMode}
-                  className="h-7 px-2.5 text-xs gap-1.5 border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                  className="h-9 shrink-0 gap-1.5 border-orange-500/30 px-3 text-xs text-orange-400 hover:bg-orange-500/10 sm:h-7 sm:px-2.5"
                   title={`Entra em modo seleção — pré-marca leads sem resposta há ${INATIVO_DIAS}+ dias`}
                 >
                   <Clock className="h-3.5 w-3.5" />
@@ -4999,7 +4999,7 @@ export function CrmAvancadoTab({
                 <Button
                   size="sm"
                   onClick={handleDispararCampanha}
-                  className="h-7 px-2.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="h-9 shrink-0 gap-1.5 bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700 sm:h-7 sm:px-2.5"
                   title="Pré-carrega os selecionados no disparo em massa"
                 >
                   <Send className="h-3.5 w-3.5" />
@@ -5016,7 +5016,7 @@ export function CrmAvancadoTab({
               onClick={() => setFollowupIAModalOpen(true)}
               disabled={triggerLoading}
               title={`Configurar reativação automática (Follow-up IA está ${isFollowupActive ? 'ATIVO' : 'PAUSADO'})`}
-              className={`h-7 px-2.5 text-xs gap-1.5 transition-all ${
+              className={`h-9 shrink-0 gap-1.5 px-3 text-xs transition-all sm:h-7 sm:px-2.5 ${
                 isFollowupActive
                   ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/10 hover:text-emerald-300'
                   : 'border-zinc-500/30 text-zinc-400 hover:bg-zinc-500/10'
@@ -5055,13 +5055,13 @@ export function CrmAvancadoTab({
               onClick={handleClassifyLeads}
               disabled={classifyLoading}
               title="Re-classifica leads nos 3 níveis SDR (Inativo / Pouco Qualificado / Qualificado) com base em respostas do cliente e dados coletados"
-              className="h-7 px-2.5 text-xs gap-1.5 border-blue-500/30 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
+              className="h-9 shrink-0 gap-1.5 border-blue-500/30 px-3 text-xs text-blue-400 hover:bg-blue-500/10 hover:text-blue-300 sm:h-7 sm:px-2.5"
             >
               {classifyLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>🤖</span>}
               Reclassificar IA
             </Button>
           )}
-          <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-7 w-7 p-0 text-muted-foreground">
+          <Button variant="ghost" size="sm" onClick={() => fetchData(true)} disabled={refreshing} className="h-9 w-9 shrink-0 p-0 text-muted-foreground sm:h-7 sm:w-7">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </Button>
           {/* "Adicionar Lead": Pedro escolhe a fonte de trafego pago; Marcos mantem origens proprias + custom. */}
@@ -5080,7 +5080,7 @@ export function CrmAvancadoTab({
               }
               setAddLeadOpen(nextOpen);
             }}
-            className="h-7 px-2.5 text-xs gap-1.5 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+            className="h-9 shrink-0 gap-1.5 border-emerald-500/30 px-3 text-xs text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 sm:h-7 sm:px-2.5"
           >
             {addLeadOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
             {addLeadOpen ? 'Fechar' : 'Adicionar Lead'}
@@ -5093,7 +5093,7 @@ export function CrmAvancadoTab({
                 variant="outline"
                 size="sm"
                 onClick={() => bulkFileRef.current?.click()}
-                className="h-7 px-2.5 text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
+                className="h-9 shrink-0 gap-1.5 border-amber-500/30 px-3 text-xs text-amber-400 hover:bg-amber-500/10 hover:text-amber-300 sm:h-7 sm:px-2.5"
               >
                 <FileSpreadsheet className="h-3.5 w-3.5" />
                 Importar Planilha
@@ -5298,7 +5298,7 @@ export function CrmAvancadoTab({
           onDragStart={startBoardAutoScroll}
           onDragEnd={(result) => { stopBoardAutoScroll(); handleDragEnd(result); }}
         >
-          <div ref={boardScrollRef} className="overflow-x-auto pb-2 -mx-4 px-4">
+          <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 overflow-x-auto px-2 pb-2 sm:-mx-4 sm:px-4">
             <div className="flex gap-3 min-w-max">
               {pipelineColumns.map(col => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
@@ -5318,7 +5318,7 @@ export function CrmAvancadoTab({
                       draggedColumnIdRef.current = null;
                       if (draggedId) handleColumnReorder(draggedId, col.id);
                     }}
-                    className={`w-[260px] shrink-0 rounded-xl border ${useHex ? '' : col.border} bg-card/50 ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
+                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
                     style={useHex ? { borderColor: `${hex}4d` } : undefined}
                   >
                     {/* Column header */}
@@ -6367,14 +6367,14 @@ export default function PedroSDR() {
 
   return (
     <MainLayout>
-      <div className="flex flex-col h-full">
+      <div className="flex h-full flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center gap-3 px-4 lg:px-6 pt-1 pb-2">
+        <div className="flex items-center gap-2.5 px-3 pb-2 pt-1 sm:gap-3 sm:px-4 lg:px-6">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500/20 to-cyan-600/20 border border-blue-500/30 flex items-center justify-center shrink-0">
             <Bot className="h-4 w-4 text-blue-400" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
               <h1 className="text-lg font-bold text-foreground leading-tight">Pedro</h1>
               <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse mr-1.5 inline-block" />
@@ -6386,7 +6386,7 @@ export default function PedroSDR() {
                 </Badge>
               )}
             </div>
-            <p className="text-[11px] leading-normal text-muted-foreground">
+            <p className="max-w-[270px] truncate text-[11px] leading-normal text-muted-foreground sm:max-w-none">
               {isSeller ? 'Painel do Vendedor — seus leads e atendimentos' : 'Funil do Agente — Qualificação de Leads & Automação Comercial'}
             </p>
           </div>
@@ -6394,19 +6394,21 @@ export default function PedroSDR() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
-          <div className="px-4 lg:px-6 border-b border-border/40">
-            <TabsList className="h-auto bg-transparent p-0 gap-1">
+          <div className="border-b border-border/40 px-1 sm:px-4 lg:px-6">
+            <div className="mobile-tabs-scroll overflow-x-auto">
+            <TabsList className="h-auto min-w-max bg-transparent p-0 gap-1">
               {tabs.map(tab => (
                 <TabsTrigger
                   key={tab.id}
                   value={tab.id}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-none border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-500 data-[state=active]:bg-transparent text-muted-foreground hover:text-foreground transition-all"
+                  className="flex min-h-10 items-center gap-1.5 rounded-none border-b-2 border-transparent px-3 py-2 text-xs font-medium text-muted-foreground transition-all hover:text-foreground data-[state=active]:border-blue-500 data-[state=active]:bg-blue-500/10 data-[state=active]:text-blue-400 sm:min-h-0 sm:py-1.5 sm:data-[state=active]:bg-transparent"
                 >
                   <span>{tab.emoji}</span>
                   <span>{tab.label}</span>
                 </TabsTrigger>
               ))}
             </TabsList>
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto">

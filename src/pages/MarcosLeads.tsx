@@ -110,14 +110,14 @@ export default function MarcosLeads() {
 
   return (
     <MainLayout>
-      <div className="flex flex-col h-full">
+      <div className="flex h-full flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center gap-3 px-4 lg:px-6 pt-1 pb-2">
+        <div className="flex items-center gap-2.5 px-3 pb-2 pt-1 sm:gap-3 sm:px-4 lg:px-6">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-500/20 to-violet-600/20 border border-purple-500/30 flex items-center justify-center shrink-0">
             <Users className="h-4 w-4 text-purple-400" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
               <h1 className="text-lg font-bold text-foreground leading-tight">Marcos</h1>
               <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[10px]">
                 <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse mr-1.5 inline-block" />
@@ -130,19 +130,21 @@ export default function MarcosLeads() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
-          <div className="px-4 lg:px-6 border-b border-border/40">
-            <TabsList className="bg-transparent h-auto p-0 gap-1">
+          <div className="border-b border-border/40 px-1 sm:px-4 lg:px-6">
+            <div className="mobile-tabs-scroll overflow-x-auto">
+            <TabsList className="h-auto min-w-max bg-transparent p-0 gap-1">
               {tabs.map(tab => (
                 <TabsTrigger
                   key={tab.id}
                   value={tab.id}
-                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none rounded-t-md px-3 py-1.5 text-xs gap-1.5"
+                  className="min-h-10 rounded-none rounded-t-md px-3 py-2 text-xs gap-1.5 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-primary/10 data-[state=active]:text-primary sm:min-h-0 sm:py-1.5"
                 >
                   <tab.icon className="h-3.5 w-3.5" />
                   {tab.label}
                 </TabsTrigger>
               ))}
             </TabsList>
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 overflow-hidden">
