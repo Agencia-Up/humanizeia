@@ -223,15 +223,42 @@ export function hasExplicitNewCommercialSearchIntent(
 export function isAnswerToFinancialQuestion(
   leadMessage: string,
   expected: (keyof ConversationState["slots"]) | null,
+  interpretation?: TurnInterpretation | null,
+  claimExtractor?: ClaimExtractor,
 ): boolean {
   if (expected !== "parcelaDesejada" && expected !== "entrada" && expected !== "formaPagamento") return false;
   if (/\?\s*$/.test(leadMessage.trim())) return false;    // termina em "?" = pergunta nova, não resposta
   const norm = normalizeText(leadMessage).trim();
-  const hasMoney = moneyByClause(leadMessage).length > 0;
+  // Referência a veículo (tipo/modelo) => NÃO é resposta financeira pura — evita "Compass 2019" respondendo parcela virar
+  // valor 2019. Sem isso, a pergunta pendente financeira é CONTEXTO financeiro: "2100" (range de ano) vira valor de parcela.
+  const hasVehicleRef = parseVehicleType(leadMessage) != null
+    || (claimExtractor != null && detectInterestModels(leadMessage, interpretation, claimExtractor).length > 0);
+  const hasMoney = moneyByClause(leadMessage, !hasVehicleRef).length > 0;
   const negation = /^(?:nao|nem)\b|\btenho\s+nao\b|\bnao\s+tenho\b|\bsem\s+(?:entrada|dinheiro|grana|condic)/.test(norm);
   const affirm = /^(?:sim|isso|ok|beleza|claro|pode\s+ser|com\s+certeza|isso\s+mesmo)\b/.test(norm);
   const paymentMethod = parsePayment(leadMessage) != null; // "financiar", "à vista", "consórcio"
   return hasMoney || negation || affirm || paymentMethod;
+}
+
+// Valor financeiro em andamento mesmo quando o objetivo/pergunta pendente não sobreviveu no estado.
+// Ex.: carro selecionado + entrada/financiamento já em andamento + "Até 2100 tá bom" = parcela mensal,
+// não teto de busca de estoque. Continua cedendo para intenção comercial nova explícita ("quero Onix até 80 mil").
+export function isFinancialValueDuringSelectedFinancing(
+  leadMessage: string,
+  state: ConversationState,
+  interpretation: TurnInterpretation | null | undefined,
+  claimExtractor: ClaimExtractor,
+): boolean {
+  if (/\?\s*$/.test(leadMessage.trim())) return false;
+  const paymentInProgress = state.vehicleContext.selected != null
+    && (state.slots.entrada.status !== "unknown" || state.slots.formaPagamento.status !== "unknown" || state.slots.parcelaDesejada.status !== "unknown");
+  if (!paymentInProgress) return false;
+  if (statesTradeVehiclePossession(leadMessage, claimExtractor)) return false;
+  if (hasExplicitNewCommercialSearchIntent(leadMessage, interpretation, claimExtractor)) return false;
+  // Referência a veículo (tipo/modelo) => é ano/carro, não valor financeiro ("Compass 2019" durante o financiamento).
+  if (parseVehicleType(leadMessage) != null || detectInterestModels(leadMessage, interpretation, claimExtractor).length > 0) return false;
+  // Financiamento em andamento = CONTEXTO financeiro: um número no range de ano ("2100") é VALOR (parcela). financialContext=true.
+  return moneyByClause(leadMessage, true).length > 0;
 }
 
 function parseAmount(raw: string): number | null {
@@ -251,7 +278,10 @@ function parseAmount(raw: string): number | null {
 // (parcela/entrada/orçamento) pega o valor MAIS PRÓXIMO do seu cue e o CONSOME, então outro papel não o
 // reusa. Anos (1900-2100 sem R$/mil) e km nunca viram dinheiro. Índices preservados (toLowerCase, sem NFD).
 type MoneySpan = { value: number; start: number; end: number };
-function moneySpans(message: string): MoneySpan[] {
+// financialContext=true: o CONTEXTO da conversa é financeiro (respondendo parcela/entrada, financiamento em andamento),
+// então um número no range de ANO (1900-2100) é VALOR, não ano. Sem isso (default), só um cue financeiro COLADO no texto
+// (até/parcela/entrada/por mês/R$) libera o range de ano — "Compass 2019" continua sendo ano.
+function moneySpans(message: string, financialContext = false): MoneySpan[] {
   const lower = message.toLowerCase();
   const out: MoneySpan[] = [];
   const re = /(?:r\$\s*)?(\d{1,3}(?:[.\s]\d{3})+|\d+(?:,\d{1,2})?)\s*(mil|k)?\b/gi;
@@ -261,10 +291,17 @@ function moneySpans(message: string): MoneySpan[] {
     if (!Number.isFinite(v)) continue;
     const mult = m[2];
     if (mult) v *= 1000;
+    const before = lower.slice(Math.max(0, m.index - 28), m.index);
     const after = lower.slice(m.index + m[0].length, m.index + m[0].length + 12);
-    if (/\bkm\b|quilometr|rodad/.test(after)) continue;                 // km/rodagem não é dinheiro
-    if (!mult && !hasCurrency && v >= 1900 && v <= 2100) continue;      // ano não é dinheiro
+    if (/\bkm\b|quilometr|rodad/.test(after)) continue;                 // km/rodagem NUNCA é dinheiro (vence tudo)
     const hasSep = /[.\s,]/.test(m[1]);
+    // Cue financeiro COLADO ao número (antes: "até/parcela/entrada/R$/por mês ..."; depois: "... de parcela/mês").
+    const financialCue =
+      /(?:r\$|at[eé]|parcela|mensal|mensais|por m[eê]s|prestac|entrada|sinal)\s*(?:de\s*)?$/.test(before)
+      || /^\s*(?:de\s*)?(?:parcela|mensal|mensais|por m[eê]s|prestac|entrada|sinal)\b/.test(after);
+    // Ano (1900-2100 SEM separador/multiplicador/R$) NÃO é dinheiro — EXCETO com cue financeiro no texto OU quando o
+    // contexto da conversa é financeiro. "Compass 2019" fica ano; "até 2100"/"parcela 2100"/2100-respondendo-parcela viram valor.
+    if (!mult && !hasCurrency && !hasSep && v >= 1900 && v <= 2100 && !financialCue && !financialContext) continue;
     if (v < 1000 && !hasSep && !mult && !hasCurrency) continue;         // número pequeno puro não é dinheiro
     out.push({ value: Math.round(v), start: m.index, end: m.index + m[0].length });
   }
@@ -275,11 +312,11 @@ function moneySpans(message: string): MoneySpan[] {
 // "picape até 100 mil, parcela até 1.800" separa as cláusulas e não confunde os valores (não depende de
 // distância nem de apagar texto). "unknown" = valor sem cue (resposta pura a uma pergunta pendente).
 type MoneyRoleTag = "parcela" | "entrada" | "budget" | "unknown";
-function moneyByClause(message: string): Array<{ role: MoneyRoleTag; value: number }> {
+function moneyByClause(message: string, financialContext = false): Array<{ role: MoneyRoleTag; value: number }> {
   const clauses = message.split(/(?!\d)[,;.](?!\d)|\s+\b(?:e|com|mas|mais)\b\s+/i);
   const out: Array<{ role: MoneyRoleTag; value: number }> = [];
   for (const clause of clauses) {
-    const spans = moneySpans(clause);
+    const spans = moneySpans(clause, financialContext);
     if (spans.length === 0) continue;
     const n = clause.toLowerCase();
     const role: MoneyRoleTag =
@@ -489,27 +526,27 @@ export function extractLeadSlots(args: {
   const type = interestText ? parseVehicleType(interestText) : null;
   if (type) add({ op: "set_slot", slot: "tipoVeiculo", value: type, confidence: 0.95, sourceTurnId: turnId }, "tipoVeiculo");
 
-  // ── Papéis monetários (item 3): por CLÁUSULA, order-independent (ver moneyByClause). Cada papel pega o
-  //    valor da SUA cláusula; "unknown" (valor sem cue) só alimenta o slot monetário PENDENTE (resposta pura).
-  const money = moneyByClause(leadMessage);
+  // ── MISSÃO P0 (Financial Question Context): CONTEXTO financeiro do turno. Pergunta pendente financeira (parcela/
+  //    entrada/pagamento) OU financiamento em andamento (carro selecionado + entrada/pagamento/parcela conhecidos), SEM
+  //    intenção de compra nova e SEM referência a veículo (tipo/modelo). Nesse contexto um número no range de ANO (2100)
+  //    é VALOR (parcela), não ano — libera o parser monetário (financialContext). "Compass 2019" (tem veículo) fica ano.
+  const newBuyIntent = hasExplicitNewCommercialSearchIntent(leadMessage, interpretation, claimExtractor);
+  const paymentInProgress = state.vehicleContext.selected != null
+    && (state.slots.entrada.status !== "unknown" || state.slots.formaPagamento.status !== "unknown" || state.slots.parcelaDesejada.status !== "unknown");
+  const expectedIsFinancial = expected === "parcelaDesejada" || expected === "entrada" || expected === "formaPagamento";
+  const msgHasVehicleRef = parseVehicleType(leadMessage) != null || detectInterestModels(leadMessage, interpretation, claimExtractor).length > 0;
+  const financialContext = !newBuyIntent && !msgHasVehicleRef && (expectedIsFinancial || paymentInProgress);
+  // Papéis monetários (item 3): por CLÁUSULA, order-independent. "unknown" (valor sem cue) só alimenta o slot monetário
+  // PENDENTE. financialContext libera um número no range de ano como VALOR (ver moneySpans).
+  const money = moneyByClause(leadMessage, financialContext);
   const unknownMoney = money.find((r) => r.role === "unknown")?.value;
   const roleVal = (role: MoneyRoleTag, slotForExpected: keyof ConversationState["slots"]): number | undefined =>
     money.find((r) => r.role === role)?.value ?? (expected === slotForExpected ? unknownMoney : undefined);
-  // ── MISSÃO P0 (Financial Question Context): quando o lead RESPONDE a uma pergunta financeira pendente (parcela/
-  //    entrada) e NÃO traz intenção de COMPRA nova, o valor pertence a ESSE slot — mesmo com o cue fraco de "budget"
-  //    ("até 1200" respondendo parcela = PARCELA até 1200, NÃO orçamento de compra). Sem isto, o "até" desviava o valor
-  //    para faixaPreco.max e disparava um stock_search indevido (listava o mesmo carro). A intenção comercial nova
-  //    ("quero Onix até 80 mil") VENCE o contexto e volta a alimentar faixaPreco. PURO.
-  const newBuyIntent = hasExplicitNewCommercialSearchIntent(leadMessage, interpretation, claimExtractor);
-  // Contexto de FINANCIAMENTO ativo: carro SELECIONADO + pagamento em andamento (entrada/pagamento/parcela já
-  // conhecidos). Nesse contexto, um valor solto que o lead volunteia — mesmo quando a pergunta pendente é TROCA/outra
-  // e mesmo com o cue "até" — é a PARCELA (mensal), NUNCA orçamento de compra (faixaPreco). Cobre o caso real do lead
-  // dizendo "até 1200" logo após entrada zero, enquanto o agente perguntava troca. Trade real ("tenho um Renegade...")
-  // é excluído (statesTradeVehiclePossession) p/ não virar parcela.
-  const paymentInProgress = state.vehicleContext.selected != null
-    && (state.slots.entrada.status !== "unknown" || state.slots.formaPagamento.status !== "unknown" || state.slots.parcelaDesejada.status !== "unknown");
+  // Respondendo parcela/entrada pendente (ou financiamento em andamento) SEM compra nova: o valor é a PARCELA/ENTRADA —
+  // mesmo com cue "budget" ("até 1200") ou no range de ano ("até 2100") — NUNCA orçamento de compra (faixaPreco). Trade
+  // real ("tenho um Renegade...") excluído. "quero Onix até 80 mil" (compra nova) VENCE e volta a alimentar faixaPreco.
   const financingValue = paymentInProgress && expected !== "entrada" && expected !== "faixaPreco"
-    && money.length > 0 && !statesTradeVehiclePossession(leadMessage, claimExtractor);
+    && money.length > 0 && !statesTradeVehiclePossession(leadMessage, claimExtractor) && !newBuyIntent && !msgHasVehicleRef;
   const answeringParcela = !newBuyIntent && (expected === "parcelaDesejada" || financingValue);
   const answeringEntrada = !newBuyIntent && expected === "entrada";
   const firstMoney = money[0]?.value;

@@ -9,6 +9,7 @@ import { runCentralConversationTurn, applyAcceptedPhotoActionOutcome, type Centr
 import { commitEffectOutcome } from "../src/engine/effect-outcome-commit.ts";
 import {
   extractLeadSlots, inferExpectedAnswerContext, hasExplicitNewCommercialSearchIntent, isAnswerToFinancialQuestion,
+  isFinancialValueDuringSelectedFinancing,
 } from "../src/engine/lead-extraction.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
@@ -99,6 +100,10 @@ function runPure(): void {
   check("[P-ans-5] pergunta ('qual o preço?') NÃO é resposta financeira", !isAnswerToFinancialQuestion("qual o preço?", "parcelaDesejada"));
   check("[P-ans-6] sem contexto financeiro pendente -> false", !isAnswerToFinancialQuestion("até 1200", "interesse"));
 
+  check("[P-progress-1] financiamento em andamento + 'Ate 2100 ta bom' -> resposta financeira mesmo sem slot pendente", isFinancialValueDuringSelectedFinancing("Ate 2100 ta bom", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
+  check("[P-progress-2] financiamento em andamento + compra nova explicita ainda vence", !isFinancialValueDuringSelectedFinancing("na verdade quero Onix ate 80 mil", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
+  check("[P-progress-3] financiamento em andamento + 'Compass 2019' (ref. a veículo) -> NÃO é resposta financeira (ano/carro)", !isFinancialValueDuringSelectedFinancing("Compass 2019", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
+  check("[P-progress-4] financiamento em andamento + '2100' pelado -> resposta financeira (ano vira valor no contexto)", isFinancialValueDuringSelectedFinancing("2100", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
   // extractLeadSlots — CASO 1: "até 1200" respondendo parcela -> parcelaDesejada=1200, faixaPreco NÃO setado.
   {
     const s = slotsOf(PARCELA_Q, "até 1200");
@@ -138,6 +143,22 @@ function runPure(): void {
     for (const m of muts) if (m.op === "set_slot") out[m.slot] = m.value;
     check("[E-fin] 'até 1200' (pergunta troca pendente + financiamento) -> parcelaDesejada=1200, NÃO entrada/faixaPreco", out.parcelaDesejada === 1200 && out.entrada === undefined && out.faixaPreco === undefined, JSON.stringify(out));
   }
+  // ⭐MISSÃO "Até 2100" — valor no range de ANO (1900-2100) respondendo parcela = parcelaDesejada, faixaPreco NÃO setado.
+  {
+    const s = slotsOf(PARCELA_Q, "Até 2100 ta bom");
+    check("[E-2100] 'Até 2100 ta bom' respondendo parcela -> parcelaDesejada=2100", s.parcelaDesejada === 2100, JSON.stringify(s));
+    check("[E-2100b] faixaPreco NÃO setado (2100 não é teto de compra)", s.faixaPreco === undefined, JSON.stringify(s));
+  }
+  { const s = slotsOf(PARCELA_Q, "2100"); check("[E-2100c] '2100' pelado respondendo parcela -> parcelaDesejada=2100, sem faixaPreco", s.parcelaDesejada === 2100 && s.faixaPreco === undefined, JSON.stringify(s)); }
+  { const s = slotsOf(PARCELA_Q, "uns 2100"); check("[E-2100d] 'uns 2100' respondendo parcela -> parcelaDesejada=2100", s.parcelaDesejada === 2100, JSON.stringify(s)); }
+  { const s = slotsOf(PARCELA_Q, "até 2.100"); check("[E-2100e] 'até 2.100' (com separador) -> parcelaDesejada=2100", s.parcelaDesejada === 2100 && s.faixaPreco === undefined, JSON.stringify(s)); }
+  // "Tenho 8k" respondendo entrada -> entrada=8000, faixaPreco NÃO setado.
+  { const s = slotsOf(ENTRADA_Q, "Tenho 8k"); check("[E-8k] 'Tenho 8k' respondendo entrada -> entrada=8000, sem faixaPreco", s.entrada === 8000 && s.faixaPreco === undefined, JSON.stringify(s)); }
+  // CASO ANO (não abrir brecha): "Compass 2019" respondendo parcela NÃO vira valor financeiro 2019 (é ano do carro).
+  { const s = slotsOf(PARCELA_Q, "Compass 2019"); check("[E-ano] 'Compass 2019' -> parcelaDesejada NÃO vira 2019 (fica ano)", s.parcelaDesejada !== 2019, JSON.stringify(s)); }
+  { const s = slotsOf(PARCELA_Q, "Onix 2020"); check("[E-ano-b] 'Onix 2020' -> parcelaDesejada NÃO vira 2020", s.parcelaDesejada !== 2020, JSON.stringify(s)); }
+  // REGRESSÃO busca: "quero pickup até 90 mil" continua orçamento de COMPRA (faixaPreco), não parcela.
+  { const s = slotsOf(PARCELA_Q, "quero pickup até 90 mil"); const fp = s.faixaPreco as { max?: number } | undefined; check("[E-busca] 'quero pickup até 90 mil' -> faixaPreco.max=90000 (compra), NÃO parcela", fp?.max === 90000 && s.parcelaDesejada === undefined, JSON.stringify(s)); }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -306,7 +327,7 @@ async function runEngine(): Promise<void> {
       ? finU([txt("Ola! Eu sou o Carvalho, consultor da Icom. Voce e de Taubate mesmo?")], "reply", U("other"))   // retry: limpo
       : finU([txt("Ola! Eu sou o Carvalho " + String.fromCharCode(0x1f,0x1f) + "Voc" + String.fromCharCode(0) + "ê é de Taubaté?")], "reply", U("other"));   // 1a: corrompido (controle)
     const t = await c.t("Boa tarde", corruptThenClean);
-    const hasCtrl = /[ --�]/.test(t.outbox);
+    const hasCtrl = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/.test(t.outbox);
     check("[G-enc] resposta com caracteres de controle -> engine rejeita -> reautora (brain_retry)", t.src === "brain_retry", `src=${t.src}`);
     check("[G-enc-b] texto final LIMPO (sem caracteres de controle)", t.committed && !hasCtrl && has(t.outbox, "Taubate"), `outbox=${JSON.stringify(t.outbox)}`);
   }
@@ -320,6 +341,30 @@ async function runEngine(): Promise<void> {
     const leaked = /Voceaa|\be9\b|Taubate9|je1/.test(t.outbox);
     check("[G-enc-c] mojibake visível reparado antes do WhatsApp", t.committed && !leaked, `outbox=${JSON.stringify(t.outbox)}`);
     check("[G-enc-d] texto reparado contém acentos esperados", t.committed && t.outbox.includes("Você é") && t.outbox.includes("Taubaté") && t.outbox.includes("já"), `outbox=${JSON.stringify(t.outbox)}`);
+  }
+
+  // ⭐MISSÃO — E2E do print: quero SUV -> gostei do primeiro -> quais as condições? -> Tenho 8k -> Até 2100 ta bom.
+  //  No último turno "Até 2100 ta bom" (parcela): 0 stock_search/details/photos, parcelaDesejada=2100, entrada=8000
+  //  preservada, faixaPreco NÃO vira 2100, primaryIntent != search_stock, brain_final/brain_retry.
+  {
+    const c = conv();
+    await c.t("quero SUV", listSuv);
+    await c.t("gostei do primeiro", selectFirst);
+    await c.t("quais as condicoes?", () => finU([txt("Perfeito! Você tem algum valor para dar de entrada?")], "reply", U("financing")));
+    const t4 = await c.t("Tenho 8k", () => finU([txt("Ótimo! Qual parcela mensal caberia para você?")], "reply", U("financing")));
+    // No turno da parcela o cérebro TENTA buscar estoque (o bug do print); ao ser bloqueado, conduz o financiamento.
+    const parcelaTryThenConduct: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
+      ? finU([txt("Show! Com essa parcela dá pra montar um plano bacana. Posso já simular o financiamento pra você?")], "reply", U("financing"))
+      : qU({ tool: "stock_search", input: { tipo: "pickup", precoMax: 2100 } }, searchSuvU);
+    const t5 = await c.t("Até 2100 ta bom", parcelaTryThenConduct);
+    check("[G-2100-T4] 'Tenho 8k' -> entrada=8000 (0 stock_search)", t4.slots?.entrada.value === 8000 && t4.stockCalls === 0, `entrada=${JSON.stringify(t4.slots?.entrada)} stock=${t4.stockCalls}`);
+    check("[G-2100-a] 'Até 2100 ta bom' -> 0 stock_search (engine bloqueia)", t5.stockCalls === 0 && t5.stockObs === 0, `calls=${t5.stockCalls} obs=${t5.stockObs}`);
+    check("[G-2100-b] parcelaDesejada=2100", t5.slots?.parcelaDesejada.status === "known" && t5.slots?.parcelaDesejada.value === 2100, JSON.stringify(t5.slots?.parcelaDesejada));
+    check("[G-2100-c] entrada=8000 preservada", t5.slots?.entrada.value === 8000, JSON.stringify(t5.slots?.entrada));
+    check("[G-2100-d] faixaPreco NÃO virou 2100", (t5.slots?.faixaPreco.value as { max?: number } | undefined)?.max !== 2100, JSON.stringify(t5.slots?.faixaPreco));
+    check("[G-2100-e] primaryIntent NÃO é search_stock (=financing)", t5.primaryIntent !== "search_stock", `intent=${t5.primaryIntent}`);
+    check("[G-2100-f] responseSource brain_final/brain_retry", t5.src === "brain_final" || t5.src === "brain_retry", `src=${t5.src}`);
+    check("[G-2100-g] não caiu em terminalSafe", !t5.terminalSafe, `terminalSafe=${t5.terminalSafe}`);
   }
 }
 

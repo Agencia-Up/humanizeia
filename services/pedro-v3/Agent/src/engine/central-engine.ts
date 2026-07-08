@@ -57,7 +57,7 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
-import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession, isAnswerToFinancialQuestion } from "./lead-extraction.ts";
+import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
@@ -1394,9 +1394,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       //    carro já escolhido). !explicitBuyIntent deixa "na verdade quero Onix até 80 mil" voltar a ser busca. Gate por
       //    intenção do turno: foto/institucional/detalhe do lead NÃO são bloqueados (ele pivotou; segue o fluxo normal).
       const pendingFinancialQuestion = pendingQuestionSlot === "parcelaDesejada" || pendingQuestionSlot === "entrada" || pendingQuestionSlot === "formaPagamento";
-      const financialAnswerTurn = llmFirst && !explicitBuyIntent && !tradeInAnswerTurn && pendingFinancialQuestion
-        && isAnswerToFinancialQuestion(leadMessage, pendingQuestionSlot)
+      const financialValueInProgress = llmFirst && !explicitBuyIntent && !tradeInAnswerTurn
+        && isFinancialValueDuringSelectedFinancing(leadMessage, contextState, prepared.interpretation, prepared.claimExtractor);
+      const financialAnswerTurn = llmFirst && !explicitBuyIntent && !tradeInAnswerTurn && ((pendingFinancialQuestion
+        && isAnswerToFinancialQuestion(leadMessage, pendingQuestionSlot, prepared.interpretation, prepared.claimExtractor)) || financialValueInProgress)
         && currentTurnIntent !== "photo_request" && currentTurnIntent !== "photo_memory" && currentTurnIntent !== "institutional" && !isVehicleDetailTurn;
+      const financialAnswerSlot = financialValueInProgress && !pendingFinancialQuestion ? "parcelaDesejada" : pendingQuestionSlot;
       // ── Missão P0 INC1/B: RETOMADA de busca prometida/pendente ("cadê?/e aí?/achou?/me mostra"). Só vira busca quando há
       //    FILTRO ATIVO suficiente (activeSearchConstraints) -> força a busca com esse filtro, sem reperguntar modelo/tipo. ──
       const resumeSearchTurn = llmFirst && !tradeInAnswerTurn && wantsResumeSearch(leadMessage) && sufficientForStockSearch(contextState.activeSearchConstraints ?? {});
@@ -1782,7 +1785,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         //    contagem) + feedback tipado -> o cérebro re-decide e CONDUZ o financiamento. LLM-first: o engine só orienta.
         if (financialAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
           duplicateStockCallsBlocked += 1;
-          const finSlot = pendingQuestionSlot === "parcelaDesejada" ? "a PARCELA mensal" : pendingQuestionSlot === "entrada" ? "a ENTRADA" : "a forma de pagamento";
+          const finSlot = financialAnswerSlot === "parcelaDesejada" ? "a PARCELA mensal" : financialAnswerSlot === "entrada" ? "a ENTRADA" : "a forma de pagamento";
           observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `O cliente está RESPONDENDO à sua pergunta financeira anterior (${finSlot}). O valor/negação dele responde ESSA pergunta — NÃO é pedido de estoque nem novo orçamento de compra de veículo. NÃO chame stock_search/vehicle_details/vehicle_photos_resolve. Interprete a resposta como ${finSlot} e CONDUZA o financiamento do veículo que ele JÁ escolheu com UMA pergunta curta (o próximo dado que falta: troca/entrada/parcela, ou ofereça passar ao consultor). Só busque estoque se ele pedir EXPLICITAMENTE um carro/modelo/tipo/faixa de preço de compra NOVO.` } });
           if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
           continue;
