@@ -114,6 +114,42 @@ export function adHasVehicle(constraints: CommercialConstraints): boolean {
   return sufficientForStockSearch(constraints);
 }
 
+// ── PARTE (missão P0 CTWA): FOCO EXATO do anúncio ESPECÍFICO. Anúncio específico NÃO é filtro amplo — é o veículo EXATO
+//    (foco inicial selecionado). Extrai a IDENTIDADE do anúncio incluindo o ANO (e preço) quando houver, para a busca
+//    resolver o veículo mais específico possível (modelo + ano), nunca listar outros anos de cara. PURO. ────────────────
+export type AdFocusedVehicle = {
+  readonly source: "ad";
+  readonly marca?: string;
+  readonly modelo: string;
+  readonly ano?: number;
+  readonly precoMax?: number;
+};
+export function resolveAdFocusedVehicle(
+  ad: AdContext | null | undefined,
+  claimExtractor: ClaimExtractor,
+  interpretation?: TurnInterpretation | null,
+): AdFocusedVehicle | null {
+  const base = extractAdVehicleConstraints(ad, claimExtractor, interpretation);
+  const modelo = base.modelos && base.modelos.length > 0 ? base.modelos[0] : null;
+  if (!modelo) return null;   // sem MODELO resolvível não há foco exato (anúncio genérico/só tipo -> tratado como amplo)
+  const years = adYears(adText(ad));
+  const focus: AdFocusedVehicle = {
+    source: "ad",
+    modelo,
+    ...(base.marca ? { marca: base.marca } : {}),
+    ...(years.length > 0 ? { ano: years[years.length - 1] } : {}),
+    ...(base.precoMax != null ? { precoMax: base.precoMax } : {}),
+  };
+  return focus;
+}
+
+// O turno atual pede ALTERNATIVAS ao veículo do anúncio? "tem outro Compass?", "tem outros?", "outro ano", "mais barato",
+// "mais em conta". Nesses casos NÃO se prende ao ano exato do anúncio — relaxa para o modelo (lista outros anos). PURO.
+const AD_ALTERNATIVES_RX = /\boutro\b|\boutros\b|\boutra\b|\boutras\b|\bmais\s+barat\w+|\bmais\s+em\s+conta\b|\boutro\s+ano\b|\banos?\s+diferente|\bmais\s+(?:novo|velho|recente|antigo)\b/;
+export function asksAdAlternatives(block: string): boolean {
+  return AD_ALTERNATIVES_RX.test(normalizeText(block));
+}
+
 // O turno ATUAL refere-se ao anúncio? "esse ainda tem?", "tem esse (carro)?", "vi o anúncio", "do anúncio", "ainda está
 // disponível?", "esse aí". Conservador — pega o dêitico "esse/este" ligado a carro/disponibilidade + menções ao anúncio.
 const REFERS_AD_RX = /\btem\s+esse\b|\besse\s+(?:ainda|carro|veiculo|modelo|ai|mesmo)\b|\beste\s+(?:ainda|carro|veiculo|modelo)\b|\bvi\s+o\s+anuncio\b|\b(?:do|no|pelo)\s+anuncio\b|\banuncio\b|\bainda\s+(?:tem|ta|esta|disponivel|dispon[ií]vel)\b|\besse\s+ainda\b|\bainda\s+tem\s+esse\b|\bquero\s+esse\b|\bgostei\s+desse\b/;

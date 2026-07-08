@@ -39,7 +39,7 @@ import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, 
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
-import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey, resolveAdCandidateKeys } from "./ad-context.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, type AdFocusedVehicle } from "./ad-context.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
@@ -452,6 +452,10 @@ export function enrichStockSearchCall(
     // P0-B (audit Codex smoke): turno de SIMILARIDADE ("algo parecido") -> a busca ignora modelo/marca do cérebro e roda
     // só por tipo/preço (constraints já relaxado). Mercado por TIPO, não preso ao modelo do anúncio.
     readonly relaxToType?: boolean;
+    // FOCO EXATO do anúncio (missão P0): o lead pediu ALTERNATIVA do carro do anúncio ("tem outro Compass?", "outro ano",
+    // "mais barato") e NÃO citou ano próprio -> remove o ANO da chamada EXECUTADA (nunca fica preso no ano do anúncio).
+    // Preserva modelo/marca/excludeKeys. É a chamada que VAI RODAR — não depende de retry.
+    readonly dropAdYear?: boolean;
   },
 ): QueryCall {
   if (call.tool !== "stock_search") return call;
@@ -502,20 +506,24 @@ export function enrichStockSearchCall(
     if (call.input.tipo == null && c.tipo) (filled as { tipo?: typeof c.tipo }).tipo = c.tipo;
     if (call.input.precoMax == null && c.precoMax != null) (filled as { precoMax?: number }).precoMax = c.precoMax;
     if (call.input.cambio == null && c.cambio) (filled as { cambio?: typeof c.cambio }).cambio = c.cambio;
+    // FOCO EXATO do anúncio (missão P0): preenche o ANO quando o turno tem um (do anúncio específico OU do lead). Assim a
+    // busca do cérebro que omitiu o ano ainda resolve o veículo EXATO (ex.: Compass 2019, não 2017). Rígido (F2.28).
+    if (call.input.anos == null && c.anos && c.anos.length > 0) (filled as { anos?: number[] }).anos = [...c.anos];
   }
   // INC3: DROPA o excludeKeys ORIGINAL do cérebro (nunca passa verbatim) — só entra o CLAMPADO (ou nada).
   const { excludeKeys: _brainExcludeDropped, ...restInput } = call.input;
-  return {
-    ...call,
-    input: {
-      ...restInput,
-      ...filled,
-      ...(options.popular || c?.popular ? { popular: true } : {}),
-      ...(excludeKeys ? { excludeKeys } : {}),
-      // F2.29: só libera moto se o lead pediu moto OU o cérebro já marcou includeMotorcycles. Senão, DEFAULT exclui.
-      ...(options.wantsMotorcycle || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
-    },
+  const mergedInput: QueryCall["input"] = {
+    ...restInput,
+    ...filled,
+    ...(options.popular || c?.popular ? { popular: true } : {}),
+    ...(excludeKeys ? { excludeKeys } : {}),
+    // F2.29: só libera moto se o lead pediu moto OU o cérebro já marcou includeMotorcycles. Senão, DEFAULT exclui.
+    ...(options.wantsMotorcycle || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
   };
+  // FOCO EXATO do anúncio (missão P0): alternativa pedida + sem ano do lead -> o ANO (do anúncio, seja do cérebro ou do
+  // filled) SAI da chamada EXECUTADA. Preserva modelo/marca/excludeKeys. Não depende de retry.
+  if (options.dropAdYear && "anos" in mergedInput) delete (mergedInput as { anos?: number[] }).anos;
+  return { ...call, input: mergedInput };
 }
 
 // AUTORIA ÚNICA: o cérebro autora um ResponseDraft; o engine RENDERIZA aterrado (SEM 2º LLM), valida contra os
@@ -1040,6 +1048,7 @@ function buildContextualRecovery(args: {
   readonly ctx: TurnContext;
   readonly turnId: string;
   readonly constraints?: CommercialConstraints;   // P0 (LLM-first): recuperação de busca NOMEIA o filtro (honesta, contextual)
+  readonly adVehicleLabel?: string | null;         // FOCO EXATO (missão P0 polimento): foco de anúncio + 1 resultado -> nomeia "o ‹veículo› do anúncio"
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; recoveryReason: string; lastResort: boolean } {
   const u = args.vU.understanding;
   const state = args.ctx.state;
@@ -1090,7 +1099,12 @@ function buildContextualRecovery(args: {
     const itemKeys: string[] = [];
     for (const f of factsArr) if (f.ok && f.tool === "stock_search") for (const v of f.data.items) if (!itemKeys.includes(v.vehicleKey)) itemKeys.push(v.vehicleKey);
     if (itemKeys.length > 0) {
-      const draft: ResponseDraft = { parts: [{ type: "text", content: "Encontrei estas opções pra você:" }, { type: "vehicle_offer_list", vehicleKeys: itemKeys.slice(0, 6) }, { type: "text", content: "Quer ver as fotos de alguma?" }] };
+      // FOCO EXATO do anúncio (missão P0 polimento): 1 resultado do foco do anúncio -> texto SINGULAR nomeando o veículo do
+      // anúncio ("Encontrei o Jeep Compass 2019 do anúncio:"), não o genérico plural "estas opções".
+      const intro = (itemKeys.length === 1 && args.adVehicleLabel)
+        ? `Encontrei o ${args.adVehicleLabel} do anúncio:`
+        : "Encontrei estas opções pra você:";
+      const draft: ResponseDraft = { parts: [{ type: "text", content: intro }, { type: "vehicle_offer_list", vehicleKeys: itemKeys.slice(0, 6) }, { type: "text", content: "Quer ver as fotos, os detalhes ou as condições?" }] };
       try { return mk(draft, ResponseRenderer.render(draft, factsArr, state, args.identities), "reply", "recovery_offer", "busca com itens -> lista aterrada"); } catch { /* cai no honesto */ }
     }
     // P0: busca EXECUTADA com 0 itens -> honesto NOMEANDO o filtro (nunca "esse modelo"), com alternativa. O executor
@@ -1229,6 +1243,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // P0-B (audit Codex smoke): "algo parecido/opções semelhantes/outras parecidas" -> turno de SIMILARIDADE: relaxa
       // modelo/marca (do anúncio/ativo) e busca por TIPO. É turno de busca (força a tool) e o filtro é relaxado abaixo.
       const similarityTurn = llmFirst && detectSimilarityIntent(leadMessage) && currentTurnIntent !== "institutional" && leadEngagement == null;
+      // ── PARTE (missão P0 CTWA): FOCO EXATO do anúncio ESPECÍFICO. Anúncio específico = veículo SELECIONADO, não filtro
+      //    amplo. Na ENTRADA/REFERÊNCIA ao anúncio (adEntryTurn), se o anúncio traz o ANO, a busca filtra por modelo+ANO ->
+      //    resolve o veículo EXATO (Compass 2019), nunca lista outros anos de cara. O lead pedindo ALTERNATIVAS ("outro
+      //    Compass", "outro ano", "mais barato") NÃO é adEntryTurn (nomeia o modelo -> currentHasVehicle) e ainda é travado
+      //    por asksAdAlternatives -> relaxa para o modelo (lista outros). Similaridade/outro veículo já tratados acima.
+      const adFocus: AdFocusedVehicle | null = (llmFirst && effectiveAdContext) ? resolveAdFocusedVehicle(effectiveAdContext, prepared.claimExtractor, prepared.interpretation) : null;
+      const adExactFocusTurn = llmFirst && adEntryTurn && adFocus?.ano != null && !asksAdAlternatives(leadMessage) && !similarityTurn;
+      // FOCO EXATO (missão P0 audit smoke): lead pediu ALTERNATIVA do carro do anúncio ("outro Compass/outro ano/mais
+      // barato") e NÃO citou um ano PRÓPRIO -> o ANO sai da chamada EXECUTADA de stock_search (o cérebro às vezes carimba
+      // anos=[2019] por ver adVehicle="Jeep Compass 2019"). Se o lead citar ano ("outro Compass 2018"), respeita o dele.
+      const dropAdYear = llmFirst && asksAdAlternatives(leadMessage) && !(currentConstraints.anos && currentConstraints.anos.length > 0);
       // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio, OU similaridade.
       const commercialSearchTurn = ((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
@@ -1253,7 +1278,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const mergedConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(searchBase, currentConstraints, commercialCorrections) : currentConstraints;
       // P0-B: SIMILARIDADE relaxa o merge -> só tipo/preço/popular (câmbio só se o LEAD pediu no turno atual). "Algo parecido"
       // nunca fica preso no modelo/marca do anúncio; a recuperação honesta nomeia o TIPO (picapes), não o modelo do anúncio.
-      const commercialConstraints: CommercialConstraints = (llmFirst && similarityTurn) ? relaxToSimilar(mergedConstraints, !!currentConstraints.cambio) : mergedConstraints;
+      const commercialConstraintsBase: CommercialConstraints = (llmFirst && similarityTurn) ? relaxToSimilar(mergedConstraints, !!currentConstraints.cambio) : mergedConstraints;
+      // FOCO EXATO do anúncio: injeta o ANO do anúncio na busca (só na entrada/referência ao anúncio, sem alternativas/
+      // similaridade, e se o lead NÃO deu um ano próprio). O ano é RÍGIDO (F2.28) -> resolve o Compass 2019 exato. NÃO é
+      // persistido como filtro ativo (ver commit) -> não vaza para "tem outro Compass?"/"quero Onix".
+      const commercialConstraints: CommercialConstraints = (adExactFocusTurn && (!commercialConstraintsBase.anos || commercialConstraintsBase.anos.length === 0))
+        ? { ...commercialConstraintsBase, anos: [adFocus!.ano!] }
+        : commercialConstraintsBase;
       // F2.29 (invariante 4): moto NUNCA em lista de carro (default do estoque exclui). Só o lead pedindo moto EXPLICITAMENTE
       // libera moto na busca. Conservador (palavra "moto/scooter/..."), não infere por modelo.
       const wantsMotorcycle = mentionsMotorcycle(leadMessage);
@@ -1278,7 +1309,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // F2.32: o cérebro vê o veículo do anúncio (label aterrado) sempre que há anúncio COM veículo — mesmo fora de turno
       // de entrada — para conduzir LLM-first (o prompt deixa claro que o turno atual/correção vencem o anúncio).
       const adVehicleHint = (llmFirst && effectiveAdContext && adVehicle)
-        ? ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints))
+        ? (adFocus ? [adFocus.marca, adFocus.modelo, adFocus.ano].filter(Boolean).join(" ")
+          : ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints)))
         : undefined;
       const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry, firstContactNoCommercialTarget, specificAdEntry });
 
@@ -1467,6 +1499,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
           enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
           relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
+          dropAdYear,                            // FOCO EXATO (missão P0): alternativa sem ano do lead -> tira anos=[2019] da chamada EXECUTADA
         });
         const started = Date.parse(clock.now());
         let res: QueryResult;
@@ -1551,6 +1584,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
                 wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
                 enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
                 relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
+                dropAdYear,                            // FOCO EXATO (missão P0): alternativa sem ano do lead -> sem anos=[2019]
               });
               const startedS = Date.parse(clock.now());
               const searchRes = await withTimeout(runQuery(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
@@ -1649,7 +1683,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
               // como MARCADOR interno de degradação (o cérebro falhou); o TEXTO ao lead é sempre contextual/honesto.
-              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId, constraints: commercialConstraints });
+              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId, constraints: commercialConstraints, adVehicleLabel: adExactFocusTurn ? (adVehicleHint ?? null) : null });
               // Recuperação CONTEXTUAL aterrada -> deterministic_recovery (texto útil, não "visível"); só o default genérico
               // (lastResort) é technical_fallback. Ambas são degradação (o cérebro não autorou).
               responseSource = rec.lastResort ? "technical_fallback" : "deterministic_recovery";
@@ -1808,7 +1842,14 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // não só o texto do lead. Se uma stock_search rodou (o cérebro OU o engine buscou {tipo:"sedan"} e listou), persiste o
       // ESCOPO REAL — assim "tem outros?" no próximo turno herda tipo/marca/preço/câmbio/anos. Fallback: o filtro do texto.
       const lastStockFact = [...facts].reverse().find((f): f is Extract<QueryResult, { ok: true; tool: "stock_search" }> => f.ok && f.tool === "stock_search");
-      const executedScope = lastStockFact ? activeConstraintsFromStockInput(lastStockFact.data.filtersUsed as Record<string, unknown>) : null;
+      let executedScope = lastStockFact ? activeConstraintsFromStockInput(lastStockFact.data.filtersUsed as Record<string, unknown>) : null;
+      // FOCO EXATO do anúncio (missão P0): o ANO injetado pelo anúncio NÃO persiste como filtro ativo (o lead não pediu esse
+      // ano). Senão "tem outro Compass?"/"quero Onix" herdariam o ano 2019 e ficariam presos. Persistimos o escopo SEM o ano
+      // do anúncio quando o lead não deu ano próprio.
+      if (adExactFocusTurn && executedScope && executedScope.anos && (!currentConstraints.anos || currentConstraints.anos.length === 0)) {
+        const { anos: _adYear, ...rest } = executedScope;
+        executedScope = rest;
+      }
       if (llmFirst) {
         if (executedScope && sufficientForStockSearch(executedScope)) reduced.next.activeSearchConstraints = executedScope;
         else if (isSearchishTurn && (sufficientForStockSearch(commercialConstraints) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = commercialConstraints;

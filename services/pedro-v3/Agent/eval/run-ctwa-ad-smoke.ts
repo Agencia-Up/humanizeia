@@ -235,6 +235,33 @@ const scenarios: readonly Scenario[] = [
     },
   },
   {
+    // Missao P0 (Conversa A): anuncio ESPECIFICO Compass 2019 = FOCO no veiculo exato. T1 fala do 2019 (nao lista 2017);
+    // T2 fotos do 2019 (<=5); T3 "tem outro compass?" -> ai sim lista outros; T4 "quero Onix" -> anuncio nao prende.
+    id: "ad-exact-focus",
+    title: "Anuncio Compass 2019: foco exato, fotos, alternativa so quando pedida, troca para Onix",
+    ad: adCompass,
+    maxCalls: 26,
+    steps: [["Ola"], ["me manda fotos dele"], ["tem outro compass?"], ["na verdade quero Onix"]],
+    assert(turns) {
+      const v = baseViolations(turns);
+      const t1 = turns[0];
+      if (t1 && !has(t1.response, "compass")) v.push("T1: abertura do anuncio especifico nao falou do Compass do anuncio");
+      if (t1 && nameAskRx.test(t1.response)) v.push("T1: abertura pediu o NOME antes de conduzir o veiculo do anuncio");
+      const t1Stock = t1?.toolsExecuted.find((x) => x.tool === "stock_search");
+      if (t1Stock && !/\banos?\b|"anos"|2019/i.test(JSON.stringify(t1Stock.input))) v.push(`T1: busca do anuncio NAO focou o ano exato (esperado anos=[2019]) input=${JSON.stringify(t1Stock.input)}`);
+      const t2 = turns[1];
+      if (t2 && !t2.effects.some((e) => e.kind === "send_media")) v.push("T2: 'fotos dele' nao enviou send_media do Compass do anuncio");
+      const t3 = turns[2];
+      if (t3 && !t3.toolsExecuted.some((x) => x.tool === "stock_search")) v.push("T3: 'tem outro compass?' nao acionou stock_search de alternativas");
+      const t3Stock = t3?.toolsExecuted.find((x) => x.tool === "stock_search");
+      if (t3Stock && /2019/.test(JSON.stringify(t3Stock.input)) && /"anos"/.test(JSON.stringify(t3Stock.input))) v.push(`T3: 'outro compass' ainda ficou preso no ano 2019 (deveria relaxar) input=${JSON.stringify(t3Stock.input)}`);
+      const t4 = turns[3];
+      if (t4 && !t4.toolsExecuted.some((x) => x.tool === "stock_search" && has(JSON.stringify(x.input), "onix"))) v.push("T4: correcao para Onix nao acionou stock_search de Onix");
+      if (t4 && has(t4.response, "compass") && !has(t4.response, "onix")) v.push("T4: anuncio Compass venceu a correcao do lead para Onix");
+      return v;
+    },
+  },
+  {
     // PARTE C (missao abertura+fotos): abertura sem alvo -> discovery (nao nome); busca; foto com curadoria (<=5); "manda
     // mais" -> proximo lote sem repetir. Anuncio generico (adGenericEntry) representa a abertura de descoberta.
     id: "opening-photos",
