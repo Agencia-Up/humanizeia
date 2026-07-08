@@ -167,7 +167,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       llmCallsInTurn: allCalls.length,
       promptExactInTurn: allCalls.length === 0 ? true : allCalls.every((c) => c.promptExact === true),
       toolsRequested: [...recordingBrain.requestedTools],
-      observations: r?.status === "committed" ? r.toolObservations.map((o) => ({ tool: o.tool, ok: o.ok })) : [],
+      observations: r?.status === "committed" ? r.toolObservations.map((o) => ({ tool: o.tool, ok: o.ok, code: o.ok ? undefined : o.error.code })) : [],
       effects: outbox.map((o) => ({ kind: o.kind, vehicleKey: o.payload?.vehicleKey, photoCount: Array.isArray(o.payload?.photoIds) ? o.payload!.photoIds!.length : undefined, status: o.status })),
       slotsDelta: diffSlots(before, after),
       wmBeforeLastPhotoLabel: wmBefore.lastPhotoAction?.label ?? null,

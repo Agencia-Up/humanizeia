@@ -49,6 +49,10 @@ export function detectQuestionRepetition(args: {
   readonly finalText: string;
   readonly slotsKnown: SlotKnownView;
   readonly recentTurns: readonly { readonly role: "lead" | "agent"; readonly text: string }[];
+  // LLM-first (regra P0 do dono): o turno AVANÇOU (o lead contribuiu com um slot NOVO, ex.: o nome)? Se sim, reperguntar uma
+  // pergunta AINDA NÃO respondida (descoberta) é CONDUÇÃO legítima, não loop — o caso 2 (repetição) NÃO deve trancar a LLM.
+  // O caso 1 (slot JÁ conhecido) continua protegendo. Sem avanço, o caso 2 segue barrando repergunta idêntica.
+  readonly advancedThisTurn?: boolean;
 }): QuestionRepetition | null {
   const clauses = questionClauses(args.finalText);
   if (clauses.length === 0) return null;
@@ -69,7 +73,9 @@ export function detectQuestionRepetition(args: {
   }
 
   // 2) MESMA pergunta que uma RECENTE do agente (histórico accepted-safe em recentTurns) -> repetição de decisão. Bloqueia
-  //    a repergunta IDÊNTICA (mesmo texto normalizado OU mesmo slot); rephrasing legítimo passa.
+  //    a repergunta IDÊNTICA (mesmo texto normalizado OU mesmo slot); rephrasing legítimo passa. MAS se o turno AVANÇOU (o
+  //    lead deu um slot novo, ex.: o nome), reperguntar o que ele NÃO respondeu (descoberta) é condução — não trava.
+  if (args.advancedThisTurn) return null;
   const recentAgentQ = args.recentTurns
     .filter((t) => t.role === "agent")
     .slice(-4)

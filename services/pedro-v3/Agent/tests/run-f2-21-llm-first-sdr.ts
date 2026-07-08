@@ -288,8 +288,9 @@ async function main(): Promise<void> {
     await turn("Quero um carro popular", "ambiguous", [q(stockPopular()), fin([txt("Opções:"), offer(POPULAR), txt("Curtiu?")])]);
     const c = await turn("tem Onix?", "ambiguous", (_f, obs) => {
       if (!obs.some((o) => o.tool === "stock_search" && o.ok)) {
-        // 1º tenta responder sem buscar -> engine força; depois busca Onix
-        return obs.some((o) => o.tool === "stock_search") ? q({ tool: "stock_search", input: { modelo: "onix" } }) : fin([txt("Sim, temos Onix!")]);
+        // 1º tenta responder sem buscar -> engine força (REQUIRED_TOOL_MISSING; label tool:"response" p/ não inflar a
+        // contagem do smoke) -> o cérebro lê o feedback e busca Onix. Keia no CÓDIGO do feedback, não no label da tool.
+        return obs.some((o) => o.ok === false && o.error.code === "REQUIRED_TOOL_MISSING") ? q({ tool: "stock_search", input: { modelo: "onix" } }) : fin([txt("Sim, temos Onix!")]);
       }
       return fin([txt("Temos sim! Olha:"), offer([POP2]), txt("Quer ver as fotos?")]);
     });

@@ -106,6 +106,18 @@ function extractName(
       }
     }
   }
+  // Missão P0 (audit Codex smoke real T8): captura OPORTUNÍSTICA de nome — o lead se APRESENTA espontaneamente ("Douglas",
+  // "Douglas Aloan") mesmo SEM termos perguntado. Só quando o bloco INTEIRO é um nome PELADO (1-2 tokens que passam
+  // isNameToken; nenhum outro answer-kind: valor/modelo/negação/afirmação/data/comando) — evita capturar "SUV"/"Sim"/
+  // "automático"/"mostra" como nome. Confidence menor (não foi resposta a uma pergunta de nome). >=NAME_CONFIDENCE_MIN.
+  // Guard: se o agente perguntou a CIDADE, um token pelado ("Taubaté") é a cidade, NÃO o nome — a extração de cidade cuida.
+  const bareTokens = leadMessage.trim().split(/\s+/).filter(Boolean);
+  if (inferredQuestionSlot(state) !== "cidade"
+    && bareTokens.length >= 1 && bareTokens.length <= 2
+    && classifyAnswerKinds(leadMessage.trim(), claimExtractor).size === 0
+    && bareTokens.every((t) => isNameToken(t, claimExtractor))) {
+    return { value: titleCase(bareTokens.join(" ")), confidence: 0.8 };
+  }
   return null;
 }
 
@@ -319,6 +331,20 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
   return Object.keys(result).length > 0 ? result : null;
 }
 
+// Missão P0 (audit Codex smoke real): o lead OFERECE um veículo de TROCA mesmo SEM termos perguntado sobre troca — no smoke,
+// "Tenho um Renegade 2019 86km" foi dito enquanto o agente perguntava sobre ENTRADA/financiamento. Sinal ROBUSTO de posse =
+// verbo de posse (tenho/possuo, exceto "tenho interesse" = compra) + veículo (modelo) + QUILOMETRAGEM (km). O km é o
+// discriminador forte: você só cita o km de um carro que É SEU, nunca de um que quer comprar. Assim "tem Renegade?" /
+// "quero um Renegade" (compra, sem posse+km) NÃO viram troca. Usado no engine (tradeInAnswerTurn) e na captura de
+// veiculoTroca — para o ENTENDIMENTO REFLETIR a conversa, não só quando nós perguntamos.
+export function statesTradeVehiclePossession(text: string, claimExtractor: ClaimExtractor): boolean {
+  const norm = normalizeText(text);
+  const hasPossession = /\b(?:tenho|possuo)\b/.test(norm) && !/\btenho\s+interesse\b/.test(norm);
+  if (!hasPossession) return false;
+  const tv = tradeVehicle(text, claimExtractor);
+  return tv != null && tv.modelo != null && tv.km != null;
+}
+
 // item 1 (Codex): ESCOLHA de veículo do lead a partir da última lista renderizada — ordinal OU modelo ÚNICO.
 // Ambíguo (2 Onix pelo modelo) -> NÃO seleciona (o ordinal desambigua); modelo fora da lista -> não muda o foco.
 // item 2: usa o parseOrdinal ÚNICO/endurecido (quantidade não é ordinal: "quero 3 fotos" não seleciona).
@@ -362,6 +388,21 @@ export function extractLeadSlots(args: {
   const captured = new Set<keyof ConversationState["slots"]>();
   const expected = inferredQuestionSlot(state);
   const norm = normalizeText(leadMessage);
+  // ── Missão P0 (audit Codex): separa o ALVO DE COMPRA do veículo de TROCA no MESMO bloco. O verbo de compra marca o INÍCIO
+  //    do alvo de compra; o trecho ANTES é a parte de TROCA. Em contexto de troca, interesse/tipoVeiculo (COMPRA) vêm SÓ do
+  //    alvo de compra (NUNCA do carro de troca -> mata a contaminação "interesse=Renegade"); veiculoTroca vem da parte de troca. ──
+  const buyVerbMatch = /\b(quero|procuro|busco|prefiro|gostaria\s+de|estou\s+procurando|to\s+procurando)\b/i.exec(leadMessage);
+  const buyClauseText = buyVerbMatch ? leadMessage.slice(buyVerbMatch.index) : "";           // "quero SUV / quero algo até 70 mil"
+  const preBuyText = buyVerbMatch ? leadMessage.slice(0, buyVerbMatch.index) : leadMessage;   // "tenho um Onix para troca,"
+  const availabilityQ = /\btem\s+\w/.test(norm);   // "tem Renegade?" = DISPONIBILIDADE (compra), não troca
+  const tradePhrase = /\b(?:para|pra|de|na)\s+troca\b|\bdar\s+(?:de\s+|na\s+)?troca\b|\bdou\s+(?:de\s+|na\s+)?troca\b/.test(norm);
+  // Missão P0 (audit Codex smoke real): posse de veículo COM km = oferta de TROCA mesmo sem termos perguntado troca. Entra no
+  // inTradeContext p/ que interesse/tipoVeiculo (COMPRA) venham SÓ do alvo de compra (buyClause) — NUNCA do carro de troca
+  // (senão "Tenho um Renegade 2019 86km" respondendo sobre entrada gravaria interesse=renegade).
+  const offersTradeByPossession = statesTradeVehiclePossession(preBuyText || leadMessage, claimExtractor);
+  const inTradeContext = expected === "possuiTroca" || expected === "veiculoTroca" || tradePhrase || offersTradeByPossession;
+  // interesse/tipoVeiculo de COMPRA: em contexto de troca, só do ALVO DE COMPRA (buy clause); fora dele, o bloco todo.
+  const interestText = inTradeContext ? buyClauseText : leadMessage;
 
   const add = (mutation: DecisionMutation, slot?: keyof ConversationState["slots"]): void => {
     muts.push(mutation);
@@ -373,7 +414,8 @@ export function extractLeadSlots(args: {
     add({ op: "set_slot", slot: "nome", value: name.value, confidence: name.confidence, sourceTurnId: turnId }, "nome");
   }
 
-  const models = detectInterestModels(leadMessage, interpretation, claimExtractor);
+  // interesse/tipoVeiculo (COMPRA) vêm de interestText — em contexto de troca é o ALVO DE COMPRA (nunca o carro de troca).
+  const models = interestText ? detectInterestModels(interestText, interpretation, claimExtractor) : [];
   if (models.length > 0) {
     const value = models.join(", ");
     const before = state.slots.interesse.status === "known" ? normalizeText(state.slots.interesse.value ?? "") : "";
@@ -382,7 +424,7 @@ export function extractLeadSlots(args: {
     }
   }
 
-  const type = parseVehicleType(leadMessage);
+  const type = interestText ? parseVehicleType(interestText) : null;
   if (type) add({ op: "set_slot", slot: "tipoVeiculo", value: type, confidence: 0.95, sourceTurnId: turnId }, "tipoVeiculo");
 
   // ── Papéis monetários (item 3): por CLÁUSULA, order-independent (ver moneyByClause). Cada papel pega o
@@ -426,15 +468,15 @@ export function extractLeadSlots(args: {
   const buyVerb = /\b(quero|procuro|busco|prefiro|mostra|me ve|gostaria de ver|estou procurando|to procurando)\b/.test(norm);
   const mentionsVehicle = parseVehicleType(leadMessage) != null || /\b(carro|veiculo|modelo)\b/.test(norm) || /\b\d{1,3}\s*mil\b/.test(norm)
     || claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model");
-  const looksLikeBuyRequest = buyVerb && mentionsVehicle;
+  const looksLikeBuyRequest = (buyVerb || availabilityQ) && mentionsVehicle;   // "tem Renegade?" também é compra, não troca
   // LLM-first (missão): "tenho não"/"não tenho"/"não possuo" respondendo à pergunta de TROCA = NÃO (possuiTroca=false).
   // parseBooleanAnswer("tenho não") casaria "tenho"->true (ERRADO); por isso a negação explícita vem ANTES. Mata a
   // repetição vista no eval real (agente repetia "tem carro pra troca?" porque não entendeu "tenho não").
   const trocaNeg = /\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+possuo\b|\bpossuo\s+nao\b/.test(norm);
   const trocaPos = !trocaNeg && /\btenho\s+sim\b|\bpossuo\s+sim\b/.test(norm);
   let deniedTradeVehicle = false;
-  if (explicitTrade || explicitNoTrade || expected === "possuiTroca") {
-    const value = (explicitNoTrade || trocaNeg) ? false : (explicitTrade || trocaPos) ? true : (looksLikeBuyRequest ? null : parseBooleanAnswer(leadMessage));
+  if (explicitTrade || explicitNoTrade || expected === "possuiTroca" || offersTradeByPossession) {
+    const value = (explicitNoTrade || trocaNeg) ? false : (explicitTrade || trocaPos || offersTradeByPossession) ? true : (looksLikeBuyRequest ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
       add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");
@@ -445,9 +487,14 @@ export function extractLeadSlots(args: {
   // Renegade / 2019 / 86km" respondendo "tem carro pra troca?"). Antes o gate lia possuiTroca PRÉ-turno e perdia o veículo.
   // Contexto de troca ATIVO = pergunta pendente de troca (possuiTroca/veiculoTroca) OU já confirmou OU frase explícita de
   // troca no bloco. NÃO captura quando negou a troca ("não tenho"). O tradeVehicle já retorna null sem dados de veículo.
-  const tradeContextActive = expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade;
-  if (tradeContextActive && !deniedTradeVehicle) {
-    const vehicle = tradeVehicle(leadMessage, claimExtractor);
+  // Missão P0 (audit Codex): só captura o veículo de troca quando há sinal REAL de POSSE/troca no trecho de troca
+  // (tenho/possuo/"para troca") OU o agente pediu explicitamente os DADOS do carro de troca (expected=veiculoTroca).
+  // Extrai do preBuyText (parte de troca) — nunca do alvo de compra. "tem Renegade?"/"quero um Renegade" (COMPRA) NÃO viram troca.
+  const tradeContextActive = expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade || offersTradeByPossession;
+  const possessionSignal = /\b(tenho|possuo)\b/.test(normalizeText(preBuyText)) || tradePhrase;
+  const captureTrade = !deniedTradeVehicle && (expected === "veiculoTroca" || (tradeContextActive && possessionSignal));
+  if (captureTrade) {
+    const vehicle = tradeVehicle(preBuyText || leadMessage, claimExtractor);
     if (vehicle) add({ op: "set_slot", slot: "veiculoTroca", value: vehicle, confidence: 0.86, sourceTurnId: turnId }, "veiculoTroca");
   }
 

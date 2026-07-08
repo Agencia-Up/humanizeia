@@ -57,7 +57,7 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
-import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot } from "./lead-extraction.ts";
+import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession } from "./lead-extraction.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
@@ -129,6 +129,18 @@ function isDegradedResponse(src: ResponseSource, recoveryReason: string | null):
   void recoveryReason;
   if (isDegradedSource(src)) return true;
   return false;
+}
+
+// T1 (audit Codex smoke): o LLM às vezes emite BYTES DE CONTROLE no texto (ex.: U+001F). Remove C0 (mantém \t \n \r), DEL
+// e o replacement char U+FFFD — nunca vão pro WhatsApp/CRM. NÃO mexe em espaços/quebras (preserva a formatação da lista).
+function stripControlChars(text: string): string {
+  let out = "";
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0x7f || c === 0xfffd) continue;
+    out += ch;
+  }
+  return out;
 }
 
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean): string | null {
@@ -545,6 +557,7 @@ function authorFromBrainDraft(args: {
   readonly specificAdVehicle?: string | null;        // PARTE A (missão P0): entrada por anúncio ESPECÍFICO -> abertura DEVE falar do veículo
   readonly searchExpectedThisTurn?: boolean;         // Missão P0 INC1/A: turno comercial/busca -> proíbe promessa "vou buscar" sem stock_search
   readonly noCommercialContextYet?: boolean;         // Missão P0 INC2/F: sem intenção comercial ainda -> não pedir nome (nem sobrenome)
+  readonly advancedThisTurn?: boolean;               // LLM-first: o lead deu um slot novo neste turno (ex.: o nome) -> reperguntar o não-respondido é condução
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -647,6 +660,28 @@ function authorFromBrainDraft(args: {
       && !mentionsCommercialDiscovery(composed.text)) {
     return { ok: false, feedback: "O cliente ainda NÃO disse o que procura. NÃO peça o nome agora — primeiro entenda a intenção comercial: pergunte o que ele procura (um modelo, um TIPO de carro — SUV/sedan/hatch/picape — ou uma FAIXA de preço). O nome vem depois, com naturalidade, quando já houver interesse." };
   }
+  // Missão P0 (audit Codex smoke real T8): NUNCA repergunte o NOME quando ele JÁ está conhecido (o lead já se apresentou). E
+  // NUNCA peça nome num turno de PAGAMENTO/condições/financiamento — pagamento avança a QUALIFICAÇÃO (troca/entrada/parcela/
+  // simulação), não coleta cadastro. Deny + feedback -> o cérebro RE-AUTORA conduzindo, sem pedir nome.
+  if (asksLeadName(composed.text)) {
+    if (args.ctx.state.slots.nome.status === "known") {
+      const known = args.ctx.state.slots.nome.value;
+      return { ok: false, feedback: `Você JÁ sabe o nome do cliente${typeof known === "string" && known ? ` (${known})` : ""}. NÃO pergunte o nome de novo — use-o e siga a conversa (o que ele procura, opções, condições ou visita).` };
+    }
+    if (isPaymentTurn(args.leadMessage)) {
+      return { ok: false, feedback: "O cliente pediu as CONDIÇÕES DE PAGAMENTO. NÃO peça o nome — pagamento não é cadastro. Avance a qualificação financeira: pergunte se ele tem carro para dar de TROCA, se pretende dar ENTRADA, uma PARCELA mensal confortável, ou ofereça simular o financiamento." };
+    }
+  }
+  // ⭐T8 (audit Codex, LLM-first): turno de PAGAMENTO com veículo JÁ ESCOLHIDO (selecionado OU há oferta na última lista) ->
+  // o agente CONDUZ o financiamento do carro selecionado; NUNCA volta para a DESCOBERTA ("o que você procura?/que tipo?").
+  // Draft vira discovery -> deny + feedback (a LLM RE-AUTORA conduzindo). O engine NÃO escreve a resposta.
+  if (isPaymentTurn(args.leadMessage)
+      && (args.ctx.state.vehicleContext.selected?.key != null || (args.ctx.state.lastRenderedOfferContext?.items?.length ?? 0) > 0)
+      && asksDiscoveryQuestion(composed.text)) {
+    const sel = args.ctx.state.vehicleContext.selected;
+    const selLabel = sel?.label && sel.label !== sel.key ? sel.label : "o veículo que ele já escolheu";
+    return { ok: false, feedback: `O cliente pediu as CONDIÇÕES DE PAGAMENTO de ${selLabel} — ele JÁ escolheu o carro. NÃO volte para a descoberta ("o que você procura"/"que tipo"). CONDUZA o financiamento: pergunte se ele tem um valor para dar de ENTRADA, uma PARCELA mensal confortável, ou um carro na TROCA. NÃO afirme valores específicos (pergunte-os).` };
+  }
   // PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO — a abertura DEVE reconhecer/conduzir o VEÍCULO do anúncio (não uma
   // saudação genérica pedindo nome/telefone/cidade/loja). INVARIANTE (o engine NÃO escreve a resposta, só NEGA): se o draft
   // não mostra/lista/oferece o veículo E não cita a marca/modelo do anúncio conduzindo sobre ele -> deny + feedback (o
@@ -688,6 +723,7 @@ function authorFromBrainDraft(args: {
         faixaPreco: slots.faixaPreco?.status === "known",
       },
       recentTurns: args.ctx.state.recentTurns ?? [],
+      advancedThisTurn: args.advancedThisTurn === true,
     });
     if (rep) return { ok: false, feedback: rep.feedback };
   }
@@ -1008,6 +1044,14 @@ function buildRelaxedOfferResponse(args: {
 // O texto ABRE pedindo o NOME/dado de contato do lead (abertura burocrática de formulário)? PURO.
 const ASKS_LEAD_NAME_RX = /\b(?:qual|quais|como)\b[^?]*\b(?:seu|teu|o\s+seu)\s+nome\b|\bseu\s+nome\b\s*\??$|\bcomo\s+(?:voce|vc|tu|o\s+senhor|a\s+senhora)\s+se\s+chama|\bme\s+(?:diz|fala|informa|passa|dizer)\b[^?]*\bnome\b|\bpode\s+me\s+(?:dizer|passar|informar|falar)\b[^?]*\bnome\b|\bcom\s+quem\s+(?:eu\s+)?(?:falo|estou\s+falando)\b|\bqual\s+(?:e\s+)?o\s+seu\s+nome\b/;
 function asksLeadName(text: string): boolean { return ASKS_LEAD_NAME_RX.test(normalizeText(text)); }
+// Missão P0 (audit Codex smoke real T8): o BLOCO do lead é sobre CONDIÇÕES DE PAGAMENTO / financiamento? Nesse turno o
+// agente NÃO deve pedir nome (é qualificação financeira, não cadastro). PURO. normalizeText remove acentos.
+const PAYMENT_TURN_RX = /\bcondic[oõ]?es?\b|\bpagament|\bfinanci|\bparcel|\bentrada\b|\ba\s+vista\b|\bconsorci|\bsimul(?:ar|acao|e)\b/;
+function isPaymentTurn(leadMessage: string): boolean { return PAYMENT_TURN_RX.test(normalizeText(leadMessage)); }
+// Missão P0 (audit Codex T8): o draft está PERGUNTANDO a DESCOBERTA ("o que você procura?", "que tipo?", "me conta mais do
+// que procura", "qual faixa?")? NARROW (não pega "opções de financiamento"). PURO. normalizeText remove acentos.
+const ASKS_DISCOVERY_RX = /\bo\s+que\s+(?:voce|vc|tu|o\s+senhor|a\s+senhora)\s+(?:procur|busc|quer|deseja|precis|ta\s+buscando)|\bque\s+tipo\s+de\s+(?:carro|veiculo)\b|\bqual\s+(?:modelo|tipo)\b[^?]*\b(?:procur|quer|interess|busc)|\bme\s+conta\s+(?:um\s+pouco\s+)?mais\s+do\s+que\s+voce\s+(?:procur|busc)|\bqual\s+(?:a\s+)?faixa\s+de\s+(?:preco|valor)\b/;
+function asksDiscoveryQuestion(text: string): boolean { return ASKS_DISCOVERY_RX.test(normalizeText(text)); }
 // Missão P0 INC2/F: o texto pede SOBRENOME / nome completo? (nunca deve, nessa fase). PURO.
 const ASKS_SURNAME_RX = /\bsobrenome\b|\bnome\s+completo\b|\bnome\s+e\s+sobrenome\b/;
 function asksLeadSurname(text: string): boolean { return ASKS_SURNAME_RX.test(normalizeText(text)); }
@@ -1029,6 +1073,20 @@ function hasExplicitBuyIntent(block: string): boolean { return EXPLICIT_BUY_RX.t
 // acento (case-insensitive no ORIGINAL, sem depender de normalizeText que muda índices). PURO.
 const BUY_VERB_ORIG_RX = /\b(quero|procuro|busco|prefiro|gostaria\s+de|estou\s+procurando|to\s+procurando)\b/i;
 function buyClauseOf(block: string): string { const m = BUY_VERB_ORIG_RX.exec(block); return m ? block.slice(m.index) : block; }
+// Missão P0 (audit Codex smoke): FINGERPRINT normalizado de uma stock_search (marca/modelo/tipo/preço/câmbio/anos/popular/
+// moto/excludeKeys/broad). Buscas semanticamente EQUIVALENTES têm o mesmo fingerprint -> executam 1x por turno (dedup).
+// Relaxamento REAL de filtros gera fingerprint DIFERENTE (é uma busca de verdade), então não é bloqueado. PURO.
+function stockSearchFingerprint(input: Record<string, unknown>): string {
+  const s = (v: unknown): string => (typeof v === "string" ? normalizeText(v) : "");
+  const arr = (v: unknown): (string | number)[] => Array.isArray(v) ? [...v].map((x) => (typeof x === "number" ? x : normalizeText(String(x)))).sort() : [];
+  return JSON.stringify({
+    marca: s(input.marca), modelo: s(input.modelo), tipo: s(input.tipo),
+    precoMax: typeof input.precoMax === "number" ? input.precoMax : null,
+    precoMin: typeof input.precoMin === "number" ? input.precoMin : null,
+    cambio: s(input.cambio), anos: arr(input.anos), popular: input.popular === true,
+    includeMotorcycles: input.includeMotorcycles === true, excludeKeys: arr(input.excludeKeys), broad: input.broad === true,
+  });
+}
 // O texto JÁ faz descoberta comercial (modelo/tipo/faixa/procura/opções)? Se sim, não precisa do backstop. PURO.
 const COMMERCIAL_DISCOVERY_RX = /\bmodelo\b|\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\bpickup\b|\btipo\s+de\s+(?:carro|veiculo)\b|\bfaixa\s+de\s+(?:preco|valor)\b|\bprocur\w+\b|\bopcoes\b|\bopcao\b|\bque\s+(?:tipo|carro|modelo)\b|\b(?:ta|esta)\s+buscando\b|\bpensando\s+em\b|\borcamento\b/;
 function mentionsCommercialDiscovery(text: string): boolean { return COMMERCIAL_DISCOVERY_RX.test(normalizeText(text)); }
@@ -1123,6 +1181,11 @@ function buildContextualRecovery(args: {
     }
     return plain(`O ${label} está com ${values.join(", ")}.`, "reply", "recovery_vehicle_detail_fact", "vehicle_details executado -> responde atributo com fato real");
   }
+  // NOTA (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SELEÇÃO ("gostei do segundo") NÃO é respondida por
+  // texto comercial do engine. O carro escolhido é entregue à LLM como FATO no FEEDBACK do loop (o label aterrado quando ela
+  // tenta vehicle_details numa seleção) e ela REDIGE o acolhimento. Aqui na recuperação (última linha) NÃO se escreve
+  // "Ótima escolha…": se a LLM nunca autorar, cai no fallback técnico degradado abaixo (raro, observável). Removido
+  // recovery_selection (era handler disfarçado).
   // BUSCA (hint do entendimento OU há itens). P1: DIFERENCIA — executada com itens -> lista; executada 0 -> ausência REAL;
   // tool FALHOU -> indisponibilidade temporária; NÃO executada -> nunca afirma ausência, pergunta específica.
   // Busca (hint do entendimento OU há fato de estoque). NÃO usa constraint p/ rotear: o executor determinístico de busca
@@ -1164,6 +1227,10 @@ function buildContextualRecovery(args: {
     const text = (state.lastRenderedOfferContext?.items?.length ?? 0) > 0 ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "De qual carro você quer ver as fotos?";
     return plain(text, "clarify", "recovery_photo_which", "foto sem alvo -> pergunta qual");
   }
+  // NOTA (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): turno só-nome ("Douglas") NÃO é respondido por texto
+  // do engine ("Prazer, Douglas…"). O nome já entra no frame (funnel.known) + o prompt manda acolher e avançar a descoberta;
+  // se a LLM pede nome já conhecido/sobrenome, o guard devolve FEEDBACK e ela reescreve. Removido recovery_name_identified
+  // (era handler disfarçado). Sem autoria da LLM, cai no fallback técnico degradado abaixo (raro, observável).
   // Default GENÉRICO (lastResort) — sem contexto acionável. É o ÚNICO caso marcado technical_fallback (não "reformule").
   return plain("Me conta um pouco mais do que você procura que eu já te ajudo. 😊", "clarify", "recovery_ask_need", "sem contexto acionável -> pede o que procura", true);
 }
@@ -1211,6 +1278,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         turnId,
       });
       const { contextState, committed: safeExtractedSlots } = safeCommitSlots(state, extractedSlots, turnId, cutoff);
+      // LLM-first (regra P0): o lead contribuiu com um slot NOVO neste turno (ex.: o nome)? Se sim, reperguntar o que ele
+      // ainda NÃO respondeu (descoberta) é condução legítima — o anti-repetição (caso 2) não deve trancar a LLM.
+      const leadAdvancedThisTurn = safeExtractedSlots.some((m) => m.op === "set_slot");
 
       const ctx: TurnContext = {
         state: contextState, turnId, leadMessage, now: cutoff,
@@ -1257,7 +1327,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // ── Missão P0 INC3/G: TURNO DE RESPOSTA DE TROCA. A última pergunta do agente foi sobre TROCA (possuiTroca/veiculoTroca)
       //    e o lead NÃO está pedindo COMPRA explícita ("tem X?", "quero comprar X") -> o bloco é RESPOSTA DE TROCA: o carro
       //    citado ("tenho um Renegade 2019 86km") é do LEAD, não pedido de estoque. NUNCA vira stock_search. gate llmFirst. ──
-      const tradeInAnswerTurn = llmFirst && pendingTradeQuestion && !explicitBuyIntent;
+      // Missão P0 (audit Codex smoke real): o turno é RESPOSTA/OFERTA de TROCA quando NÓS perguntamos sobre troca
+      // (pendingTradeQuestion) OU quando o LEAD oferece espontaneamente um veículo que POSSUI com km
+      // (statesTradeVehiclePossession) — em ambos, sem intenção de COMPRA explícita. O entendimento REFLETE a conversa:
+      // "Tenho um Renegade 2019 86km" respondendo sobre entrada/financiamento é TROCA, não busca de estoque.
+      const leadOffersTradeVehicle = llmFirst && statesTradeVehiclePossession(leadMessage, prepared.claimExtractor);
+      const tradeInAnswerTurn = llmFirst && !explicitBuyIntent && (pendingTradeQuestion || leadOffersTradeVehicle);
       // ── Missão P0 INC1/B: RETOMADA de busca prometida/pendente ("cadê?/e aí?/achou?/me mostra"). Só vira busca quando há
       //    FILTRO ATIVO suficiente (activeSearchConstraints) -> força a busca com esse filtro, sem reperguntar modelo/tipo. ──
       const resumeSearchTurn = llmFirst && !tradeInAnswerTurn && wantsResumeSearch(leadMessage) && sufficientForStockSearch(contextState.activeSearchConstraints ?? {});
@@ -1393,7 +1468,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // P0-sel (missão): o lead está SELECIONANDO um veículo da última lista/foco ("gostei do segundo", "esse", ordinal)?
       // Numa seleção o cérebro pode dar um final NATURAL sem vehicle_details (citar atributo é barrado no validate, com
       // feedback específico "acolha a escolha, não cite atributo sem vehicle_details").
-      const selectionTurn = resolveSelectedVehicle(leadMessage, contextState, ctx.claimExtractor) != null;
+      const selectionRef = resolveSelectedVehicle(leadMessage, contextState, ctx.claimExtractor);
+      const selectionTurn = selectionRef != null;
+      // Label ATERRADO do carro escolhido (do offer context) — vai no FEEDBACK à LLM (fato), NUNCA numa resposta escrita pelo engine.
+      const selectionLabel: string | null = selectionRef ? (canonicalVehicleLabel(selectionRef.key, [], identities, contextState) ?? (selectionRef.label && selectionRef.label !== selectionRef.key ? selectionRef.label : null)) : null;
       let authoredComposed: RenderedResponse | null = null;
       let authoredDecision: TurnDecision | null = null;
       let authoredProposedEffects: ProposedEffectPlan[] | null = null;
@@ -1463,6 +1541,34 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       };
 
       const turnStartMs = Date.parse(clock.now());   // Missão P0 (doc 2): observabilidade de latência do turno.
+      // Missão P0 (audit Codex smoke): DEDUP de stock_search por fingerprint POR TURNO. Buscas equivalentes (mesmo filtro
+      // normalizado) executam 1x — a 2ª+ devolve o FATO já obtido ao cérebro (sem re-executar a tool). Mata o "cadê? rodou
+      // stock_search 6x". Relaxamento real (filtro diferente) tem fingerprint diferente e roda. NÃO usa if por frase.
+      const stockSearchCache = new Map<string, QueryResult>();
+      const stockFingerprintsExecuted: string[] = [];
+      let duplicateStockCallsBlocked = 0;
+      // Missão P0 (audit Codex smoke): CAP anti-loop de stock_search repetido pelo cérebro (o "cadê? 7x"). Cada repetição
+      // SEMÂNTICA vira feedback de controle (tool:"response", NÃO conta como busca no relatório) mandando finalizar; após
+      // poucas repetições o loop sai e a recuperação determinística responde. Persiste ENTRE iterações (por isso fora do for).
+      let dupStockLoopCount = 0;
+      const DUP_STOCK_LOOP_CAP = 3;  // 1 busca real + até 2 nudges "finalize" antes de sair do loop (bound de custo/latência)
+      // Missão P0 (audit Codex smoke real T7): MESMO cap para vehicle_details. "gostei do segundo" = SELEÇÃO; o cérebro às
+      // vezes tenta vehicle_details sem ter a vehicleKey (a rejeição do gate não é execução) — sem cap loopava 6x → fallback.
+      let dupDetailLoopCount = 0;
+      // Fase 1 (LLM-first): retries EXTRAS (bounded) para os feedbacks acionáveis de LISTAGEM/MONEY — a LLM insiste em listar/
+      // conduzir sem cair no recovery, mas com teto (não gasta todos os passos num cérebro travado). Persiste entre iterações.
+      let listMoneyRetries = 0;
+      const LIST_MONEY_RETRY_CAP = 4;
+      const runQueryDedup = async (call: QueryCall): Promise<QueryResult> => {
+        if (call.tool !== "stock_search") return runQuery(call);
+        const fp = stockSearchFingerprint(call.input as Record<string, unknown>);
+        const cached = stockSearchCache.get(fp);
+        if (cached) { duplicateStockCallsBlocked += 1; return cached; }
+        const res = await runQuery(call);
+        stockSearchCache.set(fp, res);
+        stockFingerprintsExecuted.push(fp);
+        return res;
+      };
       for (; brainSteps < brainMaxSteps; brainSteps++) {
         let step;
         try {
@@ -1486,9 +1592,36 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           // P0 (LLM-first): a busca é exigida pela SEMÂNTICA do cérebro OU por um constraint comercial DETERMINÍSTICO do
           // bloco (marca/modelo/tipo/preço/câmbio/popular). Sem isto, quando o cérebro sub-classificava "até 50 mil e que
           // seja da volks", o turno caía em recovery_stock_not_run e reperguntava o que o lead já disse.
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && (isStockSearchTurn(brainVU()) || commercialSearchTurn), moreOptionsNeedsScope);
+          // Missão P0 (audit Codex smoke): num turno de RESPOSTA DE TROCA o stock_search é PROIBIDO — então o engine também
+          // NÃO pode EXIGIR stock_search antes do final. Senão o cérebro fica preso numa contradição (proíbe-se buscar E
+          // exige-se buscar) e CADA REQUIRED_TOOL_MISSING empurra uma observação de stock_search (o "obs=8" do relatório).
+          // O carro citado é a TROCA; o turno avança sem busca. (O primaryIntent do resultado já é reconciliado p/ trade_in.)
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && (isStockSearchTurn(brainVU()) || commercialSearchTurn), moreOptionsNeedsScope);
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
-            observations.push({ tool: frame.signals.mentionsStore ? "tenant_business_info" : "stock_search", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
+            const stockReq = !frame.signals.mentionsStore;
+            // ⭐Fase 1 (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SÓ na RETOMADA ("cadê?/e aí?/achou?/
+            //   me mostra", resumeSearchTurn) — o lead cobra o resultado de uma busca que ele JÁ pediu. Em vez de só mandar
+            //   "busque" (e o engine acabar LISTANDO no lugar da LLM via recovery_offer), o ENGINE EXECUTA a busca (fato) com o
+            //   FILTRO ATIVO e devolve o RESULTADO ao MESMO cérebro + feedback "liste com vehicle_offer_list e conduza". A LLM
+            //   REDIGE a lista — o engine NÃO escreve. Fresh search / "tem X?" seguem o caminho antigo (o cérebro chama a tool).
+            if (stockReq && resumeSearchTurn && sufficientForStockSearch(effectiveSearchScope)) {
+              if (!facts.some((f) => f.ok && f.tool === "stock_search")) {
+                try {
+                  const forcedCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, { popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true, moreOptions: frame.signals.mentionsMoreOptions, previousVehicleKeys: shownVehicleKeys, constraints: effectiveSearchScope, wantsMotorcycle, enforceShownClamp: llmFirst, relaxToType: similarityTurn, dropAdYear });
+                  const startedF = Date.parse(clock.now());
+                  const forcedRes = await withTimeout(runQueryDedup(forcedCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (resume list-it) exceeded timeout");
+                  facts.push(forcedRes); observations.push(toAgentObservation(forcedRes)); toolResultMems.push(toToolResultMemory(forcedRes, turnId)); toolTelemetry.push(toToolTelemetry(forcedRes, Math.max(0, Date.parse(clock.now()) - startedF)));
+                } catch { /* best-effort: sem o fato, cai no feedback padrão abaixo */ }
+              }
+              if (facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0)) {
+                observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: "Você JÁ tem o resultado da busca (está nas observações deste turno). Responda ao lead LISTANDO os veículos encontrados com uma parte vehicle_offer_list e conduza com UMA pergunta curta (quer ver as fotos, os detalhes ou as condições?). NÃO chame stock_search de novo." } });
+                if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+                continue;
+              }
+            }
+            // Fresh search / "tem X?" / sem escopo / tenant_business_info: mantém o feedback original ("chame a tool").
+            observations.push({ tool: stockReq ? "response" : "tenant_business_info", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
+            if (stockReq) { duplicateStockCallsBlocked += 1; if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break; }
             continue;
           }
           if (missingTool) break;
@@ -1504,18 +1637,50 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn, noCommercialContextYet });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
               break;
             }
-            brainRetries += 1; policyFeedbackLog.push(authored.feedback);
-            // T5: fingerprint de deny REPETIDO -> não gasta as 3 tentativas idênticas; sai p/ RECUPERAÇÃO contextual.
-            const fp = denyFingerprint(authored.feedback);
-            if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
-            seenDenyFingerprints.add(fp);
-            if (brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: authored.feedback } }); continue; }
+            brainRetries += 1;
+            // ⭐Fase 1 (LLM-first, regra P0 do dono): deny num turno de CONDUÇÃO comercial vira FEEDBACK ACIONÁVEL para a LLM
+            //   REDIGIR (nunca o engine escrever). Dois casos + "keepRetrying" (isento do break de deny-repetido: o certo é a
+            //   LLM insistir até acertar, dentro de brainMaxSteps — evita cair em recovery_offer/technical_fallback):
+            //   (1) LISTAGEM (comercial/retomada COM itens): entrega as vehicleKeys EXATAS + formato de 3 partes -> a LLM devolve
+            //       a vehicle_offer_list (o sistema formata preço/km). (2) MONEY em condução (pagamento/troca): o carro de troca
+            //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
+            const listTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
+            const moneyDeny = /monet[aá]ri|money_ref|valor\s+monetario|\bR\$/i.test(authored.feedback);
+            const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn);
+            let effFeedback = authored.feedback;
+            let keepRetrying = false;
+            if (listTurn) {
+              const listKeys: string[] = [];
+              for (const f of facts) if (f.ok && f.tool === "stock_search") for (const it of f.data.items) if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
+              effFeedback = `Turno de LISTAGEM: devolva um draft com EXATAMENTE 3 partes — [{"type":"text","content":"Encontrei estas opções:"},{"type":"vehicle_offer_list","vehicleKeys":${JSON.stringify(listKeys)}},{"type":"text","content":"Quer ver as fotos, os detalhes ou as condições?"}]. Use ESSES vehicleKeys. NUNCA escreva nomes de carro, "R$", preços ou km em "text" (o sistema formata a lista pela vehicle_offer_list). NÃO chame stock_search de novo.`;
+              keepRetrying = true;
+            } else if (conductTurn) {
+              // CONDUÇÃO (pagamento / avaliação de troca): o ÚNICO desfecho válido é ACOLHER + conduzir com UMA pergunta de
+              // avanço. QUALQUER deny aqui (valor em texto livre, atributo de carro sem aterrar, ou volta à descoberta) recebe
+              // o MESMO norte e retry bounded — a LLM redige, o engine só orienta (LLM-first). Sem restringir a moneyDeny:
+              // quando o deny NÃO é exatamente monetário, antes caía direto no break->recovery_ask_need (technical_fallback).
+              const moneyHint = moneyDeny ? " Você escreveu um valor em R$/mil que NÃO está aterrado num preço real — REMOVA todo R$/valor." : "";
+              effFeedback = `Turno de CONDUÇÃO (pagamento/troca).${moneyHint} NÃO afirme valores em R$/mil (você não tem um preço aterrado desse número) e NÃO volte para descoberta ('o que você procura'). Reescreva o draft com UMA parte text: acolha o que o lead disse (o carro de troca ou o pedido de condições) e conduza com UMA pergunta de avanço — 'você tem um valor para dar de entrada?', 'qual parcela caberia no seu orçamento?', ou 'posso agendar uma avaliação do seu carro?'.`;
+              keepRetrying = true;
+            }
+            policyFeedbackLog.push(effFeedback);
+            // T5: fingerprint de deny REPETIDO -> não gasta as tentativas idênticas; sai p/ RECUPERAÇÃO. EXCEÇÃO BOUNDED
+            // (keepRetrying): os feedbacks acionáveis de LISTAGEM/MONEY ganham LIST_MONEY_RETRY_CAP tentativas extras (a LLM
+            // insiste em listar/conduzir), mas com teto — depois disso conta como deny repetido (não trava o loop inteiro).
+            const fp = denyFingerprint(effFeedback);
+            if (keepRetrying) {
+              if (++listMoneyRetries > LIST_MONEY_RETRY_CAP) { repeatedDeny = true; break; }
+            } else {
+              if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
+              seenDenyFingerprints.add(fp);
+            }
+            if (brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: effFeedback } }); continue; }
             break;
           }
           finalDecision = step.decision;
@@ -1528,6 +1693,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           observations.push({ tool: call.tool, ok: false, error: { code: "FORBIDDEN", message: `tool '${call.tool}' fora do allowlist` } });
           continue;
         }
+        // Missão P0 INC3/G (audit Codex smoke): em TURNO DE RESPOSTA DE TROCA o stock_search é PROIBIDO — o carro citado é a
+        // TROCA do lead, não pedido de estoque. Bloqueia ANTES da autorização de capability e do dedup: senão um understanding
+        // do cérebro com evidence inválida cairia no gate REQUIRED_TURN_UNDERSTANDING (linha abaixo), que empurra
+        // tool:"stock_search" e INFLA a contagem do smoke (o "obs=8"). Empurra feedback de controle (tool:"response", nenhuma
+        // busca EXECUTADA) + cap anti-loop. LLM-first: o cérebro re-decide (registra a troca e avança), sem handler escrever.
+        if (call.tool === "stock_search" && tradeInAnswerTurn) {
+          duplicateStockCallsBlocked += 1;
+          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: "O cliente está RESPONDENDO à sua pergunta sobre o VEÍCULO DE TROCA dele — o carro que ele citou (modelo/ano/km) é a troca, NÃO um pedido de estoque. NÃO chame stock_search. Confirme que anotou a troca e siga para a próxima etapa (entrada/condições/visita). Só busque estoque se ele disser explicitamente que quer COMPRAR outro carro." } });
+          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+          continue;
+        }
         // P0-2 (audit Codex): AUTORIZAÇÃO TIPADA POR TOOL — cada tool comercial exige a capability PRÓPRIA + evidência
         // própria do CÉREBRO (stock_search->stock_search; vehicle_details->vehicle_details; vehicle_photos_resolve->
         // send_photos). Exceção SISTÊMICA: vehicle_details do key que o engine exigiu p/ grounding (systemDetailKeys).
@@ -1535,22 +1711,53 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         const sysDetailOk = call.tool === "vehicle_details" && systemDetailKeys.has(((call.input as { vehicleKey?: string }).vehicleKey) ?? "");
         if (singleAuthor && llmFirst && COMMERCIAL_TOOLS.has(call.tool) && !sysDetailOk && !toolCapabilityAuthorized(brainVU(), call.tool)) {
           const capNeeded = call.tool === "vehicle_photos_resolve" ? "send_photos" : call.tool;
-          observations.push({ tool: call.tool, ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: `Para usar '${call.tool}' inclua NO MESMO passo um 'understanding' com requestedCapabilities contendo '${capNeeded}' e uma evidence (capability '${capNeeded}') citando o TRECHO LITERAL do bloco atual que justifica isso.` } });
+          const capMsg = `Para usar '${call.tool}' inclua NO MESMO passo um 'understanding' com requestedCapabilities contendo '${capNeeded}' e uma evidence (capability '${capNeeded}') citando o TRECHO LITERAL do bloco atual que justifica isso.`;
+          // T5 (audit Codex smoke): stock_search SEM understanding válido (ex.: "cadê?" não tem substantivo comercial p/ a
+          // evidence) NÃO é execução — empurra como tool:"response" (não infla a contagem de stock_search do smoke) + cap
+          // anti-loop. A busca de retomada/comercial roda DETERMINÍSTICA na autoria (não depende de o cérebro autorar evidence).
+          if (call.tool === "stock_search") {
+            duplicateStockCallsBlocked += 1;
+            observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: capMsg } });
+            if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+            continue;
+          }
+          // T7 (LLM-first, audit Codex): numa SELEÇÃO ("gostei do segundo") o cérebro às vezes tenta vehicle_details sem
+          // understanding válido (e sem a vehicleKey). A rejeição NÃO é execução (tool:"response") + cap. FEEDBACK ESPECÍFICO:
+          // o engine entrega o FATO (o label aterrado do carro escolhido) e orienta — a LLM REDIGE o acolhimento (o engine NÃO
+          // escreve a resposta). Seleção não precisa de vehicle_details.
+          if (call.tool === "vehicle_details") {
+            const detailMsg = (selectionTurn && selectionLabel)
+              ? `O cliente SELECIONOU o ${selectionLabel} (item da última lista). Seleção NÃO precisa de vehicle_details — ACOLHA a escolha (elogie) e ofereça o próximo passo: as fotos, os detalhes ou as condições de pagamento. Responda AGORA, sem ferramenta.`
+              : capMsg;
+            observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: detailMsg } });
+            if (++dupDetailLoopCount >= DUP_STOCK_LOOP_CAP) break;
+            continue;
+          }
+          observations.push({ tool: call.tool, ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: capMsg } });
           continue;
         }
         // Proíbe loop idêntico: mesma tool + mesmos args -> devolve o fato já obtido (nunca reexecuta).
         const sig = toolCallSignature(call);
         if (seenToolSigs.has(sig)) {
+          if (call.tool === "stock_search") {
+            // Repetição BYTE-idêntica de stock_search: NÃO re-observa como busca (senão o relatório conta várias) — empurra
+            // feedback de controle (tool:"response") mandando FINALIZAR com o resultado que já tem + cap anti-loop.
+            duplicateStockCallsBlocked += 1;
+            observations.push({ tool: "response", ok: false, error: { code: "DUP_STOCK_SEARCH", message: "Você JÁ buscou esse estoque neste turno e tem o resultado em mãos. Finalize AGORA respondendo ao cliente com esse resultado (liste os carros encontrados) — NÃO chame stock_search de novo." } });
+            if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+            continue;
+          }
+          if (call.tool === "vehicle_details") {
+            // T7: repetição byte-idêntica de vehicle_details NÃO re-observa como detalhe (o smoke conta observações) — usa
+            // o fato JÁ obtido; feedback de controle (tool:"response") + cap. (O executor de detalhe já roda 1x quando exigido.)
+            observations.push({ tool: "response", ok: false, error: { code: "DUP_TOOL", message: "Você já consultou os detalhes desse veículo neste turno; use o fato que a ferramenta retornou (não repita a mesma chamada)." } });
+            if (++dupDetailLoopCount >= DUP_STOCK_LOOP_CAP) break;
+            continue;
+          }
           observations.push({ tool: call.tool, ok: false, error: { code: "DUP_TOOL", message: "Você já consultou isso neste turno; use o fato que a ferramenta retornou (não repita a mesma chamada)." } });
           continue;
         }
         seenToolSigs.add(sig);
-        // Missão P0 INC3/G: em TURNO DE RESPOSTA DE TROCA o stock_search NÃO roda (o carro citado é a TROCA do lead, não
-        // pedido de estoque). Não executa a tool — devolve feedback ao cérebro (LLM-first: o cérebro re-decide, sem handler).
-        if (call.tool === "stock_search" && tradeInAnswerTurn) {
-          observations.push({ tool: "stock_search", ok: false, error: { code: "FORBIDDEN", message: "O cliente está RESPONDENDO à sua pergunta sobre o VEÍCULO DE TROCA dele — o carro que ele citou (modelo/ano/km) é a troca, NÃO um pedido de estoque. NÃO chame stock_search. Confirme que anotou a troca e siga para a próxima etapa (entrada/condições/visita). Só busque estoque se ele disser explicitamente que quer COMPRAR outro carro." } });
-          continue;
-        }
         if (call.tool === "tenant_business_info") {
           // resolveInstitutional dedup por tópico (1x); repetição do MESMO tópico devolve o cache (nunca reexecuta).
           await resolveInstitutional(call.input.topic);
@@ -1575,10 +1782,20 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
           dropAdYear,                            // FOCO EXATO (missão P0): alternativa sem ano do lead -> tira anos=[2019] da chamada EXECUTADA
         });
+        // Missão P0 (audit Codex smoke): DEDUP SEMÂNTICO NO LOOP. Se ESTA busca (filtro ENRIQUECIDO) já foi executada neste
+        // turno, NÃO re-observa como stock_search (é aqui, no push de toAgentObservation abaixo, que o relatório contava 7x) —
+        // empurra feedback de controle (tool:"response") p/ o cérebro FINALIZAR com o resultado que já tem. Relaxamento real =
+        // fingerprint diferente = passa e executa. + cap anti-loop. NÃO é if-por-frase (é igualdade de filtro normalizado).
+        if (execCall.tool === "stock_search" && stockSearchCache.has(stockSearchFingerprint(execCall.input as Record<string, unknown>))) {
+          duplicateStockCallsBlocked += 1;
+          observations.push({ tool: "response", ok: false, error: { code: "DUP_STOCK_SEARCH", message: "Você JÁ buscou esse estoque neste turno e tem o resultado em mãos. Finalize AGORA respondendo ao cliente com esse resultado (liste os carros encontrados) — NÃO chame stock_search de novo." } });
+          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+          continue;
+        }
         const started = Date.parse(clock.now());
         let res: QueryResult;
         try {
-          res = await withTimeout(runQuery(execCall), limits.queryTimeoutMs ?? 20_000, `query: ${call.tool} exceeded timeout`);
+          res = await withTimeout(runQueryDedup(execCall), limits.queryTimeoutMs ?? 20_000, `query: ${call.tool} exceeded timeout`);
         } catch {
           observations.push({ tool: call.tool, ok: false, error: { code: "UPSTREAM", message: "tool indisponivel" } });
           continue;
@@ -1661,7 +1878,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
                 dropAdYear,                            // FOCO EXATO (missão P0): alternativa sem ano do lead -> sem anos=[2019]
               });
               const startedS = Date.parse(clock.now());
-              const searchRes = await withTimeout(runQuery(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
+              const searchRes = await withTimeout(runQueryDedup(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
               facts.push(searchRes); observations.push(toAgentObservation(searchRes)); toolResultMems.push(toToolResultMemory(searchRes, turnId)); toolTelemetry.push(toToolTelemetry(searchRes, Math.max(0, Date.parse(clock.now()) - startedS)));
             } catch { observations.push({ tool: "stock_search", ok: false, error: { code: "UPSTREAM", message: "tool indisponivel" } }); }
           }
@@ -1684,7 +1901,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               for (const step of relaxSearchCascade(zeroed, tipoHint).slice(0, 3)) {
                 try {
                   const relaxCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(step.constraints) }, { popular: false, moreOptions: false, previousVehicleKeys: shownVehicleKeys, constraints: step.constraints, wantsMotorcycle, enforceShownClamp: llmFirst });
-                  const relaxRes = await withTimeout(runQuery(relaxCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (relax) exceeded timeout");
+                  const relaxRes = await withTimeout(runQueryDedup(relaxCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (relax) exceeded timeout");
                   facts.push(relaxRes); observations.push(toAgentObservation(relaxRes)); toolResultMems.push(toToolResultMemory(relaxRes, turnId));
                   if (relaxRes.ok && relaxRes.tool === "stock_search" && relaxRes.data.items.length > 0) { relaxedOffer = { zeroedDesc: describeConstraints(zeroed), kind: step.kind, items: relaxRes.data.items }; break; }
                 } catch { /* best-effort: sem relaxamento cai na recuperação honesta abaixo */ }
@@ -1954,13 +2171,22 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         throw new Error("central: next state ownership mismatch at commit");
       }
 
-      const outbox = materializeEffectPlans(decision, composed, { conversationId, createdAt: cutoff, providerCapability });
+      // T1 (audit Codex smoke): SANITIZA control chars do texto de saída num chokepoint ÚNICO — cobre o send_message
+      // (materializeEffectPlans), o composedText do resultado e o evento response_composed. O LLM às vezes emite U+001F etc.
+      const outComposed = { ...composed, text: stripControlChars(composed.text) };
+      const outbox = materializeEffectPlans(decision, outComposed, { conversationId, createdAt: cutoff, providerCapability });
 
       // Observabilidade institucional (audit): status TERMINAL por tópico resolvido no turno.
       const institutionalResolved = [...institutionalObs.entries()].map(([topic, obs]) => ({
         topic, status: (obs.ok ? "ok" : (obs.error.code === "NOT_CONFIGURED" ? "not_configured" : "failure")) as "ok" | "not_configured" | "failure",
       }));
       const finalVU = authoritativeVU();   // T6: semântica autoritativa do turno (do cérebro OU fallback validado)
+      // Missão P0 (audit Codex): em TURNO DE RESPOSTA DE TROCA o entendimento é RESPOSTA DE TROCA — reconcilia primaryIntent
+      // para "trade_in" (mesmo que o cérebro tenha rotulado search_stock). O understanding reflete a conversa (briefing/CRM),
+      // não a intenção crua do LLM. Guardrail não basta — o entendimento precisa estar certo. Só afeta a semântica, não o efeito.
+      const reconciledUnderstanding: TurnUnderstanding = tradeInAnswerTurn
+        ? { ...finalVU.understanding, primaryIntent: "trade_in" }
+        : finalVU.understanding;
       // T6: se houve send_media e o executor não registrou a fonte do alvo (foto AUTORADA pelo cérebro), registra aqui.
       if (targetResolutionSource == null && proposedEffects.some((e) => e.kind === "send_media")) {
         const tr = resolveTargetWithAd(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
@@ -1976,7 +2202,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded, brainRetries,
           brainReason: finalDecision.reasonSummary.slice(0, 160),
           // T6: semântica do turno (fonte única) + resolução de alvo.
-          primaryIntent: finalVU.understanding.primaryIntent, subject: finalVU.understanding.subject,
+          primaryIntent: reconciledUnderstanding.primaryIntent, subject: finalVU.understanding.subject,
           subjectSource: finalVU.understanding.subjectSource, understandingTrusted: finalVU.trusted,
           understandingFromBrain: lockedU != null,
           evidence: finalVU.understanding.evidence.slice(0, 4).map((e) => ({ capability: e.capability ?? null, quote: e.quote.slice(0, 48) })),
@@ -1998,9 +2224,16 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           toolMs: toolTelemetry.reduce((sum, t) => sum + (t.ms ?? 0), 0),
           firstFailureReason: policyFeedbackLog[0] ? policyFeedbackLog[0].slice(0, 140) : null,
           // Missão P0 INC3/1/2: intenção do turno p/ auditoria de troca vs busca vs abertura.
-          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn, pendingQuestionSlot,
+          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn, pendingQuestionSlot, tradeBuyTurn,
+          // Missão P0 (audit Codex): separação compra/troca + dedup de busca.
+          buyConstraints: tradeBuyTurn ? buyConstraints : null,
+          interesseBefore: contextState.slots.interesse.value ?? null,
+          interesseAfter: reduced.next.slots.interesse.value ?? null,
+          veiculoTrocaAfter: reduced.next.slots.veiculoTroca.value ?? null,
+          stockSearchFingerprintsExecuted: stockFingerprintsExecuted.length,
+          duplicateStockCallsBlocked,
         }, at: cutoff }),
-        makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: composed.text, terminalSafe, responseSource, degraded }, at: cutoff }),
+        makeEvent({ conversationId, turnId, type: "response_composed", suffix: "response", payload: { text: outComposed.text, terminalSafe, responseSource, degraded }, at: cutoff }),
       ];
 
       // ── TRAVA ANTI-PARCIAL (P0 bloco-do-lead): reconferência ANTES de despachar. Se chegou mensagem NOVA (pending)
@@ -2033,10 +2266,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
 
       return {
-        status: "committed", turnId, claimedEventIds, decision, composedText: composed.text, terminalSafe,
+        status: "committed", turnId, claimedEventIds, decision, composedText: outComposed.text, terminalSafe,
         facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, brainSteps, responseSource,
         degraded, institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
-        understanding: finalVU.understanding, understandingFromBrain: lockedU != null, targetResolutionSource,
+        understanding: reconciledUnderstanding, understandingFromBrain: lockedU != null, targetResolutionSource,
         resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
         previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null, recoveryReason,
       };
