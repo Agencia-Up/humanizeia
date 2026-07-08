@@ -909,21 +909,43 @@ async function maybeHandleSellerAck(
   const remainingCount = pendingTransfers.length - 1;
 
   const now = new Date().toISOString();
-  await supabase.from('ai_lead_transfers').update({
+  const { data: updatedLead, error: leadUpdateErr } = await supabase.from('ai_crm_leads').update({
+    assigned_to_id: pendingTransfer.to_member_id || seller.id,
+    status: 'em_atendimento',
+    last_interaction_at: now,
+  })
+    .eq('id', pendingTransfer.lead_id)
+    .select('id, assigned_to_id')
+    .maybeSingle();
+
+  if (leadUpdateErr || !updatedLead?.id) {
+    console.error('[TransferGuard] Falha ao fixar vendedor no lead antes de confirmar transferencia', {
+      transfer_id: pendingTransfer.id,
+      lead_id: pendingTransfer.lead_id,
+      seller_id: pendingTransfer.to_member_id || seller.id,
+      error: leadUpdateErr?.message || 'lead_not_updated',
+    });
+    return { isSeller: true, confirmed: false, reason: 'lead_update_failed' };
+  }
+
+  const { error: transferUpdateErr } = await supabase.from('ai_lead_transfers').update({
     transfer_status: 'confirmed',
     is_confirmed: true,
     confirmed_at: now,
   }).eq('id', pendingTransfer.id);
 
+  if (transferUpdateErr) {
+    console.error('[TransferGuard] Lead recebeu vendedor, mas falhou ao marcar transferencia como confirmada', {
+      transfer_id: pendingTransfer.id,
+      lead_id: pendingTransfer.lead_id,
+      error: transferUpdateErr.message,
+    });
+    return { isSeller: true, confirmed: false, reason: 'transfer_update_failed' };
+  }
+
   await supabase.from('ai_team_members').update({
     last_lead_received_at: now,
   }).eq('id', pendingTransfer.to_member_id || seller.id);
-
-  await supabase.from('ai_crm_leads').update({
-    assigned_to_id: pendingTransfer.to_member_id || seller.id,
-    status: 'em_atendimento',
-    last_interaction_at: now,
-  }).eq('id', pendingTransfer.lead_id);
 
   // Lead ganhou dono firme (vendedor confirmou "Ok") — resolve qualquer falha
   // de transferencia ABERTA deste lead no painel de diagnostico. best-effort:
