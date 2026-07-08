@@ -31,6 +31,7 @@ interface Pessoa {
   papel: 'gerente' | 'vendedor' | 'externo';
   memberIds: string[];
   acessos: Acesso[];
+  aparece_paineis: boolean;
   agentes: AgenteLead[];
   recebe_atendimento: boolean; recebe_trafego: boolean; recebe_alertas: boolean;
 }
@@ -133,6 +134,7 @@ export function ResponsaveisTab({ userId }: Props) {
   const [nTel, setNTel] = useState('');
   const [nTipo, setNTipo] = useState<Tipo>('vendedor');
   const [nAcessos, setNAcessos] = useState<Set<Acesso>>(defaultAcessosByTipo('vendedor'));
+  const [nAparecePaineis, setNAparecePaineis] = useState(true);
   const [nAgentes, setNAgentes] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -140,7 +142,7 @@ export function ResponsaveisTab({ userId }: Props) {
     try {
       const [membersRes, agentsRes, respRes] = await Promise.all([
         (supabase as any).from('ai_team_members')
-          .select('id, name, whatsapp_number, is_manager, is_active, agent_id, visible_features').eq('user_id', userId),
+          .select('id, name, whatsapp_number, is_manager, is_active, active_in_system, agent_id, visible_features').eq('user_id', userId),
         (supabase as any).from('wa_ai_agents').select('id, name, gerente_phone, gerente_phone_2').eq('user_id', userId),
         (supabase as any).from('conta_responsaveis')
           .select('nome, whatsapp, recebe_atendimento, recebe_trafego, recebe_alertas').eq('user_id', userId),
@@ -156,7 +158,7 @@ export function ResponsaveisTab({ userId }: Props) {
       const map = new Map<string, Pessoa>();
       const ensure = (k: string, nome: string, wa: string, papel: Pessoa['papel']): Pessoa => {
         let p = map.get(k);
-        if (!p) { p = { key: k, nome: nome || '', whatsapp: onlyDigits(wa), papel, memberIds: [], acessos: [], agentes: [], recebe_atendimento: false, recebe_trafego: false, recebe_alertas: false }; map.set(k, p); }
+        if (!p) { p = { key: k, nome: nome || '', whatsapp: onlyDigits(wa), papel, memberIds: [], acessos: [], aparece_paineis: false, agentes: [], recebe_atendimento: false, recebe_trafego: false, recebe_alertas: false }; map.set(k, p); }
         if (!p.nome && nome) p.nome = nome;
         return p;
       };
@@ -171,6 +173,7 @@ export function ResponsaveisTab({ userId }: Props) {
         const p = ensure(k, m.name || '', wn, m.is_manager ? 'gerente' : 'vendedor');
         if (m.is_manager) p.papel = 'gerente';
         if (m.id && !p.memberIds.includes(m.id)) p.memberIds.push(m.id);
+        if (m.active_in_system !== false) p.aparece_paineis = true;
         for (const acesso of inferAcessos(m.visible_features, !!m.is_manager)) {
           if (!p.acessos.includes(acesso)) p.acessos.push(acesso);
         }
@@ -248,7 +251,7 @@ export function ResponsaveisTab({ userId }: Props) {
     try {
       const { error } = await (supabase as any)
         .from('ai_team_members')
-        .update({ visible_features: features, active_in_system: true })
+        .update({ visible_features: features })
         .in('id', p.memberIds);
       if (error) throw error;
     } catch (e: any) {
@@ -257,13 +260,39 @@ export function ResponsaveisTab({ userId }: Props) {
     } finally { setSaving(null); }
   };
 
+  const toggleAparecePaineis = async (p: Pessoa) => {
+    if (p.papel === 'gerente') {
+      toast({ title: 'Gerente nao entra como vendedor nos paineis', description: 'Esse controle vale para vendedores e marketing.' });
+      return;
+    }
+    if (p.memberIds.length === 0) {
+      toast({ title: 'Esta pessoa ainda nao tem cadastro no painel', description: 'Adicione com e-mail para criar o acesso antes de configurar os paineis.', variant: 'destructive' });
+      return;
+    }
+
+    const novo = !p.aparece_paineis;
+    setSaving(p.key + 'paineis');
+    setPessoas((prev) => prev.map((x) => x.key === p.key ? { ...x, aparece_paineis: novo } : x));
+    try {
+      const { error } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ active_in_system: novo })
+        .in('id', p.memberIds);
+      if (error) throw error;
+    } catch (e: any) {
+      setPessoas((prev) => prev.map((x) => x.key === p.key ? { ...x, aparece_paineis: p.aparece_paineis } : x));
+      toast({ title: 'Nao deu pra alterar os paineis', description: e?.message, variant: 'destructive' });
+    } finally { setSaving(null); }
+  };
+
   const setTipo = (tipo: Tipo) => {
     setNTipo(tipo);
     setNAcessos(defaultAcessosByTipo(tipo));
+    setNAparecePaineis(tipo === 'vendedor');
     if (tipo !== 'vendedor') setNAgentes(new Set());
   };
 
-  const resetForm = () => { setNNome(''); setNEmail(''); setNTel(''); setTipo('vendedor'); setNAgentes(new Set()); };
+  const resetForm = () => { setNNome(''); setNEmail(''); setNTel(''); setTipo('vendedor'); setNAgentes(new Set()); setNAparecePaineis(true); };
 
   const addResponsavel = async () => {
     const d = onlyDigits(nTel);
@@ -284,7 +313,7 @@ export function ResponsaveisTab({ userId }: Props) {
         const { data, error } = await (supabase as any).from('ai_team_members').insert({
           user_id: userId, agent_id: ag, name: nNome.trim(), whatsapp_number: d,
           email: nEmail.trim() || null, visible_features: features,
-          is_manager: isManager, is_active: nTipo === 'vendedor', active_in_system: true,
+          is_manager: isManager, is_active: nTipo === 'vendedor', active_in_system: isManager ? true : nAparecePaineis,
         }).select('id').single();
         if (error) throw error;
         if (!firstMemberId) firstMemberId = data.id;
@@ -367,6 +396,14 @@ export function ResponsaveisTab({ userId }: Props) {
                     </button>
                   );
                 })}
+                {p.papel !== 'gerente' && (
+                  <button onClick={() => toggleAparecePaineis(p)} disabled={saving === p.key + 'paineis' || p.memberIds.length === 0}
+                    className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors ${p.aparece_paineis ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'text-muted-foreground border-border/50 hover:bg-accent/40'} ${(saving === p.key + 'paineis' || p.memberIds.length === 0) ? 'opacity-60' : ''}`}
+                    title={p.aparece_paineis ? 'Aparece no Painel ao Vivo e no Painel Geral' : 'Nao aparece no Painel ao Vivo nem no Painel Geral'}>
+                    {saving === p.key + 'paineis' ? <Loader2 className="h-3 w-3 animate-spin" /> : <BarChart3 className="h-3 w-3" />}
+                    {p.aparece_paineis ? 'Aparece nos paineis' : 'Oculto dos paineis'}
+                  </button>
+                )}
                 {p.agentes.length > 0 ? p.agentes.map((ag) => {
                   const busy = saving === p.key + ag.memberId;
                   return (
@@ -463,6 +500,17 @@ export function ResponsaveisTab({ userId }: Props) {
                   })}
                 </div>
               </div>
+            )}
+            {nTipo !== 'gerente' && (
+              <button type="button" onClick={() => setNAparecePaineis((v) => !v)}
+                className={`flex items-center gap-3 text-left rounded-lg border px-3 py-2 transition-colors ${nAparecePaineis ? 'border-amber-500/50 bg-amber-500/10' : 'border-border/50 hover:bg-accent/40'}`}>
+                <BarChart3 className={`h-4 w-4 shrink-0 ${nAparecePaineis ? 'text-amber-300' : 'text-muted-foreground'}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-foreground">Aparecer no Painel ao Vivo e Painel Geral</div>
+                  <div className="text-[11px] text-muted-foreground">Desligue para marketing/gestor que supervisiona, mas nao recebe lead nem entra em ranking.</div>
+                </div>
+                {nAparecePaineis && <Check className="h-4 w-4 text-amber-300 shrink-0" />}
+              </button>
             )}
             {nTipo === 'vendedor' && agentesDisp.length > 0 && (
               <div className="space-y-1.5">
