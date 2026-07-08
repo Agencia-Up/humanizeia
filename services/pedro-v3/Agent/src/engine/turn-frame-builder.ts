@@ -16,6 +16,7 @@ const STORE_RX = /\bloja\b|\bendereco\b|\bfica\s+onde\b|\bonde\s+(fica|e|esta)\b
 // F2.29 (invariante 2): cobre "mais opções", "outros/outras", "mais carros", "mais algum(a)", "tem outros", "tem mais"
 // (exceto "tem mais informações/detalhe/sobre/dados" — pedido de INFO do carro atual, não de outros veículos).
 const MORE_RX = /\bmais\s+op|\boutr[ao]s?\b|\bmais\s+carr|\bmais\s+algum|\btem\s+outr|\btem\s+mais\b(?!\s+(?:informa|detalhe|sobre|dado))/;
+const MORE_PHOTOS_RX = /\b(?:tem\s+)?(?:mais|outr[ao]s?)\s+(?:fotos?|imagens?|midias?|fotografias?)\b|\b(?:fotos?|imagens?)\s+(?:a\s+)?mais\b/;
 const POPULAR_RX = /\bpopular(?:es)?\b/;
 const MEMORY_Q_RX = /\bqual\b[^?]*\b(carro|ve[ií]culo|foto|modelo)\b|\bpedi\b|\bmandei\b|\bmostrei\b|\bmandou\b|\benviou\b|\bquais?\b[^?]*\bfotos?\b/;
 
@@ -31,10 +32,11 @@ function mentionsVehicleType(norm: string): string | null {
 export function buildFrameSignals(block: string, interpretation: TurnInterpretation): FrameSignals {
   const norm = normalizeText(block);
   const hasQ = /\?/.test(block);
+  const isMorePhotos = MORE_PHOTOS_RX.test(norm);
   return {
     mentionsPhoto: PHOTO_RX.test(norm),
     mentionsStore: STORE_RX.test(norm),
-    mentionsMoreOptions: MORE_RX.test(norm),
+    mentionsMoreOptions: MORE_RX.test(norm) && !isMorePhotos,
     mentionsPopular: POPULAR_RX.test(norm),
     mentionsVehicleType: mentionsVehicleType(norm),
     isMemoryQuestion: (hasQ || /\bqual\b|\bquais\b/.test(norm)) && MEMORY_Q_RX.test(norm),

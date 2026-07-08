@@ -187,6 +187,17 @@ async function main(): Promise<void> {
     check("[PB-5] negação de foto -> NÃO envia mídia", t2.hasMedia === false, `hasMedia=${t2.hasMedia}`);
   }
 
+  // "Tem mais fotos?" continua mídia do veículo em foco; não é "mais opções" de estoque.
+  {
+    const c = conv();
+    await c.t("tem SUV?", { responder: listSuvs });
+    const t2 = await c.t("me manda fotos do segundo");
+    const t3 = await c.t("Tem mais fotos?");
+    const t3Signals = sig(c, 2);
+    check("[PB-2b] 'Tem mais fotos?' nao vira mentionsMoreOptions/stock_search", t3Signals.mentionsPhoto === true && t3Signals.mentionsMoreOptions !== true && !t3.exec.includes("stock_search"), `signals=${JSON.stringify(t3Signals)} exec=${t3.exec.join(",")}`);
+    check("[PB-2c] 'Tem mais fotos?' envia proximo lote do MESMO veiculo", t3.hasMedia && t3.mediaKey === "rm:suvB" && t3.mediaPhotoIds.length > 0 && t3.mediaPhotoIds.every((id) => !t2.mediaPhotoIds.includes(id)), `key=${t3.mediaKey} t2=${t2.mediaPhotoIds.join(",")} t3=${t3.mediaPhotoIds.join(",")} outbox="${t3.outbox}"`);
+  }
+
   // ══ PARTE A — ABERTURA SDR ══
   // 1) primeiro contato genérico SEM anúncio: sinal firstContactNoCommercialTarget + guardrail (deny+feedback -> discovery)
   {

@@ -229,7 +229,7 @@ export function reconcileUnderstanding(base: TurnUnderstanding | null, next: Tur
 // ── FALLBACK conservador (só HINT p/ recuperação TEXTUAL — NUNCA autoriza ação; fromBrain=false no validate). "foto"
 //    SOLTA não vira request_photos: exige verbo de envio + foto (imperativo) OU "fotos do <carro>". ──
 const PHOTO_MEMORY_Q = /\b(qual|que|quais)\b[^?]*\b(foto|carro|ve[ií]culo|modelo)\b[^?]*\b(pedi|pediu|mandei|mostrei|recebi)\b/;
-const PHOTO_REQUEST_STEM = /\b(?:mand\w*|envi\w*|mostr\w*)\b[^?]*\bfotos?\b|\b(?:quero|posso|pode|gostaria)\b[^?]*\b(?:ver|mandar|enviar)\b[^?]*\bfotos?\b|\bfotos?\s+d(?:o|a|e|esse|essa|ele|ela)\b/;
+const PHOTO_REQUEST_STEM = /\b(?:tem\s+)?(?:mais|outr[ao]s?)\s+(?:fotos?|imagens?|midias?|fotografias?)\b|\b(?:fotos?|imagens?)\s+(?:a\s+)?mais\b|\b(?:mand\w*|envi\w*|mostr\w*)\b[^?]*\bfotos?\b|\b(?:quero|posso|pode|gostaria)\b[^?]*\b(?:ver|mandar|enviar)\b[^?]*\bfotos?\b|\bfotos?\s+d(?:o|a|e|esse|essa|ele|ela)\b/;
 const BUDGET_RX = /\bate\s+\d|\br\$\s*\d|\b\d{2,3}\s*mil\b|\bbarat|\beconomic|\bfaixa\s+de\s+pre|\bor[çc]amento\b/;
 const ATTR_RX = /\bkm\b|quilometr|rodad|\bcor\b|\bcambio\b|c[aâ]mbio|autom[aá]tic|\bmanual\b|\bpre[çc]o\b|\bvalor\b|quanto\s+(?:custa|sai|fica)|\bano\b|\bconsumo\b|\bmotor\b|\bversao\b|vers[aã]o|\bopcionais\b|\bcompleto\b/;
 const ORDINAL_WORD_RX = /\b(?:primeir|segund|terceir|quart|quint|sext|ultim)\w*|\bnumero\s+\d+|\bopcao\s+\d+/;

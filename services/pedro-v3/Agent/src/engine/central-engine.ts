@@ -289,11 +289,12 @@ function isKernelQueryCall(call: CentralQueryCall): call is QueryCall {
 // ── Enforcement determinístico de invariantes (Brain/11 §5: validador/executor; NÃO conduz o assunto) ──────────
 // PEDIDO de foto AGORA (imperativo) — distinto de PERGUNTA de memória ("qual carro pedi fotos?").
 const PHOTO_MEMORY_Q_RX = /\b(qual|que|quais)\b[^?]*\b(foto|carro|ve[ií]culo|modelo)\b[^?]*\b(pedi|pediu|mandei|mostrei|recebi)\b/;
-const PHOTO_REQUEST_RX = /\b(manda|mandar|envia|enviar|mostra|mostrar|me\s+ve|quero\s+ver|posso\s+ver|ver\s+as?)\b[^?]*\bfotos?\b|\bfotos?\s+d(o|a|e|esse|essa|ele|ela|aquele)\b|\bfoto\s+d(a|o)\s+(primeir|segund|terceir|quart)/;
+const PHOTO_MORE_REQUEST_RX = /\b(?:tem\s+)?(?:mais|outr[ao]s?)\s+(?:fotos?|imagens?|midias?|fotografias?)\b|\b(?:fotos?|imagens?)\s+(?:a\s+)?mais\b/;
+const PHOTO_REQUEST_RX = /\b(manda|mandar|mande|envia|enviar|envie|mostra|mostrar|mostre|me\s+ve|quero\s+ver|posso\s+ver|ver\s+as?)\b[^?]*\bfotos?\b|\bfotos?\s+d(o|a|e|esse|essa|ele|ela|aquele)\b|\bfoto\s+d(a|o)\s+(primeir|segund|terceir|quart)/;
 function isPhotoRequestBlock(text: string): boolean {
   const n = normalizeText(text);
   if (PHOTO_MEMORY_Q_RX.test(n)) return false;   // pergunta de memória NUNCA é pedido de envio
-  return PHOTO_REQUEST_RX.test(n);
+  return PHOTO_MORE_REQUEST_RX.test(n) || PHOTO_REQUEST_RX.test(n);
 }
 function isPhotoMemoryQuestionBlock(text: string): boolean { return PHOTO_MEMORY_Q_RX.test(normalizeText(text)); }
 // A resposta cita o veículo lembrado? (token de marca/modelo do label, ignorando o ano).
