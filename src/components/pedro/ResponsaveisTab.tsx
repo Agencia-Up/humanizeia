@@ -22,7 +22,7 @@ import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSeller
 interface Props { userId: string; }
 
 type Entrega = 'recebe_atendimento' | 'recebe_trafego' | 'recebe_alertas';
-type Tipo = 'vendedor' | 'gerente' | 'trafego';
+type Tipo = 'vendedor' | 'gerente' | 'personalizado';
 
 interface AgenteLead { agentId: string; nome: string; memberId: string; ativo: boolean; }
 interface Pessoa {
@@ -50,9 +50,14 @@ const featKeys = Object.keys(DEFAULT_SELLER_FEATURES) as (keyof VisibleFeatures)
 const allTrue = (): VisibleFeatures => Object.fromEntries(featKeys.map((k) => [k, true])) as VisibleFeatures;
 const allFalse = (): VisibleFeatures => Object.fromEntries(featKeys.map((k) => [k, false])) as VisibleFeatures;
 const GERENTE_FEATURES = allTrue();                                           // acesso total
-// Só José (acesso RESTRITO): o marcador __restrito faz o useSellerProfile respeitar
-// o que está OFF (senão o vendedor sempre veria o padrão Pedro+Marcos por cima).
-const TRAFEGO_FEATURES = { ...allFalse(), agent_jose: true, sidebar_dashboard: true, __restrito: true } as unknown as VisibleFeatures;
+// Áreas do acesso PERSONALIZADO — pode combinar (ex.: gestor de tráfego que também
+// acompanha os leads da IA). O marcador __restrito faz o useSellerProfile respeitar
+// o que está OFF (senão a pessoa veria o padrão Pedro+Marcos por cima).
+const AREAS: { id: string; label: string; desc: string; features: Partial<VisibleFeatures> }[] = [
+  { id: 'jose', label: 'Tráfego pago (José)', desc: 'Campanhas, criativos e qualidade dos leads.', features: { agent_jose: true, sidebar_dashboard: true } },
+  { id: 'pedro', label: 'Leads & IA (Pedro)', desc: 'Painel ao Vivo, Conversas IA e performance dos leads.', features: { agent_pedro: true, tab_crm: true, tab_inbox_ia: true, tab_crm_ao_vivo: true, tab_performance: true, sidebar_dashboard: true } },
+  { id: 'marcos', label: 'CRM & WhatsApp (Marcos)', desc: 'Kanban, contatos e conversas do WhatsApp.', features: { agent_marcos: true, marcos_crm: true, marcos_contatos: true, marcos_inbox: true, sidebar_dashboard: true } },
+];
 
 const ENTREGAS: { campo: Entrega; label: string; icon: typeof FileText }[] = [
   { campo: 'recebe_atendimento', label: 'Atendimento', icon: FileText },
@@ -63,7 +68,7 @@ const ENTREGAS: { campo: Entrega; label: string; icon: typeof FileText }[] = [
 const TIPOS: { id: Tipo; label: string; desc: string; icon: typeof Users }[] = [
   { id: 'vendedor', label: 'Vendedor', desc: 'Recebe leads. Acessa Pedro + Marcos.', icon: Users },
   { id: 'gerente', label: 'Gerente', desc: 'Acesso total ao painel + recebe relatórios.', icon: Crown },
-  { id: 'trafego', label: 'Só tráfego pago', desc: 'Acessa só o José. Recebe o relatório do tráfego.', icon: Radar },
+  { id: 'personalizado', label: 'Acesso personalizado', desc: 'Escolha as áreas que a pessoa acompanha (pode combinar).', icon: Radar },
 ];
 
 export function ResponsaveisTab({ userId }: Props) {
@@ -80,6 +85,7 @@ export function ResponsaveisTab({ userId }: Props) {
   const [nTel, setNTel] = useState('');
   const [nTipo, setNTipo] = useState<Tipo>('vendedor');
   const [nAgentes, setNAgentes] = useState<Set<string>>(new Set());
+  const [nAreas, setNAreas] = useState<Set<string>>(new Set(['jose']));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -171,20 +177,26 @@ export function ResponsaveisTab({ userId }: Props) {
     } finally { setSaving(null); }
   };
 
-  const resetForm = () => { setNNome(''); setNEmail(''); setNTel(''); setNTipo('vendedor'); setNAgentes(new Set()); };
+  const resetForm = () => { setNNome(''); setNEmail(''); setNTel(''); setNTipo('vendedor'); setNAgentes(new Set()); setNAreas(new Set(['jose'])); };
 
   const addResponsavel = async () => {
     const d = onlyDigits(nTel);
     if (!nNome.trim() || d.length < 10) { toast({ title: 'Preencha nome e um número válido (com DDD)', variant: 'destructive' }); return; }
     if (nTipo === 'gerente' && nGerentes >= 4) { toast({ title: 'Limite de 4 gerentes atingido', description: 'Remova um gerente antes de adicionar outro.', variant: 'destructive' }); return; }
     if (nTipo === 'vendedor' && agentesDisp.length && nAgentes.size === 0) { toast({ title: 'Escolha em qual agente o vendedor recebe leads', variant: 'destructive' }); return; }
+    if (nTipo === 'personalizado' && nAreas.size === 0) { toast({ title: 'Escolha ao menos uma área de acesso', variant: 'destructive' }); return; }
 
     setSaving('add');
     try {
       let features: VisibleFeatures; let isManager = false; let rowsAgentes: (string | null)[];
       if (nTipo === 'vendedor') { features = { ...DEFAULT_SELLER_FEATURES }; rowsAgentes = nAgentes.size ? [...nAgentes] : (agentesDisp.length ? agentesDisp.map((a) => a.id) : [null]); }
       else if (nTipo === 'gerente') { features = GERENTE_FEATURES; isManager = true; rowsAgentes = [null]; }
-      else { features = TRAFEGO_FEATURES; rowsAgentes = [null]; }
+      else {
+        // Personalizado: união das áreas marcadas, com __restrito (só vê o que marcou).
+        const f: Record<string, boolean> = { ...(allFalse() as any), __restrito: true };
+        for (const a of AREAS) if (nAreas.has(a.id)) Object.assign(f, a.features);
+        features = f as unknown as VisibleFeatures; rowsAgentes = [null];
+      }
 
       let firstMemberId: string | null = null;
       for (const ag of rowsAgentes) {
@@ -206,7 +218,7 @@ export function ResponsaveisTab({ userId }: Props) {
 
       // Entregas padrão por tipo.
       const entregas = nTipo === 'gerente' ? { recebe_atendimento: true, recebe_trafego: true, recebe_alertas: true }
-        : nTipo === 'trafego' ? { recebe_trafego: true } : null;
+        : (nTipo === 'personalizado' && nAreas.has('jose')) ? { recebe_trafego: true } : null;
       if (entregas) {
         await (supabase as any).from('conta_responsaveis').upsert({ user_id: userId, whatsapp: d, nome: nNome.trim(), ...entregas }, { onConflict: 'user_id,whatsapp' });
       }
@@ -336,6 +348,27 @@ export function ResponsaveisTab({ userId }: Props) {
                 })}
               </div>
             </div>
+            {nTipo === 'personalizado' && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Áreas que a pessoa acompanha (marque quantas quiser)</label>
+                <div className="grid gap-2">
+                  {AREAS.map((a) => {
+                    const on = nAreas.has(a.id);
+                    return (
+                      <button key={a.id} type="button"
+                        onClick={() => setNAreas((prev) => { const n = new Set(prev); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })}
+                        className={`flex items-center gap-3 text-left rounded-lg border px-3 py-2 transition-colors ${on ? 'border-sky-500/50 bg-sky-500/10' : 'border-border/50 hover:bg-accent/40'}`}>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-foreground">{a.label}</div>
+                          <div className="text-[11px] text-muted-foreground">{a.desc}</div>
+                        </div>
+                        {on && <Check className="h-4 w-4 text-sky-400 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {nTipo === 'vendedor' && agentesDisp.length > 0 && (
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Recebe leads em quais agentes</label>
