@@ -1,6 +1,6 @@
 # Refatoração de AUTORIDADE (P0) — a LLM decide a tool; o detector só enriquece
 
-**Data:** 2026-07-08/09 · **Autor:** Claude (executor) · **Diagnóstico:** Codex ("dois cérebros") · **Estado:** FEITO+PROVADO (offline + 2/2 smoke real). **NÃO commitado — aguarda autorização do dono.**
+**Data:** 2026-07-08/09 · **Autor:** Claude (executor) · **Diagnóstico:** Codex ("dois cérebros") · **Estado:** FEITO+PROVADO (offline + 2/2 smoke real) · **✅ COMMITADO+PUSHADO `main 5f9cfdee` (2026-07-09, aprovado pelo dono + Codex; rebase limpo sobre CRM/feedback, zero conflito).**
 
 ## Incidente real (print do dono)
 Lead: "tem outros?" → agente honesto. Lead: "tem corolla?" → lista 2 Corollas. Lead: **"Corolla não é um sedan? pq disse
@@ -83,7 +83,7 @@ Boa tarde → tem sedan? → tem outros? → tem corolla? → "Corolla nao e um 
 - Abertura (T1) ainda usa backstop `deterministic_discovery`/feedback de draft ocasionalmente — fora do escopo.
 - `financialAnswerTurn`/`tradeInAnswerTurn` (BLOQUEADORES por contexto) mantidos — negam tool, nunca autorizam.
 
-**PARADO — nada commitado. Aguarda autorização do dono.**
+**✅ COMMITADO+PUSHADO — `main 5f9cfdee` (2026-07-09). Em produção só no piloto (tenant ecb26258, PEDRO_V3_BRAIN_MODE=central_active).**
 
 ## ⭐Hardening (auditoria do Codex — 2026-07-09, aprovado p/ o caso do print, 3 pedidos)
 1. **`mentionsMoreOptions` não força busca sob ato conversacional**: novo `conversationalActDeclared()` (a LLM declarou
@@ -98,4 +98,4 @@ Boa tarde → tem sedan? → tem outros? → tem corolla? → "Corolla nao e um 
 3. **Teste adversarial** F2.41 caso E: "outras opções" DENTRO de contestação → 0 stock_search (exec+obs), brain_*,
    sem pergunta de escopo determinística, primaryIntent=conversation_repair. **F2.41 agora 14 OK**.
 
-Gates re-rodados: tsc EXIT 0, test:all EXIT 0, smoke real F2.41 PASS (5/5 LLM, 0 fallback, 0 recovery). **NÃO commitado.**
+Gates re-rodados: tsc EXIT 0, test:all EXIT 0, smoke real F2.41 PASS (5/5 LLM, 0 fallback, 0 recovery). **✅ COMMITADO `main 5f9cfdee`.**
