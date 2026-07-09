@@ -1257,7 +1257,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const shellClass = chatExpanded
     ? 'fixed inset-3 md:inset-6 z-50 flex flex-col h-auto bg-card rounded-2xl border border-border/70 overflow-hidden shadow-2xl'
     : unified
-      ? 'flex flex-col h-full bg-[#0b141a] overflow-hidden border-y border-[#1f2c34]'
+      ? 'flex h-full min-h-0 flex-col overflow-hidden bg-[#0b141a] sm:border-y sm:border-[#1f2c34]'
       : 'flex flex-col h-[calc(100vh-210px)] bg-card rounded-xl border border-border/50 overflow-hidden';
   const handoffCard = (transferAtMs != null && transferInfo) ? (
     <div className="flex justify-center my-3">
@@ -1370,13 +1370,16 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       <div ref={paneRef} className="flex flex-1 overflow-hidden">
         {/* ── Painel Esquerdo: Lista de Conversas ── */}
         <div
-          className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40 ${unified ? 'md:!w-[var(--conv-lw)] shrink-0 bg-[#111b21]' : ''}`}
+          className={`${selectedLead ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 lg:w-[380px] border-r border-border/40 ${unified ? 'min-h-0 md:!w-[var(--conv-lw)] shrink-0 bg-[#111b21]' : ''}`}
           style={unified ? ({ ['--conv-lw']: `${sidebarCompact ? Math.min(listW, 300) : listW}px` } as any) : undefined}
         >
           {unified && (
-            <div className="border-b border-[#1f2c34] bg-[#0f1722] px-4 py-3">
+            <div className="border-b border-[#1f2c34] bg-[#0f1722] px-3 py-3 sm:px-4">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-bold text-[#e9edef]">Conversas</h2>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-bold text-[#e9edef]">Conversas</h2>
+                  <p className="mt-0.5 text-[11px] text-[#8696a0] md:hidden">Toque em um lead para atender</p>
+                </div>
                 <Badge className="shrink-0 border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold text-emerald-300">
                   {arrivalDateFilter ? `${filteredLeads.length}/${leads.length}` : leads.length} conversas
                 </Badge>
@@ -1407,7 +1410,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             </div>
           )}
           {/* Search */}
-          <div className={`${unified ? 'border-b border-[#1f2c34] bg-[#0f1722] p-3' : 'p-3 border-b border-border/30'}`}>
+          <div className={`${unified ? 'border-b border-[#1f2c34] bg-[#0f1722] p-2.5 sm:p-3' : 'p-3 border-b border-border/30'}`}>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1418,7 +1421,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
               />
             </div>
             {unified && (
-              <div className="mt-2 flex items-center gap-1.5">
+              <div className="mobile-tabs-scroll mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
                 {([['all', 'Todos'], ['pedro', 'Pedro'], ['marcos', 'Marcos']] as const).map(([val, label]) => (
                   <button
                     key={val}
@@ -1435,7 +1438,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
               </div>
             )}
             <div className="mt-2 flex items-center gap-2">
-              <div className="flex flex-1 items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
+              <div className="flex flex-1 items-center gap-2 rounded-xl border border-border/60 bg-background px-2.5 py-2">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">Chegou em</span>
                 <Input
@@ -1482,14 +1485,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   <button
                     key={lead.id}
                     onClick={() => setSelectedLead(lead)}
-                    className={`w-full text-left px-4 py-3.5 border-b transition-colors ${
+                    className={`w-full text-left px-3 py-3.5 border-b transition-colors sm:px-4 ${
                       unified
                         ? `border-[#1f2c34] hover:bg-[#17212b] ${isSelected ? 'bg-[#182536] border-l-2 border-l-[#3f5cff]' : 'border-l-2 border-l-transparent'}`
                         : `border-border/20 hover:bg-accent/40 ${isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : ''}`
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <Avatar className={`${unified ? 'h-12 w-12' : 'h-11 w-11'} shrink-0`}>
+                      <Avatar className={`${unified ? 'h-12 w-12' : 'h-11 w-11'} shrink-0 ring-1 ring-white/5`}>
                         {profilePicture && (
                           <AvatarImage
                             src={profilePicture}
@@ -1526,7 +1529,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center flex-wrap gap-1.5 gap-y-1 mt-1.5">
+                        <div className="mt-2 flex items-center gap-1.5 overflow-hidden">
                           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${st.color}`}>
                             {st.label}
                           </span>
@@ -1548,11 +1551,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                               <User className="h-2.5 w-2.5" /> {sellerNameById.get(lead.assigned_to_id)}
                             </span>
                           )}
-                          {tags.slice(0, 2).map(tag => (
+                          {tags.slice(0, 1).map(tag => (
                             <TagBadge key={tag} name={tag} color="#7c3aed" size="sm" />
                           ))}
-                          {tags.length > 2 && (
-                            <span className="text-[10px] text-muted-foreground">+{tags.length - 2}</span>
+                          {tags.length > 1 && (
+                            <span className="text-[10px] text-muted-foreground">+{tags.length - 1}</span>
                           )}
                         </div>
                         {!unified && <p className="text-[11px] text-muted-foreground mt-1">
@@ -1584,7 +1587,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         )}
 
         {/* ── Painel Direito: Chat ── */}
-        <div className={`${selectedLead ? 'flex' : 'hidden md:flex'} flex-col flex-1`}>
+        <div className={`${selectedLead ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`}>
           {!selectedLead ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground">
               {unified ? (
@@ -1598,7 +1601,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
           ) : (
             <>
               {/* Chat header */}
-              <div className={`${unified ? 'bg-[#111b21] border-[#1f2c34] px-5 py-3' : 'bg-muted/20 border-border/50 px-4 py-3'} flex items-center gap-3 border-b`}>
+              <div className={`${unified ? 'bg-[#111b21] border-[#1f2c34] px-2.5 py-2.5 sm:px-5 sm:py-3' : 'bg-muted/20 border-border/50 px-4 py-3'} flex items-center gap-2.5 border-b sm:gap-3`}>
                 <Button
                   variant="ghost" size="sm"
                   className="h-8 w-8 p-0 md:hidden"
@@ -1607,7 +1610,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
 
-                <Avatar className="h-11 w-11 shrink-0">
+                <Avatar className="h-10 w-10 shrink-0 ring-1 ring-white/5 sm:h-11 sm:w-11">
                   {(leadProfilePictures[cleanPhone(selectedLead.remote_jid)] || leadProfilePictures[phoneCanonical(selectedLead.remote_jid)]) && (
                     <AvatarImage
                       src={leadProfilePictures[cleanPhone(selectedLead.remote_jid)] || leadProfilePictures[phoneCanonical(selectedLead.remote_jid)]}
@@ -1627,20 +1630,20 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                 </Avatar>
 
                 <div className="flex-1 min-w-0">
-                  <p className={`${unified ? 'text-[16px] text-[#f4f6f8]' : 'text-base'} font-semibold truncate`}>{selectedLead.lead_name || selectedLead.remote_jid}</p>
-                  <p className={`${unified ? 'text-[12px] text-[#aebac1]' : 'text-xs text-muted-foreground'} flex items-center gap-1`}>
+                  <p className={`${unified ? 'text-[15px] text-[#f4f6f8] sm:text-[16px]' : 'text-base'} font-semibold truncate`}>{selectedLead.lead_name || selectedLead.remote_jid}</p>
+                  <p className={`${unified ? 'text-[11px] text-[#aebac1] sm:text-[12px]' : 'text-xs text-muted-foreground'} flex min-w-0 items-center gap-1 truncate`}>
                     <Phone className="h-2.5 w-2.5" />
                     {displayPhone(selectedLead.remote_jid)}
                     {unified && (
                       <>
-                        <span className="mx-1 text-[#3a4650]">|</span>
-                        <span className="inline-flex items-center gap-1 text-emerald-400">
+                        <span className="mx-1 hidden text-[#3a4650] sm:inline">|</span>
+                        <span className="hidden items-center gap-1 text-emerald-400 sm:inline-flex">
                           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Online
                         </span>
                       </>
                     )}
-                    <span className="mx-1 text-[#3a4650]">|</span>
-                    {selectedAssignedSeller ? `Vendedor: ${selectedAssignedSeller}` : `${selectedLead.message_count ?? 0} msgs`}
+                    <span className="mx-1 hidden text-[#3a4650] sm:inline">|</span>
+                    <span className="truncate">{selectedAssignedSeller ? `Vendedor: ${selectedAssignedSeller}` : `${selectedLead.message_count ?? 0} msgs`}</span>
                   </p>
                   {selectedLeadTags.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
@@ -1733,7 +1736,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
               {/* Messages */}
               <ScrollArea
-                className={`${unified ? 'bg-[#0b141a] px-8 py-4' : 'bg-[#0b141a] px-4 py-3'} flex-1`}
+                className={`${unified ? 'bg-[#0b141a] px-2.5 py-3 sm:px-5 lg:px-8 lg:py-4' : 'bg-[#0b141a] px-4 py-3'} flex-1`}
                 style={unified ? {
                   backgroundImage:
                     'radial-gradient(circle at 12px 12px, rgba(134,150,160,0.11) 1.2px, transparent 1.4px), linear-gradient(180deg, rgba(11,20,26,0.96), rgba(11,20,26,0.96))',
@@ -1778,13 +1781,13 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           )}
                           {showHandoff && handoffCard}
                         <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`${unified ? 'max-w-[68%] rounded-2xl px-4 py-2.5' : 'max-w-[78%] rounded-lg px-3 py-2'} ${zoomClasses.bubble} leading-relaxed shadow-md ${
+                          <div className={`${unified ? 'max-w-[88%] rounded-2xl px-3.5 py-2.5 sm:max-w-[76%] sm:px-4 lg:max-w-[68%]' : 'max-w-[78%] rounded-lg px-3 py-2'} ${zoomClasses.bubble} leading-relaxed shadow-md ${
                             isOutgoing
                               ? (curIa ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm' : 'bg-[#075e54] text-[#e9edef] rounded-tr-sm')
                               : (curIa ? 'bg-[#241f33] text-[#e9edef] rounded-tl-sm border border-violet-500/20' : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5')
                           }`}>
                             {album.length > 0 ? (
-                              <div className={`grid ${album.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-2 max-w-[360px]`}>
+                              <div className={`grid ${album.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-2 max-w-[min(76vw,360px)]`}>
                                 {album.map((m: any, idx: number) => {
                                   const url = m.file || m.url;
                                   return (
@@ -1802,7 +1805,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                               )
                             )}
                             {mainOk && isAudio && (
-                              <audio controls src={msg.media_url!} className={`w-full min-w-[240px] mb-1.5 accent-[#00a884] ${chatZoom === 'lg' ? 'min-w-[300px]' : ''}`} />
+                              <audio controls src={msg.media_url!} className={`mb-1.5 w-full min-w-[210px] accent-[#00a884] sm:min-w-[240px] ${chatZoom === 'lg' ? 'sm:min-w-[300px]' : ''}`} />
                             )}
                             {mainOk && mt === 'video' && (
                               <video controls src={msg.media_url!} className={`max-w-full rounded-xl mb-2 ${zoomClasses.media}`} />
@@ -1854,7 +1857,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
               {/* Reply input */}
               {!readOnly && (
-              <div className={`${unified ? 'border-[#1f2c34] bg-[#111b21] px-5 py-4' : 'border-border/50 bg-muted/20 px-4 py-3'} border-t`}>
+              <div className={`${unified ? 'border-[#1f2c34] bg-[#111b21] px-2.5 py-2.5 sm:px-5 sm:py-4' : 'border-border/50 bg-muted/20 px-4 py-3'} border-t`}>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1972,18 +1975,18 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     </Button>
                   </div>
                 ) : (
-                    <div className="flex items-end gap-3">
+                    <div className="flex items-end gap-2 sm:gap-3">
                       <Button
                         size="sm"
                         variant="ghost"
-                        className={`${unified ? 'h-11 w-11 rounded-full text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef]' : 'h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground'} p-0 shrink-0`}
+                        className={`${unified ? 'h-10 w-10 rounded-full text-[#aebac1] hover:bg-[#202c33] hover:text-[#e9edef] sm:h-11 sm:w-11' : 'h-9 w-9 rounded-xl text-muted-foreground hover:text-foreground'} p-0 shrink-0`}
                         onClick={() => fileInputRef.current?.click()}
                         disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
                         title="Anexar arquivo"
                     >
                       {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
                     </Button>
-                    <div className={`${unified ? 'rounded-2xl border-[#243241] bg-[#0b111d] px-4 py-3 shadow-inner' : 'rounded-xl border-border/50 bg-background px-3 py-2'} flex-1 border`}>
+                    <div className={`${unified ? 'rounded-2xl border-[#243241] bg-[#0b111d] px-3 py-2.5 shadow-inner sm:px-4 sm:py-3' : 'rounded-xl border-border/50 bg-background px-3 py-2'} flex-1 border`}>
                       <Textarea
                         value={replyText}
                         onChange={e => setReplyText(e.target.value)}
@@ -2001,7 +2004,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     {replyText.trim() ? (
                       <Button
                         size="sm"
-                        className={`${unified ? 'h-11 w-11 rounded-full bg-[#00a884] hover:bg-[#06cf9c]' : 'h-9 w-9 rounded-xl bg-primary hover:bg-primary/90'} p-0 shrink-0`}
+                        className={`${unified ? 'h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#06cf9c] sm:h-11 sm:w-11' : 'h-9 w-9 rounded-xl bg-primary hover:bg-primary/90'} p-0 shrink-0`}
                         onClick={handleSend}
                         disabled={(!unified && !selectedLead.ai_paused) || sending}
                       >
@@ -2010,7 +2013,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     ) : (
                       <Button
                         size="sm"
-                        className={`${unified ? 'h-11 w-11 rounded-full bg-[#00a884] hover:bg-[#06cf9c]' : 'h-9 w-9 rounded-xl bg-primary hover:bg-primary/90'} p-0 shrink-0`}
+                        className={`${unified ? 'h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#06cf9c] sm:h-11 sm:w-11' : 'h-9 w-9 rounded-xl bg-primary hover:bg-primary/90'} p-0 shrink-0`}
                         onClick={startRecording}
                         disabled={(!unified && !selectedLead.ai_paused) || uploadingMedia}
                         title="Gravar audio"

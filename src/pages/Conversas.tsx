@@ -15,7 +15,7 @@ export default function Conversas() {
 
   return (
     <MainLayout>
-      <div className="h-[calc(100vh-78px)] overflow-hidden">
+      <div className="h-[calc(100vh-64px)] overflow-hidden sm:h-[calc(100vh-78px)]">
         {loading || !effectiveUserId ? (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />

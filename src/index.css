@@ -2,6 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  .mobile-tabs-scroll,
+  .mobile-crm-tools,
+  .mobile-kanban-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-tabs-scroll::-webkit-scrollbar,
+  .mobile-crm-tools::-webkit-scrollbar,
+  .mobile-kanban-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  @media (max-width: 640px) {
+    .mobile-crm-shell input,
+    .mobile-crm-shell button,
+    .mobile-crm-shell [role="combobox"] {
+      touch-action: manipulation;
+    }
+
+    .mobile-lead-detail [role="combobox"],
+    .mobile-lead-detail button {
+      min-height: 36px;
+    }
+  }
+}
+
 /* ============================================================================ */
 /* BRAND TOKENS (Prompt 2 — landing redesign 16/05/2026)                       */
 /* ----------------------------------------------------------------------------*/

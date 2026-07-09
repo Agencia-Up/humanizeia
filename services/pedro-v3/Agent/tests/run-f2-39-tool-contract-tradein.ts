@@ -361,9 +361,12 @@ async function main(): Promise<void> {
   {
     const CTRL = String.fromCharCode(0x1f);
     const c = conv();
-    const t1 = await c.t("Oi", { responder: () => finU([txt("Ola" + CTRL + CTRL + "! Como posso te ajudar hoje?")], "reply", U("smalltalk")) });
+    const cleanOnFeedback: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
+      ? finU([txt("Olá! Como posso te ajudar hoje?")], "reply", U("smalltalk"))
+      : finU([txt("Ola" + CTRL + CTRL + "! Como posso te ajudar hoje?")], "reply", U("smalltalk"));
+    const t1 = await c.t("Oi", { responder: cleanOnFeedback });
     const hasCtrl = [...t1.outbox].some((ch) => { const cc = ch.codePointAt(0) ?? 0; return (cc < 0x20 && cc !== 9 && cc !== 10 && cc !== 13) || cc === 0x7f || cc === 0xfffd; });
-    check("[IN-8] control chars (U+001F) removidos do texto de saida", !hasCtrl && has(t1.outbox, "Como posso te ajudar"), `outbox=${JSON.stringify(t1.outbox)}`);
+    check("[IN-8] control chars (U+001F) rejeitados + LLM reautora texto limpo", t1.src === "brain_retry" && !hasCtrl && has(t1.outbox, "Como posso te ajudar"), `src=${t1.src} outbox=${JSON.stringify(t1.outbox)}`);
   }
   // IN-9) rejeição de capability de stock_search (understanding sem evidence válida, ex.: "cadê?") NÃO conta como busca no
   //       relatório do smoke (tool:"response") + cap anti-loop; a busca comercial roda 1x na autoria determinística.
@@ -402,7 +405,7 @@ async function main(): Promise<void> {
     const c = conv();
     await c.t("quero SUV", { responder: listSuv });   // contexto comercial (não é abertura)
     const askNameInPayment: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Claro! Você tem algum carro para dar de troca ou pretende dar entrada?")], "reply", U("financing"))
+      ? finU([txt("Claro! Você tem algum carro para dar de troca?")], "reply", U("financing"))   // UMA pergunta financeira (F2.40 caso F)
       : finU([txt("Para as condições, qual é o seu nome?")], "reply", U("financing"));
     const t2 = await c.t("Me passa as condições de pagamento", { responder: askNameInPayment });
     check("[T8b] pagamento -> engine NEGA pedido de nome -> re-autora sem pedir nome", !has(t2.outbox, "seu nome") && (has(t2.outbox, "troca") || has(t2.outbox, "entrada")), `outbox="${t2.outbox}"`);
@@ -456,7 +459,7 @@ async function main(): Promise<void> {
     await c.t("você tem SUV?", { responder: listSuv });   // lista SUVs
     await c.t("gostei do segundo", { responder: () => finU([txt("Ótima escolha! O Renault Duster 2015 é uma boa. Quer fotos ou condições?")], "reply", selectU) });   // seleciona -> persiste selectedVehicle
     const payBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Claro! Você tem algum valor para dar de entrada ou prefere que eu simule o financiamento?")], "reply", U("financing"))   // conduz após feedback
+      ? finU([txt("Claro! Você tem algum valor para dar de entrada?")], "reply", U("financing"))   // conduz após feedback (UMA pergunta — F2.40 caso F)
       : finU([txt("Me conta o que você procura?")], "reply", U("financing"));   // discovery -> NEGADO
     const t3 = await c.t("Me passa as condições de pagamento", { responder: payBrain });
     check("[T8P] pagamento c/ veículo escolhido: engine NEGA discovery -> LLM conduz (brain_retry, não technical_fallback)", (t3.src === "brain_final" || t3.src === "brain_retry") && !t3.terminalSafe && !has(t3.outbox, "o que você procura"), `src=${t3.src} outbox="${t3.outbox}"`);

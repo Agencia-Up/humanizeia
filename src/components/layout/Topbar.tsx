@@ -30,8 +30,8 @@ export function Topbar() {
   };
 
   return (
-    <header className="shrink-0 sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-border/50 bg-background/95 px-4 backdrop-blur-xl lg:px-6 shadow-sm">
-      <div className="flex items-center gap-4">
+    <header className="shrink-0 sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-border/50 bg-background/95 px-3 backdrop-blur-xl shadow-sm sm:h-16 sm:px-4 lg:px-6">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-4">
         <SidebarTrigger className="lg:hidden"><Menu className="h-5 w-5" /></SidebarTrigger>
         <div className="relative hidden md:block">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -39,19 +39,21 @@ export function Topbar() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <TokenWidget />
-        <Button variant="ghost" size="icon" onClick={toggleDarkMode} className="text-muted-foreground hover:text-foreground">
+      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+        <div className="hidden sm:block">
+          <TokenWidget />
+        </div>
+        <Button variant="ghost" size="icon" onClick={toggleDarkMode} className="h-9 w-9 text-muted-foreground hover:text-foreground">
           {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
 
-        <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+        <Button variant="ghost" size="icon" className="hidden h-9 w-9 text-muted-foreground hover:text-foreground sm:inline-flex">
           <Bell className="h-5 w-5" />
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 px-2">
+            <Button variant="ghost" className="flex min-w-0 items-center gap-2 px-1.5 sm:px-2">
               <Avatar className="h-8 w-8">
                 <AvatarImage src={avatarUrl} alt={displayName} />
                 <AvatarFallback className="gradient-primary text-white">{initials}</AvatarFallback>
