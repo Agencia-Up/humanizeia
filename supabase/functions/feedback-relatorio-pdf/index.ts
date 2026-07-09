@@ -66,17 +66,46 @@ Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') return new Response('POST only', { status: 405 });
     const body = await req.json().catch(() => ({}));
-    if (body?.k !== VIEW_KEY) return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403 });
-    const tenant = String(body?.tenant_id || TENANT_DEFAULT);
-    const uploadNome = String(body?.upload_nome || 'icom-julho-teste.pdf');
+
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    // ── Autorização ────────────────────────────────────────────────────────
+    // Modo AUTENTICADO (frontend do master): valida o token do chamador e resolve
+    // o tenant DELE. Dispensa a VIEW_KEY e IGNORA tenant_id do body (o master só
+    // gera da própria conta). Modo LEGADO (guard k + tenant fixo) segue pros
+    // disparos internos.
+    let authedTenant: string | null = null;
+    const authz = req.headers.get('Authorization') || '';
+    if (authz.toLowerCase().startsWith('bearer ')) {
+      const token = authz.slice(7).trim();
+      const anon = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!);
+      const { data: { user } } = await anon.auth.getUser(token);
+      if (user) {
+        const { data: t } = await admin.rpc('resolve_billing_owner_user_id', { p_user_id: user.id });
+        if (t) authedTenant = String(t);
+      }
+    }
+    if (!authedTenant && body?.k !== VIEW_KEY) {
+      return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403 });
+    }
+
+    // Filtro opcional: relatório completo de UM vendedor (Feedbacks > Por vendedor).
+    const vendedorId = body?.vendedor_id ? String(body.vendedor_id) : null;
+    const tenant = authedTenant || String(body?.tenant_id || TENANT_DEFAULT);
+    // No modo autenticado gera um arquivo único (não sobrescreve o do disparo) e
+    // devolve URL assinada; no legado mantém o nome/comportamento antigos.
+    const uploadNome = authedTenant
+      ? `vendedor/${tenant}/${vendedorId || 'todos'}-${Date.now()}.pdf`
+      : String(body?.upload_nome || 'icom-julho-teste.pdf');
     const loja = String(body?.loja || 'Icom Motors');
     const periodoLabel = String(body?.periodo_label || 'Julho de 2026 (até domingo, dia 06)');
 
-    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const { data: rows, error } = await admin.rpc('feedback_relatorio_dados', { p_tenant: tenant });
     if (error) return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 200 });
-    const leadsRaw: any[] = Array.isArray(rows) ? rows : [];
-    if (!leadsRaw.length) return new Response(JSON.stringify({ ok: false, error: 'sem dados' }), { status: 200 });
+    let leadsRaw: any[] = Array.isArray(rows) ? rows : [];
+    // Se pediram um vendedor específico, mantém só as conversas dele.
+    if (vendedorId) leadsRaw = leadsRaw.filter((l) => String(l?.vendedor_id || '') === vendedorId);
+    if (!leadsRaw.length) return new Response(JSON.stringify({ ok: false, error: vendedorId ? 'sem dados para este vendedor' : 'sem dados' }), { status: 200 });
 
     const leads = leadsRaw.map((l) => {
       const inc = String(l.incoming_txt || '');
@@ -676,7 +705,14 @@ Deno.serve(async (req) => {
     const up = await admin.storage.from('feedback-relatorios').upload(uploadNome, new Blob([bytes], { type: 'application/pdf' }), { upsert: true, contentType: 'application/pdf' } as any);
     if ((up as any).error) return new Response(JSON.stringify({ ok: false, error: (up as any).error.message }), { status: 200 });
 
-    return new Response(JSON.stringify({ ok: true, arquivo: uploadNome, paginas: nPages, bytes: bytes.length }), {
+    // Modo autenticado: já devolve a URL assinada pra o front abrir o PDF direto.
+    let signedUrl: string | null = null;
+    if (authedTenant) {
+      const { data: signed } = await admin.storage.from('feedback-relatorios').createSignedUrl(uploadNome, 600);
+      signedUrl = signed?.signedUrl || null;
+    }
+
+    return new Response(JSON.stringify({ ok: true, arquivo: uploadNome, paginas: nPages, bytes: bytes.length, url: signedUrl }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (e: any) {

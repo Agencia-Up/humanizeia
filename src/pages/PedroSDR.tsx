@@ -45,7 +45,7 @@ import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder'
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
 import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
-import { RelatoriosHistoricoTab } from '@/components/pedro/RelatoriosHistoricoTab';
+import { FeedbacksArea } from '@/components/pedro/FeedbacksArea';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -5761,7 +5761,7 @@ export function CrmAvancadoTab({
 
       {/* ── Relatórios: histórico dos relatórios que a IA produziu — só master ── */}
       {view === 'feedbacks' && !isSeller && (
-        <RelatoriosHistoricoTab />
+        <FeedbacksArea />
       )}
       {/* Bloco antigo (feedback manual do vendedor) DESATIVADO — mantido só como
           referência; o novo histórico de relatórios substitui esta aba. */}
