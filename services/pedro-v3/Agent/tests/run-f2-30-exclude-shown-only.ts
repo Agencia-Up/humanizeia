@@ -71,7 +71,12 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): turnos-default desta suíte são BUSCAS — a LLM real classifica search_stock. Declara o
+// ATO mas resiste a chamar a tool: o executor determinístico garante a execução (o que a suíte prova).
+const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 
 type Cap = { outbox: string; committed: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; presentedKeys: string[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder): Promise<Cap> {

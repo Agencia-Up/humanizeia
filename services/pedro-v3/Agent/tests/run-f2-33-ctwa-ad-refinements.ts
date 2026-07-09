@@ -77,6 +77,12 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): "na verdade quero o Onix" é BUSCA (a LLM real classifica search_stock); declara o ATO mas
+// resiste — o executor determinístico garante a execução com a correção aplicada.
+const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
@@ -178,7 +184,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass });
-    const t2 = await c.t("na verdade quero o Onix");
+    const t2 = await c.t("na verdade quero o Onix", { responder: resistSearch });
     check("[R-1] correção -> busca Onix (não Compass)", has(String(t2.stockInput?.modelo ?? ""), "onix") && !has(String(t2.stockInput?.modelo ?? ""), "compass"), `input=${JSON.stringify(t2.stockInput)}`);
   }
   {

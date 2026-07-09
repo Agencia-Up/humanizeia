@@ -81,6 +81,14 @@ const listSuv: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
 };
 // Cérebro que PROMETE buscar sem chamar tool (INC1/A) — o engine deve NÃO deixar isso vazar.
 const promiseNoSearch: BrainResponder = () => finU([txt("Boa! Vou buscar as opções de SUV pra você já já.")], "reply", searchSuvU);
+// ⭐AUTORIDADE: variante do listSuv com EVIDENCE do PRÓPRIO bloco (p/ turnos que não contêm "suv", ex.: "tem Renegade
+// 2019?") — a LLM real cita o trecho literal; evidence com quote fora do bloco é INVÁLIDA (gate P0-2, correto).
+const listSuvB: BrainResponder = (f, obs: readonly AgentToolObservation[]) => {
+  const u: TurnUnderstanding = { ...searchSuvU, evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }] };
+  const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  if (!so) return qU({ tool: "stock_search", input: { modelo: "Renegade" } }, u);
+  return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", u);
+};
 
 type Slots = ConversationState["slots"];
 type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; detailObs: number; terminalSafe: boolean; primaryIntent: string | null; stockInput: Record<string, unknown> | null; hasMedia: boolean; src: string | null; slots: Slots | null };
@@ -198,7 +206,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("Boa noite", { responder: askTrade });   // mesmo com troca pendente, "tem X?" é compra
-    const t2 = await c.t("na verdade tem Renegade 2019?", { responder: listSuv });
+    const t2 = await c.t("na verdade tem Renegade 2019?", { responder: listSuvB });
     check("[T7] pergunta de COMPRA ('tem Renegade 2019?') executa stock_search", t2.stockCalls >= 1, `calls=${t2.stockCalls} input=${JSON.stringify(t2.stockInput)}`);
   }
 
@@ -206,7 +214,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("Boa noite", { responder: askTrade });
-    const t2 = await c.t("quero comprar um Renegade", { responder: listSuv });
+    const t2 = await c.t("quero comprar um Renegade", { responder: listSuvB });
     check("[T8] 'quero comprar um Renegade' executa stock_search", t2.stockCalls >= 1, `calls=${t2.stockCalls}`);
   }
 
@@ -300,7 +308,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("Boa noite", { responder: askTrade });
-    const t2 = await c.t("tem Renegade 2019?", { responder: listSuv });
+    const t2 = await c.t("tem Renegade 2019?", { responder: listSuvB });
     check("[IN-3] 'tem Renegade 2019?' = compra -> busca, NÃO grava veiculoTroca", t2.stockCalls >= 1 && t2.slots?.veiculoTroca.status !== "known", `calls=${t2.stockCalls} veic=${JSON.stringify(t2.slots?.veiculoTroca)}`);
   }
 

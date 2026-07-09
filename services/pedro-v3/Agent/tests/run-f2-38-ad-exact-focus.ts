@@ -73,6 +73,12 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
 }
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): "na verdade quero Onix" é BUSCA — a LLM real classifica search_stock; declara o ATO mas
+// resiste (o executor determinístico garante a execução, solto do anúncio).
+const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 const searchCompassU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "explicit_model", subjectValue: "Compass", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "compass" }], isTopicChange: false, answeredLeadQuestions: [] };
 // Cérebro que carimba anos=[2019] (como no smoke real, por ver adVehicle="Jeep Compass 2019"): query stock_search com o ano.
 const brainStampsYear: BrainResponder = (_f, obs) => {
@@ -179,7 +185,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass19 });
-    const t2 = await c.t("na verdade quero Onix");
+    const t2 = await c.t("na verdade quero Onix", { responder: resistSearch });
     check("[AD-4] T2 busca Onix (não Compass) e sem ano do anúncio", has(String(t2.stockInput?.modelo ?? ""), "onix") && !has(String(t2.stockInput?.modelo ?? ""), "compass") && (!t2.stockInput?.anos || (t2.stockInput!.anos as number[]).length === 0), `input=${JSON.stringify(t2.stockInput)}`);
     check("[AD-4b] resposta traz o Onix, não fica presa no Compass", has(t2.outbox, "Onix") && !has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
   }

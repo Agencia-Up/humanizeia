@@ -256,6 +256,9 @@ export const PRIMARY_INTENTS = [
   "search_stock", "request_photos", "recall_photos", "select_vehicle", "vehicle_detail",
   "institutional", "financing", "visit", "smalltalk", "other",
   "trade_in", // Missão P0 (audit Codex): resposta à pergunta de TROCA — o carro é do lead, NÃO busca de estoque.
+  // ⭐AUTORIDADE (audit Codex): o lead CONTESTA/CORRIGE algo que o AGENTE disse ("Corolla não é um sedan? pq disse que
+  // não tinha?"). É conversa (reparo), NUNCA busca — mesmo citando modelo/tipo. A LLM reconhece, corrige e conduz.
+  "conversation_repair",
 ] as const;
 export type PrimaryIntent = (typeof PRIMARY_INTENTS)[number];
 // Capacidades que o turno PEDE (o engine só autoriza a que tem evidência no bloco).

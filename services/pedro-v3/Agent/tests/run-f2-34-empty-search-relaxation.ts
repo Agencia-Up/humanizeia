@@ -67,7 +67,13 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): os turnos-default desta suíte são BUSCAS ("tem Compass até 100 mil?") — a LLM real
+// classifica search_stock; declara o ATO mas resiste (o executor determinístico garante a execução + relaxamento).
+const resistOther: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const searchPickupU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "vehicle_type", subjectValue: "pickup", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "picape" }], isTopicChange: false, answeredLeadQuestions: [] } as TurnUnderstanding;
 
@@ -155,7 +161,9 @@ async function main(): Promise<void> {
   // ── Override: o cérebro AUTORA o beco ("não temos Compass, quer outras?") -> engine sobrepõe com a lista relaxada ──
   {
     const c = conv();
-    const deadEnd: BrainResponder = () => finU([txt("Não temos Compass até 100 mil no momento. Quer que eu veja outras opções para você?")], "reply", U("search_stock"));
+    // ⭐AUTORIDADE: a LLM real declara capability+evidence quando classifica busca (o prompt exige) — sem isso o engine
+    // não age (capability solta/ausente não autoriza).
+    const deadEnd: BrainResponder = () => finU([txt("Não temos Compass até 100 mil no momento. Quer que eu veja outras opções para você?")], "reply", { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Compass" }] });
     const t1 = await c.t("tem Compass até 100 mil?", { responder: deadEnd });
     check("[D-1] beco autorado é SOBREPOSTO: lista Creta/Renegade", has(t1.outbox, "Creta") || has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
     check("[D-2] a resposta final não é o beco 'quer que eu veja outras opções?'", !/quer que eu veja outras op(c|ç)oes/i.test(norm(t1.outbox)), `outbox="${t1.outbox}"`);
@@ -200,7 +208,7 @@ async function main(): Promise<void> {
   }
   {
     const c = conv();
-    await c.t("Boa tarde");   // turno 1 (abertura) — tira do 1º contato p/ isolar a semântica de technical_fallback (senão o
+    await c.t("Boa tarde", { responder: resistOther });   // turno 1 (abertura) — tira do 1º contato p/ isolar a semântica de technical_fallback (senão o
                               // backstop de abertura da PARTE A vira discovery, corretamente). Aqui provamos SÓ o degradado.
     const empty: BrainResponder = () => finU([], "reply", U("other"));   // draft VAZIO p/ turno genérico -> rejeitado -> lastResort
     const t1 = await c.t("e aí, tudo certo por aí?", { responder: empty });   // turno 2 (NÃO-abertura)

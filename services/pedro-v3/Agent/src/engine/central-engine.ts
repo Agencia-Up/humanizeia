@@ -167,7 +167,9 @@ function sanitizeOutgoingText(text: string): string {
   return repairVisibleLatin1Escapes(stripControlChars(text)).normalize("NFC");
 }
 
-function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean): string | null {
+// ⭐Hardening (audit Codex): moreOptionsSearch chega JÁ GATEADO pelo caller ("mais opções" só exige busca quando o ato
+// declarado pela LLM NÃO é conversacional — contestação/financiamento/troca/smalltalk vencem o regex).
+function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean, moreOptionsSearch: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
   // T4 (fonte única): uma pergunta de DISPONIBILIDADE/estoque do turno atual (understanding.primaryIntent=search_stock,
@@ -180,7 +182,7 @@ function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, obser
   // "mais opções" exige nova busca — MAS só quando há ESCOPO recuperável (F2.29). Sem escopo (nem filtro ativo, nem
   // oferta homogênea derivável) NÃO se força busca genérica: o engine PERGUNTA o escopo (executor determinístico). Forçar
   // uma busca sem filtro devolveria lista genérica (o bug do print: "tem outros?" -> carros baratos aleatórios + moto).
-  if (frame.signals.mentionsMoreOptions && !wasObserved("stock_search") && !moreOptionsNeedsScope) {
+  if (moreOptionsSearch && !wasObserved("stock_search") && !moreOptionsNeedsScope) {
     return "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final.";
   }
   if (frame.signals.mentionsStore && !wasObserved("tenant_business_info")) {
@@ -1460,13 +1462,20 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // barato") e NÃO citou um ano PRÓPRIO -> o ANO sai da chamada EXECUTADA de stock_search (o cérebro às vezes carimba
       // anos=[2019] por ver adVehicle="Jeep Compass 2019"). Se o lead citar ano ("outro Compass 2018"), respeita o dele.
       const dropAdYear = llmFirst && asksAdAlternatives(leadMessage) && !(currentConstraints.anos && currentConstraints.anos.length > 0);
-      // GATE por intenção do turno + entrada de anúncio: search/other com constraint do bloco, OU entrada de anúncio, OU similaridade.
-      // Missão P0: turno de RESPOSTA DE TROCA nunca força busca (o carro é do lead); "cadê?" (retomada) força a busca ativa.
-      // Missão P0 (Financial Question Context): turno de RESPOSTA FINANCEIRA nunca é busca (o valor responde parcela/
-      //    entrada, não é pedido de estoque) — mesma exclusão do tradeInAnswerTurn.
-      const commercialSearchTurn = !financialAnswerTurn && ((!tradeInAnswerTurn && (((currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints)) || (adEntryTurn && !isVehicleDetailTurn) || similarityTurn)) || resumeSearchTurn);
-      // Missão P0 INC1/A: turno em que a busca é ESPERADA (comercial/retomada, NÃO resposta de troca/financeira) -> proíbe promessa sem tool.
-      const searchExpectedThisTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && !tradeInAnswerTurn && !financialAnswerTurn;
+      // ⭐REFATORAÇÃO DE AUTORIDADE (audit Codex — "dois cérebros"): o detector de constraint NÃO autoriza mais busca.
+      // A AUTORIDADE da tool é da LLM (TurnUnderstanding: capability stock_search + evidence, via isStockSearchTurn(brainVU())
+      // nos pontos de decisão). Sem isto, "Corolla não é um sedan? pq disse que não tinha?" (contestação) virava re-lista:
+      // o detector via Corolla/sedan → constraint suficiente → forçava stock_search por cima do entendimento da LLM.
+      // Ficam como AUTORIDADE apenas fluxos de CONTEXTO conversacional real (não keyword-do-turno): entrada por anúncio
+      // (o anúncio É o assunto), similaridade explícita ("algo parecido") e retomada de busca prometida ("cadê?" com filtro
+      // ativo). Troca/financeiro continuam excluindo tudo (o carro/valor é resposta, não pedido).
+      const contextualSearchTurn = !financialAnswerTurn && ((!tradeInAnswerTurn && ((adEntryTurn && !isVehicleDetailTurn) || similarityTurn)) || resumeSearchTurn);
+      // Sinal HEURÍSTICO de turno-com-constraint (search/other + filtro suficiente): APENAS enriquecimento/merge do filtro
+      // ativo (isSearchishTurn abaixo). NUNCA autoriza/força tool — essa é a mudança de autoridade.
+      const constraintishTurn = !financialAnswerTurn && !tradeInAnswerTurn && (currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints);
+      // Missão P0 INC1/A: turno em que a busca é ESPERADA por CONTEXTO (anúncio/similaridade/retomada) -> proíbe promessa sem
+      // tool. A expectativa vinda da PRÓPRIA LLM (capability de busca declarada) é somada no ponto da autoria (brainVU()).
+      const searchExpectedThisTurn = llmFirst && contextualSearchTurn && !tradeInAnswerTurn && !financialAnswerTurn;
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
       // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
@@ -1485,7 +1494,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // F2.32: em turno de ENTRADA de anúncio, o veículo do anúncio é a BASE do escopo (acima do filtro ativo antigo —
       // prioridade anúncio>ativo); o bloco atual (ex.: "até 100k") REFINA por cima. Fora de anúncio, base = filtro ativo.
       const searchBase: CommercialConstraints = (llmFirst && adEntryTurn) ? mergeActiveConstraints(activeConstraints, adConstraints) : activeConstraints;
-      const isSearchishTurn = commercialSearchTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0 || similarityTurn;
+      // Enriquecimento/merge do filtro ativo: constraint do turno (heurística) AINDA alimenta o merge — só não autoriza tool.
+      const isSearchishTurn = contextualSearchTurn || constraintishTurn || baseSignals.mentionsMoreOptions || commercialCorrections.removedTypes.length > 0 || similarityTurn;
       const mergedConstraints: CommercialConstraints = (llmFirst && isSearchishTurn) ? mergeActiveConstraints(searchBase, currentConstraints, commercialCorrections) : currentConstraints;
       // P0-B: SIMILARIDADE relaxa o merge -> só tipo/preço/popular (câmbio só se o LEAD pediu no turno atual). "Algo parecido"
       // nunca fica preso no modelo/marca do anúncio; a recuperação honesta nomeia o TIPO (picapes), não o modelo do anúncio.
@@ -1557,6 +1567,15 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let lockedU: TurnUnderstanding | null = null;                 // base TRAVADA do turno (do cérebro)
       const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true) : null);
       const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false);
+      // ⭐AUTORIDADE (audit Codex): o ATO declarado é PEDIDO DE ESTOQUE — primaryIntent=search_stock E capability de busca
+      // validada. É o que autoriza o ENGINE a agir (forçar/garantir busca). Capability solta NÃO basta: "quanto custa o
+      // Onix?" (vehicle_detail) pode carregar capability de busca sem o ATO ser busca — o engine não força nada nesse caso.
+      const brainSearchAct = (): boolean => lockedU?.primaryIntent === "search_stock" && isStockSearchTurn(brainVU());
+      // ⭐Hardening (audit Codex): a LLM declarou um ATO CONVERSACIONAL (contestação/financiamento/troca/smalltalk) —
+      // nenhum caminho determinístico (nem mentionsMoreOptions) pode forçar/exigir busca por cima dele. Ex.: "Você disse
+      // que não tinha outras opções, mas Corolla é sedan?" casa o regex de 'mais opções' mas o ato é conversation_repair.
+      const conversationalActDeclared = (): boolean => lockedU != null
+        && (lockedU.primaryIntent === "conversation_repair" || lockedU.primaryIntent === "financing" || lockedU.primaryIntent === "trade_in" || lockedU.primaryIntent === "smalltalk");
       // key -> {marca,modelo} ESTRUTURADO (audit Codex P0): SÓ de fontes com modelo estruturado confiável — VehicleFact
       // (stock_search/vehicle_details), oferta e identidade. NUNCA `selected.label` (texto livre; não infere modelo
       // aproximado). A identidade do modelo é EXATA (catalog-utils.modelIdentityMatches), nunca substring.
@@ -1657,15 +1676,14 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               if (brainSteps + 1 < brainMaxSteps) continue; else break;
             }
           }
-          // T4: exigência de stock_search pela SEMÂNTICA do CÉREBRO (só brainVU força busca; fallback nunca força tool).
-          // P0 (LLM-first): a busca é exigida pela SEMÂNTICA do cérebro OU por um constraint comercial DETERMINÍSTICO do
-          // bloco (marca/modelo/tipo/preço/câmbio/popular). Sem isto, quando o cérebro sub-classificava "até 50 mil e que
-          // seja da volks", o turno caía em recovery_stock_not_run e reperguntava o que o lead já disse.
+          // T4 + ⭐AUTORIDADE (audit Codex): a busca é exigida pela SEMÂNTICA do CÉREBRO (isStockSearchTurn(brainVU()) —
+          // a LLM declarou a capability de busca com evidence) OU por fluxo de CONTEXTO (anúncio/similaridade/retomada).
+          // A perna heurística "constraint suficiente força busca" FOI REMOVIDA: o detector via Corolla/sedan numa
+          // CONTESTAÇÃO e forçava re-lista. Se a LLM sub-classificar um pedido real, o certo agora é ela perguntar/explicar
+          // (conversa), nunca o engine buscar por keyword — o filtro extraído segue enriquecendo a chamada QUANDO ela busca.
           // Missão P0 (audit Codex smoke): num turno de RESPOSTA DE TROCA o stock_search é PROIBIDO — então o engine também
-          // NÃO pode EXIGIR stock_search antes do final. Senão o cérebro fica preso numa contradição (proíbe-se buscar E
-          // exige-se buscar) e CADA REQUIRED_TOOL_MISSING empurra uma observação de stock_search (o "obs=8" do relatório).
-          // O carro citado é a TROCA; o turno avança sem busca. (O primaryIntent do resultado já é reconciliado p/ trade_in.)
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && (isStockSearchTurn(brainVU()) || commercialSearchTurn), moreOptionsNeedsScope);
+          // NÃO pode EXIGIR stock_search antes do final (senão contradição proíbe-e-exige, o "obs=8" do relatório).
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && (brainSearchAct() || contextualSearchTurn), moreOptionsNeedsScope, frame.signals.mentionsMoreOptions === true && !conversationalActDeclared());
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             const stockReq = !frame.signals.mentionsStore;
             // ⭐Fase 1 (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SÓ na RETOMADA ("cadê?/e aí?/achou?/
@@ -1706,7 +1724,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             if (needDetail) break;
             // Renderiza+valida a autoria do cérebro AQUI. Deny/fato ausente -> feedback tipado ao MESMO cérebro
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn });
+            // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
+            // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -1719,15 +1739,26 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             //   (1) LISTAGEM (comercial/retomada COM itens): entrega as vehicleKeys EXATAS + formato de 3 partes -> a LLM devolve
             //       a vehicle_offer_list (o sistema formata preço/km). (2) MONEY em condução (pagamento/troca): o carro de troca
             //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
-            const listTurn = llmFirst && (commercialSearchTurn || resumeSearchTurn) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
+            // ⭐AUTORIDADE: busca EXECUTADA (autorizada no gate da call — pela LLM ou por contexto) com itens -> o desfecho
+            // certo é APRESENTAR o resultado; orienta a LLM a listar. O detector de constraint não participa.
+            const listTurn = llmFirst && (contextualSearchTurn || brainSearchAct()) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             const moneyDeny = /monet[aá]ri|money_ref|valor\s+monetario|\bR\$/i.test(authored.feedback);
             const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
             const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn);
             let effFeedback = authored.feedback;
             let keepRetrying = false;
+            // ⭐AUTORIDADE: CONTESTAÇÃO (conversation_repair declarado pela LLM) — a resposta certa é TEXTO simples
+            // (reconhecer/corrigir/conduzir); vehicle_offer_list exige fato DO TURNO e aqui não há busca — orienta a LLM.
+            const repairTurn = llmFirst && lockedU?.primaryIntent === "conversation_repair";
+            // ⭐"mais opções"/busca que voltou VAZIA (todas as stock_search do turno com 0 itens): a resposta certa é a
+            // LLM ser HONESTA em texto (sem re-listar os mesmos), nunca o engine escrever (recovery_stock_empty).
+            const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             if (corruptionDeny) {
               // Encoding corruption is transient; retry with the same intent and
               // an explicit cleanup instruction before any commercial feedback.
+              keepRetrying = true;
+            } else if (repairTurn) {
+              effFeedback = "Turno de CONTESTAÇÃO/correção (conversation_repair): o cliente questionou algo que VOCÊ disse. Responda com UMA parte text simples: reconheça com naturalidade e humildade ('você tem razão...'), corrija a informação e conduza com UMA pergunta curta sobre os carros JÁ mostrados (fotos/detalhes/condições). NÃO use vehicle_offer_list (a lista já foi mostrada — re-listar é robótico), NÃO escreva R$/km, NÃO chame tools.";
               keepRetrying = true;
             } else if (listTurn) {
               const listKeys: string[] = [];
@@ -1741,6 +1772,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               // quando o deny NÃO é exatamente monetário, antes caía direto no break->recovery_ask_need (technical_fallback).
               const moneyHint = moneyDeny ? " Você escreveu um valor em R$/mil que NÃO está aterrado num preço real — REMOVA todo R$/valor." : "";
               effFeedback = `Turno de CONDUÇÃO (pagamento/troca).${moneyHint} NÃO afirme valores em R$/mil (você não tem um preço aterrado desse número) e NÃO volte para descoberta ('o que você procura'). Reescreva o draft com UMA parte text: acolha o que o lead disse (o carro de troca ou o pedido de condições) e conduza com UMA pergunta de avanço — 'você tem um valor para dar de entrada?', 'qual parcela caberia no seu orçamento?', ou 'posso agendar uma avaliação do seu carro?'.`;
+              keepRetrying = true;
+            } else if (emptyStockTurn) {
+              effFeedback = "A busca deste turno voltou VAZIA (com os carros já mostrados excluídos, não há NOVAS opções nesse filtro). Responda com UMA parte text HONESTA: diga que no momento não tem outras opções além das que já mostrou e CONDUZA com UMA pergunta curta (fotos/detalhes/condições de algum dos mostrados, ou se ele quer ampliar o filtro — outro tipo/faixa). NÃO use vehicle_offer_list, NÃO re-liste os mesmos, NÃO escreva R$/km.";
               keepRetrying = true;
             }
             policyFeedbackLog.push(effFeedback);
@@ -1787,6 +1821,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           duplicateStockCallsBlocked += 1;
           const finSlot = financialAnswerSlot === "parcelaDesejada" ? "a PARCELA mensal" : financialAnswerSlot === "entrada" ? "a ENTRADA" : "a forma de pagamento";
           observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `O cliente está RESPONDENDO à sua pergunta financeira anterior (${finSlot}). O valor/negação dele responde ESSA pergunta — NÃO é pedido de estoque nem novo orçamento de compra de veículo. NÃO chame stock_search/vehicle_details/vehicle_photos_resolve. Interprete a resposta como ${finSlot} e CONDUZA o financiamento do veículo que ele JÁ escolheu com UMA pergunta curta (o próximo dado que falta: troca/entrada/parcela, ou ofereça passar ao consultor). Só busque estoque se ele pedir EXPLICITAMENTE um carro/modelo/tipo/faixa de preço de compra NOVO.` } });
+          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
+          continue;
+        }
+        // ⭐AUTORIDADE (audit Codex, item 5): INTENT CONTRADITÓRIO — o PRÓPRIO cérebro classificou o ato como conversa
+        // (contestação/correção, financiamento, troca, smalltalk) e MESMO ASSIM pediu stock_search. A intenção declarada
+        // vence a tool: nega + feedback semântico -> a LLM responde a CONVERSA (explica/corrige/conduz), sem re-listar.
+        // Não é regex de frase: usa a classificação da própria LLM como contrato.
+        if (llmFirst && call.tool === "stock_search" && lockedU != null
+            && (lockedU.primaryIntent === "conversation_repair" || lockedU.primaryIntent === "financing" || lockedU.primaryIntent === "trade_in" || lockedU.primaryIntent === "smalltalk")) {
+          duplicateStockCallsBlocked += 1;
+          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `Você classificou este turno como '${lockedU.primaryIntent}' — o cliente NÃO está pedindo uma nova busca de estoque. Responda o ATO da conversa: se ele contestou/corrigiu algo que você disse, reconheça com naturalidade, corrija a informação e conduza; se é financiamento/troca, conduza a qualificação. NÃO chame stock_search (só se ele pedir explicitamente um carro/modelo/tipo/faixa NOVA).` } });
           if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
           continue;
         }
@@ -1945,13 +1990,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               facts.push(photoRes); observations.push(toAgentObservation(photoRes)); toolResultMems.push(toToolResultMemory(photoRes, turnId));
             } catch { /* best-effort: sem fotos o executor cai no honesto "não localizei as fotos", nunca "de qual carro?" */ }
           }
-          // ── P0 (F2.26, audit Codex): busca comercial DETERMINÍSTICA. Se há constraint suficiente (bloco atual OU filtro
-          //    ATIVO mergeado) e o cérebro NÃO chamou stock_search, o ENGINE executa a busca com o filtro ativo — GARANTE
-          //    a ação. Elimina a promessa falsa "vou procurar" sem buscar: a recuperação então lista de verdade OU é honesta
-          //    sobre o vazio (nomeando o filtro). Foto/detalhe/institucional NÃO entram aqui (gate por commercialSearchTurn). ──
+          // ── P0 (F2.26 + ⭐AUTORIDADE): busca comercial determinística SÓ com AUTORIZAÇÃO real — a LLM declarou busca
+          //    (isStockSearchTurn) mas não executou, fluxo de CONTEXTO (anúncio/similaridade/retomada), ou "mais opções"
+          //    (ato explícito do lead). O detector de constraint NÃO dispara mais isto: era o robô que re-listava estoque
+          //    numa CONTESTAÇÃO ("Corolla não é um sedan?") só porque a frase citava modelo/tipo. ──
           // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
           // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
-          if (llmFirst && (commercialSearchTurn || frame.signals.mentionsMoreOptions) && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+          if (llmFirst && (contextualSearchTurn || brainSearchAct() || (frame.signals.mentionsMoreOptions === true && !conversationalActDeclared())) && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
             try {
               const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, {
                 popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true,
@@ -2035,9 +2080,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               responseSource = "deterministic_institutional";
               effectiveDecision = detDiseng.decision; composed = detDiseng.composed; proposedEffects = detDiseng.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "lead_disengaged", reasonSummary: "desinteresse -> resposta curta, sem funil", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
-            } else if (moreOptionsNeedsScope && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+            } else if (moreOptionsNeedsScope && !conversationalActDeclared() && !facts.some((f) => f.ok && f.tool === "stock_search")) {
               // F2.29 (invariante 5): "mais opções" SEM escopo recuperável e SEM busca executada -> PERGUNTA o tipo/faixa.
-              // Nunca cai em recovery genérico nem lista aleatória. Aterrado e honesto.
+              // Nunca cai em recovery genérico nem lista aleatória. Aterrado e honesto. ⭐Hardening: ato conversacional
+              // declarado pela LLM (contestação etc.) vence o regex de 'mais opções' — a LLM conversa, o executor não roda.
               const detScope = buildMoreOptionsScopeQuestion({ ctx, turnId });
               responseSource = "deterministic_institutional";
               effectiveDecision = detScope.decision; composed = detScope.composed; proposedEffects = detScope.proposedEffects;
