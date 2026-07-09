@@ -88,7 +88,12 @@ function final(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding):
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
 const query = (call: CentralQueryCall, u: TurnUnderstanding): AgentBrainStep => ({ kind: "query", call, understanding: u });
-const resist: BrainResponder = () => final([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): "na verdade quero um SUV..." é BUSCA — a LLM real classifica search_stock; declara o ATO
+// mas resiste (o executor determinístico garante a execução com o reset de tipo).
+const resist: BrainResponder = (f) => final([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 
 const detailU = U("vehicle_detail", {
   caps: ["vehicle_details"],

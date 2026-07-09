@@ -21,7 +21,9 @@ export type QueryLoopLimits = {
   queryTimeoutMs?: number;
   composeTimeoutMs?: number;
 };
-export type TurnContextPreparation = Pick<TurnContext, "interpretation" | "tenantCatalog" | "claimExtractor">;
+// catalogDegraded (opcional): o snapshot do catálogo FALHOU no prepare (fail-closed p/ vazio) — o engine loga em
+// decision_final (observável, nunca silencioso) e as policies seguem aceitando fatos frescos das tools do turno.
+export type TurnContextPreparation = Pick<TurnContext, "interpretation" | "tenantCatalog" | "claimExtractor"> & { readonly catalogDegraded?: boolean };
 
 export interface TurnContextPreparer {
   prepare(args: {

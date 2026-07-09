@@ -71,7 +71,12 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): turnos-default desta suíte são BUSCAS — a LLM real classifica search_stock. Declara o
+// ATO mas resiste a chamar a tool: o executor determinístico garante a execução (o que a suíte prova).
+const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 
 type Cap = { outbox: string; committed: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; presentedKeys: string[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder): Promise<Cap> {
@@ -144,6 +149,22 @@ async function main(): Promise<void> {
     check("[I-5] busca herdou tipo=suv + precoMax=100000", t2.stockInput?.tipo === "suv" && t2.stockInput?.precoMax === 100000, `input=${JSON.stringify(t2.stockInput)}`);
   }
 
+  // -- GRUPO 2b: incidente 2026-07-09. Draft com 7 keys, renderer mostra 5, memoria guarda SO 5.
+  {
+    const c = conv();
+    const allStockBrain: BrainResponder = (_f, _obs, step) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "SUV" }] };
+      if (step === 0) return { kind: "query", understanding: u, call: { tool: "stock_search", input: { tipo: "suv" } } } as AgentBrainStep;
+      return finU([txt("Encontrei estas opcoes pra voce:"), offer(STOCK.map((v) => v.vehicleKey))], "offer_all_suv", u);
+    };
+    const t1 = await c.t("quero SUV", "ambiguous", allStockBrain);
+    check("[R-1] renderer mostra so 5: Compass fica fora do texto", has(t1.outbox, "Renegade") && !has(t1.outbox, "Compass"), `outbox="${t1.outbox}"`);
+    check("[R-2] memoria presentedKeys espelha o render: so 5, sem Compass", t1.presentedKeys.length === 5 && !t1.presentedKeys.includes("rm:cmp17") && !t1.presentedKeys.includes("rm:cmp19"), `pk=${JSON.stringify(t1.presentedKeys)}`);
+    const t2 = await c.t("tem outros?");
+    const ex = (t2.stockInput?.excludeKeys as string[] | undefined) ?? [];
+    check("[R-3] T2 exclui so os 5 efetivamente mostrados", ex.length === 5 && !ex.includes("rm:cmp17") && !ex.includes("rm:cmp19"), `ex=${JSON.stringify(ex)}`);
+    check("[R-4] T2 encontra Compass que nao tinha sido renderizado", has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
+  }
   // ── GRUPO 3 — INCIDENTE EXATO: o cérebro passa excludeKeys com as keys que VIU (incl. Compass) -> engine clampa ──
   {
     const c = conv();

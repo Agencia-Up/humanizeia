@@ -9,7 +9,7 @@ import type { VehicleFact } from "../domain/types.ts";
 
 export type VehicleOfferListOptions = { maxItems?: number };
 
-const DEFAULT_MAX_ITEMS = 5;
+export const DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS = 5;
 
 export function formatBRL(value: number): string {
   const n = Number.isFinite(value) ? value : 0;
@@ -43,7 +43,7 @@ function vehicleDetails(v: VehicleFact): string | null {
 
 // Renderiza a lista numerada. 1 veiculo tambem vira "1. ...". Limite default 5.
 export function renderVehicleOfferList(vehicles: readonly VehicleFact[], options: VehicleOfferListOptions = {}): string {
-  const max = options.maxItems ?? DEFAULT_MAX_ITEMS;
+  const max = options.maxItems ?? DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS;
   const items = vehicles.slice(0, Math.max(1, max));
   const blocks = items.map((v, i) => {
     const title = `${i + 1}. ${vehicleName(v)} - ${vehiclePrice(v)}`;

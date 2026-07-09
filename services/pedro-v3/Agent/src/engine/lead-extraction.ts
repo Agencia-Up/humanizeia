@@ -18,6 +18,7 @@ import type { ClaimExtractor, DecisionMutation, TurnInterpretation } from "../do
 import type { EntityReference, Id } from "../domain/types.ts";
 import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
+import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 
 const NON_NAME = new Set([
   "sim", "nao", "claro", "certo", "ok", "okay", "isso", "beleza", "blz", "opa", "oi", "ola", "eai", "e", "ou", "eh",
@@ -307,6 +308,16 @@ function moneySpans(message: string, financialContext = false): MoneySpan[] {
   }
   return out;
 }
+// ⭐Missão P0 (validationState, audit Codex F2.43): os VALORES MONETÁRIOS que o LEAD ESCREVEU no bloco ATUAL —
+// allowlist de PROVENIÊNCIA para a validação da resposta: ecoar um valor que o cliente acabou de dizer ("Tenho 8k
+// de entrada" -> "R$ 8.000 anotado!") NUNCA é invenção, independente do timing do commit dos slots. Valor que a LLM
+// inventa (não está no bloco nem nos slots conhecidos) continua sem aterro -> deny. PURO (mesmo parser da extração;
+// financialContext=true para "até 2100" contar como valor, como no slot).
+export function leadStatedMoneyValues(message: string): number[] {
+  const seen = new Set<number>();
+  for (const s of moneySpans(message, true)) seen.add(s.value);
+  return [...seen];
+}
 // Papel por CLÁUSULA (robusto a ambas as ordens): divide a fala em cláusulas (vírgula/;/./"e"/"com"/"mas")
 // e classifica cada uma pelo cue presente NELA. O valor da cláusula é o 1º span monetário dela. Assim
 // "picape até 100 mil, parcela até 1.800" separa as cláusulas e não confunde os valores (não depende de
@@ -408,6 +419,34 @@ function extractDayPeriod(text: string): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+// ── Missão P0 (TROCA em bloco quebrado): o carro de TROCA é DO LEAD — não precisa existir na taxonomia nem no
+//    catálogo do tenant. Tolerância GENÉRICA (não if-por-frase): (a) typo de letra dobrada resolve pela taxonomia de
+//    mercado COLAPSADA ("hillux"->Hilux/Toyota); (b) senão, o DESCRITOR LIVRE adjacente à posse/ano vira o modelo
+//    (palavra do lead, para o briefing do vendedor). Dígitos nunca colapsam (ano/km intactos). ─────────────────────
+const collapseLetters = (s: string): string => s.replace(/(\p{L})\1+/gu, "$1");
+const MARKET_COLLAPSED: ReadonlyMap<string, { marca: string; modelo: string }> = (() => {
+  const m = new Map<string, { marca: string; modelo: string }>();
+  for (const e of VEHICLE_TAXONOMY) {
+    const key = collapseLetters(normalizeText(e.model));
+    if (key && !m.has(key)) m.set(key, { marca: e.brand, modelo: e.model });
+  }
+  return m;
+})();
+// Palavras que descrevem o veículo genericamente (nunca são um modelo): não viram descritor.
+const TRADE_DESC_STOP = new Set([
+  "carro", "carros", "veiculo", "veiculos", "automovel", "moto", "modelo", "marca", "ano", "km", "mil", "troca",
+  "meu", "minha", "outro", "outra", "novo", "nova", "usado", "usada", "seminovo", "seminova", "bom", "boa", "sim",
+  "sedan", "suv", "hatch", "picape", "pickup", "caminhonete", "diesel", "flex", "automatico", "manual", "completo", "completa",
+]);
+function freeTradeDescriptor(norm: string): string | null {
+  const cands: string[] = [];
+  const afterPossession = /\b(?:tenho|possuo)\s+(?:um|uma)\s+([\p{L}][\p{L}\d-]{2,})/u.exec(norm);
+  if (afterPossession) cands.push(afterPossession[1]);
+  for (const m of norm.matchAll(/\b([\p{L}][\p{L}\d-]{2,})\s+(?:19|20)\d{2}\b/gu)) cands.push(m[1]);
+  for (const c of cands) if (!TRADE_DESC_STOP.has(c) && !/^\d+$/.test(c)) return c;
+  return null;
+}
+
 function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: string; modelo?: string; ano?: number; km?: number; estado?: string } | null {
   const norm = normalizeText(text);
   const claims = claimExtractor.extractClaims(text);
@@ -418,6 +457,14 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
   const result: { marca?: string; modelo?: string; ano?: number; km?: number; estado?: string } = {};
   if (brand) result.marca = brand.text;
   if (model) result.modelo = model.text;
+  else {
+    const desc = freeTradeDescriptor(norm);
+    if (desc) {
+      const canon = MARKET_COLLAPSED.get(collapseLetters(desc));
+      if (canon) { result.modelo = canon.modelo; if (!result.marca) result.marca = canon.marca; }
+      else result.modelo = desc;
+    }
+  }
   if (yearMatch) result.ano = Number(yearMatch[1]);
   if (kmMatch) {
     let km = Number(kmMatch[1].replace(/[.,]/g, ""));
@@ -593,9 +640,15 @@ export function extractLeadSlots(args: {
   // repetição vista no eval real (agente repetia "tem carro pra troca?" porque não entendeu "tenho não").
   const trocaNeg = /\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+possuo\b|\bpossuo\s+nao\b/.test(norm);
   const trocaPos = !trocaNeg && /\btenho\s+sim\b|\bpossuo\s+sim\b/.test(norm);
+  // ⭐F2.43 (audit Codex): resposta FINANCEIRA ("Tenho 8k de entrada", "tenho 5 mil") à pergunta de TROCA não é
+  // booleano de troca — o "tenho" é do DINHEIRO. Com valor monetário no bloco e SEM menção a carro/troca/modelo,
+  // NÃO infere posse (paralelo do R11-A1 p/ compra); o valor vai aos slots financeiros e a troca segue sem resposta.
+  const mentionsVehicleWord = parseVehicleType(leadMessage) != null || /\b(carro|veiculo|modelo|troca)\b/.test(norm)
+    || claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model");
+  const looksLikeMoneyAnswer = leadStatedMoneyValues(leadMessage).length > 0 && !mentionsVehicleWord;
   let deniedTradeVehicle = false;
   if (explicitTrade || explicitNoTrade || expected === "possuiTroca" || offersTradeByPossession) {
-    const value = (explicitNoTrade || trocaNeg) ? false : (explicitTrade || trocaPos || offersTradeByPossession) ? true : (looksLikeBuyRequest ? null : parseBooleanAnswer(leadMessage));
+    const value = (explicitNoTrade || trocaNeg) ? false : (explicitTrade || trocaPos || offersTradeByPossession) ? true : ((looksLikeBuyRequest || looksLikeMoneyAnswer) ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
       add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");

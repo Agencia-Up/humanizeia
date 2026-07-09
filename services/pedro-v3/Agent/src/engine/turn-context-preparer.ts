@@ -93,11 +93,15 @@ export class ConversationTurnContextPreparer implements TurnContextPreparer {
 
   async prepare(args: Parameters<TurnContextPreparer["prepare"]>[0]) {
     let tenantCatalog: TenantCatalog;
+    let catalogDegraded = false;
     try {
       tenantCatalog = await this.catalogs.loadCatalog(this.ref);
     } catch {
       // Empty catalog fails closed for vehicle grounding without blocking a greeting.
+      // ⭐Missão P0: a degradação é OBSERVÁVEL (decision_final.catalogDegraded) — nunca silenciosa; os fatos
+      // frescos das tools do turno seguem aterrando oferta (isVehicleKeyGrounded), o snapshot vazio não os apaga.
       tenantCatalog = { entries: [] };
+      catalogDegraded = true;
     }
 
     let interpretation: TurnInterpretation;
@@ -117,6 +121,7 @@ export class ConversationTurnContextPreparer implements TurnContextPreparer {
     return {
       interpretation,
       tenantCatalog,
+      catalogDegraded,
       claimExtractor: this.independentClaimExtractor
         ? new CompositeClaimExtractor([new CatalogClaimExtractor(tenantCatalog), this.independentClaimExtractor])
         : new CatalogClaimExtractor(tenantCatalog),

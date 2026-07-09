@@ -4,7 +4,8 @@ import type {
   TurnDecision, EffectPlan, ProposedEffectPlan, MoneyRole,
 } from "../domain/decision.ts";
 import type { VehicleFact } from "../domain/types.ts";
-import { isVehicleKeyInCatalog, normalizeText, canonicalModel } from "./catalog-utils.ts";
+import { isVehicleKeyGrounded, normalizeText, canonicalModel } from "./catalog-utils.ts";
+import { leadStatedMoneyValues } from "./lead-extraction.ts";
 import { slotQuestions } from "./question-classify.ts";
 import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone } from "./turn-domain.ts";
 
@@ -260,9 +261,11 @@ export const PolicyEngine = {
       });
     }
 
-    // POL-CATALOG-OFFER: veículo ofertado deve ter marca e modelo no catálogo do tenant (Fase 1.4)
+    // POL-CATALOG-OFFER: veículo ofertado deve ter marca e modelo no catálogo do tenant (Fase 1.4).
+    // ⭐Missão P0 (fatos frescos vencem snapshot): key vinda das TOOLS do tenant NESTE turno é catálogo válido —
+    // snapshot vazio/falho não apaga fato fresco (o engine nunca exige uma key e depois a rejeita).
     for (const k of offeredKeys) {
-      if (!isVehicleKeyInCatalog(ctx.tenantCatalog, k)) {
+      if (!isVehicleKeyGrounded(ctx.tenantCatalog, facts, k)) {
         verdicts.push({
           policyId: "POL-GROUND-STOCK",
           outcome: "deny",
@@ -427,6 +430,11 @@ export const PolicyEngine = {
       if (fp?.status === "known" && fp.value && typeof fp.value === "object") { const o = fp.value as { min?: number; max?: number }; push(o.min); push(o.max); }
       if (sl.entrada?.status === "known") push(sl.entrada.value);
       if (sl.parcelaDesejada?.status === "known") push(sl.parcelaDesejada.value);
+      // ⭐Missão P0 (validationState, audit Codex F2.43): valores que o LEAD ESCREVEU no bloco DESTE turno aterram o
+      // eco na resposta ("Tenho 8k de entrada" -> "R$ 8.000 anotado!") mesmo que o slot ainda não esteja no estado
+      // durante a validação (o commit dos slots é tudo-ou-nada e acontece depois). Proveniência do lead — paralelo
+      // ao veiculoTroca. Valor INVENTADO pela LLM (nem bloco, nem slot) continua sem aterro -> deny.
+      for (const v of leadStatedMoneyValues(ctx.leadMessage)) push(v);
     }
     const isLeadValue = (v: number): boolean => leadMoney.some((lv) => Math.abs(lv - v) <= lv * PRICE_TOL);
 
@@ -442,6 +450,19 @@ export const PolicyEngine = {
       const addClaims = (s: string | null | undefined): void => { if (!s) return; for (const c of ctx.claimExtractor.extractClaims(s)) { if (c.kind === "brand" || c.kind === "brand_model") validBrands.add(c.normalized); if (c.kind === "model" || c.kind === "brand_model") validModels.add(c.normalized); } };
       if (sel?.label) addClaims(sel.label);
       for (const it of ctx.state.lastRenderedOfferContext?.items ?? []) { addClaims(it.marca ?? undefined); addClaims(it.modelo ?? undefined); if (it.marca && it.modelo) addClaims(`${it.marca} ${it.modelo}`); }
+      // ⭐Missão P0 (TROCA, proveniência do LEAD): o VEÍCULO DE TROCA é o carro DO LEAD (slots.veiculoTroca — já inclui
+      // a extração DESTE turno). Nomeá-lo na resposta ("anotei sua Hilux 2020") é conversa aterrada NA FALA DO LEAD,
+      // nunca invenção de catálogo — paralelo ao isLeadValue para valores monetários. Cobre o typo do lead nos DOIS
+      // sentidos pela forma de letras colapsadas ("hillux" ≙ "hilux"). O carro de troca NUNCA entra em oferta
+      // (vehicle_ref/offer_list seguem exigindo catálogo) — a isenção é só para o NOME em texto livre.
+      const tvSlot = (ctx.state.slots as Record<string, { status?: string; value?: unknown } | undefined>).veiculoTroca;
+      if (tvSlot?.status === "known" && tvSlot.value && typeof tvSlot.value === "object") {
+        const tv = tvSlot.value as { marca?: string; modelo?: string };
+        const collapseL = (s: string): string => s.replace(/(\p{L})\1+/gu, "$1");
+        addClaims(tv.marca); addClaims(tv.modelo); if (tv.marca && tv.modelo) addClaims(`${tv.marca} ${tv.modelo}`);
+        if (tv.modelo) { const n = normalizeText(tv.modelo); validModels.add(n); validModels.add(collapseL(n)); }
+        if (tv.marca) { const n = normalizeText(tv.marca); validBrands.add(n); validBrands.add(collapseL(n)); }
+      }
     }
     const modelGrounded = (norm: string): boolean => validModels.has(norm) || modelGroundedExact(norm, validModels);
     const claimGrounded = (claim: { kind: string; normalized: string }): boolean => {
@@ -469,21 +490,22 @@ export const PolicyEngine = {
           priceViolations.push(`TextPart contém valor monetário livre '${moneyMentionsText[0].raw}'`);
         }
       } else if (part.type === "vehicle_ref") {
-        // Valida se o veículo referenciado está no catálogo do tenant (Fase 1.4)
-        if (!isVehicleKeyInCatalog(ctx.tenantCatalog, part.vehicleKey)) {
+        // Valida se o veículo referenciado está no catálogo do tenant (Fase 1.4).
+        // ⭐Fatos frescos do turno (stock_search/vehicle_details ok) contam como catálogo — snapshot vazio não apaga.
+        if (!isVehicleKeyGrounded(ctx.tenantCatalog, facts, part.vehicleKey)) {
           brandModelViolations.push(`veículo referenciado '${part.vehicleKey}' contém marca/modelo fora do catálogo do tenant`);
         }
       } else if (part.type === "money_ref") {
         // Valida se o veículo na fonte está no catálogo do tenant (Fase 1.4)
         if (part.source.kind === "vehicle_fact") {
-          if (!isVehicleKeyInCatalog(ctx.tenantCatalog, part.source.vehicleKey)) {
+          if (!isVehicleKeyGrounded(ctx.tenantCatalog, facts, part.source.vehicleKey)) {
             brandModelViolations.push(`veículo referenciado na fonte monetária '${part.source.vehicleKey}' contém marca/modelo fora do catálogo do tenant`);
           }
         }
       } else if (part.type === "vehicle_offer_list") {
-        // F2.7.5: cada veículo da lista renderizada deve estar no catálogo do tenant.
+        // F2.7.5: cada veículo da lista renderizada deve estar no catálogo do tenant (ou nos fatos frescos do turno).
         for (const key of part.vehicleKeys) {
-          if (!isVehicleKeyInCatalog(ctx.tenantCatalog, key)) {
+          if (!isVehicleKeyGrounded(ctx.tenantCatalog, facts, key)) {
             brandModelViolations.push(`veículo da lista '${key}' contém marca/modelo fora do catálogo do tenant`);
           }
         }

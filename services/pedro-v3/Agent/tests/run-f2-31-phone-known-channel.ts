@@ -100,7 +100,14 @@ async function main(): Promise<void> {
   }
   {
     // WhatsApp + resposta normal (sem pedir telefone) -> commit normal, sem falso-positivo.
-    const r = await runOne("wa:8ed13714cafe", "quero um Onix", () => finU([txt("Ótimo! O Onix é uma excelente escolha. Quer que eu te mande as fotos?")], "reply", U("other")));
+    // ⭐AUTORIDADE: sem força heurística a AUTORIA é despachada — o responder simula a LLM real: classifica busca, CHAMA
+    // stock_search e apresenta o resultado aterrado. O alvo do caso segue sendo o guard de telefone (não dispara).
+    const searchU: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Onix" }] };
+    const r = await runOne("wa:8ed13714cafe", "quero um Onix", (_f, obs) => {
+      const s = obs.find((o) => o.tool === "stock_search" && o.ok);
+      if (!s) return { kind: "query", call: { tool: "stock_search", input: { modelo: "Onix" } }, understanding: searchU } as AgentBrainStep;
+      return finU([txt("Ótimo! Encontrei este pra você:"), { type: "vehicle_offer_list", vehicleKeys: [ONIX.vehicleKey] } as ResponsePart, txt("Quer ver as condições?")], "reply", searchU);
+    });
     check("[I-4] wa: + resposta sem pedir telefone -> commit normal (sem falso-positivo)", r.committed && has(r.outbox, "Onix"), `outbox="${r.outbox}"`);
   }
 

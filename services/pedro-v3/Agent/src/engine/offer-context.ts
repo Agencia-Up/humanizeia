@@ -8,6 +8,7 @@ import type { LastRenderedOfferContext, RenderedOfferItem } from "../domain/conv
 import type { Id, Iso, VehicleFact } from "../domain/types.ts";
 import type { QueryResult } from "../domain/decision.ts";
 import type { TurnOutput } from "./decision-engine.ts";
+import { DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS } from "./vehicle-offer-render.ts";
 
 function stockItemsFromFacts(facts: QueryResult[]): VehicleFact[] {
   const out: VehicleFact[] = [];
@@ -24,7 +25,9 @@ export function computeRenderedOfferContext(turnOutput: TurnOutput, turnId: Id, 
   // 2) caminho do LLM: parte vehicle_offer_list (chaves na ORDEM renderizada) + detalhes nos fatos
   const parts = turnOutput.composed?.draft?.parts ?? [];
   const part = parts.find((p) => (p as { type?: string }).type === "vehicle_offer_list") as { vehicleKeys?: string[] } | undefined;
-  const keys = Array.isArray(part?.vehicleKeys) ? part!.vehicleKeys : [];
+  // A memoria operacional precisa espelhar o que o renderer realmente mostrou no WhatsApp.
+  // Se a LLM propuser 16 chaves mas a lista renderizada mostra 5, so essas 5 viram "apresentadas".
+  const keys = Array.isArray(part?.vehicleKeys) ? part!.vehicleKeys.slice(0, DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS) : [];
   if (keys.length === 0) return null;
   const stock = stockItemsFromFacts(turnOutput.facts);
   const items: RenderedOfferItem[] = keys.map((key, i) => {

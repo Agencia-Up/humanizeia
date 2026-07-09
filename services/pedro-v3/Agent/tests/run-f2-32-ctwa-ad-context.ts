@@ -77,6 +77,12 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+// ⭐AUTORIDADE (audit Codex): turnos em que o lead ESPECIFICA busca ("na verdade quero o Onix", "quero um SUV") — a
+// LLM real classifica search_stock; declara o ATO mas resiste (o executor determinístico garante a execução).
+const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
+  ...U("search_stock"), requestedCapabilities: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+});
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; adVehicleSeen: string | null; hasHandoff: boolean };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
@@ -158,7 +164,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("tem esse?", { ad: adCompass });                 // T1: anúncio Compass
-    const t2 = await c.t("na verdade quero o Onix");            // T2: correção
+    const t2 = await c.t("na verdade quero o Onix", { responder: resistSearch });            // T2: correção
     check("[E-1] correção do lead VENCE o anúncio: busca Onix (não Compass)", has(String(t2.stockInput?.modelo ?? ""), "onix") && !has(String(t2.stockInput?.modelo ?? ""), "compass"), `input=${JSON.stringify(t2.stockInput)}`);
     check("[E-2] outbox lista Onix, não Compass", has(t2.outbox, "Onix") && !has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
   }
@@ -195,7 +201,7 @@ async function main(): Promise<void> {
   // ADGEN-3) Fix B: anúncio genérico mas o lead JÁ especifica (SUV) -> NÃO força discovery (o lead engatou); segue comercial.
   {
     const c = conv();
-    const r = await c.t("quero um SUV", { ad: adInstitucional });
+    const r = await c.t("quero um SUV", { ad: adInstitucional, responder: resistSearch });
     check("[ADGEN-3] lead que já especifica não recebe discovery genérico (busca o tipo)", r.reasonCode !== "ad_generic_discovery" && (has(r.outbox, "Compass") || has(r.outbox, "Tracker") || has(r.outbox, "Renegade") || r.exec.includes("stock_search")), `rc=${r.reasonCode} outbox="${r.outbox}" exec=${r.exec.join(",")}`);
   }
 

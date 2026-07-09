@@ -156,15 +156,18 @@ async function main(): Promise<void> {
     check("[I-1e] NÃO lista Palio (Fiat) nem Polo (>50k)", !has(r.outbox, "Palio") && !has(r.outbox, "Polo"));
     check("[I-1f] NÃO é recuperação", r.src !== "deterministic_recovery" && r.recoveryReason == null, `src=${r.src}`);
   }
-  // INT-2: cérebro RESISTE (não chama tool, understanding fraco). O engine FORÇA e o executor determinístico BUSCA de
-  // verdade (VW ≤50k = Gol) -> lista Gol. NUNCA recovery_stock_not_run, NUNCA promessa falsa "vou procurar", NÃO repergunta.
+  // INT-2 (⭐REESCRITO — refatoração de AUTORIDADE, audit Codex): o cérebro classifica o ato como "other" (NÃO busca) e
+  // conversa. CONTRATO NOVO: o detector de constraint NÃO autoriza mais busca — o engine NÃO busca por keyword nem lista
+  // via recovery_offer (recovery comercial era proibido pela regra P0 e este caso o codificava). A resposta da LLM é
+  // despachada como autoria (perguntar/esclarecer > buscar por palpite). Quando a LLM DECLARA search_stock, a força
+  // continua (INT-1, F2.39 T1).
   {
     const c = conv(); await c.seed();
     const r = await c.t("Até 50 mil e que seja da volks", () => finU([txt("Claro! Que tipo de carro você prefere?")], [reply], "ask", U("other")));
-    check("[I-2a] NUNCA recovery_stock_not_run/will_search (busca de verdade)", r.reasonCode !== "recovery_stock_not_run" && r.reasonCode !== "recovery_stock_will_search", `rc=${r.reasonCode}`);
-    check("[I-2b] engine buscou e LISTOU o Gol (sem promessa falsa)", r.exec.includes("stock_search") && r.reasonCode === "recovery_offer" && has(r.outbox, "Gol"), `rc=${r.reasonCode} outbox="${r.outbox}"`);
-    check("[I-2c] resposta final NÃO repergunta 'qual modelo/tipo procura?'", !/qual (modelo|tipo)/i.test(norm(r.outbox)), `outbox="${r.outbox}"`);
-    check("[I-2d] a força BLOQUEOU o final resistente do cérebro (não despachou 'que tipo de carro?')", !has(r.outbox, "que tipo de carro"), `outbox="${r.outbox}"`);
+    check("[I-2a] engine NÃO busca por keyword (0 stock_search — a LLM não classificou busca)", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
+    check("[I-2b] NUNCA recovery comercial (engine não lista no lugar da LLM)", r.reasonCode !== "recovery_offer" && r.reasonCode !== "recovery_stock_not_run" && r.reasonCode !== "recovery_stock_will_search", `rc=${r.reasonCode}`);
+    check("[I-2c] a resposta é a AUTORIA da LLM (brain_final/brain_retry)", r.src === "brain_final" || r.src === "brain_retry", `src=${r.src}`);
+    check("[I-2d] a LLM conversa (pergunta/esclarece) em vez de lista robótica", has(r.outbox, "tipo de carro"), `outbox="${r.outbox}"`);
   }
   // INT-3: turno de FOTO ("me manda foto do Onix") NÃO é forçado a buscar — regressão do gate por intenção.
   {

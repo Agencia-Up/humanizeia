@@ -255,8 +255,11 @@ export function deriveFallbackUnderstanding(block: string, signals: FrameSignals
   // modelo num turno de FOTO/DETALHE ("me manda foto do Onix") NÃO vira busca (evita forçar stock_search indevidamente).
   const explicitSearch = signals.mentionsVehicleType != null || signals.mentionsMoreOptions || signals.mentionsPopular === true || BUDGET_RX.test(norm);
   const searchQuote = cModels[0]?.text ?? firstMatch(BUDGET_RX, block) ?? firstMatch(/\bpopular\b|\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\bpick-?up\b|\bmais\s+op|\boutr[ao]s?\s+op|\bcarro\b|\bve[ií]culo\b/, block);
-  if (explicitSearch || (cModels.length > 0 && primaryIntent === "other")) add("stock_search", searchQuote, "search_stock");
-  else if (ATTR_RX.test(norm)) add("vehicle_details", firstMatch(ATTR_RX, block), "vehicle_detail");   // atributo sem busca -> detalhe
+  // ⭐AUTORIDADE (audit Codex): pergunta de ATRIBUTO ("quanto custa o Onix?") é DETALHE mesmo citando modelo — o ATO vence
+  // a keyword. Modelo-solto só vira busca quando NÃO é pergunta de atributo; explicitSearch (tipo/faixa/mais opções) vence.
+  const attrQuestion = ATTR_RX.test(norm);
+  if (explicitSearch || (cModels.length > 0 && primaryIntent === "other" && !attrQuestion)) add("stock_search", searchQuote, "search_stock");
+  else if (attrQuestion) add("vehicle_details", firstMatch(ATTR_RX, block), "vehicle_detail");   // atributo -> detalhe (mesmo com modelo)
   const ord = parseOrdinal(block);
   if (ord) add("select", firstMatch(ORDINAL_WORD_RX, block) ?? String(ord.value), "select_vehicle");
 

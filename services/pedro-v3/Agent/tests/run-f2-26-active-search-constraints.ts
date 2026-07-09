@@ -70,9 +70,16 @@ const qU = (call: CentralQueryCall, u: TurnUnderstanding): AgentBrainStep => ({ 
 function finU(parts: ResponsePart[], effects: ProposedEffectPlan[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: effects, memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-// Cérebro RESISTENTE: sempre devolve um final "other" simples. Nos turnos comerciais o FORCE bloqueia e o executor
-// determinístico busca de verdade (prova: nunca promessa falsa; o engine age).
+// Cérebro RESISTENTE "other": devolve um final simples SEM classificar busca. ⭐AUTORIDADE (audit Codex): sem o ATO
+// search_stock declarado pela LLM, o engine NÃO busca por keyword — usado nos turnos NÃO-comerciais (foto/institucional).
 const resist: BrainResponder = () => finU([txt("Certo!")], [reply], "reply", U("other"));
+// Cérebro que CLASSIFICA busca (como a gpt-4.1-mini faria em "Tem Palio? Ou Gol?") mas RESISTE a chamar a tool.
+// ⭐Contrato novo: a LLM AUTORIZOU (ato search_stock + capability), então o executor determinístico GARANTE a execução
+// com o filtro MERGEADO — é o que esta suíte prova (merge entre turnos + nunca promessa falsa), agora sob a autoridade da LLM.
+const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], [reply], "reply", U("search_stock", {
+  caps: ["stock_search"],
+  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+}));
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; activeAfter: ActiveSearchConstraints | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, script: AgentBrainStep[] | BrainResponder): Promise<Cap> {
@@ -102,7 +109,8 @@ function conv(seedState?: Partial<ConversationState>) {
   const brain = new ScriptedAgentBrain(); const preparer = new RelPreparer(); const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
   const id = `conv-${seq0++}`; let s = 0;
   const seed = async (): Promise<void> => { if (!seedState) return; const base = { ...createInitialState({ conversationId: id, tenantId: TENANT, agentId: AGENT, leadId: null, now: NOW }), ...seedState } as ConversationState; const uow = persistence.begin(); uow.casState(id, 0, base); if (!(await uow.commit()).ok) throw new Error("seed_failed"); };
-  const t = (lead: string, script: AgentBrainStep[] | BrainResponder = resist): Promise<Cap> => turn(persistence, clock, brain, preparer, id, ++s, lead, script);
+  // Default = resistSearch: os turnos da suíte são COMERCIAIS (a LLM real classificaria busca); foto/institucional passam `resist`.
+  const t = (lead: string, script: AgentBrainStep[] | BrainResponder = resistSearch): Promise<Cap> => turn(persistence, clock, brain, preparer, id, ++s, lead, script);
   return { seed, t };
 }
 const offerCtx = (vs: VehicleFact[]) => ({ lastRenderedOfferContext: { sourceTurnId: "seed", createdAt: NOW, items: vs.map((v, i) => ({ ordinal: i + 1, vehicleKey: v.vehicleKey, marca: v.marca, modelo: v.modelo, ano: v.ano, preco: v.preco })) } } as Partial<ConversationState>);
@@ -152,14 +160,14 @@ async function main(): Promise<void> {
   // ── #5: "me manda foto do segundo" NÃO ativa stock_search ──
   {
     const c = conv(offerCtx([GOL, PALIO])); await c.seed();
-    const r = await c.t("me manda foto do segundo");
+    const r = await c.t("me manda foto do segundo", resist);   // a LLM NÃO classifica busca num pedido de foto
     check("[#5] turno de foto NÃO roda stock_search", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
   }
 
   // ── #6: "onde fica a loja?" NÃO altera o filtro ativo ──
   {
     const c = conv({ ...offerCtx([GOL]), activeSearchConstraints: { marca: "volkswagen", precoMax: 50000 } } as Partial<ConversationState>); await c.seed();
-    const r = await c.t("onde fica a loja?");
+    const r = await c.t("onde fica a loja?", resist);   // a LLM NÃO classifica busca numa pergunta institucional
     check("[#6a] institucional NÃO roda stock_search", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
     check("[#6b] filtro ativo PRESERVADO (marca+teto intactos)", r.activeAfter?.marca === "volkswagen" && r.activeAfter?.precoMax === 50000, `active=${JSON.stringify(r.activeAfter)}`);
   }
