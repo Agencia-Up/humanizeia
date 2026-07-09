@@ -1,6 +1,6 @@
 # Missão P0 — Eliminar contradições internas do engine (fatos frescos × catálogo) + varredura exige-e-proíbe (F2.43)
 
-**Data:** 2026-07-09 · **Autor:** Claude (executor) · **Espec:** Codex/dono (missão "contradições internas + SDR antes do CRM") · **Estado:** FEITO+PROVADO (offline 26 OK + 2 smokes reais PASS). **NÃO commitado — aguarda auditoria do Codex.**
+**Data:** 2026-07-09 · **Autor:** Claude (executor) · **Espec:** Codex/dono (missão "contradições internas + SDR antes do CRM") · **Estado:** FEITO+PROVADO (offline 30 OK + smokes 2/2 PASS) · **✅ APROVADO pelo Codex (2 rodadas) e COMMITADO+PUSHADO `main ac529080` (2026-07-09).**
 
 ## 1. Causa-raiz técnica (P0 principal)
 `ConversationTurnContextPreparer.prepare` carrega o catálogo com `stock.search(ref, {})` e **falha-fechado para
@@ -141,4 +141,4 @@ reports em eval/reports/.
 **Observabilidade nova:** `PEDRO_V3_DENY_DEBUG=1` imprime o feedback CRU de cada deny de autoria (foi o que revelou
 as causas 2 e 4 — mantido, env-gated, zero custo em produção).
 
-**PARADO — nada commitado. Aguarda re-auditoria do Codex.**
+**✅ COMMITADO+PUSHADO — `main ac529080` (2026-07-09, pós re-auditoria do Codex). Em produção só no piloto (tenant ecb26258).**
