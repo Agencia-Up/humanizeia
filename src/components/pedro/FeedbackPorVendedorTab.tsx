@@ -56,6 +56,14 @@ function potDe(c: Conversa): 'forte' | 'bom' | 'dificil' | 'nao' | 'sem' {
 }
 const ehBom = (c: Conversa) => { const p = potDe(c); return p === 'forte' || p === 'bom'; };
 const vendeu = (c: Conversa) => c.houve_venda === 'true';
+// Regras canônicas (mesmas do relatório do WhatsApp / PDF completo), pra a tela
+// não divergir: bem atendido = lead bom E nota>=50; perdeu chance = lead bom,
+// nota<45 e sem venda (nunca é injusto com quem só pegou lead fraco).
+const LIMIAR_BEM = 50;
+const LIMIAR_PERDEU = 45;
+const score0 = (c: Conversa) => Number(c.score) || 0;
+const bemAtendido = (c: Conversa) => ehBom(c) && score0(c) >= LIMIAR_BEM;
+const perdeuChanceBoa = (c: Conversa) => ehBom(c) && score0(c) < LIMIAR_PERDEU && !vendeu(c);
 
 function fmtMin(mRaw: number): string {
   const m = Math.round(mRaw);
@@ -114,9 +122,9 @@ export function FeedbackPorVendedorTab() {
     const list: Vendedor[] = [];
     for (const [id, cs] of m) {
       const bons = cs.filter(ehBom).length;
-      const bemAtendidos = cs.filter((c) => (Number(c.score) || 0) >= 50).length;
+      const bemAtendidos = cs.filter(bemAtendido).length;
       const vendas = cs.filter(vendeu).length;
-      const perdeuChance = cs.filter((c) => ehBom(c) && (Number(c.score) || 0) < 50 && !vendeu(c)).length;
+      const perdeuChance = cs.filter(perdeuChanceBoa).length;
       const scoreMedio = cs.length ? Math.round(cs.reduce((a, c) => a + (Number(c.score) || 0), 0) / cs.length) : 0;
       list.push({
         id, nome: cs[0]?.vendedor_nome || '(vendedor)', convs: cs,
@@ -234,7 +242,7 @@ export function FeedbackPorVendedorTab() {
               const score = Number(c.score) || 0;
               const q = c.qualidade_lead && QMAP[c.qualidade_lead];
               const venda = vendeu(c);
-              const perdeu = ehBom(c) && score < 50 && !venda;
+              const perdeu = perdeuChanceBoa(c);
               const ops = Array.isArray(c.oportunidades_perdidas) ? c.oportunidades_perdidas : [];
               return (
                 <div key={c.fc_id} className="bg-card border border-border/50 rounded-xl px-4 py-3 space-y-2">
