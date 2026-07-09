@@ -3,18 +3,59 @@
 @tailwind utilities;
 
 @layer utilities {
+  /* Rows horizontais de botoes (abas/ferramentas do CRM): rolam por toque no
+     mobile; no desktop elas quebram linha (sm:flex-wrap sm:overflow-visible),
+     entao nunca rolam — pode esconder a barra em qualquer tamanho. */
   .mobile-tabs-scroll,
-  .mobile-crm-tools,
-  .mobile-kanban-scroll {
+  .mobile-crm-tools {
     scrollbar-width: none;
     -ms-overflow-style: none;
     -webkit-overflow-scrolling: touch;
   }
 
   .mobile-tabs-scroll::-webkit-scrollbar,
-  .mobile-crm-tools::-webkit-scrollbar,
-  .mobile-kanban-scroll::-webkit-scrollbar {
+  .mobile-crm-tools::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Kanban do CRM: rola horizontal em TODOS os tamanhos (sempre ha mais colunas
+     que a tela). No mobile a barra fica escondida (rola com o dedo); no DESKTOP
+     ela PRECISA aparecer (o mouse arrasta por ela) — por isso o esconde fica SO
+     no mobile. Regressao 08/07: o hide era global e sumiu a barra no desktop. */
+  @media (max-width: 640px) {
+    .mobile-kanban-scroll {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .mobile-kanban-scroll::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  @media (min-width: 641px) {
+    .mobile-kanban-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: hsl(var(--border)) transparent;
+    }
+
+    .mobile-kanban-scroll::-webkit-scrollbar {
+      height: 10px;
+    }
+
+    .mobile-kanban-scroll::-webkit-scrollbar-thumb {
+      background: hsl(var(--border));
+      border-radius: 6px;
+    }
+
+    .mobile-kanban-scroll::-webkit-scrollbar-thumb:hover {
+      background: hsl(var(--muted-foreground));
+    }
+
+    .mobile-kanban-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
   }
 
   @media (max-width: 640px) {
