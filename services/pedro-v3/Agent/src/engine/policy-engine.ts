@@ -442,6 +442,19 @@ export const PolicyEngine = {
       const addClaims = (s: string | null | undefined): void => { if (!s) return; for (const c of ctx.claimExtractor.extractClaims(s)) { if (c.kind === "brand" || c.kind === "brand_model") validBrands.add(c.normalized); if (c.kind === "model" || c.kind === "brand_model") validModels.add(c.normalized); } };
       if (sel?.label) addClaims(sel.label);
       for (const it of ctx.state.lastRenderedOfferContext?.items ?? []) { addClaims(it.marca ?? undefined); addClaims(it.modelo ?? undefined); if (it.marca && it.modelo) addClaims(`${it.marca} ${it.modelo}`); }
+      // ⭐Missão P0 (TROCA, proveniência do LEAD): o VEÍCULO DE TROCA é o carro DO LEAD (slots.veiculoTroca — já inclui
+      // a extração DESTE turno). Nomeá-lo na resposta ("anotei sua Hilux 2020") é conversa aterrada NA FALA DO LEAD,
+      // nunca invenção de catálogo — paralelo ao isLeadValue para valores monetários. Cobre o typo do lead nos DOIS
+      // sentidos pela forma de letras colapsadas ("hillux" ≙ "hilux"). O carro de troca NUNCA entra em oferta
+      // (vehicle_ref/offer_list seguem exigindo catálogo) — a isenção é só para o NOME em texto livre.
+      const tvSlot = (ctx.state.slots as Record<string, { status?: string; value?: unknown } | undefined>).veiculoTroca;
+      if (tvSlot?.status === "known" && tvSlot.value && typeof tvSlot.value === "object") {
+        const tv = tvSlot.value as { marca?: string; modelo?: string };
+        const collapseL = (s: string): string => s.replace(/(\p{L})\1+/gu, "$1");
+        addClaims(tv.marca); addClaims(tv.modelo); if (tv.marca && tv.modelo) addClaims(`${tv.marca} ${tv.modelo}`);
+        if (tv.modelo) { const n = normalizeText(tv.modelo); validModels.add(n); validModels.add(collapseL(n)); }
+        if (tv.marca) { const n = normalizeText(tv.marca); validBrands.add(n); validBrands.add(collapseL(n)); }
+      }
     }
     const modelGrounded = (norm: string): boolean => validModels.has(norm) || modelGroundedExact(norm, validModels);
     const claimGrounded = (claim: { kind: string; normalized: string }): boolean => {

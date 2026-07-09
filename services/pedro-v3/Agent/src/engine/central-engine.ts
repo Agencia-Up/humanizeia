@@ -1715,8 +1715,14 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           if (singleAuthor) {
             // B2 (audit): pergunta de atributo do SELECIONADO exige vehicle_details bem-sucedido do MESMO key ANTES
             // do final. Sem o fato -> força a consulta (retry); esgotou -> fallback degradado pós-loop.
+            // ⭐Missão P0 (TROCA em bloco, incidente Hilux): num turno de RESPOSTA DE TROCA/FINANCEIRA o km/ano/modelo
+            // citado descreve o carro DO LEAD (ou responde a pergunta) — NÃO é pergunta de atributo do selecionado.
+            // O regex de atributo via "85km rodados" e EXIGIA vehicle_details do Nivus (que o cérebro, certo, não
+            // chamava) -> consumia TODOS os passos em silêncio -> recovery_ask_need ("o que você procura?" = regressão
+            // à descoberta). Invariante: o engine NUNCA exige uma tool que o contexto do turno proíbe/reinterpreta
+            // (mesmo princípio do "proíbe-e-exige" do stock_search acima).
             const detailTarget = resolveTargetWithAd();
-            const needDetail = requireVehicleDetailBeforeFinal(frame, observations, detailTarget);
+            const needDetail = (tradeInAnswerTurn || financialAnswerTurn) ? null : requireVehicleDetailBeforeFinal(frame, observations, detailTarget);
             // P0-2 (exceção sistêmica TIPADA): necessidade de grounding do engine AUTORIZA vehicle_details do key selecionado
             // (separada da intenção da LLM). Registra o key p/ o gate de tool liberar a consulta de aterramento.
             if (needDetail) { const detailKey = detailTarget.kind === "resolved" ? detailTarget.vehicleKey : frame.workingMemory.selectedVehicle?.vehicleKey; if (detailKey) systemDetailKeys.add(detailKey); }
