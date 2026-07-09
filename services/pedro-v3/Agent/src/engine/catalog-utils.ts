@@ -96,7 +96,23 @@ export function isVehicleKeyInCatalog(catalog: TenantCatalog, vehicleKey: string
   });
 }
 
+// ⭐Missão P0 (fatos frescos vencem snapshot): um veículo retornado pelas TOOLS DO TENANT NESTE turno
+// (stock_search/vehicle_details ok — o runQuery é construído com o ref do tenant, então o resultado é por
+// construção do catálogo dele) é evidência de catálogo MAIS FRESCA que o snapshot do prepare (que falha-fechado
+// para vazio quando o feed soluça). Invariante: o engine NUNCA exige/entrega uma key vinda da tool e depois a
+// rejeita como "fora do catálogo" (classe exige-e-proíbe). Key inventada pela LLM ou de outro tenant continua
+// bloqueada: nunca aparece nos fatos do turno nem no snapshot.
+export function isVehicleKeyGrounded(catalog: TenantCatalog, facts: readonly QueryResult[], vehicleKey: string): boolean {
+  for (const f of facts) {
+    if (!f.ok) continue;
+    if (f.tool === "stock_search" && f.data.items.some((i) => i.vehicleKey === vehicleKey)) return true;
+    if (f.tool === "vehicle_details" && f.data.vehicle.vehicleKey === vehicleKey) return true;
+  }
+  return isVehicleKeyInCatalog(catalog, vehicleKey);
+}
+
 import type { VehicleFact } from "../domain/types.ts";
+import type { QueryResult } from "../domain/decision.ts";
 
 /**
  * Constrói dinamicamente o TenantCatalog a partir da lista de VehicleFacts vivos do estoque.

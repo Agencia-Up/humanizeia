@@ -169,6 +169,9 @@ function sanitizeOutgoingText(text: string): string {
 
 // ⭐Hardening (audit Codex): moreOptionsSearch chega JÁ GATEADO pelo caller ("mais opções" só exige busca quando o ato
 // declarado pela LLM NÃO é conversacional — contestação/financiamento/troca/smalltalk vencem o regex).
+// Slots monetários do LEAD (fonte única: extractLeadSlots é autoritativo sobre a LLM — F2.40; a validationState
+// projeta ESTES slots do turno para render/validate enxergarem — F2.43/audit Codex).
+const VALIDATION_FINANCIAL_SLOTS = new Set(["entrada", "parcelaDesejada", "faixaPreco"]);
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean, moreOptionsSearch: boolean): string | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
@@ -701,7 +704,14 @@ function authorFromBrainDraft(args: {
       return { ok: false, feedback: `Você JÁ sabe o nome do cliente${typeof known === "string" && known ? ` (${known})` : ""}. NÃO pergunte o nome de novo — use-o e siga a conversa (o que ele procura, opções, condições ou visita).` };
     }
     if (isPaymentTurn(args.leadMessage)) {
-      return { ok: false, feedback: "O cliente pediu as CONDIÇÕES DE PAGAMENTO. NÃO peça o nome — pagamento não é cadastro. Avance a qualificação financeira perguntando UMA coisa por vez (não empilhe): comece pela TROCA (tem carro para dar na troca?), senão ENTRADA, senão PARCELA mensal — só UMA pergunta." };
+      // ⭐F2.43 (varredura exige-e-proíbe, fase): o veto vale ENQUANTO a qualificação financeira está incompleta.
+      // Com troca+entrada+parcela CONHECIDAS, pedir o nome é o avanço legítimo do funil (o handoff EXIGE nome,
+      // POL-HANDOFF-001) — manter o veto aqui era "colete para o handoff" e "nunca peça o nome" ao mesmo tempo.
+      const sl = args.ctx.state.slots;
+      const qualificationDone = sl.possuiTroca.status === "known" && sl.entrada.status === "known" && sl.parcelaDesejada.status === "known";
+      if (!qualificationDone) {
+        return { ok: false, feedback: "O cliente pediu as CONDIÇÕES DE PAGAMENTO. NÃO peça o nome — pagamento não é cadastro. Avance a qualificação financeira perguntando UMA coisa por vez (não empilhe): comece pela TROCA (tem carro para dar na troca?), senão ENTRADA, senão PARCELA mensal — só UMA pergunta." };
+      }
     }
   }
   // ⭐T8 (audit Codex, LLM-first): turno de PAGAMENTO com veículo JÁ ESCOLHIDO (selecionado OU há oferta na última lista) ->
@@ -1332,7 +1342,20 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         claimExtractor: prepared.claimExtractor,
         turnId,
       });
-      const { contextState, committed: safeExtractedSlots } = safeCommitSlots(state, extractedSlots, turnId, cutoff);
+      const { contextState: ctxState0, committed: safeExtractedSlots } = safeCommitSlots(state, extractedSlots, turnId, cutoff);
+      // ⭐Missão P0 (validationState, audit Codex F2.43): o safeCommitSlots é TUDO-OU-NADA — se UMA mutation do lote
+      // falhar no preview, TODOS os slots ficam fora do estado que a VALIDAÇÃO enxerga, e o eco do valor do lead
+      // ("Tenho 8k" -> "R$ 8.000 anotado!") vira "valor monetário livre" -> deny -> fallback (T9/T10 do smoke).
+      // Projeta INDIVIDUALMENTE os slots FINANCEIROS extraídos (fonte autoritativa = extractLeadSlots, nunca a LLM)
+      // que ficaram de fora — o renderer (money_ref slot_value) e o isLeadValue enxergam o valor DESTE turno, sem
+      // commitar nada (o commit real segue sendo o reducer no fim do turno).
+      let contextState = ctxState0;
+      if (safeExtractedSlots.length === 0 && extractedSlots.length > 0) {
+        for (const m of extractedSlots) {
+          if (m.op !== "set_slot" || !VALIDATION_FINANCIAL_SLOTS.has(m.slot)) continue;
+          contextState = safeCommitSlots(contextState, [m], turnId, cutoff).contextState;
+        }
+      }
       // LLM-first (regra P0): o lead contribuiu com um slot NOVO neste turno (ex.: o nome)? Se sim, reperguntar o que ele
       // ainda NÃO respondeu (descoberta) é condução legítima — o anti-repetição (caso 2) não deve trancar a LLM.
       const leadAdvancedThisTurn = safeExtractedSlots.some((m) => m.op === "set_slot");
@@ -1683,7 +1706,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           // (conversa), nunca o engine buscar por keyword — o filtro extraído segue enriquecendo a chamada QUANDO ela busca.
           // Missão P0 (audit Codex smoke): num turno de RESPOSTA DE TROCA o stock_search é PROIBIDO — então o engine também
           // NÃO pode EXIGIR stock_search antes do final (senão contradição proíbe-e-exige, o "obs=8" do relatório).
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && (brainSearchAct() || contextualSearchTurn), moreOptionsNeedsScope, frame.signals.mentionsMoreOptions === true && !conversationalActDeclared());
+          // ⭐Missão P0 (exige-e-proíbe, varredura): a perna CONTEXTUAL (anúncio/similaridade/retomada) também respeita o
+          // ato conversacional declarado pela LLM (contestação/financiamento/troca/smalltalk) — senão o missingTool EXIGE
+          // stock_search que o gate de INTENT CONTRADITÓRIO NEGA (loop). Mesmo helper do hardening F2.41.
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && (brainSearchAct() || (contextualSearchTurn && !conversationalActDeclared())), moreOptionsNeedsScope, frame.signals.mentionsMoreOptions === true && !conversationalActDeclared());
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             const stockReq = !frame.signals.mentionsStore;
             // ⭐Fase 1 (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SÓ na RETOMADA ("cadê?/e aí?/achou?/
@@ -1739,6 +1765,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               break;
             }
             brainRetries += 1;
+            if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[DENY_DEBUG] ${authored.feedback}`);
             // ⭐Fase 1 (LLM-first, regra P0 do dono): deny num turno de CONDUÇÃO comercial vira FEEDBACK ACIONÁVEL para a LLM
             //   REDIGIR (nunca o engine escrever). Dois casos + "keepRetrying" (isento do break de deny-repetido: o certo é a
             //   LLM insistir até acertar, dentro de brainMaxSteps — evita cair em recovery_offer/technical_fallback):
@@ -1747,8 +1774,14 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
             // ⭐AUTORIDADE: busca EXECUTADA (autorizada no gate da call — pela LLM ou por contexto) com itens -> o desfecho
             // certo é APRESENTAR o resultado; orienta a LLM a listar. O detector de constraint não participa.
-            const listTurn = llmFirst && (contextualSearchTurn || brainSearchAct()) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
-            const moneyDeny = /monet[aá]ri|money_ref|valor\s+monetario|\bR\$/i.test(authored.feedback);
+            // ⭐F2.43: inclui a perna de "MAIS OPÇÕES" — a busca executada pelo executor determinístico de mais-opções
+            // também precisa do feedback de LISTAGEM (sem ele, o draft sem offer_list caía no fingerprint -> recovery_offer,
+            // o engine listando no lugar da LLM). Ato conversacional declarado continua vencendo (repairTurn tem precedência).
+            const listTurn = llmFirst && (contextualSearchTurn || brainSearchAct() || (frame.signals.mentionsMoreOptions === true && !conversationalActDeclared())) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
+            // ⭐F2.43 (audit Codex): moneyDeny SÓ quando a VIOLAÇÃO é monetária de fato ("valor monetário livre" /
+            // "preço não-aterrado" / erro de money_ref) — o regex antigo casava a INSTRUÇÃO padrão "via vehicle_ref/
+            // money_ref" presente em TODO feedback de validação e rotulava qualquer deny como monetário (hint errado).
+            const moneyDeny = /valor monet[aá]rio livre|pre[çc]o n[aã]o.aterrado|money_ref:/i.test(authored.feedback);
             const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
             const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn);
             let effFeedback = authored.feedback;
@@ -1767,20 +1800,44 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
               effFeedback = "Turno de CONTESTAÇÃO/correção (conversation_repair): o cliente questionou algo que VOCÊ disse. Responda com UMA parte text simples: reconheça com naturalidade e humildade ('você tem razão...'), corrija a informação e conduza com UMA pergunta curta sobre os carros JÁ mostrados (fotos/detalhes/condições). NÃO use vehicle_offer_list (a lista já foi mostrada — re-listar é robótico), NÃO escreva R$/km, NÃO chame tools.";
               keepRetrying = true;
             } else if (listTurn) {
+              // ⭐Missão P0 (exige-e-proíbe, teto de preço): o feedback de LISTAGEM só entrega keys que a POL-STOCK-003
+              // ACEITA (preço <= teto do lead quando faixaPreco.max é conhecida) — o engine nunca manda listar uma key
+              // que a própria policy vai negar. Se TODAS excederem o teto, não é listTurn (cai na condução honesta).
+              const priceCeiling = ctx.state.slots.faixaPreco.value?.max ?? null;
               const listKeys: string[] = [];
-              for (const f of facts) if (f.ok && f.tool === "stock_search") for (const it of f.data.items) if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
-              effFeedback = `Turno de LISTAGEM: devolva um draft com EXATAMENTE 3 partes — [{"type":"text","content":"Encontrei estas opções:"},{"type":"vehicle_offer_list","vehicleKeys":${JSON.stringify(listKeys)}},{"type":"text","content":"Quer ver as fotos, os detalhes ou as condições?"}]. Use ESSES vehicleKeys. NUNCA escreva nomes de carro, "R$", preços ou km em "text" (o sistema formata a lista pela vehicle_offer_list). NÃO chame stock_search de novo.`;
+              for (const f of facts) if (f.ok && f.tool === "stock_search") for (const it of f.data.items) {
+                if (priceCeiling != null && typeof it.preco === "number" && it.preco > priceCeiling) continue;
+                if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
+              }
+              if (listKeys.length > 0) {
+                effFeedback = `Turno de LISTAGEM: devolva um draft com EXATAMENTE 3 partes — [{"type":"text","content":"Encontrei estas opções:"},{"type":"vehicle_offer_list","vehicleKeys":${JSON.stringify(listKeys)}},{"type":"text","content":"Quer ver as fotos, os detalhes ou as condições?"}]. Use ESSES vehicleKeys. NUNCA escreva nomes de carro, "R$", preços ou km em "text" (o sistema formata a lista pela vehicle_offer_list). NÃO chame stock_search de novo.`;
+              } else {
+                effFeedback = "A busca encontrou itens, mas TODOS acima do teto de preço que o cliente informou. Responda com UMA parte text HONESTA: diga que nessa faixa não encontrou opções agora e CONDUZA com UMA pergunta curta (ele topa ampliar um pouco a faixa, ver outro tipo/modelo, ou prefere que um consultor ajude?). NÃO use vehicle_offer_list, NÃO escreva R$/km, NÃO chame tools.";
+              }
               keepRetrying = true;
             } else if (conductTurn) {
               // CONDUÇÃO (pagamento / avaliação de troca): o ÚNICO desfecho válido é ACOLHER + conduzir com UMA pergunta de
               // avanço. QUALQUER deny aqui (valor em texto livre, atributo de carro sem aterrar, ou volta à descoberta) recebe
               // o MESMO norte e retry bounded — a LLM redige, o engine só orienta (LLM-first). Sem restringir a moneyDeny:
               // quando o deny NÃO é exatamente monetário, antes caía direto no break->recovery_ask_need (technical_fallback).
-              const moneyHint = moneyDeny ? " Você escreveu um valor em R$/mil que NÃO está aterrado num preço real — REMOVA todo R$/valor." : "";
-              effFeedback = `Turno de CONDUÇÃO (pagamento/troca).${moneyHint} NÃO afirme valores em R$/mil (você não tem um preço aterrado desse número) e NÃO volte para descoberta ('o que você procura'). Reescreva o draft com UMA parte text: acolha o que o lead disse (o carro de troca ou o pedido de condições) e conduza com UMA pergunta de avanço — 'você tem um valor para dar de entrada?', 'qual parcela caberia no seu orçamento?', ou 'posso agendar uma avaliação do seu carro?'.`;
+              // ⭐Audit Codex (F2.43 T9/T10): o valor que o CLIENTE informou é ECOÁVEL (aterrado por proveniência) —
+              // o feedback NUNCA manda "remover todo valor"; só valores NOVOS/calculados (saldo, total, taxa,
+              // simulação) ficam proibidos sem fato real. E quando o deny é de FORMATO (draft ausente/money_ref
+              // malformado — rejeição integral do decode), a orientação CONVERGE: UMA parte text simples com o valor
+              // do LEAD escrito no texto — NUNCA re-empurra a LLM para o money_ref que ela acabou de errar (era o
+              // loop do T9: money_ref malformado -> deny genérico -> money_ref malformado de novo -> fallback).
+              const moneyHint = moneyDeny ? " Você escreveu um valor que o cliente NÃO informou (ex.: saldo/total/simulação calculada) — REMOVA apenas ESSE valor calculado; os valores que o CLIENTE disse (entrada/parcela/faixa) você PODE repetir ao acolher." : "";
+              const formatHint = /parts estruturadas/.test(authored.feedback) ? " Seu 'draft' veio ausente/malformado — devolva draft.parts com UMA part {\"type\":\"text\",\"content\":\"...\"} SIMPLES; o valor que o CLIENTE informou pode ir ESCRITO no texto (ex.: 'R$ 8.000 de entrada anotado!'); NÃO use money_ref aqui." : "";
+              effFeedback = `Turno de CONDUÇÃO (pagamento/troca).${moneyHint}${formatHint} NÃO afirme valores que o cliente não informou (sem simulação/cálculo — você não tem tabela real) e NÃO volte para descoberta ('o que você procura'). Reescreva o draft com UMA parte text: ACOLHA o que o lead disse (pode citar o valor/carro que ELE informou) e conduza com UMA pergunta de avanço — 'você tem um valor para dar de entrada?', 'qual parcela caberia no seu orçamento?', ou 'posso agendar uma avaliação do seu carro?'.`;
               keepRetrying = true;
             } else if (emptyStockTurn) {
               effFeedback = "A busca deste turno voltou VAZIA (com os carros já mostrados excluídos, não há NOVAS opções nesse filtro). Responda com UMA parte text HONESTA: diga que no momento não tem outras opções além das que já mostrou e CONDUZA com UMA pergunta curta (fotos/detalhes/condições de algum dos mostrados, ou se ele quer ampliar o filtro — outro tipo/faixa). NÃO use vehicle_offer_list, NÃO re-liste os mesmos, NÃO escreva R$/km.";
+              keepRetrying = true;
+            } else if (llmFirst && selectionTurn) {
+              // ⭐Missão P0 (varredura exige-e-proíbe, smoke T4): deny em turno de SELEÇÃO ("gostei do segundo") também é
+              // ACIONÁVEL (o feedback SELECTION_ATTR_FEEDBACK já diz exatamente o que remover) — sem keepRetrying, a LLM
+              // que insiste no atributo cai no fingerprint de deny repetido -> technical_fallback num turno trivial de
+              // acolhimento. Mesma mecânica bounded dos demais (a LLM redige; o engine nunca escreve).
               keepRetrying = true;
             }
             policyFeedbackLog.push(effFeedback);
@@ -2002,7 +2059,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           //    numa CONTESTAÇÃO ("Corolla não é um sedan?") só porque a frase citava modelo/tipo. ──
           // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
           // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
-          if (llmFirst && (contextualSearchTurn || brainSearchAct() || (frame.signals.mentionsMoreOptions === true && !conversationalActDeclared())) && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+          if (llmFirst && ((contextualSearchTurn && !conversationalActDeclared()) || brainSearchAct() || (frame.signals.mentionsMoreOptions === true && !conversationalActDeclared())) && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
             try {
               const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, {
                 popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true,
@@ -2228,11 +2285,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       //    que o LEAD forneceu (entrada/parcela/faixaPreco). Se a extração determinística já atribuiu um slot financeiro
       //    neste turno, DESCARTA a atribuição financeira CONFLITANTE do cérebro — evita "até 1200" virar entrada=1200 por
       //    palpite do LLM (o lead deu uma PARCELA). Slots não-financeiros do cérebro seguem intactos. ────────────────────
-      const FINANCIAL_SLOTS = new Set(["entrada", "parcelaDesejada", "faixaPreco"]);
-      const engineOwnedFinancialSlot = safeExtractedSlots.some((m) => m.op === "set_slot" && FINANCIAL_SLOTS.has(m.slot));
+      const engineOwnedFinancialSlot = safeExtractedSlots.some((m) => m.op === "set_slot" && VALIDATION_FINANCIAL_SLOTS.has(m.slot));
       const brainStateMutations = decision.decisionMutations.filter((m) => {
         if (m.op === "append_lead_turn") return false;
-        if (engineOwnedFinancialSlot && m.op === "set_slot" && FINANCIAL_SLOTS.has(m.slot)) return false;
+        if (engineOwnedFinancialSlot && m.op === "set_slot" && VALIDATION_FINANCIAL_SLOTS.has(m.slot)) return false;
         return true;
       });
       const newSearchExecuted = isNewSearchTurn({
@@ -2363,6 +2419,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           targetResolutionSource, recoveryReason,
           toolsExecuted: toolTelemetry.map((t) => t.tool), policyFeedback: policyFeedbackLog.slice(0, 5),
           institutionalResolved, droppedSelectKeys,
+          // ⭐Missão P0 (fatos frescos vencem snapshot): degradação do catálogo é OBSERVÁVEL, nunca silenciosa.
+          catalogEntries: prepared.tenantCatalog.entries.length, catalogDegraded: prepared.catalogDegraded === true,
           // F2.29 (observabilidade do escopo comercial — auditoria do "mais opções herda escopo"): filtro ativo ANTES/DEPOIS,
           // input REAL da stock_search executada, e o escopo herdado por "mais opções" (null se pediu escopo).
           activeSearchConstraintsBefore: contextState.activeSearchConstraints ?? null,
