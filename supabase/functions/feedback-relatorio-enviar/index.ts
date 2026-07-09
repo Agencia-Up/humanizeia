@@ -34,7 +34,9 @@ function captionPadrao(): string {
   return [
     `Relatório de atendimento - ${dataBRT()}`,
     ``,
-    `Segue o resumo do dia: o feedback dos atendimentos dos vendedores e a qualidade dos leads que chegaram.`,
+    `Resumo de ontem em 2 páginas: o funil de vendas, onde está o gargalo (lead, atendimento ou fechamento) e como cada vendedor foi.`,
+    ``,
+    `O relatório completo, conversa por conversa, fica na área de Feedbacks da plataforma.`,
     ``,
     `Logos IA`,
   ].join('\n');
@@ -73,14 +75,16 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: 'a instancia da IA e Meta (2a via) — envio de documento por aqui ainda nao suportado; use uma instancia UAZAPI' }, 200);
     }
 
-    // 3) Gera o PDF do periodo (sobe no bucket privado feedback-relatorios).
-    const uploadNome = `relatorio-atendimento-${tenant.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.pdf`;
-    const genRes = await fetch(`${SUPA_URL}/functions/v1/feedback-relatorio-pdf`, {
+    // 3) Gera o PDF DIARIO simplificado (2 paginas: funil + gargalo + vendedores).
+    //    O completo (conversa por conversa) e o feedback-relatorio-pdf, usado
+    //    sob demanda na area de Feedbacks — nao no disparo diario.
+    const uploadNome = `relatorio-diario-${tenant.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const genRes = await fetch(`${SUPA_URL}/functions/v1/feedback-relatorio-diario-pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         k: VIEW_KEY, tenant_id: tenant, upload_nome: uploadNome,
-        loja: body?.loja, periodo_label: body?.periodo_label,
+        loja: body?.loja,
       }),
     });
     const gen = await genRes.json().catch(() => ({}));

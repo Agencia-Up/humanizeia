@@ -33,6 +33,7 @@ const maskCpf = (t: string) => t.replace(/\d{3}\.\d{3}\.\d{3}-\d{2}/g, '***.***.
 const cap = (t: string, n: number) => (t.length > n ? t.slice(0, n - 3).trimEnd() + '...' : t);
 function fmtMin(mRaw: number): string {
   const m = Math.round(mRaw);
+  if (m >= 2880) return `${Math.round(m / 1440)} dias`; // acima de 48h fala em dias, nao "350 horas"
   if (m >= 60) { const h = Math.floor(m / 60), mm = m % 60; return mm ? `${h}h${String(mm).padStart(2, '0')}` : `${h}h`; }
   return `${m} min`;
 }
@@ -83,7 +84,14 @@ Deno.serve(async (req) => {
       const ruim = RUIM_RE.test(inc);
       const q = l.qualidade_lead;
       let pot = q === '1_alto' ? 'forte' : q === '2_medio' ? 'bom' : q === '3_baixo' ? 'dificil' : q === '4_nao_lead' ? 'nao' : '';
-      if (!pot) { const t = String(l.temperature || '').toLowerCase(); pot = t === 'quente' ? 'forte' : t === 'frio' ? 'dificil' : 'bom'; }
+      // Regua do especialista (potencial_compra, exige sinal concreto de compra).
+      if (!pot) {
+        const pc = String(l.potencial_compra || '').toLowerCase();
+        pot = pc === 'alto' ? 'forte' : pc === 'medio' ? 'bom' : pc === 'baixo' ? 'dificil' : pc === 'nao_lead' ? 'nao' : '';
+      }
+      // Temperatura do Pedro so quando explicita. SEM evidencia => 'sem'
+      // (antes caia em 'bom' por padrao — lead virava "bom" so por responder).
+      if (!pot) { const t = String(l.temperature || '').toLowerCase(); pot = t === 'quente' ? 'bom' : t === 'frio' ? 'dificil' : 'sem'; }
       if (ruim) pot = 'nao';
       const score = Number(l.score) || 0;
       const msgs = Array.isArray(l.ultimas_msgs) ? l.ultimas_msgs : [];
@@ -125,6 +133,7 @@ Deno.serve(async (req) => {
       bom: { label: 'Lead bom', c: BLUE, bg: BLUE_BG },
       dificil: { label: 'Lead difícil', c: AMBER, bg: AMBER_BG },
       nao: { label: 'Não era lead', c: RED, bg: RED_BG },
+      sem: { label: 'Sem dados', c: MUTED, bg: [240, 242, 245] },
     };
 
     const byAd = new Map<string, any>();
@@ -322,11 +331,17 @@ Deno.serve(async (req) => {
       y += 14;
       const drew = chatCard(l);
       if (!drew) {
+        // Honestidade: vendedor com numero DESCONECTADO pode ter respondido pelo
+        // celular sem a plataforma enxergar — nao afirmar que ele nao respondeu.
+        const semAcompanhamento = l.instancia_conectada === false;
+        const txtVazio = semAcompanhamento
+          ? 'O número deste vendedor está desconectado da plataforma — a conversa com este cliente não pôde ser acompanhada.'
+          : 'O cliente chamou e a conversa ficou sem nenhuma resposta do vendedor.';
         T(9.5, 'normal', INK);
-        const bl = doc.splitTextToSize('O cliente chamou e a conversa ficou sem nenhuma resposta do vendedor.', CW - 30);
+        const bl = doc.splitTextToSize(txtVazio, CW - 30);
         const h = 16 + bl.length * 12 + 10;
         pageBreak(h + 8);
-        F(RED_BG); doc.roundedRect(ML, y, CW, h, 7, 7, 'F');
+        F(semAcompanhamento ? AMBER_BG : RED_BG); doc.roundedRect(ML, y, CW, h, 7, 7, 'F');
         T(9.5, 'normal', INK); doc.text(bl, ML + 15, y + 17);
         y += h + 12;
       }
@@ -348,8 +363,15 @@ Deno.serve(async (req) => {
       pill(ML + 20 + nw + 12, y - 13, v.status.label, v.status.c, v.status.bg);
       y += 22;
 
+      // Vendedor com numero desconectado: nao da pra afirmar que ele nao atendeu.
+      const desconectado = v.leads.length > 0 && v.leads.every((l: any) => l.instancia_conectada === false);
       if (v.status.tier === 0) {
-        if (v.semResp === v.n) {
+        if (desconectado && v.semResp === v.n) {
+          rich(ML, CW, [
+            { t: 'O número deste vendedor está desconectado da plataforma', b: true },
+            { t: '- as conversas dele não puderam ser acompanhadas. Peça pra ele reconectar o WhatsApp no painel pra voltar a aparecer nos relatórios.' },
+          ], 10, 14);
+        } else if (v.semResp === v.n) {
           rich(ML, CW, [
             { t: 'Recebeu' }, { t: `${v.n} cliente${v.n > 1 ? 's' : ''}`, b: true },
             { t: 'e não respondeu nenhum - o cliente chamou e ficou no vácuo.' },
@@ -384,7 +406,7 @@ Deno.serve(async (req) => {
             }
           }
         }
-        if (v.semResp === v.n) {
+        if (v.semResp === v.n && !desconectado) {
           pageBreak(56);
           F(RED_BG); doc.roundedRect(ML, y, CW, 48, 7, 7, 'F');
           T(22, 'bold', RED); doc.text('0 respostas', ML + 16, y + 31);
@@ -442,6 +464,7 @@ Deno.serve(async (req) => {
       { k: 'bom', label: 'Clientes bons', c: BLUE, desc: 'Mostraram interesse real. Fecham com um bom atendimento.' },
       { k: 'dificil', label: 'Clientes difíceis', c: AMBER, desc: 'Esfriaram ou têm restrição. Dá trabalho e nem sempre fecha.' },
       { k: 'nao', label: 'Nem eram clientes', c: RED, desc: 'Clique por engano ou sem intenção. Não é falha da equipe.' },
+      { k: 'sem', label: 'Sem dados pra avaliar', c: MUTED, desc: 'Conversa curta demais pra julgar. Não é bom nem ruim.' },
     ];
     for (const cat of cats) {
       const n = leads.filter((l) => l.pot === cat.k).length;
@@ -550,7 +573,7 @@ Deno.serve(async (req) => {
       { n: String(nLeads), lab: 'clientes atendidos', c: NAVY },
       { n: String(nVendas), lab: nVendas === 1 ? 'venda fechada' : 'vendas fechadas', c: GREEN },
       { n: String(nPerfil), lab: 'com perfil de comprar', c: BLUE },
-      { n: String(nSem), lab: 'sem perfil / fora', c: RED },
+      { n: String(nSem), lab: 'sem perfil / sem dados', c: RED },
     ];
     const tw2 = (CW - 30) / 4; let tx = ML; const ty = 192;
     for (const t of tiles) {
@@ -589,6 +612,7 @@ Deno.serve(async (req) => {
     for (const cat of [
       { k: 'forte', lab: 'fortes', c: GREEN }, { k: 'bom', lab: 'bons', c: BLUE },
       { k: 'dificil', lab: 'difíceis', c: AMBER }, { k: 'nao', lab: 'não eram leads', c: RED },
+      { k: 'sem', lab: 'sem dados', c: MUTED },
     ]) {
       const n = leads.filter((l) => l.pot === cat.k).length;
       F(cat.c); doc.roundedRect(qx, y - 11.5, 17, 16, 3, 3, 'F');

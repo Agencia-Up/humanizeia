@@ -41,6 +41,7 @@ function instrucaoContrato(framework: any): string {
 {
  "versao":"1.0",
  "sinais":{"carro_na_troca":false,"entrada_pct":null,"tem_entrada":false,"nome_limpo":true,"restricao":false,"clique_sem_querer":false,"produto_errado":false,"fora_idade":false,"sem_intencao":false},
+ "potencial_compra":"sem_dados",
  "competencias":{${compFields}},
  "tempo_primeira_resposta_min":null,
  "perfil_idade":{"faixa":"desconhecida","fora_do_perfil":false},
@@ -52,6 +53,8 @@ function instrucaoContrato(framework: any): string {
  "frase_coaching":""
 }
 Regras: classifique pela CONVERSA, nunca pela palavra do vendedor. Cada competencia: nota 0-100 + um trecho-evidencia com horario. entrada_pct = % da entrada sobre o valor do carro (null se nao der pra saber). "vendedor_descartou_lead_bom"=true se o vendedor tratou/rotulou como ruim um cliente que tinha carro na troca e/ou entrada.
+"potencial_compra" ('alto'|'medio'|'baixo'|'nao_lead'|'sem_dados'): siga a REGUA DE POTENCIAL — 'alto' exige sinal FORTE e explicito (troca oferecida, entrada dita, pediu financiamento/simulacao, marcou/pediu visita ou endereco); 'medio' = interesse claro em carro especifico + pergunta objetiva de preco/parcela/condicao; responder mensagem ou cumprimentar NAO e interesse; sem evidencia suficiente = 'sem_dados'.
+"tempo_primeira_resposta_min": calcule APENAS a partir dos timestamps entre colchetes; se nao der pra calcular com certeza, deixe null — NUNCA estime.
 IMPORTANTE: sua resposta deve ser APENAS o objeto JSON, comecando com { e terminando com }. Sem markdown, sem crases, sem nenhum texto antes ou depois. Use exatamente as chaves de competencia mostradas acima.`;
 }
 
@@ -167,20 +170,29 @@ export async function analisarLead(
   // preenche quando ainda está vazio (não briga com o carimbo do Pedro).
   if (leadSource === 'pedro') {
     try {
+      // Ordem de evidencia: regras oficiais (q) > potencial_compra do LLM (regua
+      // rigida) > temperatura do Pedro. SEM evidencia => NAO carimba (null) — o
+      // Jose mostra "sem classificacao" honesto em vez de um "medio" inventado.
+      const pc = String(contrato.potencial_compra || '').toLowerCase();
       const temp = String((thread.sinais_estruturados as any)?.temperature || '').toLowerCase();
       const ql = q === '1_alto' ? 'bom'
         : q === '2_medio' ? 'medio'
         : (q === '3_baixo' || q === '4_nao_lead') ? 'ruim'
-        : (temp === 'quente' ? 'bom' : temp === 'frio' ? 'ruim' : 'medio');
-      await admin.from('ai_crm_leads')
-        .update({
-          qualidade_lead: ql,
-          motivo_classificacao: `cerebro-feedback: ${q || `temperatura ${temp || 'desconhecida'}`}`,
-          classificado_em: new Date().toISOString(),
-          classificado_por: 'timoteo',
-        })
-        .eq('id', leadId)
-        .is('qualidade_lead', null);
+        : pc === 'alto' ? 'bom'
+        : pc === 'medio' ? 'medio'
+        : (pc === 'baixo' || pc === 'nao_lead') ? 'ruim'
+        : (temp === 'quente' ? 'bom' : temp === 'frio' ? 'ruim' : null);
+      if (ql) {
+        await admin.from('ai_crm_leads')
+          .update({
+            qualidade_lead: ql,
+            motivo_classificacao: `cerebro-feedback: ${q || (pc && pc !== 'sem_dados' ? `potencial ${pc}` : `temperatura ${temp || 'desconhecida'}`)}`,
+            classificado_em: new Date().toISOString(),
+            classificado_por: 'timoteo',
+          })
+          .eq('id', leadId)
+          .is('qualidade_lead', null);
+      }
     } catch (_e) { /* não bloqueia a análise */ }
   }
 
