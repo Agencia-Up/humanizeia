@@ -24,29 +24,45 @@ function normNum(s?: string | null): string {
   return d;
 }
 
+// Formata o telefone do lead em (DD) 9XXXX-XXXX (tira DDI 55).
+function fone(raw?: string): string {
+  let d = (raw || '').replace(/\D/g, '');
+  if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+  if (d.length >= 10) { const dd = d.slice(0, 2), r = d.slice(2); return `(${dd}) ${r.slice(0, r.length - 4)}-${r.slice(-4)}`; }
+  return d;
+}
+const cap1 = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+// Formato aprovado pelo dono: alerta forte (so dispara em risco real de perder
+// venda) + dados pra AGIR na hora (contato do lead, horario do ultimo contato,
+// nome completo do vendedor).
 function buildMsg(cases: any[]): string {
   const b = (s: string) => `*${s}*`;
-  const atende = (c: any) => (c.vendedor_nome ? ` · atendeu: ${c.vendedor_nome}` : '');
   const veic = (c: any) => (c.veiculo ? ` (${c.veiculo})` : '');
+  const tel = (c: any) => (c.telefone ? ` · ${fone(c.telefone)}` : '');
+  const hora = (c: any) => (c.ultimo_contato ? ` · último contato ${c.ultimo_contato}` : '');
   if (cases.length === 1) {
     const c = cases[0];
     return [
-      b('Atenção — atendimento de hoje'),
+      `🚨 ${b('ATENÇÃO — cliente bom prestes a ser perdido')}`,
       '',
-      'Um cliente bom está sendo perdido por atendimento fraco:',
-      `${b(c.lead_nome)}${veic(c)} — ${c.motivo}.${c.vendedor_nome ? ` Atendeu: ${c.vendedor_nome}.` : ''}`,
+      `${b(c.lead_nome)}${veic(c)}${tel(c)}`,
+      `${cap1(c.motivo)}.`,
+      `Atendendo: ${b(c.vendedor_nome || 'sem vendedor')}${hora(c)}`,
+      '',
       'Vale entrar nessa conversa antes de perder o cliente.',
       '',
       '_Logos IA_',
     ].join('\n');
   }
-  const linhas = cases.map((c) => `• ${b(c.lead_nome)}${veic(c)} — ${c.motivo}${atende(c)}`).join('\n');
+  const linhas = cases.map((c) => `• ${b(c.lead_nome)}${veic(c)}${tel(c)} — ${c.motivo}${c.vendedor_nome ? ` · ${c.vendedor_nome}` : ''}`).join('\n');
   return [
-    b('Atenção — atendimento de hoje'),
+    `🚨 ${b('ATENÇÃO — clientes bons prestes a serem perdidos')}`,
     '',
-    `${b(cases.length + ' clientes bons')} estão sendo perdidos por atendimento fraco:`,
+    `${b(cases.length + ' clientes bons')} estão sendo mal atendidos e podem escapar:`,
     linhas,
-    'Vale ouvir essas conversas antes de perder os clientes.',
+    '',
+    'Vale entrar nessas conversas antes de perder os clientes.',
     '',
     '_Logos IA_',
   ].join('\n');
@@ -78,8 +94,9 @@ Deno.serve(async (req) => {
     let casos: any[] = casosRaw || [];
     // Teste: se nao ha caso real na janela, manda o exemplo pra visualizar o formato.
     if (isTest && body?.sample && !casos.length) {
-      casos = [{ conversa_id: null, lead_nome: 'Marcos', veiculo: 'Toyota Hilux', vendedor_nome: 'João',
-        motivo: 'tinha carro na troca e falou de entrada, mas foi mal atendido' }];
+      casos = [{ conversa_id: null, lead_nome: 'Marcos', veiculo: 'Toyota Hilux', vendedor_nome: 'João Santos',
+        motivo: 'tinha carro na troca e falou de entrada, mas foi mal atendido',
+        telefone: '5512997918775', ultimo_contato: '14:20' }];
     }
     if (!casos.length) return json({ ok: true, enviados: 0, motivo: 'nenhum cliente bom em risco' });
 
