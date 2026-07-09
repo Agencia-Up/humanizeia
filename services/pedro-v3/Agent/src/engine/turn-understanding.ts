@@ -10,7 +10,7 @@
 //  - P1: a 1ª compreensão validada TRAVA o assunto do turno (reconcile só adiciona fato; não troca sem evidência nova).
 // Módulo PURO, sem ciclo. Memória = contexto/pronome, nunca vence o turno.
 // ============================================================================
-import { normalizeText, canonicalModel, modelIdentityMatches } from "./catalog-utils.ts";
+import { normalizeText, canonicalModel, modelIdentityMatches, modelLikelyTypoMatches } from "./catalog-utils.ts";
 export type KnownVehicleModel = { readonly marca: string | null; readonly modelo: string | null };
 import { parseOrdinal } from "./ordinal.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
@@ -157,6 +157,24 @@ function modelsAgreeUpToBrand(a: string, b: string): boolean {
   const [long, short] = ca.length >= cb.length ? [ca, cb] : [cb, ca];
   return long.endsWith(short);   // marca é PREFIXO; "onixplus" NÃO termina em "onix" -> Onix≠Onix Plus continua conflito
 }
+function uniqueModelCandidates(subject: string, knownModels: ReadonlyMap<string, KnownVehicleModel>, fuzzy: boolean): string[] {
+  const hits = [...knownModels.entries()].filter(([, m]) => fuzzy ? modelLikelyTypoMatches(subject, m) : modelIdentityMatches(subject, m)).map(([k]) => k);
+  return [...new Set(hits)];
+}
+
+function leadTypoSubjectCandidate(block: string, knownModels: ReadonlyMap<string, KnownVehicleModel>): string | null {
+  if (!leadRequestsPhoto(block)) return null;
+  const words = normalizeText(block).split(/\s+/).filter((w) => w.length >= 3 && !/^(?:foto|fotos|imagem|imagens|manda|mande|mandar|envia|enviar|mostra|mostrar|quero|ver|do|da|de|dos|das|me|o|a|um|uma|ele|ela|dele|dela)$/.test(w));
+  const terms = new Set<string>();
+  for (let i = 0; i < words.length; i++) {
+    terms.add(words[i]);
+    if (i + 1 < words.length) terms.add(`${words[i]}${words[i + 1]}`);
+    if (i + 2 < words.length) terms.add(`${words[i]}${words[i + 1]}${words[i + 2]}`);
+  }
+  const viable = [...terms].filter((term) => uniqueModelCandidates(term, knownModels, true).length > 0);
+  if (viable.length !== 1) return null;
+  return viable[0];
+}
 export function resolveTurnTarget(args: {
   readonly understanding: TurnUnderstanding | null;
   readonly leadMessage: string;
@@ -187,12 +205,17 @@ export function resolveTurnTarget(args: {
   } else if (uModel) {
     // inferência (typo): só é assunto se CONFIRMADA por knownModels (identidade EXATA) OU pelo catálogo (claimExtractor).
     const inKnown = [...knownModels.values()].some((m) => modelIdentityMatches(uModel, m));
+    const typoKnown = uniqueModelCandidates(uModel, knownModels, true).length > 0;
     const inCatalog = claimExtractor.extractClaims(uModel).some((c) => c.kind === "model" || c.kind === "brand_model");
-    if (inKnown || inCatalog) subjectModel = uModel;   // senão: inferência não confirmada -> não vira assunto (fail-closed)
+    if (inKnown || typoKnown || inCatalog) subjectModel = uModel;   // senão: inferência não confirmada -> não vira assunto (fail-closed)
   }
-  // B) MODELO do assunto -> candidatos por IDENTIDADE EXATA (só de knownModels estruturado). Modelo diferente NUNCA herda selected.
+  if (!subjectModel) subjectModel = leadTypoSubjectCandidate(leadMessage, knownModels);
+
+  // B) MODELO do assunto -> candidatos por IDENTIDADE EXATA primeiro; se nao houver, tolera typo com candidato unico.
+  // Modelo diferente NUNCA herda selected. A tolerancia nao usa substring e preserva Onix!=Onix Plus/HB20!=HB20S.
   if (subjectModel) {
-    const cands = [...new Set([...knownModels.entries()].filter(([, m]) => modelIdentityMatches(subjectModel!, m)).map(([k]) => k))];
+    let cands = uniqueModelCandidates(subjectModel, knownModels, false);
+    if (cands.length === 0) cands = uniqueModelCandidates(subjectModel, knownModels, true);
     if (cands.length === 1) return { kind: "resolved", vehicleKey: cands[0], source: "turn_explicit_model", candidateVehicleKeys: cands, subjectModel };
     if (cands.length > 1) return { kind: "ambiguous", candidateVehicleKeys: cands, subjectModel };
     return { kind: "none", subjectModel };   // modelo do assunto sem candidato conhecido -> busca antes (nunca herda outro)
