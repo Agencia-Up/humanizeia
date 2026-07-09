@@ -331,6 +331,35 @@ async function main(): Promise<void> {
     const cap = await c.t("Me manda fotos do tcroos", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok) ? finU([txt("Aqui estao:")], [reply, mediaEff(T_CROSS)], "send_photos", uTypo) : photoResolve(T_CROSS, uTypo));
     check("[IdG] typo 'tcroos' resolve T-Cross da lista e envia fotos", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.targetSource === "turn_explicit_model", `media=${cap.hasMedia} mediaKey=${cap.mediaKey} target=${cap.targetSource}`);
   }
+  const pendingPhotoAsk = (vs: VehicleFact[]) => ({
+    ...offerCtx(vs),
+    recentTurns: [{ role: "agent" as const, text: "De qual carro da lista você quer as fotos? Me diz o número ou o modelo.", at: NOW }],
+  } as Partial<ConversationState>);
+
+  {
+    const c = conv({ ...pendingPhotoAsk([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
+    const uPending = U("other", { subject: "explicit_model", subjectValue: "T-Cross", subjectSource: "current_turn", evidence: [{ quote: "T-Cross" }] });
+    const cap = await c.t("T-Cross", "ambiguous", [finU([txt("Claro, vou separar pra você.")], [reply], "reply", uPending)]);
+    check("[IdH] resposta ao clarify de fotos com modelo exato continua pedido de foto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.src === "deterministic_photo", `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+  }
+  {
+    const c = conv({ ...pendingPhotoAsk([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
+    const uPendingTypo = U("other", { subject: "explicit_model", subjectValue: "tcroos", subjectSource: "inference", evidence: [{ quote: "tcroos" }] });
+    const cap = await c.t("tcroos", "ambiguous", [finU([txt("Entendi.")], [reply], "reply", uPendingTypo)]);
+    check("[IdI] resposta ao clarify de fotos tolera typo do modelo", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.src === "deterministic_photo", `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+  }
+  {
+    const c = conv({ ...pendingPhotoAsk([T_CROSS, KICKS1, KICKS2]) }); await c.seed();
+    const uPendingOrdinal = U("other", { subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ quote: "numero 1" }] });
+    const cap = await c.t("o numero 1 da lista", "ambiguous", [finU([txt("Boa escolha.")], [reply], "reply", uPendingOrdinal)]);
+    check("[IdJ] resposta ao clarify de fotos com ordinal envia foto do item correto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.src === "deterministic_photo", `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+  }
+  {
+    const c = conv({ ...offerCtx([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
+    const uBare = U("other", { subject: "explicit_model", subjectValue: "T-Cross", subjectSource: "current_turn", evidence: [{ quote: "T-Cross" }] });
+    const cap = await c.t("T-Cross", "ambiguous", [finU([txt("Me conta o que você quer saber dele.")], [reply], "reply", uBare)]);
+    check("[IdK] modelo solto sem pergunta anterior de foto NÃO autoriza mídia", cap.committed && !cap.hasMedia, `media=${cap.hasMedia} src=${cap.src}`);
+  }
   console.log(`\n== F2.23: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }
 }

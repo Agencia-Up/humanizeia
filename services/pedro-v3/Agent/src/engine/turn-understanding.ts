@@ -114,8 +114,19 @@ export function leadRequestsPhoto(block: string): boolean {
   if (isPhotoDeclined(block)) return false;
   return PHOTO_REQUEST_STEM.test(normalizeText(block));
 }
-export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string): boolean {
-  return target.kind === "resolved" && leadRequestsPhoto(block);
+function lastAgentAskedPhotoTarget(state?: ConversationState | null): boolean {
+  const lastAgent = [...(state?.recentTurns ?? [])].reverse().find((t) => t.role === "agent")?.text ?? "";
+  const n = normalizeText(lastAgent);
+  if (!/\b(?:fotos?|imagens?)\b/.test(n)) return false;
+  return /\b(?:qual|quais|de\s+qual|numero|modelo|ano|carro|lista|opcao|item)\b/.test(n);
+}
+function answersPendingPhotoTargetQuestion(target: TargetResolution, state?: ConversationState | null): boolean {
+  if (target.kind !== "resolved") return false;
+  if (!lastAgentAskedPhotoTarget(state)) return false;
+  return target.source === "turn_ordinal" || target.source === "turn_explicit_model" || target.source === "ad_reference";
+}
+export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string, state?: ConversationState | null): boolean {
+  return target.kind === "resolved" && (leadRequestsPhoto(block) || answersPendingPhotoTargetQuestion(target, state));
 }
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──
@@ -162,8 +173,8 @@ function uniqueModelCandidates(subject: string, knownModels: ReadonlyMap<string,
   return [...new Set(hits)];
 }
 
-function leadTypoSubjectCandidate(block: string, knownModels: ReadonlyMap<string, KnownVehicleModel>): string | null {
-  if (!leadRequestsPhoto(block)) return null;
+function leadTypoSubjectCandidate(block: string, knownModels: ReadonlyMap<string, KnownVehicleModel>, allowBareModelTypo = false): string | null {
+  if (!leadRequestsPhoto(block) && !allowBareModelTypo) return null;
   const words = normalizeText(block).split(/\s+/).filter((w) => w.length >= 3 && !/^(?:foto|fotos|imagem|imagens|manda|mande|mandar|envia|enviar|mostra|mostrar|quero|ver|do|da|de|dos|das|me|o|a|um|uma|ele|ela|dele|dela)$/.test(w));
   const terms = new Set<string>();
   for (let i = 0; i < words.length; i++) {
@@ -184,6 +195,7 @@ export function resolveTurnTarget(args: {
 }): TargetResolution {
   const { understanding: u, leadMessage, state, claimExtractor, knownModels } = args;
   const offerItems = state.lastRenderedOfferContext?.items ?? [];
+  const pendingPhotoTargetAnswer = lastAgentAskedPhotoTarget(state);
   const uModel = u?.subject === "explicit_model" && u.subjectValue ? u.subjectValue : null;
   const textModels = claimExtractor.extractClaims(leadMessage).filter((c) => c.kind === "model" || c.kind === "brand_model").map((c) => c.text);
 
@@ -209,7 +221,7 @@ export function resolveTurnTarget(args: {
     const inCatalog = claimExtractor.extractClaims(uModel).some((c) => c.kind === "model" || c.kind === "brand_model");
     if (inKnown || typoKnown || inCatalog) subjectModel = uModel;   // senão: inferência não confirmada -> não vira assunto (fail-closed)
   }
-  if (!subjectModel) subjectModel = leadTypoSubjectCandidate(leadMessage, knownModels);
+  if (!subjectModel) subjectModel = leadTypoSubjectCandidate(leadMessage, knownModels, pendingPhotoTargetAnswer);
 
   // B) MODELO do assunto -> candidatos por IDENTIDADE EXATA primeiro; se nao houver, tolera typo com candidato unico.
   // Modelo diferente NUNCA herda selected. A tolerancia nao usa substring e preserva Onix!=Onix Plus/HB20!=HB20S.
