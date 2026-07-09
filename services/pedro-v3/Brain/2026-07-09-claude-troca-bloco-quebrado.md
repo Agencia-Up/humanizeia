@@ -1,6 +1,6 @@
 # Missão P0 — Resposta de TROCA em bloco quebrado não cai em fallback nem vira busca/descoberta (F2.42)
 
-**Data:** 2026-07-09 · **Autor:** Claude (executor) · **Espec:** Codex (missão P0 troca-em-bloco) · **Estado:** FEITO+PROVADO (offline 20 OK + smoke real PASS; turno-alvo perfeito 2/2). **NÃO commitado — aguarda auditoria do Codex.**
+**Data:** 2026-07-09 · **Autor:** Claude (executor) · **Espec:** Codex (missão P0 troca-em-bloco) · **Estado:** FEITO+PROVADO (offline 20 OK + smoke real PASS; turno-alvo perfeito 2/2) · **✅ APROVADO pela auditoria do Codex (re-rodou os 4 gates) e COMMITADO+PUSHADO `main fb79f144` (2026-07-09). Próximo P0 acordado com o dono: o achado do catálogo falha-fechado (seção ⚠️ abaixo).**
 
 ## Incidente real (WhatsApp, piloto Douglas, 2026-07-09 ~12:13 BRT)
 Agente: "Douglas, tem algum carro para dar de troca?" → lead em rajada: **"tenho" / "Uma hillux 2020" / "85km rodados"**
@@ -77,4 +77,4 @@ vazio deveria degradar diferente. Transitório (run 2 passou), mas estrutural.
 Nenhum handler comercial, nenhum if de frase/"hillux", nenhum texto do engine, nenhuma mudança no lastResort, nenhum
 cap novo no loop (precisa-detalhe gateado resolve o incidente), e o achado do catálogo ficou intocado (fora do escopo).
 
-**PARADO — nada commitado. Aguarda auditoria do Codex.**
+**✅ COMMITADO+PUSHADO — `main fb79f144` (2026-07-09, pós-auditoria Codex). Em produção só no piloto (tenant ecb26258).**
