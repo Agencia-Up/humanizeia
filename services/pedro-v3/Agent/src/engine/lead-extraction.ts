@@ -154,6 +154,18 @@ export function detectInterestModels(
 
 const NAME_CONFIDENCE_MIN = 0.7;
 
+function leadAsksQuestion(text: string): boolean {
+  const norm = normalizeText(text).trim();
+  if (/[?？]\s*$/.test(text.trim())) return true;
+  if (/^(?:tem|da|dá)\s+(?:sim|nao)\b/.test(norm)) return false;
+  return /^(?:qual|quais|quanto|quantos|onde|como|quando|tem|existe|possui|aceita|faz|da|dá|precisa|tenho que|tem que)\b/.test(norm);
+}
+
+function negatesOwnCity(text: string): boolean {
+  const norm = normalizeText(text);
+  return /\bnao\s+(?:sou|moro|estou|fico)\s+de\b|\bnao\s+falo\s+de\b/.test(norm);
+}
+
 // A ÚLTIMA cláusula INTERROGATIVA da fala do agente (o que ele de fato PERGUNTOU). Assim um acolhimento em statement
 // ("Entendi que você não tem entrada. ...") NÃO domina a inferência do slot — só o que termina em "?". PURO.
 function lastAgentQuestionText(state: ConversationState): string {
@@ -201,7 +213,7 @@ export function inferExpectedAnswerContext(state: ConversationState): ExpectedAn
 // Intenção EXPLÍCITA de COMPRA/BUSCA NOVA (vence o contexto financeiro anterior): verbo de compra/mostrar + referência a
 // veículo (modelo/tipo/"carro"), OU "tem <veículo>?", OU "outro carro/modelo/mais opções". NÃO casa valor solto ("até
 // 1200"), negação ("tenho não"), afirmação curta ("sim"/"pode ser") nem forma de pagamento ("financiar"). PURO.
-const NEW_SEARCH_VERB_RX = /\b(quero|procuro|busco|prefiro|mostra|me\s+(?:mostra|ve|mostr\w*)|ver|gostaria\s+de\s+(?:ver|comprar))\b/;
+const NEW_SEARCH_VERB_RX = /\b(quero|procuro|busco|prefiro|mostra|me\s+(?:mostra|ve|mostr\w*)|ver|gostaria\s+de\s+(?:ver|comprar)|gostei|curti|me\s+interess(?:ou|ei)|tenho\s+interesse)\b/;
 const ANOTHER_CAR_RX = /\boutr[oa]s?\s+(?:carro|modelo|veiculo|op[cç])|\bmais\s+op[cç]|\bmais\s+um\s+(?:carro|modelo)\b/;
 export function hasExplicitNewCommercialSearchIntent(
   leadMessage: string,
@@ -474,6 +486,7 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
     result.km = km;
   }
   if (/\bbom estado\b|\bbem conservad/.test(norm)) result.estado = "bom estado";
+  if (!result.modelo && result.marca && (result.ano != null || result.km != null)) result.modelo = result.marca;
   return Object.keys(result).length > 0 ? result : null;
 }
 
@@ -534,19 +547,21 @@ export function extractLeadSlots(args: {
   const captured = new Set<keyof ConversationState["slots"]>();
   const expected = inferredQuestionSlot(state);
   const norm = normalizeText(leadMessage);
+  const questionLike = leadAsksQuestion(leadMessage);
   // ── Missão P0 (audit Codex): separa o ALVO DE COMPRA do veículo de TROCA no MESMO bloco. O verbo de compra marca o INÍCIO
   //    do alvo de compra; o trecho ANTES é a parte de TROCA. Em contexto de troca, interesse/tipoVeiculo (COMPRA) vêm SÓ do
   //    alvo de compra (NUNCA do carro de troca -> mata a contaminação "interesse=Renegade"); veiculoTroca vem da parte de troca. ──
-  const buyVerbMatch = /\b(quero|procuro|busco|prefiro|gostaria\s+de|estou\s+procurando|to\s+procurando)\b/i.exec(leadMessage);
+  const buyVerbMatch = /\b(quero|procuro|busco|prefiro|gostaria\s+de|estou\s+procurando|to\s+procurando|gostei|curti|me\s+interess(?:ou|ei)|tenho\s+interesse)\b/i.exec(leadMessage);
   const buyClauseText = buyVerbMatch ? leadMessage.slice(buyVerbMatch.index) : "";           // "quero SUV / quero algo até 70 mil"
   const preBuyText = buyVerbMatch ? leadMessage.slice(0, buyVerbMatch.index) : leadMessage;   // "tenho um Onix para troca,"
   const availabilityQ = /\btem\s+\w/.test(norm);   // "tem Renegade?" = DISPONIBILIDADE (compra), não troca
+  const asksVehicleAvailability = questionLike && availabilityQ;
   const tradePhrase = /\b(?:para|pra|de|na)\s+troca\b|\bdar\s+(?:de\s+|na\s+)?troca\b|\bdou\s+(?:de\s+|na\s+)?troca\b/.test(norm);
   // Missão P0 (audit Codex smoke real): posse de veículo COM km = oferta de TROCA mesmo sem termos perguntado troca. Entra no
   // inTradeContext p/ que interesse/tipoVeiculo (COMPRA) venham SÓ do alvo de compra (buyClause) — NUNCA do carro de troca
   // (senão "Tenho um Renegade 2019 86km" respondendo sobre entrada gravaria interesse=renegade).
   const offersTradeByPossession = statesTradeVehiclePossession(preBuyText || leadMessage, claimExtractor);
-  const inTradeContext = expected === "possuiTroca" || expected === "veiculoTroca" || tradePhrase || offersTradeByPossession;
+  const inTradeContext = !asksVehicleAvailability && (expected === "possuiTroca" || expected === "veiculoTroca" || tradePhrase || offersTradeByPossession);
   // interesse/tipoVeiculo de COMPRA: em contexto de troca, só do ALVO DE COMPRA (buy clause); fora dele, o bloco todo.
   const interestText = inTradeContext ? buyClauseText : leadMessage;
 
@@ -604,10 +619,11 @@ export function extractLeadSlots(args: {
   // LLM-first (missão SDR): NEGAÇÃO a uma pergunta de ENTRADA = entrada zero (MEMÓRIA, p/ o cérebro não repergunta e
   // seguir no financiamento). "não"/"tenho não"/"não tenho"/"não tenho dinheiro pra entrada"/"não dá"/"não consigo" -> 0.
   // Bare "não"/"tenho não" só quando entrada foi PERGUNTADA (expected); "... entrada" explícito vale mesmo espontâneo.
-  const entradaNegada =
+  const entradaNegada = !questionLike && (
     (expected === "entrada" && (/\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+da\b|\bnao\s+consigo\b|\bnao\s+posso\b|\bsem\s+(?:dinheiro|grana|condic)/.test(norm) || /^(?:nao|nem)\b/.test(norm)))
-    || /\bnao\s+(?:tenho|vou|posso|consigo|pretendo)\b[^.?!]{0,25}\bentrada\b|\bsem\s+condic[^.?!]{0,20}\bentrada\b/.test(norm);
-  if (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm) || entradaNegada) {
+    || /\bnao\s+(?:tenho|vou|posso|consigo|pretendo)\b[^.?!]{0,25}\bentrada\b|\bsem\s+condic[^.?!]{0,20}\bentrada\b/.test(norm)
+  );
+  if (!questionLike && (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm) || entradaNegada)) {
     add({ op: "set_slot", slot: "entrada", value: 0, confidence: entradaNegada ? 0.9 : 0.98, sourceTurnId: turnId }, "entrada");
   } else {
     const entradaVal = answeringEntrada && firstMoney != null ? firstMoney : roleVal("entrada", "entrada");
@@ -631,7 +647,7 @@ export function extractLeadSlots(args: {
   // R11-A1 (Codex): um PEDIDO de compra ("Quero SUV até 70 mil", "quero um Gol") NÃO é resposta booleana de troca.
   // Sem isto, com objetivo 'possuiTroca' pendente, parseBooleanAnswer("quero...") virava possuiTroca=true ESPÚRIO
   // (memória corrompida -> objetivo trocava sem base). "tenho um Gol" (verbo de POSSE) continua sendo troca=sim.
-  const buyVerb = /\b(quero|procuro|busco|prefiro|mostra|me ve|gostaria de ver|estou procurando|to procurando)\b/.test(norm);
+  const buyVerb = /\b(quero|procuro|busco|prefiro|mostra|me ve|gostaria de ver|estou procurando|to procurando|gostei|curti|me interess(?:ou|ei)|tenho interesse)\b/.test(norm);
   const mentionsVehicle = parseVehicleType(leadMessage) != null || /\b(carro|veiculo|modelo)\b/.test(norm) || /\b\d{1,3}\s*mil\b/.test(norm)
     || claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model");
   const looksLikeBuyRequest = (buyVerb || availabilityQ) && mentionsVehicle;   // "tem Renegade?" também é compra, não troca
@@ -647,8 +663,14 @@ export function extractLeadSlots(args: {
     || claimExtractor.extractClaims(leadMessage).some((c) => c.kind === "model" || c.kind === "brand_model");
   const looksLikeMoneyAnswer = leadStatedMoneyValues(leadMessage).length > 0 && !mentionsVehicleWord;
   let deniedTradeVehicle = false;
-  if (explicitTrade || explicitNoTrade || expected === "possuiTroca" || offersTradeByPossession) {
-    const value = (explicitNoTrade || trocaNeg) ? false : (explicitTrade || trocaPos || offersTradeByPossession) ? true : ((looksLikeBuyRequest || looksLikeMoneyAnswer) ? null : parseBooleanAnswer(leadMessage));
+  const tradeCandidate = tradeVehicle(preBuyText || leadMessage, claimExtractor);
+  const tradeVehicleDescribed = tradeCandidate != null && tradeCandidate.modelo != null && (tradeCandidate.ano != null || tradeCandidate.km != null);
+  const noTradeAnswer = explicitNoTrade || trocaNeg;
+  const positiveTradeAnswer = !questionLike && (explicitTrade || expected === "possuiTroca" || offersTradeByPossession || tradeVehicleDescribed);
+  if (noTradeAnswer || positiveTradeAnswer) {
+    const value = (explicitNoTrade || trocaNeg) ? false
+      : (explicitTrade || trocaPos || offersTradeByPossession || (expected === "possuiTroca" && tradeVehicleDescribed)) ? true
+      : ((looksLikeBuyRequest || looksLikeMoneyAnswer) ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
       add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");
@@ -662,15 +684,15 @@ export function extractLeadSlots(args: {
   // Missão P0 (audit Codex): só captura o veículo de troca quando há sinal REAL de POSSE/troca no trecho de troca
   // (tenho/possuo/"para troca") OU o agente pediu explicitamente os DADOS do carro de troca (expected=veiculoTroca).
   // Extrai do preBuyText (parte de troca) — nunca do alvo de compra. "tem Renegade?"/"quero um Renegade" (COMPRA) NÃO viram troca.
-  const tradeContextActive = expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade || offersTradeByPossession;
-  const possessionSignal = /\b(tenho|possuo)\b/.test(normalizeText(preBuyText)) || tradePhrase;
+  const tradeContextActive = !asksVehicleAvailability && (expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade || offersTradeByPossession || tradeVehicleDescribed);
+  const possessionSignal = /\b(tenho|possuo|meu|minha)\b/.test(normalizeText(preBuyText)) || tradePhrase || (expected === "possuiTroca" && tradeVehicleDescribed);
   const captureTrade = !deniedTradeVehicle && (expected === "veiculoTroca" || (tradeContextActive && possessionSignal));
   if (captureTrade) {
-    const vehicle = tradeVehicle(preBuyText || leadMessage, claimExtractor);
+    const vehicle = tradeCandidate ?? tradeVehicle(preBuyText || leadMessage, claimExtractor);
     if (vehicle) add({ op: "set_slot", slot: "veiculoTroca", value: vehicle, confidence: 0.86, sourceTurnId: turnId }, "veiculoTroca");
   }
 
-  const city = explicitCity(leadMessage) ?? (expected === "cidade" ? bareCityAnswer(leadMessage, claimExtractor) : null);
+  const city = (!questionLike && !negatesOwnCity(leadMessage) ? explicitCity(leadMessage) : null) ?? (expected === "cidade" && !questionLike ? bareCityAnswer(leadMessage, claimExtractor) : null);
   if (city) add({ op: "set_slot", slot: "cidade", value: titleCase(city), confidence: expected === "cidade" ? 0.86 : 0.95, sourceTurnId: turnId }, "cidade");
 
   if (expected === "conheceLoja" || /\b(?:conheco|ja fui|nunca fui).{0,20}\bloja\b/.test(norm)) {

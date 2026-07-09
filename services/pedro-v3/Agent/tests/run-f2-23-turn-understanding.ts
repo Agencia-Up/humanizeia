@@ -39,6 +39,7 @@ const HB20: VehicleFact = { vehicleKey: "revendamais:hb20", marca: "Hyundai", mo
 const HB20S: VehicleFact = { vehicleKey: "revendamais:hb20s", marca: "Hyundai", modelo: "HB20S", ano: 2019, preco: 64990, km: 52000, cambio: "Manual", cor: "Preto", tipo: "sedan" };
 const C3: VehicleFact = { vehicleKey: "revendamais:c3", marca: "Citroen", modelo: "C3", ano: 2016, preco: 44990, km: 90000, cambio: "Manual", cor: "Vermelho", tipo: "hatch" };
 const C3_AIRCROSS: VehicleFact = { vehicleKey: "revendamais:c3aircross", marca: "Citroen", modelo: "C3 Aircross", ano: 2015, preco: 47990, km: 116000, cambio: "Manual", cor: "Branco", tipo: "suv" };
+const T_CROSS: VehicleFact = { vehicleKey: "revendamais:tcross", marca: "Volkswagen", modelo: "T-Cross", ano: 2020, preco: 89990, km: 89000, cambio: "Automatico", cor: "Prata", tipo: "suv" };
 const STOCK = [ONIX, KICKS1, KICKS2, KICKS3, KICKS_A, ONIX_PLUS, HB20, HB20S, C3, C3_AIRCROSS];
 const catalog = buildTenantCatalog(STOCK);
 const extractor = new CatalogClaimExtractor(catalog);
@@ -324,6 +325,12 @@ async function main(): Promise<void> {
   await identPos("[IdF1] 'Chevrolet Onix' casa {marca:Chevrolet,modelo:Onix} -> mídia", ONIX, "me manda foto do Chevrolet Onix", "Chevrolet Onix", "foto do chevrolet onix");
   await identNeg("[IdF2] 'Chevrolet Onix' NÃO casa Onix Plus -> ZERO mídia", ONIX_PLUS, "me manda foto do Chevrolet Onix", "Chevrolet Onix", "foto do chevrolet onix");
 
+  {
+    const c = conv({ ...offerCtx([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
+    const uTypo = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "tcroos", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do tcroos" }] });
+    const cap = await c.t("Me manda fotos do tcroos", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok) ? finU([txt("Aqui estao:")], [reply, mediaEff(T_CROSS)], "send_photos", uTypo) : photoResolve(T_CROSS, uTypo));
+    check("[IdG] typo 'tcroos' resolve T-Cross da lista e envia fotos", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.targetSource === "turn_explicit_model", `media=${cap.hasMedia} mediaKey=${cap.mediaKey} target=${cap.targetSource}`);
+  }
   console.log(`\n== F2.23: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }
 }

@@ -44,6 +44,52 @@ export function modelIdentityMatches(subjectRaw: string, veh: { readonly marca: 
   return veh.marca != null && s === canonicalModel(`${veh.marca} ${veh.modelo}`);
 }
 
+const SEMANTIC_MODEL_SUFFIXES = ["plus", "aircross", "sedan", "cross", "sport", "s"] as const;
+
+function editDistanceWithin(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = cur[0];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function semanticPrefixConflict(a: string, b: string): boolean {
+  if (a === b) return false;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (!short || !long.startsWith(short)) return false;
+  const suffix = long.slice(short.length);
+  return SEMANTIC_MODEL_SUFFIXES.some((s) => suffix === s || suffix.startsWith(s));
+}
+
+function likelyModelTypo(subject: string, model: string): boolean {
+  if (!subject || !model || subject === model) return false;
+  if (subject.length < 4 || model.length < 4) return false;
+  if (semanticPrefixConflict(subject, model)) return false;
+  const max = Math.min(subject.length, model.length) <= 6 ? 1 : 2;
+  return editDistanceWithin(subject, model, max) <= max;
+}
+
+// Tolerancia conservadora para erro de digitacao do lead contra modelos JA ATERRADOS no contexto.
+// Nao e substring e preserva separacoes semanticas: Onix != Onix Plus, HB20 != HB20S, C3 != C3 Aircross.
+export function modelLikelyTypoMatches(subjectRaw: string, veh: { readonly marca: string | null; readonly modelo: string | null }): boolean {
+  if (!veh.modelo || modelIdentityMatches(subjectRaw, veh)) return false;
+  const s = canonicalModel(subjectRaw);
+  if (!s) return false;
+  if (likelyModelTypo(s, canonicalModel(veh.modelo))) return true;
+  return veh.marca != null && likelyModelTypo(s, canonicalModel(`${veh.marca} ${veh.modelo}`));
+}
+
 export function normalizedTermInText(text: string, term: string): boolean {
   const normalizedTerm = normalizeText(term);
   if (!normalizedTerm) return false;
