@@ -4,6 +4,7 @@ import { PostgresPersistence } from "../adapters/persistence/postgres-store.ts";
 import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-database.ts";
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot, type PilotBrainMode } from "../engine/pilot-active-root.ts";
+import { SupabaseCrmLeadStore } from "../adapters/effects/supabase-crm-lead-store.ts";
 import { ingestPilotMessage } from "../engine/pilot-ingest.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
@@ -207,6 +208,15 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       allowedUazapiHosts: this.#allowedUazapiHosts,
       brainMode,
       agentBrainFactory,
+      // FASE 1 CRM (missão 2026-07-09): OFF por default (fail-closed). Liga SÓ com PEDRO_V3_CRM_WRITE=active
+      // E SÓ para o tenant do piloto (Douglas) — o root já é pilot-scoped; o store filtra ownership no banco.
+      crmLeadStore: process.env.PEDRO_V3_CRM_WRITE?.trim() === "active"
+        ? new SupabaseCrmLeadStore({
+            url: this.#supabaseUrl,
+            serviceRoleKey: this.#serviceRoleKey,
+            allowedHosts: [supabaseHost(this.#supabaseUrl)],
+          })
+        : null,
     });
   }
 

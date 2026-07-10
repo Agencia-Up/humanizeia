@@ -55,6 +55,7 @@ import type { RenderedResponse, ResponsePart } from "../domain/decision.ts";
 import { finalize } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
+import { buildCrmWritePlan } from "./crm-write.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
@@ -96,6 +97,9 @@ export type CentralTurnArgs = {
   readonly tenantId: Id;
   readonly agentId: Id;
   readonly leadId?: Id | null;
+  // FASE 1 CRM (missão 2026-07-09): liga o effect crm_write determinístico do chokepoint. Default OFF —
+  // fail-closed: sem flag OU sem leadId, nenhum effect de CRM nasce. Nunca fala com o lead.
+  readonly crmWriteEnabled?: boolean;
   readonly workerId: string;
   readonly turnId: Id;
   readonly leaseTtlMs: number;
@@ -2401,10 +2405,21 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         throw new Error("central: next state ownership mismatch at commit");
       }
 
+      // ── FASE 1 CRM (missão 2026-07-09): crm_write DETERMINÍSTICO no chokepoint. O engine grava o que JÁ
+      //    COLETOU (slots do estado PÓS-turno, fonte = extração+reducer) — nunca o palpite da LLM, nunca fala
+      //    com o lead. Gated (flag + leadId, fail-closed); DELTA por turno (stateBefore=contextState); order
+      //    ALTO (o reply/media despacham ANTES — falha de CRM nunca silencia o lead). A política de merge
+      //    não-destrutivo (fill-only-if-empty / campo humano intocado) vive no CrmWriteEffectDispatcher. ──────
+      // stateBefore = state ORIGINAL do snapshot (o contextState JÁ contém a extração deste turno e zeraria o delta).
+      const crmPlan = (llmFirst && args.crmWriteEnabled === true)
+        ? buildCrmWritePlan({ stateAfter: reduced.next, stateBefore: state, adContext: effectiveAdContext, adVehicleLabel: adVehicleHint ?? null, leadId: leadId ?? null, turnId })
+        : null;
+      const decisionForOutbox = crmPlan ? { ...decision, effectPlan: [...decision.effectPlan, crmPlan] } : decision;
+
       // T1 (audit Codex smoke): SANITIZA control chars do texto de saída num chokepoint ÚNICO — cobre o send_message
       // (materializeEffectPlans), o composedText do resultado e o evento response_composed. O LLM às vezes emite U+001F etc.
       const outComposed = { ...composed, text: sanitizeOutgoingText(composed.text) };
-      const outbox = materializeEffectPlans(decision, outComposed, { conversationId, createdAt: cutoff, providerCapability });
+      const outbox = materializeEffectPlans(decisionForOutbox, outComposed, { conversationId, createdAt: cutoff, providerCapability });
 
       // Observabilidade institucional (audit): status TERMINAL por tópico resolvido no turno.
       const institutionalResolved = [...institutionalObs.entries()].map(([topic, obs]) => ({
