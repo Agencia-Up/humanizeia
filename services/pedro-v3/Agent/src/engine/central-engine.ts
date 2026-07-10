@@ -55,6 +55,7 @@ import type { RenderedResponse, ResponsePart } from "../domain/decision.ts";
 import { finalize } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
+import { buildCrmWritePlan } from "./crm-write.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
@@ -96,6 +97,9 @@ export type CentralTurnArgs = {
   readonly tenantId: Id;
   readonly agentId: Id;
   readonly leadId?: Id | null;
+  // FASE 1 CRM (missão 2026-07-09): liga o effect crm_write determinístico do chokepoint. Default OFF —
+  // fail-closed: sem flag OU sem leadId, nenhum effect de CRM nasce. Nunca fala com o lead.
+  readonly crmWriteEnabled?: boolean;
   readonly workerId: string;
   readonly turnId: Id;
   readonly leaseTtlMs: number;
@@ -679,6 +683,19 @@ function authorFromBrainDraft(args: {
   // Valida contra fatos REAIS (identidade de memória NÃO aterra atributo/oferta).
   const gv = PolicyEngine.validateResponse(composed, realFacts, decision0, args.ctx);
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
+  if (isServiceOrInstitutionalQuestion(args.leadMessage)
+      && hasCommercialConversationContext(args.ctx.state)
+      && !ATTR_QUESTION_RX.test(normalizeText(args.leadMessage))
+      && !leadRequestsPhoto(args.leadMessage)
+      && detectDisengagement(args.leadMessage) == null
+      && !hasQuestion(composed.text)
+      && !draft.parts.some((p) => p.type === "vehicle_offer_list")
+      && !proposedEffects.some((e) => e.kind === "send_media")) {
+    return { ok: false, feedback: "Responda a duvida do cliente e conduza como SDR com UMA pergunta curta ligada ao contexto atual (fotos, detalhes, condicoes, visita ou proximo passo do carro em conversa). Nao pare seco depois da resposta." };
+  }
+  if (detectDisengagement(args.leadMessage) === "low_intent" && lastAgentAnnouncedHandoff(args.ctx.state) && isHandoffLikeText(composed.text)) {
+    return { ok: false, feedback: "O cliente esta agradecendo/despedindo depois de voce ja anunciar a transferencia. Nao repita a transferencia nem reabra o funil. Responda curto, cordial, confirmando que fica a disposicao." };
+  }
   // Missão P0 INC2/F: NUNCA peça SOBRENOME / nome completo — o primeiro nome basta e só mais adiante. deny SEMPRE (o carro
   // é o assunto, não cadastro). O cérebro RE-AUTORA avançando a intenção comercial.
   if (asksLeadSurname(composed.text)) {
@@ -755,7 +772,7 @@ function authorFromBrainDraft(args: {
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage) || leadRequestsPhoto(args.leadMessage) });
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) || leadRequestsPhoto(args.leadMessage) });
   if (incomplete) return { ok: false, feedback: incomplete };
   // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
   // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
@@ -918,7 +935,7 @@ function buildDeterministicPhotoResponse(args: {
 }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
   // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO alvo resolvido (ordinal/anúncio/seleção/modelo) + pedido de foto (grounding
   // máximo; nunca "foto solta"), OU conjunto CANDIDATO do anúncio (>1) + pedido de foto (aí pergunta QUAL, não escolhe errado).
-  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedTarget(args.target, args.leadMessage) && !(args.adCandidateKeys.length > 1 && leadRequestsPhoto(args.leadMessage))) return null;
+  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) && !(args.adCandidateKeys.length > 1 && leadRequestsPhoto(args.leadMessage))) return null;
   const state = args.ctx.state;
   const factsArr = [...args.facts];
   const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
@@ -1167,6 +1184,19 @@ const AD_CONDUCT_RX = /\bfoto|\bimagem|\bdetalhe|\bcondi[cç]|\bdispon|\bfinanc|
 function conductsAboutAdVehicle(text: string): boolean { const t = normalizeText(text); return AD_CONDUCT_RX.test(t) || t.includes("?"); }
 // Backstop: substitui uma abertura que pede NOME por uma DESCOBERTA comercial acolhedora (modelo/tipo/faixa) — SDR humano,
 // não formulário. UMA pergunta. PURO.
+function hasCommercialConversationContext(state: ConversationState): boolean {
+  return state.vehicleContext.selected?.key != null || (state.lastRenderedOfferContext?.items?.length ?? 0) > 0;
+}
+const HANDOFF_TEXT_RX = /\b(?:consultor|vendedor|transfer|transferir|encaminh|chamar|chamei|passar|continuidade)\b/;
+function isHandoffLikeText(text: string): boolean { return HANDOFF_TEXT_RX.test(normalizeText(text)); }
+function lastAgentAnnouncedHandoff(state: ConversationState): boolean {
+  return [...(state.recentTurns ?? [])].reverse().filter((t) => t.role === "agent").slice(0, 3).some((t) => isHandoffLikeText(t.text));
+}
+const SERVICE_OR_INSTITUTIONAL_RX = /\b(?:garantia|procedencia|documenta[cç]ao|documentos?|laudo|revis[aã]o|ipva|licenciad|blindad|seguro|chave\s+reserva|manual|recibo)\b/;
+function isServiceOrInstitutionalQuestion(text: string): boolean {
+  return institutionalTopicsRequested(text).length > 0 || mentionsContact(text) || SERVICE_OR_INSTITUTIONAL_RX.test(normalizeText(text));
+}
+function hasQuestion(text: string): boolean { return text.includes("?"); }
 function buildGenericAdDiscoveryResponse(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
   const text = "Que bom te ver por aqui! 😊 Pra eu te ajudar certinho, você já tem algum modelo em mente, um tipo de carro (SUV, sedan, hatch ou picape) ou uma faixa de preço?";
   const pe = ensureSendMessage([]);
@@ -2017,7 +2047,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         //    autoria que não enviou -> executor determinístico (Path B) materializa send_media. Ausência honesta só sobrevive
         //    DEPOIS de consultar o alvo certo e vir VAZIO/erro. Fail-closed: alvo ambíguo/ausente -> não força nada. ──
         const photoInvariantTarget = resolveTargetWithAd();
-        if (llmFirst && photoInvariantTarget.kind === "resolved" && authorizesPhotoByResolvedTarget(photoInvariantTarget, leadMessage)) {
+        if (llmFirst && photoInvariantTarget.kind === "resolved" && authorizesPhotoByResolvedTarget(photoInvariantTarget, leadMessage, contextState)) {
           const invKey = photoInvariantTarget.vehicleKey;
           if (!facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === invKey)) {
             try {
@@ -2046,7 +2076,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         //    explícito de foto (grounding máximo). A mesma fonte de alvo (resolveTarget) alimenta seleção, foto e recall. ──
         if (!authoredComposed) {
           const photoTarget = resolveTargetWithAd();   // P0-A: inclui a referência EXATA do anúncio p/ foto pronominal
-          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedTarget(photoTarget, leadMessage);
+          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedTarget(photoTarget, leadMessage, contextState);
           if (wantsPhotoNow && photoTarget.kind === "resolved" && !facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === photoTarget.vehicleKey)) {
             try {
               const photoRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: photoTarget.vehicleKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (ordinal) exceeded timeout");
@@ -2375,10 +2405,21 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         throw new Error("central: next state ownership mismatch at commit");
       }
 
+      // ── FASE 1 CRM (missão 2026-07-09): crm_write DETERMINÍSTICO no chokepoint. O engine grava o que JÁ
+      //    COLETOU (slots do estado PÓS-turno, fonte = extração+reducer) — nunca o palpite da LLM, nunca fala
+      //    com o lead. Gated (flag + leadId, fail-closed); DELTA por turno (stateBefore=contextState); order
+      //    ALTO (o reply/media despacham ANTES — falha de CRM nunca silencia o lead). A política de merge
+      //    não-destrutivo (fill-only-if-empty / campo humano intocado) vive no CrmWriteEffectDispatcher. ──────
+      // stateBefore = state ORIGINAL do snapshot (o contextState JÁ contém a extração deste turno e zeraria o delta).
+      const crmPlan = (llmFirst && args.crmWriteEnabled === true)
+        ? buildCrmWritePlan({ stateAfter: reduced.next, stateBefore: state, adContext: effectiveAdContext, adVehicleLabel: adVehicleHint ?? null, leadId: leadId ?? null, turnId })
+        : null;
+      const decisionForOutbox = crmPlan ? { ...decision, effectPlan: [...decision.effectPlan, crmPlan] } : decision;
+
       // T1 (audit Codex smoke): SANITIZA control chars do texto de saída num chokepoint ÚNICO — cobre o send_message
       // (materializeEffectPlans), o composedText do resultado e o evento response_composed. O LLM às vezes emite U+001F etc.
       const outComposed = { ...composed, text: sanitizeOutgoingText(composed.text) };
-      const outbox = materializeEffectPlans(decision, outComposed, { conversationId, createdAt: cutoff, providerCapability });
+      const outbox = materializeEffectPlans(decisionForOutbox, outComposed, { conversationId, createdAt: cutoff, providerCapability });
 
       // Observabilidade institucional (audit): status TERMINAL por tópico resolvido no turno.
       const institutionalResolved = [...institutionalObs.entries()].map(([topic, obs]) => ({

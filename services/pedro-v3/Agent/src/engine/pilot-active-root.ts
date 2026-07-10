@@ -18,6 +18,7 @@ import { V2StockLoader } from "../adapters/read/stock-loader.ts";
 import { V2StockSource } from "../adapters/read/stock-source.ts";
 import { V2VehiclePhotoSource } from "../adapters/read/photo-source.ts";
 import { V2CrmReadSource } from "../adapters/read/crm-read-source.ts";
+import { CompositeEffectDispatcher, CrmWriteEffectDispatcher, type CrmLeadStore } from "../adapters/effects/crm-write-dispatcher.ts";
 import { PromptBoundConversationAdapter } from "../adapters/llm/prompt-bound-conversation.ts";
 import { createReadQueryRunner } from "./read-query-runner.ts";
 import { ConversationTurnContextPreparer, StockTenantCatalogSource, type TenantCatalogSource } from "./turn-context-preparer.ts";
@@ -64,6 +65,10 @@ export type PilotActiveDeps = {
   // R13-D/4: modo do cérebro (default off) + fábrica do AgentBrain REAL (OpenAI). Sem a fábrica, central_* cai em off.
   readonly brainMode?: PilotBrainMode;
   readonly agentBrainFactory?: (config: TenantRuntimeConfig) => AgentBrainPort;
+  // FASE 1 CRM (missão 2026-07-09): store do CRM. AUSENTE = CRM write OFF (fail-closed, default).
+  // Presente = o engine emite crm_write no chokepoint e o dispatch roteia p/ o CrmWriteEffectDispatcher
+  // (merge não-destrutivo + cross-tenant fail-closed pelo ref DESTE root). Só o composition root liga.
+  readonly crmLeadStore?: CrmLeadStore | null;
 };
 
 const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
@@ -169,6 +174,7 @@ export class PilotActiveRoot {
     private readonly agentBrain: AgentBrainPort | null,
     private readonly businessInfo: TenantBusinessInfoSource,
     private readonly promptSha256: string,
+    private readonly crmLeadStore: CrmLeadStore | null,
   ) {}
 
   get tenantConfig(): TenantRuntimeConfig {
@@ -246,6 +252,7 @@ export class PilotActiveRoot {
       agentBrain,
       businessInfo,
       promptSha256,
+      deps.crmLeadStore ?? null,
     );
   }
 
@@ -344,6 +351,8 @@ export class PilotActiveRoot {
       singleAuthor: true,
       // LLM-FIRST (missão SDR real): o engine NÃO gerencia objetivo de funil — o cérebro conduz; guardrails só validam.
       llmFirst: true,
+      // FASE 1 CRM: só emite crm_write quando o composition root ligou o store (fail-closed sem ele/sem leadId).
+      crmWriteEnabled: this.crmLeadStore != null,
       // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto do bloco vindo do debounce (server); default no engine se ausente.
       blockAwaitMaxMs: input.blockAwaitMaxMs,
     });
@@ -377,7 +386,16 @@ export class PilotActiveRoot {
     });
     if (!dispatcherRuntime.ok) throw new PilotActiveRootError(dispatcherRuntime.error);
     const gate = new ConversationOnlyActiveGate(input.conversationId);
-    const dispatcher = new OutboxDispatcher(input.persistence, this.clock, dispatcherRuntime.dispatcher, gate, `${input.workerId}:active-dispatcher`);
+    // FASE 1 CRM: com o store presente, roteia por kind — send_* -> WhatsApp; crm_write -> CRM (merge
+    // não-destrutivo, cross-tenant fail-closed pelo ref DESTE root). Sem store, comportamento idêntico ao atual.
+    const effectDispatcher = this.crmLeadStore
+      ? new CompositeEffectDispatcher({
+          send_message: dispatcherRuntime.dispatcher,
+          send_media: dispatcherRuntime.dispatcher,
+          crm_write: new CrmWriteEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.crmLeadStore }),
+        })
+      : dispatcherRuntime.dispatcher;
+    const dispatcher = new OutboxDispatcher(input.persistence, this.clock, effectDispatcher, gate, `${input.workerId}:active-dispatcher`);
     return dispatcher.dispatchConversation(input.conversationId);
   }
 }
