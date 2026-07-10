@@ -1,4 +1,22 @@
 // deno-lint-ignore-file no-explicit-any
+// ============================================================================
+// DUAS FONTES DE FEEDBACK — NÃO CONFUNDIR (documentação da auditoria 10/07):
+//
+//  1) `pedro_manager_feedback` (ANTIGA) — é o feedback do REPASSE: quando o Pedro
+//     transfere o lead pro vendedor, gera um "briefing/feedback" pro gerente
+//     (content, reason, observations, sent_to_manager_at). É parte do fluxo de
+//     TRANSFERÊNCIA e NÃO deve ser alterado por aqui. No frontend, quem lê essa
+//     fonte é o painel `FeedbackAnalytics.tsx` (concordância vendedor×IA, motivos).
+//
+//  2) `feedback_conversas` + NEPQ (NOVA — este módulo) — é a análise de QUALIDADE
+//     do ATENDIMENTO por conversa: score (0-100), qualidade_lead, veredito, e as
+//     dimensões NEPQ (`feedback_dimensoes`/`feedback_rubricas`/rollup). Alimenta as
+//     3 abas de `FeedbacksArea.tsx` (Por vendedor, NEPQ, Histórico diário) e os
+//     alertas de "cliente bom em risco". Ligado por `feedback_config.feature_flags`
+//     (analise/alertas/relatorio) por tenant, com teto de custo (feedback_cost_gate).
+//
+//  Regra de ouro: este arquivo (fonte NOVA) nunca toca em repasse/CRM/follow-up.
+// ============================================================================
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { buildLeadThread, LeadThread } from './ingestor.ts';
 

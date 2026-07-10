@@ -12,11 +12,12 @@ import {
 import {
   ShieldCheck, RefreshCcw, AlertTriangle, ChevronDown, ChevronRight,
   Activity, Users, BadgeCheck, Home, HeartPulse, ClipboardList,
-  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap, Wallet, BellRing,
+  UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap, Wallet, BellRing, MessagesSquare,
 } from 'lucide-react';
 import AdminMargemTab from '@/components/admin/AdminMargemTab';
 import AdminAuditoriaTab from '@/components/admin/AdminAuditoriaTab';
 import AdminDailyAuditTab from '@/components/admin/AdminDailyAuditTab';
+import AdminFeedbackConfigTab from '@/components/admin/AdminFeedbackConfigTab';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
 // Organizado em ABAS pra facilitar a leitura de quem nao e tecnico. Cada aba = 1 bloco.
@@ -41,6 +42,7 @@ const TABS = [
   { key: 'clientes', label: 'Clientes & Agentes', icon: Building2 },
   { key: 'provedores', label: 'Provedores de IA', icon: Cpu },
   { key: 'auditoria_diaria', label: 'Auditoria diária', icon: BellRing },
+  { key: 'feedbacks', label: 'Feedbacks', icon: MessagesSquare },
   { key: 'consumo', label: 'Consumo de IA', icon: Activity },
   { key: 'margem', label: 'Margem (IA)', icon: Wallet },
 ] as const;
@@ -94,6 +96,7 @@ export default function Administracao() {
       {tab === 'clientes' && <ClientesTab />}
       {tab === 'provedores' && <ProvedoresTab />}
       {tab === 'auditoria_diaria' && <AdminDailyAuditTab />}
+      {tab === 'feedbacks' && <AdminFeedbackConfigTab />}
       {tab === 'consumo' && <AdminAuditoriaTab />}
       {tab === 'margem' && <AdminMargemTab />}
     </div>

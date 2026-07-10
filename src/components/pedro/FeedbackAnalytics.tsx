@@ -1,6 +1,15 @@
 // ============================================================================
-// FeedbackAnalytics — aba Feedbacks (Master)
+// FeedbackAnalytics — aba Feedbacks (Master) — ⚠️ FONTE ANTIGA (pedro_manager_feedback)
 // ----------------------------------------------------------------------------
+// AUDITORIA 10/07 — DUAS FONTES, NÃO CONFUNDIR:
+//  • ESTE painel usa a fonte ANTIGA `pedro_manager_feedback` = feedback do REPASSE
+//    (o que o vendedor/Pedro classifica do lead no handoff). Ligado à TRANSFERÊNCIA.
+//    Mantido porque mede "concordância VENDEDOR × IA" — uma lente diferente do NEPQ.
+//  • A fonte NOVA de QUALIDADE do atendimento (NEPQ/score) vive em `FeedbacksArea.tsx`
+//    (abas Por vendedor / NEPQ / Histórico), lendo `feedback_conversas` + rollup.
+//  → Migração futura: unificar esta visão sobre `feedback_conversas` quando o NEPQ
+//    cobrir "concordância vendedor×IA". Por ora, fica explícito que é a fonte antiga.
+//
 // Filtros: VENDEDOR (todos / cada um) + PERÍODO (hoje / ontem / 7 / 30 / personalizado).
 // Tudo abaixo obedece os dois filtros. Mostra: KPIs, comparação VENDEDOR x IA (concordância),
 // gráficos agregados, e a LISTA dos feedbacks completos (texto inteiro, expansível) de cada um.
@@ -223,7 +232,7 @@ export function FeedbackAnalytics({ feedbacks, sellers, hideSellerFilter }: Feed
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <CardTitle className="text-base flex items-center gap-2"><BarChart3 className="h-4 w-4 text-blue-400" /> Análise de Feedbacks dos Vendedores</CardTitle>
-            <CardDescription className="text-xs mt-1">Feedback completo de cada vendedor, comparado com a classificação da IA — filtre por vendedor e período</CardDescription>
+            <CardDescription className="text-xs mt-1">Concordância vendedor × IA na classificação do lead (feedback do repasse). A <span className="font-medium">qualidade do atendimento (NEPQ/score)</span> fica na área de Feedbacks. Filtre por vendedor e período.</CardDescription>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Filtro de VENDEDOR (escondido no painel do próprio vendedor) */}

@@ -111,9 +111,57 @@ Deno.serve(async (req) => {
     return json({ ok: true, modelo: String(body?.model || MODEL_DEFAULT), processados: resultados.length, pulados: pulados.length, falhas: falhas.length, resultados });
   }
 
+  // Reprocesso SEGURO das falhas LEGADAS: conversas com status='falhou' cujo `erro`
+  // e o marcador antigo "reprocessar: escopo mudou..." (setado por uma versao anterior
+  // do ingestor, que HOJE ja separa IA x vendedor por instancia). Essas linhas NAO sao
+  // repescadas pelo batch normal porque feedback_leads_pendentes so olha o mes atual.
+  // Aqui reanalisamos DIRETO por lead_id, reusando analisarLead: respeita o teto de
+  // custo (feedback_cost_gate -> status 'pulado') e e idempotente (a analise sobrescreve
+  // a linha 'falhou' via upsert). dry_run lista os alvos sem gastar nada.
+  if (body?.reprocessar_falhas) {
+    const limit = Math.min(Number(body?.limit) || 30, 100);
+    const tenant = body?.tenant_id ? String(body.tenant_id) : null;
+    const marcador = String(body?.marcador || 'reprocessar: escopo mudou%');
+    let q = admin.from('feedback_conversas')
+      .select('lead_source, lead_id, tenant_id, erro, versao_thread')
+      .eq('status', 'falhou').ilike('erro', marcador)
+      .order('created_at', { ascending: true }).limit(limit);
+    if (tenant) q = q.eq('tenant_id', tenant);
+    const { data: falhadas, error } = await q;
+    if (error) return json({ error: error.message }, 500);
+    const alvo = falhadas || [];
+    if (body?.dry_run) return json({ ok: true, dry_run: true, encontrados: alvo.length, alvo: alvo.map((f: any) => f.lead_id) });
+
+    const llm = makeLlm(String(body?.model || MODEL_DEFAULT));
+    const esgotados = new Set<string>();
+    let concluidos = 0, pulados = 0, aindaFalhou = 0;
+    const resultados: any[] = [];
+    for (const f of alvo) {
+      const t = (f as any).tenant_id ? String((f as any).tenant_id) : '';
+      if (t && esgotados.has(t)) { pulados++; resultados.push({ lead_id: (f as any).lead_id, status: 'pulado', motivo: 'tenant no teto' }); continue; }
+      try {
+        const r = await analisarLead(admin, llm, (f as any).lead_source === 'marcos' ? 'marcos' : 'pedro', (f as any).lead_id, String((f as any).versao_thread || 'v1'));
+        resultados.push({ lead_id: (f as any).lead_id, status: r.status, motivo: (r as any).motivo });
+        if (r.status === 'pulado') { if (t) esgotados.add(t); pulados++; }
+        else if (r.status === 'falhou') aindaFalhou++;
+        else concluidos++;
+      } catch (e: any) {
+        aindaFalhou++; resultados.push({ lead_id: (f as any).lead_id, status: 'falhou', motivo: e?.message });
+      }
+    }
+    try {
+      await admin.from('feedback_job_log').insert({
+        funcao: 'feedback-analista:reprocessar_falhas', tenant_id: tenant,
+        status: aindaFalhou ? 'parcial' : 'ok',
+        detalhe: { encontrados: alvo.length, concluidos, pulados, ainda_falhou: aindaFalhou },
+      });
+    } catch (_e) { /* log best-effort */ }
+    return json({ ok: true, encontrados: alvo.length, concluidos, pulados, ainda_falhou: aindaFalhou, resultados });
+  }
+
   const leadId = String(body?.lead_id || '');
   const leadSource = body?.lead_source === 'marcos' ? 'marcos' : 'pedro';
-  if (!leadId) return json({ error: 'lead_id obrigatorio (ou batch:true)' }, 400);
+  if (!leadId) return json({ error: 'lead_id obrigatorio (ou batch:true / reprocessar_falhas:true)' }, 400);
   const model = String(body?.model || MODEL_DEFAULT);
   const versaoThread = String(body?.versao_thread || 'v1');
 

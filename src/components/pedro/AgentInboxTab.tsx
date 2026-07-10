@@ -9,6 +9,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { TagBadge } from '@/components/whatsapp/TagBadge';
 import { TagSelector } from '@/components/whatsapp/TagSelector';
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
@@ -16,6 +19,7 @@ import {
   MessageCircle, User, Phone, Clock, CheckCheck, Wifi,
   Paperclip, Mic, FileText, Download, Trash2, X, Square, Eye,
   Tag, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut,
+  UserCheck,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -61,6 +65,17 @@ interface Message {
   media_list?: { file?: string; url?: string; type?: string; caption?: string }[] | null;
   created_at: string;
   contact_name: string | null;
+}
+
+interface TransferSeller {
+  id: string;
+  name: string;
+  whatsapp_number: string | null;
+  is_active: boolean;
+  active_in_system?: boolean | null;
+  last_lead_received_at: string | null;
+  total_leads_received?: number | null;
+  is_manager?: boolean | null;
 }
 
 interface AgentInboxTabProps {
@@ -296,6 +311,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   // Pause/Resume
   const [togglingPause, setTogglingPause] = useState(false);
 
+  // Transferencia manual pelo inbox do Pedro
+  const [transferSellers, setTransferSellers] = useState<TransferSeller[]>([]);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferMode, setTransferMode] = useState<'queue' | 'seller'>('queue');
+  const [transferSellerId, setTransferSellerId] = useState<string>('');
+  const [transferNotes, setTransferNotes] = useState('');
+  const [transferringLead, setTransferringLead] = useState(false);
+
   // Midia (anexos + audio)
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -350,12 +373,12 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   /* ── Vendedores do master (filtro de acompanhamento) ──────────── */
   useEffect(() => {
-    if (isSeller || !userId) { setSellers([]); return; }
+    if (isSeller || !userId) { setSellers([]); setTransferSellers([]); return; }
     let cancelled = false;
     (async () => {
       const { data } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, name, whatsapp_number, active_in_system')
+        .select('id, name, whatsapp_number, is_active, active_in_system, last_lead_received_at, total_leads_received, is_manager')
         .eq('user_id', userId)
         .neq('active_in_system', false);
       if (cancelled) return;
@@ -367,6 +390,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         byKey.get(key)!.memberIds.push(s.id);
       }
       setSellers([...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)));
+      setTransferSellers(((data || []) as TransferSeller[]).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
     })();
     return () => { cancelled = true; };
   }, [isSeller, userId]);
@@ -898,6 +922,137 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   };
 
   /* ── Resolver instancia vinculada ao lead ────────────────────────── */
+  const eligibleTransferSellers = useCallback((): TransferSeller[] => {
+    const byPhone = new Map<string, TransferSeller>();
+    for (const seller of transferSellers) {
+      if (!seller.is_active || seller.active_in_system === false || !seller.whatsapp_number || seller.is_manager) continue;
+      const key = cleanPhone(seller.whatsapp_number) || seller.id;
+      const current = byPhone.get(key);
+      if (!current) {
+        byPhone.set(key, seller);
+        continue;
+      }
+      const sellerTotal = seller.total_leads_received ?? 0;
+      const currentTotal = current.total_leads_received ?? 0;
+      const sellerLast = seller.last_lead_received_at ? new Date(seller.last_lead_received_at).getTime() : 0;
+      const currentLast = current.last_lead_received_at ? new Date(current.last_lead_received_at).getTime() : 0;
+      if (sellerTotal < currentTotal || (sellerTotal === currentTotal && sellerLast < currentLast)) {
+        byPhone.set(key, seller);
+      }
+    }
+    return [...byPhone.values()].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [transferSellers]);
+
+  const nextTransferSellerInQueue = useCallback((): TransferSeller | null => {
+    const eligible = eligibleTransferSellers();
+    if (eligible.length === 0) return null;
+    return [...eligible].sort((a, b) => {
+      const ta = a.total_leads_received ?? 0;
+      const tb = b.total_leads_received ?? 0;
+      if (ta !== tb) return ta - tb;
+      const la = a.last_lead_received_at ? new Date(a.last_lead_received_at).getTime() : 0;
+      const lb = b.last_lead_received_at ? new Date(b.last_lead_received_at).getTime() : 0;
+      return la - lb;
+    })[0];
+  }, [eligibleTransferSellers]);
+
+  const openTransferDialog = () => {
+    const eligible = eligibleTransferSellers();
+    if (!selectedLead || eligible.length === 0) {
+      toast({
+        title: 'Nenhum vendedor disponivel',
+        description: 'Cadastre um vendedor ativo com WhatsApp para transferir este lead.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const queueSeller = nextTransferSellerInQueue();
+    setTransferMode('queue');
+    setTransferSellerId(queueSeller?.id || eligible[0]?.id || '');
+    setTransferNotes('');
+    setTransferOpen(true);
+  };
+
+  const handleManualTransfer = async () => {
+    if (!selectedLead || transferringLead) return;
+    const eligible = eligibleTransferSellers();
+    const seller = transferMode === 'queue'
+      ? nextTransferSellerInQueue()
+      : eligible.find(s => s.id === transferSellerId) || null;
+
+    if (!seller) {
+      toast({
+        title: 'Nenhum vendedor selecionado',
+        description: 'Escolha um vendedor ou use o proximo da fila.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setTransferringLead(true);
+    try {
+      if (!selectedLead.ai_paused) {
+        const { error: pauseErr } = await (supabase as any)
+          .from('ai_crm_leads')
+          .update({ ai_paused: true })
+          .eq('id', selectedLead.id);
+        if (pauseErr) throw pauseErr;
+        setLeads(prev => prev.map(l => (l.id === selectedLead.id ? { ...l, ai_paused: true } : l)));
+        setSelectedLead(prev => (prev ? { ...prev, ai_paused: true } : prev));
+      }
+
+      const { data, error } = await supabase.functions.invoke('manual-transfer', {
+        body: {
+          leadId: selectedLead.id,
+          memberId: seller.id,
+          notes: transferNotes.trim() || 'Transferencia manual via Conversas IA',
+          remoteJid: selectedLead.remote_jid || null,
+          agentId: selectedLead.agent_id || null,
+          leadName: selectedLead.lead_name || null,
+          ownerUserId: userId || null,
+        },
+      });
+
+      if (error) {
+        let message = error.message || 'Falha ao transferir';
+        const context = (error as any).context;
+        if (context && typeof context.json === 'function') {
+          try {
+            const body = await context.json();
+            message = body?.error || message;
+          } catch {
+            // Mantem mensagem original.
+          }
+        }
+        throw new Error(message);
+      }
+
+      const flags = data as any;
+      setLeads(prev => prev.map(l => (l.id === selectedLead.id ? { ...l, status: 'transferido', ai_paused: true } : l)));
+      setSelectedLead(prev => (prev ? { ...prev, status: 'transferido', ai_paused: true } : prev));
+      setTransferOpen(false);
+      await Promise.all([fetchLeads(), fetchMessages(true)]);
+
+      toast({
+        title: flags?.alreadyConfirmed ? 'Lead ja estava confirmado'
+          : flags?.alreadyPending ? 'Transferencia ja estava pendente'
+          : flags?.deduplicated ? 'Clique duplicado ignorado'
+          : 'Lead enviado ao vendedor',
+        description: flags?.alreadyConfirmed
+          ? `${seller.name} ja tinha confirmado este lead.`
+          : flags?.alreadyPending
+          ? `${seller.name} ja recebeu este lead e ainda precisa responder OK.`
+          : flags?.deduplicated
+          ? `${seller.name} nao recebeu mensagem duplicada.`
+          : `${seller.name} recebeu o briefing. Aguardando confirmacao OK.`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro ao transferir', description: err.message, variant: 'destructive' });
+    } finally {
+      setTransferringLead(false);
+    }
+  };
+
   const resolveInstanceId = (): string | null => {
     if (!selectedLead) return null;
     // Modelo B (Conversas): follow-up do lead do Pedro sai do numero do PROPRIO vendedor quando
@@ -1249,6 +1404,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const selectedLeadTags = selectedLead
     ? (contactTags[cleanPhone(selectedLead.remote_jid)] || contactTags[phoneCanonical(selectedLead.remote_jid)] || [])
     : [];
+  const transferEligibleSellers = eligibleTransferSellers();
+  const queueTransferSeller = nextTransferSellerInQueue();
+  const selectedTransferSeller = transferMode === 'queue'
+    ? queueTransferSeller
+    : transferEligibleSellers.find(s => s.id === transferSellerId) || null;
   const zoomClasses = {
     sm: { bubble: 'text-[13.5px]', input: 'text-sm', media: 'max-w-[240px] max-h-[260px]' },
     md: { bubble: 'text-[14.5px]', input: 'text-sm', media: 'max-w-[300px] max-h-[320px]' },
@@ -1287,6 +1447,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   /* ── RENDER ──────────────────────────────────────────────────────── */
   return (
+    <>
     <div className={shellClass}>
       {/* ── Top Bar: Seletor de Agente (Pedro) / titulo Conversas (unified) ── */}
       <div className={`${unified ? 'hidden' : 'flex'} items-center gap-3 px-4 py-3 border-b border-border/50 bg-muted/30`}>
@@ -1696,31 +1857,44 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     Somente leitura
                   </Badge>
                 ) : (
-                  <Button
-                    size="sm"
-                    variant={selectedLead.ai_paused ? 'default' : 'outline'}
-                    className={`h-9 text-sm gap-1.5 shrink-0 ${
-                      selectedLead.ai_paused
-                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                        : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
-                    }`}
-                    onClick={() => handleTogglePause(selectedLead)}
-                    disabled={togglingPause}
-                  >
-                    {togglingPause ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : selectedLead.ai_paused ? (
-                      <>
-                        <Play className="h-4 w-4" />
-                        Reativar IA
-                      </>
-                    ) : (
-                      <>
-                        <Pause className="h-4 w-4" />
-                        Pausar IA
-                      </>
-                    )}
-                  </Button>
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9 text-sm gap-1.5 shrink-0 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+                      onClick={openTransferDialog}
+                      disabled={transferringLead || transferEligibleSellers.length === 0}
+                      title="Transferir este lead para um vendedor"
+                    >
+                      {transferringLead ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
+                      Transferir
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={selectedLead.ai_paused ? 'default' : 'outline'}
+                      className={`h-9 text-sm gap-1.5 shrink-0 ${
+                        selectedLead.ai_paused
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
+                      }`}
+                      onClick={() => handleTogglePause(selectedLead)}
+                      disabled={togglingPause}
+                    >
+                      {togglingPause ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : selectedLead.ai_paused ? (
+                        <>
+                          <Play className="h-4 w-4" />
+                          Reativar IA
+                        </>
+                      ) : (
+                        <>
+                          <Pause className="h-4 w-4" />
+                          Pausar IA
+                        </>
+                      )}
+                    </Button>
+                  </>
                 ))}
               </div>
 
@@ -2042,5 +2216,117 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         </div>
       </div>
     </div>
+
+    <Dialog open={transferOpen} onOpenChange={(open) => { if (!transferringLead) setTransferOpen(open); }}>
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-[560px] border-border/70 bg-card">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserCheck className="h-5 w-5 text-emerald-400" />
+            Transferir lead para vendedor
+          </DialogTitle>
+          <DialogDescription>
+            Envia o briefing com o historico desta conversa e aguarda o vendedor responder OK.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+            <p className="text-sm font-semibold text-foreground truncate">{selectedLead?.lead_name || selectedLead?.remote_jid || 'Lead'}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {selectedLead ? displayPhone(selectedLead.remote_jid) : ''} · {messages.length} mensagens no historico atual
+            </p>
+            {!selectedLead?.ai_paused && (
+              <p className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-200">
+                Ao transferir, a IA sera pausada automaticamente nesta conversa.
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-semibold text-muted-foreground">Destino</label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setTransferMode('queue')}
+                className={`rounded-xl border px-3 py-3 text-left transition ${
+                  transferMode === 'queue'
+                    ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-100'
+                    : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                <span className="text-sm font-semibold">Proximo da fila</span>
+                <span className="mt-1 block text-xs">
+                  {queueTransferSeller ? queueTransferSeller.name : 'Nenhum vendedor elegivel'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTransferMode('seller');
+                  if (!transferSellerId && transferEligibleSellers[0]) setTransferSellerId(transferEligibleSellers[0].id);
+                }}
+                className={`rounded-xl border px-3 py-3 text-left transition ${
+                  transferMode === 'seller'
+                    ? 'border-primary/60 bg-primary/10 text-primary'
+                    : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                <span className="text-sm font-semibold">Escolher vendedor</span>
+                <span className="mt-1 block text-xs">Selecionar manualmente</span>
+              </button>
+            </div>
+          </div>
+
+          {transferMode === 'seller' && (
+            <div className="grid gap-2">
+              <label className="text-xs font-semibold text-muted-foreground">Vendedor</label>
+              <Select value={transferSellerId} onValueChange={setTransferSellerId}>
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder="Selecione o vendedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferEligibleSellers.map(seller => (
+                    <SelectItem key={seller.id} value={seller.id}>
+                      {seller.name} {seller.whatsapp_number ? `· ${displayPhone(seller.whatsapp_number)}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="grid gap-2">
+            <label className="text-xs font-semibold text-muted-foreground">Observacao opcional para o vendedor</label>
+            <Textarea
+              value={transferNotes}
+              onChange={e => setTransferNotes(e.target.value)}
+              rows={3}
+              placeholder="Ex: Cliente pediu retorno agora, prefere financiamento, esta comparando valores..."
+              className="resize-none"
+            />
+          </div>
+
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+            Vai para: <strong>{selectedTransferSeller?.name || 'nenhum vendedor selecionado'}</strong>. O CRM so atribui definitivamente quando o vendedor confirmar com OK.
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button type="button" variant="outline" onClick={() => setTransferOpen(false)} disabled={transferringLead}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            className="bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={handleManualTransfer}
+            disabled={transferringLead || !selectedTransferSeller}
+          >
+            {transferringLead ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserCheck className="mr-2 h-4 w-4" />}
+            Confirmar transferencia
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
