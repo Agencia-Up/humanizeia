@@ -10,9 +10,9 @@
 // ============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-// Guard interno das funcoes de feedback. Vem do secret FEEDBACK_VIEW_KEY; o
-// literal e apenas fallback de compatibilidade ate o secret ser configurado.
-const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || 'icom-7f3a9c2e';
+// Guard interno das funcoes de feedback: secret FEEDBACK_VIEW_KEY (setado no
+// dashboard). Sem literal no codigo — se o secret faltar, falha fechado.
+const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || '';
 const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 const SUPA_URL = Deno.env.get('SUPABASE_URL')!;
 
