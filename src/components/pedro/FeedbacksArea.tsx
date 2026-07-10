@@ -1,20 +1,22 @@
 import { useState } from 'react';
-import { Users, FileText, Gauge } from 'lucide-react';
+import { Users, FileText, Gauge, PackageSearch } from 'lucide-react';
 import { FeedbackPorVendedorTab } from './FeedbackPorVendedorTab';
 import { FeedbackNepqTab } from './FeedbackNepqTab';
 import { RelatoriosHistoricoTab } from './RelatoriosHistoricoTab';
+import { FeedbackPorProdutoTab } from './FeedbackPorProdutoTab';
 
 // ── Área de Feedbacks (master) ───────────────────────────────────────────────
 // Três lentes: "Por vendedor" (desempenho conversa a conversa + coaching),
 // "NEPQ / Desempenho" (o Power BI: ranking + KPIs + radar por dimensão) e
 // "Histórico diário" (os relatórios que a IA gerou/enviou).
 
-type Aba = 'vendedor' | 'nepq' | 'historico';
+type Aba = 'vendedor' | 'produto' | 'nepq' | 'historico';
 
 export function FeedbacksArea() {
   const [aba, setAba] = useState<Aba>('vendedor');
   const tabs: { id: Aba; label: string; icon: typeof Users }[] = [
     { id: 'vendedor', label: 'Por vendedor', icon: Users },
+    { id: 'produto', label: 'Por produto', icon: PackageSearch },
     { id: 'nepq', label: 'NEPQ / Desempenho', icon: Gauge },
     { id: 'historico', label: 'Histórico diário', icon: FileText },
   ];
@@ -38,6 +40,7 @@ export function FeedbacksArea() {
         })}
       </div>
       {aba === 'vendedor' && <FeedbackPorVendedorTab />}
+      {aba === 'produto' && <FeedbackPorProdutoTab />}
       {aba === 'nepq' && <FeedbackNepqTab />}
       {aba === 'historico' && <RelatoriosHistoricoTab />}
     </div>
