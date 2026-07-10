@@ -8,7 +8,9 @@
 // ============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const VIEW_KEY = 'icom-7f3a9c2e';
+// Guard interno das funcoes de feedback. Vem do secret FEEDBACK_VIEW_KEY; o
+// literal e apenas fallback de compatibilidade ate o secret ser configurado.
+const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || 'icom-7f3a9c2e';
 const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 const SUPA_URL = Deno.env.get('SUPABASE_URL')!;
 
@@ -51,6 +53,11 @@ Deno.serve(async (req) => {
     const tenant = String(body?.tenant_id || TENANT_DEFAULT);
     const admin = createClient(SUPA_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
+    // Item 10: log rastreavel (nao deixa falha silenciosa no cron diario).
+    const logJob = async (status: string, detalhe: any, erro?: string) => {
+      try { await admin.from('feedback_job_log').insert({ funcao: 'feedback-relatorio-enviar', tenant_id: tenant, status, detalhe, erro: erro || null }); } catch (_e) { /* best-effort */ }
+    };
+
     // 1) Destinatarios: quem tem "Atendimento" ligado nos Responsaveis.
     const { data: recs, error: rErr } = await admin
       .from('conta_responsaveis')
@@ -69,6 +76,7 @@ Deno.serve(async (req) => {
     if (iErr) return json({ ok: false, error: `instancia: ${iErr.message}` }, 200);
     const inst: any = (instRows || [])[0];
     if (!inst || !inst.api_url || !inst.token) {
+      await logJob('falhou', { etapa: 'instancia' }, 'sem instancia da IA conectada');
       return json({ ok: false, error: 'sem instancia da IA conectada para disparar' }, 200);
     }
     if (inst.provider === 'meta') {
@@ -88,7 +96,10 @@ Deno.serve(async (req) => {
       }),
     });
     const gen = await genRes.json().catch(() => ({}));
-    if (!gen?.ok) return json({ ok: false, error: `falha ao gerar o PDF: ${gen?.error || genRes.status}` }, 200);
+    if (!gen?.ok) {
+      await logJob('falhou', { etapa: 'gerar_pdf' }, String(gen?.error || genRes.status));
+      return json({ ok: false, error: `falha ao gerar o PDF: ${gen?.error || genRes.status}` }, 200);
+    }
 
     // 4) URL assinada (o bucket e privado; a UAZAPI baixa por essa URL).
     const { data: signed, error: sErr } = await admin.storage

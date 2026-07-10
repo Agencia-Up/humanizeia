@@ -204,7 +204,24 @@ export async function analisarLead(
   }
 
   const parsed = parseContrato(out.text);
-  const contrato = parsed || {};
+
+  // Item 5: JSON invalido NAO vira analise valida. Grava status 'falhou' + _raw
+  // pra debug, contabiliza o custo (a chamada ao LLM aconteceu) e deixa
+  // retentavel (feedback_leads_pendentes reprocessa quem nao esta 'concluido').
+  // Nao alimenta relatorio/score/qualidade com dado nao confiavel.
+  if (!parsed) {
+    await admin.rpc('feedback_cost_record', { p_tenant: tenant, p_tokens: out.tokens, p_custo: out.custo });
+    await admin.from('feedback_conversas').upsert({
+      tenant_id: tenant, lead_source: leadSource, lead_id: leadId, versao_thread: versaoThread,
+      vendedor_id: thread.vendedor_id, campanha_id: thread.campanha_id,
+      status: 'falhou', erro: 'json invalido',
+      resultado: { _parse_ok: false, _raw: out.text.slice(0, 1800) },
+      custo_usd: out.custo, tokens: out.tokens,
+    }, { onConflict: 'lead_source,lead_id,versao_thread' });
+    return { status: 'falhou', motivo: 'json invalido', custo_usd: out.custo, tokens: out.tokens };
+  }
+
+  const contrato = parsed;
   const sinais = contrato.sinais || {};
   const score = calcScore(contrato.competencias, framework);
 

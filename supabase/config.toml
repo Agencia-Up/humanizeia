@@ -254,3 +254,27 @@ verify_jwt = false
 
 [functions.feedback-nepq-diario]
 verify_jwt = false
+
+# Cerebro de Feedback — auth intencional por funcao:
+# analista = chamado por cron com JWT service_role (valida o role internamente).
+[functions.feedback-analista]
+verify_jwt = true
+
+# relatorio-pdf/enviar/diario-pdf/alertas = guard interno FEEDBACK_VIEW_KEY (cron
+# interno) OU token do chamador (modo autenticado do relatorio-pdf). verify_jwt
+# fica false pra permitir os dois caminhos; a funcao valida o guard/token.
+[functions.feedback-relatorio-pdf]
+verify_jwt = false
+
+[functions.feedback-relatorio-enviar]
+verify_jwt = false
+
+[functions.feedback-relatorio-diario-pdf]
+verify_jwt = false
+
+[functions.feedback-alertas]
+verify_jwt = false
+
+# download = depende do usuario logado (le a linha com o token dele via RLS).
+[functions.feedback-relatorio-download]
+verify_jwt = true

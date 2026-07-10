@@ -75,16 +75,40 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message }, 500);
     const llm = makeLlm(String(body?.model || MODEL_DEFAULT));
     const resultados: any[] = [];
+    const pulados: any[] = [];
+    const falhas: any[] = [];
+    // Item 4: um lead 'pulado' (teto de custo do tenant) NAO pode parar o lote
+    // inteiro. Marca o tenant como esgotado e pula so os DELE; outros tenants
+    // continuam sendo analisados.
+    const tenantsEsgotados = new Set<string>();
     for (const p of (pend || [])) {
+      const t = (p as any).tenant_id ? String((p as any).tenant_id) : '';
+      if (t && tenantsEsgotados.has(t)) { pulados.push({ lead_id: p.lead_id, motivo: 'tenant no teto' }); continue; }
       try {
         const r = await analisarLead(admin, llm, p.lead_source, p.lead_id);
         resultados.push({ lead_id: p.lead_id, ...r });
-        if (r.status === 'pulado') break;
+        if (r.status === 'pulado') {
+          if (t) tenantsEsgotados.add(t);
+          pulados.push({ lead_id: p.lead_id, tenant_id: t, motivo: r.motivo || 'cap' });
+          console.warn(`[feedback-analista] tenant ${t || '?'} no teto (${r.motivo}); pulando os leads dele, o lote continua`);
+          continue;
+        }
+        if (r.status === 'falhou') falhas.push({ lead_id: p.lead_id, motivo: r.motivo });
       } catch (e: any) {
-        resultados.push({ lead_id: p.lead_id, status: 'falhou', motivo: e?.message, stack: String(e?.stack||'').slice(0,600) });
+        const item = { lead_id: p.lead_id, status: 'falhou', motivo: e?.message, stack: String(e?.stack || '').slice(0, 600) };
+        resultados.push(item); falhas.push({ lead_id: p.lead_id, motivo: e?.message });
+        console.error(`[feedback-analista] excecao no lead ${p.lead_id}:`, e?.message);
       }
     }
-    return json({ ok: true, modelo: String(body?.model || MODEL_DEFAULT), processados: resultados.length, resultados });
+    // Item 10: registra o resumo da rodada num log rastreavel (best-effort).
+    try {
+      await admin.from('feedback_job_log').insert({
+        funcao: 'feedback-analista:batch',
+        status: falhas.length ? 'parcial' : 'ok',
+        detalhe: { total: (pend || []).length, processados: resultados.length, pulados, falhas, tenants_esgotados: [...tenantsEsgotados] },
+      });
+    } catch (_e) { /* log e best-effort, nao quebra o batch */ }
+    return json({ ok: true, modelo: String(body?.model || MODEL_DEFAULT), processados: resultados.length, pulados: pulados.length, falhas: falhas.length, resultados });
   }
 
   const leadId = String(body?.lead_id || '');

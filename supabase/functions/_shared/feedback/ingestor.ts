@@ -32,6 +32,12 @@ export function last8(s?: string | null): string {
   return digits(s).slice(-8);
 }
 
+// Limite de tentativas e janela de re-tentativa pra transcricao com falha
+// temporaria (UAZAPI/OpenAI instavel, midia ainda propagando). Evita inutilizar
+// o audio pra sempre por uma falha unica, sem repetir infinitamente.
+const TRANSCRICAO_MAX_TENT = 3;
+const TRANSCRICAO_RETRY_APOS_MS = 60 * 60 * 1000; // 1h
+
 async function transcreverAudios(
   admin: SupabaseClient,
   msgs: { id: string; media_url: string }[],
@@ -42,22 +48,31 @@ async function transcreverAudios(
 
   const { data: cached } = await admin
     .from('feedback_transcricoes')
-    .select('message_id, texto, ok')
+    .select('message_id, texto, ok, tentativas, updated_at')
     .in('message_id', ids);
-  const jaTem = new Set<string>();
+  const tentMap = new Map<string, number>();
+  const jaOk = new Set<string>();       // ja transcrito com sucesso
+  const naoRetentar = new Set<string>(); // falhou mas ainda nao pode re-tentar
   for (const c of (cached || [])) {
-    jaTem.add(c.message_id);
-    if (c.ok && c.texto) out.set(c.message_id, c.texto);
+    tentMap.set(c.message_id, Number((c as any).tentativas) || 0);
+    if (c.ok && c.texto) { out.set(c.message_id, c.texto); jaOk.add(c.message_id); continue; }
+    // ok=false: so re-tenta se ainda tem tentativa E passou a janela de espera.
+    const tent = Number((c as any).tentativas) || 0;
+    const upd = (c as any).updated_at;
+    const idadeMs = upd ? (Date.now() - new Date(upd).getTime()) : Infinity;
+    if (tent >= TRANSCRICAO_MAX_TENT || idadeMs < TRANSCRICAO_RETRY_APOS_MS) naoRetentar.add(c.message_id);
   }
 
   const key = Deno.env.get('OPENAI_API_KEY') || Deno.env.get('OPENAI_KEY');
   if (!key) return out;
 
-  const pend = msgs.filter((m) => !jaTem.has(m.id));
+  // Pendentes = nunca tentados + falhas antigas ainda dentro do limite de tentativas.
+  const pend = msgs.filter((m) => !jaOk.has(m.id) && !naoRetentar.has(m.id));
   const CONC = 4;
   for (let i = 0; i < pend.length; i += CONC) {
     const slice = pend.slice(i, i + CONC);
     await Promise.all(slice.map(async (m) => {
+      const tentAtual = (tentMap.get(m.id) || 0) + 1;
       try {
         const audioRes = await fetch(m.media_url);
         if (!audioRes.ok) throw new Error('fetch media ' + audioRes.status);
@@ -76,12 +91,16 @@ async function transcreverAudios(
         const texto = String(j?.text || '').trim();
         if (texto) out.set(m.id, texto);
         await admin.from('feedback_transcricoes').upsert(
-          { message_id: m.id, texto: texto || null, ok: !!texto },
+          { message_id: m.id, texto: texto || null, ok: !!texto, tentativas: tentAtual,
+            erro: texto ? null : 'transcricao vazia', updated_at: new Date().toISOString() },
           { onConflict: 'message_id' },
         );
-      } catch (_e) {
+      } catch (e) {
+        // Falha temporaria (UAZAPI/OpenAI/midia expirada): conta a tentativa e
+        // registra o erro; NAO bloqueia a analise (o audio vira "[sem transcricao]").
         await admin.from('feedback_transcricoes').upsert(
-          { message_id: m.id, texto: null, ok: false },
+          { message_id: m.id, texto: null, ok: false, tentativas: tentAtual,
+            erro: String((e as any)?.message || e).slice(0, 300), updated_at: new Date().toISOString() },
           { onConflict: 'message_id' },
         );
       }
@@ -148,12 +167,18 @@ export async function buildLeadThread(
     });
   }
 
-  if (leadSource === 'pedro' && vendedor) {
-    const { data: vend } = await admin
-      .from('ai_team_members').select('name').eq('id', vendedor).maybeSingle();
-    vendedorNome = vend?.name ?? null;
-  } else if (vendedor) {
-    vendedorNome = vendedor;
+  // Resolve o NOME real do vendedor. assigned_to (Marcos) pode ser UUID ou texto
+  // legado; assigned_to_id (Pedro) e UUID. Se parecer UUID, busca em
+  // ai_team_members; senao mantem o texto (fallback legado). Nunca mostra UUID.
+  if (vendedor) {
+    const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(vendedor);
+    if (looksUuid) {
+      const { data: vend } = await admin
+        .from('ai_team_members').select('name').eq('id', vendedor).maybeSingle();
+      vendedorNome = vend?.name ?? null;
+    } else {
+      vendedorNome = vendedor; // texto legado (ja e nome)
+    }
   }
 
   if (jid) {
@@ -172,13 +197,37 @@ export async function buildLeadThread(
     }
   }
 
-  if (phone8) {
-    const { data: inbox } = await admin
-      .from('wa_inbox')
-      .select('id, direction, content, message_type, media_url, created_at')
-      .eq('user_id', tenant)
-      .ilike('phone', `%${phone8}`)
-      .order('created_at', { ascending: true });
+  // Busca as mensagens do atendimento humano (wa_inbox) casando o numero NACIONAL
+  // COMPLETO (DDD+numero), nao so os ultimos 8 digitos — evita misturar leads de
+  // DDDs diferentes com final igual. Fallback last-8 e controlado e logado.
+  const phoneNat = telefone
+    ? (telefone.startsWith('55') && telefone.length > 11 ? telefone.slice(2) : telefone)
+    : '';
+  if (phoneNat.length >= 10) {
+    // Quais instancias sao da IA (seller_member_id null) nesta conta — pra separar
+    // mensagem da IA de mensagem do vendedor humano.
+    const { data: insts } = await admin
+      .from('wa_instances').select('id, seller_member_id').eq('user_id', tenant);
+    const iaInstances = new Set((insts || []).filter((i: any) => !i.seller_member_id).map((i: any) => i.id));
+
+    const cols = 'id, instance_id, direction, content, message_type, media_url, created_at';
+    let inbox: any[] | null = null;
+    {
+      const { data } = await admin.from('wa_inbox').select(cols)
+        .eq('user_id', tenant).ilike('phone', `%${phoneNat}`)
+        .order('created_at', { ascending: true });
+      inbox = data as any[] | null;
+    }
+    // Fallback controlado: match preciso vazio -> tenta ultimos 8 (numeros legados). Logado.
+    if ((!inbox || inbox.length === 0) && phone8) {
+      const { data: fb } = await admin.from('wa_inbox').select(cols)
+        .eq('user_id', tenant).ilike('phone', `%${phone8}`)
+        .order('created_at', { ascending: true });
+      if (fb && fb.length) {
+        console.warn(`[feedback-ingestor] lead ${leadId}: match preciso (${phoneNat}) vazio; fallback last-8 (${fb.length} msgs)`);
+        inbox = fb as any[];
+      }
+    }
 
     const audioMsgs = (inbox || [])
       .filter((m: any) => m.message_type === 'audio' && m.media_url)
@@ -192,10 +241,17 @@ export async function buildLeadThread(
         texto = t ? `🎤 (áudio) ${t}` : (m.media_url ? '[áudio sem transcricao]' : (m.content || ''));
       }
       if (!texto) continue;
-      thread.push({
-        from: m.direction === 'outgoing' ? 'vendedor' : 'cliente',
-        texto, timestamp: m.created_at, canal: 'marcos',
-      });
+      // Separa IA / vendedor / cliente: mensagem enviada por instancia DA IA
+      // (seller_member_id null) NAO e avaliada como vendedor humano — vira contexto.
+      if (m.direction === 'outgoing') {
+        if (iaInstances.has(m.instance_id)) {
+          contexto.push({ from: 'ia', texto, timestamp: m.created_at, canal: 'marcos' });
+        } else {
+          thread.push({ from: 'vendedor', texto, timestamp: m.created_at, canal: 'marcos' });
+        }
+      } else {
+        thread.push({ from: 'cliente', texto, timestamp: m.created_at, canal: 'marcos' });
+      }
     }
   }
 

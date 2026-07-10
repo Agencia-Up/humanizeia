@@ -11,7 +11,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { jsPDF } from 'https://esm.sh/jspdf@2.5.1';
 
-const VIEW_KEY = 'icom-7f3a9c2e';
+// Guard interno das funcoes de feedback. Vem do secret FEEDBACK_VIEW_KEY; o
+// literal e apenas fallback de compatibilidade ate o secret ser configurado.
+const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || 'icom-7f3a9c2e';
 const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 
 const NAVY = [11, 30, 58], GOLD = [224, 168, 46], INK = [29, 36, 48], MUTED = [107, 116, 130];
