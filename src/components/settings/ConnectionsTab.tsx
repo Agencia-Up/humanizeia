@@ -547,41 +547,10 @@ export function ConnectionsTab() {
         }
         break;
       }
-      case 'instagram_publisher': {
-        setIgLoading(true);
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session) throw new Error('Sessão expirada. Faça login novamente.');
-          
-          const { data, error } = await supabase.functions.invoke('instagram-publish-oauth', {
-            body: { action: 'authorize', origin: window.location.origin },
-          });
-
-          if (error) {
-            let realMsg = 'Erro ao conectar Instagram';
-            try {
-              const errBody = await (error as any).context?.json?.();
-              realMsg = errBody?.error || errBody?.message || error.message || realMsg;
-            } catch (_) {
-              realMsg = error.message || realMsg;
-            }
-            throw new Error(realMsg);
-          }
-          if (data?.error) {
-            throw new Error(data.error);
-          }
-          if (data?.auth_url) {
-            // Apenas redireciona a própria janela, fluxo sem popup, garantido no mobile também
-            window.location.href = data.auth_url;
-          } else {
-            setIgLoading(false);
-          }
-        } catch (err: any) {
-          toast.error(err.message || 'Erro ao conectar Instagram');
-          setIgLoading(false);
-        }
-        break;
-      }
+      // NOTA: 'instagram_publisher' e tratado no case unico acima (navega para
+      // /integrations/instagram, que faz o OAuth em InstagramConnect.tsx). O bloco
+      // inline duplicado que existia aqui era inalcancavel (o case acima da return)
+      // e foi removido para nao haver dois cases para a mesma acao.
       default:
         toast.info('Esta integração estará disponível em breve!');
     }
