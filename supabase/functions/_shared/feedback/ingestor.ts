@@ -28,9 +28,6 @@ export interface LeadThread {
 export function digits(s?: string | null): string {
   return (s || '').replace(/\D/g, '');
 }
-export function last8(s?: string | null): string {
-  return digits(s).slice(-8);
-}
 
 // Limite de tentativas e janela de re-tentativa pra transcricao com falha
 // temporaria (UAZAPI/OpenAI instavel, midia ainda propagando). Evita inutilizar
