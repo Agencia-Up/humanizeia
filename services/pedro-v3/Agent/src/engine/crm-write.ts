@@ -45,6 +45,16 @@ function moneyBr(v: unknown): string | null {
   return `R$ ${Math.round(v).toLocaleString("pt-BR")}`;
 }
 
+// Nome REAL de pessoa (mesma semântica do ensurePedroV2Lead/isRealLeadName do v2):
+// >=2 letras e não-placeholder. Vale p/ lead_name (exibição no CRM/inbox/briefing —
+// campo CANÔNICO de nome, auditado 2026-07-10) e client_name (nome da qualificação).
+// Lixo/emoji/placeholder NUNCA entra em nenhum dos dois.
+export function isRealLeadName(value: unknown): boolean {
+  const text = String(value ?? "").trim();
+  return text.length > 0 && /\p{L}{2,}/u.test(text) &&
+    !/^(lead|cliente|client|customer|contato|usuario|user)$/i.test(text);
+}
+
 // Veículo de TROCA (carro DO LEAD) -> texto de briefing/CRM. NUNCA alimenta vehicle_interest.
 export function tradeVehicleText(slots: Slots): string | null {
   const possui = known(slots, "possuiTroca");
@@ -104,7 +114,14 @@ export function buildCrmSummary(state: ConversationState, adVehicleLabel: string
 export function buildCrmFields(state: ConversationState, ad: AdContext | null, adVehicleLabel: string | null): Record<string, JsonValue> {
   const out: Record<string, JsonValue> = {};
   const put = (col: string, v: string | null) => { if (v != null && v.trim() !== "") out[col] = v.trim().slice(0, 400); };
-  put("client_name", textOf(known(state.slots, "nome")));
+  // Nome: só NOME REAL entra (nunca lixo/placeholder). client_name = nome da qualificação;
+  // lead_name = nome de EXIBIÇÃO canônico do CRM (o dispatcher promove placeholder->real e
+  // NUNCA regride um lead_name humano real — contrato do audit 2026-07-10).
+  const nome = textOf(known(state.slots, "nome"));
+  if (nome && isRealLeadName(nome)) {
+    put("client_name", nome);
+    put("lead_name", nome);
+  }
   put("vehicle_interest", interestVehicleText(state, adVehicleLabel));
   put("payment_method", textOf(known(state.slots, "formaPagamento")));
   put("down_payment", moneyBr(known(state.slots, "entrada")));

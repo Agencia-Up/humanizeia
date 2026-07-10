@@ -107,6 +107,10 @@ export type PilotActiveProcessInput = {
   // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto de espera do bloco (= maxWait do debounce). Opcional; o engine cai no
   // DEFAULT_DEBOUNCE_CONFIG.maxWaitMs quando ausente.
   readonly blockAwaitMaxMs?: number;
+  // Opção A (vínculo lead↔conversa, 2026-07-10): decisão POR TURNO do composition root (crm-lead-binding).
+  // enabled=false força fail-closed do crm_write neste turno (ex.: mismatch de vínculo); bootstrapSync=true
+  // SÓ no turno do 1º vínculo (snapshot acumulado). Ausente = comportamento anterior (store presente => ligado).
+  readonly crmWrite?: { readonly enabled: boolean; readonly bootstrapSync: boolean };
 };
 
 export type PilotActiveProcessResult = {
@@ -352,7 +356,9 @@ export class PilotActiveRoot {
       // LLM-FIRST (missão SDR real): o engine NÃO gerencia objetivo de funil — o cérebro conduz; guardrails só validam.
       llmFirst: true,
       // FASE 1 CRM: só emite crm_write quando o composition root ligou o store (fail-closed sem ele/sem leadId).
-      crmWriteEnabled: this.crmLeadStore != null,
+      // Opção A: o binding POR TURNO (crm-lead-binding no server) pode desligar (mismatch) e marca o bootstrap.
+      crmWriteEnabled: this.crmLeadStore != null && (input.crmWrite?.enabled ?? true),
+      crmBootstrapSync: input.crmWrite?.bootstrapSync === true,
       // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto do bloco vindo do debounce (server); default no engine se ausente.
       blockAwaitMaxMs: input.blockAwaitMaxMs,
     });

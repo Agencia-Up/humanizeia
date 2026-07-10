@@ -1,5 +1,27 @@
 # 01 - Status Atual do Pedro v3
 
+## 2026-07-10 - F2.47 Identidade do lead no CRM (Opção A hardened) — IMPLEMENTADA, aguarda auditoria Codex
+
+- Bloqueio estrutural exposto na verificação pré-ativação do CRM (Estágio A): o bridge fixa `leadId:null`
+  (pedroV3Bridge.ts:32/229) e NINGUÉM cria a linha em `ai_crm_leads` quando o v3 atende → com a fiação antiga,
+  `PEDRO_V3_CRM_WRITE=active` produziria ZERO escrita (provado no caso-controle da F2.47).
+- Opção A implementada SÓ no pedro-v3 (bridge/webhook/v2 intocados), com o hardening da auditoria: porta SEPARADA
+  `CrmLeadIdentityStore` (o CrmLeadStore segue update-only) · jid canônico único `whatsapp-jid.ts` (fail-closed) ·
+  ownership na seleção FINAL (user+agent+jid; conflito de tenant fail-closed) · INSERT mínimo SEM origem (null até
+  adContext factual) · contrato lead_name (canônico de exibição; promove placeholder, nunca regride real) ×
+  client_name (qualificação) · concorrência convergente (UUID sempre do SELECT final owned) · vínculo DURÁVEL =
+  ConversationState.leadId (commit espelha na coluna; routing regride por design do RPC do ingest — re-hidratada
+  best-effort) · falha de resolução NUNCA silencia o lead · BOOTSTRAP sync no 1º vínculo (snapshot acumulado, não
+  delta) · defesa em profundidade no engine (mismatch → zero crm_write) + observabilidade `crmWrite` no decision_final.
+- Arquivos: novos `domain/whatsapp-jid.ts`, `adapters/effects/crm-lead-identity-store.ts`, `engine/crm-lead-binding.ts`,
+  `tests/run-f2-47-crm-lead-identity.ts`; alterados `supabase-crm-lead-store.ts` (implementa a 2ª porta),
+  `crm-write.ts` (isRealLeadName + lead_name), `crm-write-dispatcher.ts` (merge do lead_name), `central-engine.ts`
+  (bind + guard + bootstrap), `pilot-active-root.ts` (crmWrite por turno), `runtime/server.ts` (binding no
+  processSettled), `package.json` (test:f247).
+- Gates: `test:f247` 49 OK/0 · `test:f246` 31 OK/0 · `tsc` EXIT 0 · `test:all` EXIT 0 (2162 OK) · `git diff --check`
+  limpo · sem OpenAI. Flags: `PEDRO_V3_CRM_WRITE` OFF · `PEDRO_V3_HANDOFF` NÃO existe (Fase 3 não iniciada).
+  **NADA commitado/deployado — parado p/ auditoria Codex.** Detalhe: `Brain/2026-07-10-claude-estagio-a-crm-bloqueio-leadid.md`.
+
 ## 2026-07-05 - FONTE ÚNICA (TurnUnderstanding): elimina fallbacks por conflito cérebro×regex×memória×alvo
 
 - Missão P0 (evidência Codex, tenant ecb26258): 3 incidentes reais — (1) foto do Kicks saiu como Onix (executor preferia

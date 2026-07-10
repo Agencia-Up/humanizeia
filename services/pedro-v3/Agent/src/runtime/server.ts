@@ -5,6 +5,7 @@ import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-databas
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot, type PilotBrainMode } from "../engine/pilot-active-root.ts";
 import { SupabaseCrmLeadStore } from "../adapters/effects/supabase-crm-lead-store.ts";
+import { resolveConversationLeadBinding } from "../engine/crm-lead-binding.ts";
 import { ingestPilotMessage } from "../engine/pilot-ingest.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
@@ -87,6 +88,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #allowedUazapiHosts: readonly string[];
   readonly #clock = new RealClock();
   readonly #debounce: DebounceConfig;
+  // FASE 1 CRM + Opção A: UMA instância (stateless) implementa as DUAS portas — CrmLeadStore (update
+  // fill-only do dispatcher) e CrmLeadIdentityStore (resolução/criação do vínculo). null = flag OFF:
+  // zero SELECT/INSERT no CRM, comportamento byte-idêntico ao atual.
+  readonly #crmLeadStore: SupabaseCrmLeadStore | null;
   #turnSeq = 0;
 
   constructor() {
@@ -97,6 +102,13 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
     // F2.7.6: janela de debounce + intervalo do poller (defaults 6000/12000/2000ms).
     this.#debounce = resolveDebounceConfig(process.env);
+    this.#crmLeadStore = process.env.PEDRO_V3_CRM_WRITE?.trim() === "active"
+      ? new SupabaseCrmLeadStore({
+          url: this.#supabaseUrl,
+          serviceRoleKey: this.#serviceRoleKey,
+          allowedHosts: [supabaseHost(this.#supabaseUrl)],
+        })
+      : null;
   }
 
   get debounceConfig(): DebounceConfig {
@@ -210,13 +222,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       agentBrainFactory,
       // FASE 1 CRM (missão 2026-07-09): OFF por default (fail-closed). Liga SÓ com PEDRO_V3_CRM_WRITE=active
       // E SÓ para o tenant do piloto (Douglas) — o root já é pilot-scoped; o store filtra ownership no banco.
-      crmLeadStore: process.env.PEDRO_V3_CRM_WRITE?.trim() === "active"
-        ? new SupabaseCrmLeadStore({
-            url: this.#supabaseUrl,
-            serviceRoleKey: this.#serviceRoleKey,
-            allowedHosts: [supabaseHost(this.#supabaseUrl)],
-          })
-        : null,
+      crmLeadStore: this.#crmLeadStore,
     });
   }
 
@@ -228,9 +234,47 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       tenantId: PEDRO_V3_PILOT_TENANT_ID,
       clock: this.#clock,
     });
+
+    // ── Opção A (bloqueio leadId 2026-07-10): o bridge entrega leadId=null; o VÍNCULO lead↔conversa é
+    //    resolvido AQUI, no composition root, com autoridade do banco+ownership (nunca payload). Flag OFF
+    //    (#crmLeadStore null) => zero IO extra, leadId segue o da routing (null) como sempre. Falha de
+    //    resolução NUNCA silencia o lead: o turno conversacional roda normalmente com CRM desligado. ──────
+    let turnLeadId = settled.leadId;
+    let crmWrite: { enabled: boolean; bootstrapSync: boolean } | undefined;
+    if (this.#crmLeadStore != null) {
+      let stateLeadId: string | null = null;
+      try {
+        const snapshot = await persistence.load(settled.conversationId);
+        stateLeadId = snapshot?.state.leadId ?? null;   // fonte DURÁVEL do vínculo (a routing regride a cada ingest)
+      } catch {
+        stateLeadId = null;   // leitura falhou: segue como não-vinculado; o binding decide (transiente => CRM off)
+      }
+      const binding = await resolveConversationLeadBinding({
+        identity: this.#crmLeadStore,
+        ref: { tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: settled.agentId },
+        toAddr: settled.toAddr,
+        settledLeadId: settled.leadId,
+        stateLeadId,
+      });
+      turnLeadId = binding.leadId;
+      crmWrite = { enabled: binding.crmEnabled, bootstrapSync: binding.bootstrapSync };
+      if (binding.note !== "bound_existing") {
+        // Observabilidade SANITIZADA: nunca telefone/jid — só conversa (hash) + nota + uuid do lead.
+        console.log(JSON.stringify({ event: "pedro_v3_crm_lead_binding", conversationId: settled.conversationId, note: binding.note, leadId: binding.leadId }));
+      }
+      if (binding.leadId != null && binding.leadId !== settled.leadId) {
+        // Re-hidrata a routing (tenant-scoped via persistence). Best-effort: o RPC do ingest sobrescreve
+        // lead_id com o null do bridge na PRÓXIMA mensagem — a fonte durável é o state (acima); isto só
+        // melhora a observabilidade/settled dos próximos ticks até lá.
+        try {
+          await persistence.upsertRouting(settled.conversationId, settled.agentId, binding.leadId, settled.toAddr);
+        } catch { /* best-effort: nunca bloqueia o turno */ }
+      }
+    }
+
     let root: PilotActiveRoot;
     try {
-      root = await this.#createRoot(settled.agentId, settled.leadId, gateway);
+      root = await this.#createRoot(settled.agentId, turnLeadId, gateway);
     } catch {
       return;
     }
@@ -245,6 +289,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       limits: PILOT_TURN_LIMITS,
       maxValidationAttempts: 3, // R10: 1 tentativa + 2 retries c/ guidance específico -> menos terminal-safe
       blockAwaitMaxMs: this.#debounce.maxWaitMs, // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto = maxWait do debounce
+      crmWrite,
     });
     if (processed.status === "commit_failed" && processed.engine.status === "commit_failed") {
       console.error(JSON.stringify({

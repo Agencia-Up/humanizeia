@@ -22,13 +22,16 @@ import type { Clock } from "../../domain/ports.ts";
 import type { TenantAgentRef } from "../../domain/read-ports.ts";
 import type { JsonValue } from "../../domain/types.ts";
 import type { EffectDispatcher } from "../../engine/outbox-dispatcher.ts";
+import { isRealLeadName } from "../../engine/crm-write.ts";
 
 export const CRM_SUMMARY_PREFIX = "[Pedro v3]";
 
 // Colunas que a Fase 1 tem permissão de escrever (allowlist dura — qualquer
-// outra chave no payload é IGNORADA, nunca escrita).
+// outra chave no payload é IGNORADA, nunca escrita). `lead_name` (audit
+// 2026-07-10) é o nome de EXIBIÇÃO canônico do CRM/inbox/briefing e tem regra
+// de merge PRÓPRIA (promoção de placeholder->nome real; nunca regride) — ver dispatch.
 export const CRM_WRITABLE_COLUMNS = new Set([
-  "client_name", "vehicle_interest", "payment_method", "down_payment", "desired_installment",
+  "client_name", "lead_name", "vehicle_interest", "payment_method", "down_payment", "desired_installment",
   "trade_in_vehicle", "client_city", "visit_scheduled", "budget", "origem", "summary",
 ]);
 
@@ -98,6 +101,15 @@ export class CrmWriteEffectDispatcher implements EffectDispatcher {
     const skippedExisting: string[] = [];
     for (const [col, value] of Object.entries(requested)) {
       const current = lead.fields[col] ?? null;
+      // lead_name (nome de EXIBIÇÃO canônico): regra própria — "nome só melhora, nunca
+      // regride" (mesmo contrato do v2). Novo valor precisa ser NOME REAL; um lead_name
+      // atual REAL (humano/v2) é preservado; placeholder ("Lead"/lixo) é PROMOVIDO.
+      if (col === "lead_name") {
+        if (!isRealLeadName(value)) { skippedExisting.push(col); continue; }          // lixo nunca entra
+        if (!isBlank(current) && isRealLeadName(current)) { skippedExisting.push(col); continue; }  // real preservado
+        if (String(current ?? "").trim() !== value.trim()) toWrite[col] = value;      // promove placeholder->real
+        continue;
+      }
       if (isBlank(current)) { toWrite[col] = value; continue; }
       if (col === "summary" && String(current).startsWith(CRM_SUMMARY_PREFIX) && value.startsWith(CRM_SUMMARY_PREFIX)) {
         if (String(current).trim() !== value.trim()) toWrite[col] = value;

@@ -100,6 +100,10 @@ export type CentralTurnArgs = {
   // FASE 1 CRM (missão 2026-07-09): liga o effect crm_write determinístico do chokepoint. Default OFF —
   // fail-closed: sem flag OU sem leadId, nenhum effect de CRM nasce. Nunca fala com o lead.
   readonly crmWriteEnabled?: boolean;
+  // Opção A (bloqueio leadId 2026-07-10): true SÓ no turno do 1º VÍNCULO lead↔conversa — o crm_write
+  // sincroniza o SNAPSHOT acumulado (stateBefore=null), não o delta do turno. Turnos anteriores sem
+  // vínculo (falha transitória de resolução / flag recém-ligada) não perdem nome/interesse/troca/entrada.
+  readonly crmBootstrapSync?: boolean;
   readonly workerId: string;
   readonly turnId: Id;
   readonly leaseTtlMs: number;
@@ -1355,7 +1359,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
 
       const snapshot = await persistence.load(conversationId);
       const expectedVersion = snapshot?.version ?? 0;
-      const state = snapshot?.state ?? createInitialState({ conversationId, tenantId, agentId, leadId, now: cutoff });
+      const loadedState = snapshot?.state ?? createInitialState({ conversationId, tenantId, agentId, leadId, now: cutoff });
+      // VÍNCULO de identidade CRM (Opção A, infra — não conversa): conversa existente SEM lead vinculado
+      // adota o leadId RESOLVIDO pelo composition root (autoridade = banco + ownership do ref; o bridge
+      // entrega null). O reducer herda e o commit persiste (v3_commit_turn: p_lead_id = nextState.leadId)
+      // — vínculo DURÁVEL, sobrevive a restart. Vínculo existente NUNCA é sobrescrito aqui (mismatch =
+      // fail-closed no chokepoint do crm_write; a conversa segue normal).
+      const state = (leadId != null && loadedState.leadId == null) ? { ...loadedState, leadId } : loadedState;
       // Isolamento (B item 3): estado carregado precisa pertencer a ESTA conta/agente/conversa. Falha fechado.
       if (state.tenantId !== tenantId || state.agentId !== agentId || state.conversationId !== conversationId) {
         throw new Error(`central: state ownership mismatch (loaded ${state.tenantId}/${state.agentId}/${state.conversationId} != ${tenantId}/${agentId}/${conversationId})`);
@@ -2411,8 +2421,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       //    ALTO (o reply/media despacham ANTES — falha de CRM nunca silencia o lead). A política de merge
       //    não-destrutivo (fill-only-if-empty / campo humano intocado) vive no CrmWriteEffectDispatcher. ──────
       // stateBefore = state ORIGINAL do snapshot (o contextState JÁ contém a extração deste turno e zeraria o delta).
-      const crmPlan = (llmFirst && args.crmWriteEnabled === true)
-        ? buildCrmWritePlan({ stateAfter: reduced.next, stateBefore: state, adContext: effectiveAdContext, adVehicleLabel: adVehicleHint ?? null, leadId: leadId ?? null, turnId })
+      // Opção A (2026-07-10): defesa em profundidade do VÍNCULO — o crm_write só nasce quando o leadId do turno
+      // é o MESMO do state (bind feito acima ou vínculo antigo). Divergência (nunca deveria passar pelo root) =
+      // fail-closed: zero crm_write, conversa intacta. Bootstrap (1º vínculo) = baseline null -> snapshot completo.
+      const crmLeadId = (args.crmWriteEnabled === true && leadId != null && state.leadId === leadId) ? leadId : null;
+      const crmPlan = (llmFirst && args.crmWriteEnabled === true && crmLeadId != null)
+        ? buildCrmWritePlan({ stateAfter: reduced.next, stateBefore: args.crmBootstrapSync === true ? null : state, adContext: effectiveAdContext, adVehicleLabel: adVehicleHint ?? null, leadId: crmLeadId, turnId })
         : null;
       const decisionForOutbox = crmPlan ? { ...decision, effectPlan: [...decision.effectPlan, crmPlan] } : decision;
 
@@ -2462,6 +2476,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           institutionalResolved, droppedSelectKeys,
           // ⭐Missão P0 (fatos frescos vencem snapshot): degradação do catálogo é OBSERVÁVEL, nunca silenciosa.
           catalogEntries: prepared.tenantCatalog.entries.length, catalogDegraded: prepared.catalogDegraded === true,
+          // Opção A (vínculo lead↔conversa): auditoria do CRM write por turno — leadId efetivo do plan (null =
+          // desligado/mismatch fail-closed), 1º vínculo (bootstrap) e se o turno emitiu crm_write.
+          crmWrite: { enabled: args.crmWriteEnabled === true, leadBound: crmLeadId, bootstrapSync: args.crmBootstrapSync === true, planned: crmPlan != null },
           // F2.29 (observabilidade do escopo comercial — auditoria do "mais opções herda escopo"): filtro ativo ANTES/DEPOIS,
           // input REAL da stock_search executada, e o escopo herdado por "mais opções" (null se pediu escopo).
           activeSearchConstraintsBefore: contextState.activeSearchConstraints ?? null,
