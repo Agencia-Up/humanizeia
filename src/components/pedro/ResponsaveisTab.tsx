@@ -8,9 +8,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import {
-  Users, UserPlus, Loader2, FileText, BarChart3, Bell, Crown, Info, Mail, Radar, Check, Bot, MessageSquare,
+  Users, UserPlus, Loader2, FileText, BarChart3, Bell, Crown, Info, Mail, Radar, Check, Bot, MessageSquare, Trash2,
 } from 'lucide-react';
 import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
+import { onlyDigits, normalizePhoneBR } from '@/lib/phoneBR';
 
 // ── Responsáveis & entregas ──────────────────────────────────────────────────
 // Lugar ÚNICO de pessoas + acessos da conta (mora em Configurações). Adicionar
@@ -36,8 +37,10 @@ interface Pessoa {
   recebe_atendimento: boolean; recebe_trafego: boolean; recebe_alertas: boolean;
 }
 
-const onlyDigits = (s?: string | null) => (s || '').replace(/\D/g, '');
-const last8 = (s?: string | null) => onlyDigits(s).slice(-8);
+// onlyDigits e normalizePhoneBR vem do helper unico @/lib/phoneBR. A chave de
+// agrupamento das pessoas usa o numero nacional COMPLETO (normalizePhoneBR),
+// nunca os ultimos 8 digitos — senao pessoas de DDDs diferentes com final igual
+// seriam fundidas na mesma linha.
 function fmtTel(d: string): string {
   const n = d.startsWith('55') ? d.slice(2) : d;
   if (n.length >= 10) return `(${n.slice(0, 2)}) ${n.slice(2, n.length - 4)}-${n.slice(-4)}`;
@@ -137,6 +140,9 @@ export function ResponsaveisTab({ userId }: Props) {
   const [nAparecePaineis, setNAparecePaineis] = useState(true);
   const [nAgentes, setNAgentes] = useState<Set<string>>(new Set());
 
+  const [delAlvo, setDelAlvo] = useState<Pessoa | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -168,7 +174,7 @@ export function ResponsaveisTab({ userId }: Props) {
           if (m.is_manager && wn.startsWith('gerente-')) continue; // placeholder legado
           if (!wn) continue;
         }
-        const k = last8(wn);
+        const k = normalizePhoneBR(wn);
         if (!k) continue;
         const p = ensure(k, m.name || '', wn, m.is_manager ? 'gerente' : 'vendedor');
         if (m.is_manager) p.papel = 'gerente';
@@ -181,13 +187,13 @@ export function ResponsaveisTab({ userId }: Props) {
       }
       for (const a of agents) {
         for (const gp of [a.gerente_phone, a.gerente_phone_2]) {
-          const k = last8(gp); if (!k) continue;
+          const k = normalizePhoneBR(gp); if (!k) continue;
           const p = ensure(k, 'Gerente', gp, 'gerente');
           if (p.papel !== 'vendedor') p.papel = 'gerente';
         }
       }
       for (const r of resp) {
-        const k = last8(r.whatsapp); if (!k) continue;
+        const k = normalizePhoneBR(r.whatsapp); if (!k) continue;
         const p = ensure(k, r.nome || '', r.whatsapp, 'externo');
         p.recebe_atendimento = !!r.recebe_atendimento; p.recebe_trafego = !!r.recebe_trafego; p.recebe_alertas = !!r.recebe_alertas;
       }
@@ -340,6 +346,23 @@ export function ResponsaveisTab({ userId }: Props) {
     } finally { setSaving(null); }
   };
 
+  // Exclui o responsavel (edge delete-responsavel): so o master, casando o numero
+  // COMPLETO, tira acesso/fila/paineis/entregas e mantem o historico dos leads.
+  const excluirResponsavel = async () => {
+    if (!delAlvo) return;
+    setDelBusy(true);
+    try {
+      const { data, error } = await invokeWithReauth('delete-responsavel', { body: { whatsapp: delAlvo.whatsapp } });
+      if (error) throw new Error((error as any)?.message || 'Falha ao excluir');
+      if (data && (data as any).success === false) throw new Error((data as any).error || 'Falha ao excluir');
+      setDelAlvo(null);
+      await load();
+      toast({ title: 'Responsável excluído', description: 'Os leads dele ficaram sem vendedor (o histórico foi mantido).' });
+    } catch (e: any) {
+      toast({ title: 'Não deu pra excluir', description: e?.message, variant: 'destructive' });
+    } finally { setDelBusy(false); }
+  };
+
   const papelLabel = (p: Pessoa) => p.papel === 'gerente' ? 'gerente / conta master' : p.papel === 'vendedor' ? 'vendedor' : 'parceiro externo';
 
   return (
@@ -428,6 +451,11 @@ export function ResponsaveisTab({ userId }: Props) {
                     </button>
                   );
                 })}
+                <button onClick={() => setDelAlvo(p)}
+                  className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border border-red-500/40 text-red-300 hover:bg-red-500/10 transition-colors"
+                  title="Excluir este responsável (mantém o histórico dos leads)">
+                  <Trash2 className="h-3 w-3" /> Excluir
+                </button>
               </div>
             </div>
           ))}
@@ -534,6 +562,30 @@ export function ResponsaveisTab({ userId }: Props) {
             <Button variant="outline" size="sm" onClick={() => { setAddOpen(false); resetForm(); }} disabled={saving === 'add'}>Cancelar</Button>
             <Button size="sm" onClick={addResponsavel} disabled={saving === 'add'}>
               {saving === 'add' ? 'Adicionando...' : 'Adicionar e convidar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmação de exclusão */}
+      <Dialog open={!!delAlvo} onOpenChange={(o) => { if (!o && !delBusy) setDelAlvo(null); }}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Excluir responsável</DialogTitle>
+            <DialogDescription>
+              {delAlvo ? (
+                <>
+                  Tem certeza que quer excluir <strong className="text-foreground">{delAlvo.nome || 'este responsável'}</strong>
+                  {' '}({fmtTel(delAlvo.whatsapp)})? Ele perde o acesso ao painel e sai da fila de leads. Os leads dele
+                  ficam sem vendedor, mas <strong className="text-foreground">o histórico de leads e conversas é mantido</strong>. Não dá para desfazer.
+                </>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDelAlvo(null)} disabled={delBusy}>Cancelar</Button>
+            <Button variant="destructive" size="sm" onClick={excluirResponsavel} disabled={delBusy}>
+              {delBusy ? <><Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Excluindo...</> : 'Excluir responsável'}
             </Button>
           </DialogFooter>
         </DialogContent>

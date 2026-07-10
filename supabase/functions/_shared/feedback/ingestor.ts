@@ -125,7 +125,6 @@ export async function buildLeadThread(
   let nome: string | null = null;
   let telefone: string | null = null;
   let jid = '';
-  let phone8 = '';
 
   if (leadSource === 'pedro') {
     const { data: lead } = await admin
@@ -141,7 +140,6 @@ export async function buildLeadThread(
     adName = lead.ad_name || null;
     jid = lead.remote_jid || '';
     telefone = digits(jid.split('@')[0]) || null;
-    phone8 = last8(jid.split('@')[0]);
     Object.assign(sinais, {
       trade_in_vehicle: lead.trade_in_vehicle, down_payment: lead.down_payment,
       cpf: lead.cpf, birth_date: lead.birth_date, temperature: lead.temperature,
@@ -160,7 +158,6 @@ export async function buildLeadThread(
     nome = lead.name ?? null;
     campanha = lead.utm_campaign || null;
     telefone = digits(lead.phone) || null;
-    phone8 = last8(lead.phone);
     Object.assign(sinais, {
       vehicle_interest: lead.vehicle_interest, consignado_modelo: lead.consignado_modelo,
       custom_fields: lead.custom_fields,
@@ -218,15 +215,12 @@ export async function buildLeadThread(
         .order('created_at', { ascending: true });
       inbox = data as any[] | null;
     }
-    // Fallback controlado: match preciso vazio -> tenta ultimos 8 (numeros legados). Logado.
-    if ((!inbox || inbox.length === 0) && phone8) {
-      const { data: fb } = await admin.from('wa_inbox').select(cols)
-        .eq('user_id', tenant).ilike('phone', `%${phone8}`)
-        .order('created_at', { ascending: true });
-      if (fb && fb.length) {
-        console.warn(`[feedback-ingestor] lead ${leadId}: match preciso (${phoneNat}) vazio; fallback last-8 (${fb.length} msgs)`);
-        inbox = fb as any[];
-      }
+    // Sem fallback por ultimos 8 digitos: casar so os 8 finais podia trazer o
+    // inbox de OUTRA pessoa (mesmo final, DDD diferente) e analisar a conversa
+    // errada. So o match nacional completo (phoneNat) acima e confiavel; se ele
+    // vier vazio, a conversa fica sem thread humana (nao inventa por aproximacao).
+    if (!inbox || inbox.length === 0) {
+      console.warn(`[feedback-ingestor] lead ${leadId}: sem inbox casando o numero nacional completo (${phoneNat}).`);
     }
 
     const audioMsgs = (inbox || [])

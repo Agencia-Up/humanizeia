@@ -278,3 +278,8 @@ verify_jwt = false
 # download = depende do usuario logado (le a linha com o token dele via RLS).
 [functions.feedback-relatorio-download]
 verify_jwt = true
+
+# delete-responsavel = so o master exclui responsavel da propria conta. Exige
+# sessao valida (le o auth.uid do token) e ainda valida o dono internamente.
+[functions.delete-responsavel]
+verify_jwt = true
