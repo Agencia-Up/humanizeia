@@ -97,15 +97,19 @@ export function FeedbackPorVendedorTab() {
   const [convs, setConvs] = useState<Conversa[]>([]);
   const [sel, setSel] = useState<string>('');
   const [baixando, setBaixando] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
       const { data, error } = await (supabase as any).rpc('feedback_relatorio_por_vendedor');
       if (error) throw error;
       const arr: Conversa[] = Array.isArray(data) ? data : [];
       setConvs(arr.filter((c) => c.vendedor_id)); // exclui "(sem vendedor)"
     } catch (e: any) {
+      setConvs([]);
+      setErrorMsg(e?.message || 'Nao foi possivel carregar o desempenho por vendedor.');
       toast({ title: 'Erro ao carregar', description: e?.message, variant: 'destructive' });
     } finally {
       setLoading(false);
@@ -165,6 +169,22 @@ export function FeedbackPorVendedorTab() {
   }
 
   if (!vendedores.length) {
+    if (errorMsg) {
+      return (
+        <div className="border border-rose-500/25 bg-rose-500/10 rounded-2xl p-5 text-sm text-rose-100">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-rose-300 shrink-0 mt-0.5" />
+            <div className="space-y-2">
+              <div className="font-semibold">Nao consegui carregar a aba por vendedor.</div>
+              <div className="text-rose-100/80">{errorMsg}</div>
+              <Button variant="outline" size="sm" onClick={load} className="mt-1">
+                Tentar novamente
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="text-center py-16 text-sm text-muted-foreground">
         <Users className="h-8 w-8 mx-auto mb-3 opacity-30" />
@@ -243,7 +263,11 @@ export function FeedbackPorVendedorTab() {
               const q = c.qualidade_lead && QMAP[c.qualidade_lead];
               const venda = vendeu(c);
               const perdeu = perdeuChanceBoa(c);
-              const ops = Array.isArray(c.oportunidades_perdidas) ? c.oportunidades_perdidas : [];
+              const ops = Array.isArray(c.oportunidades_perdidas)
+                ? c.oportunidades_perdidas
+                    .map((op: any) => (typeof op === 'string' ? op : op?.texto || op?.trecho || op?.resumo || ''))
+                    .filter(Boolean)
+                : [];
               return (
                 <div key={c.fc_id} className="bg-card border border-border/50 rounded-xl px-4 py-3 space-y-2">
                   <div className="flex items-start justify-between gap-3 flex-wrap">

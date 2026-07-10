@@ -71,12 +71,18 @@ export function FeedbackNepqTab() {
 
   // Usa o mês mais recente presente no rollup (uma linha por vendedor).
   const periodo = useMemo(() => rows.map((r) => r.periodo).sort().slice(-1)[0] || '', [rows]);
-  const vendedores = useMemo(() => {
+  const vendedoresBase = useMemo(() => {
     const doMes = rows.filter((r) => r.periodo === periodo);
     return doMes
       .map((r) => ({ ...r, nome: nomes[r.vendedor_id] || '(vendedor)' }))
-      .sort((a, b) => (b.score_medio ?? -1) - (a.score_medio ?? -1) || a.nome.localeCompare(b.nome));
+      .sort((a, b) => a.nome.localeCompare(b.nome));
   }, [rows, periodo, nomes]);
+  const vendedores = useMemo(() => (
+    vendedoresBase
+      .filter((v) => v.score_medio != null)
+      .sort((a, b) => (a.score_medio ?? 999) - (b.score_medio ?? 999) || a.nome.localeCompare(b.nome))
+  ), [vendedoresBase]);
+  const semNepq = useMemo(() => vendedoresBase.filter((v) => v.score_medio == null), [vendedoresBase]);
 
   useEffect(() => {
     if (!sel && vendedores.length) setSel(vendedores.find((v) => v.score_medio != null)?.vendedor_id || vendedores[0].vendedor_id);
@@ -84,12 +90,12 @@ export function FeedbackNepqTab() {
 
   // KPIs da equipe.
   const kpis = useMemo(() => {
-    const comNepq = vendedores.filter((v) => v.score_medio != null);
+    const comNepq = vendedores;
     const scoreEquipe = comNepq.length ? Math.round(comNepq.reduce((a, v) => a + (v.score_medio || 0), 0) / comNepq.length) : null;
-    const totalConv = vendedores.reduce((a, v) => a + (v.conversas || 0), 0);
+    const totalConv = vendedoresBase.reduce((a, v) => a + (v.conversas || 0), 0);
     const somaDist = (key: 'distribuicao_qualidade' | 'distribuicao_veredicto') => {
       const acc: Record<string, number> = {};
-      for (const v of vendedores) for (const [k, n] of Object.entries(v[key] || {})) acc[k] = (acc[k] || 0) + (n as number);
+      for (const v of vendedoresBase) for (const [k, n] of Object.entries(v[key] || {})) acc[k] = (acc[k] || 0) + (n as number);
       return acc;
     };
     const vered = somaDist('distribuicao_veredicto');
@@ -101,7 +107,7 @@ export function FeedbackNepqTab() {
       qualidade: somaDist('distribuicao_qualidade'),
       veredicto: vered,
     };
-  }, [vendedores]);
+  }, [vendedores, vendedoresBase]);
 
   const atual = vendedores.find((v) => v.vendedor_id === sel) || null;
   const radarData = useMemo(() => {
@@ -109,12 +115,12 @@ export function FeedbackNepqTab() {
     return DIMS.map((d) => ({ dim: d.label, nota: Number(nd[d.cod] ?? 0) }));
   }, [atual]);
 
-  const alertas = vendedores.filter((v) => (v.taxa_conflito_rotulagem || 0) > 0);
+  const alertas = vendedoresBase.filter((v) => (v.taxa_conflito_rotulagem || 0) > 0);
 
   if (loading) {
     return <div className="flex items-center justify-center py-12 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando desempenho NEPQ...</div>;
   }
-  if (!vendedores.length) {
+  if (!vendedoresBase.length) {
     return (
       <div className="text-center py-16 text-sm text-muted-foreground">
         <Gauge className="h-8 w-8 mx-auto mb-3 opacity-30" />
@@ -133,7 +139,7 @@ export function FeedbackNepqTab() {
         </div>
         <div className="min-w-0">
           <h3 className="text-base font-semibold text-foreground leading-tight">Desempenho NEPQ da equipe</h3>
-          <p className="text-xs text-muted-foreground">Qualidade do atendimento por método NEPQ · {mesLabel}. Para as conversas e o coaching, veja "Por vendedor".</p>
+          <p className="text-xs text-muted-foreground">Qualidade do atendimento por método NEPQ · {mesLabel}. Ranking mostra quem precisa de coaching primeiro.</p>
         </div>
       </div>
 
@@ -148,8 +154,8 @@ export function FeedbackNepqTab() {
           <div className={`text-lg font-semibold ${kpis.pctConflito > 0 ? 'text-rose-400' : 'text-foreground'}`}>{kpis.pctConflito}%</div>
         </div>
         <div className="bg-card border border-border/50 rounded-xl px-3 py-2.5">
-          <div className="text-[10px] text-muted-foreground mb-0.5">Vendedores com NEPQ</div>
-          <div className="text-lg font-semibold text-foreground">{kpis.comNepq}/{vendedores.length}</div>
+          <div className="text-[10px] text-muted-foreground mb-0.5">Vendedores avaliados</div>
+          <div className="text-lg font-semibold text-foreground">{kpis.comNepq}/{vendedoresBase.length}</div>
         </div>
         <div className="bg-card border border-border/50 rounded-xl px-3 py-2.5">
           <div className="text-[10px] text-muted-foreground mb-0.5">Conversas analisadas</div>
@@ -168,7 +174,7 @@ export function FeedbackNepqTab() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Ranking */}
         <div className="space-y-2">
-          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" /> Ranking</div>
+          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" /> Prioridade de coaching</div>
           {vendedores.map((v) => {
             const s = semaforo(v.score_medio);
             const on = v.vendedor_id === sel;
@@ -185,6 +191,18 @@ export function FeedbackNepqTab() {
               </button>
             );
           })}
+          {semNepq.length > 0 && (
+            <div className="mt-3 rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-xs font-medium text-muted-foreground mb-2">Sem nota NEPQ suficiente</div>
+              <div className="flex flex-wrap gap-2">
+                {semNepq.map((v) => (
+                  <span key={v.vendedor_id} className="text-[11px] px-2 py-1 rounded-full border border-border/60 text-muted-foreground">
+                    {v.nome} · {v.conversas} conv.
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Radar do vendedor */}
@@ -204,6 +222,19 @@ export function FeedbackNepqTab() {
                 </RadarChart>
               </ResponsiveContainer>
               <p className="text-[10px] text-muted-foreground text-center">Cada eixo é uma dimensão NEPQ (0–4). Quanto mais preenchido, melhor o atendimento naquela etapa.</p>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {radarData.map((d) => (
+                  <div key={d.dim} className="rounded-lg bg-muted/25 px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
+                      <span className="text-muted-foreground truncate">{d.dim}</span>
+                      <span className="font-medium text-foreground">{d.nota}/4</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-background overflow-hidden">
+                      <div className="h-full rounded-full bg-indigo-400" style={{ width: `${Math.max(0, Math.min(100, (d.nota / 4) * 100))}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </>
           ) : (
             <div className="h-[300px] flex items-center justify-center text-center text-sm text-muted-foreground px-4">
