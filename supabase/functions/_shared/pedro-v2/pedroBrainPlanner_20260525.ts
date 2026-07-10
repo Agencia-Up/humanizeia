@@ -146,6 +146,108 @@ function memoryVehicleQuery(memory?: PedroV2LeadMemory | null) {
   ).trim() || null;
 }
 
+function compactPlannerHistory(turns?: any[]) {
+  return (Array.isArray(turns) ? turns : [])
+    .slice(-8)
+    .map((turn) => {
+      const role = String(turn?.role || turn?.direction || "").toLowerCase();
+      const text = String(turn?.text || turn?.content || turn?.message || "").trim();
+      if (!text) return null;
+      return {
+        role: ["agent", "assistant", "consultor", "outgoing"].includes(role) ? "agent" : "lead",
+        text: text.slice(0, 500),
+      };
+    })
+    .filter(Boolean);
+}
+
+function compactPlannerMemory(memory?: PedroV2LeadMemory | null) {
+  const m: any = memory || {};
+  const compactVehicle = (v: any) => v && typeof v === "object"
+    ? {
+        key: v.key || null,
+        label: v.label || [v.marca, v.modelo, v.ano].filter(Boolean).join(" ") || null,
+        marca: v.marca || null,
+        modelo: v.modelo || null,
+        ano: v.ano || null,
+        preco: v.preco || null,
+        cor: v.cor || null,
+        cambio: v.cambio || null,
+        tem_fotos: Array.isArray(v.fotos) ? v.fotos.length > 0 : Number(v.images_count) > 0,
+      }
+    : null;
+  return {
+    pending_question: m.pending_question || null,
+    lead: { nome: m.lead?.nome || m.lead_name || null },
+    interesse: {
+      modelo_desejado: m.interesse?.modelo_desejado || null,
+      tipo_veiculo: m.interesse?.tipo_veiculo || null,
+      preco_max: m.interesse?.preco_max || null,
+      cambio: m.interesse?.cambio || null,
+      cor: m.interesse?.cor || null,
+    },
+    negociacao: {
+      tem_troca: m.negociacao?.tem_troca ?? null,
+      carro_troca: m.negociacao?.carro_troca || null,
+      forma_pagamento: m.negociacao?.forma_pagamento || null,
+      valor_entrada: m.negociacao?.valor_entrada || null,
+    },
+    atendimento: {
+      etapa: m.atendimento?.etapa || null,
+      dia_agendamento: m.atendimento?.dia_agendamento || null,
+    },
+    referencia: {
+      veiculo_citado: m.referencia?.veiculo_citado || null,
+      ultimo_veiculo_label: m.referencia?.ultimo_veiculo_label || null,
+    },
+    veiculo_em_foco: compactVehicle(m.veiculo_em_foco),
+    ultima_foto: m.ultima_foto
+      ? {
+          veiculo_key: m.ultima_foto.veiculo_key || null,
+          veiculo_label: m.ultima_foto.veiculo_label || null,
+          target: m.ultima_foto.target || null,
+        }
+      : null,
+    last_stock_offer: m.last_stock_offer
+      ? {
+          category: m.last_stock_offer.category || null,
+          query: m.last_stock_offer.query || null,
+          offered_keys: Array.isArray(m.last_stock_offer.offered_keys) ? m.last_stock_offer.offered_keys.slice(0, 8) : [],
+        }
+      : null,
+    veiculos_apresentados: (Array.isArray(m.veiculos_apresentados) ? m.veiculos_apresentados : [])
+      .slice(0, 8)
+      .map(compactVehicle)
+      .filter(Boolean),
+    rejeitados: {
+      modelos: Array.isArray(m.rejeitados?.modelos) ? m.rejeitados.modelos.slice(0, 6) : [],
+      tipos: Array.isArray(m.rejeitados?.tipos) ? m.rejeitados.tipos.slice(0, 4) : [],
+    },
+  };
+}
+
+function compactPlannerAdContext(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    has_ad_context: Boolean(value.has_ad_context),
+    source: value.source || null,
+    vehicle_query: value.vehicle_query || null,
+    summary: value.summary ? String(value.summary).slice(0, 500) : null,
+    title: value.title ? String(value.title).slice(0, 180) : null,
+  };
+}
+
+function compactPlannerMediaContext(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    kind: value.kind || null,
+    audio_transcribed: value.audio_transcribed ?? null,
+    text: value.text ? String(value.text).slice(0, 500) : null,
+    vehicle_query: value.vehicle_query || null,
+    summary: value.summary ? String(value.summary).slice(0, 400) : null,
+  };
+}
+
 // Emojis positivos que, SOZINHOS, equivalem a um "sim" quando o lead esta reagindo
 // a uma oferta ("quer ver as fotos?" -> 👍 = sim). normalizeText() apaga emojis
 // (sao non-word), entao precisamos testar a string CRUA, antes de normalizar.
@@ -1386,11 +1488,11 @@ export async function planPedroTurn(input: {
     pending_question: pendingQuestion,
     last_agent_message: lastAgentMessage,
     decision_context: decisionContext,
-    memory: input.memory || {},
+    memory: compactPlannerMemory(input.memory),
     heuristic_intent: input.heuristic_intent || null,
-    ad_context: input.ad_context || null,
-    media_context: input.media_context || null,
-    recent_history: input.recent_history || [],
+    ad_context: compactPlannerAdContext(input.ad_context),
+    media_context: compactPlannerMediaContext(input.media_context),
+    recent_history: compactPlannerHistory(input.recent_history),
     vehicle_resolution: input.vehicle_resolution,
   });
 

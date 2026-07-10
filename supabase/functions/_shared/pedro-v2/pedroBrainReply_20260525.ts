@@ -5,7 +5,7 @@ import { PedroVehicleResolution } from "./vehicleResolver_20260525_brain.ts";
 import { sumOpenAiTokens, UsageSink } from "./tokenMeter.ts";
 import { logAiCall } from "../observability/aiCallLog.ts";
 import { keyFromCtx, recordProviderError, AiKeyCtx } from "../aiKeys.ts";
-import { validateGrounding, buildGroundingCorrection, groundedFallback } from "./grounding.ts";
+import { validateGrounding, groundedFallback } from "./grounding.ts";
 import { getReplyProfile } from "./llmProfiles/index.ts";
 import { buildConversationState } from "./decisionLogic.ts";
 
@@ -214,7 +214,7 @@ function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
       if (!role || !text) return null;
       return {
         role,
-        content: text.slice(0, 1800),
+        content: text.slice(0, 900),
       };
     })
     .filter(Boolean) as Array<{ role: "lead" | "agent"; content: string }>;
@@ -226,7 +226,7 @@ function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
     deduped.push(turn);
   }
 
-  const trimmed = deduped.slice(-20);
+  const trimmed = deduped.slice(-10);
   const last = trimmed[trimmed.length - 1];
   const withoutCurrent = last?.role === "lead" && normalizedCurrent && normalizeText(last.content) === normalizedCurrent
     ? trimmed.slice(0, -1)
@@ -239,7 +239,7 @@ function buildChatHistory(turns: any[] | undefined, currentMessage: string) {
 }
 
 function stockFacts(stockResult: any) {
-  const items = Array.isArray(stockResult?.items) ? stockResult.items.slice(0, 24) : [];
+  const items = Array.isArray(stockResult?.items) ? stockResult.items.slice(0, 8) : [];
   return items.map((vehicle: any, index: number) => ({
     index: index + 1,
     label: vehicleLabel(vehicle) || vehicle?.label || vehicle?.modelo || "Veiculo",
@@ -261,6 +261,29 @@ function stockFacts(stockResult: any) {
     match_score: vehicle?.match_score || null,
     relaxed_match: Boolean(vehicle?.relaxed_match),
   }));
+}
+
+function compactMediaContext(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    kind: value.kind || null,
+    audio_transcribed: value.audio_transcribed ?? null,
+    text: value.text ? String(value.text).slice(0, 600) : null,
+    vehicle_query: value.vehicle_query || null,
+    summary: value.summary ? String(value.summary).slice(0, 500) : null,
+  };
+}
+
+function compactAdContext(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    has_ad_context: Boolean(value.has_ad_context),
+    source: value.source || null,
+    vehicle_query: value.vehicle_query || null,
+    summary: value.summary ? String(value.summary).slice(0, 500) : null,
+    title: value.title ? String(value.title).slice(0, 180) : null,
+    description: value.description ? String(value.description).slice(0, 300) : null,
+  };
 }
 
 function adSignalText(input: {
@@ -775,14 +798,14 @@ export async function generatePedroBrainReply(input: {
       return await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "x-api-key": llm.key, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify({ model, max_tokens: 4096, system: sys, messages: conv }),
+        body: JSON.stringify({ model, max_tokens: 1200, system: sys, messages: conv }),
       });
     }
     const url = llm.isDeepseek ? "https://api.deepseek.com/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
     return await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${llm.key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, temperature: 0.35, response_format: { type: "json_object" }, messages: msgs }),
+      body: JSON.stringify({ model, temperature: 0.35, max_tokens: 900, response_format: { type: "json_object" }, messages: msgs }),
     });
   };
   // BASE DE CONHECIMENTO (RAG): chunks da loja recuperados no orchestrator (garantia/financiamento/FAQ).
@@ -884,14 +907,19 @@ export async function generatePedroBrainReply(input: {
                 tipos: Array.isArray((input.memory as any)?.rejeitados?.tipos) ? (input.memory as any).rejeitados.tipos : [],
               },
               estado_conversa: buildConversationState(input.memory, input.ad_context),
-              ad_context: input.ad_context || null,
-              media_context: input.media_context || null,
-              recent_history: input.recent_history || input.memory?.recent_turns || [],
+              ad_context: compactAdContext(input.ad_context),
+              media_context: compactMediaContext(input.media_context),
               memory_summary: {
                 lead: input.memory?.lead || {},
                 interesse: input.memory?.interesse || {},
                 negociacao: input.memory?.negociacao || {},
-                referencia: input.memory?.referencia || {},
+                referencia: {
+                  veiculo_citado: input.memory?.referencia?.veiculo_citado || null,
+                  ultimo_veiculo_label: input.memory?.referencia?.ultimo_veiculo_label || null,
+                  texto_referencia: input.memory?.referencia?.texto_referencia
+                    ? String(input.memory.referencia.texto_referencia).slice(0, 500)
+                    : null,
+                },
                 atendimento: input.memory?.atendimento || {},
               },
               stock: {
@@ -1018,19 +1046,7 @@ export async function generatePedroBrainReply(input: {
       if (!gv.ok) {
         grounding_corrected = true;
         console.warn("[PedroV2] grounding_violation", JSON.stringify({ violations: gv.violations }));
-        let fixed = "";
-        try {
-          const res2 = await callReply(activeLlm, activeModel, [...replyMessages, { role: "system", content: buildGroundingCorrection(gv.violations, facts) }]);
-          if (res2.ok) {
-            const data2 = await res2.json();
-            if (input.usage_sink) input.usage_sink.tokens += activeLlm.isAnthropic ? Number(data2?.usage?.input_tokens || 0) + Number(data2?.usage?.output_tokens || 0) : sumOpenAiTokens(data2);
-            const content2 = activeLlm.isAnthropic
-              ? String((Array.isArray(data2?.content) ? data2.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text || "").join("") : "") || "{}")
-              : String(data2?.choices?.[0]?.message?.content || "{}");
-            fixed = finalizeFrom(String(JSON.parse(cleanJson(content2))?.text || "").trim());
-          }
-        } catch (e) { console.warn("[PedroV2] grounding regen failed:", e); }
-        finalText = (fixed && validateGrounding(fixed, facts).ok) ? fixed : groundedFallback(facts);
+        finalText = groundedFallback(facts);
       }
     }
 

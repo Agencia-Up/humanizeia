@@ -436,15 +436,15 @@ export function ResponsaveisTab({ userId }: Props) {
 
       {/* Dialog: adicionar responsável (completo) */}
       <Dialog open={addOpen} onOpenChange={(o) => { if (!o) { setAddOpen(false); resetForm(); } }}>
-        <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-[480px] max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
+          <DialogHeader className="shrink-0 pr-6">
             <DialogTitle>Adicionar responsável</DialogTitle>
             <DialogDescription>
               Cadastre a pessoa, escolha o tipo e mande o convite por e-mail pra ela criar o acesso.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-1">
-            <div className="grid grid-cols-2 gap-3">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain space-y-3 py-1 pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Nome</label>
                 <Input value={nNome} onChange={(e) => setNNome(e.target.value)} placeholder="Ex.: Ana Souza" />
@@ -530,7 +530,7 @@ export function ResponsaveisTab({ userId }: Props) {
               </div>
             )}
           </div>
-          <DialogFooter className="gap-2">
+          <DialogFooter className="shrink-0 gap-2 border-t border-border/50 pt-4">
             <Button variant="outline" size="sm" onClick={() => { setAddOpen(false); resetForm(); }} disabled={saving === 'add'}>Cancelar</Button>
             <Button size="sm" onClick={addResponsavel} disabled={saving === 'add'}>
               {saving === 'add' ? 'Adicionando...' : 'Adicionar e convidar'}

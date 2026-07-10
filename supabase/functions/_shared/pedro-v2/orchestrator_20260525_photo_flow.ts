@@ -238,6 +238,20 @@ function shouldGateStockListUntilFunnel(input: {
   return false;
 }
 
+function shouldUsePedroKnowledgeContext(text: string, intent: any, plan: any) {
+  const normalized = normalizePlannerText(text || "");
+  if (!normalized || normalized.length < 4) return false;
+
+  const asksStorePolicy =
+    /\b(garantia|garantido|financiamento|financia|entrada|parcela|taxa|juros|documentacao|documento|transferencia|ipva|licenciamento|laudo|vistoria|revisao|procedencia|troca|consignado|entrega|frete|loja|endereco|horario|funciona|aberto|atendimento|cnpj|pix|cartao|boleto|faq)\b/.test(normalized);
+  if (asksStorePolicy) return true;
+
+  if (plan?.action === "photo_request" || plan?.action === "stock_search") return false;
+  if (intent?.needs_stock_search === true || intent?.needs_handoff === true) return false;
+
+  return leadAsksInfoQuestion(text) && /\b(como|quando|onde|qual|quais|tem|aceita|faz|posso|consegue)\b/.test(normalized);
+}
+
 function configuredTransferRules(agent?: any): string[] {
   const b4 = agent?.funnel_bloco4;
   const raw = b4?.transfer_now_rules || b4?.handoff_triggers || [];
@@ -2415,14 +2429,24 @@ export async function processPedroV2Turn(
   // (garantia, financiamento, documentação, FAQ — o que o agente hoje não sabe e às vezes inventa). Só
   // custa quando o agente TEM base ligada (senão retorna "" após 1 query barata). Best-effort: nunca
   // derruba o turno. Query = a mensagem REAL do lead (não o enriched, p/ não poluir o embedding).
-  const _knowledgeContext = await fetchPedroKnowledgeContext(supabase, {
-    agentId: input.agent.id,
-    userId: input.agent.user_id,
-    agentName: input.agent.name,
-    queryText: text,
-    openaiKey: _openaiKey,
-    auditable: !dryRun,
-  });
+  const _shouldUseKnowledgeContext = shouldUsePedroKnowledgeContext(text, contextualIntent, brainPlan);
+  const _knowledgeContext = _shouldUseKnowledgeContext
+    ? await fetchPedroKnowledgeContext(supabase, {
+        agentId: input.agent.id,
+        userId: input.agent.user_id,
+        agentName: input.agent.name,
+        queryText: text,
+        openaiKey: _openaiKey,
+        auditable: !dryRun,
+      })
+    : "";
+  if (!_shouldUseKnowledgeContext) {
+    log("info", "pedro_v2_rag_skipped_cost_gate", {
+      lead_id: lead?.id || null,
+      action: brainPlan?.action || null,
+      intent: contextualIntent?.intent || null,
+    });
+  }
 
   // CÉREBRO/FOCO DA CONVERSA: garante o VEÍCULO EM FOCO (o carro que a conversa discute) no pool de fotos —
   // com isso "fotos dele / mais detalhes" resolve NELE (pickReferencedVehicle ancora no foco), em vez de
@@ -2969,7 +2993,8 @@ export async function processPedroV2Turn(
     }
   }
 
-  if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
+  const _useBrainPhotoClosing = String(Deno.env.get("PEDRO_PHOTO_CLOSING_LLM") || "").toLowerCase() === "on";
+  if (_useBrainPhotoClosing && reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
     const brainClosing = await generatePedroBrainReply({
       agent: input.agent,
       agent_system_prompt: input.agent?.system_prompt || input.agent?.prompt || null,
@@ -3008,6 +3033,17 @@ export async function processPedroV2Turn(
         text_source: brainClosing.source,
       };
     }
+  } else if (reply?.source === "vehicle_photos_reply" && Array.isArray(reply.media) && reply.media.length > 0) {
+    reply = {
+      ...reply,
+      text_source: (reply as any).text_source || "deterministic_photo_reply",
+    };
+    log("info", "pedro_v2_photo_closing_llm_skipped_cost_gate", {
+      lead_id: lead?.id || null,
+      media_count: reply.media.length,
+      selected_vehicle_label: (reply as any).selected_vehicle_label || null,
+      photo_target: (reply as any).photo_target || null,
+    });
   }
 
   let memoryAfterReply = effectiveMemory;

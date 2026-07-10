@@ -3,20 +3,30 @@ import { searchPedroStock } from "../../supabase/functions/_shared/pedro-v2/stoc
 import { resolvePedroVehicleTurn } from "../../supabase/functions/_shared/pedro-v2/vehicleResolver_20260525_brain";
 
 function mockSupabaseWithBndvToken() {
-  const chain = {
-    select: vi.fn(() => chain),
-    eq: vi.fn(() => chain),
-    maybeSingle: vi.fn(async () => ({
-      data: {
-        is_active: true,
-        api_key_encrypted: JSON.stringify({ api_token: "test-token" }),
-      },
-      error: null,
-    })),
+  const makeChain = () => {
+    const filters: Record<string, unknown> = {};
+    const chain = {
+      select: vi.fn(() => chain),
+      eq: vi.fn((column: string, value: unknown) => {
+        filters[column] = value;
+        return chain;
+      }),
+      maybeSingle: vi.fn(async () => {
+        if (filters.platform !== "bndv") return { data: null, error: null };
+        return {
+          data: {
+            is_active: true,
+            api_key_encrypted: JSON.stringify({ api_token: "test-token" }),
+          },
+          error: null,
+        };
+      }),
+    };
+    return chain;
   };
 
   return {
-    from: vi.fn(() => chain),
+    from: vi.fn(() => makeChain()),
   };
 }
 
