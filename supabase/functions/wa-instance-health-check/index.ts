@@ -80,12 +80,16 @@ Deno.serve(async (req) => {
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
-    // Instâncias a checar: UazAPI, que estão ativas OU marcadas 'connected' (pra pegar quem caiu).
-    // Sem filtro de provider (PostgREST .neq é null-unsafe e excluiria provider NULL). Instância
-    // Meta não tem api_url -> é pulada no loop pelo check de api_url.
+    // Instâncias a checar: TODAS as UazAPI (têm api_url). Antes o filtro era
+    // "is_active OU status=connected" — mas quando um número caía de vez (is_active=false
+    // E status=disconnected) ele saía da checagem e NUNCA mais era reavaliado: ficava
+    // travado em "caído" até religar o QR na mão, mesmo se a sessão voltasse na UazAPI.
+    // Agora checamos todas (Meta não tem api_url -> pulada no loop), então um número que
+    // reconecta na UazAPI volta a ser marcado connected sozinho. checkRealStatus com erro
+    // de rede não muda nada (retorna 'error' e o loop pula).
     const { data: instances } = await admin.from("wa_instances")
-      .select("id, user_id, instance_name, api_url, api_key_encrypted, status, seller_member_id, disconnect_alert_sent_at")
-      .or("is_active.eq.true,status.eq.connected");
+      .select("id, user_id, instance_name, api_url, api_key_encrypted, status, seller_member_id, disconnect_alert_sent_at, last_connected_at")
+      .not("api_url", "is", null);
 
     let checked = 0, status_mudou = 0, avisos = 0, erros = 0;
     const masterCache: Record<string, any> = {};
@@ -111,7 +115,9 @@ Deno.serve(async (req) => {
 
       // VENDEDOR desconectado -> lembrete a cada ~1h (07h–21h BRT) pela instância master da loja,
       // até reconectar. Reconectou -> disconnect_alert_sent_at zera (bloco isConnected acima).
-      if (!isConnected && inst.seller_member_id) {
+      // Guard `last_connected_at`: só lembra quem JÁ conectou antes (caiu) — não fica
+      // cutucando número de vendedor que nunca chegou a conectar (teste/abandonado).
+      if (!isConnected && inst.seller_member_id && inst.last_connected_at) {
         const horaBRT = new Date(Date.now() - 3 * 3600 * 1000).getUTCHours();
         if (horaBRT < 7 || horaBRT >= 21) continue; // não acordar o vendedor de madrugada
         const jaAvisou = inst.disconnect_alert_sent_at &&

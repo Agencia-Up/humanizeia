@@ -255,6 +255,22 @@ Deno.serve(async (req) => {
       console.log(
         `[pedro-webhook-v2] connection event instance=${connInstanceName} state=${state} -> ${connError ? "ERROR " + connError.message : "marked connected"}`,
       );
+    } else if (
+      connInstanceName &&
+      (state === "close" || state === "closed" || state === "disconnected" ||
+        state === "logout" || state === "logged_out" || state === "connection_closed")
+    ) {
+      // Queda em TEMPO REAL: antes isto era no-op e o status so caia no cron de 5min
+      // (o numero ficava "connected" no banco enquanto estava morto, e o disparo
+      // tentava enviar e falhava). Marca desconectado na hora. Se voltar, o evento
+      // "open" acima (ou a chegada de mensagem, mais abaixo) reativa.
+      const { error: connError } = await supabase
+        .from("wa_instances")
+        .update({ is_active: false, status: "disconnected", updated_at: new Date().toISOString() })
+        .eq("instance_name", connInstanceName);
+      console.log(
+        `[pedro-webhook-v2] connection event instance=${connInstanceName} state=${state} -> ${connError ? "ERROR " + connError.message : "marked disconnected"}`,
+      );
     } else {
       console.log(
         `[pedro-webhook-v2] connection event instance=${connInstanceName ?? "?"} state=${state || "?"} -> no-op`,
@@ -288,15 +304,37 @@ Deno.serve(async (req) => {
 
   if (!instanceName) return jsonResponse({ ok: false, error: "instance_missing" }, 400);
 
-  const { data: waInstance, error: instanceError } = await supabase
+  // Busca a instancia pelo nome. NAO exige is_active=true: se a UAZAPI esta
+  // ENTREGANDO uma mensagem, o numero esta VIVO no WhatsApp — mesmo que o nosso
+  // status tenha marcado "caido" por falso-negativo (cron/circuit-breaker). Antes,
+  // is_active=false aqui = 404 e a mensagem do cliente era DESCARTADA (dezenas por
+  // minuto nos logs). Preferimos a linha ativa; sobrou so a "caida" -> curamos o
+  // status (prova de vida) e seguimos. Quem RESPONDE segue decidido pelos gates de
+  // sempre mais abaixo (agente ativo / regra do vendedor) — nada muda pra numero ja
+  // ativo (caminho quente identico).
+  const { data: waRows, error: instanceError } = await supabase
     .from("wa_instances")
     .select("*")
     .eq("instance_name", instanceName)
-    .eq("is_active", true)
-    .maybeSingle();
+    .order("is_active", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(1);
 
+  const waInstance = (waRows || [])[0];
   if (instanceError || !waInstance) {
     return jsonResponse({ ok: false, error: "active_instance_not_found" }, 404);
+  }
+
+  // Auto-cura: mensagem chegou => sessao viva. Se estava marcada caida, reativa
+  // (nao mexe em 'no_credentials' = falta de chave, nao queda de sessao).
+  if (waInstance.is_active !== true && waInstance.status !== "no_credentials") {
+    await supabase
+      .from("wa_instances")
+      .update({ is_active: true, status: "connected", updated_at: new Date().toISOString() })
+      .eq("id", waInstance.id);
+    waInstance.is_active = true;
+    waInstance.status = "connected";
+    console.log(`[pedro-webhook-v2] self-heal instance=${instanceName} (mensagem recebida em instancia marcada caida) -> reativada`);
   }
 
 
