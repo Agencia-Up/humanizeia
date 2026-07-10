@@ -248,7 +248,13 @@ export async function analisarLead(
   const { data: qualidade } = await admin.rpc('feedback_classificar_qualidade', {
     p_tenant: tenant, p_nicho: nicho, p_signals: sinais,
   });
-  const q = (qualidade as string) || null;
+  // A régua de sinais DUROS (feedback_regras_qualidade: carro_na_troca+entrada, etc.)
+  // só bate em casos raros -> a maioria vinha NULL. Fallback pela leitura holística da
+  // IA (potencial_compra), que reflete melhor a realidade da conversa:
+  //   alto -> qualificado(1) · medio -> pouco(2) · baixo -> ruim(3) · nao_lead -> nem-é-lead(4)
+  //   sem_dados/'' -> fica null (a IA não teve evidência pra classificar).
+  const POT_QUALIDADE: Record<string, string> = { alto: '1_alto', medio: '2_medio', baixo: '3_baixo', nao_lead: '4_nao_lead' };
+  const q = (qualidade as string) || POT_QUALIDADE[String(contrato.potencial_compra || '').toLowerCase()] || null;
 
   const veredito = decidirVeredito(q, score, !!contrato.houve_venda, !!contrato.vendedor_descartou_lead_bom);
   const rotulagem = veredito === 'rotulagem_incorreta';
