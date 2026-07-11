@@ -10,6 +10,31 @@ export default function ConfirmEmail() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('Redirecionando para o dashboard...');
 
+  const buildFriendlyError = (err: any) => {
+    const rawMessage = String(err?.message || '');
+    const url = new URL(window.location.href);
+    const type = url.searchParams.get('type') || new URLSearchParams((url.hash || '').replace(/^#/, '')).get('type');
+    const sentAt = url.searchParams.get('sent_at');
+    const isInvalidInvite =
+      type === 'invite' &&
+      /invalid|expired|link|token/i.test(rawMessage);
+
+    if (!isInvalidInvite) {
+      return rawMessage || 'Erro ao confirmar email.';
+    }
+
+    let ageHint = '';
+    if (sentAt) {
+      const sentDate = new Date(sentAt);
+      if (!Number.isNaN(sentDate.getTime())) {
+        const hours = Math.max(0, Math.floor((Date.now() - sentDate.getTime()) / 36e5));
+        if (hours >= 1) ageHint = ` Este convite foi gerado ha aproximadamente ${hours}h.`;
+      }
+    }
+
+    return `Este convite expirou, ja foi usado ou foi substituido por um convite mais recente.${ageHint} Peça para o administrador reenviar o convite e abra o e-mail mais novo.`;
+  };
+
   /** Verifica se o usuário é seller e decide para onde redirecionar */
   const redirectAfterConfirm = async (type?: string | null) => {
     // Recuperação de senha: SEMPRE manda redefinir a senha (master OU vendedor),
@@ -86,7 +111,7 @@ export default function ConfirmEmail() {
         throw new Error('Link de confirmação inválido ou expirado. Solicite um novo convite.');
       } catch (err: any) {
         console.error('[ConfirmEmail] Erro:', err);
-        setErrorMsg(err.message || 'Erro ao confirmar email.');
+        setErrorMsg(buildFriendlyError(err));
         setStatus('error');
       }
     };

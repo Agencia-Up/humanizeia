@@ -326,11 +326,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const origin = req.headers.get('origin') || 'https://logosiabrasil.com';
-    const redirectTo = `${origin}/auth/confirm`;
     // Dominio canonico do app (Site URL allowlisted). O link do e-mail SEMPRE
     // aponta pra ca, onde mora o ConfirmEmail — independente da origem do master.
     const APP_BASE_URL = 'https://logosiabrasil.com';
+    const origin = req.headers.get('origin') || APP_BASE_URL;
+    const redirectTo = `${APP_BASE_URL}/auth/confirm`;
 
     // Step 1: Create user via Admin API (does NOT send default Supabase email)
     const userMetadata = { full_name: member.name, role: 'seller', master_user_id: masterUserId };
@@ -517,7 +517,8 @@ Deno.serve(async (req) => {
       // estatico e NAO roda o JS, entao NAO consome o token. So o clique real consome.
       const hashedToken = (linkData?.hashed_token || rawResponse?.hashed_token || '') as string;
       if (hashedToken) {
-        actionLink = `${APP_BASE_URL}/auth/confirm?token_hash=${encodeURIComponent(hashedToken)}&type=${linkType}`;
+        const sentAt = new Date().toISOString();
+        actionLink = `${APP_BASE_URL}/auth/confirm?token_hash=${encodeURIComponent(hashedToken)}&type=${linkType}&sent_at=${encodeURIComponent(sentAt)}`;
         usedType = linkType;
         console.log(`[invite-seller] Link token_hash '${linkType}' gerado para ${email} (alreadyConfirmed=${alreadyConfirmed})`);
         break;
@@ -671,6 +672,10 @@ async function sendInviteEmailViaResend(
         Se o botão não funcionar, copie e cole este link no navegador:<br>
         <a href="${loginUrl}" style="color:#2d3a7c;word-break:break-all;">${loginUrl}</a>
       </p>
+      ${action === 'invited'
+        ? `<p style="color:#b07b16;font-size:12px;line-height:1.5;margin-top:14px;">Este convite e de uso unico e pode expirar. Se aparecer "link invalido ou expirado", peça para o administrador reenviar o convite e use sempre o e-mail mais recente.</p>`
+        : ''
+      }
     </div>
     <div style="background:#f9f9f9;padding:16px 24px;text-align:center;border-top:1px solid #eee;">
       <p style="color:#aaa;font-size:11px;margin:0;">Equipe LogosIA — suporte@logosiabrasil.com</p>
