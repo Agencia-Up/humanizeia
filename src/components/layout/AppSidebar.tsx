@@ -451,6 +451,7 @@ export function AppSidebar() {
                 concentrar os recursos de WhatsApp; começa com Conversas. */}
             <NavGroup label="WhatsApp" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Conversas', url: '/conversas', icon: MessageCircle }} />
+              <NavItem collapsed={collapsed} item={{ title: 'Pixel & Conversões', url: '/meta-pixels', icon: Plug }} />
             </NavGroup>
 
             {/* ── Sistema ── */}

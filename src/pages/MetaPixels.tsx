@@ -16,13 +16,17 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 export default function MetaPixels() {
-  const { pixels, isLoading, addPixel, togglePixel, deletePixel } = useMetaPixels();
+  const { pixels, isLoading, addPixel, updatePixel, togglePixel, deletePixel } = useMetaPixels();
   const [selectedPixelId, setSelectedPixelId] = useState<string | undefined>();
   const { data: events } = useCAPIEvents(selectedPixelId);
   const { sendEvents } = useCAPISend();
 
-  const [newPixel, setNewPixel] = useState({ pixel_id: '', pixel_name: '', domain: '' });
+  const [newPixel, setNewPixel] = useState({ pixel_id: '', pixel_name: '', domain: '', access_token: '' });
   const [addOpen, setAddOpen] = useState(false);
+
+  // Editar a chave da API de Conversões de um pixel já cadastrado
+  const [tokenEdit, setTokenEdit] = useState<{ id: string; nome: string } | null>(null);
+  const [tokenValue, setTokenValue] = useState('');
 
   // Test event form
   const [testEvent, setTestEvent] = useState({ event_name: 'Purchase', event_source_url: '', value: '' });
@@ -36,9 +40,16 @@ export default function MetaPixels() {
     }
     addPixel.mutate(newPixel, {
       onSuccess: () => {
-        setNewPixel({ pixel_id: '', pixel_name: '', domain: '' });
+        setNewPixel({ pixel_id: '', pixel_name: '', domain: '', access_token: '' });
         setAddOpen(false);
       },
+    });
+  };
+
+  const handleSaveToken = () => {
+    if (!tokenEdit) return;
+    updatePixel.mutate({ id: tokenEdit.id, access_token: tokenValue }, {
+      onSuccess: () => { setTokenEdit(null); setTokenValue(''); },
     });
   };
 
@@ -87,6 +98,13 @@ export default function MetaPixels() {
                   <Label>Domínio (opcional)</Label>
                   <Input placeholder="seusite.com.br" value={newPixel.domain} onChange={(e) => setNewPixel({ ...newPixel, domain: e.target.value })} />
                 </div>
+                <div>
+                  <Label>Token da API de Conversões (chave API)</Label>
+                  <Input type="password" placeholder="EAAG... (token da API de Conversões)" value={newPixel.access_token} onChange={(e) => setNewPixel({ ...newPixel, access_token: e.target.value })} />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Gere no Facebook: Gerenciador de Eventos → seu Pixel → Configurações → API de Conversões → Gerar token de acesso. É esse token que envia as conversões (leads e vendas) direto pro Facebook.
+                  </p>
+                </div>
                 <Button onClick={handleAddPixel} disabled={addPixel.isPending} className="w-full">
                   {addPixel.isPending ? 'Salvando...' : 'Adicionar Pixel'}
                 </Button>
@@ -132,6 +150,15 @@ export default function MetaPixels() {
                           Último evento: {format(new Date(pixel.last_event_at), 'dd/MM HH:mm')}
                         </p>
                       )}
+                      <div className="flex items-center justify-between border-t border-border/40 pt-2 text-sm">
+                        <span className="text-muted-foreground">API de Conversões</span>
+                        {pixel.access_token_encrypted
+                          ? <Badge className="bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">Chave conectada</Badge>
+                          : <Badge variant="outline" className="border-amber-500/40 text-amber-500">Falta a chave</Badge>}
+                      </div>
+                      <Button size="sm" variant="ghost" className="w-full text-xs" onClick={() => { setTokenEdit({ id: pixel.id, nome: pixel.pixel_name }); setTokenValue(''); }}>
+                        {pixel.access_token_encrypted ? 'Trocar chave API' : 'Adicionar chave API'}
+                      </Button>
                       <div className="flex gap-2">
                         <Button size="sm" variant="outline" className="flex-1" onClick={() => { setTestPixelId(pixel.id); setTestOpen(true); }}>
                           <Send className="mr-1 h-3 w-3" /> Testar
@@ -229,6 +256,25 @@ export default function MetaPixels() {
               </div>
               <Button onClick={handleSendTestEvent} className="w-full">
                 <Send className="mr-2 h-4 w-4" /> Enviar Evento
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Editar/adicionar a chave da API de Conversões de um pixel */}
+        <Dialog open={!!tokenEdit} onOpenChange={(o) => { if (!o) { setTokenEdit(null); setTokenValue(''); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Chave da API de Conversões — {tokenEdit?.nome}</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Token da API de Conversões</Label>
+                <Input type="password" placeholder="EAAG..." value={tokenValue} onChange={(e) => setTokenValue(e.target.value)} />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Facebook → Gerenciador de Eventos → seu Pixel → Configurações → API de Conversões → Gerar token de acesso. Cole o token aqui.
+                </p>
+              </div>
+              <Button onClick={handleSaveToken} disabled={updatePixel.isPending || !tokenValue.trim()} className="w-full">
+                {updatePixel.isPending ? 'Salvando...' : 'Salvar chave'}
               </Button>
             </div>
           </DialogContent>

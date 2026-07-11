@@ -23,10 +23,13 @@ export function useMetaPixels() {
   });
 
   const addPixel = useMutation({
-    mutationFn: async (pixel: { pixel_id: string; pixel_name: string; domain?: string }) => {
+    mutationFn: async (pixel: { pixel_id: string; pixel_name: string; domain?: string; access_token?: string }) => {
+      const { access_token, ...rest } = pixel;
+      const row: any = { ...rest, user_id: user!.id, is_active: true };
+      if (access_token) row.access_token_encrypted = access_token.trim();
       const { data, error } = await supabase
         .from('meta_pixels')
-        .insert({ ...pixel, user_id: user!.id })
+        .insert(row)
         .select()
         .single();
       if (error) throw error;
@@ -35,6 +38,23 @@ export function useMetaPixels() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meta-pixels'] });
       toast.success('Pixel adicionado com sucesso');
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  // Atualiza dados do pixel — inclusive o token da API de Conversões (chave API).
+  const updatePixel = useMutation({
+    mutationFn: async ({ id, access_token, pixel_name, domain }: { id: string; access_token?: string; pixel_name?: string; domain?: string }) => {
+      const patch: any = {};
+      if (access_token !== undefined) patch.access_token_encrypted = access_token ? access_token.trim() : null;
+      if (pixel_name !== undefined) patch.pixel_name = pixel_name;
+      if (domain !== undefined) patch.domain = domain;
+      const { error } = await supabase.from('meta_pixels').update(patch).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meta-pixels'] });
+      toast.success('Pixel atualizado');
     },
     onError: (err: any) => toast.error(err.message),
   });
