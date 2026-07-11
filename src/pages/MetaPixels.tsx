@@ -15,6 +15,12 @@ import { Plus, Trash2, Send, Activity, Radio, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
+// NOTA (11/07): os acessos a addPixel/updatePixel/togglePixel/deletePixel usam `?.`
+// DE PROPOSITO. Em 11/07 a pagina inteira deu tela-branca (`updatePixel.isPending`
+// -> Cannot read properties of undefined) porque o hook useMetaPixels criava o
+// `updatePixel` mas NAO o incluia no return (corrigido no useCAPI.ts). O opcional
+// e a rede de seguranca: se uma mutacao vier undefined, a feature degrada em vez
+// de derrubar a rota inteira. NAO remover os `?.`.
 export default function MetaPixels() {
   const { pixels, isLoading, addPixel, updatePixel, togglePixel, deletePixel } = useMetaPixels();
   const [selectedPixelId, setSelectedPixelId] = useState<string | undefined>();
@@ -38,7 +44,7 @@ export default function MetaPixels() {
       toast.error('Preencha ID e nome do pixel');
       return;
     }
-    addPixel.mutate(newPixel, {
+    addPixel?.mutate(newPixel, {
       onSuccess: () => {
         setNewPixel({ pixel_id: '', pixel_name: '', domain: '', access_token: '' });
         setAddOpen(false);
@@ -48,7 +54,7 @@ export default function MetaPixels() {
 
   const handleSaveToken = () => {
     if (!tokenEdit) return;
-    updatePixel.mutate({ id: tokenEdit.id, access_token: tokenValue }, {
+    updatePixel?.mutate({ id: tokenEdit.id, access_token: tokenValue }, {
       onSuccess: () => { setTokenEdit(null); setTokenValue(''); },
     });
   };
@@ -105,8 +111,8 @@ export default function MetaPixels() {
                     Gere no Facebook: Gerenciador de Eventos → seu Pixel → Configurações → API de Conversões → Gerar token de acesso. É esse token que envia as conversões (leads e vendas) direto pro Facebook.
                   </p>
                 </div>
-                <Button onClick={handleAddPixel} disabled={addPixel.isPending} className="w-full">
-                  {addPixel.isPending ? 'Salvando...' : 'Adicionar Pixel'}
+                <Button onClick={handleAddPixel} disabled={addPixel?.isPending} className="w-full">
+                  {addPixel?.isPending ? 'Salvando...' : 'Adicionar Pixel'}
                 </Button>
               </div>
             </DialogContent>
@@ -133,7 +139,7 @@ export default function MetaPixels() {
                         <CardTitle className="text-base">{pixel.pixel_name}</CardTitle>
                         <CardDescription className="font-mono text-xs">{pixel.pixel_id}</CardDescription>
                       </div>
-                      <Switch checked={pixel.is_active} onCheckedChange={(checked) => togglePixel.mutate({ id: pixel.id, is_active: checked })} />
+                      <Switch checked={pixel.is_active} onCheckedChange={(checked) => togglePixel?.mutate({ id: pixel.id, is_active: checked })} />
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {pixel.domain && <Badge variant="outline">{pixel.domain}</Badge>}
@@ -166,7 +172,7 @@ export default function MetaPixels() {
                         <Button size="sm" variant="outline" onClick={() => setSelectedPixelId(pixel.id)}>
                           <Eye className="h-3 w-3" />
                         </Button>
-                        <Button size="sm" variant="destructive" onClick={() => deletePixel.mutate(pixel.id)}>
+                        <Button size="sm" variant="destructive" onClick={() => deletePixel?.mutate(pixel.id)}>
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
@@ -273,8 +279,8 @@ export default function MetaPixels() {
                   Facebook → Gerenciador de Eventos → seu Pixel → Configurações → API de Conversões → Gerar token de acesso. Cole o token aqui.
                 </p>
               </div>
-              <Button onClick={handleSaveToken} disabled={updatePixel.isPending || !tokenValue.trim()} className="w-full">
-                {updatePixel.isPending ? 'Salvando...' : 'Salvar chave'}
+              <Button onClick={handleSaveToken} disabled={updatePixel?.isPending || !tokenValue.trim()} className="w-full">
+                {updatePixel?.isPending ? 'Salvando...' : 'Salvar chave'}
               </Button>
             </div>
           </DialogContent>

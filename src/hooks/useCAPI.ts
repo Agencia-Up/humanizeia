@@ -81,7 +81,7 @@ export function useMetaPixels() {
     },
   });
 
-  return { pixels: pixelsQuery.data || [], isLoading: pixelsQuery.isLoading, addPixel, togglePixel, deletePixel };
+  return { pixels: pixelsQuery.data || [], isLoading: pixelsQuery.isLoading, addPixel, updatePixel, togglePixel, deletePixel };
 }
 
 // CAPI event sending
