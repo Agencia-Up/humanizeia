@@ -29,7 +29,8 @@ type Linha = Row & { key: string | null; jose?: JoseAgg };
 type SortKey = 'produto' | 'total' | 'qualificados' | 'pouco' | 'ruins' | 'nao_lead' | 'pct' | 'gasto';
 type StatusFiltro = 'todos' | 'ativos' | 'anunciados' | 'nao_anunciados';
 
-const PRESETS = [{ v: 30, l: '30 dias' }, { v: 90, l: '90 dias' }, { v: 365, l: '1 ano' }];
+const PRESETS = [{ v: 7, l: '7 dias' }, { v: 30, l: '30 dias' }, { v: 60, l: '60 dias' }];
+const MAX_DIAS = 60; // teto do filtro: a Meta fica inviável de somar por carro além disso
 const STATUS: { v: StatusFiltro; l: string }[] = [
   { v: 'todos', l: 'Todos' }, { v: 'ativos', l: 'Só ativos' }, { v: 'anunciados', l: 'Anunciados' }, { v: 'nao_anunciados', l: 'Não anunciados' },
 ];
@@ -91,12 +92,15 @@ export function FeedbackPorProdutoTab() {
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
     try {
+      // trava de 60 dias: nunca deixa o início passar do teto (Meta inviável além disso)
+      const minIso = isoMenosDias(MAX_DIAS);
+      const iniClamp = modo === 'custom' && ini < minIso ? minIso : ini;
       const params = modo === 'custom'
-        ? { p_dias: null, p_ini: ini, p_fim: fim }
+        ? { p_dias: null, p_ini: iniClamp, p_fim: fim }
         : { p_dias: dias, p_ini: null, p_fim: null };
       // José: puxa o gasto por criativo AO VIVO da Meta no MESMO intervalo do filtro
       // (histórico completo), não do snapshot (que é só de 1/7 dias).
-      const since = modo === 'custom' ? ini : isoMenosDias(dias - 1);
+      const since = modo === 'custom' ? iniClamp : isoMenosDias(dias - 1);
       const until = modo === 'custom' ? fim : hojeISO();
       const [q, j] = await Promise.all([
         (supabase as any).rpc('feedback_produtos_qualidade', params),
@@ -292,11 +296,12 @@ export function FeedbackPorProdutoTab() {
         {modo === 'custom' && (
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span>de</span>
-            <input type="date" value={ini} max={fim} onChange={(e) => setIni(e.target.value)}
+            <input type="date" value={ini} min={isoMenosDias(MAX_DIAS)} max={fim} onChange={(e) => setIni(e.target.value)}
               className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground" />
             <span>até</span>
             <input type="date" value={fim} min={ini} max={hojeISO()} onChange={(e) => setFim(e.target.value)}
               className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground" />
+            <span className="text-[10px] opacity-70">(máx. 60 dias)</span>
           </div>
         )}
         <button onClick={carregar} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground">

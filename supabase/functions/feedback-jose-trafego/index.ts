@@ -6,7 +6,7 @@
 // divergir. Também devolve o cache de carros lidos por imagem (jose_criativo_carro).
 // SÓ LEITURA — não altera campanha/anúncio nenhum. NÃO depende do flag da Cabine.
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { getDashboardCards } from "../_shared/jose-v2/dashboardQueries.ts";
+import { getSpendByCreative } from "../_shared/jose-v2/dashboardQueries.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,22 +43,24 @@ Deno.serve(async (req) => {
       .eq("tenant_id", tenant).not("carro", "is", null).neq("carro", "indefinido");
     const carros_ia = Array.isArray(carrosRows) ? carrosRows : [];
 
-    // gasto por criativo AO VIVO da Meta pro intervalo pedido (histórico completo)
-    let cards: any = null;
+    // gasto por criativo AO VIVO da Meta pro intervalo pedido — HISTÓRICO completo
+    // (inclui anúncios pausados que gastaram no período; não só os ativos de hoje).
+    let dados: any = null;
     try {
-      cards = await getDashboardCards(admin, tenant, timeRange ? { timeRange } : { datePreset: "last_30d" });
+      dados = await getSpendByCreative(admin, tenant, timeRange ? { timeRange } : { datePreset: "last_30d" });
     } catch (e) {
       return json({ ok: true, tem_dados: false, criativos: [], carros_ia, erro_meta: String((e as any)?.message || e) });
     }
 
-    if (!cards) return json({ ok: true, tem_dados: false, criativos: [], carros_ia, reason: "sem_conta_meta" });
+    if (!dados) return json({ ok: true, tem_dados: false, criativos: [], carros_ia, reason: "sem_conta_meta" });
 
     return json({
       ok: true,
       tem_dados: true,
       computed_at: new Date().toISOString(),
-      periodo: cards.periodo,
-      criativos: Array.isArray(cards.por_criativo) ? cards.por_criativo : [],
+      periodo: dados.periodo,
+      gasto_total: dados.gasto_total,
+      criativos: Array.isArray(dados.criativos) ? dados.criativos : [],
       carros_ia,
     });
   } catch (e) {

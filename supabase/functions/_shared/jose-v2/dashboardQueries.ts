@@ -151,6 +151,141 @@ async function fetchActiveAds(acc: MetaAccount): Promise<any[]> {
   return out;
 }
 
+// Busca metadados (nome/status/arte) de anúncios ESPECÍFICOS por id (lotes de 50),
+// inclusive PAUSADOS — usado pelo HISTÓRICO da área de Feedbacks (Facebook devolve
+// os objetos mesmo pausados; só não devolve os DELETADOS, aí caímos no ad_name do insight).
+async function fetchAdsByIds(acc: MetaAccount, ids: string[]): Promise<Map<string, any>> {
+  const map = new Map<string, any>();
+  const uniq = Array.from(new Set(ids.filter(Boolean).map(String)));
+  for (let i = 0; i < uniq.length; i += 50) {
+    const chunk = uniq.slice(i, i + 50);
+    const url = new URL(`${META_GRAPH_URL}/`);
+    url.searchParams.set("ids", chunk.join(","));
+    url.searchParams.set("fields", "name,effective_status,creative{thumbnail_url,image_url}");
+    url.searchParams.set("access_token", acc.accessToken);
+    try {
+      const res = await fetch(url.toString());
+      const data = await res.json();
+      if (data?.error) { console.warn("[dashboardQueries] adsByIds erro:", data.error?.message); continue; }
+      for (const id of Object.keys(data || {})) map.set(String(id), data[id]);
+    } catch (e) { console.warn("[dashboardQueries] adsByIds fetch falhou:", e); }
+  }
+  return map;
+}
+
+// Insights no nível de ANÚNCIO, ORDENADOS por maior gasto, paginando só o topo. A conta
+// tem MILHARES de cópias de anúncio em 60-90 dias (level=ad sem paginar trava e subconta);
+// mas o gasto é super concentrado (os maiores gastadores = ~todo o valor). Pegamos as
+// primeiras páginas por gasto desc e paramos cedo quando o gasto vira centavo (irrelevante
+// pra decisão). Assim bate ~100% do total sem explodir. sort=spend_descending (testado).
+async function fetchTopAdSpend(
+  acc: MetaAccount,
+  opts: { datePreset?: string; timeRange?: { since: string; until: string } },
+  maxPages = 4,
+): Promise<any[]> {
+  const first = new URL(`${META_GRAPH_URL}/${acc.accountId}/insights`);
+  first.searchParams.set("access_token", acc.accessToken);
+  if (opts.timeRange?.since && opts.timeRange?.until) {
+    first.searchParams.set("time_range", JSON.stringify({ since: opts.timeRange.since, until: opts.timeRange.until }));
+  } else {
+    first.searchParams.set("date_preset", opts.datePreset || "last_30d");
+  }
+  first.searchParams.set("level", "ad");
+  first.searchParams.set("fields", "ad_id,ad_name,spend,impressions,actions");
+  first.searchParams.set("sort", "spend_descending");
+  first.searchParams.set("limit", "500");
+  let next: string | null = first.toString();
+  const out: any[] = [];
+  let pages = 0;
+  try {
+    while (next && pages < maxPages) {
+      pages++;
+      const res = await fetch(next);
+      const data = await res.json();
+      if (data?.error) { console.warn("[dashboardQueries] topAdSpend erro:", data.error?.message); break; }
+      const rows = Array.isArray(data?.data) ? data.data : [];
+      out.push(...rows);
+      // ordenado desc: se o último da página já é < R$1, o resto é cauda irrelevante -> para.
+      const last = rows[rows.length - 1];
+      if (!last || num(last.spend) < 1) break;
+      next = data?.paging?.next || null;
+    }
+  } catch (e) { console.warn("[dashboardQueries] topAdSpend fetch falhou:", e); }
+  return out;
+}
+
+export interface SpendByCreative {
+  periodo: string; ad_account_id: string; moeda: string; gasto_total: number;
+  criativos: Array<{ nome: string; gasto: number; conversas: number; cpm: number; custo_conversa: number | null; status: string | null; thumbnail_url: string | null }>;
+}
+// HISTÓRICO por criativo (área de Feedbacks): gasto por CARRO no período, incluindo
+// anúncios PAUSADOS que gastaram — o que o por_criativo dos cards (só ATIVOS) não dá.
+// Estratégia: pega os anúncios por MAIOR gasto (fetchTopAdSpend), agrupa por nome (=carro);
+// status vem de quem ainda está ATIVO na Meta (fetchActiveAds); a arte dos pausados vem de
+// um anúncio representativo por carro (poucas chamadas). Bate ~o total sem explodir volume.
+export async function getSpendByCreative(
+  admin: any, userId: string,
+  opts?: { adAccountId?: string; datePreset?: string; timeRange?: { since: string; until: string } },
+): Promise<SpendByCreative | null> {
+  const timeRange = (opts?.timeRange?.since && opts?.timeRange?.until) ? opts.timeRange : undefined;
+  const datePreset = timeRange ? undefined : (opts?.datePreset || "last_30d");
+  const acc = await resolveMetaAccount(admin, userId, opts?.adAccountId);
+  if (!acc) return null;
+
+  const [byAd, activeAds] = await Promise.all([
+    fetchTopAdSpend(acc, { datePreset, timeRange }),
+    fetchActiveAds(acc),
+  ]);
+  // nome (normalizado p/ chave) -> arte do anúncio ATIVO (pra status + thumbnail dos ativos)
+  const activeByName = new Map<string, string | null>();
+  for (const ad of activeAds) {
+    const key = String(ad?.name || "").trim().toLowerCase();
+    if (key && !activeByName.has(key)) activeByName.set(key, ad?.creative?.image_url || ad?.creative?.thumbnail_url || null);
+  }
+
+  const byName = new Map<string, any>();
+  let gasto_total = 0;
+  for (const r of byAd) {
+    const spend = num(r.spend);
+    gasto_total += spend;
+    const rawName = r.ad_name || "—";
+    const key = String(rawName).trim().toLowerCase();
+    if (!key) continue;
+    let g = byName.get(key);
+    if (!g) { g = { nome: cleanAdName(rawName), gasto: 0, conversas: 0, impressoes: 0, repId: String(r.ad_id || ""), thumbnail_url: null }; byName.set(key, g); }
+    g.gasto += spend;
+    g.conversas += conversasFromActions(r.actions);
+    g.impressoes += num(r.impressions);
+  }
+  // status + arte: ativo se o nome casa com um anúncio ativo; senão busca a arte do representativo
+  const semArte: any[] = [];
+  for (const [key, g] of byName) {
+    g.ativo = activeByName.has(key);
+    g.thumbnail_url = activeByName.get(key) || null;
+    if (!g.thumbnail_url && g.repId) semArte.push(g);
+  }
+  if (semArte.length) {
+    const meta = await fetchAdsByIds(acc, semArte.map((g) => g.repId));
+    for (const g of semArte) {
+      const m = meta.get(String(g.repId));
+      if (m) g.thumbnail_url = m.creative?.image_url || m.creative?.thumbnail_url || null;
+    }
+  }
+
+  const criativos = Array.from(byName.values())
+    .map((g: any) => ({
+      nome: g.nome, gasto: g.gasto, conversas: g.conversas,
+      cpm: g.impressoes > 0 ? (g.gasto / g.impressoes) * 1000 : 0,
+      custo_conversa: g.conversas > 0 ? g.gasto / g.conversas : null,
+      status: g.ativo ? "ACTIVE" : "PAUSED", thumbnail_url: g.thumbnail_url,
+    }))
+    .sort((a, b) => b.gasto - a.gasto);
+  return {
+    periodo: timeRange ? `${timeRange.since} a ${timeRange.until}` : (datePreset || "last_30d"),
+    ad_account_id: acc.accountDbId, moeda: acc.moeda, gasto_total, criativos,
+  };
+}
+
 // De onde os leads REALMENTE vieram (cidade declarada) + quantos bons por cidade.
 async function leadOriginByCity(
   admin: any,
