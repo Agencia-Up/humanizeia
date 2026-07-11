@@ -227,7 +227,8 @@ function validOutcome(value: unknown): boolean {
     case "set_presented_vehicle_focus": return validEntityReference(value.vehicle);
     case "mark_photos_sent": return isNonEmptyString(value.vehicleKey) && isStringArray(value.photoIds);
     case "advance_stage": return STAGES.has(String(value.stage));
-    case "mark_handoff_completed": return isNonEmptyString(value.sellerId);
+    // HF-1: sellerId é resolvido pela saga no dispatch — o outcome do plano não o afirma.
+    case "mark_handoff_completed": return value.sellerId === undefined || isNonEmptyString(value.sellerId);
     case "append_assistant_turn": return validTurn(value.turn, "agent");
     default: return false;
   }
@@ -243,8 +244,14 @@ function validEffect(value: unknown): boolean {
     case "send_media": return isNonEmptyString(value.vehicleKey) && isStringArray(value.photoIds);
     case "crm_write": return isNonEmptyString(value.leadId) && isRecord(value.fields);
     case "schedule_visit": return isNonEmptyString(value.leadId) && isNonEmptyString(value.slot);
-    case "handoff": return isNonEmptyString(value.leadId) && isNonEmptyString(value.sellerId);
-    case "notify_seller": return isNonEmptyString(value.sellerId) && isNonEmptyString(value.reason);
+    // HF-1: a LLM NUNCA fornece sellerId. handoff = leadId + reason tipado + briefing factual (o engine é quem
+    // materializa briefing/etiquetas — do modelo basta o motivo; briefing ausente vira "" e o engine preenche).
+    case "handoff": return isNonEmptyString(value.leadId) && isNonEmptyString(value.reason)
+      && (value.briefing === undefined || typeof value.briefing === "string")
+      && (value.correlationId === undefined || isNonEmptyString(value.correlationId)) && value.sellerId === undefined;
+    case "notify_seller": return isNonEmptyString(value.leadId) && isNonEmptyString(value.reason)
+      && (value.etiquetas === undefined || isRecord(value.etiquetas))
+      && (value.correlationId === undefined || isNonEmptyString(value.correlationId)) && value.sellerId === undefined;
     default: return false;
   }
 }

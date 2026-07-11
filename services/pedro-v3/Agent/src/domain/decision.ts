@@ -58,7 +58,11 @@ export type EffectOutcomeMutation =
   | { op: "set_presented_vehicle_focus"; effectId: Id; vehicle: EntityReference }
   | { op: "mark_photos_sent"; effectId: Id; vehicleKey: string; photoIds: string[] }
   | { op: "advance_stage"; effectId: Id; stage: ConversationStage }
-  | { op: "mark_handoff_completed"; effectId: Id; sellerId: string }
+  // HF-1 (2026-07-11): sellerId OPCIONAL — o vendedor é resolvido pela SAGA no dispatch (a LLM nunca fornece
+  // sellerId; o plano é congelado ANTES da resolução). O reducer só marca stage=handoff; o vendedor real fica
+  // auditável em ai_lead_transfers + provider_receipt do effect.
+  | { op: "mark_handoff_completed"; effectId: Id; sellerId?: string }
+  | { op: "mark_followup_sent"; effectId: Id; anchorEffectId: Id; stage: 1 | 2 | 3; sentAt: string }
   | { op: "append_assistant_turn"; effectId: Id; turn: ConversationTurn };
 
 // ── TurnInterpreter / TurnRelation ──────────────────────────────────────────
@@ -144,8 +148,13 @@ export type SendMessagePlan = EffectPlanBase & { kind: "send_message" };
 export type SendMediaPlan = EffectPlanBase & { kind: "send_media"; vehicleKey: string; photoIds: string[] };
 export type CrmWritePlan = EffectPlanBase & { kind: "crm_write"; leadId: string; fields: Record<string, JsonValue> };
 export type SchedulePlan = EffectPlanBase & { kind: "schedule_visit"; leadId: string; slot: string };
-export type HandoffPlan = EffectPlanBase & { kind: "handoff"; leadId: string; sellerId: string };
-export type NotifySellerPlan = EffectPlanBase & { kind: "notify_seller"; sellerId: string; reason: string };
+// HF-1 (2026-07-11): a LLM NUNCA fornece sellerId — o plano de handoff carrega o leadId + o MOTIVO tipado
+// (contrato semântico) + o BRIEFING factual materializado (texto puro do estado; vai p/ notes/summary). O
+// vendedor é resolvido pela saga confiável (vendedor anterior > roster do agente > roster do tenant > rodízio
+// justo) DENTRO do dispatcher. notify_seller depende do handoff e lê o vendedor efetivamente registrado no
+// banco (ai_lead_transfers) — nunca um palpite do modelo. `reason` usa HandoffReasonKind (transfer-templates).
+export type HandoffPlan = EffectPlanBase & { kind: "handoff"; leadId: string; reason: string; briefing: string; correlationId: string };
+export type NotifySellerPlan = EffectPlanBase & { kind: "notify_seller"; leadId: string; reason: string; etiquetas: Record<string, string>; correlationId: string };
 export type EffectPlan = SendMessagePlan | SendMediaPlan | CrmWritePlan | SchedulePlan | HandoffPlan | NotifySellerPlan;
 
 export const COMMERCIAL_EFFECT_KINDS: EffectKind[] = ["send_media", "crm_write", "schedule_visit", "handoff", "notify_seller"];
@@ -178,8 +187,8 @@ export type ProposedEffectPlan =
   | (Omit<SendMediaPlan, "effectId"> & { effectId?: Id })
   | (Omit<CrmWritePlan, "effectId"> & { effectId?: Id })
   | (Omit<SchedulePlan, "effectId"> & { effectId?: Id })
-  | (Omit<HandoffPlan, "effectId"> & { effectId?: Id })
-  | (Omit<NotifySellerPlan, "effectId"> & { effectId?: Id });
+  | (Omit<HandoffPlan, "effectId" | "correlationId"> & { effectId?: Id; correlationId?: never })
+  | (Omit<NotifySellerPlan, "effectId" | "correlationId"> & { effectId?: Id; correlationId?: never });
 
 export type ProposedDecision = {
   proposedAction: TurnAction;

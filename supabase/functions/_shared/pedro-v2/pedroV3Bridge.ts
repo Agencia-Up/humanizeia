@@ -109,7 +109,7 @@ function incomingText(payload: any): string | null {
   ]);
 }
 
-function incomingRemoteJid(payload: any): string | null {
+export function incomingRemoteJid(payload: any): string | null {
   const message = pickIncoming(payload);
   const primary = firstString([
     message?.sender_pn,
@@ -131,6 +131,10 @@ function incomingRemoteJid(payload: any): string | null {
     payload?.remoteJidAlt,
     payload?.sender_pn,
   ]) ?? primary;
+}
+
+export function shouldBridgePedroV3Identity(kind: "lead" | "seller" | "unknown"): boolean {
+  return kind !== "seller";
 }
 
 function normalizePhone(value: string | null): string | null {

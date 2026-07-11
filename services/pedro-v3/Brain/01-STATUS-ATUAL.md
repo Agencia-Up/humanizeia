@@ -1429,3 +1429,12 @@ vez de horário (conteúdo do cérebro, não policy). NÃO commitado — aguarda
   encarecer turnos normais e sem introduzir handler/recovery comercial.
 - Guardas de despedida estreitadas: `contato` e `continuidade` naturais não são mais falsos positivos.
 - Gates: F2.48 62 OK, F2.14 19 OK, tsc/test:all verdes; 2 smokes reais completos consecutivos PASS.
+
+## 2026-07-11 — F2.49 briefing, transferência e follow-up (working tree)
+- Follow-up T1/T2/T3 é LLM-first: o cérebro redige; infraestrutura agenda, valida e envia sem handler comercial.
+- Transferência factual: reply delivered -> CRM -> saga de handoff -> notify_seller delivered; LLM nunca escolhe vendedor.
+- Briefing usa apenas fatos do estado e mantém compra/troca separados; templates e regras vêm do portal/v2.
+- `Ok` do vendedor é desviado do bridge v3 e continua no fluxo de aceite/rotação do v2.
+- Flags `PEDRO_V3_HANDOFF` e `PEDRO_V3_FOLLOWUP` seguem OFF; nenhum envio real foi feito.
+- Gates: F2.49 38 OK, active-root 26 OK, bridge 24 OK, pilot-http 21 OK, tsc/test:all EXIT 0.
+- Handoff completo: `Brain/2026-07-11-codex-fase3-handoff-followup-concluida.md`.

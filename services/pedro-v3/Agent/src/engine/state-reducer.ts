@@ -18,12 +18,12 @@ function clone(s: ConversationState): ConversationState {
 }
 
 const ALLOWED_OUTCOMES: Record<string, string[]> = {
-  send_message: ["activate_objective", "mark_message_delivered", "record_offer", "set_presented_vehicle_focus", "advance_stage", "append_assistant_turn"],
+  send_message: ["activate_objective", "mark_message_delivered", "mark_followup_sent", "record_offer", "set_presented_vehicle_focus", "advance_stage", "append_assistant_turn"],
   send_media: ["mark_photos_sent", "record_offer", "set_presented_vehicle_focus", "append_assistant_turn", "activate_objective", "advance_stage"],
   crm_write: ["advance_stage"],
   schedule_visit: ["advance_stage"],
   handoff: ["mark_handoff_completed", "advance_stage"],
-  notify_seller: ["advance_stage"],
+  notify_seller: ["mark_handoff_completed", "advance_stage"],
 };
 
 const VALID_VEHICLE_TYPES: readonly VehicleType[] = ["suv", "sedan", "hatch", "pickup", "unknown"];
@@ -388,6 +388,17 @@ export function applyEffectOutcome(
       }
       case "mark_handoff_completed": {
         next.stage = "handoff";
+        break;
+      }
+      case "mark_followup_sent": {
+        const cycle = next.followupCycle;
+        if (!cycle || cycle.anchorEffectId !== o.anchorEffectId) break;
+        next.followupCycle = {
+          ...cycle,
+          sentStages: Array.from(new Set([...cycle.sentStages, o.stage])).sort() as Array<1 | 2 | 3>,
+          plannedStage: cycle.plannedStage === o.stage ? null : cycle.plannedStage,
+          lastSentAt: o.sentAt,
+        };
         break;
       }
       case "append_assistant_turn": {

@@ -5,6 +5,8 @@ import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-databas
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot, type PilotBrainMode } from "../engine/pilot-active-root.ts";
 import { SupabaseCrmLeadStore } from "../adapters/effects/supabase-crm-lead-store.ts";
+import { SupabaseTransferStore } from "../adapters/effects/supabase-transfer-store.ts";
+import { FollowupCandidateStore } from "../adapters/effects/followup-candidate-store.ts";
 import { resolveConversationLeadBinding } from "../engine/crm-lead-binding.ts";
 import { ingestPilotMessage } from "../engine/pilot-ingest.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
@@ -14,10 +16,11 @@ import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
 import { resolveTenantOpenAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
 import { DebouncePoller } from "./debounce-poller.ts";
-import { PEDRO_V3_PILOT_TENANT_ID } from "../domain/pilot-scope.ts";
+import { PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../domain/pilot-scope.ts";
 import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
+import { evaluateFollowupDue } from "../engine/followup-policy.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
 import {
@@ -92,6 +95,9 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   // fill-only do dispatcher) e CrmLeadIdentityStore (resolução/criação do vínculo). null = flag OFF:
   // zero SELECT/INSERT no CRM, comportamento byte-idêntico ao atual.
   readonly #crmLeadStore: SupabaseCrmLeadStore | null;
+  readonly #transferStore: SupabaseTransferStore | null;
+  readonly #handoffEnabled: boolean;
+  readonly #followupEnabled: boolean;
   #turnSeq = 0;
 
   constructor() {
@@ -104,6 +110,15 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     this.#debounce = resolveDebounceConfig(process.env);
     this.#crmLeadStore = process.env.PEDRO_V3_CRM_WRITE?.trim() === "active"
       ? new SupabaseCrmLeadStore({
+          url: this.#supabaseUrl,
+          serviceRoleKey: this.#serviceRoleKey,
+          allowedHosts: [supabaseHost(this.#supabaseUrl)],
+        })
+      : null;
+    this.#handoffEnabled = process.env.PEDRO_V3_HANDOFF?.trim() === "active";
+    this.#followupEnabled = process.env.PEDRO_V3_FOLLOWUP?.trim() === "active";
+    this.#transferStore = this.#handoffEnabled || this.#followupEnabled
+      ? new SupabaseTransferStore({
           url: this.#supabaseUrl,
           serviceRoleKey: this.#serviceRoleKey,
           allowedHosts: [supabaseHost(this.#supabaseUrl)],
@@ -130,7 +145,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       tenantId: payload.tenantId,
       clock: this.#clock,
     });
-    return applyProviderDeliveryReceipt({
+    const result = await applyProviderDeliveryReceipt({
       persistence,
       clock: this.#clock,
       receipt: {
@@ -139,6 +154,22 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         at: payload.occurredAt,
       },
     });
+    // Um receipt delivered pode liberar crm/handoff/notify. Sem este flush a
+    // cadeia ficaria parada ate a proxima mensagem do lead.
+    if (result.status === "applied" && result.conversationId) {
+      try {
+        const root = await this.#createRoot(PEDRO_V3_PILOT_AGENT_ID, null, this.#gateway());
+        await root.flushConversationEffects({
+          persistence,
+          conversationId: result.conversationId,
+          to: "receipt-flush",
+          workerId: "receipt-flush",
+        });
+      } catch (error) {
+        console.error(JSON.stringify({ event: "pedro_v3_receipt_flush_failed", conversationId: result.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
+      }
+    }
+    return result;
   }
 
   // F2.7.6: /v1/pilot/turn agora SO INGERE (rapido). O processamento real (decidir +
@@ -198,6 +229,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           retryModel: process.env.PEDRO_V3_OPENAI_RETRY_MODEL?.trim() || "gpt-4.1",
           temperature: 0.2, maxCompletionTokens: 1_200, timeoutMs: 45_000,
           allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
+          handoffEnabled: this.#handoffEnabled,
+          followupEnabled: this.#followupEnabled,
         })
       : undefined;
     return PilotActiveRoot.create({
@@ -226,6 +259,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       // FASE 1 CRM (missão 2026-07-09): OFF por default (fail-closed). Liga SÓ com PEDRO_V3_CRM_WRITE=active
       // E SÓ para o tenant do piloto (Douglas) — o root já é pilot-scoped; o store filtra ownership no banco.
       crmLeadStore: this.#crmLeadStore,
+      transferStore: this.#transferStore,
+      handoffEnabled: this.#handoffEnabled,
     });
   }
 
@@ -273,6 +308,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           await persistence.upsertRouting(settled.conversationId, settled.agentId, binding.leadId, settled.toAddr);
         } catch { /* best-effort: nunca bloqueia o turno */ }
       }
+      if (binding.leadId != null && binding.crmEnabled) {
+        try { await this.#crmLeadStore.touchOwnedLeadActivity({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: settled.agentId }, binding.leadId, this.#clock.now()); }
+        catch { /* atividade do CRM nunca silencia o lead */ }
+      }
     }
 
     let root: PilotActiveRoot;
@@ -302,6 +341,38 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }));
     }
   }
+
+  async processDueFollowups(): Promise<{ checked: number; planned: number; failed: number }> {
+    if (!this.#followupEnabled || !this.#transferStore || !this.#crmLeadStore) return { checked: 0, planned: 0, failed: 0 };
+    const gateway = this.#gateway();
+    const candidates = await new FollowupCandidateStore(gateway).list({
+      tenantId: PEDRO_V3_PILOT_TENANT_ID,
+      agentId: PEDRO_V3_PILOT_AGENT_ID,
+    });
+    const config = await this.#transferStore.loadAgentConfig({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID });
+    if (!config?.rules.followup.enabled) return { checked: candidates.length, planned: 0, failed: 0 };
+    let planned = 0;
+    let failed = 0;
+    for (const candidate of candidates) {
+      if (!candidate.leadId) continue;
+      try {
+        const persistence = new PostgresPersistence(gateway, { tenantId: PEDRO_V3_PILOT_TENANT_ID, clock: this.#clock });
+        const outbox = await persistence.listOutbox(candidate.conversationId);
+        const due = evaluateFollowupDue({ state: candidate.state, outbox, rules: config.rules.followup, now: this.#clock.now() });
+        if (!due) continue;
+        const root = await this.#createRoot(PEDRO_V3_PILOT_AGENT_ID, candidate.leadId, gateway);
+        const result = await root.processFollowup({
+          persistence, conversationId: candidate.conversationId, to: candidate.toAddr,
+          workerId: "followup-worker", due, rules: config.rules,
+        });
+        if (result.planned) planned += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(JSON.stringify({ event: "pedro_v3_followup_failed", conversationId: candidate.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
+      }
+    }
+    return { checked: candidates.length, planned, failed };
+  }
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {
@@ -325,7 +396,12 @@ const port = Number(process.env.PORT ?? "3000");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RuntimeConfigError("ENV_PORT_INVALID");
 
 const runtime = new ProductionPilotRunner();
-const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime, () => ({ configuredBrainMode: resolveBrainMode() }));
+const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime, () => ({
+  configuredBrainMode: resolveBrainMode(),
+  crmWrite: process.env.PEDRO_V3_CRM_WRITE?.trim() === "active",
+  handoff: process.env.PEDRO_V3_HANDOFF?.trim() === "active",
+  followup: process.env.PEDRO_V3_FOLLOWUP?.trim() === "active",
+}));
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -373,9 +449,22 @@ console.log(JSON.stringify({
   pollIntervalMs: runtime.debounceConfig.pollIntervalMs,
 }));
 
+let followupTickRunning = false;
+const followupTimer = setInterval(() => {
+  if (followupTickRunning) return;
+  followupTickRunning = true;
+  void runtime.processDueFollowups()
+    .then((result) => {
+      if (result.checked > 0 || result.failed > 0) console.log(JSON.stringify({ event: "pedro_v3_followup_tick", ...result }));
+    })
+    .catch((error) => console.error(JSON.stringify({ event: "pedro_v3_followup_tick_failed", reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) })))
+    .finally(() => { followupTickRunning = false; });
+}, 60_000);
+
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
     stopPoller();
+    clearInterval(followupTimer);
     server.close(() => process.exit(0));
   });
 }

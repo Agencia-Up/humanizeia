@@ -43,7 +43,7 @@ export type PilotWhatsAppRuntimeErrorCode =
   | "INSTANCE_OWNERSHIP_MISMATCH";
 
 export type PilotWhatsAppRuntimeResult =
-  | { readonly ok: true; readonly dispatcher: WhatsAppEffectDispatcher; readonly instanceId: string }
+  | { readonly ok: true; readonly dispatcher: WhatsAppEffectDispatcher; readonly sender: UazapiWhatsAppSender; readonly instanceId: string }
   | { readonly ok: false; readonly error: PilotWhatsAppRuntimeErrorCode };
 
 export async function createPilotWhatsAppDispatcher(
@@ -77,6 +77,7 @@ export async function createPilotWhatsAppDispatcher(
   return {
     ok: true,
     instanceId,
+    sender,
     dispatcher: new WhatsAppEffectDispatcher({
       ref: config.ref,
       conversationId: config.conversationId,

@@ -147,7 +147,8 @@ function handoffProposal(): ProposedDecision {
   return {
     proposedAction: "handoff",
     facts: [],
-    proposedEffects: [{ kind: "handoff", planId: "handoff-1", order: 1, leadId: "11111111-1111-4111-8111-111111111111", sellerId: "seller-1", onSuccess: [] }],
+    // HF-1 (contrato novo): handoff proposto carrega leadId + reason tipado + briefing — NUNCA sellerId (saga resolve).
+    proposedEffects: [{ kind: "handoff", planId: "handoff-1", order: 1, leadId: "11111111-1111-4111-8111-111111111111", reason: "explicit_human_request", briefing: "", onSuccess: [] }],
     responsePlan: { guidance: "Handoff bloqueado nesta fase." },
     reasonCode: "handoff_attempt",
     reasonSummary: "Tentativa de handoff sem adapter.",
@@ -331,6 +332,33 @@ await expectThrow(
     maxValidationAttempts: 2,
   });
   check("webhook duplicado nao reprocessa nem reenvia", dup.status === "duplicate" && dup.dispatched === 0 && transport.calls.length === 1, JSON.stringify({ dup, calls: transport.calls.length }));
+}
+
+{
+  const clock = new FakeClock(NOW);
+  const persistence = new ReceiptMemoryPersistence(clock, new FakeIdGen(), "conv-notify-receipt");
+  const initial = createInitialState({ conversationId: "conv-notify-receipt", tenantId: TENANT_ID, agentId: AGENT_ID, leadId: null, now: NOW });
+  const notify: OutboxRecord = {
+    effectId: "turn-notify:notify-seller", conversationId: "conv-notify-receipt", turnId: "turn-notify",
+    planId: "notify-seller", kind: "notify_seller", idempotencyKey: "turn-notify:notify-seller",
+    order: 3, dependsOn: [], payload: redact({ leadId: "33333333-3333-4333-8333-333333333333" }),
+    onSuccess: [{ op: "mark_handoff_completed", effectId: "turn-notify:notify-seller" }],
+    status: "succeeded", providerCapability: "none", receiptLevel: "accepted", attempts: 1,
+    nextRetryAt: null, providerReceipt: redact({ effectId: "turn-notify:notify-seller", level: "accepted", at: NOW, providerMessageId: "wa-seller-notify-1" }),
+    outcomeAppliedAt: null, lastError: null, createdAt: NOW, dispatchedAt: NOW,
+  };
+  const seed = persistence.begin();
+  seed.casState("conv-notify-receipt", 0, initial);
+  seed.appendOutbox([notify]);
+  await seed.commit();
+
+  const delivered = await applyProviderDeliveryReceipt({
+    persistence,
+    clock,
+    receipt: { providerMessageId: "wa-seller-notify-1", status: "delivered", at: NOW },
+  });
+  const snapshot = await persistence.load("conv-notify-receipt");
+  check("notify_seller delivered aplica o handoff no callback real", delivered.status === "applied" && delivered.conversationId === "conv-notify-receipt" && snapshot?.state.stage === "handoff", JSON.stringify({ delivered, stage: snapshot?.state.stage }));
 }
 
 {

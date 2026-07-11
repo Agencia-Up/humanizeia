@@ -3,6 +3,7 @@ import {
   conversationHasV3Routing,
   conversationHasV3State,
   shouldFallbackToPedroV2,
+  shouldBridgePedroV3Identity,
 } from "./pedroV3Bridge.ts";
 
 type TestFn = () => void | Promise<void>;
@@ -165,6 +166,18 @@ test("M-4: state-only v3 ownership blocks v2 fallback", async () => {
   assert(hasRouting === false, "routing should be absent");
   assert(hasState === true, "state should be present");
   assert(result.fallback === false, "state-only ownership should block fallback");
+});
+
+test("HF-1: seller identity never enters Pedro v3", () => {
+  assert(shouldBridgePedroV3Identity("seller") === false, "seller must stay in v2 ack flow");
+});
+
+test("HF-2: lead identity still enters Pedro v3", () => {
+  assert(shouldBridgePedroV3Identity("lead") === true, "lead must stay routed to v3");
+});
+
+test("HF-3: unknown identity does not silently drop the lead", () => {
+  assert(shouldBridgePedroV3Identity("unknown") === true, "unknown should remain on guarded v3 path");
 });
 
 async function main(): Promise<void> {

@@ -10,7 +10,8 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldBridgePedroV3Identity } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 
 const PEDRO_V2_BUILD = "2026-06-29-pedro-v3-no-dispatch-fallback-v222";
@@ -604,7 +605,22 @@ Deno.serve(async (req) => {
   // fallback is allowed ONLY when the service explicitly proves the failure
   // happened before inbox ingestion. Timeout/network/unknown never invoke both.
   const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
-  if (!_dryRun && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
+  let _pilotSellerInbound = false;
+  if (!_dryRun && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active") {
+    const _remoteJid = incomingRemoteJid(payload);
+    if (_remoteJid) {
+      const _identity = await identifyPedroContact(supabase, {
+        user_id: (agent as any).user_id,
+        agent_id: (agent as any).id,
+        remote_jid: _remoteJid,
+      });
+      _pilotSellerInbound = !shouldBridgePedroV3Identity(_identity.kind);
+      if (_pilotSellerInbound) {
+        console.log(`[pedro-v3-bridge] seller_identity_bypassed sellerId=${_identity.seller?.id || "unknown"}`);
+      }
+    }
+  }
+  if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
     const bridgeTurn = await buildPedroV3BridgeTurn({
       payload,
       tenantId: (agent as any)?.user_id,

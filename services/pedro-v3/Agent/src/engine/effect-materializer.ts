@@ -33,9 +33,11 @@ function payloadFor(plan: EffectPlan, composed: RenderedResponse): { [k: string]
     case "schedule_visit":
       return { leadId: plan.leadId, slot: plan.slot };
     case "handoff":
-      return { leadId: plan.leadId, sellerId: plan.sellerId };
+      // HF-1: sellerId NÃO existe no plano (saga resolve no dispatch). O briefing factual viaja no payload
+      // (texto do estado; sem CPF por construção — cpf é SensitiveSlot ref, o valor nunca entra no estado).
+      return { leadId: plan.leadId, reason: plan.reason, briefing: plan.briefing, correlationId: plan.correlationId };
     case "notify_seller":
-      return { sellerId: plan.sellerId, reason: plan.reason };
+      return { leadId: plan.leadId, reason: plan.reason, etiquetas: plan.etiquetas, correlationId: plan.correlationId };
   }
 }
 

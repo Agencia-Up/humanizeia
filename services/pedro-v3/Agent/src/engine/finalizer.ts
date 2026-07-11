@@ -10,12 +10,12 @@ import type { PlannedObjective } from "../domain/conversation-state.ts";
 import { hasDeny, collectRequirements } from "./policy-engine.ts";
 
 const ALLOWED_OUTCOMES: Record<string, string[]> = {
-  send_message: ["activate_objective", "mark_message_delivered", "record_offer", "set_presented_vehicle_focus", "advance_stage", "append_assistant_turn"],
+  send_message: ["activate_objective", "mark_message_delivered", "mark_followup_sent", "record_offer", "set_presented_vehicle_focus", "advance_stage", "append_assistant_turn"],
   send_media: ["mark_photos_sent", "record_offer", "set_presented_vehicle_focus", "append_assistant_turn", "activate_objective", "advance_stage"],
   crm_write: ["advance_stage"],
   schedule_visit: ["advance_stage"],
   handoff: ["mark_handoff_completed", "advance_stage"],
-  notify_seller: ["advance_stage"],
+  notify_seller: ["mark_handoff_completed", "advance_stage"],
 };
 
 export function effectIdFor(turnId: Id, planId: Id): Id {
@@ -115,8 +115,10 @@ export function validateEffectPlans(plans: EffectPlan[]): string[] {
       }
 
       if (p.kind === "handoff" && o.op === "mark_handoff_completed") {
-        if (o.sellerId !== p.sellerId) {
-          violations.push(`mark_handoff_completed.sellerId ${o.sellerId} divergente de plan.sellerId ${p.sellerId}`);
+        // HF-1: o plano NÃO tem sellerId (a saga resolve no dispatch) — o outcome também não pode
+        // afirmar um vendedor que ninguém resolveu ainda.
+        if (typeof o.sellerId === "string" && o.sellerId.trim() !== "") {
+          violations.push(`mark_handoff_completed.sellerId não pode ser afirmado no plano (saga resolve no dispatch) — plano ${p.planId}`);
         }
       }
     }

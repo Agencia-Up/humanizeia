@@ -209,6 +209,8 @@ export type FrameSignals = {
   readonly disengagementOnly?: boolean;  // agradecimento/despedida sem pedido novo no mesmo bloco
   readonly acceptedPhotoOffer?: boolean; // afirmação curta aceitou a última pergunta única de envio de fotos
   readonly selectedOfferThisTurn?: boolean; // bloco atual seleciona item/modelo da última oferta; acolher antes do funil
+  readonly handoffAvailable?: boolean;
+  readonly followupStage?: 1 | 2 | 3;
 };
 export type TurnFrame = {
   readonly turnId: string;

@@ -38,6 +38,7 @@ const TABLE_ALLOWLIST = new Set([
   "v3_inbox",
   "v3_conversation_state",
   "v3_effect_outbox",
+  "v3_conversation_routing",
   // BYOK grandfather (F2.6K): leitura de profiles.created_at p/ decidir grandfathered (fail-open).
   "profiles",
 ]);

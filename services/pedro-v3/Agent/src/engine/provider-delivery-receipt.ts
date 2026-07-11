@@ -15,6 +15,7 @@ export type ProviderDeliveryReceipt = {
 export type ProviderDeliveryResult = {
   readonly status: "applied" | "duplicate" | "not_found";
   readonly effectId?: string;
+  readonly conversationId?: string;
 };
 
 export class ProviderDeliveryReceiptError extends Error {
@@ -43,11 +44,11 @@ export async function applyProviderDeliveryReceipt(input: {
 
   const record = await input.persistence.findOutboxByProviderMessageId(providerMessageId);
   if (!record) return { status: "not_found" };
-  if (record.kind !== "send_message") {
+  if (record.kind !== "send_message" && record.kind !== "notify_seller") {
     throw new ProviderDeliveryReceiptError("RECEIPT_EFFECT_KIND_INVALID");
   }
   if (record.receiptLevel === "delivered" && record.outcomeAppliedAt !== null) {
-    return { status: "duplicate", effectId: record.effectId };
+    return { status: "duplicate", effectId: record.effectId, conversationId: record.conversationId };
   }
 
   const committed = await commitEffectOutcome({
@@ -67,5 +68,5 @@ export async function applyProviderDeliveryReceipt(input: {
     },
   });
   if (!committed.ok) throw new ProviderDeliveryReceiptError("RECEIPT_COMMIT_FAILED");
-  return { status: "applied", effectId: record.effectId };
+  return { status: "applied", effectId: record.effectId, conversationId: record.conversationId };
 }

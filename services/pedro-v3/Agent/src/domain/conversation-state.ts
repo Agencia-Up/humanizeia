@@ -81,6 +81,14 @@ export type PhotoLedger = { sentByVehicle: Record<string, string[]> }; // vehicl
 export type RejectedMemory = { modelos: string[] };
 export type ConversationTurn = { role: "lead" | "agent"; text: string; at: Iso };
 
+export type FollowupCycle = {
+  anchorEffectId: Id;
+  anchorAt: Iso;
+  sentStages: Array<1 | 2 | 3>;
+  plannedStage: 1 | 2 | 3 | null;
+  lastSentAt: Iso | null;
+};
+
 // F2.7.12: memória OPERACIONAL da última lista renderizada (vehicle_offer_list), p/ resolver
 // referência ORDINAL ("foto do 3") de forma estruturada — SEM parse de texto, SEM depender do
 // callback delivered. NÃO é o ledger oficial de oferta entregue (offers.last); é só contexto.
@@ -154,6 +162,7 @@ export type ConversationState = {
   photoLedger: PhotoLedger;
   rejected: RejectedMemory;
   recentTurns: ConversationTurn[];
+  followupCycle?: FollowupCycle | null;
   appliedEffectIds: string[];          // idempotência do EffectOutcomeCommit (Codex r3 #2) — fase DELIVERED (estado/ledger)
   // R13 Inc2/B item 2 (Codex): idempotência INDEPENDENTE da fase ACCEPTED (WorkingMemory lastPhotoAction). Separada
   // de appliedEffectIds/outcomeAppliedAt (que governam a fase delivered): um único marcador NÃO pode impedir a fase
@@ -213,6 +222,7 @@ export function createInitialState(args: {
     photoLedger: { sentByVehicle: {} },
     rejected: { modelos: [] },
     recentTurns: [],
+    followupCycle: null,
     appliedEffectIds: [],
     appliedAcceptedEffectIds: [],
     pendingPhotoActions: {},

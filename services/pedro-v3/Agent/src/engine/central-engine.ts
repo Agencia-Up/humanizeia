@@ -52,10 +52,11 @@ import { PolicyEngine, hasDeny } from "./policy-engine.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
 import { buildContextualSdrReply } from "./continuity-fallback.ts";
 import type { RenderedResponse, ResponsePart } from "../domain/decision.ts";
-import { finalize } from "./finalizer.ts";
+import { finalize, validateEffectPlans } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { buildCrmWritePlan } from "./crm-write.ts";
+import { buildHandoffChain } from "./handoff-plan.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, lastAgentQuestionText, questionSlotFromAgentText, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
@@ -101,6 +102,17 @@ export type CentralTurnArgs = {
   // FASE 1 CRM (missão 2026-07-09): liga o effect crm_write determinístico do chokepoint. Default OFF —
   // fail-closed: sem flag OU sem leadId, nenhum effect de CRM nasce. Nunca fala com o lead.
   readonly crmWriteEnabled?: boolean;
+  // HF-1 (2026-07-11): transferência do turno. enabled = flag PEDRO_V3_HANDOFF do root; available = pré-check
+  // de vendedor ativo (root, evita promessa falsa); agentName/leadPhone/leadDisplayName/nowLocal alimentam
+  // briefing/etiquetas (puros). Ausente = comportamento atual (zero handoff, deny de promessa intacto).
+  readonly handoff?: {
+    readonly enabled: boolean;
+    readonly available: boolean;
+    readonly agentName: string;
+    readonly leadPhone: string | null;
+    readonly leadDisplayName?: string | null;
+    readonly nowLocal?: string;
+  };
   // Opção A (bloqueio leadId 2026-07-10): true SÓ no turno do 1º VÍNCULO lead↔conversa — o crm_write
   // sincroniza o SNAPSHOT acumulado (stateBefore=null), não o delta do turno. Turnos anteriores sem
   // vínculo (falha transitória de resolução / flag recém-ligada) não perdem nome/interesse/troca/entrada.
@@ -609,6 +621,9 @@ function authorFromBrainDraft(args: {
   readonly advancedThisTurn?: boolean;               // LLM-first: o lead deu um slot novo neste turno (ex.: o nome) -> reperguntar o não-respondido é condução
   readonly disengagementOnly?: boolean;              // agradecimento/despedida sem novo pedido acionável -> não reabre o funil
   readonly financialAnswerSlot?: "formaPagamento" | "entrada" | "parcelaDesejada" | null;
+  // HF-1 (2026-07-11): transferência EXECUTÁVEL neste turno (flag ON + vendedor ativo disponível + CRM
+  // vinculado + transfer.enabled do portal). Promessa de consultor exige ISTO **e** o effect handoff proposto.
+  readonly handoffPlannable?: boolean;
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -711,9 +726,17 @@ function authorFromBrainDraft(args: {
   // (handoff/notify_seller inexistentes nesta fase) é mentira operacional — mesmo padrão do textPromisesPhoto.
   // A LLM reescreve conduzindo ELA MESMA. Quando a Fase 3 materializar o handoff, a promessa passa a exigir o
   // EFEITO correspondente no plano (o predicado já checa proposedEffects).
-  if (args.requireBrain && promisesHumanHandoff(composed.text)
-      && !proposedEffects.some((e) => e.kind === "handoff" || e.kind === "notify_seller")) {
-    return { ok: false, feedback: "Você prometeu/ofereceu ENCAMINHAR para consultor/vendedor, mas esse mecanismo NÃO existe ainda — a promessa deixa o cliente esperando alguém que não virá. Reescreva SEM citar transferência/consultor: continue VOCÊ conduzindo (responda e avance com UMA pergunta útil — ex.: agendar uma visita, confirmar um dado do financiamento, ou oferecer fotos/detalhes)." };
+  if (args.requireBrain && promisesHumanHandoff(composed.text)) {
+    const handoffProposed = proposedEffects.some((e) => e.kind === "handoff" || e.kind === "notify_seller");
+    // HF-1: promessa de consultor SÓ passa com o plano EXECUTÁVEL no MESMO turno = effect handoff proposto
+    // E transferência plannable (flag+vendedor+vínculo+portal). Qualquer outra combinação = deny + reescrita
+    // pela MESMA LLM (nunca texto do engine).
+    if (!handoffProposed && args.handoffPlannable === true) {
+      return { ok: false, feedback: "Você prometeu/ofereceu ENCAMINHAR para consultor/vendedor, mas NÃO incluiu o efeito de transferência neste turno. Se transferir é o próximo passo (cliente pediu humano OU a qualificação está completa), inclua nos effects: {\"kind\":\"handoff\",\"reason\":\"explicit_human_request\"|\"qualified_handoff\"}. Senão, reescreva SEM prometer transferência e continue VOCÊ conduzindo." };
+    }
+    if (!handoffProposed || args.handoffPlannable !== true) {
+      return { ok: false, feedback: "Você prometeu/ofereceu ENCAMINHAR para consultor/vendedor, mas a transferência NÃO está disponível agora — a promessa deixa o cliente esperando alguém que não virá. Reescreva SEM citar transferência/consultor: continue VOCÊ conduzindo (responda e avance com UMA pergunta útil — ex.: agendar uma visita, confirmar um dado do financiamento, ou oferecer fotos/detalhes)." };
+    }
   }
   // ⭐Codex P0: pergunta DUPLA de AÇÃO deixa o "sim" ambíguo (incidente real T4). Deny de OUTPUT com reescrita.
   if (args.requireBrain && hasDoubleActionQuestion(composed.text)) {
@@ -1683,7 +1706,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           : ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints)))
         : undefined;
       const selectionRef = resolveSelectedVehicle(leadMessage, contextState, ctx.claimExtractor);
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: selectionRef != null });
+      const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
+        && args.crmWriteEnabled === true && leadId != null;
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: selectionRef != null, handoffAvailable: handoffCapabilityAvailable });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -1758,6 +1783,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // requireBrain = produção (central_active+llmFirst): só o cérebro autoriza foto. Sem llmFirst (replay/legado) o
       // fallback validado autoriza (mantém a coerência de evidência de foto). photoVU escolhe a fonte por modo.
       const requireBrain = llmFirst;
+      // HF-1 (2026-07-11): transferência EXECUTÁVEL neste turno = flag ON no root + vendedor ativo DISPONÍVEL
+      // (pré-check do root, evita promessa falsa) + regras do portal permitem + CRM vinculável (o handoff exige a
+      // linha do lead). Governa o deny de promessa E a montagem da cadeia no chokepoint.
+      const handoffPlannable = handoffCapabilityAvailable;
       const photoVU = (): ValidatedUnderstanding | null => (llmFirst ? brainVU() : authoritativeVU());
       const seenDenyFingerprints = new Set<string>();               // deny repetido -> recupera já (não gasta tentativas)
       let repeatedDeny = false;
@@ -1934,7 +1963,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2643,7 +2672,35 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       const crmPlan = (llmFirst && args.crmWriteEnabled === true && crmLeadId != null)
         ? buildCrmWritePlan({ stateAfter: reduced.next, stateBefore: args.crmBootstrapSync === true ? null : state, adContext: effectiveAdContext, adVehicleLabel: adVehicleHint ?? null, leadId: crmLeadId, turnId, leadNameHint: leadNameHintFromInbox(inboxRecords) })
         : null;
-      const decisionForOutbox = crmPlan ? { ...decision, effectPlan: [...decision.effectPlan, crmPlan] } : decision;
+      const decisionWithCrm = crmPlan ? { ...decision, effectPlan: [...decision.effectPlan, crmPlan] } : decision;
+      // ── HF-1/HF-3 (missão 2026-07-11): cadeia de TRANSFERÊNCIA no chokepoint (autoria do ENGINE). O cérebro
+      //    só propôs o ATO ({kind:"handoff", reason}); aqui removemos qualquer handoff/notify proposto e, quando
+      //    plannable (flag+vendedor+CRM vinculado+crm_write do turno), reconstruímos a cadeia executável:
+      //    reply (delivered-gate) -> crm_write -> handoff (saga) -> notify_seller. briefing/etiquetas = fatos. ──
+      const wmPhoto = reduced.next.workingMemory?.lastPhotoAction ?? null;
+      const handoffChain = buildHandoffChain({
+        decision: decisionWithCrm,
+        turnId,
+        leadId: crmLeadId ?? "",
+        stateAfter: reduced.next,
+        adContext: effectiveAdContext ?? null,
+        adVehicleLabel: adVehicleHint ?? null,
+        lastPhotoAction: wmPhoto && typeof wmPhoto.label === "string" && Array.isArray(wmPhoto.photoIds)
+          ? { label: wmPhoto.label, photoIds: wmPhoto.photoIds }
+          : null,
+        agentName: args.handoff?.agentName ?? "Agente",
+        leadPhone: args.handoff?.leadPhone ?? null,
+        leadDisplayName: args.handoff?.leadDisplayName ?? leadNameHintFromInbox(inboxRecords),
+        nowLocal: args.handoff?.nowLocal ?? "",
+        // CRM pode ja estar sincronizado: ausencia de delta neste turno nao bloqueia
+        // um pedido explicito de humano. Se houver crmPlan, ele entra como dependencia.
+        plannable: handoffPlannable && crmLeadId != null,
+      });
+      const decisionForOutbox = { ...decisionWithCrm, effectPlan: handoffChain.effectPlan };
+      const handoffGraphViolations = validateEffectPlans(decisionForOutbox.effectPlan);
+      if (handoffGraphViolations.length > 0) {
+        throw new Error(`central: invalid post-finalizer handoff graph: ${handoffGraphViolations.join("; ")}`);
+      }
 
       // T1 (audit Codex smoke): SANITIZA control chars do texto de saída num chokepoint ÚNICO — cobre o send_message
       // (materializeEffectPlans), o composedText do resultado e o evento response_composed. O LLM às vezes emite U+001F etc.
@@ -2694,6 +2751,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // Opção A (vínculo lead↔conversa): auditoria do CRM write por turno — leadId efetivo do plan (null =
           // desligado/mismatch fail-closed), 1º vínculo (bootstrap) e se o turno emitiu crm_write.
           crmWrite: { enabled: args.crmWriteEnabled === true, leadBound: crmLeadId, bootstrapSync: args.crmBootstrapSync === true, planned: crmPlan != null },
+          // HF-1/3 (auditoria por turno): plannable (flag+vendedor+vínculo), se a cadeia foi montada, o motivo
+          // tipado e por que um handoff proposto foi REMOVIDO (nunca silencioso).
+          handoff: { plannable: handoffPlannable, planned: handoffChain.planned, reason: handoffChain.planned ? handoffChain.reason : null, stripped: handoffChain.planned ? null : handoffChain.strippedReason },
           // ⭐SEM (invariantes 1/2 — auditoria por turno): retries de proveniência do understanding + mutações de
           // slot da LLM descartadas por falta de proveniência (o incidente possuiTroca=false fantasma fica visível).
           provenanceRetries, provenanceExhausted, evidenceNormalized, droppedSlotMutations: droppedSlotMutations.slice(0, 6),

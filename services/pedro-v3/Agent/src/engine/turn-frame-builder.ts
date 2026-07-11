@@ -65,6 +65,7 @@ export function buildTurnFrame(args: {
   readonly disengagementOnly?: boolean;
   readonly acceptedPhotoOffer?: boolean;
   readonly selectedOfferThisTurn?: boolean;
+  readonly handoffAvailable?: boolean;
 }): TurnFrame {
   const base = buildFrameSignals(args.block, args.interpretation);
   // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
@@ -79,6 +80,7 @@ export function buildTurnFrame(args: {
     ...(args.disengagementOnly ? { disengagementOnly: true } : {}),
     ...(args.acceptedPhotoOffer ? { acceptedPhotoOffer: true } : {}),
     ...(args.selectedOfferThisTurn ? { selectedOfferThisTurn: true } : {}),
+    ...(args.handoffAvailable ? { handoffAvailable: true } : {}),
   };
   return {
     turnId: args.turnId,

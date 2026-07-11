@@ -5,7 +5,7 @@
 import type { Clock, ConversationRoutingStore, Persistence } from "../domain/ports.ts";
 import type { QueryLoopLimits } from "../domain/context.ts";
 import { ingestPilotMessage } from "./pilot-ingest.ts";
-import type { ClaimExtractor } from "../domain/decision.ts";
+import type { ClaimExtractor, RenderedResponse, TurnDecision } from "../domain/decision.ts";
 import type { Id } from "../domain/types.ts";
 import type { NormalizedVehicle, TenantAgentRef, TenantConfigSource, TenantRuntimeConfig } from "../domain/read-ports.ts";
 import type { StructuredConversationModel } from "../domain/conversation-model.ts";
@@ -19,6 +19,9 @@ import { V2StockSource } from "../adapters/read/stock-source.ts";
 import { V2VehiclePhotoSource } from "../adapters/read/photo-source.ts";
 import { V2CrmReadSource } from "../adapters/read/crm-read-source.ts";
 import { CompositeEffectDispatcher, CrmWriteEffectDispatcher, type CrmLeadStore } from "../adapters/effects/crm-write-dispatcher.ts";
+import { HandoffEffectDispatcher, NotifySellerEffectDispatcher } from "../adapters/effects/transfer-dispatchers.ts";
+import type { TransferSagaStore } from "../adapters/effects/transfer-store.ts";
+import { sellerPhoneKey } from "./transfer-templates.ts";
 import { PromptBoundConversationAdapter } from "../adapters/llm/prompt-bound-conversation.ts";
 import { createReadQueryRunner } from "./read-query-runner.ts";
 import { ConversationTurnContextPreparer, StockTenantCatalogSource, type TenantCatalogSource } from "./turn-context-preparer.ts";
@@ -36,6 +39,13 @@ import type { UazapiHttpTransport } from "../adapters/effects/uazapi-whatsapp-se
 import { createPilotWhatsAppDispatcher } from "../adapters/effects/pilot-whatsapp-runtime.ts";
 import { V2WhatsAppInstanceCredentialProvider, V2WhatsAppInstanceSource } from "../adapters/effects/v2-whatsapp-instance-source.ts";
 import { buildSdrQualificationPolicy, type SdrQualificationPolicy } from "./sdr-conductor.ts";
+import { authorFollowupMessage } from "./followup-author.ts";
+import type { FollowupDue } from "./followup-policy.ts";
+import type { AutomationRules } from "./automation-rules.ts";
+import { buildHandoffChain } from "./handoff-plan.ts";
+import { materializeEffectPlans } from "./effect-materializer.ts";
+import { loadPersistedWorkingMemory } from "./working-memory.ts";
+import { validateEffectPlans } from "./finalizer.ts";
 import { createHash } from "node:crypto";
 
 // R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
@@ -69,6 +79,8 @@ export type PilotActiveDeps = {
   // Presente = o engine emite crm_write no chokepoint e o dispatch roteia p/ o CrmWriteEffectDispatcher
   // (merge não-destrutivo + cross-tenant fail-closed pelo ref DESTE root). Só o composition root liga.
   readonly crmLeadStore?: CrmLeadStore | null;
+  readonly transferStore?: TransferSagaStore | null;
+  readonly handoffEnabled?: boolean;
 };
 
 const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
@@ -119,6 +131,15 @@ export type PilotActiveProcessResult = {
   readonly outboxBeforeDispatch: readonly OutboxRecord[];
   readonly outboxAfterDispatch: readonly OutboxRecord[];
   readonly dispatched: number;
+};
+
+export type PilotFollowupInput = {
+  readonly persistence: Persistence;
+  readonly conversationId: string;
+  readonly to: string;
+  readonly workerId: string;
+  readonly due: FollowupDue;
+  readonly rules: AutomationRules;
 };
 
 export type PilotActiveTurnResult =
@@ -179,6 +200,8 @@ export class PilotActiveRoot {
     private readonly businessInfo: TenantBusinessInfoSource,
     private readonly promptSha256: string,
     private readonly crmLeadStore: CrmLeadStore | null,
+    private readonly transferStore: TransferSagaStore | null,
+    private readonly handoffEnabled: boolean,
   ) {}
 
   get tenantConfig(): TenantRuntimeConfig {
@@ -257,6 +280,8 @@ export class PilotActiveRoot {
       businessInfo,
       promptSha256,
       deps.crmLeadStore ?? null,
+      deps.transferStore ?? null,
+      deps.handoffEnabled === true,
     );
   }
 
@@ -340,6 +365,17 @@ export class PilotActiveRoot {
     } catch (error) {
       console.error(JSON.stringify({ event: "pedro_v3_wm_reconcile_error", conversationId: input.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
     }
+    let handoffAvailable = false;
+    if (this.handoffEnabled && this.transferStore && this.crmLeadStore && (input.crmWrite?.enabled ?? true)) {
+      try {
+        const config = await this.transferStore.loadAgentConfig(this.ref);
+        if (config?.rules.transfer.enabled) {
+          const scoped = await this.transferStore.listActiveSellers(this.ref.tenantId, this.ref.agentId);
+          const roster = scoped.length > 0 ? scoped : await this.transferStore.listActiveSellers(this.ref.tenantId, null);
+          handoffAvailable = roster.some((seller) => seller.isActive && sellerPhoneKey(seller.whatsappNumber) !== "");
+        }
+      } catch { handoffAvailable = false; }
+    }
     const engine = await runCentralConversationTurn({
       persistence: input.persistence, clock: this.clock, brain: this.agentBrain!, llm: this.llm, runQuery: this.runQuery,
       businessInfo: this.businessInfo, contextPreparer: this.contextPreparer,
@@ -359,6 +395,13 @@ export class PilotActiveRoot {
       // Opção A: o binding POR TURNO (crm-lead-binding no server) pode desligar (mismatch) e marca o bootstrap.
       crmWriteEnabled: this.crmLeadStore != null && (input.crmWrite?.enabled ?? true),
       crmBootstrapSync: input.crmWrite?.bootstrapSync === true,
+      handoff: {
+        enabled: this.handoffEnabled,
+        available: handoffAvailable,
+        agentName: this.runtimeConfig.agentName,
+        leadPhone: input.to,
+        nowLocal: new Date(this.clock.now()).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+      },
       // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto do bloco vindo do debounce (server); default no engine se ausente.
       blockAwaitMaxMs: input.blockAwaitMaxMs,
     });
@@ -394,14 +437,98 @@ export class PilotActiveRoot {
     const gate = new ConversationOnlyActiveGate(input.conversationId);
     // FASE 1 CRM: com o store presente, roteia por kind — send_* -> WhatsApp; crm_write -> CRM (merge
     // não-destrutivo, cross-tenant fail-closed pelo ref DESTE root). Sem store, comportamento idêntico ao atual.
-    const effectDispatcher = this.crmLeadStore
-      ? new CompositeEffectDispatcher({
-          send_message: dispatcherRuntime.dispatcher,
-          send_media: dispatcherRuntime.dispatcher,
-          crm_write: new CrmWriteEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.crmLeadStore }),
-        })
-      : dispatcherRuntime.dispatcher;
+    const routes: Record<string, import("./outbox-dispatcher.ts").EffectDispatcher> = {
+      send_message: dispatcherRuntime.dispatcher,
+      send_media: dispatcherRuntime.dispatcher,
+    };
+    if (this.crmLeadStore) routes.crm_write = new CrmWriteEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.crmLeadStore });
+    if (this.handoffEnabled && this.transferStore) {
+      routes.handoff = new HandoffEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.transferStore });
+      routes.notify_seller = new NotifySellerEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.transferStore, sender: dispatcherRuntime.sender });
+    }
+    const effectDispatcher = new CompositeEffectDispatcher(routes);
     const dispatcher = new OutboxDispatcher(input.persistence, this.clock, effectDispatcher, gate, `${input.workerId}:active-dispatcher`);
     return dispatcher.dispatchConversation(input.conversationId);
+  }
+
+  async flushConversationEffects(input: Pick<PilotActiveProcessInput, "persistence" | "conversationId" | "to" | "workerId">): Promise<number> {
+    return this.#dispatchIfCommitted({
+      ...input,
+      turnId: "receipt-flush",
+      limits: CENTRAL_TURN_LIMITS,
+      maxValidationAttempts: 0,
+    }, true);
+  }
+
+  async processFollowup(input: PilotFollowupInput): Promise<{ planned: boolean; dispatched: number; reason?: string }> {
+    if (!this.agentBrain) return { planned: false, dispatched: 0, reason: "brain_unavailable" };
+    const now = this.clock.now();
+    let committed = false;
+    await input.persistence.withLease(input.conversationId, input.workerId, 60_000, async (lease) => {
+      const snapshot = await input.persistence.load(input.conversationId);
+      if (!snapshot || snapshot.state.stage === "handoff" || snapshot.state.stage === "closed") return;
+      const current = snapshot.state.followupCycle;
+      if (current?.anchorEffectId === input.due.anchorEffectId && (current.sentStages.includes(input.due.stage) || current.plannedStage != null)) return;
+
+      const turnId = `followup:${input.due.anchorEffectId}:${input.due.stage}`;
+      const text = await authorFollowupMessage({
+        brain: this.agentBrain!, state: snapshot.state, stage: input.due.stage,
+        turnId, now, portalPromptSha256: this.promptSha256, maxAttempts: 3,
+      });
+      if (!text) return;
+
+      const messagePlanId = "followup-message";
+      const messageEffectId = `${turnId}:${messagePlanId}`;
+      let decision: TurnDecision = {
+        turnId, action: input.due.stage === 3 ? "close" : "reply",
+        reasonCode: `followup_t${input.due.stage}`, reasonSummary: "system_followup_due", confidence: 1,
+        decisionMutations: [], responsePlan: { guidance: "llm_authored_followup" }, policyChecks: [],
+        effectPlan: [{
+          kind: "send_message", planId: messagePlanId, effectId: messageEffectId, order: 1, dependsOn: [],
+          onSuccess: [{ op: "mark_followup_sent", effectId: messageEffectId, anchorEffectId: input.due.anchorEffectId, stage: input.due.stage, sentAt: now }],
+        }],
+      };
+
+      if (input.due.stage === 3 && input.rules.followup.t3Transfers && input.rules.transfer.enabled && this.handoffEnabled && this.transferStore && this.leadId) {
+        const memory = loadPersistedWorkingMemory(snapshot.state.workingMemory).memory;
+        const chain = buildHandoffChain({
+          decision, turnId, leadId: this.leadId, stateAfter: snapshot.state,
+          adContext: snapshot.state.adContext ?? null, adVehicleLabel: null,
+          lastPhotoAction: memory.lastPhotoAction ? { label: memory.lastPhotoAction.label, photoIds: memory.lastPhotoAction.photoIds } : null,
+          agentName: this.runtimeConfig.agentName, leadPhone: input.to,
+          leadDisplayName: snapshot.state.slots.nome.status === "known" ? snapshot.state.slots.nome.value : null,
+          nowLocal: new Date(now).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+          plannable: true, forcedReason: "followup_timeout_handoff",
+        });
+        if (chain.planned) decision = { ...decision, effectPlan: chain.effectPlan };
+      }
+      const graph = validateEffectPlans(decision.effectPlan);
+      if (graph.length > 0) return;
+      const rendered: RenderedResponse = { draft: { parts: [{ type: "text", content: text }] }, text };
+      const outbox = materializeEffectPlans(decision, rendered, {
+        conversationId: input.conversationId, createdAt: now,
+        providerCapability: { send_message: "none", handoff: "none", notify_seller: "none" },
+      });
+      const next = structuredClone(snapshot.state);
+      next.followupCycle = {
+        ...(input.due.cycle.anchorEffectId === input.due.anchorEffectId ? input.due.cycle : {
+          anchorEffectId: input.due.anchorEffectId, anchorAt: input.due.anchorAt, sentStages: [], lastSentAt: null,
+        }),
+        plannedStage: input.due.stage,
+      };
+      next.version = snapshot.version + 1;
+      next.updatedAt = now;
+      const uow = input.persistence.begin({ lease });
+      uow.casState(input.conversationId, snapshot.version, next);
+      uow.appendDecision(input.conversationId, decision);
+      uow.appendOutbox(outbox);
+      committed = (await uow.commit()).ok;
+    });
+    if (!committed) return { planned: false, dispatched: 0, reason: "not_committed" };
+    const dispatched = await this.#dispatchIfCommitted({
+      persistence: input.persistence, conversationId: input.conversationId, to: input.to,
+      workerId: input.workerId, turnId: "followup-dispatch", limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 0,
+    }, true);
+    return { planned: true, dispatched };
   }
 }

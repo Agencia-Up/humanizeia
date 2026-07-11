@@ -28,6 +28,8 @@ export type OpenAiAgentBrainConfig = {
   readonly maxCompletionTokens?: number;
   readonly timeoutMs?: number;
   readonly allowedTools?: readonly string[];
+  readonly handoffEnabled?: boolean;
+  readonly followupEnabled?: boolean;
 };
 
 export class OpenAiAgentBrainError extends Error {
@@ -306,6 +308,28 @@ stateMutations (opcional, SÓ fatos que o cliente REALMENTE disse): [{"op":"set_
   {"op":"select_vehicle_focus","vehicleKey":".."}]  // NÃO grave possuiTroca a menos que o cliente responda claramente sobre TROCA.
 Devolva SOMENTE o JSON.`;
 
+const HANDOFF_PROTOCOL = `
+
+=== CAPABILITY DE TRANSFERENCIA (ATIVA) ===
+Voce pode propor o effect {"kind":"handoff","reason":"explicit_human_request"|"qualified_handoff"}.
+- explicit_human_request: somente quando o cliente pediu claramente humano/vendedor/consultor. Pode faltar qualificacao.
+- qualified_handoff: somente quando o funil do prompt esta completo e transferir e o proximo passo natural.
+Nao transfira por "gostei", foto, garantia, curiosidade ou interesse suave. Nao escolha sellerId, UUID ou vendedor.
+Se disser ao cliente que vai encaminhar/chamar vendedor, inclua o effect handoff no MESMO final. Se nao houver
+disponibilidade informada nos signals, nao prometa transferencia; continue conduzindo naturalmente.
+`;
+
+const FOLLOWUP_PROTOCOL = `
+
+=== FOLLOW-UP SISTEMICO (LLM-FIRST) ===
+Quando signals.followupStage existir, este e um evento de inatividade e NAO uma nova mensagem do cliente.
+- Nao chame tools, nao invente fatos e nao proponha efeitos comerciais. Use apenas historico e slots conhecidos.
+- T1: retome de forma curta, humana e contextual, com no maximo UMA pergunta simples.
+- T2: ofereca um proximo passo contextual diferente do T1, sem repetir texto, com no maximo UMA pergunta.
+- T3: encerre o ciclo com despedida curta e educada, SEM pergunta. A infraestrutura decide a transferencia por timeout.
+- Retorne final com ResponseDraft contendo apenas partes text.
+`;
+
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
 function str(v: unknown): string | null { return typeof v === "string" && v.trim() !== "" ? v : null; }
 function num(v: unknown): number | null { return typeof v === "number" && Number.isFinite(v) ? v : null; }
@@ -333,7 +357,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#secret = secret;
     this.#transport = transport;
     this.#portalPrompt = portalPrompt;
-    this.#system = `${portalPrompt}${BRAIN_PROTOCOL}`;
+    this.#system = `${portalPrompt}${BRAIN_PROTOCOL}${config.handoffEnabled === true ? HANDOFF_PROTOCOL : ""}${config.followupEnabled === true ? FOLLOWUP_PROTOCOL : ""}`;
     this.#url = url.toString();
     this.#model = config.model.trim();
     this.#retryModel = config.retryModel?.trim() || this.#model;
@@ -543,6 +567,14 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         if (vehicleKey && photoIds.length > 0) {
           mediaSeen = true;
           out.push({ kind: "send_media", planId: "media", order: order++, vehicleKey, photoIds, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey, photoIds }] } as ProposedEffectPlan);
+        }
+      } else if (e.kind === "handoff" && !out.some((x) => x.kind === "handoff")) {
+        // HF-1: o cérebro propõe só o ATO + o MOTIVO tipado (explicit_human_request | qualified_handoff).
+        // leadId/briefing/vendedor são autoridade do ENGINE/saga (chokepoint buildHandoffChain) — a LLM nunca
+        // fornece UUID. Sem flag/vendedor/vínculo o engine remove a proposta e o deny guia a reescrita.
+        const reason = str(e.reason);
+        if (reason === "explicit_human_request" || reason === "qualified_handoff") {
+          out.push({ kind: "handoff", planId: "handoff", order: order++, leadId: "", reason, briefing: "", onSuccess: [] } as ProposedEffectPlan);
         }
       }
     }

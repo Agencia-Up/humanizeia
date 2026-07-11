@@ -92,6 +92,22 @@ export class SupabaseCrmLeadStore implements CrmLeadStore, CrmLeadIdentityStore 
     return { ok: true, updatedRows: Array.isArray(rows) ? rows.length : 0 };
   }
 
+  // Metadado de infraestrutura, separado do crm_write comercial. Mantem o
+  // motor v2 fora da conversa v3 sem jamais escrever last_agent_reply_at.
+  async touchOwnedLeadActivity(ref: TenantAgentRef, leadId: string, at: string): Promise<boolean> {
+    const params = this.#ownershipParams(ref, leadId);
+    if (!params || !Number.isFinite(Date.parse(at))) return false;
+    const res = await fetch(`${this.base}?${params}`, {
+      method: "PATCH",
+      headers: this.#headers({ prefer: "return=representation" }),
+      body: JSON.stringify({ last_user_reply_at: at, last_interaction_at: at }),
+      signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000),
+    });
+    if (!res.ok) return false;
+    const rows = await res.json() as unknown[];
+    return Array.isArray(rows) && rows.length === 1;
+  }
+
   // ── CrmLeadIdentityStore (Opção A) ──────────────────────────────────────────
 
   #identityParams(ref: TenantAgentRef, jid: string): URLSearchParams | null {
