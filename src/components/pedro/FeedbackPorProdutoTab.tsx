@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { RefreshCcw, PackageSearch, Loader2, AlertTriangle, Download, CalendarRange, Megaphone, ImageOff, TrendingUp, ScanEye } from 'lucide-react';
+import { RefreshCcw, PackageSearch, Loader2, AlertTriangle, Download, CalendarRange, Megaphone, ImageOff, TrendingUp, ScanEye, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react';
 
 // ── Por produto × Tráfego (José) ──────────────────────────────────────────────
 // Cruza a QUALIDADE do lead (qualificado / pouco / ruim / nem-é-lead) com o PRODUTO
@@ -9,12 +9,13 @@ import { RefreshCcw, PackageSearch, Loader2, AlertTriangle, Download, CalendarRa
 //   1) feedback_produtos_qualidade  → produto (da conversa) × qualidade do lead.
 //   2) jose_criativos_ativos        → criativos do último snapshot do José: nome
 //      (que quase sempre É o carro), status (ACTIVE/pausado), gasto, conversas e a
-//      thumbnail (imagem do anúncio). Onde o nome é genérico ("05", "01"...), o carro
-//      só sai LENDO A IMAGEM — esses ficam listados à parte, marcados p/ leitura.
+//      thumbnail (imagem do anúncio). Onde o nome é genérico ("05","01"...), o carro
+//      só sai LENDO A IMAGEM (edge feedback-criativo-visao) — cache em carrosIa.
 // O casamento é pelo MODELO do carro (normalizeModelo), tolerante a acento/versão.
-// Serve o gestor de tráfego humano: qual carro anunciado traz lead bom, qual gasta
-// sem trazer, e qual traz lead bom mas nem está no ar. Filtros: atalho (30/90/365)
-// ou intervalo PERSONALIZADO. Exporta CSV. SÓ LEITURA — não toca em tráfego/CRM.
+// A tabela é operável estilo Facebook Ads: filtro por status (todos/ativos/anunciados/
+// não anunciados) e ordenação clicável em cada coluna (melhor→pior, gasto, leads...).
+// Filtros de período: atalho (30/90/365) ou intervalo PERSONALIZADO. Exporta CSV do
+// que estiver na tela. SÓ LEITURA — não toca em tráfego/CRM.
 
 interface Row {
   produto: string; total: number;
@@ -23,8 +24,14 @@ interface Row {
 }
 interface Criativo { nome?: string; status?: string; gasto?: number; conversas?: number; thumbnail_url?: string; }
 interface JoseAgg { ativo: boolean; gasto: number; conversas: number; criativos: string[]; thumb?: string; }
+type Linha = Row & { key: string | null; jose?: JoseAgg };
+type SortKey = 'produto' | 'total' | 'qualificados' | 'pouco' | 'ruins' | 'nao_lead' | 'pct' | 'gasto';
+type StatusFiltro = 'todos' | 'ativos' | 'anunciados' | 'nao_anunciados';
 
 const PRESETS = [{ v: 30, l: '30 dias' }, { v: 90, l: '90 dias' }, { v: 365, l: '1 ano' }];
+const STATUS: { v: StatusFiltro; l: string }[] = [
+  { v: 'todos', l: 'Todos' }, { v: 'ativos', l: 'Só ativos' }, { v: 'anunciados', l: 'Anunciados' }, { v: 'nao_anunciados', l: 'Não anunciados' },
+];
 const hojeISO = () => new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10); // BRT
 const isoMenosDias = (d: number) => new Date(Date.now() - 3 * 3600e3 - d * 86400e3).toISOString().slice(0, 10);
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -54,7 +61,6 @@ function normalizeModelo(raw?: string): string | null {
   s = s.replace(/\.(png|jpg|jpeg|webp)\b/g, ' ').replace(/—\s*c[óo]pia/g, ' ').replace(/[*()]/g, ' ');
   s = ' ' + s.replace(/[^a-z0-9-]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
   for (const m of MODELOS) if (s.includes(' ' + m + ' ')) return m;
-  // genérico (só número, "05", "cópia", vazio) → sem carro identificável pelo texto
   const t = s.trim();
   if (!t || /^\d{1,3}$/.test(t) || t.length < 3) return null;
   const first = t.split(' ').find((w) => w.length >= 3 && !/^\d+$/.test(w));
@@ -77,6 +83,9 @@ export function FeedbackPorProdutoTab() {
   const [loading, setLoading] = useState(true);
   const [lendo, setLendo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusFiltro>('todos');
+  const [sortKey, setSortKey] = useState<SortKey>('total');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
@@ -144,11 +153,38 @@ export function FeedbackPorProdutoTab() {
   };
 
   // Junta cada produto (conversa) com o José.
-  const linhas = useMemo(() => rows.map((r) => {
+  const linhas: Linha[] = useMemo(() => rows.map((r) => {
     const key = normalizeModelo(r.produto);
-    const j = key ? joseMap.get(key) : undefined;
-    return { ...r, key, jose: j };
+    return { ...r, key, jose: key ? joseMap.get(key) : undefined };
   }), [rows, joseMap]);
+
+  // Aplica filtro de status + ordenação (o que aparece na tela / vai pro CSV / soma no total).
+  const linhasVis = useMemo(() => {
+    const filtradas = linhas.filter((l) => {
+      if (status === 'ativos') return !!l.jose?.ativo;
+      if (status === 'anunciados') return !!l.jose;
+      if (status === 'nao_anunciados') return !l.jose;
+      return true;
+    });
+    const val = (l: Linha): number | string => {
+      switch (sortKey) {
+        case 'produto': return l.produto.toLowerCase();
+        case 'total': return l.total;
+        case 'qualificados': return l.qualificados;
+        case 'pouco': return l.pouco_qualificados;
+        case 'ruins': return l.ruins;
+        case 'nao_lead': return l.nao_lead;
+        case 'pct': return l.pct_qualificado;
+        case 'gasto': return l.jose ? l.jose.gasto : -1;
+      }
+    };
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...filtradas].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb)) * dir;
+      return (va - vb) * dir;
+    });
+  }, [linhas, status, sortKey, sortDir]);
 
   // Carros que o José anuncia mas que NÃO aparecem em nenhuma conversa (gasta e não pinga lead).
   const anunciadosSemLead = useMemo(() => {
@@ -158,23 +194,28 @@ export function FeedbackPorProdutoTab() {
     return out.sort((a, b) => b.agg.gasto - a.agg.gasto);
   }, [linhas, joseMap]);
 
-  const tot = linhas.reduce((a, r) => ({
+  const tot = linhasVis.reduce((a, r) => ({
     total: a.total + r.total, q: a.q + r.qualificados, p: a.p + r.pouco_qualificados,
-    r: a.r + r.ruins, n: a.n + r.nao_lead,
-  }), { total: 0, q: 0, p: 0, r: 0, n: 0 });
+    r: a.r + r.ruins, n: a.n + r.nao_lead, g: a.g + (r.jose?.gasto || 0),
+  }), { total: 0, q: 0, p: 0, r: 0, n: 0, g: 0 });
 
-  const statusLabel = (l: typeof linhas[number]) =>
+  const statusLabel = (l: Linha) =>
     !jose.tem_dados ? '—' : !l.jose ? 'Não anunciado' : l.jose.ativo ? 'Anunciado (ativo)' : 'Pausado';
+
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(k); setSortDir(k === 'produto' ? 'asc' : 'desc'); }
+  };
 
   const exportarCSV = () => {
     const periodo = modo === 'custom' ? `${ini}_a_${fim}` : `ultimos_${dias}_dias`;
     const head = ['Produto', 'Leads', 'Qualificados', 'Pouco', 'Ruins', 'Nem e lead', 'Sem classe', '% Bom', 'Status trafego', 'Gasto Meta', 'Criativos'];
-    const linhasCsv = linhas.map((r) => [
+    const linhasCsv = linhasVis.map((r) => [
       r.produto, r.total, r.qualificados, r.pouco_qualificados, r.ruins, r.nao_lead, r.sem_classe, r.pct_qualificado + '%',
       statusLabel(r), r.jose ? brl(r.jose.gasto) : '', r.jose ? r.jose.criativos.join(' | ') : '',
     ]);
     const esc = (v: any) => { const s = String(v ?? ''); return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const rodape = ['TOTAL', tot.total, tot.q, tot.p, tot.r, tot.n, '', (tot.total ? Math.round(100 * tot.q / tot.total) : 0) + '%', '', '', ''];
+    const rodape = ['TOTAL', tot.total, tot.q, tot.p, tot.r, tot.n, '', (tot.total ? Math.round(100 * tot.q / tot.total) : 0) + '%', '', tot.g ? brl(tot.g) : '', ''];
     const csv = [head, ...linhasCsv, rodape].map((l) => l.map(esc).join(';')).join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -195,12 +236,24 @@ export function FeedbackPorProdutoTab() {
       </div>
     );
   };
-  const StatusPill = ({ l }: { l: typeof linhas[number] }) => {
+  const StatusPill = ({ l }: { l: Linha }) => {
     if (!jose.tem_dados) return <span className="text-muted-foreground">—</span>;
     if (!l.jose) return <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[11px] text-slate-500">Não anunciado</span>;
     if (l.jose.ativo) return <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">Ativo</span>;
     return <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">Pausado</span>;
   };
+  // cabeçalho clicável (ordena). align 'right' pros números.
+  const Th = ({ k, children, align = 'right', className = '' }: { k: SortKey; children: any; align?: 'left' | 'right'; className?: string }) => (
+    <th className={`px-3 py-2 font-medium ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
+      <button onClick={() => toggleSort(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${sortKey === k ? 'text-foreground' : ''} ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+        {children}
+        {sortKey === k
+          ? (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)
+          : <ChevronsUpDown className="h-3 w-3 opacity-40" />}
+      </button>
+    </th>
+  );
 
   return (
     <div className="space-y-4">
@@ -211,7 +264,7 @@ export function FeedbackPorProdutoTab() {
           </h3>
           <p className="text-xs text-muted-foreground">Qual carro anunciado traz lead bom, qual gasta sem converter, e qual traz lead bom sem estar no ar.</p>
         </div>
-        <button onClick={exportarCSV} disabled={loading || rows.length === 0}
+        <button onClick={exportarCSV} disabled={loading || linhasVis.length === 0}
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent/40 disabled:opacity-50">
           <Download className="h-3.5 w-3.5" /> Exportar CSV
         </button>
@@ -246,6 +299,30 @@ export function FeedbackPorProdutoTab() {
         </button>
       </div>
 
+      {/* filtro de status (tráfego) + ordenação rápida */}
+      <div className="flex flex-wrap items-center gap-2">
+        {jose.tem_dados && (
+          <div className="flex rounded-md border border-border p-0.5">
+            {STATUS.map((o) => (
+              <button key={o.v} onClick={() => setStatus(o.v)}
+                className={`rounded px-2.5 py-1 text-xs transition-colors ${status === o.v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                {o.l}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>Ordenar:</span>
+          <button onClick={() => { setSortKey('pct'); setSortDir('desc'); }}
+            className={`rounded-md border px-2 py-1 ${sortKey === 'pct' ? 'border-primary text-foreground' : 'border-border hover:text-foreground'}`}>Melhor → pior</button>
+          <button onClick={() => { setSortKey('gasto'); setSortDir('desc'); }}
+            className={`rounded-md border px-2 py-1 ${sortKey === 'gasto' ? 'border-primary text-foreground' : 'border-border hover:text-foreground'}`}>Mais gasto</button>
+          <button onClick={() => { setSortKey('total'); setSortDir('desc'); }}
+            className={`rounded-md border px-2 py-1 ${sortKey === 'total' ? 'border-primary text-foreground' : 'border-border hover:text-foreground'}`}>Mais leads</button>
+        </div>
+        {!loading && <span className="text-[11px] text-muted-foreground">{linhasVis.length} de {linhas.length}</span>}
+      </div>
+
       {/* legenda */}
       <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Qualificado</span>
@@ -269,25 +346,29 @@ export function FeedbackPorProdutoTab() {
         <div className="rounded-xl border border-border/50 py-10 text-center text-sm text-muted-foreground">
           Sem análises no período. (A área de Feedbacks precisa da "Análise" ligada e conversas avaliadas.)
         </div>
+      ) : linhasVis.length === 0 ? (
+        <div className="rounded-xl border border-border/50 py-10 text-center text-sm text-muted-foreground">
+          Nenhum produto com esse filtro de status.
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border/50">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border/50 bg-muted/30 text-[11px] uppercase text-muted-foreground">
-                <th className="px-3 py-2 text-left font-medium">Produto</th>
-                <th className="px-3 py-2 text-right font-medium">Leads</th>
-                <th className="px-3 py-2 text-right font-medium">Qualif.</th>
-                <th className="px-3 py-2 text-right font-medium">Pouco</th>
-                <th className="px-3 py-2 text-right font-medium">Ruim</th>
-                <th className="px-3 py-2 text-right font-medium">Nem é lead</th>
-                <th className="w-[18%] px-3 py-2 text-left font-medium">Distribuição</th>
-                <th className="px-3 py-2 text-right font-medium">% Bom</th>
+                <Th k="produto" align="left">Produto</Th>
+                <Th k="total">Leads</Th>
+                <Th k="qualificados">Qualif.</Th>
+                <Th k="pouco">Pouco</Th>
+                <Th k="ruins">Ruim</Th>
+                <Th k="nao_lead">Nem é lead</Th>
+                <th className="w-[16%] px-3 py-2 text-left font-medium">Distribuição</th>
+                <Th k="pct">% Bom</Th>
                 <th className="px-3 py-2 text-left font-medium">Tráfego</th>
-                <th className="px-3 py-2 text-right font-medium">Gasto Meta</th>
+                <Th k="gasto">Gasto Meta</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40">
-              {linhas.map((r, i) => (
+              {linhasVis.map((r, i) => (
                 <tr key={i} className="hover:bg-accent/30">
                   <td className="max-w-[200px] truncate px-3 py-2 font-medium text-foreground" title={r.produto}>{r.produto}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.total}</td>
@@ -304,7 +385,7 @@ export function FeedbackPorProdutoTab() {
             </tbody>
             <tfoot>
               <tr className="border-t border-border/50 bg-muted/20 text-[12px] font-medium">
-                <td className="px-3 py-2">Total</td>
+                <td className="px-3 py-2">Total {status !== 'todos' ? '(filtrado)' : ''}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{tot.total}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-emerald-600 dark:text-emerald-400">{tot.q}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-amber-600 dark:text-amber-400">{tot.p}</td>
@@ -312,7 +393,8 @@ export function FeedbackPorProdutoTab() {
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{tot.n}</td>
                 <td className="px-3 py-2" />
                 <td className="px-3 py-2 text-right tabular-nums">{tot.total ? Math.round((100 * tot.q) / tot.total) : 0}%</td>
-                <td className="px-3 py-2" /><td className="px-3 py-2" />
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-right tabular-nums">{tot.g ? brl(tot.g) : ''}</td>
               </tr>
             </tfoot>
           </table>
@@ -372,8 +454,8 @@ export function FeedbackPorProdutoTab() {
         <TrendingUp className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
           O produto vem do que a IA identificou na conversa; o lado "Tráfego" vem dos criativos que o José está rodando.
-          "Não anunciado" com muitos leads bons = carro que vende sozinho (avaliar anunciar). "Ativo" com % Bom baixo = gasto
-          trazendo curioso. Onde o José ainda não tem snapshot, a coluna Tráfego fica vazia.
+          Clique num cabeçalho pra ordenar; use o filtro de status pra ver só os ativos, os anunciados ou os que não estão no ar.
+          "Não anunciado" com muitos leads bons = carro que vende sozinho (avaliar anunciar). "Ativo" com % Bom baixo = gasto trazendo curioso.
         </span>
       </p>
     </div>
