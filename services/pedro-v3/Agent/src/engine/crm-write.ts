@@ -49,10 +49,24 @@ function moneyBr(v: unknown): string | null {
 // >=2 letras e não-placeholder. Vale p/ lead_name (exibição no CRM/inbox/briefing —
 // campo CANÔNICO de nome, auditado 2026-07-10) e client_name (nome da qualificação).
 // Lixo/emoji/placeholder NUNCA entra em nenhum dos dois.
+// ⭐Codex P1: NORMALIZA o hint do WhatsApp (pushName) — remove emoji/símbolos (mantém letras, espaços, ' - .),
+// colapsa espaços ("Douglas 🚗" -> "Douglas"). Nome COMERCIAL ("Icom Motors") não é nome de pessoa: rejeitado
+// (vira placeholder promovível). Exportado p/ o teste bridge→ingest→CRM.
+const BUSINESS_NAME_RX = /\b(?:motors?|motos?|veiculos?|automoveis|autos?|cars?|multimarcas|garage|garagem|loja|oficina|ltda|comercio|store|shop|oficial|vendas)\b/i;
+export function sanitizeLeadNameHint(raw: unknown): string | null {
+  const text = String(raw ?? "").normalize("NFC").replace(/[^\p{L}\p{M}\s'.-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+  if (text.length < 2) return null;
+  const noAccents = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (BUSINESS_NAME_RX.test(noAccents)) return null;   // nome de empresa/loja nunca vira lead_name
+  return text;
+}
 export function isRealLeadName(value: unknown): boolean {
   const text = String(value ?? "").trim();
-  return text.length > 0 && /\p{L}{2,}/u.test(text) &&
-    !/^(lead|cliente|client|customer|contato|usuario|user)$/i.test(text);
+  if (text.length === 0 || !/\p{L}{2,}/u.test(text)) return false;
+  if (/^(lead|cliente|client|customer|contato|usuario|user)$/i.test(text)) return false;
+  // ⭐SEM inv.7: o placeholder de criação ("Contato WhatsApp • final 1234") também é promovível — nunca é nome real.
+  if (/^contato\b/i.test(text)) return false;
+  return true;
 }
 
 // Veículo de TROCA (carro DO LEAD) -> texto de briefing/CRM. NUNCA alimenta vehicle_interest.
@@ -111,7 +125,7 @@ export function buildCrmSummary(state: ConversationState, adVehicleLabel: string
 
 // Campos de ai_crm_leads que a Fase 1 pode escrever (colunas REAIS; mapeamento
 // espelha mapQualificacaoToLeadColumns do v2 + desired_installment/budget/origem).
-export function buildCrmFields(state: ConversationState, ad: AdContext | null, adVehicleLabel: string | null): Record<string, JsonValue> {
+export function buildCrmFields(state: ConversationState, ad: AdContext | null, adVehicleLabel: string | null, leadNameHint: string | null = null): Record<string, JsonValue> {
   const out: Record<string, JsonValue> = {};
   const put = (col: string, v: string | null) => { if (v != null && v.trim() !== "") out[col] = v.trim().slice(0, 400); };
   // Nome: só NOME REAL entra (nunca lixo/placeholder). client_name = nome da qualificação;
@@ -121,6 +135,11 @@ export function buildCrmFields(state: ConversationState, ad: AdContext | null, a
   if (nome && isRealLeadName(nome)) {
     put("client_name", nome);
     put("lead_name", nome);
+  } else if (sanitizeLeadNameHint(leadNameHint) && isRealLeadName(sanitizeLeadNameHint(leadNameHint))) {
+    // ⭐SEM inv.7: sem nome DECLARADO, o pushName REAL do WhatsApp inicializa o lead_name de exibição
+    // (só exibição — client_name é exclusivo do nome declarado na conversa). O merge do dispatcher
+    // continua mandando: promove placeholder e NUNCA regride um lead_name humano real.
+    put("lead_name", sanitizeLeadNameHint(leadNameHint));
   }
   put("vehicle_interest", interestVehicleText(state, adVehicleLabel));
   put("payment_method", textOf(known(state.slots, "formaPagamento")));
@@ -147,6 +166,7 @@ export type CrmWritePlanArgs = {
   readonly adVehicleLabel: string | null;          // veículo do anúncio JÁ ATERRADO no catálogo (nunca texto cru)
   readonly leadId: string | null;
   readonly turnId: Id;
+  readonly leadNameHint?: string | null;   // ⭐SEM inv.7: pushName sanitizado (hint de lead_name; validado por isRealLeadName)
 };
 
 // Constrói o CrmWritePlan do turno (ou null quando não há o que gravar).
@@ -154,10 +174,11 @@ export type CrmWritePlanArgs = {
 // ao que o estado PRÉ-turno já produzia (nada novo coletado neste turno).
 export function buildCrmWritePlan(args: CrmWritePlanArgs): CrmWritePlan | null {
   if (!args.leadId || args.leadId.trim() === "") return null;
-  const fields = buildCrmFields(args.stateAfter, args.adContext, args.adVehicleLabel);
+  const hint = args.leadNameHint ?? null;
+  const fields = buildCrmFields(args.stateAfter, args.adContext, args.adVehicleLabel, hint);
   if (Object.keys(fields).length === 0) return null;
   if (args.stateBefore) {
-    const before = buildCrmFields(args.stateBefore, args.adContext, args.adVehicleLabel);
+    const before = buildCrmFields(args.stateBefore, args.adContext, args.adVehicleLabel, hint);
     if (JSON.stringify(before) === JSON.stringify(fields)) return null;   // nada novo neste turno
   }
   return {

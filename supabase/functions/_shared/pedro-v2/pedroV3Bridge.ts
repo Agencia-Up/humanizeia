@@ -30,6 +30,7 @@ export type PedroV3BridgeTurn = {
   messageText: string;
   receivedAt: string;
   leadId: null;
+  leadNameHint: string | null;   // ⭐SEM inv.7: pushName/notifyName do WhatsApp, SANITIZADO (hint p/ lead_name inicial; nunca autoridade)
   adReferral?: PedroV3AdReferral;   // F2.32: só quando o payload traz externalAdReply (1ª msg do anúncio)
 };
 
@@ -139,6 +140,19 @@ function normalizePhone(value: string | null): string | null {
   return null;
 }
 
+// ⭐SEM inv.7: pushName/contactName do WhatsApp como HINT de nome — sanitizado (trim, sem control chars, cap 60).
+// NUNCA e autoridade de nome: o v3 so o usa se passar em isRealLeadName (emoji/simbolo/placeholder nao entram).
+function extractLeadNameHint(payload: any): string | null {
+  const message = pickIncoming(payload);
+  const raw = firstString([
+    message?.pushName, message?.pushname, message?.notifyName, message?.senderName, message?.sender_name,
+    payload?.pushName, payload?.pushname, payload?.data?.pushName, payload?.data?.message?.pushName,
+  ]);
+  if (!raw) return null;
+  const clean = raw.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
+  return clean.length >= 2 ? clean : null;
+}
+
 function receivedAt(payload: any): string {
   const message = pickIncoming(payload);
   const raw = message?.messageTimestamp ?? message?.timestamp ?? payload?.messageTimestamp ?? payload?.timestamp;
@@ -227,6 +241,7 @@ export async function buildPedroV3BridgeTurn(input: {
       messageText: text.slice(0, 12_000),
       receivedAt: receivedAt(input.payload),
       leadId: null,
+      leadNameHint: extractLeadNameHint(input.payload),
       ...(adReferral ? { adReferral } : {}),
     },
   };

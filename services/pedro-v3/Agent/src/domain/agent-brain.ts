@@ -106,6 +106,11 @@ export type CanonicalWorkingMemoryView = {
 };
 
 // ── PERSISTIDO: só o que a WorkingMemory É a autoridade gravável (dentro do state JSONB, mesmo CAS do turno) ──
+// ⭐SEM (invariante 3): pergunta de SLOT que a ULTIMA resposta do agente fez + a ultima resposta RESOLVIDA -
+// rastreadas na WM pelo ENGINE (infra de memoria, nao decisao da LLM). Uma negacao/afirmacao curta do lead so
+// pode resolver o slot da pergunta pendente registrada.
+export type PendingAgentQuestionMemory = { readonly slot: string; readonly sinceTurnId: string };
+export type ResolvedSlotAnswerMemory = { readonly slot: string; readonly turnId: string };
 export type PersistedWorkingMemory = {
   readonly schemaVersion: typeof WORKING_MEMORY_SCHEMA_VERSION;
   readonly activeTopic: ActiveTopic | null;
@@ -117,6 +122,8 @@ export type PersistedWorkingMemory = {
   readonly conversationSummary: string;
   readonly lastAgentAction: AgentActionMemory | null;
   readonly lastAnsweredLeadQuestion: AnsweredQuestionMemory | null;
+  readonly pendingAgentQuestion: PendingAgentQuestionMemory | null;    // ⭐SEM: escrita SO pelo engine (sistema)
+  readonly lastResolvedSlotAnswer: ResolvedSlotAnswerMemory | null;    // ⭐SEM: escrita SO pelo engine (sistema)
 };
 
 // Visão completa que o cérebro recebe = persistido (WM-owned) + view canônica derivada (read-only).
@@ -128,6 +135,7 @@ export function createInitialPersistedWorkingMemory(): PersistedWorkingMemory {
     schemaVersion: WORKING_MEMORY_SCHEMA_VERSION,
     activeTopic: null, currentLeadIntent: null, unansweredLeadQuestions: [], lastPhotoAction: null,
     lastToolResults: [], commitments: [], conversationSummary: "", lastAgentAction: null, lastAnsweredLeadQuestion: null,
+    pendingAgentQuestion: null, lastResolvedSlotAnswer: null,
   };
 }
 
@@ -148,7 +156,11 @@ export type DecisionWorkingMemoryMutation =
 // ── Mutação de SISTEMA (A.2) — aplicada SÓ pelo ENGINE (determinística), nunca pela LLM. Só resultado de tool
 //    REALMENTE executada+autorizada alimenta lastToolResults (summary sanitizado+limitado ANTES de persistir).
 export type SystemWorkingMemoryMutation =
-  | { readonly op: "record_tool_result"; readonly result: ToolResultMemory };
+  | { readonly op: "record_tool_result"; readonly result: ToolResultMemory }
+  // ⭐SEM (invariantes 3/4 - reconciliacao de INFRA pos-entendimento aceito; a LLM nao propoe):
+  | { readonly op: "set_pending_agent_question"; readonly question: PendingAgentQuestionMemory | null; readonly turnId: string }
+  | { readonly op: "set_resolved_slot_answer"; readonly answer: ResolvedSlotAnswerMemory; readonly turnId: string }
+  | { readonly op: "reconcile_turn_semantics"; readonly topic: string | null; readonly intent: LeadIntentKind | null; readonly turnId: string };
 
 // ── Mutação de OUTCOME (só após receipt) — aplicada SÓ pelo fluxo commitEffectOutcome. `mark_photo_action_accepted`
 //    é EXCLUSIVA daqui (P0-1). A LLM não tem como propô-la. Carrega DRAFT (sem acceptedAt): o commit preenche
@@ -193,6 +205,9 @@ export type FrameSignals = {
   // PARTE A (missão): ENTRADA por anúncio de veículo ESPECÍFICO. Na abertura, fale do veículo do anúncio e ofereça
   // fotos/detalhes/condições (acolhedor), em vez de despejar uma lista crua ou pedir dados pessoais.
   readonly specificAdEntry?: boolean;
+  // Semântica contextual read-only: não escolhe ação, apenas evita que a LLM ignore o ato atual por causa do funil pendente.
+  readonly disengagementOnly?: boolean;  // agradecimento/despedida sem pedido novo no mesmo bloco
+  readonly acceptedPhotoOffer?: boolean; // afirmação curta aceitou a última pergunta única de envio de fotos
 };
 export type TurnFrame = {
   readonly turnId: string;

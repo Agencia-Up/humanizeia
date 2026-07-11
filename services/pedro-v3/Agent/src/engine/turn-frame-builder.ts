@@ -62,6 +62,8 @@ export function buildTurnFrame(args: {
   readonly adGenericEntry?: boolean;                // Fix B (audit CTWA): entrada por anúncio genérico -> abre com discovery
   readonly firstContactNoCommercialTarget?: boolean; // PARTE A (missão): 1º contato sem anúncio/alvo -> discovery, não nome
   readonly specificAdEntry?: boolean;               // PARTE A (missão): entrada por anúncio específico -> fala do veículo
+  readonly disengagementOnly?: boolean;
+  readonly acceptedPhotoOffer?: boolean;
 }): TurnFrame {
   const base = buildFrameSignals(args.block, args.interpretation);
   // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
@@ -73,6 +75,8 @@ export function buildTurnFrame(args: {
     ...(args.adGenericEntry ? { adGenericEntry: true } : {}),
     ...(args.firstContactNoCommercialTarget ? { firstContactNoCommercialTarget: true } : {}),
     ...(args.specificAdEntry ? { specificAdEntry: true } : {}),
+    ...(args.disengagementOnly ? { disengagementOnly: true } : {}),
+    ...(args.acceptedPhotoOffer ? { acceptedPhotoOffer: true } : {}),
   };
   return {
     turnId: args.turnId,

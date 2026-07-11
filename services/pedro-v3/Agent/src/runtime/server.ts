@@ -155,6 +155,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         conversationId: payload.conversationId,
         agentId: payload.agentId,
         leadId: payload.leadId ?? null,
+        leadNameHint: payload.leadNameHint ?? null,   // ⭐SEM inv.7: viaja no raw do inbox (como o adContext)
         toAddr: payload.to,
         messageText: payload.messageText,
         receivedAt: payload.receivedAt,
@@ -193,7 +194,9 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     // tenant (mesmo openAiSecret do compose); prompt integral vai no system do brain (prova por SHA no adapter).
     const agentBrainFactory = brainMode !== "off"
       ? (config: TenantRuntimeConfig) => new OpenAiAgentBrain(openAiSecret, new FetchModelHttpTransport(), config.promptText, {
-          model: this.#modelOverride, temperature: 0.2, maxCompletionTokens: 1_200, timeoutMs: 45_000,
+          model: this.#modelOverride,
+          retryModel: process.env.PEDRO_V3_OPENAI_RETRY_MODEL?.trim() || "gpt-4.1",
+          temperature: 0.2, maxCompletionTokens: 1_200, timeoutMs: 45_000,
           allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
         })
       : undefined;

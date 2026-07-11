@@ -267,7 +267,8 @@ async function main(): Promise<void> {
   {
     const { turn } = makeConv("c13");
     await turn("Quero um carro popular", "ambiguous", [q(stockPopular()), fin([txt("Olha essas opções:"), offer(POPULAR), txt("Curtiu alguma?")])]);
-    const c = await turn("gostei do segundo", "ambiguous", [fin([txt("Ótima escolha, Douglas! Quer que eu te mande as fotos ou já te passo as condições?")])]);
+    // ⭐Codex rodada 2: pergunta DUPLA de ação agora é deny de output — o script usa UMA pergunta acionável.
+    const c = await turn("gostei do segundo", "ambiguous", [fin([txt("Ótima escolha, Douglas! Quer que eu te mande as fotos dele?")])]);
     check("[13] seleção natural -> committed, NÃO degrada, seleciona o 2º (Onix)", c.committed && !c.degraded && c.selKey === POP2.vehicleKey, `src=${c.src} degraded=${c.degraded} selKey=${c.selKey}`);
     check("[13] resposta acolhe sem citar atributo (sem km/preço)", has(c.outbox, "escolha") && !/\bkm\b|R\$|\d{2}\.\d{3}/.test(c.outbox), `text="${c.outbox}"`);
   }
@@ -277,7 +278,7 @@ async function main(): Promise<void> {
     await turn("Quero um carro popular", "ambiguous", [q(stockPopular()), fin([txt("Opções:"), offer(POPULAR), txt("Curtiu?")])]);
     const c = await turn("gostei do segundo", "ambiguous", [
       fin([txt("Ótima! Esse tem"), vref(POP2.vehicleKey, "km"), txt("rodados.")]),   // cita km SEM vehicle_details -> deny específico
-      fin([txt("Ótima escolha! Quer as fotos ou as condições?")]),                    // acolhe -> ok
+      fin([txt("Ótima escolha! Quer que eu te mande as fotos?")]),                   // acolhe (UMA ação) -> ok
     ]);
     check("[14] feedback ESPECÍFICO de seleção ('acolher, não cite atributo')", c.policyFeedback.some((f) => /acolher a escolha|nao cite|não cite/i.test(f)), JSON.stringify(c.policyFeedback));
     check("[14] após o feedback, acolhe e COMMITA (não degrada)", c.committed && !c.degraded && has(c.outbox, "escolha"), `src=${c.src} text="${c.outbox}"`);

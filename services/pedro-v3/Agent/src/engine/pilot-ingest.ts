@@ -20,6 +20,8 @@ export type PilotIngestInput = {
   // F2.32 (CTWA): contexto de anúncio SANITIZADO (do bridge). Guardado no raw do inbox; o engine resolve o veículo e
   // persiste no state (herda em rajada). CONTEXTO, não resposta do lead. Opaco aqui (o engine valida o shape).
   readonly adContext?: unknown;
+  // ⭐SEM inv.7: hint de nome do WhatsApp (pushName sanitizado no bridge). Viaja no raw; o engine valida (isRealLeadName).
+  readonly leadNameHint?: string | null;
 };
 
 // "proceed" = mensagem nova OU retry de evento ainda pendente (entra/segue na fila do poller).
@@ -40,7 +42,7 @@ export async function ingestPilotMessage(
     eventId: input.eventId,
     conversationId: input.conversationId,
     // F2.32: adContext viaja no raw (só quando presente) -> o engine o lê da rajada e persiste no state.
-    raw: redact((input.adContext != null ? { text: input.messageText, adContext: input.adContext } : { text: input.messageText }) as Record<string, JsonValue>),
+    raw: redact(({ text: input.messageText, ...(input.adContext != null ? { adContext: input.adContext } : {}), ...(input.leadNameHint ? { leadNameHint: input.leadNameHint } : {}) }) as unknown as Record<string, JsonValue>),
     receivedAt: input.receivedAt ?? clock.now(),
   });
   if (!inserted) {

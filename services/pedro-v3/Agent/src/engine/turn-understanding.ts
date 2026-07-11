@@ -125,8 +125,21 @@ function answersPendingPhotoTargetQuestion(target: TargetResolution, state?: Con
   if (!lastAgentAskedPhotoTarget(state)) return false;
   return target.source === "turn_ordinal" || target.source === "turn_explicit_model" || target.source === "ad_reference";
 }
+// ⭐Codex rodada 2 (smoke T4): "Sim" ACEITANDO a oferta de foto que o AGENTE acabou de fazer ("quer que eu te
+// envie as fotos dele?") — com pergunta ÚNICA por design (dupla é deny), o aceite booleano curto é inequívoco.
+// Exige: oferta de foto interrogativa na última fala do agente + afirmação curta + alvo RESOLVIDO (selected/
+// carryover). Negação/adiamento continua barrando (isPhotoDeclined). Determinístico e grounded. PURO.
+const SHORT_AFFIRMATION_RX = /^(?:sim|pode|pode sim|pode ser|quero|quero sim|manda|mande|envia|envie|claro|com certeza|por favor|bora|ok|okay|isso|aceito|show|beleza|top)[.!\s]*$/;
+export function acceptsAgentPhotoOffer(block: string, state?: ConversationState | null): boolean {
+  if (isPhotoDeclined(block)) return false;
+  const lastAgent = [...(state?.recentTurns ?? [])].reverse().find((t) => t.role === "agent")?.text ?? "";
+  if (!lastAgent.trim().endsWith("?")) return false;
+  const n = normalizeText(lastAgent);
+  if (!/\b(?:fotos?|imagens?)\b/.test(n)) return false;
+  return SHORT_AFFIRMATION_RX.test(normalizeText(block).trim());
+}
 export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string, state?: ConversationState | null): boolean {
-  return target.kind === "resolved" && (leadRequestsPhoto(block) || answersPendingPhotoTargetQuestion(target, state));
+  return target.kind === "resolved" && (leadRequestsPhoto(block) || answersPendingPhotoTargetQuestion(target, state) || acceptsAgentPhotoOffer(block, state));
 }
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──
@@ -199,6 +212,14 @@ export function resolveTurnTarget(args: {
   const uModel = u?.subject === "explicit_model" && u.subjectValue ? u.subjectValue : null;
   const textModels = claimExtractor.extractClaims(leadMessage).filter((c) => c.kind === "model" || c.kind === "brand_model").map((c) => c.text);
 
+  // Uma afirmação curta que aceita a pergunta única de fotos não introduz um
+  // novo veículo. O selected já aterrado é a autoridade do alvo; um
+  // subjectValue especulativo do modelo não pode apagar esse contexto.
+  const selectedForAcceptedPhoto = state.vehicleContext.selected?.key ?? null;
+  if (selectedForAcceptedPhoto && acceptsAgentPhotoOffer(leadMessage, state)) {
+    return { kind: "resolved", vehicleKey: selectedForAcceptedPhoto, source: "carryover_selected", candidateVehicleKeys: [selectedForAcceptedPhoto], subjectModel: null };
+  }
+
   // A) ORDINAL explícito -> key EXATA da lista estruturada (desambigua sozinho; independe de modelo).
   const ord = parseOrdinal(leadMessage);
   if (ord && ord.value >= 1 && ord.value <= offerItems.length) {
@@ -236,7 +257,10 @@ export function resolveTurnTarget(args: {
   if (uModel) return { kind: "none", subjectModel: uModel };
   // C) PRONOME / sem novo modelo -> selecionado (nunca em troca de assunto).
   const sel = state.vehicleContext.selected?.key ?? null;
-  if (sel && u?.isTopicChange !== true) return { kind: "resolved", vehicleKey: sel, source: "carryover_selected", candidateVehicleKeys: [sel], subjectModel: null };
+  // ⭐Codex rodada 2 (smoke T4): uma AFIRMAÇÃO CURTA ("Sim"/"pode"/"quero") NUNCA é troca de assunto por
+  // definição — o isTopicChange do cérebro em bloco monossílabo não é confiável e negava o carryover do
+  // selected (o "dele" da oferta de foto que o próprio agente fez), derrubando o alvo para "de qual carro?".
+  if (sel && (u?.isTopicChange !== true || SHORT_AFFIRMATION_RX.test(normalizeText(leadMessage).trim()))) return { kind: "resolved", vehicleKey: sel, source: "carryover_selected", candidateVehicleKeys: [sel], subjectModel: null };
   return { kind: "none", subjectModel: null };
 }
 // Uma vehicleKey (send_media autorado OU photo fact) é compatível com o alvo do assunto? conflict/none -> nunca.

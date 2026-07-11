@@ -19,6 +19,7 @@ export type CentralTurnCapture = {
   wmBeforeLastPhotoLabel: string | null;
   wmAfterLastPhotoLabel: string | null;
   possuiTrocaBefore: string; possuiTrocaAfter: string;
+  selectedVehicleKeyAfter?: string | null;
 };
 
 export type Severity = "critical" | "warn";

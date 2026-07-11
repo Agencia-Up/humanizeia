@@ -395,7 +395,7 @@ async function main(): Promise<void> {
     const selectThenAck: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
       const fb = obs.find((o) => o.ok === false && o.tool === "response");
       if (fb) { const label = /SELECIONOU o ([^(]+?) \(/.exec((fb as { error: { message: string } }).error.message)?.[1]?.trim() ?? "esse carro";
-        return finU([txt(`Ótima escolha! O ${label} é uma boa. Quer que eu te envie as fotos ou já te passo as condições?`)], "reply", selectU); }   // a LLM usa o FATO do feedback
+        return finU([txt(`Ótima escolha! O ${label} é uma boa. Quer que eu te envie as fotos dele?`)], "reply", selectU); }   // a LLM usa o FATO do feedback
       return qU({ tool: "vehicle_details", input: { vehicleKey: "rm:reneg" } }, selectU);   // 1ª tentativa: detalhe -> rejeitado com feedback
     };
     const t2 = await c.t("gostei do segundo", { responder: selectThenAck });
@@ -451,10 +451,13 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("você tem SUV?", { responder: listSuv });   // renderiza SUVs + persiste activeSearchConstraints
+    // ⭐Codex rodada 2 (proveniência temporal): a evidence do understanding precisa ser do BLOCO ATUAL ("cadê?"),
+    // nunca herdada do turno anterior ("suv") — senão o deny UNDERSTANDING_STALE descarta a decisão (correto).
+    const resumeU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "cadê" }], isTopicChange: false, answeredLeadQuestions: [] };
     const cadeBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
       const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-      if (so) return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos ou as condições?")], "reply", searchSuvU);
-      return finU([txt("Claro! Aqui estão as opções, quer ver as fotos ou as condições?")], "reply", searchSuvU);   // finaliza sem ter o resultado (como o cérebro real)
+      if (so) return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", resumeU);
+      return finU([txt("Claro! Aqui estão as opções, quer ver as fotos de alguma delas?")], "reply", resumeU);   // finaliza sem ter o resultado (como o cérebro real)
     };
     const t2 = await c.t("cadê?", { responder: cadeBrain });
     check("[T5R] 'cadê?' termina brain_final/brain_retry (NÃO recovery_offer/technical_fallback)", (t2.src === "brain_final" || t2.src === "brain_retry"), `src=${t2.src}`);
@@ -465,7 +468,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("você tem SUV?", { responder: listSuv });   // lista SUVs
-    await c.t("gostei do segundo", { responder: () => finU([txt("Ótima escolha! O Renault Duster 2015 é uma boa. Quer fotos ou condições?")], "reply", selectU) });   // seleciona -> persiste selectedVehicle
+    await c.t("gostei do segundo", { responder: () => finU([txt("Ótima escolha! O Renault Duster 2015 é uma boa. Quer que eu te mande as fotos?")], "reply", selectU) });   // seleciona -> persiste selectedVehicle
     const payBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
       ? finU([txt("Claro! Você tem algum valor para dar de entrada?")], "reply", U("financing"))   // conduz após feedback (UMA pergunta — F2.40 caso F)
       : finU([txt("Me conta o que você procura?")], "reply", U("financing"));   // discovery -> NEGADO

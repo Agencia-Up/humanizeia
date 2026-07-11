@@ -150,7 +150,10 @@ async function main(): Promise<void> {
   await turn("quero agendar uma visita", [finalStep({ guidance: "Perfeito! Que dia e horário fica melhor pra você?", stateMutations: [{ op: "set_slot", slot: "interesseVisita", value: true, confidence: 0.95, sourceTurnId: "g1-t5" }] })], plainText, "answers_pending");
   await turn("sábado de manhã", [finalStep({ guidance: "Combinado, te espero sábado de manhã!", stateMutations: [{ op: "set_slot", slot: "diaHorario", value: "sábado de manhã", confidence: 0.9, sourceTurnId: "g1-t6" }] })], plainText, "answers_pending");
   const afterE = (await p.load("g1"))?.state ?? null;
-  check("(e) agendamento avança: interesseVisita + diaHorario known", slot(afterE, "interesseVisita")?.status === "known" && slot(afterE, "interesseVisita")?.value === true && slot(afterE, "diaHorario")?.status === "known" && slot(afterE, "diaHorario")?.value === "sábado de manhã", JSON.stringify({ v: slot(afterE, "interesseVisita")?.value, d: slot(afterE, "diaHorario")?.value }));
+  // ⭐SEM (F2.48): a EXTRAÇÃO determinística é a autoridade do slot quando cobre o bloco — a mutação da LLM
+  // ("sábado de manhã") é descartada em favor do valor extraído ("sábado"). O invariante do caso é o AVANÇO
+  // do agendamento (ambos known), não o texto exato do dia.
+  check("(e) agendamento avança: interesseVisita + diaHorario known", slot(afterE, "interesseVisita")?.status === "known" && slot(afterE, "interesseVisita")?.value === true && slot(afterE, "diaHorario")?.status === "known" && String(slot(afterE, "diaHorario")?.value ?? "").toLowerCase().includes("sábado"), JSON.stringify({ v: slot(afterE, "interesseVisita")?.value, d: slot(afterE, "diaHorario")?.value }));
 
   // ── (f) nenhuma fixação: nenhum slot perguntado em 3 turnos consecutivos ──
   let maxStreak = 0;

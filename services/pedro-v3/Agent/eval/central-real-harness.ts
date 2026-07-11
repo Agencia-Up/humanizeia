@@ -43,7 +43,9 @@ export function buildCentralStack(assembly: RealAssembly): CentralStack {
   const brainTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
   brainTransport.fullPrompt = assembly.runtimeConfig.promptText;
   const brain = new OpenAiAgentBrain(assembly.openAiSecret, brainTransport, assembly.runtimeConfig.promptText, {
-    model: PILOT_MODEL, temperature: 0.1, maxCompletionTokens: 1200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+    model: PILOT_MODEL,
+    retryModel: process.env.PEDRO_V3_OPENAI_RETRY_MODEL?.trim() || "gpt-4.1",
+    temperature: 0.1, maxCompletionTokens: 1200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
   const composeTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
@@ -173,6 +175,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       wmBeforeLastPhotoLabel: wmBefore.lastPhotoAction?.label ?? null,
       wmAfterLastPhotoLabel: wmAfter.lastPhotoAction?.label ?? null,
       possuiTrocaBefore, possuiTrocaAfter: possuiTrocaStr(after),
+      selectedVehicleKeyAfter: after?.vehicleContext.selected?.key ?? null,
     });
     base.ms += 30_000;
     if (INTER_TURN_DELAY_MS > 0) await realSleep(INTER_TURN_DELAY_MS);

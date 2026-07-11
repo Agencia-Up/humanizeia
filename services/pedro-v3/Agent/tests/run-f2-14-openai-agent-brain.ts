@@ -93,6 +93,17 @@ async function main(): Promise<void> {
     check("[5] prompt do portal presente INTEGRALMENTE no system", sys.includes(PORTAL_PROMPT) && sys.includes("PROMPT-INTEGRAL-MARKER-42"));
     check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
   }
+  // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
+  {
+    const transport = new CannedTransport(JSON.stringify({ kind: "final", guidance: "ok" }));
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1-mini", retryModel: "gpt-4.1" });
+    await brain.proposeNextStep(frame("obrigado"), []);
+    const firstBody = JSON.parse(transport.lastRequest!.body) as { model: string };
+    await brain.proposeNextStep(frame("obrigado"), [{ tool: "response", ok: false, error: { code: "POLICY", message: "reescreva" } }]);
+    const retryBody = JSON.parse(transport.lastRequest!.body) as { model: string };
+    check("[5b] caminho normal permanece no mini", firstBody.model === "gpt-4.1-mini");
+    check("[5b] retry pós-policy escala para modelo forte", retryBody.model === "gpt-4.1");
+  }
   // [6] segredo NUNCA no corpo/JSON serializável (só no header via materialize)
   {
     const { brain, transport } = brainWith(JSON.stringify({ kind: "final", guidance: "ok" }));

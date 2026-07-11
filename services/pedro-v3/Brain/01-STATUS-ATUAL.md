@@ -1,5 +1,39 @@
 # 01 - Status Atual do Pedro v3
 
+## 2026-07-11 - F2.48 rodada 2 (auditoria Codex): proveniência campo-a-campo + decisão stale + denies de conversa
+
+- 4 achados do Codex CORRIGIDOS+testados: objeto composto exige TODOS os campos (Ferrari Roma morto); booleano
+  só via pergunta pendente ("aceito troca na compra" não vira slot); decisão stale descartada INTEIRA (break;
+  nunca renderiza); deny de pergunta DUPLA de ação + deny de PROMESSA de consultor sem efeito (quando a Fase 3
+  materializar handoff, o predicado já exige o efeito); sanitizeLeadNameHint (emoji/comercial fora).
+- Decorrentes: normalização mecânica de citação em resposta curta sem ação; feedback prescritivo (JSON literal);
+  aceite de oferta de foto ("Sim" → executor manda a foto do selected); afirmação curta nunca nega carryover;
+  preço da última oferta ecoável; prompt de resposta curta.
+- Gates: f248 **54 OK/0** · tsc 0 · **test:all 2216 OK/0** · diff --check limpo. Smokes reais (9 runs): invariantes
+  FACTUAIS 100% em todos (troca unknown sempre; zero dupla/promessa ENVIADA — denies seguram); fluidez com
+  variância do gpt-4.1-mini (1 PASS completo; 2 consecutivos NÃO alcançados — declarado, não maquiado; decisão
+  do gate em aberto p/ Codex: aceitar recovery honesto × modelo maior no retry × mais prompt-tuning).
+- **NADA commitado/deployado; CRM OFF.** Detalhe: `Brain/2026-07-11-claude-sem-rodada2-codex.md`.
+
+## 2026-07-10 - F2.48 Verdade temporal e semântica por turno (missão SEM) — IMPLEMENTADA, aguarda auditoria Codex
+
+- Incidente real (piloto, CRM ON): evidence HERDADA do turno anterior em "Sim"/"Não"/"Douglas" → trusted=false →
+  2× technical_fallback; `possuiTroca=false` FANTASMA ("Mas não tenho entrada" casava trocaNeg sem vínculo) →
+  CRM gravou "não possui" E bloqueou a pergunta legítima de troca (anti-repetição) → cascata; seleção "Gostei do
+  Aircross" não persistia (submodelo ⊄ claims); WM presa em greeting; conheceLoja=true inventado (pergunta nova).
+- Fixes por INVARIANTE (LLM-first intacto): deny UNDERSTANDING_STALE + retry bounded (evidence do bloco ATUAL;
+  esgotado → understanding herdado descartado) · `slot-provenance.ts` (mutação set_slot da LLM exige extração OU
+  proveniência no bloco; inventada = descartada+observada) · negação só resolve a pergunta pendente (trocaNeg
+  vinculada; guard por cláusula; conheceLoja) · WM reconciliada por infra (activeTopic/currentLeadIntent +
+  pendingAgentQuestion/lastResolvedSlotAnswer) · seleção por token da última oferta · pushName sanitizado como
+  lead_name inicial + placeholder "Contato WhatsApp • final XXXX" (nunca "Lead") · prompt: quote do bloco atual
+  mesmo monossílabo + UMA pergunta acionável.
+- Gates: `test:f248` 42 OK/0 · `tsc` 0 · `test:all` EXIT 0 (2204 OK) · smokes REAIS gpt-4.1-mini **2× PASS
+  consecutivos** (possuiTroca unknown em TODOS os turnos; entrada=0/parcela=1200/nome=Douglas; zero fallback;
+  compose=0; retry de proveniência visível no run 2). ⚠️ linha real do lead de teste ainda tem trade_in
+  "não possui" antigo (fill-only não corrige; limpar manualmente antes do aceite).
+- **NADA commitado/deployado; flags inalteradas (CRM OFF).** Detalhe: `Brain/2026-07-10-claude-sem-verdade-temporal.md`.
+
 ## 2026-07-10 - F2.47 Identidade do lead no CRM (Opção A hardened) — IMPLEMENTADA, aguarda auditoria Codex
 
 - Bloqueio estrutural exposto na verificação pré-ativação do CRM (Estágio A): o bridge fixa `leadId:null`
@@ -1388,3 +1422,10 @@ Real 5 turnos (US$0,033, 0 technical_fallback): T4 "aonde fica a loja e quantos 
 E vehicle_details (km 80.000 real — policy de veículo NÃO desligada); T5 foto via send_media. ⚠️T5 respondeu endereço em
 vez de horário (conteúdo do cérebro, não policy). NÃO commitado — aguarda Codex passar. Detalhe:
 `Brain/2026-07-04-claude-roteamento-por-dominio.md`.
+## 2026-07-11 — F2.48 SEM + convergência LLM-first (audit Codex)
+- Verdade temporal e proveniência campo a campo blindadas; slots do turno atual são usados na validação da fala.
+- Aceite curto de fotos mantém o veículo selecionado; políticas não podem substituir o alvo por inferência da LLM.
+- Retry pós-deny pode escalar do mini para `PEDRO_V3_OPENAI_RETRY_MODEL` (`gpt-4.1` por default no piloto), sem
+  encarecer turnos normais e sem introduzir handler/recovery comercial.
+- Guardas de despedida estreitadas: `contato` e `continuidade` naturais não são mais falsos positivos.
+- Gates: F2.48 62 OK, F2.14 19 OK, tsc/test:all verdes; 2 smokes reais completos consecutivos PASS.

@@ -157,7 +157,9 @@ export class SupabaseCrmLeadStore implements CrmLeadStore, CrmLeadIdentityStore 
           user_id: ref.tenantId,
           agent_id: ref.agentId,
           remote_jid: jid,
-          lead_name: "Lead",          // placeholder promovível (contrato lead_name: nunca regride nome real)
+          // ⭐SEM inv.7: placeholder IDENTIFICÁVEL (nunca "Lead" seco) — final do telefone ajuda o vendedor;
+          // isRealLeadName o rejeita, então segue PROMOVÍVEL pelo pushName real ou pelo nome declarado.
+          lead_name: `Contato WhatsApp • final ${jid.replace(/@.*$/, "").slice(-4)}`,
           status: "novo",
           status_crm: "novo",
           message_count: 1,

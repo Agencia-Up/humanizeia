@@ -37,6 +37,7 @@ export type PilotTurnPayload = {
   readonly messageText: string;
   readonly receivedAt: string;
   readonly leadId?: string | null;
+  readonly leadNameHint?: string | null;   // ⭐SEM inv.7: hint sanitizado do bridge (pushName)
   // F2.32 (CTWA): contexto de anúncio SANITIZADO forwardado pelo bridge (só na 1ª mensagem do anúncio). Opaco (o engine
   // valida/sanitiza o shape via sanitizeAdContext).
   readonly adReferral?: unknown;
@@ -137,6 +138,7 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
   const messageText = readString(raw.messageText);
   const receivedAt = readString(raw.receivedAt);
   const leadId = raw.leadId == null ? null : readString(raw.leadId);
+  const leadNameHint = raw.leadNameHint == null ? null : readString(raw.leadNameHint);
 
   if (!tenantId || !agentId || !conversationId || !turnId || !eventId || !workerId || !to || !messageText || !receivedAt) {
     return null;
@@ -160,6 +162,7 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
     messageText,
     receivedAt: new Date(receivedAt).toISOString(),
     leadId,
+    leadNameHint: leadNameHint ?? null,
     ...(adReferral ? { adReferral } : {}),
   };
 }

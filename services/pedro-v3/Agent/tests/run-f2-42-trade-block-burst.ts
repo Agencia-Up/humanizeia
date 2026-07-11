@@ -83,7 +83,7 @@ const searchB = (input: Record<string, unknown>): BrainResponder => (f, obs: rea
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
   if (!so) return qU({ tool: "stock_search", input }, u);
   if (so.data.items.length === 0) return finU([txt("No momento não tenho esse modelo em estoque. Quer que eu veja opções parecidas pra você?")], "reply", u);
-  return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos, os detalhes ou as condições?")], "reply", u);
+  return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", u);
 };
 // Seleção ordinal ("gostei do primeiro") — acolhe sem nomear (a seleção canônica é do engine).
 const selectFirst: BrainResponder = () => finU([txt("Boa escolha! Quer ver as condições de pagamento?")], "reply",

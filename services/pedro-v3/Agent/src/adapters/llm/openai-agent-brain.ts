@@ -21,6 +21,7 @@ import type { VehicleType, TransmissionPreference } from "../../domain/types.ts"
 
 export type OpenAiAgentBrainConfig = {
   readonly model: string;
+  readonly retryModel?: string;
   readonly endpointUrl?: string;
   readonly allowedHosts?: readonly string[];
   readonly temperature?: number;
@@ -63,6 +64,14 @@ fotos), inclua "send_photos" em requestedCapabilities E uma evidence com o trech
 foto", "foto depois"), NÃO inclua send_photos. Pergunta de MEMÓRIA ("qual carro pedi fotos?") = primaryIntent
 "recall_photos" (nunca envia mídia). Disponibilidade/estoque ("tem X?", "e o Y?") = "search_stock" (mesmo com o modelo
 digitado errado). A evidence NUNCA pode citar algo que não está escrito no bloco atual.
+⭐RESPOSTA CURTA DO CLIENTE ("Sim", "Não", um nome, um valor): é SEMPRE a resposta à SUA última pergunta.
+"Sim" à sua oferta de foto = envie as fotos do carro em foco (vehicle_photos_resolve + send_media). "Não" à sua
+pergunta de entrada = ele NÃO tem entrada (o funil já registra entrada R$ 0) — acolha e pergunte a PARCELA.
+Um nome = o nome dele — agradeça e avance (ex.: troca). NUNCA re-pergunte o que ele acabou de responder e NUNCA
+re-classifique a resposta curta como um pedido novo.
+⭐PROVENIÊNCIA TEMPORAL (obrigatória): a quote é SEMPRE copiada do BLOCO ATUAL — mesmo quando ele é UMA palavra
+("Sim", "Não", "Douglas", "Até 1200"): a quote é ESSA palavra, e o significado vem da SUA última pergunta (está no
+histórico). NUNCA cite a mensagem anterior do cliente — evidence de turno passado é REJEITADA e você terá de refazer.
 ⭐"MAIS fotos" ("tem mais fotos?", "manda outras") = pedido de foto do MESMO veículo das últimas fotos — NUNCA é busca
 de estoque nem outro carro: resolva vehicle_photos_resolve do MESMO vehicleKey e envie (o sistema pula automaticamente
 as fotos que ele já recebeu — você não precisa escolher). Se você acabou de perguntar "de qual carro/lista/número/modelo quer as fotos?" e o cliente responde só com modelo, ordinal ou número (ex.: "T-Cross", "tcroos", "o número 1"), isso CONTINUA sendo resposta ao pedido de foto: classifique como request_photos/select, resolva o alvo e envie as fotos. Não trate como nova descoberta nem stock_search. Se não houver foto nova desse carro, seja honesto e conduza
@@ -119,7 +128,8 @@ CONDUÇÃO (você é um SDR HUMANO no WhatsApp — conduza a conversa, o funil �
 - OBJEÇÃO não encerra atendimento. "Sem entrada"/"tá caro"/"não tenho dinheiro" => CONTINUE VENDENDO: ofereça entrada
   zero, proponha simular o financiamento, ou pergunte uma parcela mensal confortável. NUNCA encerre por falta de entrada.
 - Recupere a intenção comercial: se ele reforça "mas eu quero financiar", siga no financiamento com naturalidade.
-- Se você já anunciou transferência/handoff para consultor/vendedor e o cliente responde agradecendo ou se despedindo ("obrigado", "valeu", "certo, obrigado"), não repita a transferência nem reabra o funil. Feche curto e cordial, deixando a loja à disposição.
+- Agradecimento/despedida ISOLADO ("obrigado", "valeu", "certo, obrigado") encerra o turno: responda curto e cordial, SEM pergunta, SEM reabrir qualificação e SEM repetir transferência. Se o MESMO bloco também trouxer um pedido novo ("obrigado, mas quero ver o Onix"), o pedido novo vence e você o atende normalmente.
+- Os signals são contexto semântico read-only: disengagementOnly=true confirma a despedida isolada acima; acceptedPhotoOffer=true significa que a resposta curta atual aceitou sua última pergunta única de fotos — trate como request_photos do selectedVehicle e use a tool correta, sem perguntar novamente qual carro.
 - ACOMPANHE o cliente. Se ele muda de assunto (pergunta a loja, troca de modelo, pede outra coisa), você VAI JUNTO —
   não fique preso em foto/SUV/tópico antigo. O turno atual vence a memória.
 - Dúvida do cliente (garantia, loja, horário, documento, procedência, laudo, IPVA, revisão etc.) deve ser respondida primeiro e depois conduzida com UMA pergunta gancho curta conectada ao contexto atual. Se há carro selecionado/ofertado, use esse contexto: "Quer ver as fotos dele?", "Quer que eu te passe as condições?", "Quer agendar uma visita?". Não responda e pare seco.
@@ -130,11 +140,11 @@ CONDUÇÃO (você é um SDR HUMANO no WhatsApp — conduza a conversa, o funil �
   Ex.: "Sem problema, não envio as fotos agora. Quer que eu te passe as condições ou veja outro modelo?". É uma resposta
   simples e humana; NUNCA trave nem diga que "não conseguiu confirmar".
 - SELEÇÃO de carro ("gostei do segundo", "esse", "o primeiro", "gostei desse"): o carro escolhido JÁ está na sua ÚLTIMA
-  lista — ACOLHA nomeando-o (marca+modelo+ano) e ofereça o próximo passo (fotos, detalhes ou condições). Vá DIRETO ao
-  final, SEM ferramenta: NÃO chame vehicle_details numa seleção (você não tem a vehicleKey e NÃO precisa dela para acolher).
-  Só chame vehicle_details se ele PERGUNTAR um atributo específico (km/cor/preço/câmbio) do selecionado. NÃO cite km/cor/preço
-  sem o fato (o sistema BLOQUEIA). Ex.: "Ótima escolha! O Renault Duster 2015 é uma ótima opção. Quer ver as fotos ou já te
-  passo as condições?".
+  lista. Neste turno, emita FINAL em texto: acolha nomeando marca+modelo+ano e faça UMA única pergunta de próximo passo.
+  NÃO chame ferramenta na seleção e NÃO envie fotos ainda — oferecer fotos não é autorização para enviá-las. Pergunte apenas
+  pelas fotos (ex.: "Ótima escolha! O Renault Duster 2015 é uma ótima opção. Quer que eu envie as fotos dele?"). Só no turno
+  seguinte, se o cliente aceitar/pedir, use vehicle_photos_resolve. Só use vehicle_details quando ele PERGUNTAR um atributo
+  específico (km/cor/preço/câmbio). NÃO cite atributo sem o fato.
 - CPF é dado de FECHAMENTO: NUNCA peça CPF na saudação, qualificação ou logo após "quero financiar". Para financiar,
   pergunte entrada/parcela e dê estimativas SEM CPF. Só peça CPF quando estiver AGENDANDO a visita ou fechando (o
   sistema BLOQUEIA pedido de CPF cedo).
@@ -194,6 +204,8 @@ CONDUÇÃO (você é um SDR HUMANO no WhatsApp — conduza a conversa, o funil �
   stock_search (com tipo / popular:true / precoMax). NUNCA use vehicle_details para isso — vehicle_details é só para UM
   carro já selecionado, para detalhar km/cor/câmbio dele.
 - No máximo UMA pergunta útil por resposta (ou nenhuma, se for a hora de só acolher/avançar). Nada de interrogatório.
+- A pergunta deve ser ACIONÁVEL e ÚNICA — nunca pergunta dupla tipo "quer as fotos ou prefere as condições?" (um "sim"
+  do cliente fica ambíguo e trava a conversa). Escolha VOCÊ o próximo passo mais útil e pergunte só ele.
 REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos fatos — siga à risca):
 - O bloco ATUAL do cliente tem prioridade. RESPONDA a dúvida dele ANTES de qualificar.
 - signals.currentTurnIntent é a intenção do TURNO ATUAL (search|photo_request|photo_memory|institutional|other) e VENCE
@@ -305,6 +317,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #system: string;
   readonly #url: string;
   readonly #model: string;
+  readonly #retryModel: string;
   readonly #temperature: number;
   readonly #maxTokens: number;
   readonly #timeoutMs: number;
@@ -323,6 +336,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#system = `${portalPrompt}${BRAIN_PROTOCOL}`;
     this.#url = url.toString();
     this.#model = config.model.trim();
+    this.#retryModel = config.retryModel?.trim() || this.#model;
     this.#temperature = config.temperature ?? 0;
     this.#maxTokens = config.maxCompletionTokens ?? 1200;
     this.#timeoutMs = config.timeoutMs ?? 30_000;
@@ -331,8 +345,13 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   }
 
   async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const turnInstruction = frame.signals.disengagementOnly === true
+      ? "Este turno é uma DESPEDIDA ISOLADA. Devolva UM final JSON com draft.parts contendo exatamente UMA part text curta e cordial. Não faça pergunta, não use tool, não colete dado e não continue o funil. Esta regra específica do turno prevalece sobre orientações genéricas do portal para sempre fazer CTA/pergunta."
+      : frame.signals.acceptedPhotoOffer === true
+        ? "A resposta curta atual ACEITOU sua última oferta única de fotos. Preserve o selectedVehicle, declare request_photos/send_photos com evidence do bloco atual e use vehicle_photos_resolve; não pergunte novamente qual carro."
+        : "Analise o bloco atual do cliente e devolva UM passo (query|final) em JSON, seguindo o protocolo.";
     const user = JSON.stringify({
-      instruction: "Analise o bloco atual do cliente e devolva UM passo (query|final) em JSON, seguindo o protocolo.",
+      instruction: turnInstruction,
       leadBlock: frame.block,
       signals: frame.signals,
       workingMemory: frame.workingMemory,
@@ -341,11 +360,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     });
     let bodyText: string;
     try {
+      const hasPolicyRetry = observations.some((o) => !o.ok && o.tool === "response");
       const req: ModelHttpRequest = {
         method: "POST",
         headers: { "content-type": "application/json" }, // authorization é injetado no materialize (segredo fora do objeto serializável)
         body: JSON.stringify({
-          model: this.#model, temperature: this.#temperature, max_completion_tokens: this.#maxTokens,
+          model: hasPolicyRetry ? this.#retryModel : this.#model, temperature: this.#temperature, max_completion_tokens: this.#maxTokens,
           response_format: { type: "json_object" },
           messages: [{ role: "system", content: this.#system }, { role: "user", content: user }],
         }),
@@ -570,4 +590,3 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     return out;
   }
 }
-

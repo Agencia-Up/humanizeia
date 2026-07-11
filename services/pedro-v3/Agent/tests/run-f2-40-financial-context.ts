@@ -204,10 +204,13 @@ const listSuv: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
 const selectFirst: BrainResponder = () => finU([txt("Ótima escolha! O Jeep Compass 2017 é uma baita opção. Quer que eu já te passe as condições?")], "reply", selectU);
 const askParcela: BrainResponder = () => finU([txt("Perfeito! Para montar as condições, qual parcela mensal caberia no seu orçamento?")], "reply", U("financing"));
 // Cérebro que, num turno de resposta financeira, TENTA stock_search (o bug); ao ver o bloqueio, CONDUZ sem buscar.
+// ⭐Codex rodada 2 (proveniência temporal): o final de CONDUÇÃO precisa de evidence do BLOCO ATUAL — sem quote,
+// o reconcile mantém a base herdada (searchSuvU) e o deny UNDERSTANDING_STALE descarta a decisão (correto).
+const finConductU = (quote: string): TurnUnderstanding => ({ primaryIntent: "financing", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ capability: null, quote }] as never, isTopicChange: false, answeredLeadQuestions: [] });
 const financialTryThenConduct: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
   const blocked = obs.some((o) => o.tool === "response" && !o.ok);
   if (!blocked) return qU({ tool: "stock_search", input: { tipo: "suv", precoMax: 1200 } }, searchSuvU);
-  return finU([txt("Show! Com essa parcela dá pra montar um plano bacana pra você. Você tem algum carro pra dar na troca?")], "reply", U("financing"));
+  return finU([txt("Show! Com essa parcela dá pra montar um plano bacana pra você. Você tem algum carro pra dar na troca?")], "reply", finConductU(_f.block.slice(0, 30)));
 };
 // Resposta de entrada "tenho não": cérebro conduz sem buscar.
 const entradaConduct: BrainResponder = () => finU([txt("Sem problemas, seguimos com entrada zero. Qual parcela mensal caberia pra você?")], "reply", U("financing"));
@@ -354,7 +357,7 @@ async function runEngine(): Promise<void> {
     const t4 = await c.t("Tenho 8k", () => finU([txt("Ótimo! Qual parcela mensal caberia para você?")], "reply", U("financing")));
     // No turno da parcela o cérebro TENTA buscar estoque (o bug do print); ao ser bloqueado, conduz o financiamento.
     const parcelaTryThenConduct: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
-      ? finU([txt("Show! Com essa parcela dá pra montar um plano bacana. Posso já simular o financiamento pra você?")], "reply", U("financing"))
+      ? finU([txt("Show! Com essa parcela dá pra montar um plano bacana. Posso já simular o financiamento pra você?")], "reply", finConductU(_f.block.slice(0, 30)))
       : qU({ tool: "stock_search", input: { tipo: "pickup", precoMax: 2100 } }, searchSuvU);
     const t5 = await c.t("Até 2100 ta bom", parcelaTryThenConduct);
     check("[G-2100-T4] 'Tenho 8k' -> entrada=8000 (0 stock_search)", t4.slots?.entrada.value === 8000 && t4.stockCalls === 0, `entrada=${JSON.stringify(t4.slots?.entrada)} stock=${t4.stockCalls}`);

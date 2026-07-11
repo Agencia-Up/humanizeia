@@ -154,7 +154,7 @@ export function detectInterestModels(
 
 const NAME_CONFIDENCE_MIN = 0.7;
 
-function leadAsksQuestion(text: string): boolean {
+export function leadAsksQuestion(text: string): boolean {
   const norm = normalizeText(text).trim();
   if (/[?？]\s*$/.test(text.trim())) return true;
   if (/^(?:tem|da|dá)\s+(?:sim|nao)\b/.test(norm)) return false;
@@ -168,14 +168,22 @@ function negatesOwnCity(text: string): boolean {
 
 // A ÚLTIMA cláusula INTERROGATIVA da fala do agente (o que ele de fato PERGUNTOU). Assim um acolhimento em statement
 // ("Entendi que você não tem entrada. ...") NÃO domina a inferência do slot — só o que termina em "?". PURO.
-function lastAgentQuestionText(state: ConversationState): string {
+// ⭐SEM: exportada — o feedback de proveniência do understanding cita a última pergunta p/ orientar o cérebro.
+export function lastAgentQuestionText(state: ConversationState): string {
   const full = lastAgentText(state);
   const questions = full.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.endsWith("?"));
   return questions.length > 0 ? questions[questions.length - 1] : full;
 }
-export function inferredQuestionSlot(state: ConversationState): keyof ConversationState["slots"] | null {
-  if (state.currentObjective?.status === "pending" && state.currentObjective.slot) return state.currentObjective.slot;
-  const text = normalizeText(lastAgentQuestionText(state));
+// ⭐SEM (invariante 3): classificação de PERGUNTA DE SLOT a partir de um texto do AGENTE — fonte única usada
+// tanto na inferência da pergunta pendente (recentTurns) quanto no registro na WorkingMemory (texto AUTORADO
+// do turno que está sendo enviado). Taxonomia de slot, não handler.
+export function questionSlotFromAgentText(agentText: string, opts: { readonly legacyFallback?: boolean } = {}): keyof ConversationState["slots"] | null {
+  const questions = agentText.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.endsWith("?"));
+  // Default ESTRITO (WM.pendingAgentQuestion): sem "?" não há pergunta — um statement ("Anotado, parcela de
+  // R$ 1.200.") NUNCA registra pergunta pendente. legacyFallback=true preserva o comportamento histórico do
+  // inferredQuestionSlot (usa o texto inteiro quando não há interrogativa).
+  if (questions.length === 0 && !agentText.trim().endsWith("?") && opts.legacyFallback !== true) return null;
+  const text = normalizeText(questions.length > 0 ? questions[questions.length - 1] : agentText);
   if (/\bnome\b|\bcomo.*cham/.test(text)) return "nome";
   if (/\bcidade\b|\bde onde/.test(text)) return "cidade";
   if (/\bconhece.*loja\b/.test(text)) return "conheceLoja";
@@ -190,6 +198,10 @@ export function inferredQuestionSlot(state: ConversationState): keyof Conversati
   if (/\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b/.test(text)) return "tipoVeiculo";
   if (/\bmodelo\b|\bcarro.*procura\b/.test(text)) return "interesse";
   return null;
+}
+export function inferredQuestionSlot(state: ConversationState): keyof ConversationState["slots"] | null {
+  if (state.currentObjective?.status === "pending" && state.currentObjective.slot) return state.currentObjective.slot;
+  return questionSlotFromAgentText(lastAgentText(state), { legacyFallback: true });
 }
 
 // ── MISSÃO P0 (Financial Question Context): a RESPOSTA a uma pergunta financeira do agente (parcela/entrada/
@@ -352,7 +364,7 @@ function moneyByClause(message: string, financialContext = false): Array<{ role:
   return out;
 }
 
-function parseBooleanAnswer(text: string): boolean | null {
+export function parseBooleanAnswer(text: string): boolean | null {
   const norm = normalizeText(text).trim();
   if (/^(nao|nem|nunca)\b|\bsem\b/.test(norm)) return false;
   if (/^(sim|tenho|conheco|quero|gostaria|pode|vamos|claro|com certeza)\b/.test(norm)) return true;
@@ -522,6 +534,18 @@ export function resolveSelectedVehicle(leadMessage: string, state: ConversationS
     const uniqueKeys = [...new Set(matches.map((m) => m.vehicleKey))];
     if (uniqueKeys.length === 1) return { kind: "vehicle", key: matches[0].vehicleKey, label: labelOf(matches[0]) };
   }
+  // ⭐SEM (incidente real: "Gostei do Aircross" não selecionou o "C3 Aircross" da lista — o claim do catálogo não
+  // reconhece o SUBMODELO solto de um modelo composto). Fallback GROUNDED NA LISTA RENDERIZADA: uma palavra do bloco
+  // (>=4 chars) idêntica a um token do modelo de UM ÚNICO item seleciona aquele item. Ambíguo (2 Renegade) -> não
+  // seleciona (o ordinal desambigua); nada fora da lista pode casar (zero risco de catálogo inteiro).
+  if (claims.length === 0) {
+    const words = new Set(normalizeText(leadMessage).split(/\s+/).filter((w) => w.length >= 4));
+    if (words.size > 0) {
+      const tokenMatches = items.filter((it) => normalizeText(it.modelo ?? "").split(/\s+/).some((tk) => tk.length >= 4 && words.has(tk)));
+      const uniq = [...new Set(tokenMatches.map((m) => m.vehicleKey))];
+      if (uniq.length === 1) return { kind: "vehicle", key: tokenMatches[0].vehicleKey, label: labelOf(tokenMatches[0]) };
+    }
+  }
   return null;
 }
 
@@ -654,7 +678,15 @@ export function extractLeadSlots(args: {
   // LLM-first (missão): "tenho não"/"não tenho"/"não possuo" respondendo à pergunta de TROCA = NÃO (possuiTroca=false).
   // parseBooleanAnswer("tenho não") casaria "tenho"->true (ERRADO); por isso a negação explícita vem ANTES. Mata a
   // repetição vista no eval real (agente repetia "tem carro pra troca?" porque não entendeu "tenho não").
-  const trocaNeg = /\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+possuo\b|\bpossuo\s+nao\b/.test(norm);
+  // ⭐SEM (incidente real 2026-07-10: "Mas não tenho entrada" -> possuiTroca=false FANTASMA, que depois BLOQUEOU a
+  // pergunta legítima de troca e derrubou o turno em fallback): negação de posse NUA só responde TROCA com VÍNCULO —
+  // pergunta pendente de troca OU o bloco fala de troca/carro/veículo. Negação com OUTRO objeto explícito (entrada/
+  // parcela/valor/condições) pertence àquele contexto e NUNCA vira troca (invariante 3: uma negação nunca responde
+  // outro slot sem vínculo com a última pergunta aceita).
+  const trocaNegRaw = /\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+possuo\b|\bpossuo\s+nao\b/.test(norm);
+  const negationTargetsOtherObject = /\bnao\s+(?:tenho|possuo)\s+(?:entrada|parcela|valor|dinheiro|grana|condicao|condicoes)\b/.test(norm);
+  const tradeNegContext = expected === "possuiTroca" || expected === "veiculoTroca" || /\btroca\b|\bcarro\b|\bveiculo\b/.test(norm);
+  const trocaNeg = trocaNegRaw && !negationTargetsOtherObject && tradeNegContext;
   const trocaPos = !trocaNeg && /\btenho\s+sim\b|\bpossuo\s+sim\b/.test(norm);
   // ⭐F2.43 (audit Codex): resposta FINANCEIRA ("Tenho 8k de entrada", "tenho 5 mil") à pergunta de TROCA não é
   // booleano de troca — o "tenho" é do DINHEIRO. Com valor monetário no bloco e SEM menção a carro/troca/modelo,
@@ -665,12 +697,26 @@ export function extractLeadSlots(args: {
   let deniedTradeVehicle = false;
   const tradeCandidate = tradeVehicle(preBuyText || leadMessage, claimExtractor);
   const tradeVehicleDescribed = tradeCandidate != null && tradeCandidate.modelo != null && (tradeCandidate.ano != null || tradeCandidate.km != null);
-  const noTradeAnswer = explicitNoTrade || trocaNeg;
-  const positiveTradeAnswer = !questionLike && (explicitTrade || expected === "possuiTroca" || offersTradeByPossession || tradeVehicleDescribed);
+  // ⭐SEM: PERGUNTA do lead ("vocês não aceitam troca?") nunca é RESPOSTA de troca — mas o guard vale POR CLÁUSULA:
+  // num bloco misto ("Não tenho carro pra troca / tem SUV até 100k?") a negação está em statement e SEGUE válida
+  // (caso P0-1f da F2.44); só anula quando a PRÓPRIA cláusula da negação é interrogativa.
+  const tradeNegRx = /\b(?:nao tenho|sem)\b.{0,40}\b(?:carro|veiculo|troca)\b|\bnao\b.{0,60}\btroca\b|\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+possuo\b|\bpossuo\s+nao\b/;
+  const tradeNegClauseIsQuestion = leadMessage.split(/(?<=[.!?\n])/).some((clause) => {
+    if (!tradeNegRx.test(normalizeText(clause))) return false;
+    return clause.trim().endsWith("?") || leadAsksQuestion(clause);
+  });
+  const noTradeAnswer = !tradeNegClauseIsQuestion && (explicitNoTrade || trocaNeg);
+  // Pergunta pendente de troca NÃO transforma qualquer frase afirmativa em "possui troca". A resposta booleana nua só
+  // vale quando o bloco não está explicitamente respondendo outro objeto do funil (entrada/parcela/financiamento) nem
+  // iniciando uma compra. Isto mata: pergunta de troca -> "quero financiar ele, mas não tenho entrada" -> troca=true.
+  const pendingTradeBooleanAnswer = expected === "possuiTroca" && !questionLike
+    && !negationTargetsOtherObject && !looksLikeMoneyAnswer && !looksLikeBuyRequest
+    && parseBooleanAnswer(leadMessage) != null;
+  const positiveTradeAnswer = !questionLike && (explicitTrade || offersTradeByPossession || tradeVehicleDescribed || pendingTradeBooleanAnswer);
   if (noTradeAnswer || positiveTradeAnswer) {
     const value = (explicitNoTrade || trocaNeg) ? false
       : (explicitTrade || trocaPos || offersTradeByPossession || (expected === "possuiTroca" && tradeVehicleDescribed)) ? true
-      : ((looksLikeBuyRequest || looksLikeMoneyAnswer) ? null : parseBooleanAnswer(leadMessage));
+      : ((looksLikeBuyRequest || looksLikeMoneyAnswer || negationTargetsOtherObject) ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
       add({ op: "set_slot", slot: "possuiTroca", value, confidence: expected === "possuiTroca" ? 0.9 : 0.96, sourceTurnId: turnId }, "possuiTroca");
@@ -696,7 +742,11 @@ export function extractLeadSlots(args: {
   if (city) add({ op: "set_slot", slot: "cidade", value: titleCase(city), confidence: expected === "cidade" ? 0.86 : 0.95, sourceTurnId: turnId }, "cidade");
 
   if (expected === "conheceLoja" || /\b(?:conheco|ja fui|nunca fui).{0,20}\bloja\b/.test(norm)) {
-    const value = /\bnunca fui\b|\bnao conheco\b/.test(norm) ? false : /\bconheco\b|\bja fui\b/.test(norm) ? true : parseBooleanAnswer(leadMessage);
+    // ⭐SEM (incidente real: "tem SUV?" respondendo a saudação com "já conhece a loja?" virou conheceLoja=true):
+    // frase EXPLÍCITA ("conheço"/"já fui"/"nunca fui") vale sempre; resposta booleana NUA só quando o bloco NÃO é
+    // uma pergunta nova do lead (pergunta não responde slot pendente — invariante 3).
+    const explicit = /\bnunca fui\b|\bnao conheco\b/.test(norm) ? false : /\bconheco\b|\bja fui\b/.test(norm) ? true : null;
+    const value = explicit ?? (questionLike ? null : parseBooleanAnswer(leadMessage));
     if (value != null) add({ op: "set_slot", slot: "conheceLoja", value, confidence: 0.9, sourceTurnId: turnId }, "conheceLoja");
   }
 

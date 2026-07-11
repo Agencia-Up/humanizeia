@@ -46,7 +46,7 @@ function main(): void {
     containsAll("Quando nao houver item novo", "nao use vehicle_offer_list", "nao re-liste"));
 
   check("[SDR-7] exemplo de lista nao voltou ao menu antigo",
-    !source.includes("Quer ver as fotos, os detalhes ou as condições?"));
+    !source.includes("Quer ver as fotos de algum deles?"));
 
   check("[SDR-8] exemplo novo conduz por escolha do lead",
     source.includes("Alguma delas te chamou mais atenção?"));

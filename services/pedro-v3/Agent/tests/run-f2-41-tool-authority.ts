@@ -69,7 +69,7 @@ const searchU = (quote: string): TurnUnderstanding => ({ ...U("search_stock"), r
 const searchCorolla: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
   if (!so) return qU({ tool: "stock_search", input: { modelo: "Corolla" } }, searchU("corolla"));
-  return finU([txt("Encontrei estas opções de Toyota Corolla para você:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos, os detalhes ou as condições de algum deles?")], "reply", searchU("corolla"));
+  return finU([txt("Encontrei estas opções de Toyota Corolla para você:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", searchU("corolla"));
 };
 
 type Slots = ConversationState["slots"];

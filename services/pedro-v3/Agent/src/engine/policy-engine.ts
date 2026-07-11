@@ -485,7 +485,11 @@ export const PolicyEngine = {
         // Verifica se há valores monetários no TextPart (excluindo km e valores que o LEAD forneceu).
         // R11-D1: valor 0 ("entrada zero"/"sem entrada") NUNCA é preço de veículo — é termo de pagamento do lead;
         // não pode virar "valor monetário livre" (era terminal-safe falso-positivo). Valor do lead também isento.
-        const moneyMentionsText = parseMoneyMentions(part.content).filter((m) => m.value > 0 && !isLeadValue(m.value));
+        // ⭐Codex rodada 2 (smoke T7): o PREÇO que a PRÓPRIA LOJA mostrou na última oferta renderizada é fato
+        // ATERRADO de memória (RenderedOfferItem.preco, R13 Inc2/G) — ecoá-lo ao conduzir o financiamento não é
+        // invenção. Sem esta isenção o cérebro entrava em deny-loop ('NÃO afirme valores') ao citar o preço exibido.
+        const offeredPrices = new Set((ctx.state.lastRenderedOfferContext?.items ?? []).map((i) => i.preco).filter((v): v is number => typeof v === "number" && v > 0));
+        const moneyMentionsText = parseMoneyMentions(part.content).filter((m) => m.value > 0 && !isLeadValue(m.value) && !offeredPrices.has(m.value));
         if (moneyMentionsText.length > 0) {
           priceViolations.push(`TextPart contém valor monetário livre '${moneyMentionsText[0].raw}'`);
         }

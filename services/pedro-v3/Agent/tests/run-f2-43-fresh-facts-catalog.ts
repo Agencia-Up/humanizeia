@@ -91,7 +91,7 @@ const searchB = (input: Record<string, unknown>): BrainResponder => (f, obs: rea
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
   if (!so) return qU({ tool: "stock_search", input }, u);
   if (so.data.items.length === 0) return finU([txt("No momento não tenho esse modelo em estoque. Quer ver opções parecidas?")], "reply", u);
-  return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos, os detalhes ou as condições?")], "reply", u);
+  return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", u);
 };
 
 type Slots = ConversationState["slots"];
@@ -190,7 +190,7 @@ async function main(): Promise<void> {
       if (!so) return qU({ tool: "stock_search", input: { tipo: "suv" } }, u);
       step += 1;
       if (step === 1) return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: ["outrotenant:1"] } as ResponsePart], "reply", u);
-      return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos ou as condições?")], "reply", u);
+      return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", u);
     };
     const t1 = await c.t("tem SUV?", wrongTenant);
     check("[C-1] key de outro tenant NUNCA vai ao lead; a lista final usa as keys da TOOL", !has(t1.outbox, "outrotenant") && has(t1.outbox, "creta"), `outbox="${t1.outbox.slice(0, 120)}"`);
@@ -217,7 +217,7 @@ async function main(): Promise<void> {
       const u = searchUOf(f.block ?? "");
       const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
       if (!so) return qU({ tool: "stock_search", input: { modelo: "Compass", anos: [2019] } }, u);
-      return finU([txt("Que bom que você viu nosso anúncio! Esse é o carro:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos ou as condições?")], "reply", u);
+      return finU([txt("Que bom que você viu nosso anúncio! Esse é o carro:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", u);
     };
     const t1 = await c.t("Oi, tenho interesse", adResponder, { ad: adCompass });
     check("[E-1] entrada por anúncio + snapshot vazio -> apresenta o Compass 2019 (fatos frescos)", NO_FALLBACK(t1) && has(t1.outbox, "compass"), `src=${t1.src} outbox="${t1.outbox.slice(0, 120)}"`);
@@ -287,7 +287,8 @@ async function main(): Promise<void> {
       const u = searchUOf(f.block ?? "");
       const tried = obs.some((o) => o.tool === "stock_search");
       if (!tried) return qU({ tool: "stock_search", input: { tipo: "suv" } }, u);
-      return finU([txt("Estou com uma instabilidade para consultar o estoque neste exato momento 😕 Me conta o que você procura (modelo ou faixa de preço) e, se preferir, já te coloco com um consultor?")], "reply", u);
+      // ⭐Codex rodada 2: honestidade SEM oferecer consultor (promessa sem efeito é deny) e SEM pergunta mista.
+      return finU([txt("Estou com uma instabilidade para consultar o estoque neste exato momento 😕 Me diz o modelo que você procura, por favor?")], "reply", u);
     };
     const t1 = await c.t("quero um SUV", honest);
     stockFails = false;

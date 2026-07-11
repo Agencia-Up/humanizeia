@@ -15,7 +15,7 @@ import type {
   WorkingMemoryLoadDiagnostic, CanonicalWorkingMemoryView,
   DecisionWorkingMemoryMutation, SystemWorkingMemoryMutation, EffectOutcomeWorkingMemoryMutation,
   PhotoActionMemory, PhotoActionDraft, UnansweredQuestion, Commitment, ToolResultMemory, ActiveTopic, LeadIntent,
-  AgentActionMemory, AnsweredQuestionMemory,
+  AgentActionMemory, AnsweredQuestionMemory, PendingAgentQuestionMemory, ResolvedSlotAnswerMemory,
 } from "../domain/agent-brain.ts";
 import {
   WORKING_MEMORY_SCHEMA_VERSION, TOPIC_ORIGINS, LEAD_INTENT_KINDS, QUESTION_KINDS, COMMITMENT_STATUSES, AGENT_ACTION_KINDS,
@@ -93,6 +93,17 @@ function validAgentAction(v: unknown): v is AgentActionMemory {
   const a = v as Record<string, unknown>;
   return inEnum(a.kind, AGENT_ACTION_KINDS) && isNonEmpty(a.turnId);
 }
+// ⭐SEM: validacao dos campos de pergunta pendente/resposta resolvida (infra do engine).
+function validPendingAgentQuestion(v: unknown): v is PendingAgentQuestionMemory {
+  if (!v || typeof v !== "object") return false;
+  const q = v as Record<string, unknown>;
+  return isNonEmpty(q.slot) && isNonEmpty(q.sinceTurnId);
+}
+function validResolvedSlotAnswer(v: unknown): v is ResolvedSlotAnswerMemory {
+  if (!v || typeof v !== "object") return false;
+  const a = v as Record<string, unknown>;
+  return isNonEmpty(a.slot) && isNonEmpty(a.turnId);
+}
 function validAnswered(v: unknown): v is AnsweredQuestionMemory {
   if (!v || typeof v !== "object") return false;
   const a = v as Record<string, unknown>;
@@ -131,6 +142,8 @@ export function loadPersistedWorkingMemory(raw: unknown): { memory: PersistedWor
       conversationSummary: isStr(r.conversationSummary) ? r.conversationSummary.slice(0, 1200) : "",
       lastAgentAction: validAgentAction(r.lastAgentAction) ? r.lastAgentAction : null,
       lastAnsweredLeadQuestion: validAnswered(r.lastAnsweredLeadQuestion) ? r.lastAnsweredLeadQuestion : null,
+      pendingAgentQuestion: validPendingAgentQuestion(r.pendingAgentQuestion) ? r.pendingAgentQuestion : (r.pendingAgentQuestion != null ? (diag.push({ field: "pendingAgentQuestion", reason: "invalido" }), null) : null),
+      lastResolvedSlotAnswer: validResolvedSlotAnswer(r.lastResolvedSlotAnswer) ? r.lastResolvedSlotAnswer : (r.lastResolvedSlotAnswer != null ? (diag.push({ field: "lastResolvedSlotAnswer", reason: "invalido" }), null) : null),
     },
     diagnostics: diag,
   };
@@ -232,17 +245,38 @@ export function applySystemWorkingMemoryMutations(
 ): WorkingMemoryReducerResult {
   const rejected: WorkingMemoryRejection[] = [];
   for (const m of mutations) {
-    if (m.op !== "record_tool_result") rejected.push({ mutation: m, reason: "op de sistema desconhecida" });
-    else if (!validToolResult(m.result)) rejected.push({ mutation: m, reason: "tool result inválido" });
-    else if (m.result.turnId !== opts.authorizedTurnId) rejected.push({ mutation: m, reason: "turnId != turno autorizado" });
+    if (m.op === "record_tool_result") {
+      if (!validToolResult(m.result)) rejected.push({ mutation: m, reason: "tool result invalido" });
+      else if (m.result.turnId !== opts.authorizedTurnId) rejected.push({ mutation: m, reason: "turnId != turno autorizado" });
+    } else if (m.op === "set_pending_agent_question") {
+      if (m.turnId !== opts.authorizedTurnId) rejected.push({ mutation: m, reason: "turnId != turno autorizado" });
+      else if (m.question != null && !validPendingAgentQuestion(m.question)) rejected.push({ mutation: m, reason: "pending question invalida" });
+    } else if (m.op === "set_resolved_slot_answer") {
+      if (m.turnId !== opts.authorizedTurnId) rejected.push({ mutation: m, reason: "turnId != turno autorizado" });
+      else if (!validResolvedSlotAnswer(m.answer)) rejected.push({ mutation: m, reason: "resolved answer invalida" });
+    } else if (m.op === "reconcile_turn_semantics") {
+      if (m.turnId !== opts.authorizedTurnId) rejected.push({ mutation: m, reason: "turnId != turno autorizado" });
+      else if (m.intent != null && !inEnum(m.intent, LEAD_INTENT_KINDS)) rejected.push({ mutation: m, reason: "intent invalido" });
+    } else rejected.push({ mutation: m, reason: "op de sistema desconhecida" });
   }
   if (rejected.length > 0) return { ok: false, rejected };
   let next = memory;
   for (const m of mutations) {
-    const safe: ToolResultMemory = { tool: m.result.tool, status: m.result.status, turnId: m.result.turnId,
-      ...(m.result.itemCount !== undefined ? { itemCount: m.result.itemCount } : {}),
-      ...(m.result.factKeys ? { factKeys: m.result.factKeys.slice(0, 12) } : {}) };
-    next = { ...next, lastToolResults: [...next.lastToolResults, safe].slice(-MAX_TOOL_RESULTS) };
+    if (m.op === "record_tool_result") {
+      const safe: ToolResultMemory = { tool: m.result.tool, status: m.result.status, turnId: m.result.turnId,
+        ...(m.result.itemCount !== undefined ? { itemCount: m.result.itemCount } : {}),
+        ...(m.result.factKeys ? { factKeys: m.result.factKeys.slice(0, 12) } : {}) };
+      next = { ...next, lastToolResults: [...next.lastToolResults, safe].slice(-MAX_TOOL_RESULTS) };
+    } else if (m.op === "set_pending_agent_question") {
+      next = { ...next, pendingAgentQuestion: m.question };
+    } else if (m.op === "set_resolved_slot_answer") {
+      next = { ...next, lastResolvedSlotAnswer: m.answer };
+    } else if (m.op === "reconcile_turn_semantics") {
+      // ⭐SEM inv.4: reflete o entendimento ACEITO na memoria viva - SEM sobrescrever escolha da LLM (o caller
+      // so emite quando a LLM nao setou topic/intent neste turno). Origem "lead_message" (a fonte real do turno).
+      if (m.topic != null && m.topic.trim() !== "") next = { ...next, activeTopic: { topic: m.topic.trim(), sinceTurnId: m.turnId, origin: "lead_message" } };
+      if (m.intent != null) next = { ...next, currentLeadIntent: { intent: m.intent, confidence: 0.7, evidence: [] } };
+    }
   }
   return { ok: true, next };
 }
