@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     // Fetch pending events (limit 1000 per run)
     const { data: pendingEvents, error: fetchErr } = await admin
       .from("meta_capi_events")
-      .select("id, user_id, pixel_id, event_name, event_time, action_source, user_data, custom_data, event_source_url")
+      .select("id, user_id, pixel_id, event_name, event_time, action_source, user_data, custom_data, event_source_url, event_id")
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(1000);
@@ -121,22 +121,30 @@ Deno.serve(async (req) => {
         }
 
         // Prepare Meta CAPI payload
-        const capiData = await Promise.all(batch.map(async (evt) => {
-          // Hash phone numbers in user_data if present
-          const userData = { ...evt.user_data };
-          if (userData.ph && Array.isArray(userData.ph)) {
-            userData.ph = await Promise.all(
-              userData.ph.map(async (p: string) => {
-                if (p.length === 64) return p; // Already hashed
-                const encoder = new TextEncoder();
-                const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(p));
-                return Array.from(new Uint8Array(hashBuffer))
-                  .map((b) => b.toString(16).padStart(2, "0"))
-                  .join("");
-              })
-            );
-          }
+        const sha256 = async (s: string) => {
+          const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+          return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+        };
+        // Normaliza + hasheia (a Meta exige SHA-256 nos campos de PII). Idempotente:
+        // valor já com 64 chars (hex) é tratado como já hasheado.
+        const hashField = async (arr: any, kind: "phone" | "plain") => {
+          const list = Array.isArray(arr) ? arr : [arr];
+          return Promise.all(list.map(async (v: any) => {
+            let s = String(v ?? "").trim();
+            if (!s) return s;
+            if (s.length === 64 && /^[0-9a-f]+$/i.test(s)) return s.toLowerCase(); // já hasheado
+            s = kind === "phone" ? s.replace(/\D/g, "") : s.toLowerCase();
+            return sha256(s);
+          }));
+        };
+        // Campos de PII que a Meta quer hasheados. external_id/fbc/fbp/client_* ficam crus.
+        const HASH_KEYS: Record<string, "phone" | "plain"> = { ph: "phone", em: "plain", fn: "plain", ln: "plain", ct: "plain", st: "plain", zp: "plain", country: "plain" };
 
+        const capiData = await Promise.all(batch.map(async (evt) => {
+          const userData: Record<string, any> = { ...evt.user_data };
+          for (const [k, kind] of Object.entries(HASH_KEYS)) {
+            if (userData[k] != null && userData[k] !== "") userData[k] = await hashField(userData[k], kind);
+          }
           return {
             event_name: evt.event_name,
             event_time: Math.floor(new Date(evt.event_time).getTime() / 1000),
@@ -144,6 +152,7 @@ Deno.serve(async (req) => {
             action_source: evt.action_source || "system_generated",
             user_data: userData,
             custom_data: evt.custom_data || {},
+            ...(evt.event_id ? { event_id: evt.event_id } : {}),
           };
         }));
 
