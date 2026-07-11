@@ -22,8 +22,6 @@ interface Profile {
   preferred_language: string | null;
   timezone: string | null;
   avatar_url: string | null;
-  phone: string | null;
-  whatsapp_support: string | null;
 }
 
 export function ProfileSettingsTab() {
@@ -42,8 +40,6 @@ export function ProfileSettingsTab() {
     preferred_language: 'pt-BR',
     timezone: 'America/Sao_Paulo',
     avatar_url: null,
-    phone: null,
-    whatsapp_support: null,
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -71,8 +67,6 @@ export function ProfileSettingsTab() {
         preferred_language: data.preferred_language || 'pt-BR',
         timezone: data.timezone || 'America/Sao_Paulo',
         avatar_url: (data as any).avatar_url || null,
-        phone: (data as any).phone || null,
-        whatsapp_support: (data as any).whatsapp_support || null,
       });
     }
     if (error) console.error('Error loading profile:', error);
@@ -241,23 +235,6 @@ export function ProfileSettingsTab() {
                 onChange={(e) => updateField('industry', e.target.value)}
                 placeholder="Ex: E-commerce, SaaS, Educação"
               />
-            </div>
-            <div className="space-y-2">
-              <Label>Telefone</Label>
-              <Input
-                value={profile.phone || ''}
-                onChange={(e) => updateField('phone', e.target.value)}
-                placeholder="(11) 99999-9999"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>WhatsApp de Suporte (Agente IA)</Label>
-              <Input
-                value={profile.whatsapp_support || ''}
-                onChange={(e) => updateField('whatsapp_support', e.target.value)}
-                placeholder="5511999999999"
-              />
-              <p className="text-[10px] text-muted-foreground">Numero que o agente IA usara para transferir atendimentos</p>
             </div>
           </div>
         </CardContent>
