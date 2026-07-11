@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Users, Loader2, Download, Trophy, AlertTriangle, Clock, Star, MessageSquareQuote,
+  CheckCircle2, ClipboardList, Target,
 } from 'lucide-react';
 
 // ── Feedbacks > Por vendedor ─────────────────────────────────────────────────
@@ -77,6 +78,51 @@ function scoreCls(s: number): string {
   if (s >= 50) return 'text-sky-400';
   if (s >= 30) return 'text-amber-400';
   return 'text-rose-400';
+}
+function decisaoScore(s: number): { label: string; cls: string } {
+  if (s >= 70) return { label: 'Atendimento forte', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' };
+  if (s >= 50) return { label: 'Atendimento ok', cls: 'text-sky-300 bg-sky-500/10 border-sky-500/25' };
+  if (s >= 30) return { label: 'Precisa ajuste', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/25' };
+  return { label: 'Risco de perda', cls: 'text-rose-300 bg-rose-500/10 border-rose-500/25' };
+}
+function vendedorInsight(v: Vendedor): { resumo: string; risco: string; acao: string; prova: string } {
+  const pctBem = v.bons ? Math.round((v.bemAtendidos / v.bons) * 100) : 0;
+  const pior = [...v.convs].sort((a, b) => score0(a) - score0(b))[0];
+  const melhor = [...v.convs].sort((a, b) => score0(b) - score0(a))[0];
+  const prova = pior?.lead_name
+    ? `Revisar primeiro a conversa de ${pior.lead_name} (nota ${score0(pior)}).`
+    : 'Sem conversa critica identificada.';
+
+  if (v.perdeuChance > 0) {
+    return {
+      resumo: `${v.nome} tem ${v.perdeuChance} chance boa com risco real de perda.`,
+      risco: 'Lead bom foi atendido com nota baixa e nao virou venda.',
+      acao: 'Abrir as conversas criticas, corrigir abordagem e alinhar o criterio de classificacao.',
+      prova,
+    };
+  }
+  if (v.bons > 0 && pctBem < 60) {
+    return {
+      resumo: `${v.nome} esta recebendo leads bons, mas ainda entrega pouco atendimento forte.`,
+      risco: `Somente ${pctBem}% dos leads bons foram bem atendidos.`,
+      acao: 'Treinar a passagem de necessidade para proposta e reduzir perguntas repetidas.',
+      prova,
+    };
+  }
+  if (v.scoreMedio >= 70) {
+    return {
+      resumo: `${v.nome} esta com atendimento consistente.`,
+      risco: 'Sem alerta critico no periodo.',
+      acao: melhor?.lead_name ? `Usar a conversa de ${melhor.lead_name} como exemplo para o time.` : 'Manter acompanhamento semanal.',
+      prova,
+    };
+  }
+  return {
+    resumo: `${v.nome} precisa de acompanhamento, mas sem sinal de perda critica agora.`,
+    risco: 'A nota media ainda esta abaixo do ideal.',
+    acao: 'Escolher uma conversa ruim por dia e registrar um ponto de melhoria objetivo.',
+    prova,
+  };
 }
 
 interface Vendedor {
@@ -229,6 +275,47 @@ export function FeedbackPorVendedorTab() {
 
       {atual && (
         <>
+          {(() => {
+            const ins = vendedorInsight(atual);
+            const status = decisaoScore(atual.scoreMedio);
+            return (
+              <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${status.cls}`}>
+                      <Target className="h-3.5 w-3.5" />
+                      {status.label}
+                    </div>
+                    <div>
+                      <h4 className="text-base font-semibold text-foreground">Leitura do gestor</h4>
+                      <p className="mt-1 text-sm text-muted-foreground">{ins.resumo}</p>
+                    </div>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3 lg:w-[62%]">
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+                        <AlertTriangle className="h-3.5 w-3.5" /> Risco
+                      </div>
+                      <p className="mt-1 text-xs text-amber-100/80">{ins.risco}</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Acao
+                      </div>
+                      <p className="mt-1 text-xs text-emerald-100/80">{ins.acao}</p>
+                    </div>
+                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-sky-300">
+                        <ClipboardList className="h-3.5 w-3.5" /> Prova
+                      </div>
+                      <p className="mt-1 text-xs text-sky-100/80">{ins.prova}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Resumo do vendedor */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
             {[

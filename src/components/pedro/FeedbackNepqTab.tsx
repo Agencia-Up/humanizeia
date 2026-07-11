@@ -4,7 +4,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
 } from 'recharts';
-import { Gauge, Loader2, AlertTriangle, TrendingUp, Users } from 'lucide-react';
+import { Gauge, Loader2, AlertTriangle, TrendingUp, Users, Lightbulb, Target, BookOpen } from 'lucide-react';
 
 // ── Feedbacks > NEPQ / Desempenho (o "Power BI") ─────────────────────────────
 // Nível 1 (gestor): ranking com semáforo + KPIs da equipe + alerta de conflito
@@ -40,6 +40,15 @@ function semaforo(score: number | null): { dot: string; txt: string; label: stri
   if (score >= 70) return { dot: 'bg-emerald-400', txt: 'text-emerald-400', label: 'verde' };
   if (score >= 45) return { dot: 'bg-amber-400', txt: 'text-amber-400', label: 'amarelo' };
   return { dot: 'bg-rose-400', txt: 'text-rose-400', label: 'vermelho' };
+}
+function explicarDimensao(label: string): { impacto: string; acao: string } {
+  const l = label.toLowerCase();
+  if (l.includes('escuta')) return { impacto: 'O cliente sente que precisa repetir informacoes.', acao: 'Confirmar o que o cliente ja disse antes de fazer nova pergunta.' };
+  if (l.includes('obje')) return { impacto: 'Objeções podem virar encerramento da conversa.', acao: 'Responder a objeção e conduzir para uma proxima etapa concreta.' };
+  if (l.includes('qualifica')) return { impacto: 'O vendedor nao entende se o lead esta pronto para comprar.', acao: 'Coletar forma de pagamento, troca, prazo e preferencia sem interrogatorio.' };
+  if (l.includes('compromisso')) return { impacto: 'A conversa fica sem combinacao de proximo passo.', acao: 'Sempre fechar com visita, simulacao, envio de proposta ou retorno combinado.' };
+  if (l.includes('ritmo')) return { impacto: 'Atendimento lento ou travado reduz conversao.', acao: 'Responder com frases curtas e avancar uma etapa por mensagem.' };
+  return { impacto: 'Esse ponto reduz a clareza do atendimento.', acao: 'Revisar conversas de baixa nota e padronizar a abordagem.' };
 }
 
 export function FeedbackNepqTab() {
@@ -114,6 +123,11 @@ export function FeedbackNepqTab() {
     const nd = atual?.notas_por_dimensao || {};
     return DIMS.map((d) => ({ dim: d.label, nota: Number(nd[d.cod] ?? 0) }));
   }, [atual]);
+  const pontoFraco = useMemo(() => {
+    const validos = radarData.filter((d) => Number.isFinite(d.nota));
+    return validos.length ? [...validos].sort((a, b) => a.nota - b.nota)[0] : null;
+  }, [radarData]);
+  const leituraPontoFraco = pontoFraco ? explicarDimensao(pontoFraco.dim) : null;
 
   const alertas = vendedoresBase.filter((v) => (v.taxa_conflito_rotulagem || 0) > 0);
 
@@ -162,6 +176,32 @@ export function FeedbackNepqTab() {
           <div className="text-lg font-semibold text-foreground">{kpis.totalConv}</div>
         </div>
       </div>
+
+      {atual && pontoFraco && leituraPontoFraco && (
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div className="rounded-2xl border border-primary/20 bg-primary/10 p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold text-primary">
+              <Target className="h-3.5 w-3.5" /> Onde treinar primeiro
+            </div>
+            <div className="mt-2 text-base font-semibold text-foreground">{atual.nome}</div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Menor dimensao: <span className="font-semibold text-foreground">{pontoFraco.dim}</span> ({pontoFraco.nota}/4).
+            </p>
+          </div>
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+              <BookOpen className="h-3.5 w-3.5" /> Impacto na venda
+            </div>
+            <p className="mt-2 text-sm text-amber-100/85">{leituraPontoFraco.impacto}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
+              <Lightbulb className="h-3.5 w-3.5" /> Proxima acao
+            </div>
+            <p className="mt-2 text-sm text-emerald-100/85">{leituraPontoFraco.acao}</p>
+          </div>
+        </div>
+      )}
 
       {/* Alerta de conflito */}
       {alertas.length > 0 && (

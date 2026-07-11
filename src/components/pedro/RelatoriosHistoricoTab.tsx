@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
-import { FileText, Loader2, Download, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { FileText, Loader2, Download, CheckCircle2, Clock, AlertTriangle, Lightbulb, Send } from 'lucide-react';
 
 // ── Histórico dos relatórios que a IA produziu ───────────────────────────────
 // Substitui o antigo "Feedbacks" manual. Lista o que o Cérebro de Feedback gerou
@@ -44,6 +44,14 @@ export function RelatoriosHistoricoTab() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Relatorio[]>([]);
   const [baixando, setBaixando] = useState<string | null>(null);
+  const resumoGeral = useMemo(() => {
+    const totalLeads = rows.reduce((acc, r) => acc + (Number(r.resumo?.leads_analisados) || 0), 0);
+    const enviados = rows.filter((r) => r.status === 'enviado').length;
+    const falhas = rows.filter((r) => r.status === 'falhou').length;
+    const pendentes = rows.filter((r) => r.status === 'pendente' || r.status === 'gerado').length;
+    const ultimo = rows[0]?.data_ref ? fmtData(rows[0].data_ref) : '-';
+    return { totalLeads, enviados, falhas, pendentes, ultimo };
+  }, [rows]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,6 +96,38 @@ export function RelatoriosHistoricoTab() {
           <p className="text-xs text-muted-foreground">O histórico do que a IA gerou e enviou. Clique pra baixar o PDF de cada dia.</p>
         </div>
       </div>
+
+      {!loading && rows.length > 0 && (
+        <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+          <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Lightbulb className="h-4 w-4 text-primary" />
+              Linha do tempo gerencial
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Ultimo relatorio: <span className="font-semibold text-foreground">{resumoGeral.ultimo}</span>. Use esta tela para conferir se o PDF foi gerado, enviado e quais dias precisam revisao.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-[11px] text-muted-foreground">Leads analisados</div>
+              <div className="mt-1 text-lg font-semibold text-foreground">{resumoGeral.totalLeads}</div>
+            </div>
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
+              <div className="flex items-center gap-1 text-[11px] text-emerald-200"><Send className="h-3 w-3" /> Enviados</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-300">{resumoGeral.enviados}</div>
+            </div>
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
+              <div className="text-[11px] text-amber-200">Pendentes</div>
+              <div className="mt-1 text-lg font-semibold text-amber-300">{resumoGeral.pendentes}</div>
+            </div>
+            <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3">
+              <div className="text-[11px] text-rose-200">Falhas</div>
+              <div className="mt-1 text-lg font-semibold text-rose-300">{resumoGeral.falhas}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12 text-muted-foreground">

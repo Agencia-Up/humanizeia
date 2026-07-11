@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   RefreshCcw, PackageSearch, Loader2, AlertTriangle, Download, CalendarRange, Megaphone, ImageOff,
   TrendingUp, ScanEye, ArrowUp, ArrowDown, ChevronsUpDown, LayoutGrid, Table2, X, Sparkles, RotateCw,
+  ShieldCheck, Lightbulb, Info,
 } from 'lucide-react';
 
 // ── Por produto × Tráfego (José) ──────────────────────────────────────────────
@@ -35,6 +36,45 @@ const STATUS: { v: StatusFiltro; l: string }[] = [
 const hojeISO = () => new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
 const isoMenosDias = (d: number) => new Date(Date.now() - 3 * 3600e3 - d * 86400e3).toISOString().slice(0, 10);
 const brl = (n: number) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+function pct(n: number): string {
+  return `${Math.round(Number(n) || 0)}%`;
+}
+function confiancaProduto(totalProdutos: number, produtosComTrafego: number, joseTemDados: boolean): { label: string; cls: string; desc: string } {
+  if (!joseTemDados) {
+    return {
+      label: 'Sem dados da Meta',
+      cls: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+      desc: 'A qualidade dos leads aparece, mas o gasto de campanha ainda nao foi carregado.',
+    };
+  }
+  if (!totalProdutos) {
+    return {
+      label: 'Sem produtos analisados',
+      cls: 'border-muted-foreground/20 bg-muted/30 text-muted-foreground',
+      desc: 'Ainda nao ha volume suficiente para cruzar produto, lead e campanha.',
+    };
+  }
+  const cobertura = produtosComTrafego / totalProdutos;
+  if (cobertura >= 0.75) {
+    return {
+      label: 'Dados confiaveis',
+      cls: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+      desc: 'A maior parte dos produtos analisados tem vinculo com campanhas do Jose.',
+    };
+  }
+  if (cobertura >= 0.35) {
+    return {
+      label: 'Dados parciais',
+      cls: 'border-sky-500/25 bg-sky-500/10 text-sky-200',
+      desc: 'Parte dos produtos foi vinculada a campanhas; use como direcao, nao como fechamento financeiro.',
+    };
+  }
+  return {
+    label: 'Baixa cobertura',
+    cls: 'border-rose-500/25 bg-rose-500/10 text-rose-200',
+    desc: 'Poucos produtos foram encontrados nas campanhas. Pode haver criativo generico, anuncio sem modelo ou divergencia de nome.',
+  };
+}
 
 const MODELOS = [
   'corolla cross', 'corolla', 'onix plus', 'onix', 'hb20s', 'hb20x', 'hb20', 't-cross', 'tcross',
@@ -222,6 +262,34 @@ export function FeedbackPorProdutoTab() {
     total: a.total + r.total, q: a.q + r.qualificados, p: a.p + r.pouco_qualificados,
     r: a.r + r.ruins, n: a.n + r.nao_lead,
   }), { total: 0, q: 0, p: 0, r: 0, n: 0 });
+  const produtosComTrafego = useMemo(() => linhas.filter((l) => !!l.jose).length, [linhas]);
+  const confianca = useMemo(
+    () => confiancaProduto(linhas.length, produtosComTrafego, jose.tem_dados),
+    [linhas.length, produtosComTrafego, jose.tem_dados],
+  );
+  const custoLeadBom = tot.q > 0 ? jose.gastoTotal / tot.q : 0;
+  const acaoProduto = useMemo(() => {
+    const pior = [...linhas]
+      .filter((l) => l.jose && (l.jose.gasto || 0) > 0)
+      .sort((a, b) => {
+        const ca = a.qualificados > 0 ? (a.jose!.gasto / a.qualificados) : Number.POSITIVE_INFINITY;
+        const cb = b.qualificados > 0 ? (b.jose!.gasto / b.qualificados) : Number.POSITIVE_INFINITY;
+        return cb - ca;
+      })[0];
+    const melhor = [...linhas]
+      .filter((l) => l.jose && l.qualificados > 0)
+      .sort((a, b) => (a.jose!.gasto / a.qualificados) - (b.jose!.gasto / b.qualificados))[0];
+    if (pior && !Number.isFinite(pior.qualificados > 0 ? pior.jose!.gasto / pior.qualificados : Number.POSITIVE_INFINITY)) {
+      return `Revisar ${pior.produto}: existe gasto, mas nenhum lead bom identificado no periodo.`;
+    }
+    if (pior && pior.jose && pior.qualificados > 0 && (pior.jose.gasto / pior.qualificados) > 150) {
+      return `Revisar ${pior.produto}: custo por lead bom esta alto (${brl(pior.jose.gasto / pior.qualificados)}).`;
+    }
+    if (melhor && melhor.jose) {
+      return `Escalar ou estudar ${melhor.produto}: melhor custo por lead bom (${brl(melhor.jose.gasto / melhor.qualificados)}).`;
+    }
+    return 'Ainda nao ha volume suficiente para sugerir acao por produto com seguranca.';
+  }, [linhas]);
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(k); setSortDir(k === 'produto' ? 'asc' : 'desc'); }
@@ -287,6 +355,57 @@ export function FeedbackPorProdutoTab() {
       </div>
 
       {/* período */}
+      <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">Resumo para decisao</h4>
+              <p className="text-xs text-muted-foreground">Meta mostra o gasto; Logos mostra a qualidade real do lead.</p>
+            </div>
+            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${confianca.cls}`}>
+              <ShieldCheck className="h-3.5 w-3.5" />
+              {confianca.label}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-[11px] text-muted-foreground">Investido Meta</div>
+              <div className="mt-1 text-lg font-semibold text-foreground">{brl(jose.gastoTotal)}</div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-[11px] text-muted-foreground">Leads Logos</div>
+              <div className="mt-1 text-lg font-semibold text-foreground">{tot.total}</div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-[11px] text-muted-foreground">Leads bons</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-300">{tot.q}</div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-[11px] text-muted-foreground">Custo/lead bom</div>
+              <div className="mt-1 text-lg font-semibold text-foreground">{tot.q ? brl(custoLeadBom) : '-'}</div>
+            </div>
+          </div>
+          <div className="mt-3 rounded-xl border border-primary/20 bg-primary/10 p-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-primary">
+              <Lightbulb className="h-3.5 w-3.5" /> Acao recomendada
+            </div>
+            <p className="mt-1 text-sm text-foreground/90">{acaoProduto}</p>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Info className="h-4 w-4 text-sky-300" />
+            Como ler estes numeros
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{confianca.desc}</p>
+          <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+            <div className="flex justify-between gap-3"><span>Produtos com vinculo de campanha</span><b className="text-foreground">{produtosComTrafego}/{linhas.length || 0}</b></div>
+            <div className="flex justify-between gap-3"><span>Cobertura do cruzamento</span><b className="text-foreground">{linhas.length ? pct((produtosComTrafego / linhas.length) * 100) : '0%'}</b></div>
+            <div className="flex justify-between gap-3"><span>Sem classe de qualidade</span><b className="text-foreground">{tot.total ? pct(((tot.total - tot.q - tot.p - tot.r - tot.n) / tot.total) * 100) : '0%'}</b></div>
+          </div>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-md border border-border p-0.5">
           {PRESETS.map((o) => (
