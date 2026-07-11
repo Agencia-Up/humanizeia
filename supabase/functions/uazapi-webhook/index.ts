@@ -947,6 +947,13 @@ async function maybeHandleSellerAck(
     last_lead_received_at: now,
   }).eq('id', pendingTransfer.to_member_id || seller.id);
 
+  await supabase.from('ai_lead_transfers')
+    .update({ transfer_status: 'expired' })
+    .eq('lead_id', pendingTransfer.lead_id)
+    .eq('transfer_status', 'pending')
+    .eq('is_confirmed', false)
+    .neq('id', pendingTransfer.id);
+
   // Lead ganhou dono firme (vendedor confirmou "Ok") — resolve qualquer falha
   // de transferencia ABERTA deste lead no painel de diagnostico. best-effort:
   // nunca lanca, nunca derruba a confirmacao.
@@ -2917,6 +2924,13 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
       await supabase.from('ai_team_members').update({
         last_lead_received_at: now,
       }).eq('id', pendingTransfer.to_member_id || senderSeller.id);
+
+      await supabase.from('ai_lead_transfers')
+        .update({ transfer_status: 'expired' })
+        .eq('lead_id', pendingTransfer.lead_id)
+        .eq('transfer_status', 'pending')
+        .eq('is_confirmed', false)
+        .neq('id', pendingTransfer.id);
 
       // Atualiza status do lead para 'em_atendimento' — CRÍTICO pra cron não repassar
       if (pendingTransfer.lead_id) {

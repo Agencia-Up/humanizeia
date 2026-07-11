@@ -772,6 +772,23 @@ Deno.serve(async (req) => {
           // Cobre o caso "vendedor confirmou mas webhook falhou em algum step":
           // se existe um transfer pra esse lead criado DEPOIS de transfer.created_at com is_confirmed=true,
           // significa que houve confirmação posterior e este transfer já é stale.
+          const { data: transfersForLead } = await supabase
+            .from('ai_lead_transfers')
+            .select('id, to_member_id, created_at, is_confirmed, transfer_status')
+            .eq('lead_id', lead.id)
+            .limit(50);
+          const confirmedForLead = Array.isArray(transfersForLead)
+            ? transfersForLead.find((row: any) => row?.is_confirmed === true || row?.transfer_status === 'confirmed')
+            : null;
+
+          if (freshLead.assigned_to_id || confirmedForLead) {
+            console.log(`[Cron] Lead ${lead.id} ja foi assumido (assigned=${freshLead.assigned_to_id || 'null'}, confirmed=${confirmedForLead?.id || 'none'}). Pending ${transfer.id} e stale; expirando sem repassar.`);
+            await supabase.from('ai_lead_transfers')
+              .update({ transfer_status: 'expired' })
+              .eq('id', transfer.id);
+            continue;
+          }
+
           const { data: newerConfirmed } = await supabase
             .from('ai_lead_transfers')
             .select('id, to_member_id, created_at, is_confirmed, transfer_status')

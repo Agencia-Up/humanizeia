@@ -377,7 +377,7 @@ Deno.serve(async (req) => {
         // Fetch lead data separately (PostgREST doesn't support nested joins via query string easily)
         const { data: lead } = await supabase
           .from('ai_crm_leads')
-          .select('id,remote_jid,lead_name,summary,agent_id,status')
+          .select('id,remote_jid,lead_name,summary,agent_id,status,assigned_to_id')
           .eq('id', transfer.lead_id)
           .maybeSingle();
 
@@ -401,14 +401,16 @@ Deno.serve(async (req) => {
         // sobra de outro fluxo) como expirado. Antes faltava esse check: um transfer
         // irmao expirado roubava um lead ja aceito ("vendedor deu OK e mesmo assim
         // passou pro proximo"). Vale para v1 e v2 (uma vez aceito, o lead e do vendedor).
-        const { data: confirmedForLead } = await supabase
+        const { data: transfersForLead } = await supabase
           .from('ai_lead_transfers')
-          .select('id')
+          .select('id,transfer_status,is_confirmed')
           .eq('lead_id', transfer.lead_id)
-          .eq('transfer_status', 'confirmed')
-          .limit(1);
+          .limit(50);
+        const hasConfirmedTransfer = Array.isArray(transfersForLead) &&
+          transfersForLead.some((row: any) => row?.is_confirmed === true || row?.transfer_status === 'confirmed');
         const alreadyClaimed = lead.status === 'em_atendimento' ||
-          (Array.isArray(confirmedForLead) && confirmedForLead.length > 0);
+          Boolean(lead.assigned_to_id) ||
+          hasConfirmedTransfer;
         if (alreadyClaimed) {
           console.log(`[Timeout] Lead ${transfer.lead_id} JA reivindicado (status=${lead.status}/confirmed) — NAO repassa. Transfer ${transfer.id} -> expired.`);
           await supabase.from('ai_lead_transfers')
