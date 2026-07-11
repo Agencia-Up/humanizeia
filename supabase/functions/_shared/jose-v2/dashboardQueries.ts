@@ -181,7 +181,7 @@ async function fetchAdsByIds(acc: MetaAccount, ids: string[]): Promise<Map<strin
 async function fetchTopAdSpend(
   acc: MetaAccount,
   opts: { datePreset?: string; timeRange?: { since: string; until: string } },
-  maxPages = 4,
+  maxPages = 8,
 ): Promise<any[]> {
   const first = new URL(`${META_GRAPH_URL}/${acc.accountId}/insights`);
   first.searchParams.set("access_token", acc.accessToken);
@@ -232,10 +232,12 @@ export async function getSpendByCreative(
   const acc = await resolveMetaAccount(admin, userId, opts?.adAccountId);
   if (!acc) return null;
 
-  const [byAd, activeAds] = await Promise.all([
+  const [byAd, activeAds, base] = await Promise.all([
     fetchTopAdSpend(acc, { datePreset, timeRange }),
     fetchActiveAds(acc),
+    fetchInsights(acc, { datePreset, timeRange }), // total REAL da conta no período (referência)
   ]);
+  const accountTotal = num(base?.[0]?.spend);
   // nome (normalizado p/ chave) -> arte do anúncio ATIVO (pra status + thumbnail dos ativos)
   const activeByName = new Map<string, string | null>();
   for (const ad of activeAds) {
@@ -244,10 +246,8 @@ export async function getSpendByCreative(
   }
 
   const byName = new Map<string, any>();
-  let gasto_total = 0;
   for (const r of byAd) {
     const spend = num(r.spend);
-    gasto_total += spend;
     const rawName = r.ad_name || "—";
     const key = String(rawName).trim().toLowerCase();
     if (!key) continue;
@@ -280,9 +280,13 @@ export async function getSpendByCreative(
       status: g.ativo ? "ACTIVE" : "PAUSED", thumbnail_url: g.thumbnail_url,
     }))
     .sort((a, b) => b.gasto - a.gasto);
+  // total = o REAL da conta (insight base) -> bate com o José/Meta; a soma dos criativos
+  // cobre ~90-99% (o resto é a cauda de micro-anúncios, reconciliada como "Outros" no painel).
+  const somaCriativos = criativos.reduce((s, c) => s + (Number(c.gasto) || 0), 0);
   return {
     periodo: timeRange ? `${timeRange.since} a ${timeRange.until}` : (datePreset || "last_30d"),
-    ad_account_id: acc.accountDbId, moeda: acc.moeda, gasto_total, criativos,
+    ad_account_id: acc.accountDbId, moeda: acc.moeda,
+    gasto_total: accountTotal || somaCriativos, criativos,
   };
 }
 
@@ -390,7 +394,10 @@ export async function getDashboardCards(
   const [base, byAge, byRegion, byAdset, byAd, activeAds] = await Promise.all([
     fi(), fi("age"), fi("region"),
     fetchInsights(acc, { datePreset, timeRange, level: "adset" }),
-    fetchInsights(acc, { datePreset, timeRange, level: "ad" }),
+    // gasto por anúncio: ORDENADO por maior gasto e paginando o topo — antes era limit=500
+    // SEM paginar nem ordenar, o que SUBCONTAVA o gasto por criativo (a conta tem milhares
+    // de cópias). Agora o por_criativo da Cabine soma o gasto de verdade.
+    fetchTopAdSpend(acc, { datePreset, timeRange }),
     fetchActiveAds(acc),
   ]);
   // métricas por anúncio (insights level=ad) indexadas por ad_id -> junta com a lista LEVE de ativos.
