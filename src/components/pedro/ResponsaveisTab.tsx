@@ -8,7 +8,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import {
-  Users, UserPlus, Loader2, FileText, BarChart3, Bell, Crown, Info, Mail, Radar, Check, Bot, MessageSquare, Trash2,
+  Users, UserPlus, Loader2, FileText, BarChart3, Bell, Crown, Info, Mail, Radar, Check, Bot, MessageSquare, Trash2, Send,
 } from 'lucide-react';
 import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { onlyDigits, normalizePhoneBR } from '@/lib/phoneBR';
@@ -25,11 +25,26 @@ interface Props { userId: string; }
 type Entrega = 'recebe_atendimento' | 'recebe_trafego' | 'recebe_alertas';
 type Tipo = 'vendedor' | 'gerente' | 'trafego';
 type Acesso = 'pedro_ia' | 'marcos_crm' | 'jose_trafego';
+type InviteStatus = 'sem_email' | 'sem_convite' | 'convite_pendente' | 'confirmado' | 'ativo' | 'erro';
+
+interface InviteStatusInfo {
+  member_id: string;
+  email: string | null;
+  auth_user_id: string | null;
+  status: InviteStatus;
+  email_confirmed_at?: string | null;
+  last_sign_in_at?: string | null;
+}
 
 interface AgenteLead { agentId: string; nome: string; memberId: string; ativo: boolean; }
 interface Pessoa {
   key: string; nome: string; whatsapp: string;
   papel: 'gerente' | 'vendedor' | 'externo';
+  email: string | null;
+  authUserId: string | null;
+  inviteStatus?: InviteStatus;
+  emailConfirmedAt?: string | null;
+  lastSignInAt?: string | null;
   memberIds: string[];
   acessos: Acesso[];
   aparece_paineis: boolean;
@@ -50,6 +65,39 @@ function iniciais(nome: string): string {
   const p = (nome || '').trim().split(/\s+/).filter(Boolean);
   if (!p.length) return '?';
   return ((p[0][0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+}
+
+const inviteStatusRank: Record<InviteStatus, number> = {
+  erro: 0,
+  sem_email: 1,
+  sem_convite: 2,
+  convite_pendente: 3,
+  confirmado: 4,
+  ativo: 5,
+};
+
+function statusConviteMeta(status?: InviteStatus) {
+  switch (status) {
+    case 'ativo': return { label: 'Conta ativa', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' };
+    case 'confirmado': return { label: 'Confirmado', cls: 'bg-sky-500/15 text-sky-300 border-sky-500/40' };
+    case 'convite_pendente': return { label: 'Convite pendente', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' };
+    case 'sem_convite': return { label: 'Sem convite', cls: 'bg-muted/40 text-muted-foreground border-border/50' };
+    case 'erro': return { label: 'Status indisponivel', cls: 'bg-red-500/10 text-red-300 border-red-500/30' };
+    case 'sem_email':
+    default: return { label: 'Sem e-mail', cls: 'bg-muted/40 text-muted-foreground border-border/50' };
+  }
+}
+
+function melhorStatusConvite(infos: InviteStatusInfo[], fallbackEmail: string | null): Partial<Pessoa> {
+  if (!infos.length) return { inviteStatus: fallbackEmail ? 'sem_convite' : 'sem_email' };
+  const best = [...infos].sort((a, b) => inviteStatusRank[b.status] - inviteStatusRank[a.status])[0];
+  return {
+    inviteStatus: best.status,
+    email: fallbackEmail || best.email || null,
+    authUserId: best.auth_user_id || null,
+    emailConfirmedAt: best.email_confirmed_at || null,
+    lastSignInAt: best.last_sign_in_at || null,
+  };
 }
 
 // Presets de acesso (visible_features).
@@ -105,9 +153,11 @@ const inferAcessos = (features: any, isManager: boolean): Acesso[] => {
   return acessos;
 };
 
+// 'recebe_trafego' foi removido: era um toggle fantasma (gravava mas nenhum motor lia —
+// a entrega de relatório de tráfego do José por WhatsApp ainda não existe). Atendimento e
+// Alertas são lidos de verdade (relatório do Cérebro / alertas). Ver ResponsaveisTab audit.
 const ENTREGAS: { campo: Entrega; label: string; icon: typeof FileText }[] = [
   { campo: 'recebe_atendimento', label: 'Atendimento', icon: FileText },
-  { campo: 'recebe_trafego', label: 'Tráfego (José)', icon: BarChart3 },
   { campo: 'recebe_alertas', label: 'Alertas', icon: Bell },
 ];
 
@@ -139,6 +189,7 @@ export function ResponsaveisTab({ userId }: Props) {
   const [nAcessos, setNAcessos] = useState<Set<Acesso>>(defaultAcessosByTipo('vendedor'));
   const [nAparecePaineis, setNAparecePaineis] = useState(true);
   const [nAgentes, setNAgentes] = useState<Set<string>>(new Set());
+  const [inviteEmails, setInviteEmails] = useState<Record<string, string>>({});
 
   const [delAlvo, setDelAlvo] = useState<Pessoa | null>(null);
   const [delBusy, setDelBusy] = useState(false);
@@ -148,7 +199,7 @@ export function ResponsaveisTab({ userId }: Props) {
     try {
       const [membersRes, agentsRes, respRes] = await Promise.all([
         (supabase as any).from('ai_team_members')
-          .select('id, name, whatsapp_number, is_manager, is_active, active_in_system, agent_id, visible_features').eq('user_id', userId),
+          .select('id, name, email, auth_user_id, whatsapp_number, is_manager, is_active, active_in_system, agent_id, visible_features').eq('user_id', userId),
         (supabase as any).from('wa_ai_agents').select('id, name, gerente_phone, gerente_phone_2').eq('user_id', userId),
         (supabase as any).from('conta_responsaveis')
           .select('nome, whatsapp, recebe_atendimento, recebe_trafego, recebe_alertas').eq('user_id', userId),
@@ -164,7 +215,7 @@ export function ResponsaveisTab({ userId }: Props) {
       const map = new Map<string, Pessoa>();
       const ensure = (k: string, nome: string, wa: string, papel: Pessoa['papel']): Pessoa => {
         let p = map.get(k);
-        if (!p) { p = { key: k, nome: nome || '', whatsapp: onlyDigits(wa), papel, memberIds: [], acessos: [], aparece_paineis: false, agentes: [], recebe_atendimento: false, recebe_trafego: false, recebe_alertas: false }; map.set(k, p); }
+        if (!p) { p = { key: k, nome: nome || '', whatsapp: onlyDigits(wa), papel, email: null, authUserId: null, memberIds: [], acessos: [], aparece_paineis: false, agentes: [], recebe_atendimento: false, recebe_trafego: false, recebe_alertas: false }; map.set(k, p); }
         if (!p.nome && nome) p.nome = nome;
         return p;
       };
@@ -178,6 +229,8 @@ export function ResponsaveisTab({ userId }: Props) {
         if (!k) continue;
         const p = ensure(k, m.name || '', wn, m.is_manager ? 'gerente' : 'vendedor');
         if (m.is_manager) p.papel = 'gerente';
+        if (!p.email && m.email) p.email = m.email;
+        if (!p.authUserId && m.auth_user_id) p.authUserId = m.auth_user_id;
         if (m.id && !p.memberIds.includes(m.id)) p.memberIds.push(m.id);
         if (m.active_in_system !== false) p.aparece_paineis = true;
         for (const acesso of inferAcessos(m.visible_features, !!m.is_manager)) {
@@ -202,7 +255,28 @@ export function ResponsaveisTab({ userId }: Props) {
         const rank = (x: Pessoa) => (x.papel === 'gerente' ? 0 : x.papel === 'vendedor' ? 1 : 2);
         return rank(a) - rank(b) || a.nome.localeCompare(b.nome);
       });
-      setPessoas(arr);
+      const memberIds = arr.flatMap((p) => p.memberIds);
+      let statusByMember = new Map<string, InviteStatusInfo>();
+      if (memberIds.length) {
+        try {
+          const { data, error } = await invokeWithReauth('seller-invite-status', { body: { memberIds } });
+          if (!error && Array.isArray((data as any)?.statuses)) {
+            statusByMember = new Map((data as any).statuses.map((s: InviteStatusInfo) => [s.member_id, s]));
+          }
+        } catch {
+          // Status de convite nao pode derrubar a area de responsaveis.
+        }
+      }
+      const enriched = arr.map((p) => ({
+        ...p,
+        ...melhorStatusConvite(p.memberIds.map((id) => statusByMember.get(id)).filter(Boolean) as InviteStatusInfo[], p.email),
+      }));
+      setPessoas(enriched);
+      setInviteEmails((prev) => {
+        const next = { ...prev };
+        for (const p of enriched) if (p.email && next[p.key] === undefined) next[p.key] = p.email;
+        return next;
+      });
     } catch (e: any) {
       toast({ title: 'Erro ao carregar responsáveis', description: e?.message, variant: 'destructive' });
     } finally { setLoading(false); }
@@ -291,6 +365,38 @@ export function ResponsaveisTab({ userId }: Props) {
     } finally { setSaving(null); }
   };
 
+  const reenviarConvite = async (p: Pessoa) => {
+    const email = (inviteEmails[p.key] || p.email || '').trim().toLowerCase();
+    if (!p.memberIds.length) {
+      toast({ title: 'Sem cadastro de acesso', description: 'Esta pessoa nao possui registro em ai_team_members para receber convite.', variant: 'destructive' });
+      return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast({ title: 'Informe um e-mail valido', description: 'Preencha o campo de e-mail antes de reenviar o convite.', variant: 'destructive' });
+      return;
+    }
+
+    setSaving(p.key + 'invite');
+    try {
+      const { error: updateErr } = await (supabase as any)
+        .from('ai_team_members')
+        .update({ email })
+        .in('id', p.memberIds);
+      if (updateErr) throw updateErr;
+
+      const { data, error } = await invokeWithReauth('invite-seller', { body: { memberId: p.memberIds[0], email } });
+      if (error) throw error;
+      if ((data as any)?.success === false) throw new Error((data as any)?.error || 'Falha ao reenviar convite');
+
+      await load();
+      toast({ title: 'Convite reenviado', description: `Enviamos um novo link para ${email}.` });
+    } catch (e: any) {
+      toast({ title: 'Nao deu pra reenviar', description: e?.message || 'Falha ao enviar convite.', variant: 'destructive' });
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const setTipo = (tipo: Tipo) => {
     setNTipo(tipo);
     setNAcessos(defaultAcessosByTipo(tipo));
@@ -333,8 +439,8 @@ export function ResponsaveisTab({ userId }: Props) {
       }
 
       // Entregas padrão por tipo.
-      const entregas = nTipo === 'gerente' ? { recebe_atendimento: true, recebe_trafego: true, recebe_alertas: true }
-        : nTipo === 'trafego' ? { recebe_trafego: true, recebe_atendimento: nAcessos.has('pedro_ia') } : null;
+      const entregas = nTipo === 'gerente' ? { recebe_atendimento: true, recebe_alertas: true }
+        : nTipo === 'trafego' ? { recebe_atendimento: nAcessos.has('pedro_ia') } : null;
       if (entregas) {
         await (supabase as any).from('conta_responsaveis').upsert({ user_id: userId, whatsapp: d, nome: nNome.trim(), ...entregas }, { onConflict: 'user_id,whatsapp' });
       }
@@ -407,6 +513,9 @@ export function ResponsaveisTab({ userId }: Props) {
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                <span className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border ${statusConviteMeta(p.inviteStatus).cls}`} title="Status real do convite/acesso no Supabase Auth">
+                  <Mail className="h-3 w-3" /> {statusConviteMeta(p.inviteStatus).label}
+                </span>
                 {ACESSOS.map(({ id, label, icon: Icon }) => {
                   const on = p.acessos.includes(id);
                   const busy = saving === p.key + id;
@@ -456,6 +565,34 @@ export function ResponsaveisTab({ userId }: Props) {
                   title="Excluir este responsável (mantém o histórico dos leads)">
                   <Trash2 className="h-3 w-3" /> Excluir
                 </button>
+              </div>
+              <div className="basis-full flex items-end gap-2 flex-wrap pl-0 sm:pl-12 pt-1">
+                <div className="space-y-1 flex-1 min-w-[220px] max-w-xl">
+                  <label className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                    <Mail className="h-3 w-3" /> E-mail de acesso
+                  </label>
+                  <Input
+                    value={inviteEmails[p.key] ?? p.email ?? ''}
+                    onChange={(e) => setInviteEmails((prev) => ({ ...prev, [p.key]: e.target.value }))}
+                    placeholder="email@empresa.com"
+                    inputMode="email"
+                    className="h-9"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={p.inviteStatus === 'ativo' ? 'outline' : 'default'}
+                  className="gap-1.5"
+                  disabled={saving === p.key + 'invite' || p.memberIds.length === 0}
+                  onClick={() => reenviarConvite(p)}
+                >
+                  {saving === p.key + 'invite' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Reenviar convite
+                </Button>
+                <span className="text-[11px] text-muted-foreground">
+                  {p.lastSignInAt ? 'Ja acessou o painel.' : p.emailConfirmedAt ? 'Criou a conta, mas ainda nao acessou.' : 'Use para reenviar quando o link expirar.'}
+                </span>
               </div>
             </div>
           ))}
