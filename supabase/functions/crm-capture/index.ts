@@ -28,8 +28,8 @@ serve(async (req) => {
       )
     }
 
-    // 1. Get the first stage (Novo Lead) for this user to ensure we have a stage_id
-    const { data: stages, error: stageError } = await supabaseClient
+    // 1. Get the first Marcos stage; create the default pipeline if missing.
+    let { data: stages, error: stageError } = await supabaseClient
       .from('crm_pipeline_stages')
       .select('id')
       .eq('user_id', user_id)
@@ -37,10 +37,22 @@ serve(async (req) => {
       .limit(1)
 
     if (stageError || !stages || stages.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'No pipeline stages found for this user' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      const { error: ensureError } = await supabaseClient.rpc('ensure_marcos_default_pipeline_stages', { p_user_id: user_id })
+      if (ensureError) throw ensureError
+
+      const retry = await supabaseClient
+        .from('crm_pipeline_stages')
+        .select('id')
+        .eq('user_id', user_id)
+        .order('position', { ascending: true })
+        .limit(1)
+
+      stages = retry.data
+      stageError = retry.error
+    }
+
+    if (stageError || !stages || stages.length === 0) {
+      throw new Error('No pipeline stages found for this user after ensure')
     }
 
     const stage_id = stages[0].id

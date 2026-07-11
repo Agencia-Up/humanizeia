@@ -20,6 +20,7 @@ export type MarcosCrmStageRow = {
 
 type SupabaseLike = {
   from: (table: string) => any;
+  rpc?: (fn: string, args?: Record<string, unknown>) => Promise<{ error?: unknown }>;
 };
 
 async function fetchVisibleMarcosStages(
@@ -58,21 +59,25 @@ export async function ensureMarcosPipelineStages(
   if (countError) throw countError;
 
   if ((count ?? 0) === 0) {
-    const rows = MARCOS_DEFAULT_PIPELINE_STAGES.map(stage => ({
-      user_id: userId,
-      name: stage.name,
-      color: stage.color,
-      position: stage.position,
-      is_default: false,
-      ativo: true,
-      show_in_live: true,
-      seller_auth_id: null,
-    }));
+    const rpc = await supabase.rpc?.('ensure_marcos_default_pipeline_stages', { p_user_id: userId });
 
-    const { error: insertError } = await supabase
-      .from('crm_pipeline_stages')
-      .upsert(rows, { onConflict: 'user_id,name', ignoreDuplicates: true });
-    if (insertError) throw insertError;
+    if (rpc?.error) {
+      const rows = MARCOS_DEFAULT_PIPELINE_STAGES.map(stage => ({
+        user_id: userId,
+        name: stage.name,
+        color: stage.color,
+        position: stage.position,
+        is_default: false,
+        ativo: true,
+        show_in_live: true,
+        seller_auth_id: null,
+      }));
+
+      const { error: insertError } = await supabase
+        .from('crm_pipeline_stages')
+        .upsert(rows, { onConflict: 'user_id,name', ignoreDuplicates: true });
+      if (insertError) throw insertError;
+    }
   }
 
   const freshStages = await fetchVisibleMarcosStages(supabase, userId, authUserId);

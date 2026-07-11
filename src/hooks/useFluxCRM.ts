@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile } from '@/hooks/useSellerProfile';
+import { ensureMarcosPipelineStages } from '@/lib/marcosCrmStages';
 import { toast } from 'sonner';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -82,32 +83,7 @@ export function useFluxCRM() {
       if (!effectiveUserId) return [];
       // Escopo por vendedor: colunas da CONTA (seller_auth_id null) + as SUAS.
       // Sem isso, a coluna que um vendedor cria vazava pro board de todos.
-      const { data, error } = await supabase
-        .from('crm_pipeline_stages')
-        .select('*')
-        .eq('user_id', effectiveUserId)
-        .or(`seller_auth_id.is.null,seller_auth_id.eq.${user?.id}`)
-        .order('position');
-
-      if (error) throw error;
-
-      let stagesData = (data || []) as unknown as PipelineStage[];
-
-      // Seed default stages if none exist
-      if (stagesData.length === 0) {
-        const toInsert = DEFAULT_STAGES.map((s) => ({ ...s, user_id: effectiveUserId, is_default: true }));
-        await supabase
-          .from('crm_pipeline_stages')
-          .upsert(toInsert, { onConflict: 'user_id,name', ignoreDuplicates: true });
-
-        const { data: fresh } = await supabase
-          .from('crm_pipeline_stages')
-          .select('*')
-          .eq('user_id', effectiveUserId)
-          .order('position');
-
-        stagesData = (fresh || []) as unknown as PipelineStage[];
-      }
+      const stagesData = await ensureMarcosPipelineStages(supabase as any, effectiveUserId, user?.id) as unknown as PipelineStage[];
       // MELHORIA 2: o board so mostra colunas ATIVAS. Colunas desativadas na
       // tabela de Configuracoes somem do board (master e vendedores), mas
       // continuam na config (reativaveis) e os dados nao sao apagados.
