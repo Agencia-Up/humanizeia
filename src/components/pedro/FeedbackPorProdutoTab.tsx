@@ -7,10 +7,11 @@ import { RefreshCcw, PackageSearch, Loader2, AlertTriangle, Download, CalendarRa
 // que a conversa era (carro, no nicho auto) E com o que o agente José está de fato
 // anunciando. Duas fontes:
 //   1) feedback_produtos_qualidade  → produto (da conversa) × qualidade do lead.
-//   2) jose_criativos_ativos        → criativos do último snapshot do José: nome
-//      (que quase sempre É o carro), status (ACTIVE/pausado), gasto, conversas e a
-//      thumbnail (imagem do anúncio). Onde o nome é genérico ("05","01"...), o carro
-//      só sai LENDO A IMAGEM (edge feedback-criativo-visao) — cache em carrosIa.
+//   2) edge feedback-jose-trafego   → gasto por criativo AO VIVO da Meta no MESMO
+//      intervalo do filtro (histórico completo, não o snapshot de 1/7 dias): nome
+//      (que quase sempre É o carro), status (ativo/pausado), gasto, thumbnail. Onde o
+//      nome é genérico ("05","01"...), o carro só sai LENDO A IMAGEM (edge
+//      feedback-criativo-visao) — cache em carrosIa.
 // O casamento é pelo MODELO do carro (normalizeModelo), tolerante a acento/versão.
 // A tabela é operável estilo Facebook Ads: filtro por status (todos/ativos/anunciados/
 // não anunciados) e ordenação clicável em cada coluna (melhor→pior, gasto, leads...).
@@ -93,9 +94,13 @@ export function FeedbackPorProdutoTab() {
       const params = modo === 'custom'
         ? { p_dias: null, p_ini: ini, p_fim: fim }
         : { p_dias: dias, p_ini: null, p_fim: null };
+      // José: puxa o gasto por criativo AO VIVO da Meta no MESMO intervalo do filtro
+      // (histórico completo), não do snapshot (que é só de 1/7 dias).
+      const since = modo === 'custom' ? ini : isoMenosDias(dias - 1);
+      const until = modo === 'custom' ? fim : hojeISO();
       const [q, j] = await Promise.all([
         (supabase as any).rpc('feedback_produtos_qualidade', params),
-        (supabase as any).rpc('jose_criativos_ativos'),
+        (supabase as any).functions.invoke('feedback-jose-trafego', { body: { since, until } }),
       ]);
       if (q.error) throw q.error;
       setRows(Array.isArray(q.data) ? q.data : []);
