@@ -12,7 +12,7 @@ import { Slider } from '@/components/ui/slider';
 import { useToast } from '@/hooks/use-toast';
 import {
   Target, Globe, Megaphone, FileText, Eye, Play, ChevronRight, ChevronLeft,
-  CheckCircle, Loader2, Zap, Users, TrendingUp, Sparkles, ExternalLink, X,
+  CheckCircle, Loader2, Zap, Users, TrendingUp, Sparkles, ExternalLink, X, Upload, AlertTriangle,
 } from 'lucide-react';
 
 interface ConnectedAccount {
@@ -60,7 +60,7 @@ export default function CampanhaCreator({ connectedAccount }: CampanhaCreatorPro
   const { toast } = useToast();
   const [step, setStep] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
-  const [createdResult, setCreatedResult] = useState<{ campaign_id: string; adset_id: string; meta_ads_url: string } | null>(null);
+  const [createdResult, setCreatedResult] = useState<{ campaign_id: string; adset_id: string; meta_ads_url: string; ad_id?: string | null; ad_warning?: string | null } | null>(null);
 
   // Step 1
   const [objective, setObjective] = useState('CONVERSIONS');
@@ -86,7 +86,17 @@ export default function CampanhaCreator({ connectedAccount }: CampanhaCreatorPro
   const [primaryText, setPrimaryText] = useState('');
   const [ctaButton, setCtaButton] = useState('LEARN_MORE');
   const [destinationUrl, setDestinationUrl] = useState('');
+  const [adImage, setAdImage] = useState<string | null>(null); // data URL (preview + envio base64)
   const [launchStatus, setLaunchStatus] = useState<'PAUSED' | 'ACTIVE'>('PAUSED');
+
+  const onPickImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) { toast({ title: 'Imagem muito grande', description: 'Máximo 8MB.', variant: 'destructive' }); return; }
+    const reader = new FileReader();
+    reader.onload = () => setAdImage(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  };
 
   const estimateReach = useCallback(async () => {
     if (!connectedAccount?.account_id) return;
@@ -158,6 +168,16 @@ export default function CampanhaCreator({ connectedAccount }: CampanhaCreatorPro
           daily_budget: parseFloat(dailyBudget) || 50,
           targeting,
           ad_set_name: adSetName || undefined,
+          status: launchStatus,
+          creative: {
+            name: adName || undefined,
+            format: adFormat,
+            headline: headline || undefined,
+            primary_text: primaryText || undefined,
+            cta: ctaButton,
+            link: destinationUrl || undefined,
+            image_base64: adImage || undefined,
+          },
         },
       });
 
@@ -185,19 +205,33 @@ export default function CampanhaCreator({ connectedAccount }: CampanhaCreatorPro
             <CheckCircle className="h-8 w-8 text-emerald-400" />
           </div>
           <div className="text-center space-y-2">
-            <h3 className="text-xl font-bold text-emerald-400">Campanha Criada com Sucesso!</h3>
-            <p className="text-sm text-muted-foreground">Sua campanha está criada e pausada no Meta Ads Manager.</p>
+            <h3 className="text-xl font-bold text-emerald-400">{createdResult.ad_id ? 'Anúncio criado com sucesso!' : 'Campanha criada com sucesso!'}</h3>
+            <p className="text-sm text-muted-foreground">
+              {createdResult.ad_id
+                ? 'Campanha, conjunto e anúncio completos no Meta Ads Manager.'
+                : 'Estrutura criada no Meta Ads Manager.'}
+            </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 w-full max-w-sm">
+          <div className="grid grid-cols-3 gap-3 w-full max-w-lg">
             <div className="rounded-lg border border-border/50 p-3 text-center">
-              <p className="text-[10px] text-muted-foreground">Campaign ID</p>
+              <p className="text-[10px] text-muted-foreground">Campanha</p>
               <p className="text-xs font-mono font-semibold mt-0.5 truncate">{createdResult.campaign_id}</p>
             </div>
             <div className="rounded-lg border border-border/50 p-3 text-center">
-              <p className="text-[10px] text-muted-foreground">Ad Set ID</p>
+              <p className="text-[10px] text-muted-foreground">Conjunto</p>
               <p className="text-xs font-mono font-semibold mt-0.5 truncate">{createdResult.adset_id}</p>
             </div>
+            <div className="rounded-lg border border-border/50 p-3 text-center">
+              <p className="text-[10px] text-muted-foreground">Anúncio</p>
+              <p className="text-xs font-mono font-semibold mt-0.5 truncate">{createdResult.ad_id || '—'}</p>
+            </div>
           </div>
+          {createdResult.ad_warning && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 max-w-lg text-left">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed">{createdResult.ad_warning}</p>
+            </div>
+          )}
           <div className="flex gap-3">
             <Button asChild size="sm" className="gap-2 bg-orange-500 hover:bg-orange-600 text-white">
               <a href={createdResult.meta_ads_url} target="_blank" rel="noopener noreferrer">
@@ -498,13 +532,29 @@ export default function CampanhaCreator({ connectedAccount }: CampanhaCreatorPro
                 />
               </div>
 
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4 space-y-2">
+              <div className="space-y-2">
+                <Label className="text-xs">Imagem do anúncio</Label>
+                <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-muted/20 p-4 text-center hover:border-orange-500/40">
+                  {adImage ? (
+                    <img src={adImage} alt="prévia" className="max-h-40 w-full rounded object-contain" />
+                  ) : (
+                    <>
+                      <Upload className="h-5 w-5 text-muted-foreground" />
+                      <span className="text-[11px] text-muted-foreground">Clique para escolher a imagem (JPG/PNG, até 8MB)</span>
+                    </>
+                  )}
+                  <input type="file" accept="image/*" className="hidden" onChange={onPickImage} />
+                </label>
+                {adImage && <button onClick={() => setAdImage(null)} className="text-[11px] text-muted-foreground hover:text-foreground">Remover imagem</button>}
+              </div>
+
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1.5">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-amber-400" />
-                  <p className="text-xs font-semibold text-amber-400">Sobre o criativo</p>
+                  <p className="text-xs font-semibold text-amber-400">Como o JOSÉ cria</p>
                 </div>
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  A imagem ou vídeo do anúncio deve ser adicionado diretamente no Meta Ads Manager após a criação. O JOSÉ cria a estrutura completa da campanha e conjunto de anúncios automaticamente.
+                  Com a imagem + o texto acima, o JOSÉ monta o anúncio COMPLETO (imagem, título, texto e botão) já ligado ao conjunto. Sem imagem, ele cria só a campanha e o conjunto, e você finaliza o anúncio no Meta com o texto que escreveu. Precisa de uma Página do Facebook conectada à conta.
                 </p>
               </div>
             </div>

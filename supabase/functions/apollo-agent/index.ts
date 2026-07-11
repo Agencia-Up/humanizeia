@@ -3117,6 +3117,11 @@ async function getMetaTokenForUser(admin: any, userId: string, targetAccountId?:
 
 async function handleCreateCampaign(admin: any, userId: string, body: any, corsHeaders: any) {
   const { targetAccountId, name, objective, daily_budget, targeting, ad_set_name } = body;
+  // NOVO: criativo (texto + imagem) e status escolhido na tela. Se vier criativo com imagem,
+  // criamos o ANÚNCIO de verdade (creative + ad). Sem imagem/página, cai no modo estrutura
+  // (só campanha+conjunto, como antes) e devolve o texto pra finalizar no Meta — nunca quebra.
+  const creative = body.creative || null;
+  const status = body.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
 
   const meta = await getMetaTokenForUser(admin, userId, targetAccountId);
   if (!meta) {
@@ -3132,7 +3137,7 @@ async function handleCreateCampaign(admin: any, userId: string, body: any, corsH
     body: JSON.stringify({
       name: name || "Nova Campanha JOSÉ",
       objective: objective || "CONVERSIONS",
-      status: "PAUSED",
+      status,
       special_ad_categories: [],
       access_token: meta.accessToken,
     }),
@@ -3195,7 +3200,7 @@ async function handleCreateCampaign(admin: any, userId: string, body: any, corsH
       optimization_goal: optimizationGoal,
       bid_strategy: "LOWEST_COST_WITHOUT_CAP",
       targeting: targetingSpec,
-      status: "PAUSED",
+      status,
       start_time: startTime,
       access_token: meta.accessToken,
     }),
@@ -3206,12 +3211,121 @@ async function handleCreateCampaign(admin: any, userId: string, body: any, corsH
     return new Response(JSON.stringify({ error: adsetData.error.message, campaign_id: campaignId, meta_error: adsetData.error }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
+  // 5. Criar o ANÚNCIO de verdade (creative + ad) quando vier texto + imagem. Best-effort:
+  // qualquer falha aqui NÃO derruba a campanha/conjunto já criados — devolve o texto pra
+  // finalizar no Meta. Precisa de uma Página do Facebook (detectada pelo token) e da imagem.
+  let ad_id: string | null = null;
+  let ad_warning: string | null = null;
+  try {
+    const temTexto = creative && (creative.headline || creative.primary_text || creative.link);
+    if (temTexto && creative.image_base64) {
+      const page = await getFirstFacebookPage(meta.accessToken);
+      if (!page) {
+        ad_warning = "Campanha e conjunto criados. Não achei uma Página do Facebook conectada à conta, então o anúncio não foi montado — finalize o anúncio no Meta com o texto que você escreveu.";
+      } else {
+        const imageHash = await uploadAdImage(normalizedAccountId, meta.accessToken, creative.image_base64);
+        if (!imageHash) {
+          ad_warning = "Campanha e conjunto criados, mas não consegui subir a imagem — finalize o anúncio no Meta.";
+        } else {
+          const creativeId = await createAdCreative(normalizedAccountId, meta.accessToken, {
+            name: creative.name || name || "Criativo JOSÉ", pageId: page.id,
+            headline: creative.headline || "", message: creative.primary_text || "",
+            link: creative.link || "", cta: creative.cta || "LEARN_MORE", imageHash,
+          });
+          if (!creativeId) {
+            ad_warning = "Campanha e conjunto criados, mas o criativo falhou — finalize o anúncio no Meta.";
+          } else {
+            ad_id = await createAd(normalizedAccountId, meta.accessToken, {
+              name: creative.name || name || "Anúncio JOSÉ", adsetId: adsetData.id, creativeId, status,
+            });
+            if (!ad_id) ad_warning = "Campanha, conjunto e criativo criados, mas o anúncio não subiu — finalize no Meta.";
+          }
+        }
+      }
+    } else if (temTexto && !creative.image_base64) {
+      ad_warning = "Campanha e conjunto criados. Sem imagem, o anúncio não pôde ser montado — adicione a imagem no Meta com o texto que você escreveu.";
+    }
+  } catch (e) {
+    ad_warning = "Campanha e conjunto criados; o anúncio não pôde ser montado automaticamente (" + String((e as any)?.message || e) + "). Finalize no Meta.";
+  }
+
   return new Response(JSON.stringify({
     campaign_id: campaignId,
     adset_id: adsetData.id,
+    ad_id,
+    ad_warning,
+    creative_echo: creative ? { headline: creative.headline, primary_text: creative.primary_text, cta: creative.cta, link: creative.link } : null,
+    launched_status: status,
     status: "created",
     meta_ads_url: `https://business.facebook.com/adsmanager/manage/campaigns?act=${meta.accountId.replace("act_", "")}`,
   }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// Detecta a 1ª Página do Facebook que o token consegue usar (pra publicar o anúncio).
+async function getFirstFacebookPage(accessToken: string): Promise<{ id: string; name?: string } | null> {
+  try {
+    const url = new URL(`${META_GRAPH_URL}/me/accounts`);
+    url.searchParams.set("fields", "id,name");
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("access_token", accessToken);
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    const p = Array.isArray(data?.data) ? data.data[0] : null;
+    return p?.id ? { id: String(p.id), name: p.name } : null;
+  } catch { return null; }
+}
+
+// Sobe a imagem do anúncio (base64) pra conta e devolve o image_hash.
+async function uploadAdImage(accountId: string, accessToken: string, imageBase64: string): Promise<string | null> {
+  try {
+    const clean = String(imageBase64).replace(/^data:[^;]+;base64,/, "");
+    const res = await fetch(`${META_GRAPH_URL}/${accountId}/adimages`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bytes: clean, access_token: accessToken }),
+    });
+    const data = await res.json();
+    if (data?.error) { console.warn("[create_campaign] adimages erro:", data.error?.message); return null; }
+    const images = data?.images || {};
+    const first: any = Object.values(images)[0];
+    return first?.hash || null;
+  } catch (e) { console.warn("[create_campaign] adimages falhou:", e); return null; }
+}
+
+// Cria o criativo (object_story_spec com o texto + imagem + CTA + link).
+async function createAdCreative(accountId: string, accessToken: string, c: { name: string; pageId: string; headline: string; message: string; link: string; cta: string; imageHash: string }): Promise<string | null> {
+  try {
+    const link = c.link || "https://facebook.com";
+    const spec: any = {
+      page_id: c.pageId,
+      link_data: {
+        message: c.message || undefined,
+        name: c.headline || undefined,
+        link,
+        image_hash: c.imageHash,
+        call_to_action: { type: c.cta || "LEARN_MORE", value: { link } },
+      },
+    };
+    const res = await fetch(`${META_GRAPH_URL}/${accountId}/adcreatives`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: c.name, object_story_spec: spec, access_token: accessToken }),
+    });
+    const data = await res.json();
+    if (data?.error) { console.warn("[create_campaign] adcreative erro:", data.error?.message); return null; }
+    return data?.id || null;
+  } catch (e) { console.warn("[create_campaign] adcreative falhou:", e); return null; }
+}
+
+// Cria o anúncio final (liga o criativo ao conjunto), no status escolhido.
+async function createAd(accountId: string, accessToken: string, a: { name: string; adsetId: string; creativeId: string; status: string }): Promise<string | null> {
+  try {
+    const res = await fetch(`${META_GRAPH_URL}/${accountId}/ads`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: a.name, adset_id: a.adsetId, creative: { creative_id: a.creativeId }, status: a.status, access_token: accessToken }),
+    });
+    const data = await res.json();
+    if (data?.error) { console.warn("[create_campaign] ad erro:", data.error?.message); return null; }
+    return data?.id || null;
+  } catch (e) { console.warn("[create_campaign] ad falhou:", e); return null; }
 }
 
 async function handleGetAudienceInsights(admin: any, userId: string, body: any, corsHeaders: any) {
