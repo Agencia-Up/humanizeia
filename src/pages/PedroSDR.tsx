@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeWithReauth } from '@/lib/invokeWithReauth';
+import { ensureMarcosPipelineStages, resolveFirstMarcosStageId as ensureFirstMarcosStageId } from '@/lib/marcosCrmStages';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { descricaoErro } from '@/lib/erroAmigavel';
@@ -1492,13 +1493,7 @@ export function CrmAvancadoTab({
       const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
 
       if (isMarcosCrm) {
-        const { data: stagesData } = await (supabase as any)
-          .from('crm_pipeline_stages')
-          .select('id, name, color, position')
-          .eq('user_id', effectiveUserId)
-          // Escopo por vendedor: colunas da conta (null) + as do proprio vendedor.
-          .or(`seller_auth_id.is.null,seller_auth_id.eq.${userId}`)
-          .order('position', { ascending: true });
+        const stagesData = await ensureMarcosPipelineStages(supabase as any, effectiveUserId, userId);
         const stages = (stagesData || []) as any[];
         const fallbackStage = stages[0]?.id || 'novo';
         const columns = stages.length > 0
@@ -1973,18 +1968,7 @@ export function CrmAvancadoTab({
     const cachedStageId = manualStages.find(s => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.id))?.id;
     if (cachedStageId) return cachedStageId;
 
-    const { data, error } = await (supabase as any)
-      .from('crm_pipeline_stages')
-      .select('id')
-      .eq('user_id', effectiveUserId)
-      .order('position', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data?.id) {
-      throw new Error('Nenhuma etapa do CRM do Marcos foi encontrada para esta conta.');
-    }
-    return data.id as string;
+    return ensureFirstMarcosStageId(supabase as any, effectiveUserId, userId);
   };
 
   const loadLeadDetail = async (lead: CrmLead) => {

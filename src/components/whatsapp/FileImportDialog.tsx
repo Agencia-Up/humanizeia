@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
+import { resolveFirstMarcosStageId as ensureFirstMarcosStageId } from '@/lib/marcosCrmStages';
 import { useToast } from '@/hooks/use-toast';
 import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, Loader2, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -290,16 +291,7 @@ export function FileImportDialog({ open, onOpenChange, userId, lists, onSuccess,
   };
 
   const resolveFirstMarcosStageId = async () => {
-    const { data, error } = await (supabase as any)
-      .from('crm_pipeline_stages')
-      .select('id')
-      .eq('user_id', userId)
-      .order('position', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data?.id) throw new Error('Nenhuma etapa do CRM do Marcos foi encontrada para esta conta.');
-    return data.id as string;
+    return ensureFirstMarcosStageId(supabase as any, userId);
   };
 
   const createAssignedCrmLeads = async (listId: string) => {
