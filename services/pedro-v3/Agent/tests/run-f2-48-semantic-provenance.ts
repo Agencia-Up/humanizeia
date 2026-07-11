@@ -15,6 +15,7 @@ import { resolveConversationLeadBinding, type LeadBindingDecision } from "../src
 import { canonicalWhatsappRemoteJid } from "../src/domain/whatsapp-jid.ts";
 import { isRealLeadName, buildCrmFields, sanitizeLeadNameHint } from "../src/engine/crm-write.ts";
 import { filterBrainSlotMutations } from "../src/engine/slot-provenance.ts";
+import { reconcileUnderstanding } from "../src/engine/turn-understanding.ts";
 import { extractLeadSlots, resolveSelectedVehicle, questionSlotFromAgentText } from "../src/engine/lead-extraction.ts";
 import { ingestPilotMessage } from "../src/engine/pilot-ingest.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
@@ -414,8 +415,8 @@ async function main(): Promise<void> {
     await c.t("quero financiar", () => finU([txt("Você tem um valor para dar de entrada?")], U("financing", "quero financiar")));
     const tQ = await c.t("Não", (_f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /SEM entrada/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
       ? finU([txt("Entendi, seguimos sem entrada. Qual parcela caberia para você?")], U("financing", "Não"))
-      : finU([txt("Perfeito, anotei sua entrada para o financiamento.")], U("financing", "Não")));
-    check("[C2-SC2] entrada=0 não pode ser narrada como entrada positiva", tQ.responseSource === "brain_retry" && !tQ.sentTexts.some((x) => has(x, "anotei sua entrada")), tQ.sentTexts.join("|").slice(0, 100));
+      : finU([txt("Anotei o valor de entrada. Tem algum carro para dar de troca?")], U("financing", "Não")));
+    check("[C2-SC2] entrada=0 não pode ser narrada como entrada positiva mesmo antes de pergunta", tQ.responseSource === "brain_retry" && !tQ.sentTexts.some((x) => has(x, "anotei o valor de entrada")), tQ.sentTexts.join("|").slice(0, 100));
   }
 
   // ── [W] fonte única da pergunta de slot no texto do agente ──
@@ -424,6 +425,13 @@ async function main(): Promise<void> {
     check("[W2] nome", questionSlotFromAgentText("Para avançar com o financiamento, qual seu nome?") === "nome", "");
     check("[W3] troca", questionSlotFromAgentText("Você tem algum carro para dar de troca?") === "possuiTroca", "");
     check("[W4] statement não vira pergunta pendente", questionSlotFromAgentText("Anotado, parcela de até R$ 1.200.") === null, "");
+  }
+  // ── [U] retry pode reparar o ato de um aceite inequívoco sem liberar troca arbitrária de assunto ──
+  {
+    const wrong = U("select_vehicle", "Sim", "select");
+    const repaired = U("request_photos", "Sim", "send_photos");
+    check("[U1] aceite de foto permite corrigir intent/capability no retry", reconcileUnderstanding(wrong, repaired, "Sim", { acceptedPhotoOffer: true }).primaryIntent === "request_photos", "");
+    check("[U2] sem sinal contextual, trava de assunto continua fail-closed", reconcileUnderstanding(wrong, repaired, "Sim").primaryIntent === "select_vehicle", "");
   }
 
   console.log(`\n== F2.48: ${ok} OK | ${fail} FALHA ==`);

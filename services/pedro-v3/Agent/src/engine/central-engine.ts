@@ -608,6 +608,7 @@ function authorFromBrainDraft(args: {
   readonly noCommercialContextYet?: boolean;         // Missão P0 INC2/F: sem intenção comercial ainda -> não pedir nome (nem sobrenome)
   readonly advancedThisTurn?: boolean;               // LLM-first: o lead deu um slot novo neste turno (ex.: o nome) -> reperguntar o não-respondido é condução
   readonly disengagementOnly?: boolean;              // agradecimento/despedida sem novo pedido acionável -> não reabre o funil
+  readonly financialAnswerSlot?: "formaPagamento" | "entrada" | "parcelaDesejada" | null;
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -628,7 +629,12 @@ function authorFromBrainDraft(args: {
   }
   // T2 (fonte única): a AUTORIDADE de enviar foto é a SEMÂNTICA (authorizesPhotoSend: capability send_photos com
   // evidência PRÓPRIA que menciona foto, sem negação, não é memória) — nunca regex de frase. Recall nunca envia mídia.
-  const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain);
+  const acceptedPhotoAuthorized = args.photoVU?.fromBrain === true
+    && args.photoVU.trusted
+    && args.photoVU.understanding.primaryIntent === "request_photos"
+    && args.photoVU.understanding.requestedCapabilities.includes("send_photos")
+    && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state);
+  const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) || acceptedPhotoAuthorized;
   const photoRecall = isPhotoRecall(args.photoVU);
   // P0-1 (audit Codex): CONFLITO — subjectValue do understanding não corresponde ao modelo ESCRITO pelo cliente ->
   // entendimento INVÁLIDO. Nunca envia mídia; pede correção do subject (o claim escrito manda).
@@ -689,6 +695,12 @@ function authorFromBrainDraft(args: {
   // visible mojibake that can leak to WhatsApp.
   if (hasCorruptedControlChars(composed.text)) {
     return { ok: false, feedback: "Sua resposta veio CORROMPIDA (caracteres de controle/quebrados embutidos — acentos e emoji viraram lixo). Reescreva EXATAMENTE a mesma mensagem em português limpo e correto, com acentuação normal (á é ê ã õ ç) e SEM emojis nem caracteres especiais/de controle." };
+  }
+  if (args.financialAnswerSlot === "entrada" && !/\bentrada\b/i.test(normalizeText(composed.text))) {
+    return { ok: false, feedback: "O cliente acabou de responder sobre ENTRADA. Acolha explicitamente essa resposta antes de avançar; não a ignore nem volte a outro ponto. Você continua livre para escolher UMA próxima pergunta útil." };
+  }
+  if (args.financialAnswerSlot === "parcelaDesejada" && !/\bparcela\w*\b/i.test(normalizeText(composed.text))) {
+    return { ok: false, feedback: "O cliente acabou de informar a PARCELA mensal desejada. Acolha explicitamente a parcela antes de avançar; não repita apenas a entrada. Você continua livre para escolher UMA próxima pergunta útil." };
   }
   // T2: mesmo sem send_media/reasonCode, o TEXTO não pode PROMETER foto num turno que não autoriza foto (e não é recall,
   // que legitimamente NOMEIA a foto lembrada). Guarda de OUTPUT (não classifica o turno) — a autoridade é photoAuthorized.
@@ -1253,9 +1265,10 @@ export function hasDoubleActionQuestion(text: string): boolean {
 }
 const SERVICE_OR_INSTITUTIONAL_RX = /\b(?:garantia|procedencia|documenta[cç]ao|documentos?|laudo|revis[aã]o|ipva|licenciad|blindad|seguro|chave\s+reserva|manual|recibo)\b/;
 function factualSlotClaimFeedback(text: string, state: ConversationState): string | null {
-  const n = normalizeText(text);
-  if (text.includes("?")) return null;
-  const clauses = n.split(/[.!?\n]+/).filter(Boolean);
+  const clauses = text.split(/(?<=[.!?\n])/)
+    .filter((sentence) => !sentence.trim().endsWith("?"))
+    .map((sentence) => normalizeText(sentence))
+    .filter(Boolean);
   const saysNoTrade = clauses.some((clause) => /\b(?:sem|nao\s+(?:tem|possui))\b.{0,25}\b(?:carro|veiculo)\b.{0,20}\btroca\b|\bnao\s+possui\s+troca\b/.test(clause));
   const saysHasTrade = clauses.some((clause) => /\b(?:tem|possui)\b.{0,25}\b(?:carro|veiculo)\b.{0,20}\btroca\b/.test(clause)) && !saysNoTrade;
   const trade = state.slots.possuiTroca;
@@ -1264,7 +1277,7 @@ function factualSlotClaimFeedback(text: string, state: ConversationState): strin
   if (trade.status === "known" && trade.value === false && saysHasTrade) return "Você afirmou que o cliente TEM troca, mas o fato conhecido é que ele NÃO tem. Corrija.";
   const entrada = state.slots.entrada;
   const saysHasEntry = clauses.some((clause) =>
-    (/\b(?:anotei|registrei|entendi)\b.{0,35}\b(?:sua|uma|a)?\s*entrada\b/.test(clause)
+    (/\b(?:anotei|anotad[oa]|registrei|registrad[oa]|entendi)\b.{0,35}\b(?:seu\s+valor\s+de|o\s+valor\s+de|sua|uma|a)?\s*entrada\b/.test(clause)
       || /\b(?:voce|cliente)\b.{0,45}\btem\b.{0,25}\bentrada\b/.test(clause))
     && !/\b(?:nao|sem|zero)\b.{0,20}\bentrada\b/.test(clause));
   if (entrada.status === "known" && entrada.value === 0 && saysHasEntry) return "Você afirmou que o cliente TEM entrada, mas ele respondeu que está SEM entrada (entrada=0). Corrija a acolhida e não altere esse fato.";
@@ -1669,7 +1682,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         ? (adFocus ? [adFocus.marca, adFocus.modelo, adFocus.ano].filter(Boolean).join(" ")
           : ((adConstraints.modelos && adConstraints.modelos.length > 0) ? [adConstraints.marca, adConstraints.modelos.join("/")].filter(Boolean).join(" ") : describeConstraints(adConstraints)))
         : undefined;
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
+      const selectionRef = resolveSelectedVehicle(leadMessage, contextState, ctx.claimExtractor);
+      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: selectionRef != null });
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -1683,7 +1697,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // P0-sel (missão): o lead está SELECIONANDO um veículo da última lista/foco ("gostei do segundo", "esse", ordinal)?
       // Numa seleção o cérebro pode dar um final NATURAL sem vehicle_details (citar atributo é barrado no validate, com
       // feedback específico "acolha a escolha, não cite atributo sem vehicle_details").
-      const selectionRef = resolveSelectedVehicle(leadMessage, contextState, ctx.claimExtractor);
       const selectionTurn = selectionRef != null;
       // Label ATERRADO do carro escolhido (do offer context) — vai no FEEDBACK à LLM (fato), NUNCA numa resposta escrita pelo engine.
       const selectionLabel: string | null = selectionRef ? (canonicalVehicleLabel(selectionRef.key, [], identities, contextState) ?? (selectionRef.label && selectionRef.label !== selectionRef.key ? selectionRef.label : null)) : null;
@@ -1806,7 +1819,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           step = await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout");
         } catch { break; } // falha técnica do cérebro -> sai do loop -> fallback seguro (nunca silêncio)
         // Fonte única: captura+TRAVA o entendimento do turno (a 1ª compreensão válida é a base; refinamento só adiciona fato).
-        if (step.understanding) lockedU = reconcileUnderstanding(lockedU, step.understanding, leadMessage);
+        if (step.understanding) lockedU = reconcileUnderstanding(lockedU, step.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
         if (step.kind === "final") {
           if (singleAuthor) {
             // audit institucional: garante UMA observação TERMINAL por tópico pedido no bloco ANTES de qualquer
@@ -1921,7 +1934,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";

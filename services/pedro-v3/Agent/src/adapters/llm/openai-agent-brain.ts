@@ -349,6 +349,8 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       ? "Este turno é uma DESPEDIDA ISOLADA. Devolva UM final JSON com draft.parts contendo exatamente UMA part text curta e cordial. Não faça pergunta, não use tool, não colete dado e não continue o funil. Esta regra específica do turno prevalece sobre orientações genéricas do portal para sempre fazer CTA/pergunta."
       : frame.signals.acceptedPhotoOffer === true
         ? "A resposta curta atual ACEITOU sua última oferta única de fotos. Preserve o selectedVehicle, declare request_photos/send_photos com evidence do bloco atual e use vehicle_photos_resolve; não pergunte novamente qual carro."
+        : frame.signals.selectedOfferThisTurn === true
+          ? "O bloco atual SELECIONOU um veículo da última oferta. Acolha e nomeie essa escolha em FINAL, sem tool e sem iniciar cadastro/financiamento/troca. Faça somente UMA pergunta oferecendo as fotos; espere a resposta antes de enviá-las."
         : "Analise o bloco atual do cliente e devolva UM passo (query|final) em JSON, seguindo o protocolo.";
     const user = JSON.stringify({
       instruction: turnInstruction,

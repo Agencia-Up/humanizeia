@@ -273,12 +273,17 @@ export function targetAcceptsKey(target: TargetResolution, key: string): boolean
 // ── P1 (trava do assunto): a 1ª compreensão validada é a BASE do turno. Refinamento só ADICIONA fato (subjectValue) —
 //    não troca primaryIntent/subject sem EVIDÊNCIA NOVA (quote não vista na base). Ex.: search_stock -> request_photos
 //    sem nova evidência de foto = mantém search_stock. ──
-export function reconcileUnderstanding(base: TurnUnderstanding | null, next: TurnUnderstanding, block: string): TurnUnderstanding {
+export function reconcileUnderstanding(base: TurnUnderstanding | null, next: TurnUnderstanding, block: string, options: { readonly acceptedPhotoOffer?: boolean } = {}): TurnUnderstanding {
   if (!base) return next;
   const baseQuotes = new Set((base.evidence ?? []).map((e) => normalizeText(e.quote)));
   const newEvidence = (next.evidence ?? []).filter((e) => quoteInBlock(block, e.quote) && !baseQuotes.has(normalizeText(e.quote)));
   const changesSubject = next.primaryIntent !== base.primaryIntent || next.subject !== base.subject;
   if (changesSubject && newEvidence.length === 0) {
+    const repairsAcceptedPhoto = options.acceptedPhotoOffer === true
+      && next.primaryIntent === "request_photos"
+      && next.requestedCapabilities.includes("send_photos")
+      && next.evidence.some((e) => e.capability === "send_photos" && quoteInBlock(block, e.quote));
+    if (repairsAcceptedPhoto) return next;
     // mudança ARBITRÁRIA sem evidência nova -> mantém a base; só preenche subjectValue se faltava.
     return { ...base, subjectValue: base.subjectValue ?? next.subjectValue };
   }

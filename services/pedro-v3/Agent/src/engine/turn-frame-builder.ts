@@ -64,6 +64,7 @@ export function buildTurnFrame(args: {
   readonly specificAdEntry?: boolean;               // PARTE A (missão): entrada por anúncio específico -> fala do veículo
   readonly disengagementOnly?: boolean;
   readonly acceptedPhotoOffer?: boolean;
+  readonly selectedOfferThisTurn?: boolean;
 }): TurnFrame {
   const base = buildFrameSignals(args.block, args.interpretation);
   // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
@@ -77,6 +78,7 @@ export function buildTurnFrame(args: {
     ...(args.specificAdEntry ? { specificAdEntry: true } : {}),
     ...(args.disengagementOnly ? { disengagementOnly: true } : {}),
     ...(args.acceptedPhotoOffer ? { acceptedPhotoOffer: true } : {}),
+    ...(args.selectedOfferThisTurn ? { selectedOfferThisTurn: true } : {}),
   };
   return {
     turnId: args.turnId,

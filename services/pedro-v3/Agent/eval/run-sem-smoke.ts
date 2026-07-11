@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     process.exit(3);
   }
 
-  const runId = `sem-${Date.now().toString(36)}`;
+  const runId = `wa:sem-${Date.now().toString(36)}`;
   const steps = process.env.SEM_SMOKE_FAREWELL_ONLY === "1" ? [["obrigado!"]] as const : STEPS;
   const turns = await runCentralConversation(assembly, stack, runId, steps, { maxLlmCalls, singleAuthor: true, llmFirst: true });
 
@@ -66,13 +66,20 @@ async function main(): Promise<void> {
   const badSources = turns.filter((t) => t.responseSource === "technical_fallback"
     || (t.responseSource === "deterministic_recovery" && t.turnIndex >= 3));
   if (badSources.length > 0) problems.push(`technical_fallback/recovery em T${badSources.map((t) => t.turnIndex).join(",T")}`);
-  const trocaFalse = turns.filter((t) => t.possuiTrocaAfter === "false");
-  if (trocaFalse.length > 0) problems.push(`possuiTroca=false FANTASMA em T${trocaFalse.map((t) => t.turnIndex).join(",T")}`);
-  const trocaKnown = turns.filter((t) => t.possuiTrocaAfter !== "unknown");
-  if (trocaKnown.length > 0) problems.push(`possuiTroca alterada SEM resposta de troca em T${trocaKnown.map((t) => t.turnIndex).join(",T")}`);
+  const t6 = turns.find((t) => t.turnIndex === 6);
+  const askedTradeBeforeNo = !!t6 && /\b(?:carro|veiculo)\b.{0,30}\btroca\b/i.test(norm(t6.response));
+  const t7 = turns.find((t) => t.turnIndex === 7);
+  if (askedTradeBeforeNo) {
+    if (t7?.possuiTrocaAfter !== "false") problems.push(`'Não' não resolveu a pergunta explícita de troca em T7 (veio ${t7?.possuiTrocaAfter ?? "ausente"})`);
+  } else {
+    const trocaKnown = turns.filter((t) => t.possuiTrocaAfter !== "unknown");
+    if (trocaKnown.length > 0) problems.push(`possuiTroca alterada SEM pergunta/resposta de troca em T${trocaKnown.map((t) => t.turnIndex).join(",T")}`);
+  }
   const val = (k: string): string => String(acc[k] ?? "");
   if (!/0/.test(val("entrada")) || !val("entrada").includes("known")) problems.push(`entrada esperada known:0, veio ${JSON.stringify(acc.entrada)}`);
   if (!val("parcelaDesejada").includes("1200")) problems.push(`parcela esperada 1200, veio ${JSON.stringify(acc.parcelaDesejada)}`);
+  const parcelTurn = turns.find((t) => t.turnIndex === 9);
+  if (!parcelTurn || !/\bparcela\w*\b/i.test(norm(parcelTurn.response))) problems.push("T9 não acolheu verbalmente a parcela informada pelo lead");
   if (!norm(val("nome")).includes("douglas")) problems.push(`nome esperado Douglas, veio ${JSON.stringify(acc.nome)}`);
   if (acc.faixaPreco !== undefined) problems.push(`faixaPreco contaminada: ${JSON.stringify(acc.faixaPreco)}`);
   const genericAsk = turns.filter((t) => t.turnIndex >= 3 && /me conta um pouco mais do que/i.test(t.response));
@@ -106,7 +113,14 @@ async function main(): Promise<void> {
   if (duplicatePhotoExecutions.length > 0) problems.push(`vehicle_photos_resolve EXECUTADA mais de uma vez no turno T${duplicatePhotoExecutions.map((t) => t.turnIndex).join(",T")}`);
   const photoRequestLoops = turns.filter((t) => t.toolsRequested.filter((x) => x === "vehicle_photos_resolve").length > 3);
   if (photoRequestLoops.length > 0) problems.push(`cérebro insistiu em vehicle_photos_resolve (>3 pedidos) em T${photoRequestLoops.map((t) => t.turnIndex).join(",T")}`);
-  const wrongEntryAck = turns.filter((t) => /^nao$/i.test(norm(t.leadBlock).trim()) && /\b(?:anotei|entendi|voce)\b.{0,40}\btem\b.{0,20}\bentrada\b/i.test(norm(t.response)) && !/\b(?:nao|sem)\b.{0,20}\bentrada\b/i.test(norm(t.response)));
+  const acceptedPhotoTurn = turns.find((t) => t.turnIndex === 4);
+  if (!acceptedPhotoTurn || !/^brain_(?:final|retry)$/.test(acceptedPhotoTurn.responseSource ?? "")
+      || !acceptedPhotoTurn.effects.some((e) => e.kind === "send_media")) {
+    problems.push(`aceite curto de fotos não foi decidido pela LLM com send_media em T4 (source=${acceptedPhotoTurn?.responseSource ?? "ausente"})`);
+  }
+  const wrongEntryAck = turns.filter((t) => /^nao$/i.test(norm(t.leadBlock).trim())
+    && (/\b(?:anotei|anotad[oa]|registrei|entendi)\b.{0,45}\bentrada\b/i.test(norm(t.response)) || /\bvoce\b.{0,40}\btem\b.{0,20}\bentrada\b/i.test(norm(t.response)))
+    && !/\b(?:nao|sem|zero)\b.{0,20}\bentrada\b/i.test(norm(t.response)));
   if (wrongEntryAck.length > 0) problems.push(`resposta contradiz entrada=0 em T${wrongEntryAck.map((t) => t.turnIndex).join(",T")}`);
   const inventedTradeText = turns.filter((t) => {
     if (t.possuiTrocaAfter !== "unknown") return false;

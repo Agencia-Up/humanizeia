@@ -103,3 +103,14 @@ do CRM do lead de teste segue com `trade_in_vehicle="não possui"` antigo — li
   `sem-smoke-2026-07-11T02-21-21-727Z.md` e `sem-smoke-2026-07-11T02-23-53-135Z.md`.
 - Nos dois: `compose=0`, zero technical fallback/recovery comercial, entrada=0, parcela=1200, troca unknown,
   veículo selecionado preservado, fotos corretas e despedida `brain_final`.
+
+### Fechamento estrito de autoria
+- O lock de entendimento agora permite uma única correção contextual: aceite inequívoco da oferta de fotos pode
+  mudar para `request_photos/send_photos` usando a evidence literal curta. Mudanças arbitrárias continuam bloqueadas.
+- Seleção da última oferta chega ao cérebro como sinal de turno; ele acolhe/oferece fotos antes de iniciar o funil.
+- A autorização do `send_media` em resposta curta exige simultaneamente decisão explícita da LLM, aceite contextual e
+  alvo selecionado resolvido. O gate real passou a reprovar qualquer `deterministic_photo` nesse turno.
+- Afirmações factuais são validadas sentença a sentença; uma pergunta posterior não esconde mais uma afirmação falsa.
+- Resposta a entrada/parcela deve acolher a dimensão informada antes de avançar, sem o engine escolher a redação.
+- Smoke final: `sem-smoke-2026-07-11T03-02-48-994Z.md` PASS, T4=`brain_final`+`send_media`, T7 acolhe
+  entrada zero, T9 acolhe parcela, T11=`brain_final`; zero fallback/recovery comercial.
