@@ -171,8 +171,8 @@ export function applyDecision(
         break;
       }
       case "set_slot_ref": {
-        if (!m.ref?.ref) { rejected.push({ mutation: m, reason: "ref de CPF ausente" }); continue; }
-        next.slots.cpf = { status: "known", ref: m.ref, sourceTurnId: m.sourceTurnId, updatedAt: expectedNow };
+        if (!m.ref?.ref) { rejected.push({ mutation: m, reason: "ref sensivel ausente" }); continue; }
+        next.slots[m.slot] = { status: "known", ref: m.ref, sourceTurnId: m.sourceTurnId, updatedAt: expectedNow };
         break;
       }
       case "resolve_objective": {

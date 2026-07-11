@@ -73,12 +73,17 @@ export function filterBrainSlotMutations(args: {
   const moneyValues = leadStatedMoneyValues(args.block);
   const questionLike = leadAsksQuestion(args.block);
   const shortBooleanAnswer = !questionLike && parseBooleanAnswer(args.block) != null;
+  const nameOnlyAnswer = args.extractedSlots.has("nome") && !questionLike
+    && blockNorm.split(/\s+/).filter(Boolean).length <= 3;
 
   for (const m of args.mutations) {
     if (m.op !== "set_slot") { kept.push(m); continue; }
     // (a) extração determinística cobriu o slot neste turno: ELA é a autoridade — a mutação da LLM
     //     (redundante ou conflitante) é descartada; o valor extraído já está nas mutações do turno.
     if (args.extractedSlots.has(m.slot)) { dropped.push({ slot: m.slot, reason: "extraction_authority" }); continue; }
+    // Se a extracao reconheceu que o bloco inteiro e uma apresentacao curta,
+    // esse mesmo texto nao pode aterrar interesse/modelo/cidade inventado pela LLM.
+    if (nameOnlyAnswer) { dropped.push({ slot: m.slot, reason: "no_provenance" }); continue; }
     // Invariante 1: sem entendimento VÁLIDO do turno, nenhuma mutação factual da LLM é aceita.
     if (!args.understandingTrusted) { dropped.push({ slot: m.slot, reason: "understanding_untrusted" }); continue; }
     const value = (m as { value?: unknown }).value;

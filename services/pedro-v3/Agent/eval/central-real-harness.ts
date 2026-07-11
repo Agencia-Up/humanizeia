@@ -22,6 +22,8 @@ import type { ConversationState } from "../src/domain/conversation-state.ts";
 import type { AgentBrainPort, AgentBrainStep, AgentToolObservation, TurnFrame } from "../src/domain/agent-brain.ts";
 import type { EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import { redact } from "../src/domain/effect-intent.ts";
+import { createHash } from "node:crypto";
+import { extractSensitiveSpans, materializeSensitiveTokens } from "../src/domain/sensitive-data.ts";
 import type { CentralTurnCapture } from "./central-assertions.ts";
 
 export const CENTRAL_LIMITS = { maxSteps: 4, totalTimeoutMs: 200_000, proposeTimeoutMs: 90_000, queryTimeoutMs: 25_000, composeTimeoutMs: 40_000 } as const;
@@ -87,7 +89,13 @@ function possuiTrocaStr(state: ConversationState | undefined): string {
   return s?.status && s.status !== "unknown" ? `${s.status}:${JSON.stringify(s.value)}` : "unknown";
 }
 
-export async function runCentralConversation(assembly: RealAssembly, stack: CentralStack, convId: string, steps: readonly (readonly string[])[], opts: { readonly maxLlmCalls?: number; readonly singleAuthor?: boolean; readonly llmFirst?: boolean; readonly businessInfo?: TenantBusinessInfoSource } = {}): Promise<CentralTurnCapture[]> {
+export async function runCentralConversation(assembly: RealAssembly, stack: CentralStack, convId: string, steps: readonly (readonly string[])[], opts: {
+  readonly maxLlmCalls?: number; readonly singleAuthor?: boolean; readonly llmFirst?: boolean; readonly businessInfo?: TenantBusinessInfoSource;
+  // MISSÃO PII: fidelidade de produção no smoke — handoff plannable (fake, NUNCA notifica vendedor real:
+  // efeitos seguem OFF/simulados) + vínculo de lead p/ crmWriteEnabled (o handoff exige lead vinculado).
+  readonly handoff?: { readonly enabled: boolean; readonly available: boolean; readonly precheck?: import("../src/engine/handoff-precheck.ts").HandoffPrecheckDiag };
+  readonly crmLeadId?: string | null;
+} = {}): Promise<CentralTurnCapture[]> {
   const maxLlmCalls = opts.maxLlmCalls ?? Infinity;
   const base = { ms: Date.parse("2026-07-01T09:00:00.000Z") };
   const clock = { now: () => new Date(base.ms).toISOString() };
@@ -96,7 +104,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
   const businessInfo = opts.businessInfo ?? new RuntimeConfigBusinessInfoSource(assembly.runtimeConfig);
 
   const seed = persistence.begin();
-  seed.casState(convId, 0, createInitialState({ conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: null, now: clock.now() }));
+  seed.casState(convId, 0, createInitialState({ conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: opts.crmLeadId ?? null, now: clock.now() }));
   const seeded = seed.commit();
   if (!seeded.ok) throw new Error(`central_seed_failed: ${seeded.reason}`);
 
@@ -113,7 +121,27 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
     const before = (await persistence.load(convId))?.state;
     const wmBefore = loadPersistedWorkingMemory(before?.workingMemory).memory;
     const possuiTrocaBefore = possuiTrocaStr(before);
-    for (const msg of burst) { eventSeq += 1; await persistence.tryInsert({ eventId: `${convId}-e${eventSeq}`, conversationId: convId, raw: redact({ text: msg }) as never, receivedAt: clock.now() }); }
+    // Fidelidade do ingest de producao: classifica pelo bloco atual + ultima
+    // pergunta do agente e materializa refs opacas como se o cofre tivesse
+    // confirmado a gravacao. O valor existe somente nesta pilha local do eval.
+    const lastAgentText = [...(before?.recentTurns ?? [])].reverse().find((t) => t.role === "agent")?.text ?? "";
+    for (const msg of burst) {
+      eventSeq += 1;
+      const eventId = `${convId}-e${eventSeq}`;
+      const sensitive = extractSensitiveSpans(msg, new Date(clock.now()).getUTCFullYear(), {
+        expectsCpf: /\bcpf\b/i.test(msg) || /\bcpf\b/i.test(lastAgentText),
+        expectsBirthDate: /\b(?:data\s+de\s+nascimento|nascimento)\b/i.test(msg)
+          || /\b(?:data\s+de\s+nascimento|nascimento)\b/i.test(lastAgentText),
+      });
+      const refs = new Map<string, string>();
+      sensitive.secrets.forEach((secret, index) => refs.set(secret.placeholder,
+        createHash("sha256").update(`${convId}\0${eventId}\0${index}\0${secret.kind}`).digest("hex")));
+      await persistence.tryInsert({
+        eventId, conversationId: convId,
+        raw: redact({ text: materializeSensitiveTokens(sensitive, refs) }) as never,
+        receivedAt: clock.now(),
+      });
+    }
     base.ms += 1_000;
     turnSeq += 1;
     const turnId = `central-${convId}-t${turnSeq}`;
@@ -125,11 +153,20 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
     try {
       r = await runCentralConversationTurn({
         persistence, clock: clock as never, brain: recordingBrain, llm: stack.composeLlm, runQuery: assembly.runQuery, businessInfo,
-        contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: null,
+        contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: opts.crmLeadId ?? null,
         workerId: "central-eval", turnId, leaseTtlMs: 120_000, portalPromptSha256: assembly.promptSha,
         limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
         providerCapability: { send_message: "none", send_media: "none" },
         singleAuthor: opts.singleAuthor ?? false, llmFirst: opts.llmFirst ?? false,
+        // MISSÃO PII: handoff plannable no smoke (fake — efeitos seguem OFF/simulados; NENHUM vendedor real
+        // é notificado) + vínculo de lead sintético p/ o gate crmWriteEnabled&&leadId do handoffPlannable.
+        crmWriteEnabled: opts.crmLeadId != null,
+        handoff: opts.handoff ? {
+          enabled: opts.handoff.enabled, available: opts.handoff.available,
+          agentName: assembly.runtimeConfig.agentName, leadPhone: "5512988887777",
+          nowLocal: new Date(clock.now()).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+          precheck: opts.handoff.precheck,
+        } : undefined,
       });
     } catch (e) { error = String((e as Error)?.message ?? e).slice(0, 160); }
 
@@ -171,6 +208,9 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       toolsRequested: [...recordingBrain.requestedTools],
       observations: r?.status === "committed" ? r.toolObservations.map((o) => ({ tool: o.tool, ok: o.ok, code: o.ok ? undefined : o.error.code })) : [],
       effects: outbox.map((o) => ({ kind: o.kind, vehicleKey: o.payload?.vehicleKey, photoCount: Array.isArray(o.payload?.photoIds) ? o.payload!.photoIds!.length : undefined, status: o.status })),
+      // MISSÃO PII: briefing/reason do handoff planejado no turno (relatório integral do smoke).
+      handoffBriefing: (outbox.find((o) => o.kind === "handoff") as unknown as { payload?: { briefing?: string } } | undefined)?.payload?.briefing ?? null,
+      handoffReason: (outbox.find((o) => o.kind === "handoff") as unknown as { payload?: { reason?: string } } | undefined)?.payload?.reason ?? null,
       slotsDelta: diffSlots(before, after),
       wmBeforeLastPhotoLabel: wmBefore.lastPhotoAction?.label ?? null,
       wmAfterLastPhotoLabel: wmAfter.lastPhotoAction?.label ?? null,

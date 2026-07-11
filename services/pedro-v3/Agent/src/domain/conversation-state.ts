@@ -32,6 +32,7 @@ export type FunnelSlots = {
   possuiTroca: FunnelSlot<boolean>;
   diaHorario: FunnelSlot<string>;
   cpf: SensitiveSlot;
+  birthDate: SensitiveSlot;
   parcelaDesejada: FunnelSlot<number>;
   veiculoTroca: FunnelSlot<{ marca?: string; modelo?: string; ano?: number; km?: number; estado?: string }>;
   cidade: FunnelSlot<string>;
@@ -207,6 +208,7 @@ export function createInitialState(args: {
       possuiTroca: unknownSlot(now),
       diaHorario: unknownSlot(now),
       cpf: { status: "unknown", ref: null, updatedAt: now },
+      birthDate: { status: "unknown", ref: null, updatedAt: now },
       parcelaDesejada: unknownSlot(now),
       veiculoTroca: unknownSlot(now),
       cidade: unknownSlot(now),

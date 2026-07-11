@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { PostgresPersistence } from "../adapters/persistence/postgres-store.ts";
+import { decodeSensitiveVaultKey, SupabaseSensitiveVault } from "../adapters/persistence/sensitive-vault.ts";
 import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-database.ts";
 import { V2PlaintextApiKeyReader } from "../adapters/read/v2-api-key-reader.ts";
 import { PilotActiveRoot, type PilotBrainMode } from "../engine/pilot-active-root.ts";
@@ -98,6 +99,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #transferStore: SupabaseTransferStore | null;
   readonly #handoffEnabled: boolean;
   readonly #followupEnabled: boolean;
+  readonly #sensitiveVault: SupabaseSensitiveVault | null;
   #turnSeq = 0;
 
   constructor() {
@@ -117,6 +119,14 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       : null;
     this.#handoffEnabled = process.env.PEDRO_V3_HANDOFF?.trim() === "active";
     this.#followupEnabled = process.env.PEDRO_V3_FOLLOWUP?.trim() === "active";
+    const vaultKey = process.env.PEDRO_V3_SENSITIVE_VAULT_KEY?.trim();
+    this.#sensitiveVault = vaultKey
+      ? new SupabaseSensitiveVault({
+          url: this.#supabaseUrl, serviceRoleKey: this.#serviceRoleKey,
+          allowedHosts: [supabaseHost(this.#supabaseUrl)], encryptionKey: decodeSensitiveVaultKey(vaultKey),
+          keyVersion: process.env.PEDRO_V3_SENSITIVE_VAULT_KEY_VERSION?.trim() || "v1",
+        })
+      : null;
     this.#transferStore = this.#handoffEnabled || this.#followupEnabled
       ? new SupabaseTransferStore({
           url: this.#supabaseUrl,
@@ -191,6 +201,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         messageText: payload.messageText,
         receivedAt: payload.receivedAt,
         adContext: payload.adReferral,   // F2.32 (CTWA): forwardado pelo bridge; guardado no raw do inbox
+        tenantId: payload.tenantId,
+        sensitiveVault: this.#sensitiveVault,
       });
       if (ingest.decision === "duplicate") {
         return { status: "duplicate" as const, inserted: false as const, turnId: payload.turnId, dispatched: 0 as const };
@@ -261,6 +273,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       crmLeadStore: this.#crmLeadStore,
       transferStore: this.#transferStore,
       handoffEnabled: this.#handoffEnabled,
+      sensitiveVault: this.#sensitiveVault,
     });
   }
 
@@ -401,6 +414,7 @@ const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, run
   crmWrite: process.env.PEDRO_V3_CRM_WRITE?.trim() === "active",
   handoff: process.env.PEDRO_V3_HANDOFF?.trim() === "active",
   followup: process.env.PEDRO_V3_FOLLOWUP?.trim() === "active",
+  sensitiveVault: Boolean(process.env.PEDRO_V3_SENSITIVE_VAULT_KEY?.trim()),
 }));
 const server = createServer(async (request, response) => {
   try {

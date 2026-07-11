@@ -83,6 +83,61 @@ export function authorizesPhotoSend(v: ValidatedUnderstanding | null, block: str
 export function isPhotoRecall(v: ValidatedUnderstanding | null): boolean {
   return v?.understanding.primaryIntent === "recall_photos" || (v?.understanding.requestedCapabilities.includes("recall") ?? false);
 }
+// ── MISSÃO PII (P0-B): pedido EXPLÍCITO de humano/vendedor/atendente como ATO AUTÔNOMO. Autoridade = o
+//    CÉREBRO (primaryIntent request_human OU capability handoff) com evidência VALIDADA no bloco atual —
+//    nunca regex comercial concorrente. Vence o funil: não exige CPF/nascimento/qualificação. ─────────────────
+export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
+  if (!v || !v.fromBrain || !v.trusted) return false;
+  const u = v.understanding;
+  return u.primaryIntent === "request_human"
+    || (u.requestedCapabilities.includes("handoff") && capabilityHasOwnEvidence(v, "handoff"));
+}
+
+export function commercialToolAllowedForHumanRequest(v: ValidatedUnderstanding | null, tool: string): boolean {
+  if (!requestsHuman(v)) return true;
+  return !["stock_search", "vehicle_details", "vehicle_photos_resolve"].includes(tool);
+}
+
+export function humanRequestDecisionFeedback(input: {
+  readonly requested: boolean;
+  readonly handoffPlannable: boolean;
+  readonly proposedEffectKinds: readonly string[];
+  readonly composedText: string;
+}): string | null {
+  if (!input.requested) return null;
+  const hasHandoff = input.proposedEffectKinds.some((kind) => kind === "handoff" || kind === "notify_seller");
+  const text = normalizeText(input.composedText);
+  const collectsMoreData = /\b(?:cpf|nascimento|entrada|parcela|troca|seu nome|sobrenome|cidade)\b/.test(text);
+  if (input.handoffPlannable) {
+    return hasHandoff
+      ? null
+      : "O cliente pediu atendimento humano neste bloco. A transferencia esta disponivel: reconheca o pedido, agradeca e inclua o effect handoff com reason explicit_human_request no MESMO final. Nao colete nenhum dado adicional.";
+  }
+  const acknowledgesRequest = /\b(?:atendente|vendedor|humano|transfer|encaminh|equipe|pessoa)\b/.test(text);
+  return hasHandoff || collectsMoreData || !acknowledgesRequest
+    ? "O cliente pediu atendimento humano, mas o precheck informou indisponibilidade. Reconheca o pedido com transparencia e ofereca continuar ajudando ou registrar retorno. Nao proponha handoff e nao colete CPF, nascimento, nome, troca, entrada ou parcela."
+    : null;
+}
+
+export function sensitiveAnswerCompletenessFeedback(
+  kinds: readonly ("cpf" | "birthDate")[],
+  composedText: string,
+): string | null {
+  if (kinds.length === 0) return null;
+  const text = normalizeText(composedText);
+  if (/\b(?:cpf_valido_ref|data_nascimento_valida_ref)\b|\b[a-f0-9]{32,64}\b/.test(text)) {
+    return "A resposta expos uma referencia interna de dado sensivel. Reescreva sem token/ref e sem repetir o valor.";
+  }
+  const acknowledges = /\b(?:receb|anot|registr|confirm)/.test(text);
+  if (!acknowledges) {
+    const label = kinds.includes("cpf") && kinds.includes("birthDate")
+      ? "CPF e data de nascimento"
+      : kinds.includes("cpf") ? "CPF" : "data de nascimento";
+    return `O cliente acabou de fornecer ${label}. Reconheca explicitamente que recebeu/registrou o dado, sem repetir o valor nem a referencia interna; depois avance com no maximo UMA pergunta util.`;
+  }
+  return null;
+}
+
 // ── P0 (RESOLUÇÃO ÚNICA de veículo): AUTORIZAÇÃO DETERMINÍSTICA por ORDINAL RESOLVIDO. Complementa authorizesPhotoSend
 //    NO caso "me manda foto do segundo": o alvo veio de turn_ordinal (índice EXATO da última lista renderizada pela loja
 //    = grounding MÁXIMO) E o texto do lead tem pedido EXPLÍCITO de foto (verbo de envio/ver + "foto"). Isto NÃO é o "foto

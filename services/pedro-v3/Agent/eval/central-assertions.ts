@@ -15,6 +15,8 @@ export type CentralTurnCapture = {
   toolsRequested: string[];
   observations: { tool: string; ok: boolean }[];
   effects: { kind: string; vehicleKey?: string; photoCount?: number; status: string }[];
+  handoffBriefing?: string | null;         // MISSÃO PII: briefing integral do effect handoff do turno (relatório)
+  handoffReason?: string | null;           // MISSÃO PII: reason tipado do handoff planejado no turno
   slotsDelta: { slot: string; from: string; to: string }[];
   wmBeforeLastPhotoLabel: string | null;
   wmAfterLastPhotoLabel: string | null;

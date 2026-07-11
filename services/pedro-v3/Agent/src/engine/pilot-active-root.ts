@@ -29,6 +29,7 @@ import { evaluatePedroV3PilotScope } from "../domain/pilot-scope.ts";
 import type { OutboxRecord } from "../domain/effect-intent.ts";
 import { runConversationTurn, type ConversationEngineResult } from "./conversation-engine.ts";
 import { runCentralConversationTurn, reconcileAcceptedPhotoOutcomes } from "./central-engine.ts";
+import { evaluateHandoffPrecheck, type HandoffPrecheckDiag } from "./handoff-precheck.ts";
 import { sanitizeTurnError } from "../runtime/sanitize-error.ts";
 import { runCentralShadowTurn, type CentralShadowDeps } from "./central-shadow-runner.ts";
 import { PromptTenantBusinessInfoSource, type TenantBusinessInfoSource } from "./tenant-business-info.ts";
@@ -47,6 +48,7 @@ import { materializeEffectPlans } from "./effect-materializer.ts";
 import { loadPersistedWorkingMemory } from "./working-memory.ts";
 import { validateEffectPlans } from "./finalizer.ts";
 import { createHash } from "node:crypto";
+import type { SensitiveVaultPort } from "../adapters/persistence/sensitive-vault.ts";
 
 // R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
 // lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
@@ -81,6 +83,7 @@ export type PilotActiveDeps = {
   readonly crmLeadStore?: CrmLeadStore | null;
   readonly transferStore?: TransferSagaStore | null;
   readonly handoffEnabled?: boolean;
+  readonly sensitiveVault?: SensitiveVaultPort | null;
 };
 
 const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
@@ -202,6 +205,7 @@ export class PilotActiveRoot {
     private readonly crmLeadStore: CrmLeadStore | null,
     private readonly transferStore: TransferSagaStore | null,
     private readonly handoffEnabled: boolean,
+    private readonly sensitiveVault: SensitiveVaultPort | null,
   ) {}
 
   get tenantConfig(): TenantRuntimeConfig {
@@ -282,6 +286,7 @@ export class PilotActiveRoot {
       deps.crmLeadStore ?? null,
       deps.transferStore ?? null,
       deps.handoffEnabled === true,
+      deps.sensitiveVault ?? null,
     );
   }
 
@@ -297,6 +302,8 @@ export class PilotActiveRoot {
       toAddr: input.to,
       messageText: input.messageText,
       receivedAt: input.receivedAt,
+      tenantId: this.ref.tenantId,
+      sensitiveVault: this.sensitiveVault,
     });
     if (ingest.decision === "duplicate") {
       return { status: "duplicate", inserted: false, turnId: input.turnId, dispatched: 0 };
@@ -352,6 +359,20 @@ export class PilotActiveRoot {
     };
   }
 
+  // ── MISSÃO PII (P0-C): avaliação ESTRUTURADA da disponibilidade de transferência — cada etapa observável,
+  //    primeiro motivo de indisponibilidade tipado, erro sanitizado por etapa (NUNCA catch silencioso, NUNCA
+  //    segredo/PII). Reproduzível offline: vendedor tenant-wide ativo com agent_id=null e telefone válido
+  //    DEVE resultar available=true (fallback M4). ─────────────────────────────────────────────────────────────
+  async #handoffPrecheck(input: PilotActiveProcessInput): Promise<HandoffPrecheckDiag> {
+    return evaluateHandoffPrecheck({
+      flagEnabled: this.handoffEnabled,
+      crmEnabled: this.crmLeadStore != null && (input.crmWrite?.enabled ?? true),
+      leadBound: this.leadId != null,
+      store: this.transferStore,
+      ref: this.ref,
+    });
+  }
+
   async #processCentralActive(input: PilotActiveProcessInput): Promise<PilotActiveProcessResult> {
     // R13-D (audit Codex): ANTES do turno, recupera a memória de foto pendente. Rastro DURÁVEL = send_media
     // succeeded (accepted|delivered) sem promoção em appliedAcceptedEffectIds. Após restart/falha transitória da
@@ -365,16 +386,14 @@ export class PilotActiveRoot {
     } catch (error) {
       console.error(JSON.stringify({ event: "pedro_v3_wm_reconcile_error", conversationId: input.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
     }
-    let handoffAvailable = false;
-    if (this.handoffEnabled && this.transferStore && this.crmLeadStore && (input.crmWrite?.enabled ?? true)) {
-      try {
-        const config = await this.transferStore.loadAgentConfig(this.ref);
-        if (config?.rules.transfer.enabled) {
-          const scoped = await this.transferStore.listActiveSellers(this.ref.tenantId, this.ref.agentId);
-          const roster = scoped.length > 0 ? scoped : await this.transferStore.listActiveSellers(this.ref.tenantId, null);
-          handoffAvailable = roster.some((seller) => seller.isActive && sellerPhoneKey(seller.whatsappNumber) !== "");
-        }
-      } catch { handoffAvailable = false; }
+    // ── MISSÃO PII (P0-C): o precheck de handoff NUNCA mais é caixa-preta. Cada etapa é avaliada e registrada
+    //    (flag/crm/lead/config/portal/roster/telefones) com o PRIMEIRO motivo de indisponibilidade + erro
+    //    sanitizado por etapa. Catch silencioso ABOLIDO — falha vira `*_failed` observável no log e no
+    //    decision_final. Incidente real 2026-07-11: plannable=false em produção sem motivo registrável. ─────────
+    const precheck = await this.#handoffPrecheck(input);
+    const handoffAvailable = precheck.available;
+    if (this.handoffEnabled) {
+      console.log(JSON.stringify({ event: "pedro_v3_handoff_precheck", conversationId: input.conversationId, ...precheck }));
     }
     const engine = await runCentralConversationTurn({
       persistence: input.persistence, clock: this.clock, brain: this.agentBrain!, llm: this.llm, runQuery: this.runQuery,
@@ -401,6 +420,8 @@ export class PilotActiveRoot {
         agentName: this.runtimeConfig.agentName,
         leadPhone: input.to,
         nowLocal: new Date(this.clock.now()).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+        // P0-C: diagnóstico estruturado do precheck — vai INTEIRO para o decision_final (sem PII/segredo).
+        precheck,
       },
       // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto do bloco vindo do debounce (server); default no engine se ausente.
       blockAwaitMaxMs: input.blockAwaitMaxMs,
@@ -444,7 +465,7 @@ export class PilotActiveRoot {
     if (this.crmLeadStore) routes.crm_write = new CrmWriteEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.crmLeadStore });
     if (this.handoffEnabled && this.transferStore) {
       routes.handoff = new HandoffEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.transferStore });
-      routes.notify_seller = new NotifySellerEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.transferStore, sender: dispatcherRuntime.sender });
+      routes.notify_seller = new NotifySellerEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.transferStore, sender: dispatcherRuntime.sender, sensitiveVault: this.sensitiveVault });
     }
     const effectDispatcher = new CompositeEffectDispatcher(routes);
     const dispatcher = new OutboxDispatcher(input.persistence, this.clock, effectDispatcher, gate, `${input.workerId}:active-dispatcher`);

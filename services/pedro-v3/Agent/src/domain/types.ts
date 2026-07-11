@@ -58,7 +58,7 @@ export type ConversationStage =
 
 export type SlotName =
   | "nome" | "interesse" | "tipoVeiculo" | "faixaPreco" | "formaPagamento"
-  | "entrada" | "possuiTroca" | "diaHorario" | "cpf"
+  | "entrada" | "possuiTroca" | "diaHorario" | "cpf" | "birthDate"
   | "parcelaDesejada" | "veiculoTroca" | "cidade" | "conheceLoja" | "interesseVisita";
 
 export type ObjectiveType =
@@ -69,7 +69,7 @@ export type AnswerKind =
   | "valor" | "negacao" | "parcela" | "nome" | "data" | "boolean" | "modelo" | "afirmacao";
 
 // Valor sensível: NUNCA o valor cru no estado (Codex #8). Só referência ao cofre.
-export type SensitiveValueRef = { ref: string; kind: "cpf" | "secret"; last4?: string | null };
+export type SensitiveValueRef = { ref: string; kind: "cpf" | "birth_date" | "secret"; last4?: string | null };
 
 export function vehicleKeyOf(v: { marca?: string; modelo?: string; ano?: number }): string {
   return [v.marca, v.modelo, v.ano].filter(Boolean).join("|").toLowerCase().replace(/[^\w|]+/g, "-");

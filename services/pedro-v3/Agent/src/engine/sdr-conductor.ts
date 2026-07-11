@@ -8,7 +8,7 @@ import { attachQualificationObjective } from "./finalizer.ts";
 import { classifyConfiguredQuestion as classifyQuestionSlot, trailingQuestion, slotQuestions } from "./question-classify.ts";
 import { buildSdrConductionFrame } from "./sdr-conduction-frame.ts";
 
-export type SdrQualificationSlot = Exclude<SlotName, "cpf">;
+export type SdrQualificationSlot = Exclude<SlotName, "cpf" | "birthDate">;
 
 export type SdrQualificationPolicy = {
   readonly orderedSlots: readonly SdrQualificationSlot[];
@@ -47,7 +47,7 @@ export const DEFAULT_QUESTIONS: Record<SdrQualificationSlot, string> = {
 // Wrapper local: delega ao módulo neutro (question-classify) e restringe a SdrQualificationSlot (sem "cpf").
 function classifyConfiguredQuestion(question: string): SdrQualificationSlot | null {
   const s = classifyQuestionSlot(question);
-  return s != null && s !== "cpf" ? (s as SdrQualificationSlot) : null;
+  return s != null && s !== "cpf" && s !== "birthDate" ? (s as SdrQualificationSlot) : null;
 }
 
 function configuredIntroduction(config: Partial<Pick<TenantRuntimeConfig, "agentName" | "companyName" | "promptText">>): string {

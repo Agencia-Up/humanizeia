@@ -1,4 +1,6 @@
 import {
+  buildPedroV3BridgeTurn,
+  buildPedroV3DeliveryReceipt,
   classifyPedroV3BridgeResponse,
   conversationHasV3Routing,
   conversationHasV3State,
@@ -178,6 +180,76 @@ test("HF-2: lead identity still enters Pedro v3", () => {
 
 test("HF-3: unknown identity does not silently drop the lead", () => {
   assert(shouldBridgePedroV3Identity("unknown") === true, "unknown should remain on guarded v3 path");
+});
+
+// ── MISSÃO PII (P0-D): entrega NUMÉRICA edge→v3 com payloads uazapi realistas. Causa-raiz do incidente
+//    2026-07-11: mensagens com run de 11 dígitos sumiam (CHECK do inbox rejeitava o INSERT no serviço).
+//    O BRIDGE nunca pode descartar/alterar texto numérico — a sanitização é do INGEST (serviço). Aqui
+//    provamos: texto numérico passa ÍNTEGRO, ids distintos nunca colidem, mesmo id dedupa, e o bridge
+//    não loga conteúdo de mensagem (nenhum console.* com o texto). CPF SINTÉTICO 111.444.777-35. ────────────
+const PILOT_TENANT = "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0";
+const PILOT_AGENT = "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185";
+function uazapiTextPayload(id: string, text: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    EventType: "messages",
+    message: {
+      messageid: id,
+      sender_pn: "5512988887777@s.whatsapp.net",
+      chatid: "5512988887777@s.whatsapp.net",
+      text,
+      pushName: "Douglas Aloan",
+      messageTimestamp: 1_783_784_230,
+      ...extra,
+    },
+  };
+}
+
+test("PII-1: texto com 11 dígitos (CPF sintético) atravessa o bridge ÍNTEGRO", async () => {
+  const built = await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii1", "11144477735"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  assert(built.ok, "bridge must forward numeric-only message");
+  if (built.ok) assert(built.turn.messageText === "11144477735", "bridge must not mutate/drop the numeric text");
+});
+
+test("PII-2: data DD/MM/AAAA atravessa o bridge ÍNTEGRA", async () => {
+  const built = await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii2", "01/10/1997"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  assert(built.ok && built.turn.messageText === "01/10/1997", "bridge must forward the date verbatim");
+});
+
+test("PII-3: CPF e data em mensagens separadas geram eventIds DISTINTOS (nunca dedupam entre si)", async () => {
+  const a = await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii3a", "11144477735"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  const b = await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii3b", "01/10/1997"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  assert(a.ok && b.ok, "both messages must build");
+  if (a.ok && b.ok) {
+    assert(a.turn.eventId !== b.turn.eventId, "distinct message ids must never share an eventId");
+    assert(a.turn.conversationId === b.turn.conversationId, "same contact must share the conversation");
+  }
+});
+
+test("PII-4: mesmo message id gera o MESMO eventId (dedupe legítimo preservado)", async () => {
+  const a = await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii4", "CPF 111.444.777-35 data: 01/10/1997"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  const b = await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii4", "CPF 111.444.777-35 data: 01/10/1997"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  assert(a.ok && b.ok && a.turn.eventId === b.turn.eventId, "retry of the same message must dedupe by eventId");
+});
+
+test("PII-5: messages_update NÃO vira turno de mensagem (é receipt)", () => {
+  const receipt = buildPedroV3DeliveryReceipt({
+    payload: { EventType: "messages_update", message: { messageid: "wamid.pii5", status: "delivered" } },
+    tenantId: PILOT_TENANT, agentId: PILOT_AGENT,
+  });
+  assert(receipt.ok, "delivery update must be classified as receipt");
+});
+
+test("PII-6: bridge não imprime conteúdo de mensagem em log", async () => {
+  const logged: string[] = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  console.log = (...a: unknown[]) => { logged.push(a.join(" ")); };
+  console.warn = console.log; console.error = console.log;
+  try {
+    await buildPedroV3BridgeTurn({ payload: uazapiTextPayload("wamid.pii6", "11144477735"), tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test" });
+  } finally {
+    console.log = orig.log; console.warn = orig.warn; console.error = orig.error;
+  }
+  assert(!logged.some((l) => l.includes("11144477735")), "bridge must never log message content");
 });
 
 async function main(): Promise<void> {

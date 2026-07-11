@@ -43,6 +43,7 @@ import {
 } from "../../engine/transfer-templates.ts";
 import type { TransferSagaStore } from "./transfer-store.ts";
 import type { WhatsAppSendPort } from "./whatsapp-dispatcher.ts";
+import type { SensitiveVaultPort } from "../persistence/sensitive-vault.ts";
 
 const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RENOTIFY_THROTTLE_MS = 45 * 60_000;
@@ -200,7 +201,7 @@ export class HandoffEffectDispatcher implements EffectDispatcher {
   }
 }
 
-type NotifyPayload = { leadId: string; reason: HandoffReasonKind; etiquetas: Record<string, string>; correlationId: string };
+type NotifyPayload = { leadId: string; reason: HandoffReasonKind; etiquetas: Record<string, string>; correlationId: string; sensitiveRefs: { cpf?: string; birthDate?: string } };
 function decodeNotifyPayload(record: OutboxRecord): NotifyPayload | null {
   const { __redacted: _r, ...p } = record.payload as Record<string, unknown>;
   const leadId = typeof p.leadId === "string" && UUID_RX.test(p.leadId) ? p.leadId : null;
@@ -212,7 +213,14 @@ function decodeNotifyPayload(record: OutboxRecord): NotifyPayload | null {
   for (const [k, v] of Object.entries(rawEtiquetas as Record<string, unknown>)) {
     if (typeof v === "string") etiquetas[k] = v;
   }
-  return { leadId, reason, etiquetas, correlationId };
+  const refsRaw = p.sensitiveRefs;
+  const sensitiveRefs: { cpf?: string; birthDate?: string } = {};
+  if (refsRaw && typeof refsRaw === "object" && !Array.isArray(refsRaw)) {
+    const refs = refsRaw as Record<string, unknown>;
+    if (typeof refs.cpf === "string") sensitiveRefs.cpf = refs.cpf;
+    if (typeof refs.birthDate === "string") sensitiveRefs.birthDate = refs.birthDate;
+  }
+  return { leadId, reason, etiquetas, correlationId, sensitiveRefs };
 }
 
 export type NotifySellerDispatcherOptions = {
@@ -220,6 +228,7 @@ export type NotifySellerDispatcherOptions = {
   readonly clock: Clock;
   readonly store: TransferSagaStore;
   readonly sender: WhatsAppSendPort;
+  readonly sensitiveVault?: SensitiveVaultPort | null;
 };
 
 export class NotifySellerEffectDispatcher implements EffectDispatcher {
@@ -268,7 +277,7 @@ export class NotifySellerEffectDispatcher implements EffectDispatcher {
       telefone_vendedor: seller.whatsappNumber ?? payload.etiquetas.telefone_vendedor ?? "",
       resumo: (transfer.notes ?? payload.etiquetas.resumo ?? "").substring(0, 300),
     };
-    const sellerMessage = composeSellerMessage({
+    const baseSellerMessage = composeSellerMessage({
       template: config.briefingTemplateVendedor,
       mensagensSemEmoji: config.mensagensSemEmoji,
       etiquetas,
@@ -279,6 +288,23 @@ export class NotifySellerEffectDispatcher implements EffectDispatcher {
       briefing: transfer.notes ?? "",
       classificacaoLine: etiquetas.classificacao ? `🏷️ *Status:* ${etiquetas.classificacao}` : "",
     });
+
+    const sensitiveLines: string[] = [];
+    if (this.opts.sensitiveVault) {
+      try {
+        if (payload.sensitiveRefs.cpf) {
+          const cpf = await this.opts.sensitiveVault.resolve({ tenantId: ref.tenantId, conversationId: record.conversationId, ref: payload.sensitiveRefs.cpf, kind: "cpf" });
+          if (cpf) sensitiveLines.push(`CPF: ${cpf}`);
+        }
+        if (payload.sensitiveRefs.birthDate) {
+          const birthDate = await this.opts.sensitiveVault.resolve({ tenantId: ref.tenantId, conversationId: record.conversationId, ref: payload.sensitiveRefs.birthDate, kind: "birth_date" });
+          if (birthDate) sensitiveLines.push(`Data de nascimento: ${birthDate}`);
+        }
+      } catch {
+        return uncertain(record, "sensitive_vault_resolution_failed");
+      }
+    }
+    const sellerMessage = sensitiveLines.length > 0 ? `${baseSellerMessage}\n\n${sensitiveLines.join("\n")}` : baseSellerMessage;
 
     const sent = await sender.sendText({ to: sellerDigits, text: sellerMessage, idempotencyKey: record.idempotencyKey });
     if (!sent.ok) {
@@ -295,7 +321,7 @@ export class NotifySellerEffectDispatcher implements EffectDispatcher {
         mensagensSemEmoji: config.mensagensSemEmoji,
         gerenteFeedbackCompleto: config.gerenteFeedbackCompleto,
         etiquetas,
-        sellerMessage,
+        sellerMessage: baseSellerMessage,
         sellerName: seller.name,
         sellerPhone: seller.whatsappNumber,
         agentName: config.agentName,

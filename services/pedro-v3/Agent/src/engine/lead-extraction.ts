@@ -19,6 +19,7 @@ import type { EntityReference, Id } from "../domain/types.ts";
 import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
+import { BIRTH_DATE_VALID_TOKEN_RX, CPF_VALID_TOKEN_RX, reserveSensitiveNumericSpans } from "../domain/sensitive-data.ts";
 
 const NON_NAME = new Set([
   "sim", "nao", "claro", "certo", "ok", "okay", "isso", "beleza", "blz", "opa", "oi", "ola", "eai", "e", "ou", "eh",
@@ -184,6 +185,11 @@ export function questionSlotFromAgentText(agentText: string, opts: { readonly le
   // inferredQuestionSlot (usa o texto inteiro quando não há interrogativa).
   if (questions.length === 0 && !agentText.trim().endsWith("?") && opts.legacyFallback !== true) return null;
   const text = normalizeText(questions.length > 0 ? questions[questions.length - 1] : agentText);
+  // MISSÃO PII (causa-raiz do pendente STALE): pergunta de CPF/data de nascimento mapeia para o slot
+  // SENSÍVEL `cpf` — ANTES de "parcela" (a frase "…parcela até 1200. Preciso do seu CPF…" caía no
+  // fallback legado como parcelaDesejada e a resposta curta seguinte era ligada à pergunta ERRADA).
+  if (/\bcpf\b/.test(text)) return "cpf";
+  if (/\bdata de nascimento\b|\bnascimento\b/.test(text)) return "birthDate";
   if (/\bnome\b|\bcomo.*cham/.test(text)) return "nome";
   if (/\bcidade\b|\bde onde/.test(text)) return "cidade";
   if (/\bconhece.*loja\b/.test(text)) return "conheceLoja";
@@ -307,7 +313,11 @@ type MoneySpan = { value: number; start: number; end: number };
 // então um número no range de ANO (1900-2100) é VALOR, não ano. Sem isso (default), só um cue financeiro COLADO no texto
 // (até/parcela/entrada/por mês/R$) libera o range de ano — "Compass 2019" continua sendo ano.
 function moneySpans(message: string, financialContext = false): MoneySpan[] {
-  const lower = message.toLowerCase();
+  // ── MISSÃO PII (precedência lexical, causa-raiz "01/10/1997 -> parcela=1997"): spans SENSÍVEIS/DATA são
+  //    RESERVADOS e nunca chegam ao parser de dinheiro — datas completas (DD/MM/AAAA e variantes) e runs de
+  //    11 dígitos são removidos ANTES da varredura, mesmo em financialContext (que libera range de ano).
+  //    Ordem: sensível/data > km/ano > dinheiro. Defesa em profundidade (o ingest já sanitiza). ──────────────
+  const lower = reserveSensitiveNumericSpans(message).toLowerCase();
   const out: MoneySpan[] = [];
   const re = /(?:r\$\s*)?(\d{1,3}(?:[.\s]\d{3})+|\d+(?:,\d{1,2})?)\s*(mil|k)?\b/gi;
   for (let m = re.exec(lower); m; m = re.exec(lower)) {
@@ -595,12 +605,27 @@ export function extractLeadSlots(args: {
   };
 
   const name = extractName(leadMessage, state, claimExtractor);
+  const nameOnlyTurn = name != null && normalizeText(leadMessage).trim() === normalizeText(name.value).trim();
   if (name && name.confidence >= NAME_CONFIDENCE_MIN) {
     add({ op: "set_slot", slot: "nome", value: name.value, confidence: name.confidence, sourceTurnId: turnId }, "nome");
   }
 
+  // CPF chega sanitizado do ingest como token tipado com referencia opaca; o valor nunca entra no estado.
+  //    entra no estado. Token VÁLIDO -> slot sensível `cpf` recebe SÓ a referência opaca (kind+final). Token
+  //    INVÁLIDO -> NENHUM slot (o cérebro vê o token no bloco e pede correção curta). Formato, não frase. ──────
+  const cpfToken = CPF_VALID_TOKEN_RX.exec(leadMessage);
+  if (cpfToken && state.slots.cpf.status !== "known") {
+    add({ op: "set_slot_ref", slot: "cpf", ref: { ref: cpfToken[1], kind: "cpf", last4: cpfToken[2] }, sourceTurnId: turnId }, "cpf");
+  }
+  const birthToken = BIRTH_DATE_VALID_TOKEN_RX.exec(leadMessage);
+  if (birthToken && state.slots.birthDate?.status !== "known") {
+    add({ op: "set_slot_ref", slot: "birthDate", ref: { ref: birthToken[1], kind: "birth_date", last4: null }, sourceTurnId: turnId }, "birthDate");
+  }
+
   // interesse/tipoVeiculo (COMPRA) vêm de interestText — em contexto de troca é o ALVO DE COMPRA (nunca o carro de troca).
-  const models = interestText ? detectInterestModels(interestText, interpretation, claimExtractor) : [];
+  // Uma apresentacao curta e um fato de identidade, nunca um modelo de compra.
+  // Isso tambem limita uma entidade automotiva alucinada pela interpretacao LLM.
+  const models = interestText && !nameOnlyTurn ? detectInterestModels(interestText, interpretation, claimExtractor) : [];
   if (models.length > 0) {
     const value = models.join(", ");
     const before = state.slots.interesse.status === "known" ? normalizeText(state.slots.interesse.value ?? "") : "";

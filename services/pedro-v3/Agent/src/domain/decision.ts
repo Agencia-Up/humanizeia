@@ -23,7 +23,7 @@ export type SlotMutation =
   | { op: "set_slot"; slot: "entrada"; value: number; confidence: number; sourceTurnId: Id }
   | { op: "set_slot"; slot: "possuiTroca"; value: boolean; confidence: number; sourceTurnId: Id }
   | { op: "set_slot"; slot: "diaHorario"; value: string; confidence: number; sourceTurnId: Id }
-  | { op: "set_slot_ref"; slot: "cpf"; ref: SensitiveValueRef; sourceTurnId: Id }
+  | { op: "set_slot_ref"; slot: "cpf" | "birthDate"; ref: SensitiveValueRef; sourceTurnId: Id }
   | { op: "set_slot"; slot: "parcelaDesejada"; value: number; confidence: number; sourceTurnId: Id }
   | { op: "set_slot"; slot: "veiculoTroca"; value: { marca?: string; modelo?: string; ano?: number; km?: number; estado?: string }; confidence: number; sourceTurnId: Id }
   | { op: "set_slot"; slot: "cidade"; value: string; confidence: number; sourceTurnId: Id }
@@ -153,8 +153,9 @@ export type SchedulePlan = EffectPlanBase & { kind: "schedule_visit"; leadId: st
 // vendedor é resolvido pela saga confiável (vendedor anterior > roster do agente > roster do tenant > rodízio
 // justo) DENTRO do dispatcher. notify_seller depende do handoff e lê o vendedor efetivamente registrado no
 // banco (ai_lead_transfers) — nunca um palpite do modelo. `reason` usa HandoffReasonKind (transfer-templates).
-export type HandoffPlan = EffectPlanBase & { kind: "handoff"; leadId: string; reason: string; briefing: string; correlationId: string };
-export type NotifySellerPlan = EffectPlanBase & { kind: "notify_seller"; leadId: string; reason: string; etiquetas: Record<string, string>; correlationId: string };
+export type SensitiveEffectRefs = { cpf?: string; birthDate?: string };
+export type HandoffPlan = EffectPlanBase & { kind: "handoff"; leadId: string; reason: string; briefing: string; correlationId: string; sensitiveRefs?: SensitiveEffectRefs };
+export type NotifySellerPlan = EffectPlanBase & { kind: "notify_seller"; leadId: string; reason: string; etiquetas: Record<string, string>; correlationId: string; sensitiveRefs?: SensitiveEffectRefs };
 export type EffectPlan = SendMessagePlan | SendMediaPlan | CrmWritePlan | SchedulePlan | HandoffPlan | NotifySellerPlan;
 
 export const COMMERCIAL_EFFECT_KINDS: EffectKind[] = ["send_media", "crm_write", "schedule_visit", "handoff", "notify_seller"];

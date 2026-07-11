@@ -299,6 +299,8 @@ async function main(): Promise<void> {
     check("[M5] extração já cobriu o slot -> a extração é a autoridade (mutação da LLM cai)", f5.kept.length === 0 && f5.dropped[0]?.reason === "extraction_authority", JSON.stringify(f5.dropped));
     const f6 = filterBrainSlotMutations({ mutations: [mk("possuiTroca", false)], block: "não", extractedSlots: new Set(), pendingSlot: "possuiTroca", understandingTrusted: true });
     check("[M6] resposta booleana curta à pergunta pendente -> aceita", f6.kept.length === 1, JSON.stringify(f6));
+    const f7 = filterBrainSlotMutations({ mutations: [mk("interesse", "Douglas")], block: "Douglas", extractedSlots: new Set(["nome"]), pendingSlot: "nome", understandingTrusted: true });
+    check("[M7] nome isolado nunca aterra interesse comercial", f7.kept.length === 0 && f7.dropped[0]?.reason === "no_provenance", JSON.stringify(f7.dropped));
   }
 
   // ── [S] Seleção canônica por token da última oferta ──
@@ -374,7 +376,10 @@ async function main(): Promise<void> {
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
-    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /ENCAMINHAR para consultor/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
+    // MISSÃO PII (invariantes 9/10): o deny de promessa-sem-efeito passou a guiar TRANSPARÊNCIA honesta
+    // ("transferência NÃO pode ser executada… PROIBIDO condicionar a CPF") — o gatilho do script acompanha
+    // o texto novo (comportamento protegido é o MESMO: deny dispara e a LLM reescreve sem promessa falsa).
+    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /(transfer[êe]ncia n[ãa]o pode ser executada|ENCAMINHAR para consultor)/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
       ? finU([txt("Perfeito! Vamos avançar: quer agendar uma visita para ver o carro de perto?")], U("other", "quero fechar negócio"))
       : finU([txt("Perfeito! Vou chamar nosso consultor agora para finalizar com você.")], U("other", "quero fechar negócio")));
     check("[C2-H1] promessa de consultor sem efeito REJEITADA e reescrita conduzindo", tH.sentTexts.length > 0 && !tH.sentTexts.some((x) => has(x, "consultor")) && tH.sentTexts.some((x) => has(x, "visita")), tH.sentTexts.join("|").slice(0, 100));

@@ -277,10 +277,15 @@ export const PRIMARY_INTENTS = [
   // ⭐AUTORIDADE (audit Codex): o lead CONTESTA/CORRIGE algo que o AGENTE disse ("Corolla não é um sedan? pq disse que
   // não tinha?"). É conversa (reparo), NUNCA busca — mesmo citando modelo/tipo. A LLM reconhece, corrige e conduz.
   "conversation_repair",
+  // ⭐MISSÃO PII (P0-B): pedido EXPLÍCITO de humano/vendedor/atendente é um ATO AUTÔNOMO — vence o funil e
+  // NÃO exige CPF/nascimento/qualificação. Evidence obrigatória no bloco atual. A LLM agradece, anuncia a
+  // transição e propõe {kind:"handoff", reason:"explicit_human_request"} no MESMO final (saga resolve vendedor).
+  "request_human",
 ] as const;
 export type PrimaryIntent = (typeof PRIMARY_INTENTS)[number];
 // Capacidades que o turno PEDE (o engine só autoriza a que tem evidência no bloco).
-export const TURN_CAPABILITIES = ["stock_search", "send_photos", "vehicle_details", "institutional_info", "recall", "select"] as const;
+// "handoff" (MISSÃO PII P0-B): o turno PEDE transferência humana — capability semântica, evidência no bloco.
+export const TURN_CAPABILITIES = ["stock_search", "send_photos", "vehicle_details", "institutional_info", "recall", "select", "handoff"] as const;
 export type TurnCapability = (typeof TURN_CAPABILITIES)[number];
 export const TURN_SUBJECT_KINDS = ["explicit_model", "ordinal_from_last_offer", "selected_vehicle", "vehicle_type", "budget", "none"] as const;
 export type TurnSubjectKind = (typeof TURN_SUBJECT_KINDS)[number];

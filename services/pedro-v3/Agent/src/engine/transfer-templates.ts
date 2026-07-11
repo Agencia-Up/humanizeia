@@ -89,7 +89,7 @@ export function maybeStripEmojis(mensagensSemEmoji: boolean, text: string): stri
 }
 
 // ── Fatos do estado v3 -> etiquetas ─────────────────────────────────────────
-type ValueSlotName = Exclude<keyof FunnelSlots, "cpf">;   // cpf é SensitiveSlot (ref, nunca valor) — fora das etiquetas por construção
+type ValueSlotName = Exclude<keyof FunnelSlots, "cpf" | "birthDate">;   // cpf é SensitiveSlot (ref, nunca valor) — fora das etiquetas por construção
 function known<K extends ValueSlotName>(slots: FunnelSlots, key: K): FunnelSlots[K]["value"] | undefined {
   const slot = slots[key];
   return slot && slot.status === "known" && slot.value != null ? slot.value : undefined;

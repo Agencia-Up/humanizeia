@@ -129,6 +129,10 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
     reason,
     briefing,
     correlationId,
+    sensitiveRefs: {
+      ...(args.stateAfter.slots.cpf?.status === "known" && args.stateAfter.slots.cpf.ref ? { cpf: args.stateAfter.slots.cpf.ref.ref } : {}),
+      ...(args.stateAfter.slots.birthDate?.status === "known" && args.stateAfter.slots.birthDate.ref ? { birthDate: args.stateAfter.slots.birthDate.ref.ref } : {}),
+    },
     onSuccess: [],
   };
   const notifyPlan: NotifySellerPlan = {
@@ -141,6 +145,10 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
     reason,
     etiquetas,
     correlationId,
+    sensitiveRefs: {
+      ...(args.stateAfter.slots.cpf?.status === "known" && args.stateAfter.slots.cpf.ref ? { cpf: args.stateAfter.slots.cpf.ref.ref } : {}),
+      ...(args.stateAfter.slots.birthDate?.status === "known" && args.stateAfter.slots.birthDate.ref ? { birthDate: args.stateAfter.slots.birthDate.ref.ref } : {}),
+    },
     // A transferencia so esta concluida para a conversa depois que o aviso ao
     // vendedor foi realmente ENTREGUE. O registro pending sozinho nao basta.
     onSuccess: [{ op: "mark_handoff_completed", effectId: effectIdFor(args.turnId, notifyPlanId) }],

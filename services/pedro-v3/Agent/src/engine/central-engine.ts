@@ -30,7 +30,7 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer,
+  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
@@ -57,6 +57,10 @@ import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { buildCrmWritePlan } from "./crm-write.ts";
 import { buildHandoffChain } from "./handoff-plan.ts";
+
+// MISSÃO PII (P0-C): shape do diagnóstico do precheck de handoff — módulo testável handoff-precheck.ts.
+import type { HandoffPrecheckDiag } from "./handoff-precheck.ts";
+export type { HandoffPrecheckDiag } from "./handoff-precheck.ts";
 import { computeRenderedOfferContext } from "./offer-context.ts";
 import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts";
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, lastAgentQuestionText, questionSlotFromAgentText, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
@@ -112,6 +116,8 @@ export type CentralTurnArgs = {
     readonly leadPhone: string | null;
     readonly leadDisplayName?: string | null;
     readonly nowLocal?: string;
+    // MISSÃO PII (P0-C): diagnóstico estruturado do precheck (sem PII/segredo) — vai INTEIRO no decision_final.
+    readonly precheck?: HandoffPrecheckDiag;
   };
   // Opção A (bloqueio leadId 2026-07-10): true SÓ no turno do 1º VÍNCULO lead↔conversa — o crm_write
   // sincroniza o SNAPSHOT acumulado (stateBefore=null), não o delta do turno. Turnos anteriores sem
@@ -624,6 +630,8 @@ function authorFromBrainDraft(args: {
   // HF-1 (2026-07-11): transferência EXECUTÁVEL neste turno (flag ON + vendedor ativo disponível + CRM
   // vinculado + transfer.enabled do portal). Promessa de consultor exige ISTO **e** o effect handoff proposto.
   readonly handoffPlannable?: boolean;
+  readonly humanRequested?: boolean;
+  readonly sensitiveAnswerKinds?: readonly ("cpf" | "birthDate")[];
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -722,6 +730,15 @@ function authorFromBrainDraft(args: {
   if (!photoAuthorized && !photoRecall && textPromisesPhoto(composed.text)) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
+  const sensitiveFeedback = sensitiveAnswerCompletenessFeedback(args.sensitiveAnswerKinds ?? [], composed.text);
+  if (sensitiveFeedback) return { ok: false, feedback: sensitiveFeedback };
+  const humanFeedback = humanRequestDecisionFeedback({
+    requested: args.humanRequested === true,
+    handoffPlannable: args.handoffPlannable === true,
+    proposedEffectKinds: proposedEffects.map((effect) => effect.kind),
+    composedText: composed.text,
+  });
+  if (humanFeedback) return { ok: false, feedback: humanFeedback };
   // ⭐Codex P0 (rodada 2): PROMESSA/OFERTA de transferência a consultor/vendedor SEM efeito real materializado
   // (handoff/notify_seller inexistentes nesta fase) é mentira operacional — mesmo padrão do textPromisesPhoto.
   // A LLM reescreve conduzindo ELA MESMA. Quando a Fase 3 materializar o handoff, a promessa passa a exigir o
@@ -735,7 +752,9 @@ function authorFromBrainDraft(args: {
       return { ok: false, feedback: "Você prometeu/ofereceu ENCAMINHAR para consultor/vendedor, mas NÃO incluiu o efeito de transferência neste turno. Se transferir é o próximo passo (cliente pediu humano OU a qualificação está completa), inclua nos effects: {\"kind\":\"handoff\",\"reason\":\"explicit_human_request\"|\"qualified_handoff\"}. Senão, reescreva SEM prometer transferência e continue VOCÊ conduzindo." };
     }
     if (!handoffProposed || args.handoffPlannable !== true) {
-      return { ok: false, feedback: "Você prometeu/ofereceu ENCAMINHAR para consultor/vendedor, mas a transferência NÃO está disponível agora — a promessa deixa o cliente esperando alguém que não virá. Reescreva SEM citar transferência/consultor: continue VOCÊ conduzindo (responda e avance com UMA pergunta útil — ex.: agendar uma visita, confirmar um dado do financiamento, ou oferecer fotos/detalhes)." };
+      // MISSÃO PII (invariantes 9/10): a indisponibilidade REAL exige TRANSPARÊNCIA — nunca esconder o pedido
+      // do cliente nem convertê-lo em coleta de dados. PROIBIDO condicionar a transferência a CPF/qualificação.
+      return { ok: false, feedback: "A transferência NÃO pode ser executada neste momento (indisponibilidade real do sistema — o motivo técnico fica registrado). Reescreva com TRANSPARÊNCIA: reconheça o pedido do cliente, diga com honestidade que não consegue transferir AGORA e ofereça uma alternativa (continuar ajudando por aqui / registrar o pedido para a equipe retornar). PROIBIDO: condicionar a transferência a CPF ou qualquer outro dado, fingir que a transferência está em andamento, ou ignorar o pedido voltando ao funil de qualificação." };
     }
   }
   // ⭐Codex P0: pergunta DUPLA de AÇÃO deixa o "sim" ambíguo (incidente real T4). Deny de OUTPUT com reescrita.
@@ -1507,7 +1526,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
       // LLM-first (regra P0): o lead contribuiu com um slot NOVO neste turno (ex.: o nome)? Se sim, reperguntar o que ele
       // ainda NÃO respondeu (descoberta) é condução legítima — o anti-repetição (caso 2) não deve trancar a LLM.
-      const leadAdvancedThisTurn = safeExtractedSlots.some((m) => m.op === "set_slot");
+      const sensitiveAnswerTurn = safeExtractedSlots.some((m) => m.op === "set_slot_ref");
+      const sensitiveAnswerKinds = safeExtractedSlots.flatMap((m) => m.op === "set_slot_ref" && (m.slot === "cpf" || m.slot === "birthDate") ? [m.slot] : []);
+      const leadAdvancedThisTurn = safeExtractedSlots.some((m) => m.op === "set_slot" || m.op === "set_slot_ref");
 
       const ctx: TurnContext = {
         state: contextState, turnId, leadMessage, now: cutoff,
@@ -1914,7 +1935,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // ⭐Missão P0 (exige-e-proíbe, varredura): a perna CONTEXTUAL (anúncio/similaridade/retomada) também respeita o
           // ato conversacional declarado pela LLM (contestação/financiamento/troca/smalltalk) — senão o missingTool EXIGE
           // stock_search que o gate de INTENT CONTRADITÓRIO NEGA (loop). Mesmo helper do hardening F2.41.
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && (brainSearchAct() || (contextualSearchTurn && !conversationalActDeclared())), moreOptionsNeedsScope, frame.signals.mentionsMoreOptions === true && !conversationalActDeclared());
+          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && (brainSearchAct() || (contextualSearchTurn && !conversationalActDeclared())), moreOptionsNeedsScope, frame.signals.mentionsMoreOptions === true && !conversationalActDeclared());
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             const stockReq = !frame.signals.mentionsStore;
             // ⭐Fase 1 (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SÓ na RETOMADA ("cadê?/e aí?/achou?/
@@ -1963,7 +1984,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn, institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -1988,7 +2009,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // money_ref" presente em TODO feedback de validação e rotulava qualquer deny como monetário (hint errado).
             const moneyDeny = /valor monet[aá]rio livre|pre[çc]o n[aã]o.aterrado|money_ref:/i.test(authored.feedback);
             const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
-            const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn);
+            const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn || sensitiveAnswerTurn);
             let effFeedback = authored.feedback;
             let keepRetrying = false;
             // ⭐AUTORIDADE: CONTESTAÇÃO (conversation_repair declarado pela LLM) — a resposta certa é TEXTO simples
@@ -1997,7 +2018,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // ⭐"mais opções"/busca que voltou VAZIA (todas as stock_search do turno com 0 itens): a resposta certa é a
             // LLM ser HONESTA em texto (sem re-listar os mesmos), nunca o engine escrever (recovery_stock_empty).
             const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
-            if (disengagedActionable) {
+            if (sensitiveAnswerTurn) {
+              effFeedback = `O cliente acabou de fornecer um dado sensivel que foi validado e armazenado por referencia neste turno. Motivo da rejeicao anterior: ${authored.feedback} Confirme o recebimento SEM repetir o valor e SEM mostrar a referencia interna; depois conduza com no maximo UMA pergunta util. Nao use tool comercial e nao volte a perguntar o mesmo dado.`;
+              keepRetrying = true;
+            } else if (disengagedActionable) {
               // A despedida vence qualquer objetivo financeiro/de troca ainda pendente. Preserva o deny real e dá um
               // único norte sem escrever a resposta: a LLM encerra, sem pergunta e sem reabrir o funil.
               effFeedback = `DESPEDIDA ISOLADA. Motivo da rejeição anterior: ${authored.feedback} Reescreva em UMA parte text curta e cordial, SEM pergunta, SEM tool e SEM continuar nome/troca/entrada/parcela/visita. O cliente não fez pedido novo neste bloco.`;
@@ -2084,6 +2108,23 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // Allowlist: tool proibida NÃO executa (observação de erro; o cérebro segue com o que tem).
         if (!allowed.has(call.tool)) {
           observations.push({ tool: call.tool, ok: false, error: { code: "FORBIDDEN", message: `tool '${call.tool}' fora do allowlist` } });
+          continue;
+        }
+        // A autoridade continua sendo o entendimento da LLM. Quando ela declarou
+        // um pedido humano com evidencia valida, esse ato vence o funil e nenhuma
+        // ferramenta comercial pode rodar antes da transferencia.
+        if (!commercialToolAllowedForHumanRequest(brainVU(), call.tool)) {
+          observations.push({ tool: "response", ok: false, error: {
+            code: "FORBIDDEN",
+            message: "O cliente pediu atendimento humano neste bloco. Nao use ferramenta comercial nem continue o funil; finalize reconhecendo o pedido e proponha handoff quando o precheck permitir.",
+          } });
+          continue;
+        }
+        if (sensitiveAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
+          observations.push({ tool: "response", ok: false, error: {
+            code: "FORBIDDEN",
+            message: "O cliente acabou de responder com CPF ou data de nascimento validada. Nao use ferramenta comercial; confirme o recebimento sem repetir o valor/ref e conduza a conversa.",
+          } });
           continue;
         }
         // Missão P0 INC3/G (audit Codex smoke): em TURNO DE RESPOSTA DE TROCA o stock_search é PROIBIDO — o carro citado é a
@@ -2569,7 +2610,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       const slotProvenance = filterBrainSlotMutations({
         mutations: brainNonLeadMutations,
         block: leadMessage,
-        extractedSlots: new Set(safeExtractedSlots.flatMap((m) => (m.op === "set_slot" ? [m.slot as string] : []))),
+        extractedSlots: new Set(safeExtractedSlots.flatMap((m) => (m.op === "set_slot" || m.op === "set_slot_ref" ? [m.slot as string] : []))),
         pendingSlot: pendingQuestionSlot,
         understandingTrusted: lockedU != null && brainVU()!.trusted,
       });
@@ -2752,8 +2793,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // desligado/mismatch fail-closed), 1º vínculo (bootstrap) e se o turno emitiu crm_write.
           crmWrite: { enabled: args.crmWriteEnabled === true, leadBound: crmLeadId, bootstrapSync: args.crmBootstrapSync === true, planned: crmPlan != null },
           // HF-1/3 (auditoria por turno): plannable (flag+vendedor+vínculo), se a cadeia foi montada, o motivo
-          // tipado e por que um handoff proposto foi REMOVIDO (nunca silencioso).
-          handoff: { plannable: handoffPlannable, planned: handoffChain.planned, reason: handoffChain.planned ? handoffChain.reason : null, stripped: handoffChain.planned ? null : handoffChain.strippedReason },
+          // tipado e por que um handoff proposto foi REMOVIDO (nunca silencioso). P0-C: precheck INTEIRO
+          // (flag/crm/lead/config/portal/contagens/motivo/erro sanitizado) — a caixa-preta acabou.
+          handoff: { plannable: handoffPlannable, planned: handoffChain.planned, reason: handoffChain.planned ? handoffChain.reason : null, stripped: handoffChain.planned ? null : handoffChain.strippedReason, precheck: (args.handoff?.precheck ?? null) as unknown as JsonValue },
           // ⭐SEM (invariantes 1/2 — auditoria por turno): retries de proveniência do understanding + mutações de
           // slot da LLM descartadas por falta de proveniência (o incidente possuiTroca=false fantasma fica visível).
           provenanceRetries, provenanceExhausted, evidenceNormalized, droppedSlotMutations: droppedSlotMutations.slice(0, 6),
