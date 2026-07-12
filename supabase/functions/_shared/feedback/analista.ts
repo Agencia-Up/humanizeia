@@ -83,12 +83,24 @@ function instrucaoContrato(framework: any, rubrica?: any): string {
  "motivos_desqualificacao":[],
  "pontos_fortes":[],
  "oportunidades_perdidas":[{"texto":"","trecho":"","horario":""}],
- "frase_coaching":""
+ "frase_coaching":"",
+ "resumo_executivo":"",
+ "evidencia_principal":"",
+ "risco_perda":"baixo",
+ "acao_gestor":"",
+ "acao_vendedor":"",
+ "proxima_pergunta_ideal":""
 }
 Regras: classifique pela CONVERSA, nunca pela palavra do vendedor. Cada competencia: nota 0-100 + um trecho-evidencia com horario. entrada_pct = % da entrada sobre o valor do carro (null se nao der pra saber). "vendedor_descartou_lead_bom"=true se o vendedor tratou/rotulou como ruim um cliente que tinha carro na troca e/ou entrada.
 "potencial_compra" ('alto'|'medio'|'baixo'|'nao_lead'|'sem_dados'): siga a REGUA DE POTENCIAL — 'alto' exige sinal FORTE e explicito (troca oferecida, entrada dita, pediu financiamento/simulacao, marcou/pediu visita ou endereco); 'medio' = interesse claro em carro especifico + pergunta objetiva de preco/parcela/condicao; responder mensagem ou cumprimentar NAO e interesse; sem evidencia suficiente = 'sem_dados'.
 "produto": o produto/modelo que o cliente demonstrou interesse na conversa (ex.: "Onix 2020", "Hilux", "HB20"). Use o nome CURTO e canonico do modelo (sem versao/motor completos). Se o cliente NAO falou de produto nenhum (clique sem querer, assunto fora do que foi anunciado, sem intencao), deixe "" (string vazia).
 "tempo_primeira_resposta_min": calcule APENAS a partir dos timestamps entre colchetes; se nao der pra calcular com certeza, deixe null — NUNCA estime.${nepqRegras}
+"resumo_executivo": 1 frase para o gestor entender o caso sem abrir a conversa.
+"evidencia_principal": copie um trecho curto da conversa com horario que prove a conclusao.
+"risco_perda": "alto" quando lead forte/bom foi mal atendido ou abandonado; "medio" quando ha chance real mas falta fechamento; "baixo" nos demais.
+"acao_gestor": comando pratico para o gestor fazer hoje, sem texto generico.
+"acao_vendedor": orientacao curta e aplicavel para o vendedor corrigir ou repetir.
+"proxima_pergunta_ideal": a pergunta que o vendedor deveria ter feito no momento critico.
 IMPORTANTE: sua resposta deve ser APENAS o objeto JSON, comecando com { e terminando com }. Sem markdown, sem crases, sem nenhum texto antes ou depois. Use exatamente as chaves mostradas acima.`;
 }
 

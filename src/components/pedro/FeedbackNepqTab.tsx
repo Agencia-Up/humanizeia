@@ -128,6 +128,12 @@ export function FeedbackNepqTab() {
     return validos.length ? [...validos].sort((a, b) => a.nota - b.nota)[0] : null;
   }, [radarData]);
   const leituraPontoFraco = pontoFraco ? explicarDimensao(pontoFraco.dim) : null;
+  const habilidadesPrioritarias = useMemo(() => {
+    return [...radarData]
+      .sort((a, b) => a.nota - b.nota)
+      .slice(0, 3)
+      .map((d) => ({ ...d, leitura: explicarDimensao(d.dim) }));
+  }, [radarData]);
 
   const alertas = vendedoresBase.filter((v) => (v.taxa_conflito_rotulagem || 0) > 0);
 
@@ -252,6 +258,18 @@ export function FeedbackNepqTab() {
               <div className="flex items-center justify-between mb-1">
                 <div className="text-sm font-semibold text-foreground">{atual.nome}</div>
                 <div className={`text-sm font-semibold ${semaforo(atual.score_medio).txt}`}>{atual.score_medio} <span className="text-[10px] text-muted-foreground">/100</span></div>
+              </div>
+              <div className="mb-3 rounded-xl border border-primary/20 bg-primary/10 p-3">
+                <div className="text-xs font-semibold text-primary">Traducao simples para o gestor</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  {habilidadesPrioritarias.map((h, idx) => (
+                    <div key={h.dim} className="rounded-lg border border-border/50 bg-background/35 p-2">
+                      <div className="text-[11px] font-semibold text-foreground">{idx + 1}. {h.dim}</div>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">Nota {h.nota}/4</div>
+                      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{h.leitura.acao}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
               <ResponsiveContainer width="100%" height={280}>
                 <RadarChart data={radarData} outerRadius="72%">

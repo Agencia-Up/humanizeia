@@ -25,6 +25,12 @@ interface Conversa {
   potencial_compra: string | null;
   temperature: string | null;
   frase_coaching: string | null;
+  resumo_executivo: string | null;
+  evidencia_principal: string | null;
+  risco_perda: string | null;
+  acao_gestor: string | null;
+  acao_vendedor: string | null;
+  proxima_pergunta_ideal: string | null;
   oportunidades_perdidas: string[] | null;
   tempo_resposta_min: number | null;
   houve_venda: string | null;
@@ -65,6 +71,37 @@ const LIMIAR_PERDEU = 45;
 const score0 = (c: Conversa) => Number(c.score) || 0;
 const bemAtendido = (c: Conversa) => ehBom(c) && score0(c) >= LIMIAR_BEM;
 const perdeuChanceBoa = (c: Conversa) => ehBom(c) && score0(c) < LIMIAR_PERDEU && !vendeu(c);
+function riscoGerencial(c: Conversa): number {
+  let r = 0;
+  const p = potDe(c);
+  if (p === 'forte') r += 45;
+  if (p === 'bom') r += 30;
+  if (score0(c) < LIMIAR_PERDEU) r += 35;
+  if (!vendeu(c)) r += 10;
+  if (Array.isArray(c.oportunidades_perdidas) && c.oportunidades_perdidas.length) r += 10;
+  const riscoLLM = String(c.risco_perda || '').toLowerCase();
+  if (riscoLLM === 'alto') r += 25;
+  if (riscoLLM === 'medio') r += 10;
+  return r;
+}
+
+function textoAcao(c?: Conversa | null): string {
+  return c?.acao_gestor
+    || c?.acao_vendedor
+    || c?.proxima_pergunta_ideal
+    || c?.frase_coaching
+    || 'Treinar escuta ativa, confirmacao das informacoes ja ditas e proximo passo claro.';
+}
+
+function textoProva(c?: Conversa | null): string {
+  if (!c) return 'Sem conversa critica identificada.';
+  if (c.evidencia_principal) return c.evidencia_principal;
+  const ops = Array.isArray(c.oportunidades_perdidas) ? c.oportunidades_perdidas : [];
+  const primeira = ops
+    .map((op: any) => (typeof op === 'string' ? op : op?.texto || op?.trecho || op?.resumo || ''))
+    .filter(Boolean)[0];
+  return primeira || c.resumo_executivo || c.frase_coaching || `Revisar primeiro a conversa de ${c.lead_name || 'lead sem nome'} (nota ${score0(c)}).`;
+}
 
 function fmtMin(mRaw: number): string {
   const m = Math.round(mRaw);
@@ -89,15 +126,13 @@ function vendedorInsight(v: Vendedor): { resumo: string; risco: string; acao: st
   const pctBem = v.bons ? Math.round((v.bemAtendidos / v.bons) * 100) : 0;
   const pior = [...v.convs].sort((a, b) => score0(a) - score0(b))[0];
   const melhor = [...v.convs].sort((a, b) => score0(b) - score0(a))[0];
-  const prova = pior?.lead_name
-    ? `Revisar primeiro a conversa de ${pior.lead_name} (nota ${score0(pior)}).`
-    : 'Sem conversa critica identificada.';
+  const prova = textoProva(pior);
 
   if (v.perdeuChance > 0) {
     return {
       resumo: `${v.nome} tem ${v.perdeuChance} chance boa com risco real de perda.`,
       risco: 'Lead bom foi atendido com nota baixa e nao virou venda.',
-      acao: 'Abrir as conversas criticas, corrigir abordagem e alinhar o criterio de classificacao.',
+      acao: textoAcao(pior) || 'Abrir as conversas criticas, corrigir abordagem e alinhar o criterio de classificacao.',
       prova,
     };
   }
@@ -105,7 +140,7 @@ function vendedorInsight(v: Vendedor): { resumo: string; risco: string; acao: st
     return {
       resumo: `${v.nome} esta recebendo leads bons, mas ainda entrega pouco atendimento forte.`,
       risco: `Somente ${pctBem}% dos leads bons foram bem atendidos.`,
-      acao: 'Treinar a passagem de necessidade para proposta e reduzir perguntas repetidas.',
+      acao: textoAcao(pior) || 'Treinar a passagem de necessidade para proposta e reduzir perguntas repetidas.',
       prova,
     };
   }
@@ -190,6 +225,16 @@ export function FeedbackPorVendedorTab() {
   }, [vendedores, sel]);
 
   const atual = vendedores.find((v) => v.id === sel) || null;
+  const conversasOrdenadas = useMemo(
+    () => atual ? [...atual.convs].sort((a, b) => riscoGerencial(b) - riscoGerencial(a) || score0(a) - score0(b)) : [],
+    [atual],
+  );
+  const conversaCritica = conversasOrdenadas[0] || null;
+  const melhorConversa = useMemo(
+    () => atual ? [...atual.convs].sort((a, b) => score0(b) - score0(a))[0] || null : null,
+    [atual],
+  );
+  const conversaComProva = conversasOrdenadas.find((c) => Array.isArray(c.oportunidades_perdidas) && c.oportunidades_perdidas.length) || conversaCritica;
 
   const baixarPdf = async () => {
     if (!atual) return;
@@ -316,6 +361,31 @@ export function FeedbackPorVendedorTab() {
             );
           })()}
 
+          <div className="grid gap-3 lg:grid-cols-3">
+            <MiniAcao
+              titulo="1. Olhar agora"
+              subtitulo={conversaCritica?.lead_name || 'Sem lead critico'}
+              texto={conversaCritica
+                ? `Maior risco gerencial: nota ${score0(conversaCritica)} com ${potDe(conversaCritica) === 'forte' ? 'lead forte' : potDe(conversaCritica) === 'bom' ? 'lead bom' : 'lead em analise'}.`
+                : 'Nao ha conversa critica para priorizar neste vendedor.'}
+              tom="red"
+            />
+            <MiniAcao
+              titulo="2. Usar como exemplo"
+              subtitulo={melhorConversa?.lead_name || 'Sem exemplo positivo'}
+              texto={melhorConversa
+                ? `Melhor conversa do periodo: nota ${score0(melhorConversa)}. Use para mostrar o comportamento esperado.`
+                : 'Ainda falta volume para escolher uma conversa modelo.'}
+              tom="green"
+            />
+            <MiniAcao
+              titulo="3. Ponto de coaching"
+              subtitulo="Mensagem pronta para alinhar"
+              texto={textoAcao(conversaComProva)}
+              tom="blue"
+            />
+          </div>
+
           {/* Resumo do vendedor */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
             {[
@@ -343,9 +413,9 @@ export function FeedbackPorVendedorTab() {
             </div>
           )}
 
-          {/* Conversas (nota mais baixa primeiro = onde olhar) */}
+          {/* Conversas priorizadas por risco gerencial. */}
           <div className="space-y-2.5">
-            {[...atual.convs].sort((a, b) => (Number(a.score) || 0) - (Number(b.score) || 0)).map((c) => {
+            {conversasOrdenadas.map((c) => {
               const score = Number(c.score) || 0;
               const q = c.qualidade_lead && QMAP[c.qualidade_lead];
               const venda = vendeu(c);
@@ -394,6 +464,28 @@ export function FeedbackPorVendedorTab() {
                       <span className="italic">“{c.frase_coaching}”</span>
                     </div>
                   )}
+                  {c.evidencia_principal && (
+                    <div className="flex gap-2 text-[12px] text-foreground/90 bg-muted/40 rounded-lg px-3 py-2">
+                      <MessageSquareQuote className="h-3.5 w-3.5 text-violet-400 shrink-0 mt-0.5" />
+                      <span className="italic">"{c.evidencia_principal}"</span>
+                    </div>
+                  )}
+                  {(c.acao_gestor || c.acao_vendedor || c.proxima_pergunta_ideal) && (
+                    <div className="grid gap-2 text-[11px] sm:grid-cols-2">
+                      {(c.acao_gestor || c.acao_vendedor) && (
+                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-100/85">
+                          <span className="font-semibold text-emerald-300">Acao sugerida: </span>
+                          {c.acao_gestor || c.acao_vendedor}
+                        </div>
+                      )}
+                      {c.proxima_pergunta_ideal && (
+                        <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-sky-100/85">
+                          <span className="font-semibold text-sky-300">Pergunta ideal: </span>
+                          {c.proxima_pergunta_ideal}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {ops.length > 0 && (
                     <div className="text-[11px] text-muted-foreground">
                       <span className="text-amber-400 font-medium">Oportunidades perdidas:</span> {ops.slice(0, 3).join(' · ')}
@@ -405,6 +497,26 @@ export function FeedbackPorVendedorTab() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function MiniAcao({ titulo, subtitulo, texto, tom }: {
+  titulo: string;
+  subtitulo: string;
+  texto: string;
+  tom: 'red' | 'green' | 'blue';
+}) {
+  const cls = {
+    red: 'border-rose-500/20 bg-rose-500/10 text-rose-100',
+    green: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-100',
+    blue: 'border-sky-500/20 bg-sky-500/10 text-sky-100',
+  }[tom];
+  return (
+    <div className={`rounded-2xl border p-4 ${cls}`}>
+      <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">{titulo}</div>
+      <div className="mt-1 text-sm font-semibold text-foreground">{subtitulo}</div>
+      <p className="mt-2 text-xs leading-relaxed opacity-85">{texto}</p>
     </div>
   );
 }

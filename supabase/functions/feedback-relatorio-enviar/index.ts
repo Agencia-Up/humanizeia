@@ -44,6 +44,61 @@ function captionPadrao(): string {
   ].join('\n');
 }
 
+function n(v: unknown): number {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
+
+function gargaloGerencial(funil: any): string {
+  const chegaram = n(funil?.chegaram);
+  const qualificados = n(funil?.qualificados);
+  const bemAtendidos = n(funil?.bem_atendidos);
+  const vendas = n(funil?.vendas);
+  if (!chegaram) return 'ainda falta volume de leads para leitura segura';
+  if (qualificados < Math.max(1, Math.round(chegaram * 0.25))) return 'entrada de leads com pouca intencao de compra';
+  if (bemAtendidos < Math.max(1, Math.round(qualificados * 0.55))) return 'qualidade do atendimento antes do fechamento';
+  if (vendas < Math.max(1, Math.round(bemAtendidos * 0.2))) return 'fechamento e retomada comercial';
+  return 'rotina saudavel, manter acompanhamento diario';
+}
+
+function captionGerencial(dados: any): string {
+  if (!dados?.funil) return captionPadrao();
+  const funil = dados.funil || {};
+  const vendedores = Array.isArray(dados.vendedores) ? dados.vendedores : [];
+  const chegaram = n(funil.chegaram);
+  const qualificados = n(funil.qualificados);
+  const bemAtendidos = n(funil.bem_atendidos);
+  const vendas = n(funil.vendas);
+  const risco = vendedores
+    .map((v: any) => ({
+      nome: String(v?.nome || 'vendedor'),
+      chance: n(v?.com_interesse),
+      bem: n(v?.bem_atendidos),
+      vendas: n(v?.vendas),
+      score: n(v?.score_medio),
+    }))
+    .filter((v: any) => v.chance > 0 && v.bem < v.chance && v.vendas === 0)
+    .sort((a: any, b: any) => (b.chance - b.bem) - (a.chance - a.bem) || a.score - b.score)[0];
+
+  const linhas = [
+    `Relatorio de atendimento - ${dataBRT()}`,
+    ``,
+    `Leitura rapida: ${chegaram} leads, ${qualificados} com interesse real, ${bemAtendidos} bem atendidos e ${vendas} venda(s).`,
+    `Gargalo principal: ${gargaloGerencial(funil)}.`,
+  ];
+  if (risco) {
+    linhas.push(`Olhar primeiro: ${risco.nome} recebeu ${risco.chance} lead(s) com interesse e teve ${risco.bem} bem atendido(s).`);
+  }
+  linhas.push(
+    ``,
+    `PDF em anexo: funil, vendedores e qualidade dos leads.`,
+    `Detalhe por conversa: Logos > Pedro > Relatorios.`,
+    ``,
+    `Logos IA`,
+  );
+  return linhas.join('\n');
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') return json({ ok: false, error: 'POST only' }, 405);
@@ -107,7 +162,14 @@ Deno.serve(async (req) => {
     if (sErr || !signed?.signedUrl) return json({ ok: false, error: `falha ao assinar URL: ${sErr?.message || 'sem url'}` }, 200);
 
     // 5) Envia o documento a cada destinatario, pelo numero da IA.
-    const caption = String(body?.caption || captionPadrao());
+    let dadosCaption: any = null;
+    try {
+      const { data } = await admin.rpc('feedback_relatorio_diario_dados', { p_tenant: tenant, p_dias: 7 });
+      dadosCaption = data;
+    } catch (_e) {
+      dadosCaption = null;
+    }
+    const caption = String(body?.caption || captionGerencial(dadosCaption));
     const base = String(inst.api_url).replace(/\/+$/, '');
     const results: any[] = [];
     for (const d of dests) {
