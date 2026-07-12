@@ -190,13 +190,19 @@ async function main(): Promise<void> {
     check("[H-2] sem handoff/transferência automática", !r.hasHandoff);
     check("[H-3] não pede telefone (WhatsApp)", !asksLeadContactPhone(r.outbox), `outbox="${r.outbox}"`);
   }
-  // F) Fix B (audit CTWA): anúncio GENÉRICO (sem veículo) + abertura -> se o cérebro pede NOME, o engine troca por DESCOBERTA.
+  // F) Fix B (audit CTWA): anúncio GENÉRICO (sem veículo) + abertura -> se o cérebro pede NOME, o engine
+  // devolve feedback e o MESMO cérebro reescreve a descoberta. O engine nunca autora a abertura comercial.
   {
     const c = conv();
-    const askName: BrainResponder = () => finU([txt("Olá! Para te ajudar melhor, qual é o seu nome?")], "reply", U("other"));
-    const r = await c.t("Olá! Tenho interesse e queria mais informações, por favor.", { ad: adInstitucional, responder: askName });
+    const askNameThenDiscover: BrainResponder = (_frame, observations) => {
+      const wasCorrected = observations.some((obs) => !obs.ok && /não peça o nome|entenda a intenção comercial/i.test(obs.error.message));
+      return wasCorrected
+        ? finU([txt("Claro! Você procura algum modelo ou tipo de carro, ou tem uma faixa de preço em mente?")], "discover_need", U("other"))
+        : finU([txt("Olá! Para te ajudar melhor, qual é o seu nome?")], "reply", U("other"));
+    };
+    const r = await c.t("Olá! Tenho interesse e queria mais informações, por favor.", { ad: adInstitucional, responder: askNameThenDiscover });
     check("[ADGEN-1] abertura de anúncio genérico NÃO abre pedindo nome", !/\bseu\s+nome\b/.test(norm(r.outbox)), `outbox="${r.outbox}"`);
-    check("[ADGEN-2] abre com DESCOBERTA comercial (modelo/tipo/faixa) via backstop", (has(r.outbox, "modelo") || has(r.outbox, "tipo") || has(r.outbox, "suv")) && r.reasonCode === "ad_generic_discovery", `rc=${r.reasonCode} outbox="${r.outbox}"`);
+    check("[ADGEN-2] a LLM reescreve a DESCOBERTA comercial (sem backstop do engine)", (has(r.outbox, "modelo") || has(r.outbox, "tipo") || has(r.outbox, "faixa")) && r.reasonCode === "discover_need", `rc=${r.reasonCode} outbox="${r.outbox}"`);
   }
   // ADGEN-3) Fix B: anúncio genérico mas o lead JÁ especifica (SUV) -> NÃO força discovery (o lead engatou); segue comercial.
   {

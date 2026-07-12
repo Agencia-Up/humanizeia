@@ -622,6 +622,7 @@ function authorFromBrainDraft(args: {
   readonly requireBrain: boolean;                    // P0-2: em llmFirst, send_media exige understanding do cérebro
   readonly target: TargetResolution;                 // P0-1: alvo do assunto (candidateVehicleKeys verificados por modelo)
   readonly openingNeedsDiscovery?: boolean;          // PARTE A (missão): abertura sem alvo -> discovery, não pedir nome/telefone
+  readonly openingNeedsIntroduction?: boolean;       // primeiro contato sem anúncio -> identidade do prompt + discovery
   readonly specificAdVehicle?: string | null;        // PARTE A (missão P0): entrada por anúncio ESPECÍFICO -> abertura DEVE falar do veículo
   readonly searchExpectedThisTurn?: boolean;         // Missão P0 INC1/A: turno comercial/busca -> proíbe promessa "vou buscar" sem stock_search
   readonly noCommercialContextYet?: boolean;         // Missão P0 INC2/F: sem intenção comercial ainda -> não pedir nome (nem sobrenome)
@@ -640,6 +641,14 @@ function authorFromBrainDraft(args: {
       return { ok: false, feedback: "DESPEDIDA ISOLADA: seu draft veio ausente ou malformado. Devolva FINAL com draft.parts contendo EXATAMENTE UMA part {\"type\":\"text\",\"content\":\"<despedida curta e cordial>\"}. O content não pode ter pergunta, tool, coleta de nome/troca/entrada/parcela/visita nem promessa de transferência." };
     }
     return { ok: false, feedback: "Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre." };
+  }
+  // A abertura continua sendo autoria da LLM, mas precisa cumprir o contrato do
+  // prompt do portal. O engine apenas rejeita a omissão; nunca injeta identidade.
+  if (args.openingNeedsIntroduction) {
+    const openingText = draft.parts.filter((part) => part.type === "text").map((part) => part.content).join(" ");
+    if (!mentionsSelfIntroduction(openingText)) {
+      return { ok: false, feedback: "PRIMEIRO CONTATO: você cumprimentou, mas não se apresentou. Reescreva a abertura conforme a identidade e personalidade do PROMPT DO PORTAL: diga quem você é e de qual loja fala, e faça UMA pergunta curta de descoberta comercial (modelo, tipo de carro ou faixa de preço). Não peça nome, telefone, troca ou entrada." };
+    }
   }
   // P0-sel (missão): numa SELEÇÃO, quando o grounding falha (o cérebro citou km/cor/câmbio/preço sem vehicle_details), o
   // feedback é ESPECÍFICO — acolha a escolha e ofereça o próximo passo, NÃO cite atributo sem consultar. (Sem isto o
@@ -1271,6 +1280,13 @@ function stockSearchFingerprint(input: Record<string, unknown>): string {
 // O texto JÁ faz descoberta comercial (modelo/tipo/faixa/procura/opções)? Se sim, não precisa do backstop. PURO.
 const COMMERCIAL_DISCOVERY_RX = /\bmodelo\b|\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b|\bpickup\b|\btipo\s+de\s+(?:carro|veiculo)\b|\bfaixa\s+de\s+(?:preco|valor)\b|\bprocur\w+\b|\bopcoes\b|\bopcao\b|\bque\s+(?:tipo|carro|modelo)\b|\b(?:ta|esta)\s+buscando\b|\bpensando\s+em\b|\borcamento\b/;
 function mentionsCommercialDiscovery(text: string): boolean { return COMMERCIAL_DISCOVERY_RX.test(normalizeText(text)); }
+function mentionsSelfIntroduction(text: string): boolean {
+  const norm = normalizeText(text);
+  return /\b(?:eu\s+sou|me\s+chamo|aqui\s+(?:e|quem\s+fala\s+e)|sou\s+(?:o|a)\s+)\b/.test(norm);
+}
+function isInitialGreetingOnly(text: string): boolean {
+  return /^(?:oi|ola|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|como\s+vai)[\s!?,.]*$/.test(normalizeText(text));
+}
 // ── PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO. A resposta menciona a marca/modelo do veículo do anúncio? PURO.
 //    O label do anúncio (ex.: "Jeep Compass") vem aterrado do engine (adVehicleHint). Considera qualquer token >=3 do label.
 function mentionsAdVehicle(text: string, adVehicleLabel: string): boolean {
@@ -1343,13 +1359,6 @@ function isServiceOrInstitutionalQuestion(text: string): boolean {
   return institutionalTopicsRequested(text).length > 0 || mentionsContact(text) || SERVICE_OR_INSTITUTIONAL_RX.test(normalizeText(text));
 }
 function hasQuestion(text: string): boolean { return text.includes("?"); }
-function buildGenericAdDiscoveryResponse(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
-  const text = "Que bom te ver por aqui! 😊 Pra eu te ajudar certinho, você já tem algum modelo em mente, um tipo de carro (SUV, sedan, hatch ou picape) ou uma faixa de preço?";
-  const pe = ensureSendMessage([]);
-  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "ad_generic_discovery", reasonSummary: "abertura por anúncio genérico -> descoberta comercial (não nome)", confidence: 0.8 };
-  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
-  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
-}
 
 // ── Fix A+ (audit CTWA, aprovado pelo dono): BECO de busca vazia. O cérebro autora "quer que eu veja/mostre outras opções?"
 //    numa busca que zerou SEM alternativa. Detecta o beco + monta uma recuperação HONESTA+CONDUTORA (nomeia o filtro +
@@ -1650,6 +1659,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // PARTE A: PRIMEIRO contato SEM anúncio e SEM alvo comercial ("Boa tarde" cru) -> abrir com DESCOBERTA comercial, nunca
       // pedindo nome/telefone. Complementa adGenericEntry (que exige anúncio): aqui NÃO há anúncio nenhum (porta fria).
       const firstContactNoCommercialTarget = llmFirst && isOpeningTurn && effectiveAdContext == null && !adVehicle
+        && isInitialGreetingOnly(leadMessage)
         && currentTurnIntent !== "institutional" && leadEngagement == null && !sufficientForStockSearch(currentConstraints)
         && contextState.vehicleContext.selected == null;
       // PARTE A: ENTRADA por anúncio de veículo ESPECÍFICO -> a abertura fala do veículo do anúncio e oferece
@@ -1781,6 +1791,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let evidenceNormalized = false;                               // ⭐Codex rodada 2: citação mecânica em resposta curta sem ação
       let authorityRetries = 0;
       const AUTHORITY_RETRY_CAP = 3;
+      let searchActRetries = 0;
+      const SEARCH_ACT_RETRY_CAP = 2;
       const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true) : null);
       const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false);
       // ⭐AUTORIDADE (audit Codex): o ATO declarado é PEDIDO DE ESTOQUE — primaryIntent=search_stock E capability de busca
@@ -1983,6 +1995,30 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             provenanceExhausted = true;
             break;
           }
+          // O detector do bloco atual não executa tool nem decide a resposta. Ele
+          // apenas denuncia uma contradição estreita: há um pedido atual de estoque
+          // com filtro suficiente, mas a LLM encerrou como "other". A própria LLM
+          // recebe o feedback, reavalia o ato e continua dona da tool e da resposta.
+          // Atos semânticos explícitos nunca entram aqui.
+          const currentBlockExpectsSearchAct = llmFirst
+            && constraintishTurn
+            && sufficientForStockSearch(effectiveSearchScope)
+            && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn
+            && !isVehicleDetailTurn
+            && (lockedU?.primaryIntent === "other" || lockedU?.primaryIntent === "search_stock");
+          if (currentBlockExpectsSearchAct && !brainSearchAct()) {
+            if (searchActRetries < SEARCH_ACT_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
+              searchActRetries += 1;
+              const feedback = `ATO ATUAL INCOMPLETO: o bloco atual do cliente ("${leadMessage.slice(0, 160)}") pede estoque e já informa filtro suficiente (${describeConstraints(effectiveSearchScope)}). Reavalie SOMENTE este bloco. Se ele realmente pede disponibilidade/opções, emita primaryIntent=search_stock, capability stock_search com evidence copiada do bloco atual e chame stock_search agora. Não repita pergunta sobre modelo/tipo/faixa já informados. Se for contestação, troca, financiamento, foto, visita, institucional, humano ou conversa, declare esse ato explicitamente e responda sem busca.`;
+              policyFeedbackLog.push(feedback);
+              observations.push({ tool: "response", ok: false, error: { code: "SEARCH_ACT_EXPECTED", message: feedback } });
+              lockedU = null;
+              continue;
+            }
+            lockedU = null;
+            provenanceExhausted = true;
+            break;
+          }
           // T4 + ⭐AUTORIDADE (audit Codex): a busca é exigida pela SEMÂNTICA do CÉREBRO (isStockSearchTurn(brainVU()) —
           // a LLM declarou a capability de busca com evidence) OU por fluxo de CONTEXTO (anúncio/similaridade/retomada).
           // A perna heurística "constraint suficiente força busca" FOI REMOVIDA: o detector via Corolla/sedan numa
@@ -2042,7 +2078,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: adGenericEntry || firstContactNoCommercialTarget, openingNeedsIntroduction: firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2528,19 +2564,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
           responseSource = "deterministic_recall";
         }
-        // PARTE A (missão abertura SDR) + Fix B (CTWA): backstop de ABERTURA sem alvo (anúncio genérico OU 1º contato sem
-        // anúncio). Último recurso — o caminho PRIMÁRIO é o cérebro re-autorar via deny+feedback (authorFromBrainDraft). Só
-        // dispara se o cérebro NÃO conduziu: (a) abriu pedindo NOME sem descoberta, OU (b) degradou em technical_fallback
-        // (fallback genérico "me conta mais"). Aí o engine entrega uma DESCOBERTA comercial enumerada (modelo/tipo/faixa) —
-        // SDR humano, não formulário. Não mexe se já enviou/ofereceu carro.
-        const openingAsksNameNoDiscovery = asksLeadName(composed.text) && !mentionsCommercialDiscovery(composed.text);
-        if ((adGenericEntry || firstContactNoCommercialTarget) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media")
-            && (openingAsksNameNoDiscovery || responseSource === "technical_fallback")) {
-          const disc = buildGenericAdDiscoveryResponse({ ctx, turnId });
-          responseSource = "deterministic_discovery"; targetResolutionSource = null;
-          effectiveDecision = disc.decision; composed = disc.composed; proposedEffects = disc.proposedEffects;
-          finalDecision = { reasonCode: "ad_generic_discovery", reasonSummary: "abertura sem alvo -> descoberta comercial", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
-        }
+        // Em llmFirst não existe abertura comercial escrita pelo engine. A
+        // identidade e a descoberta são validadas durante a autoria e reescritas
+        // pelo próprio cérebro. Se ele não convergir, a falha permanece técnica e
+        // observável; nunca aparece uma segunda personalidade determinística.
         degraded = isDegradedResponse(responseSource, recoveryReason);
         // LLM-FIRST (missão): o engine NÃO gerencia objetivo de funil. `stripAllObjectiveMutations` garante que nenhum
         // objetivo de funil seja persistido (funil = contexto read-only; a LLM decide a condução). Fora do llm_first,

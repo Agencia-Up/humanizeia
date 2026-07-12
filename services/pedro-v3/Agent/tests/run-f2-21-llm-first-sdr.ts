@@ -313,7 +313,7 @@ async function main(): Promise<void> {
     check("[dg1] reasonCode 'respect_photo_decline...' NÃO é bloqueado", c.committed && !c.degraded, `src=${c.src}`); }
   { const { turn } = makeConv("g2"); const c = await turn("não quero foto agora", "ambiguous", [fin([txt("Sem problema, não envio as fotos agora. Quer as condições ou outro modelo?")])]);
     check("[dg2] recusa 'não envio as fotos agora' PASSA (sem media, sem degradar)", c.committed && !c.degraded && !c.hasMedia, `src=${c.src} text="${c.outbox}"`); }
-  { const { turn } = makeConv("g3"); const c = await turn("beleza", "ambiguous", [fin([txt("Quer que eu te envie as fotos ou prefere as condições?")])]);
+  { const { turn } = makeConv("g3"); const c = await turn("beleza", "ambiguous", [fin([txt("Quer que eu te envie as fotos?")])]);
     check("[dg3] OFERTA 'quer que eu te envie as fotos?' PASSA (sem send_media)", c.committed && !c.degraded && !c.hasMedia, `src=${c.src} text="${c.outbox}"`); }
   { const { turn } = makeConv("g4"); const c = await turn("beleza", "ambiguous", [fin([txt("Aqui estão as fotos!")]), fin([txt("Aqui estão as fotos!")]), fin([txt("Aqui estão as fotos!")]), fin([txt("Aqui estão as fotos!")])]);
     check("[dg4] 'Aqui estão as fotos' (sem send_media) continua BLOQUEADO", !has(c.outbox, "aqui estao as fotos") && c.policyFeedback.some((f) => /pediu fotos/i.test(f)), `text="${c.outbox}" fb=${JSON.stringify(c.policyFeedback)}`); }

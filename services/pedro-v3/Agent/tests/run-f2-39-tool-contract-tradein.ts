@@ -72,7 +72,7 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
 // Agente PERGUNTA sobre troca (para o próximo turno ser "resposta de troca").
-const askTrade: BrainResponder = () => finU([txt("Perfeito! Para eu te passar as condições, você tem algum carro para dar de troca?")], "reply", U("other"));
+const askTrade: BrainResponder = () => finU([txt("Eu sou o Aloan da Icom. Para eu te passar as condições, você tem algum carro para dar de troca?")], "reply", U("other"));
 // Cérebro LISTA SUVs (query stock_search{tipo:suv} -> offer_list).
 const listSuv: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
@@ -370,7 +370,7 @@ async function main(): Promise<void> {
     const CTRL = String.fromCharCode(0x1f);
     const c = conv();
     const cleanOnFeedback: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Olá! Como posso te ajudar hoje?")], "reply", U("smalltalk"))
+      ? finU([txt("Olá! Eu sou o Aloan da Icom. Como posso te ajudar hoje?")], "reply", U("smalltalk"))
       : finU([txt("Ola" + CTRL + CTRL + "! Como posso te ajudar hoje?")], "reply", U("smalltalk"));
     const t1 = await c.t("Oi", { responder: cleanOnFeedback });
     const hasCtrl = [...t1.outbox].some((ch) => { const cc = ch.codePointAt(0) ?? 0; return (cc < 0x20 && cc !== 9 && cc !== 10 && cc !== 13) || cc === 0x7f || cc === 0xfffd; });

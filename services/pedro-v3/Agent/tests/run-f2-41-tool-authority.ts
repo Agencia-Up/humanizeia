@@ -225,6 +225,41 @@ async function main(): Promise<void> {
     check("[F-5] turno de visita nao chama estoque", t3.stockCalls === 0 && t3.stockObs === 0, `calls=${t3.stockCalls} obs=${t3.stockObs}`);
   }
 
+  // G) INCIDENTE REAL 12/07: abertura sem identidade + burst "Quero suv / Tem?".
+  // O engine nao escreve a apresentacao nem executa busca por keyword. Ele devolve
+  // feedback semantico e a mesma LLM reautora, declara o ato e usa a tool.
+  {
+    const c = conv();
+    const opening: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
+      const denied = obs.some((o) => o.tool === "response" && !o.ok);
+      return denied
+        ? finU([txt("Boa tarde! Eu sou o Aloan, consultor da Icom. Você procura algum modelo, tipo de carro ou faixa de preço?")], "opening_with_identity", U("smalltalk"))
+        : finU([txt("Que bom te ver por aqui! Você procura algum modelo, tipo de carro ou faixa de preço?")], "opening_without_identity", U("smalltalk"));
+    };
+    const t1 = await c.t("Boa tarde", opening);
+    check("[G-1] abertura sem identidade e negada e reautorada pela LLM", t1.src === "brain_retry" && has(t1.outbox, "sou o Aloan") && has(t1.outbox, "Icom"), `src=${t1.src} out=${t1.outbox}`);
+    check("[G-2] abertura nao usa recovery deterministico", !String(t1.src).startsWith("deterministic"), `src=${t1.src}`);
+
+    const suvSearch: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
+      const stock = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+      if (stock) {
+        return finU([
+          txt("Separei estas opções de SUV para você:"),
+          { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((item) => item.vehicleKey) } as ResponsePart,
+          txt("Qual delas chamou mais sua atenção?"),
+        ], "list_suv", searchU("Quero suv"));
+      }
+      const corrected = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "SEARCH_ACT_EXPECTED");
+      if (corrected) return qU({ tool: "stock_search", input: { tipo: "suv" } }, searchU("Quero suv"));
+      return finU([txt("Qual modelo ou tipo de carro você procura? Já busco no estoque para você.")], "wrong_clarify", U("other"));
+    };
+    const t2 = await c.t("Quero suv\nTem?", suvSearch);
+    check("[G-3] pedido SUV malclassificado recebe feedback de ato e a LLM redecide", t2.pf.some((p) => has(p, "ATO ATUAL INCOMPLETO")), JSON.stringify(t2.pf));
+    check("[G-4] a LLM chama stock_search uma vez e lista o SUV", t2.stockCalls === 1 && has(t2.outbox, "Creta"), `calls=${t2.stockCalls} out=${t2.outbox}`);
+    check("[G-5] nao repete modelo/tipo ja informado nem usa recovery", !has(t2.outbox, "Qual modelo ou tipo") && (t2.src === "brain_retry" || t2.src === "brain_final"), `src=${t2.src} out=${t2.outbox}`);
+    check("[G-6] ato final e search_stock", t2.primaryIntent === "search_stock", `intent=${t2.primaryIntent}`);
+  }
+
   console.log(`\n== F2.41: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n - " + fails.join("\n - ")); process.exit(1); }
 }
