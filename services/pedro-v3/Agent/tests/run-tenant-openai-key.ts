@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   check("BYOK_GRANDFATHER_CUTOFF = 2026-06-16T03:00:00Z (igual v2)", BYOK_GRANDFATHER_CUTOFF === Date.parse("2026-06-16T03:00:00Z"));
   const serverSrc = readFileSync(new URL("../src/runtime/server.ts", import.meta.url), "utf8");
   check("servico nao exige OPENAI_API_KEY global", !/OPENAI_API_KEY/.test(serverSrc), "server.ts ainda cita OPENAI_API_KEY");
-  check("servico usa resolveTenantOpenAiSecret (BYOK por tenant)", /resolveTenantOpenAiSecret/.test(serverSrc));
+  check("servico usa resolveTenantAiSecret (BYOK por tenant e provider)", /resolveTenantAiSecret/.test(serverSrc));
 
   // 1. Cliente COM chave propria -> usa a do cliente (e nem consulta a plataforma).
   const rpc1: string[] = [];

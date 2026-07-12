@@ -17,10 +17,12 @@ Variaveis obrigatorias:
 - `PEDRO_V3_BRIDGE_SECRET` com pelo menos 32 caracteres aleatorios
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `PEDRO_V3_OPENAI_MODEL=gpt-4.1-mini`
+- `PEDRO_V3_AI_PROVIDER=openai` ou `deepseek` (default: `openai`)
+- OpenAI: `PEDRO_V3_OPENAI_MODEL=gpt-4.1-mini`
+- DeepSeek: `PEDRO_V3_DEEPSEEK_MODEL=deepseek-chat`
 - `PEDRO_V3_ALLOWED_UAZAPI_HOSTS` com os hosts HTTPS permitidos, separados por virgula
 
-> **NAO** configurar `OPENAI_API_KEY` no EasyPanel. A chave OpenAI e BYOK (F2.6J/K), MESMO comportamento
+> **NAO** configurar chave de modelo no EasyPanel. A credencial e BYOK (F2.6J/K), MESMO comportamento
 > do Pedro v2, resolvida por tenant em cada turno via service-role:
 > 1. chave PROPRIA do cliente (Vault, `get_client_ai_key`);
 > 2. conta GRANDFATHERED (criada ate 2026-06-16T03:00:00Z) sem chave propria usa a chave da PLATAFORMA
@@ -28,8 +30,10 @@ Variaveis obrigatorias:
 >    `platform_openai_api_key` cadastrado no Vault pelo dono;
 > 3. conta NOVA sem chave propria falha fechado (sem chave global, sem mensagem dupla).
 >
-> Nenhuma chave OpenAI vem de env do container. `PEDRO_V3_OPENAI_MODEL` e so o NOME do modelo (default/
-> override), nunca a credencial.
+> Nenhuma chave OpenAI/DeepSeek vem de env do container. As ENVs `PEDRO_V3_*_MODEL` contem somente o
+> NOME do modelo, nunca a credencial. Para trocar o piloto para DeepSeek, a chave `deepseek` precisa estar
+> salva no portal/Vault do tenant e o servico deve usar `PEDRO_V3_AI_PROVIDER=deepseek`. O rollback e voltar
+> essa env para `openai`; engine, prompt, memoria, tools, CRM, handoff e follow-up nao mudam.
 
 Nao habilite o roteamento ativo no webhook antes de o health check estar verde.
 No webhook v2, configure a mesma chave em `PEDRO_V3_BRIDGE_SECRET`, a URL HTTPS do

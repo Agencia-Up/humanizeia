@@ -28,8 +28,9 @@ import type { ModelHttpTransport, ModelHttpRequest, ModelHttpResponse } from "..
 import { FetchModelHttpTransport } from "../src/runtime/fetch-transports.ts";
 import { SupabaseServiceGateway } from "../src/runtime/supabase-service-gateway.ts";
 import { SupabaseReadOnlyDatabase } from "../src/adapters/read/supabase-read-database.ts";
-import { resolveTenantOpenAiSecret } from "../src/adapters/read/tenant-openai-key.ts";
-import { createOpenAiModelFactory, OpenAiRuntimeSecret } from "../src/engine/openai-canary-root.ts";
+import { resolveTenantAiSecret } from "../src/adapters/read/tenant-openai-key.ts";
+import { createOpenAiModelFactory } from "../src/engine/openai-canary-root.ts";
+import { AiRuntimeSecret, resolveAiProviderRuntime, type AiProviderRuntimeConfig, type RuntimeApiSecret } from "../src/runtime/ai-provider.ts";
 import { V2PlaintextApiKeyReader } from "../src/adapters/read/v2-api-key-reader.ts";
 import { V2DatabaseReadGateway, V2DatabaseCredentialProvider } from "../src/adapters/read/supabase-v2-read-adapter.ts";
 import { V2TenantConfigSource } from "../src/adapters/read/tenant-config-source.ts";
@@ -208,9 +209,10 @@ export type RealAssembly = {
   readonly retryTransport: RetryingModelHttpTransport; // Seção 9: retries/backoff do transporte do agente
   readonly judgeRetryTransport: RetryingModelHttpTransport; // idem p/ o judge
   readonly chat: (system: string, user: string) => Promise<string>;
+  readonly aiProvider: AiProviderRuntimeConfig;
   // R13 Inc2/G: exposto p/ o AgentBrain REAL (central-real-harness) materializar a chave no seu próprio transporte
   // contador (prova de chamada + prompt integral do brain), sem re-resolver a chave.
-  readonly openAiSecret: OpenAiRuntimeSecret;
+  readonly openAiSecret: RuntimeApiSecret;
 };
 
 export async function buildRealAssembly(clock: { now(): string }): Promise<RealAssembly> {
@@ -218,6 +220,7 @@ export async function buildRealAssembly(clock: { now(): string }): Promise<RealA
   const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
   const allowedHosts = [hostOf(url)];
   const ref: TenantAgentRef = { tenantId: PILOT_TENANT, agentId: PILOT_AGENT };
+  const aiProvider = resolveAiProviderRuntime(process.env);
 
   const serviceGateway = new SupabaseServiceGateway({ url, serviceRoleKey, allowedHosts, timeoutMs: 20_000, maxResponseBytes: 8 * 1024 * 1024 });
   const readDb = SupabaseReadOnlyDatabase.create({ url, apiKey: serviceRoleKey, allowedHosts, timeoutMs: 15_000, maxResponseBytes: 4 * 1024 * 1024 });
@@ -226,27 +229,40 @@ export async function buildRealAssembly(clock: { now(): string }): Promise<RealA
   //  1) EVAL_OPENAI_API_KEY (env/.env): usa a chave crua (nunca hardcodada nem logada, só a fonte);
   //  2) EVAL_USE_PLATFORM_KEY=1: lê a chave de PLATAFORMA do Vault (get_platform_ai_key) — sem manusear segredo;
   //  3) default: BYOK do tenant (comportamento atual).
-  const evalKeyOverride = process.env.EVAL_OPENAI_API_KEY?.trim();
-  let openAiSecret: OpenAiRuntimeSecret;
+  const evalKeyName = aiProvider.provider === "deepseek" ? "EVAL_DEEPSEEK_API_KEY" : "EVAL_OPENAI_API_KEY";
+  const evalKeyOverride = process.env[evalKeyName]?.trim();
+  let openAiSecret: RuntimeApiSecret;
   let keySource: string;
   if (evalKeyOverride) {
-    openAiSecret = OpenAiRuntimeSecret.fromString(evalKeyOverride);
-    keySource = "EVAL_OPENAI_API_KEY (override do harness)";
+    openAiSecret = AiRuntimeSecret.fromString(aiProvider.provider, evalKeyOverride);
+    keySource = `${evalKeyName} (override do harness)`;
   } else if (process.env.EVAL_USE_PLATFORM_KEY === "1") {
-    const raw = await serviceGateway.rpc<unknown>("get_platform_ai_key", { p_provider: "openai" });
+    const raw = await serviceGateway.rpc<unknown>("get_platform_ai_key", { p_provider: aiProvider.provider });
     const key = typeof raw === "string" ? raw.trim() : "";
     if (!key || /\s/.test(key) || key.length > 512) throw new Error("EVAL_PLATFORM_KEY_INVALID");
-    openAiSecret = OpenAiRuntimeSecret.fromString(key);
-    keySource = "PLATAFORMA via Vault get_platform_ai_key (Pedro v2)";
+    openAiSecret = AiRuntimeSecret.fromString(aiProvider.provider, key);
+    keySource = `PLATAFORMA via Vault get_platform_ai_key (${aiProvider.provider})`;
   } else {
-    openAiSecret = await resolveTenantOpenAiSecret({ gateway: serviceGateway, tenantId: PILOT_TENANT });
-    keySource = "tenant (resolveTenantOpenAiSecret: BYOK->plataforma)";
+    openAiSecret = await resolveTenantAiSecret({ gateway: serviceGateway, tenantId: PILOT_TENANT, provider: aiProvider.provider });
+    keySource = `tenant (resolveTenantAiSecret: ${aiProvider.provider}, BYOK->plataforma)`;
   }
-  console.log(`config chave OpenAI: fonte=${keySource}`);
+  console.log(`config IA: provider=${aiProvider.provider} model=${aiProvider.model} fonte=${keySource}`);
 
   const retryTransport = new RetryingModelHttpTransport(new FetchModelHttpTransport());
   const transport = new CountingModelHttpTransport(retryTransport);
-  const modelFactory = createOpenAiModelFactory({ openAiSecret, modelTransport: transport, modelOptions: { modelOverride: PILOT_MODEL, timeoutMs: 30_000, maxResponseBytes: 2 * 1024 * 1024, maxCompletionTokens: 1_200 } });
+  const modelFactory = createOpenAiModelFactory({
+    openAiSecret,
+    modelTransport: transport,
+    modelOptions: {
+      endpointUrl: aiProvider.endpointUrl,
+      allowedHosts: [...aiProvider.allowedHosts],
+      tokenParameter: aiProvider.tokenParameter,
+      modelOverride: aiProvider.model,
+      timeoutMs: 30_000,
+      maxResponseBytes: 2 * 1024 * 1024,
+      maxCompletionTokens: 1_200,
+    },
+  });
 
   const gateway = new V2DatabaseReadGateway(readDb);
   const loaded = await new V2TenantConfigSource(gateway).load(ref);
@@ -271,15 +287,16 @@ export async function buildRealAssembly(clock: { now(): string }): Promise<RealA
   // retry/backoff: o GATE exige TODAS as chamadas do judge concluídas — um 429 no judge não pode reprovar.
   const judgeTransport = new RetryingModelHttpTransport(new FetchModelHttpTransport());
   const chat = async (system: string, user: string): Promise<string> => openAiSecret.materialize(async (apiKey) => {
-    const res = await judgeTransport.postJson("https://api.openai.com/v1/chat/completions", {
+    const tokenLimit = { [aiProvider.tokenParameter]: 900 };
+    const res = await judgeTransport.postJson(aiProvider.endpointUrl, {
       method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: PILOT_MODEL, temperature: 0, response_format: { type: "json_object" }, max_completion_tokens: 900, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      body: JSON.stringify({ model: aiProvider.model, temperature: 0, response_format: { type: "json_object" }, ...tokenLimit, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
       signal: AbortSignal.timeout(40_000),
     } as never);
     try { return (JSON.parse(res.bodyText)?.choices?.[0]?.message?.content as string) ?? "{}"; } catch { return "{}"; }
   });
 
-  return { ref, runtimeConfig, portalPrompt: runtimeConfig.promptText, promptSha: transport.promptSha, llm, runQuery, contextPreparer, sdrPolicy, transport, retryTransport, judgeRetryTransport: judgeTransport, chat, openAiSecret };
+  return { ref, runtimeConfig, portalPrompt: runtimeConfig.promptText, promptSha: transport.promptSha, llm, runQuery, contextPreparer, sdrPolicy, transport, retryTransport, judgeRetryTransport: judgeTransport, chat, openAiSecret, aiProvider };
 }
 
 // ── Sanitização (nunca vaza chave/prompt/telefone/CPF/dado pessoal) ──────────

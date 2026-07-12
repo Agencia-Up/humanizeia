@@ -1,6 +1,7 @@
 import type { V3DatabaseGateway } from "../../domain/database-gateway.ts";
 import type { JsonValue } from "../../domain/types.ts";
 import { OpenAiRuntimeSecret } from "../../engine/openai-canary-root.ts";
+import { AiRuntimeSecret, type PedroAiProvider } from "../../runtime/ai-provider.ts";
 
 // Porta minima: `rpc` (client/platform key via Vault) + `selectOne` (profiles.created_at p/ grandfather).
 export type TenantSecretGateway = Pick<V3DatabaseGateway, "rpc" | "selectOne">;
@@ -49,10 +50,11 @@ async function isGrandfathered(gateway: TenantSecretGateway, tenantId: string): 
 //   3. sem propria + conta NOVA -> fail-closed.
 // Seguranca: nenhuma chave vem de env do container; a chave volta SO embrulhada em OpenAiRuntimeSecret
 // (opaca; toJSON nao expoe; liberada so via materialize no header). Erros sanitizados, sem vazar segredo.
-export async function resolveTenantOpenAiSecret(deps: {
+async function resolveTenantKey(deps: {
   readonly gateway: TenantSecretGateway;
   readonly tenantId: string;
-}): Promise<OpenAiRuntimeSecret> {
+  readonly provider: PedroAiProvider;
+}): Promise<string> {
   const tenantId = typeof deps.tenantId === "string" ? deps.tenantId.trim() : "";
   if (tenantId.length === 0) throw new TenantOpenAiKeyError("TENANT_INVALID");
 
@@ -61,13 +63,13 @@ export async function resolveTenantOpenAiSecret(deps: {
   try {
     clientRaw = await deps.gateway.rpc<JsonValue>(GET_CLIENT_AI_KEY_RPC, {
       p_user_id: tenantId,
-      p_provider: "openai",
+      p_provider: deps.provider,
     });
   } catch {
     clientRaw = "";
   }
   const clientKey = validKey(clientRaw);
-  if (clientKey) return OpenAiRuntimeSecret.fromString(clientKey);
+  if (clientKey) return clientKey;
 
   // 2. Sem chave propria: a chave da plataforma SO vale pra conta grandfathered.
   if (!(await isGrandfathered(deps.gateway, tenantId))) {
@@ -75,14 +77,29 @@ export async function resolveTenantOpenAiSecret(deps: {
   }
   let platformRaw: JsonValue;
   try {
-    platformRaw = await deps.gateway.rpc<JsonValue>(GET_PLATFORM_AI_KEY_RPC, { p_provider: "openai" });
+    platformRaw = await deps.gateway.rpc<JsonValue>(GET_PLATFORM_AI_KEY_RPC, { p_provider: deps.provider });
   } catch {
     // a plataforma e a unica fonte restante; erro aqui = nao da pra resolver -> sanitizado, sem fallback inseguro
     throw new TenantOpenAiKeyError("OPENAI_KEY_LOOKUP_FAILED");
   }
   const platformKey = validKey(platformRaw);
-  if (platformKey) return OpenAiRuntimeSecret.fromString(platformKey);
+  if (platformKey) return platformKey;
 
   // grandfathered, mas a plataforma nao tem chave configurada no Vault -> fail-closed
   throw new TenantOpenAiKeyError("OPENAI_KEY_NOT_FOUND");
+}
+
+export async function resolveTenantOpenAiSecret(deps: {
+  readonly gateway: TenantSecretGateway;
+  readonly tenantId: string;
+}): Promise<OpenAiRuntimeSecret> {
+  return OpenAiRuntimeSecret.fromString(await resolveTenantKey({ ...deps, provider: "openai" }));
+}
+
+export async function resolveTenantAiSecret(deps: {
+  readonly gateway: TenantSecretGateway;
+  readonly tenantId: string;
+  readonly provider: PedroAiProvider;
+}): Promise<AiRuntimeSecret> {
+  return AiRuntimeSecret.fromString(deps.provider, await resolveTenantKey(deps));
 }

@@ -5,6 +5,7 @@ import type {
   StructuredConversationModel,
 } from "../../domain/conversation-model.ts";
 import type { ModelHttpRequest, ModelHttpResponse, ModelHttpTransport } from "./structured-json-model.ts";
+import type { CompletionTokenParameter } from "../../runtime/ai-provider.ts";
 
 export type OpenAiChatOperation = "interpret" | "propose" | "compose";
 
@@ -17,6 +18,7 @@ export type OpenAiChatModelConfig = {
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
   readonly maxCompletionTokens?: number;
+  readonly tokenParameter?: CompletionTokenParameter;
 };
 
 export class OpenAiChatModelError extends Error {
@@ -60,7 +62,7 @@ function parseEndpoint(endpointUrl: string, allowedHosts: readonly string[]): UR
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
     throw new OpenAiChatModelError("OPENAI_ENDPOINT_INVALID");
   }
-  if (url.pathname !== "/v1/chat/completions") {
+  if (url.pathname !== "/v1/chat/completions" && url.pathname !== "/chat/completions") {
     throw new OpenAiChatModelError("OPENAI_ENDPOINT_INVALID");
   }
   const hosts = new Set(allowedHosts.map((host) => host.toLowerCase()));
@@ -212,6 +214,7 @@ export class OpenAiChatCompletionsModel implements StructuredConversationModel {
   readonly #apiKey: string;
   readonly #temperature: number | null | undefined;
   readonly #transport: ModelHttpTransport;
+  readonly #tokenParameter: CompletionTokenParameter;
 
   constructor(config: OpenAiChatModelConfig, transport: ModelHttpTransport) {
     if (typeof config.apiKey !== "string" || config.apiKey.trim() === "") {
@@ -239,6 +242,7 @@ export class OpenAiChatCompletionsModel implements StructuredConversationModel {
     this.#apiKey = config.apiKey;
     this.#temperature = config.temperature;
     this.#transport = transport;
+    this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
   }
 
   toJSON(): Record<string, unknown> {
@@ -269,7 +273,7 @@ export class OpenAiChatCompletionsModel implements StructuredConversationModel {
     const body = JSON.stringify({
       model: this.model,
       temperature: resolveTemperature(this.#temperature, request.binding.temperature),
-      max_completion_tokens: this.maxCompletionTokens,
+      [this.#tokenParameter]: this.maxCompletionTokens,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemMessageFor(operation, request.binding.systemPrompt) },

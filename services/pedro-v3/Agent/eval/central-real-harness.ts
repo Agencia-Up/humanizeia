@@ -7,7 +7,7 @@
 // Brain (planner) temp 0.2 + compose temp 0.3: o cérebro decide o conteúdo, o compose só REDIGE aterrado — menos
 // alucinação -> menos terminal_safe. Cada um com seu transporte contador (prova de prompt integral por papel).
 // ============================================================================
-import { buildRealAssembly, CountingModelHttpTransport, RetryingModelHttpTransport, sanitize, PILOT_MODEL, PILOT_TENANT, PILOT_AGENT, type RealAssembly } from "./real-harness.ts";
+import { buildRealAssembly, CountingModelHttpTransport, RetryingModelHttpTransport, sanitize, PILOT_TENANT, PILOT_AGENT, type RealAssembly } from "./real-harness.ts";
 import { FetchModelHttpTransport } from "../src/runtime/fetch-transports.ts";
 import { OpenAiAgentBrain } from "../src/adapters/llm/openai-agent-brain.ts";
 import { PromptBoundConversationAdapter } from "../src/adapters/llm/prompt-bound-conversation.ts";
@@ -45,8 +45,11 @@ export function buildCentralStack(assembly: RealAssembly): CentralStack {
   const brainTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
   brainTransport.fullPrompt = assembly.runtimeConfig.promptText;
   const brain = new OpenAiAgentBrain(assembly.openAiSecret, brainTransport, assembly.runtimeConfig.promptText, {
-    model: PILOT_MODEL,
-    retryModel: process.env.PEDRO_V3_OPENAI_RETRY_MODEL?.trim() || "gpt-4.1",
+    endpointUrl: assembly.aiProvider.endpointUrl,
+    allowedHosts: [...assembly.aiProvider.allowedHosts],
+    tokenParameter: assembly.aiProvider.tokenParameter,
+    model: assembly.aiProvider.model,
+    retryModel: assembly.aiProvider.retryModel,
     temperature: 0.1, maxCompletionTokens: 1200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
@@ -54,7 +57,16 @@ export function buildCentralStack(assembly: RealAssembly): CentralStack {
   composeTransport.fullPrompt = assembly.runtimeConfig.promptText;
   const composeModel = createOpenAiModelFactory({
     openAiSecret: assembly.openAiSecret, modelTransport: composeTransport,
-    modelOptions: { modelOverride: PILOT_MODEL, temperatureOverride: 0.3, timeoutMs: 30_000, maxResponseBytes: 2 * 1024 * 1024, maxCompletionTokens: 1_200 },
+    modelOptions: {
+      endpointUrl: assembly.aiProvider.endpointUrl,
+      allowedHosts: [...assembly.aiProvider.allowedHosts],
+      tokenParameter: assembly.aiProvider.tokenParameter,
+      modelOverride: assembly.aiProvider.model,
+      temperatureOverride: 0.3,
+      timeoutMs: 30_000,
+      maxResponseBytes: 2 * 1024 * 1024,
+      maxCompletionTokens: 1_200,
+    },
   })(assembly.runtimeConfig);
   const composeLlm = new PromptBoundConversationAdapter(assembly.runtimeConfig, composeModel);
   return { brain, brainTransport, composeLlm, composeTransport };

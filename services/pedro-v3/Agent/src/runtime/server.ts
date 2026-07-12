@@ -14,7 +14,7 @@ import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receip
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
 import { OpenAiAgentBrain } from "../adapters/llm/openai-agent-brain.ts";
 import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
-import { resolveTenantOpenAiSecret } from "../adapters/read/tenant-openai-key.ts";
+import { resolveTenantAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
 import { DebouncePoller } from "./debounce-poller.ts";
 import { PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../domain/pilot-scope.ts";
@@ -23,6 +23,7 @@ import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
 import { evaluateFollowupDue } from "../engine/followup-policy.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
+import { resolveAiProviderRuntime, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
 import {
   PilotHttpApp,
@@ -88,7 +89,7 @@ function supabaseHost(url: string): string {
 class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #supabaseUrl: string;
   readonly #serviceRoleKey: string;
-  readonly #modelOverride: string;
+  readonly #aiProvider: AiProviderRuntimeConfig;
   readonly #allowedUazapiHosts: readonly string[];
   readonly #clock = new RealClock();
   readonly #debounce: DebounceConfig;
@@ -106,7 +107,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     this.#supabaseUrl = requiredEnv("SUPABASE_URL");
     this.#serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     // F2.6J: a chave OpenAI NAO vem de env global. E resolvida por tenant (BYOK) via Vault/RPC.
-    this.#modelOverride = process.env.PEDRO_V3_OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+    this.#aiProvider = resolveAiProviderRuntime(process.env);
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
     // F2.7.6: janela de debounce + intervalo do poller (defaults 6000/12000/2000ms).
     this.#debounce = resolveDebounceConfig(process.env);
@@ -231,14 +232,17 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       timeoutMs: 15_000,
       maxResponseBytes: 4 * 1024 * 1024,
     });
-    const openAiSecret = await resolveTenantOpenAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID });
+    const aiSecret = await resolveTenantAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID, provider: this.#aiProvider.provider });
     const brainMode = resolveBrainMode();
     // R13-D/4: AgentBrain REAL (OpenAI) só é fabricado quando o modo pede. Planner em temp baixa (0.2). Segredo por
     // tenant (mesmo openAiSecret do compose); prompt integral vai no system do brain (prova por SHA no adapter).
     const agentBrainFactory = brainMode !== "off"
-      ? (config: TenantRuntimeConfig) => new OpenAiAgentBrain(openAiSecret, new FetchModelHttpTransport(), config.promptText, {
-          model: this.#modelOverride,
-          retryModel: process.env.PEDRO_V3_OPENAI_RETRY_MODEL?.trim() || "gpt-4.1",
+      ? (config: TenantRuntimeConfig) => new OpenAiAgentBrain(aiSecret, new FetchModelHttpTransport(), config.promptText, {
+          model: this.#aiProvider.model,
+          retryModel: this.#aiProvider.retryModel,
+          endpointUrl: this.#aiProvider.endpointUrl,
+          allowedHosts: this.#aiProvider.allowedHosts,
+          tokenParameter: this.#aiProvider.tokenParameter,
           temperature: 0.2, maxCompletionTokens: 1_200, timeoutMs: 45_000,
           allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
           handoffEnabled: this.#handoffEnabled,
@@ -255,10 +259,13 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       decryptor: new V2PlaintextApiKeyReader(),
       clock: this.#clock,
       modelFactory: createOpenAiModelFactory({
-        openAiSecret,
+        openAiSecret: aiSecret,
         modelTransport: new FetchModelHttpTransport(),
         modelOptions: {
-          modelOverride: this.#modelOverride,
+          endpointUrl: this.#aiProvider.endpointUrl,
+          allowedHosts: this.#aiProvider.allowedHosts,
+          modelOverride: this.#aiProvider.model,
+          tokenParameter: this.#aiProvider.tokenParameter,
           timeoutMs: 30_000,
           maxResponseBytes: 2 * 1024 * 1024,
           maxCompletionTokens: 1_200,
@@ -411,6 +418,8 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RuntimeConfi
 const runtime = new ProductionPilotRunner();
 const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime, () => ({
   configuredBrainMode: resolveBrainMode(),
+  aiProvider: resolveAiProviderRuntime(process.env).provider,
+  aiModel: resolveAiProviderRuntime(process.env).model,
   crmWrite: process.env.PEDRO_V3_CRM_WRITE?.trim() === "active",
   handoff: process.env.PEDRO_V3_HANDOFF?.trim() === "active",
   followup: process.env.PEDRO_V3_FOLLOWUP?.trim() === "active",

@@ -1,6 +1,7 @@
 import type { ModelHttpTransport } from "../adapters/llm/structured-json-model.ts";
 import { OpenAiChatCompletionsModel, type OpenAiChatModelConfig } from "../adapters/llm/openai-chat-model.ts";
 import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
+import type { RuntimeApiSecret } from "../runtime/ai-provider.ts";
 import {
   CanaryShadowRoot,
   type CanaryReadDeps,
@@ -54,7 +55,7 @@ export type OpenAiCanaryDeps = Omit<CanaryReadDeps, "model" | "modelFactory"> & 
 };
 
 export function createOpenAiModelFactory(deps: {
-  readonly openAiSecret: OpenAiRuntimeSecret;
+  readonly openAiSecret: RuntimeApiSecret;
   readonly modelTransport: ModelHttpTransport;
   readonly modelOptions?: OpenAiCanaryModelOptions;
 }): (config: TenantRuntimeConfig) => OpenAiChatCompletionsModel {

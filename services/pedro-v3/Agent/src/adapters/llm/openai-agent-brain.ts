@@ -9,7 +9,7 @@
 // ============================================================================
 import { createHash } from "node:crypto";
 import type { ModelHttpTransport, ModelHttpRequest } from "./structured-json-model.ts";
-import type { OpenAiRuntimeSecret } from "../../engine/openai-canary-root.ts";
+import type { CompletionTokenParameter, RuntimeApiSecret } from "../../runtime/ai-provider.ts";
 import type {
   AgentBrainPort, AgentBrainStep, AgentBrainDecision, AgentToolObservation, CentralQueryCall,
   DecisionWorkingMemoryMutation, TurnFrame, BusinessInfoTopic,
@@ -30,6 +30,7 @@ export type OpenAiAgentBrainConfig = {
   readonly allowedTools?: readonly string[];
   readonly handoffEnabled?: boolean;
   readonly followupEnabled?: boolean;
+  readonly tokenParameter?: CompletionTokenParameter;
 };
 
 export class OpenAiAgentBrainError extends Error {
@@ -363,7 +364,7 @@ function str(v: unknown): string | null { return typeof v === "string" && v.trim
 function num(v: unknown): number | null { return typeof v === "number" && Number.isFinite(v) ? v : null; }
 
 export class OpenAiAgentBrain implements AgentBrainPort {
-  readonly #secret: OpenAiRuntimeSecret;
+  readonly #secret: RuntimeApiSecret;
   readonly #transport: ModelHttpTransport;
   readonly #portalPrompt: string;
   readonly #system: string;
@@ -374,9 +375,10 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #maxTokens: number;
   readonly #timeoutMs: number;
   readonly #allowedTools: ReadonlySet<string>;
+  readonly #tokenParameter: CompletionTokenParameter;
   readonly promptSha256: string;
 
-  constructor(secret: OpenAiRuntimeSecret, transport: ModelHttpTransport, portalPrompt: string, config: OpenAiAgentBrainConfig) {
+  constructor(secret: RuntimeApiSecret, transport: ModelHttpTransport, portalPrompt: string, config: OpenAiAgentBrainConfig) {
     if (typeof config.model !== "string" || config.model.trim() === "") throw new OpenAiAgentBrainError("BRAIN_MODEL_MISSING");
     const url = new URL(config.endpointUrl ?? DEFAULT_ENDPOINT);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new OpenAiAgentBrainError("BRAIN_ENDPOINT_INVALID");
@@ -393,6 +395,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#maxTokens = config.maxCompletionTokens ?? 1200;
     this.#timeoutMs = config.timeoutMs ?? 30_000;
     this.#allowedTools = new Set(config.allowedTools ?? ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read"]);
+    this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
     this.promptSha256 = createHash("sha256").update(portalPrompt, "utf8").digest("hex");
   }
 
@@ -415,11 +418,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     let bodyText: string;
     try {
       const hasPolicyRetry = observations.some((o) => !o.ok && o.tool === "response");
+      const tokenLimit = { [this.#tokenParameter]: this.#maxTokens };
       const req: ModelHttpRequest = {
         method: "POST",
         headers: { "content-type": "application/json" }, // authorization é injetado no materialize (segredo fora do objeto serializável)
         body: JSON.stringify({
-          model: hasPolicyRetry ? this.#retryModel : this.#model, temperature: this.#temperature, max_completion_tokens: this.#maxTokens,
+          model: hasPolicyRetry ? this.#retryModel : this.#model, temperature: this.#temperature, ...tokenLimit,
           response_format: { type: "json_object" },
           messages: [{ role: "system", content: this.#system }, { role: "user", content: user }],
         }),
