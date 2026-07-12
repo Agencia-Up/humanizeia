@@ -208,7 +208,7 @@ async function main(): Promise<void> {
     const t2 = await c.t("tem SUV automático?", searchSuv);
     check("[R-T2] lista de SUVs renderizada", t2.sentTexts.some((x) => has(x, "Aircross") && has(x, "Renegade")), t2.sentTexts.join("|").slice(0, 120));
 
-    const t3 = await c.t("Gostei do Aircross", () => finU([txt("Ótima escolha! Quer ver as fotos dele?")], U("other", "Gostei do Aircross")));
+    const t3 = await c.t("Gostei do Aircross", () => finU([txt("Ótima escolha! Quer ver as fotos dele?")], U("select_vehicle", "Gostei do Aircross", "select")));
     check("[R-T3] seleção canônica persistiu (token da última oferta)", t3.state?.vehicleContext.selected?.key === "rm:aircross" && has(t3.state?.vehicleContext.selected?.label ?? "", "C3 Aircross"), JSON.stringify(t3.state?.vehicleContext.selected));
 
     // T4 "Sim": o cérebro tenta EVIDENCE HERDADA -> deny UNDERSTANDING_STALE -> corrige no retry.
@@ -368,8 +368,8 @@ async function main(): Promise<void> {
     const c = convWired(db);
     await c.t("tem SUV automático?", searchSuv);
     const tD = await c.t("Gostei do Aircross", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /DUAS ações/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
-      ? finU([txt("Ótima escolha! Quer que eu te envie as fotos dele?")], U("other", "Gostei do Aircross"))
-      : finU([txt("Ótima escolha! Quer ver as fotos dele ou prefere saber as condições?")], U("other", "Gostei do Aircross")));
+      ? finU([txt("Ótima escolha! Quer que eu te envie as fotos dele?")], U("select_vehicle", "Gostei do Aircross", "select"))
+      : finU([txt("Ótima escolha! Quer ver as fotos dele ou prefere saber as condições?")], U("select_vehicle", "Gostei do Aircross", "select")));
     check("[C2-D1] pergunta dupla REJEITADA e reescrita com UMA ação", tD.sentTexts.length > 0 && tD.sentTexts.every((x) => !/fotos[^?]*ou[^?]*condi/i.test(x)) && tD.sentTexts.some((x) => has(x, "fotos dele?")), tD.sentTexts.join("|").slice(0, 100));
   }
   // ── [C2-H] promessa de consultor SEM efeito -> deny -> reescrita ──
@@ -379,7 +379,7 @@ async function main(): Promise<void> {
     // MISSÃO PII (invariantes 9/10): o deny de promessa-sem-efeito passou a guiar TRANSPARÊNCIA honesta
     // ("transferência NÃO pode ser executada… PROIBIDO condicionar a CPF") — o gatilho do script acompanha
     // o texto novo (comportamento protegido é o MESMO: deny dispara e a LLM reescreve sem promessa falsa).
-    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /(transfer[êe]ncia n[ãa]o pode ser executada|ENCAMINHAR para consultor)/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
+    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /(transfer[êe]ncia n[ãa]o pode ser executada|ENCAMINHAR para consultor|prop[oô]s transferência sem o cliente pedir)/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
       ? finU([txt("Perfeito! Vamos avançar: quer agendar uma visita para ver o carro de perto?")], U("other", "quero fechar negócio"))
       : finU([txt("Perfeito! Vou chamar nosso consultor agora para finalizar com você.")], U("other", "quero fechar negócio")));
     check("[C2-H1] promessa de consultor sem efeito REJEITADA e reescrita conduzindo", tH.sentTexts.length > 0 && !tH.sentTexts.some((x) => has(x, "consultor")) && tH.sentTexts.some((x) => has(x, "visita")), tH.sentTexts.join("|").slice(0, 100));

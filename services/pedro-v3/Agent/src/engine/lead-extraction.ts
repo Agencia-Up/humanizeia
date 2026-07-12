@@ -575,6 +575,7 @@ export function extractLeadSlots(args: {
   readonly interpretation: TurnInterpretation | null | undefined;
   readonly claimExtractor: ClaimExtractor;
   readonly turnId: Id;
+  readonly allowVehicleSelection?: boolean;
 }): DecisionMutation[] {
   const { leadMessage, state, interpretation, claimExtractor, turnId } = args;
   const muts: DecisionMutation[] = [];
@@ -780,9 +781,13 @@ export function extractLeadSlots(args: {
   const refersVehicleOrMedia = /\b(?:primeir|segund|terceir|quart|quint|ultim)[oa]\b|\bo\s+\d+\b|\bop[cç][aã]o\b|\bfotos?\b|\bimagens?\b|\bv[ií]deos?\b/.test(norm);
   const visitIntentPresent = VISIT_INTENT_RX.test(norm);
   const visitRefusal = VISIT_REFUSAL_RX.test(norm);
+  // A weekday can share spelling with a feminine ordinal ("segunda"). It is
+  // only a vehicle reference when the hardened ordinal parser accepts it.
+  const vehicleOrMediaConflict = refersVehicleOrMedia
+    && !(visitIntentPresent && parseOrdinal(leadMessage) == null);
   // Intenção POSITIVA: cita o ato de visitar E não é recusa E não é seleção/mídia. "quero visitar mais tarde" -> true
   // ("mais tarde" é período vago, não recusa; só não vira diaHorario concreto — ver extractDayPeriod).
-  const positiveVisit = visitIntentPresent && !visitRefusal && !refersVehicleOrMedia;
+  const positiveVisit = visitIntentPresent && !visitRefusal && !vehicleOrMediaConflict;
   // ADIAMENTO só conta quando NÃO há intenção positiva nem recusa (senão "quero visitar mais tarde" cairia aqui).
   const postpone = !positiveVisit && !visitRefusal && VISIT_POSTPONE_RX.test(norm);
   if (visitRefusal || positiveVisit || expected === "interesseVisita" || visitIntentPresent) {
@@ -790,7 +795,7 @@ export function extractLeadSlots(args: {
     const value = visitRefusal ? false
       : positiveVisit ? true
       : postpone ? null
-      : refersVehicleOrMedia ? null
+      : vehicleOrMediaConflict ? null
       : expected === "interesseVisita" ? parseBooleanAnswer(leadMessage)
       : null;
     if (value != null) add({ op: "set_slot", slot: "interesseVisita", value, confidence: 0.9, sourceTurnId: turnId }, "interesseVisita");
@@ -802,8 +807,10 @@ export function extractLeadSlots(args: {
     if (answer) add({ op: "set_slot", slot: "diaHorario", value: answer, confidence: 0.82, sourceTurnId: turnId }, "diaHorario");
   }
 
-  const selectedVehicle = resolveSelectedVehicle(leadMessage, state, claimExtractor);
-  if (selectedVehicle) muts.push({ op: "select_vehicle_focus", vehicle: selectedVehicle, sourceTurnId: turnId });
+  if (args.allowVehicleSelection !== false) {
+    const selectedVehicle = resolveSelectedVehicle(leadMessage, state, claimExtractor);
+    if (selectedVehicle) muts.push({ op: "select_vehicle_focus", vehicle: selectedVehicle, sourceTurnId: turnId });
+  }
 
   // item F-6: só resolve o currentObjective quando o slot foi CAPTURADO **E** o answerKind é compatível com
   // expectedAnswerKinds (interseção real). Resposta incompatível não resolve nem altera o objetivo.

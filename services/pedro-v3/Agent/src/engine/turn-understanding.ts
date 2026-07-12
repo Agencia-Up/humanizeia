@@ -29,10 +29,55 @@ export type ValidatedUnderstanding = {
   readonly trusted: boolean;                                   // há ≥1 evidência válida
   readonly fromBrain: boolean;                                 // veio do CÉREBRO (não do fallback) -> pode autorizar ação
   readonly validEvidence: readonly TurnUnderstandingEvidence[];
+  readonly semanticIssues?: readonly string[];
 };
+
+const VISIT_ACT_RX = /\b(?:visit\w*|agend\w*|marc\w*\s+(?:uma\s+)?visita|presencial\w*)\b/;
+const HUMAN_ACT_RX = /\b(?:quero|preciso|gostaria)\b.{0,35}\b(?:falar|atendente|vendedor|consultor|humano|pessoa)\b|\b(?:me\s+)?(?:transfira|transfere|transferir|encaminhe|encaminha|chame|chama)\b/;
+const SELECTION_ACT_RX = /\b(?:gost\w*|escolh\w*|fico\s+com)\b|\bquero\s+(?:esse|essa|este|esta)\b|\b(?:item|opcao|numero|posicao)\s*[1-9]\b/;
+
+function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: readonly TurnUnderstandingEvidence[]): string[] {
+  const issues: string[] = [];
+  const norm = normalizeText(block);
+  const explicitActs = new Set<PrimaryIntent>();
+  if (VISIT_ACT_RX.test(norm)) explicitActs.add("visit");
+  if (HUMAN_ACT_RX.test(norm)) explicitActs.add("request_human");
+  if (leadRequestsPhoto(block)) explicitActs.add("request_photos");
+  if (institutionalTopicsRequested(block).length > 0 || mentionsContact(block)) explicitActs.add("institutional");
+  if (SELECTION_ACT_RX.test(norm) || parseOrdinal(block) != null) explicitActs.add("select_vehicle");
+
+  if (explicitActs.size > 0 && !explicitActs.has(u.primaryIntent)) {
+    issues.push(`o bloco atual declara ${[...explicitActs].join("/")}, mas primaryIntent=${u.primaryIntent}`);
+  }
+  if (u.subject === "selected_vehicle" && u.subjectSource === "current_turn") {
+    issues.push("selected_vehicle vem da memoria e nao pode ter subjectSource=current_turn");
+  }
+  if (u.primaryIntent === "select_vehicle" || u.requestedCapabilities.includes("select")) {
+    const selectEvidence = normalizeText(validEvidence.filter((e) => e.capability === "select").map((e) => e.quote).join("\n"));
+    const coherent = selectEvidence.length > 0 && (SELECTION_ACT_RX.test(selectEvidence) || parseOrdinal(selectEvidence) != null);
+    if (!coherent) issues.push("select/select_vehicle sem evidencia de escolha de veiculo no bloco atual");
+  }
+  if (u.primaryIntent === "visit") {
+    const visitEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
+    if (!VISIT_ACT_RX.test(visitEvidence)) issues.push("visit sem evidencia de visita/agendamento no bloco atual");
+  }
+  if (u.primaryIntent === "request_human") {
+    const humanEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
+    if (!HUMAN_ACT_RX.test(humanEvidence)) issues.push("request_human sem pedido de humano no bloco atual");
+  }
+  return issues;
+}
+
 export function validateTurnUnderstanding(u: TurnUnderstanding, block: string, fromBrain: boolean): ValidatedUnderstanding {
   const validEvidence = (u.evidence ?? []).filter((e) => e != null && typeof e.quote === "string" && quoteInBlock(block, e.quote));
-  return { understanding: u, trusted: validEvidence.length > 0, fromBrain, validEvidence };
+  const semanticIssues = semanticIssuesFor(u, block, validEvidence);
+  return { understanding: u, trusted: validEvidence.length > 0 && semanticIssues.length === 0, fromBrain, validEvidence, semanticIssues };
+}
+
+export function understandingAuthorityFeedback(v: ValidatedUnderstanding): string | null {
+  const issues = v.semanticIssues ?? [];
+  if (issues.length === 0) return null;
+  return `CONFLITO DE AUTORIDADE DO TURNO ATUAL: ${issues.join("; ")}. Releia SOMENTE o bloco atual; use memoria apenas como contexto e reemita understanding+decisao coerentes. Nao selecione veiculo nem retome foto/funil antigo quando o bloco atual declara outra acao.`;
 }
 // P1: capability STATEFUL exige evidência DA PRÓPRIA capability (não geral). "oi" ou evidência de outra capability não
 // autoriza send_photos.
@@ -88,9 +133,15 @@ export function isPhotoRecall(v: ValidatedUnderstanding | null): boolean {
 //    nunca regex comercial concorrente. Vence o funil: não exige CPF/nascimento/qualificação. ─────────────────
 export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
   if (!v || !v.fromBrain || !v.trusted) return false;
-  const u = v.understanding;
-  return u.primaryIntent === "request_human"
-    || (u.requestedCapabilities.includes("handoff") && capabilityHasOwnEvidence(v, "handoff"));
+  // An autonomous qualified handoff is not automatically evidence that the
+  // LEAD requested a human. A handoff capability counts here only when its own
+  // current-block evidence actually contains an explicit human request.
+  if (v.understanding.primaryIntent === "request_human") return true;
+  const handoffEvidence = normalizeText(v.validEvidence
+    .filter((e) => e.capability === "handoff")
+    .map((e) => e.quote)
+    .join("\n"));
+  return v.understanding.requestedCapabilities.includes("handoff") && HUMAN_ACT_RX.test(handoffEvidence);
 }
 
 export function commercialToolAllowedForHumanRequest(v: ValidatedUnderstanding | null, tool: string): boolean {

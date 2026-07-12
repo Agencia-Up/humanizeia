@@ -14,7 +14,12 @@ const ORDINALS: Record<string, number> = {
 export function parseOrdinal(msg: string): { value: number; strong: boolean } | null {
   const norm = normalizeText(msg);
   for (const [word, n] of Object.entries(ORDINALS)) {
-    if (new RegExp(`\\b${word}\\b`).test(norm)) return { value: n, strong: true };
+    const match = new RegExp(`\\b${word}\\b`).exec(norm);
+    if (!match) continue;
+    const temporalUse = /\b(?:pra|para|na|nesta|ate)\s+segunda(?:-feira)?\b(?!\s+(?:opcao|alternativa|lista|unidade|versao|vaga))/.test(norm)
+      || /\bsegunda-feira\b/.test(norm);
+    if (word === "segunda" && temporalUse) continue;
+    return { value: n, strong: true };
   }
   const strong = /\b(?:item|opcao|numero|posicao|#)\s*([1-9])\b(?!\s*(?:fotos?|imagens?))/.exec(norm);
   if (strong) return { value: Number(strong[1]), strong: true };

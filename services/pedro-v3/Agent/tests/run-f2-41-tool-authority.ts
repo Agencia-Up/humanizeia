@@ -20,6 +20,7 @@ import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding, PrimaryInte
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
+import { parseOrdinal } from "../src/engine/ordinal.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -73,7 +74,7 @@ const searchCorolla: BrainResponder = (_f, obs: readonly AgentToolObservation[])
 };
 
 type Slots = ConversationState["slots"];
-type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; slots: Slots | null; pf: string[] };
+type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; slots: Slots | null; selectedKey: string | null; pf: string[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, responder: BrainResponder): Promise<Cap> {
   executed.length = 0; brain.setResponder(responder);
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
@@ -97,6 +98,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     }
   }
   const outbox = (await persistence.listOutbox(convId)).filter((o) => o.turnId === turnId) as unknown as { kind: string; payload?: { text?: string } }[];
+  const persistedState = persistence.load(convId)?.state ?? null;
   return {
     outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "", committed: r.status === "committed",
     stockCalls: executed.filter((e) => e.tool === "stock_search").length,
@@ -104,7 +106,8 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     terminalSafe: r.status === "committed" ? r.terminalSafe : false,
     primaryIntent: r.status === "committed" ? r.understanding.primaryIntent : null,
     src: r.status === "committed" ? (r.responseSource ?? null) : null,
-    slots: persistence.load(convId)?.state.slots ?? null,
+    slots: persistedState?.slots ?? null,
+    selectedKey: persistedState?.vehicleContext.selected?.key ?? null,
     pf: r.status === "committed" ? r.policyFeedback.map((x) => x.slice(0, 120)) : [],
   };
 }
@@ -182,6 +185,44 @@ async function main(): Promise<void> {
     check("[E-1] 'outras opções' numa CONTESTAÇÃO não força busca (0 stock_search exec+obs)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
     check("[E-2] a LLM conversa (brain_*), sem pergunta de escopo determinística nem re-lista", (t2.src === "brain_final" || t2.src === "brain_retry") && !has(t2.outbox, "Qual modelo ou tipo") && !has(t2.outbox, "Encontrei estas opções"), `src=${t2.src} outbox="${t2.outbox}"`);
     check("[E-3] primaryIntent = conversation_repair", t2.primaryIntent === "conversation_repair", `intent=${t2.primaryIntent}`);
+  }
+
+  // F) INCIDENTE REAL: "pra segunda" e dia de visita, nunca ordinal da lista.
+  // A primeira tentativa do brain replica a falha de producao (select/Duster
+  // usando "quero agendar visita" como evidence). O contrato de autoridade
+  // deve rejeitar essa leitura antes de texto/mutacao, e a mesma LLM reautora.
+  {
+    check("[F-0] parser ordinal nao transforma 'pra segunda' em item 2", parseOrdinal("pra segunda") == null);
+    const c = conv();
+    await c.t("tem corolla?", searchCorolla);
+    const selectedU: TurnUnderstanding = {
+      ...U("select_vehicle"), requestedCapabilities: ["select"], subject: "ordinal_from_last_offer",
+      subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "primeiro" }],
+    };
+    await c.t("gostei do primeiro", () => finU([txt("Otima escolha! Quer que eu te passe as condicoes?")], "selected", selectedU));
+
+    const visitResponder: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
+      const conflict = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "UNDERSTANDING_CONFLICT");
+      if (!conflict) {
+        const wrong: TurnUnderstanding = {
+          ...U("other"), requestedCapabilities: ["select"], subject: "selected_vehicle", subjectValue: null,
+          subjectSource: "current_turn", evidence: [{ capability: "select", quote: "quero agendar visita" }],
+        };
+        return finU([txt("Otima escolha! O segundo carro e uma boa opcao. Quer ver as fotos?")], "wrong_stale_selection", wrong);
+      }
+      const visit: TurnUnderstanding = {
+        ...U("visit"), evidence: [{ quote: "quero agendar visita" }], subjectSource: "none",
+      };
+      const outputDenied = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "RESPONSE_REJECTED");
+      if (outputDenied) return finU([txt("Perfeito, deixei sua preferencia de visita para segunda registrada.")], "visit_monday_confirmed", visit);
+      return finU([txt("Perfeito, vamos agendar sua visita para segunda. Qual horario fica melhor para voce?")], "visit_monday", visit);
+    };
+    const t3 = await c.t("sei sim\nquero agendar visita\npra segunda", visitResponder);
+    check("[F-1] entendimento incoerente e rejeitado antes da resposta", t3.pf.some((p) => has(p, "CONFLITO DE AUTORIDADE")), JSON.stringify(t3.pf));
+    check("[F-2] LLM reautora como visita e pede o horario faltante, sem recovery", t3.primaryIntent === "visit" && (t3.src === "brain_retry" || t3.src === "brain_final") && has(t3.outbox, "visita") && has(t3.outbox, "segunda") && has(t3.outbox, "horario"), `intent=${t3.primaryIntent} src=${t3.src} out=${t3.outbox}`);
+    check("[F-3] visita e segunda persistem", t3.slots?.interesseVisita.value === true && has(String(t3.slots?.diaHorario.value ?? ""), "segunda"), JSON.stringify({ visita: t3.slots?.interesseVisita, dia: t3.slots?.diaHorario }));
+    check("[F-4] foco antigo nao e trocado pelo item 2", t3.selectedKey === COR15.vehicleKey, `selected=${t3.selectedKey}`);
+    check("[F-5] turno de visita nao chama estoque", t3.stockCalls === 0 && t3.stockObs === 0, `calls=${t3.stockCalls} obs=${t3.stockObs}`);
   }
 
   console.log(`\n== F2.41: ${ok} OK | ${fail} FALHA ==`);

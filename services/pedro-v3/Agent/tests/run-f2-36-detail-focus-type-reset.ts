@@ -95,12 +95,12 @@ const resist: BrainResponder = (f) => final([txt("Certo!")], "reply", {
   evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
 });
 
-const detailU = U("vehicle_detail", {
+const detailU: TurnUnderstanding = { ...U("vehicle_detail", {
   caps: ["vehicle_details"],
   subject: "selected_vehicle",
   subjectValue: "dele",
   evidence: [{ capability: "vehicle_details", quote: "valor dele" }],
-});
+}), subjectSource: "memory" };
 const detailBrain: BrainResponder = (_frame, obs) => {
   const detail = obs.find((o) => o.tool === "vehicle_details" && o.ok);
   if (detail?.ok && detail.tool === "vehicle_details") return final([

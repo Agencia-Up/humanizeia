@@ -310,8 +310,16 @@ export const PolicyEngine = {
     {
       const asked = slotQuestions(composed.text); // TODOS os slots perguntados (incl. visita/horário)
       const slotKnown = (slot: string): boolean => {
-        const s = (ctx.state.slots as Record<string, { status?: string } | undefined>)[slot];
-        return s?.status != null && s.status !== "unknown";
+        const s = (ctx.state.slots as Record<string, { status?: string; value?: unknown } | undefined>)[slot];
+        if (s?.status == null || s.status === "unknown") return false;
+        // diaHorario is a compound slot. A weekday alone answers the DAY but
+        // does not answer a subsequent request for the TIME.
+        if (slot === "diaHorario" && /\b(?:horario|que\s+horas?|qual\s+hora)\b/.test(normalizeText(composed.text))) {
+          const value = normalizeText(String(s.value ?? ""));
+          const hasTime = /\b(?:[01]?\d|2[0-3])\s*(?::|h)\s*[0-5]?\d?\b|\b(?:manha|tarde|noite|meio-dia)\b/.test(value);
+          return hasTime;
+        }
+        return true;
       };
       const qDeny = (why: string): PolicyVerdict[] => [{ policyId: "POL-QUESTION-OBJECTIVE", outcome: "deny", violations: [why] }];
       // (a) no MÁXIMO UMA pergunta por mensagem (sem exceção de CTA).
