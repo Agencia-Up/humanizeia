@@ -130,7 +130,7 @@ export function FeedbackPorProdutoTab() {
       const iniClamp = modo === 'custom' && ini < minIso ? minIso : ini;
       const params = modo === 'custom'
         ? { p_dias: null, p_ini: iniClamp, p_fim: fim }
-        : { p_dias: dias, p_ini: null, p_fim: null };
+        : { p_dias: dias };
       // José: preset lê o PRÉ-CALCULADO (rápido); personalizado vai ao vivo (mais lento).
       const josePromise = modo === 'custom'
         ? (supabase as any).functions.invoke('feedback-jose-trafego', { body: { since: iniClamp, until: fim } }).then((r: any) => ({ data: r.data, error: r.error }))

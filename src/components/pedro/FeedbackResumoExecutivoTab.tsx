@@ -168,7 +168,7 @@ export function FeedbackResumoExecutivoTab() {
     try {
       const [conv, prod, nepq, team, hist] = await Promise.all([
         (supabase as any).rpc('feedback_relatorio_por_vendedor'),
-        (supabase as any).rpc('feedback_produtos_qualidade', { p_dias: 30, p_ini: null, p_fim: null }),
+        (supabase as any).rpc('feedback_produtos_qualidade', { p_dias: 30 }),
         (supabase as any).rpc('feedback_rollup_por_vendedor'),
         (supabase as any).from('ai_team_members').select('id, name'),
         (supabase as any).from('feedback_relatorios').select('id, data_ref, status, resumo').order('data_ref', { ascending: false }).limit(7),
