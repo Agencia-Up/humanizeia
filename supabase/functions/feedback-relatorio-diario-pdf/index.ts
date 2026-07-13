@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
     const refDate = String(dados.ref_date || new Date().toISOString().slice(0, 10));
 
     // ---------- diagnostico do gargalo ----------
-    const cheg = Number(f.chegaram) || 0, qual = Number(f.qualificados) || 0;
+    const cheg = Number(f.chegaram) || 0, analisados = Number(f.analisados) || 0, pendentesAnalise = Number(f.pendentes_analise) || 0, qual = Number(f.qualificados) || 0;
     const bem = Number(f.bem_atendidos) || 0, vend = Number(f.vendas) || 0;
     const convE = cheg ? qual / cheg : 0;   // entrada -> interesse
     const convA = qual ? bem / qual : 0;    // interesse -> bem atendido
@@ -136,6 +136,12 @@ Deno.serve(async (req) => {
       doc.text(ll, tx + 13, y + 45);
     });
     y += 62 + 24;
+    if (pendentesAnalise > 0) {
+      F(AMBER_BG); D([245, 194, 102]); doc.setLineWidth(0.7); doc.roundedRect(ML, y - 6, CW, 28, 7, 7, 'FD');
+      T(9, 'bold', AMBER);
+      doc.text(S(`${analisados} de ${cheg} leads ja foram analisados. ${pendentesAnalise} ainda aguardam feedback para entrar nos indicadores de qualidade.`), ML + 12, y + 12);
+      y += 38;
+    }
 
     // Funil
     kicker('O funil dos últimos 7 dias — onde os clientes escapam', y); y += 18;

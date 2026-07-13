@@ -66,6 +66,8 @@ function captionGerencial(dados: any): string {
   const funil = dados.funil || {};
   const vendedores = Array.isArray(dados.vendedores) ? dados.vendedores : [];
   const chegaram = n(funil.chegaram);
+  const analisados = n(funil.analisados);
+  const pendentesAnalise = n(funil.pendentes_analise);
   const qualificados = n(funil.qualificados);
   const bemAtendidos = n(funil.bem_atendidos);
   const vendas = n(funil.vendas);
@@ -83,9 +85,12 @@ function captionGerencial(dados: any): string {
   const linhas = [
     `Relatorio de atendimento - ${dataBRT()}`,
     ``,
-    `Leitura rapida: ${chegaram} leads, ${qualificados} com interesse real, ${bemAtendidos} bem atendidos e ${vendas} venda(s).`,
+    `Leitura rapida: ${chegaram} leads recebidos, ${analisados} analisados pelo feedback, ${qualificados} com interesse real, ${bemAtendidos} bem atendidos e ${vendas} venda(s).`,
     `Gargalo principal: ${gargaloGerencial(funil)}.`,
   ];
+  if (pendentesAnalise > 0) {
+    linhas.push(`Atencao: ${pendentesAnalise} lead(s) ainda nao tinham analise de feedback no fechamento deste relatorio.`);
+  }
   if (risco) {
     linhas.push(`Olhar primeiro: ${risco.nome} recebeu ${risco.chance} lead(s) com interesse e teve ${risco.bem} bem atendido(s).`);
   }
