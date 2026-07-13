@@ -35,6 +35,26 @@ BEGIN
     RETURN;
   END IF;
 
+  WITH dados AS (
+    SELECT
+      fr.id,
+      public.feedback_relatorio_diario_dados(
+        fr.tenant_id,
+        CASE
+          WHEN COALESCE(fr.resumo->>'periodo_dias', '') ~ '^[0-9]+$'
+            THEN GREATEST((fr.resumo->>'periodo_dias')::int, 1)
+          ELSE 7
+        END,
+        CASE
+          WHEN COALESCE(fr.resumo->>'ref_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+            THEN (fr.resumo->>'ref_date')::date
+          ELSE fr.data_ref - 1
+        END
+      ) AS payload
+    FROM public.feedback_relatorios fr
+    WHERE fr.tenant_id IS NOT NULL
+      AND fr.data_ref IS NOT NULL
+  )
   UPDATE public.feedback_relatorios fr
   SET resumo =
     COALESCE(fr.resumo, '{}'::jsonb)
@@ -48,23 +68,8 @@ BEGIN
       'leads_bem_atendidos', COALESCE((dados.payload->'funil'->>'bem_atendidos')::int, 0),
       'vendas', COALESCE((dados.payload->'funil'->>'vendas')::int, 0)
     )
-  FROM LATERAL (
-    SELECT public.feedback_relatorio_diario_dados(
-      fr.tenant_id,
-      CASE
-        WHEN COALESCE(fr.resumo->>'periodo_dias', '') ~ '^[0-9]+$'
-          THEN GREATEST((fr.resumo->>'periodo_dias')::int, 1)
-        ELSE 7
-      END,
-      CASE
-        WHEN COALESCE(fr.resumo->>'ref_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-          THEN (fr.resumo->>'ref_date')::date
-        ELSE fr.data_ref - 1
-      END
-    ) AS payload
-  ) dados
-  WHERE fr.tenant_id IS NOT NULL
-    AND fr.data_ref IS NOT NULL
+  FROM dados
+  WHERE fr.id = dados.id
     AND (
       fr.resumo IS NULL
       OR NOT (fr.resumo ? 'leads_recebidos')
