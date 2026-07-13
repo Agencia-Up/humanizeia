@@ -10,16 +10,18 @@ function normalizeHistoryRole(role: any): "lead" | "agent" | null {
 function checkAgentHasPresented(recentHistory?: any[], recentTurns?: any[]) {
   const history = recentHistory || recentTurns || [];
   if (!Array.isArray(history)) return false;
+  let agentTurns = 0;
   for (const turn of history) {
     const role = normalizeHistoryRole(turn?.role || turn?.direction);
     if (role === "agent") {
+      agentTurns++;
       const text = String(turn?.text || turn?.content || turn?.message || "").toLowerCase();
       if (/\b(sou o|sou a|meu nome|aqui da|aqui de|sou consultor|sou consultora)\b/i.test(text)) {
         return true;
       }
     }
   }
-  return false;
+  return agentTurns >= 1;
 }
 
 function sanitizeAgentName(name?: string | null) {

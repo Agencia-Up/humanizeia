@@ -114,7 +114,34 @@ function isLikelyRealLeadName(value?: any): boolean {
   if (!text) return false;
   const normalized = normalizePlannerText(text);
   if (!normalized || /\d/.test(normalized)) return false;
-  if (["lead", "cliente", "contato", "particular", "desconhecido", "sem nome", "usuario"].includes(normalized)) return false;
+  if (["lead", "cliente", "contato", "particular", "desconhecido", "sem nome", "usuario", "usuario whatsapp", "conta comercial", "empresa"].includes(normalized)) return false;
+  if (/\b(conta comercial|empresa cadastrada|nao esta nos seus contatos|clique para mostrar|whatsapp|facebook|instagram)\b/.test(normalized)) return false;
+  return /\p{L}{2,}/u.test(text);
+}
+
+function isUsefulTradeVehicleCandidate(value?: any): boolean {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  const normalized = normalizePlannerText(text);
+  if (!normalized || normalized.length < 3) return false;
+  if (/\d{8,}/.test(normalized)) return false;
+  if ([
+    "interesse",
+    "entrada",
+    "troca",
+    "financiamento",
+    "carro",
+    "veiculo",
+    "veiculo de troca",
+    "meu carro",
+    "minha troca",
+    "seu carro",
+  ].includes(normalized)) return false;
+  if (/\b(interesse|entrada|troca|financiamento|parcela|valor|preco|informacao|informacoes)\b/.test(normalized)
+      && !/\b(19|20)\d{2}\b/.test(normalized)
+      && !/\b(onix|tracker|gol|fox|hb20|corolla|civic|creta|renegade|strada|s10|hilux|pulse|toro|kwid|sandero|polo|nivus|compass|fastback|focus|fiesta|ka)\b/.test(normalized)) {
+    return false;
+  }
   return /\p{L}{2,}/u.test(text);
 }
 
@@ -137,6 +164,7 @@ function inferTradeVehicleFromText(message?: string | null): string | null {
   const match = raw.match(/\btenho\s+(?:um|uma|o|a)?\s*([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9 .\/-]{1,45}?)(?=,|\.|\n| e | que | pra | para |$)/i);
   if (!match?.[1]) return null;
   const candidate = match[1].trim();
+  if (!isUsefulTradeVehicleCandidate(candidate)) return null;
   if (!candidate || /^(carro|veiculo|veículo)$/i.test(candidate)) return null;
   return candidate;
 }
@@ -353,7 +381,12 @@ function nextConfiguredFunnelQuestion(input: {
   const b4 = input.agent?.funnel_bloco4;
   if (!b4) return null;
   const q = { ...((input.reply as any)?.qualificacao_coletada || {}) };
-  const hasName = Boolean(q.nome || input.lead?.lead_name || (input.pushName && /\p{L}{2,}/u.test(String(input.pushName))));
+  const hasName = Boolean(
+    isLikelyRealLeadName(q.nome) ||
+    isLikelyRealLeadName(input.lead?.client_name) ||
+    isLikelyRealLeadName(input.lead?.lead_name) ||
+    isLikelyRealLeadName(input.pushName)
+  );
   const hasInterest = Boolean(q.interesse || input.memory?.interesse?.modelo_desejado || input.memory?.interesse?.tipo_veiculo);
   const merged = {
     ...q,
@@ -397,9 +430,14 @@ function maybeApplyTemporaryFunnelGuard(input: {
   }
 
   const items = Array.isArray(input.stockResult?.items) ? input.stockResult.items : [];
+  const deterministicStockSource = [
+    "stock_list_deterministic",
+    "brain_stock_fallback",
+    "deterministic_stock_reply",
+  ].includes(String(reply?.source || ""));
   const stockListReply = items.length >= 2
     && typeof reply?.text === "string"
-    && replyMentionsAnyVehicle(reply.text, items);
+    && (deterministicStockSource || replyMentionsAnyVehicle(reply.text, items));
   if (!nextQuestion || !stockListReply) return reply;
   if (!shouldGateStockListUntilFunnel({
     message: input.message,
@@ -453,13 +491,14 @@ function maybeApplyFinanceTradeTransferGuard(input: {
     memory?.veiculo_em_foco?.label,
     input.lead?.vehicle_interest,
   );
-  const tradeVehicle = firstNonEmpty(
+  const tradeVehicleRaw = firstNonEmpty(
     q.carro_troca,
     q.veiculo_troca,
     memory?.negociacao?.carro_troca,
     input.lead?.trade_in_vehicle,
     inferTradeVehicleFromText(contextText),
   );
+  const tradeVehicle = isUsefulTradeVehicleCandidate(tradeVehicleRaw) ? tradeVehicleRaw : null;
 
   const hasFinanceSignal = /\b(financ|parcel|prestac|simul|entrada)\b/.test(normalizedContext);
   const hasTradeAsEntrySignal = Boolean(tradeVehicle)
@@ -2874,7 +2913,12 @@ export async function processPedroV2Turn(
              "trade_collecting", "visit_schedule_qualify", "visit_cpf_qualify", "lone_emoji_no_transfer"].includes((reply as any)?.source)
         && !replyHasMeaningfulQuestion((reply as any)?.text || "")) {
       const _fq = { ...((reply as any)?.qualificacao_coletada || {}) };
-      const _hasNm = Boolean(_fq.nome || lead?.lead_name || (pushName && /\p{L}{2,}/u.test(String(pushName))));
+      const _hasNm = Boolean(
+        isLikelyRealLeadName(_fq.nome) ||
+        isLikelyRealLeadName(lead?.client_name) ||
+        isLikelyRealLeadName(lead?.lead_name) ||
+        isLikelyRealLeadName(pushName)
+      );
       const _hasInt = Boolean(_fq.interesse || (nextMemory as any)?.interesse?.modelo_desejado || (nextMemory as any)?.interesse?.tipo_veiculo);
       const _fqMerged = { ..._fq, carro_troca: _fq.carro_troca || (nextMemory as any)?.negociacao?.carro_troca || null };
       const _nextQ = nextFunnelQuestion(_b4, _fqMerged, { hasName: _hasNm, hasInterest: _hasInt });
