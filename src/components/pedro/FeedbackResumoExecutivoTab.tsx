@@ -52,6 +52,33 @@ interface Relatorio {
   resumo: any;
 }
 
+interface FeedbackHealth {
+  ok?: boolean;
+  analises?: {
+    total?: number;
+    concluidas?: number;
+    falharam?: number;
+    processando?: number;
+    pedro?: number;
+    marcos?: number;
+  };
+  transcricoes?: {
+    total?: number;
+    ok?: number;
+    falhas?: number;
+  };
+  jobs?: {
+    total?: number;
+    falhas?: number;
+  };
+  relatorios?: {
+    total?: number;
+    falhas?: number;
+    ultimo_envio?: string | null;
+  };
+  pendentes_estimados?: number;
+}
+
 const DIMS: Record<string, string> = {
   A: 'conexao',
   B1: 'situacao',
@@ -161,17 +188,19 @@ export function FeedbackResumoExecutivoTab() {
   const [rollup, setRollup] = useState<Rollup[]>([]);
   const [nomes, setNomes] = useState<Record<string, string>>({});
   const [relatorios, setRelatorios] = useState<Relatorio[]>([]);
+  const [health, setHealth] = useState<FeedbackHealth | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErro(null);
     try {
-      const [conv, prod, nepq, team, hist] = await Promise.all([
+      const [conv, prod, nepq, team, hist, status] = await Promise.all([
         (supabase as any).rpc('feedback_relatorio_por_vendedor'),
         (supabase as any).rpc('feedback_produtos_qualidade', { p_dias: 30 }),
         (supabase as any).rpc('feedback_rollup_por_vendedor'),
         (supabase as any).from('ai_team_members').select('id, name'),
         (supabase as any).from('feedback_relatorios').select('id, data_ref, status, resumo').order('data_ref', { ascending: false }).limit(7),
+        (supabase as any).rpc('feedback_status_operacional'),
       ]);
       if (conv.error) throw conv.error;
       if (prod.error) throw prod.error;
@@ -184,6 +213,7 @@ export function FeedbackResumoExecutivoTab() {
       setRollup(Array.isArray(nepq.data) ? nepq.data : []);
       setNomes(map);
       setRelatorios(hist.data || []);
+      setHealth(status?.error ? null : (status?.data || null));
     } catch (e: any) {
       setErro(e?.message || 'Nao foi possivel carregar o resumo executivo.');
     } finally {
@@ -368,13 +398,42 @@ export function FeedbackResumoExecutivoTab() {
             <BarChart3 className="h-4 w-4 text-primary" />
             Saude da rotina
           </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {leitura.ultimoRelatorio
-              ? `Ultimo relatorio: ${leitura.ultimoRelatorio.data_ref} com status "${leitura.ultimoRelatorio.status}".`
-              : 'Nenhum relatorio diario encontrado ainda. Verifique se a rotina de feedback esta ativa para esta conta.'}
-          </p>
+          <HealthSummary health={health} fallback={leitura.ultimoRelatorio
+            ? `Ultimo relatorio: ${leitura.ultimoRelatorio.data_ref} com status "${leitura.ultimoRelatorio.status}".`
+            : 'Nenhum relatorio diario encontrado ainda. Verifique se a rotina de feedback esta ativa para esta conta.'}
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+function HealthSummary({ health, fallback }: { health: FeedbackHealth | null; fallback: string }) {
+  if (!health?.ok) {
+    return <p className="mt-2 text-sm text-muted-foreground">{fallback}</p>;
+  }
+
+  const falhas = Number(health.analises?.falharam || 0)
+    + Number(health.transcricoes?.falhas || 0)
+    + Number(health.jobs?.falhas || 0)
+    + Number(health.relatorios?.falhas || 0);
+
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-4">
+      <MiniHealth label="Analises" value={Number(health.analises?.concluidas || 0)} hint={`${Number(health.analises?.pedro || 0)} Pedro / ${Number(health.analises?.marcos || 0)} Marcos`} />
+      <MiniHealth label="Audios" value={Number(health.transcricoes?.ok || 0)} hint={`${Number(health.transcricoes?.falhas || 0)} falhas`} warn={Number(health.transcricoes?.falhas || 0) > 0} />
+      <MiniHealth label="Pendentes" value={Number(health.pendentes_estimados || 0)} hint="para analisar" warn={Number(health.pendentes_estimados || 0) > 10} />
+      <MiniHealth label="Alertas" value={falhas} hint="ultimos 7 dias" warn={falhas > 0} />
+    </div>
+  );
+}
+
+function MiniHealth({ label, value, hint, warn = false }: { label: string; value: number; hint: string; warn?: boolean }) {
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${warn ? 'border-amber-500/25 bg-amber-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
+      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+      <div className={`text-lg font-semibold ${warn ? 'text-amber-200' : 'text-emerald-200'}`}>{value}</div>
+      <div className="text-[10px] text-muted-foreground">{hint}</div>
     </div>
   );
 }
