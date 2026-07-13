@@ -199,7 +199,7 @@ export function ResponsaveisTab({ userId }: Props) {
     try {
       const [membersRes, agentsRes, respRes] = await Promise.all([
         (supabase as any).from('ai_team_members')
-          .select('id, name, email, auth_user_id, whatsapp_number, is_manager, is_active, active_in_system, agent_id, visible_features').eq('user_id', userId),
+          .select('id, name, email, auth_user_id, whatsapp_number, is_manager, is_active, active_in_system, show_in_live, agent_id, visible_features').eq('user_id', userId),
         (supabase as any).from('wa_ai_agents').select('id, name, gerente_phone, gerente_phone_2').eq('user_id', userId),
         (supabase as any).from('conta_responsaveis')
           .select('nome, whatsapp, recebe_atendimento, recebe_trafego, recebe_alertas').eq('user_id', userId),
@@ -232,7 +232,7 @@ export function ResponsaveisTab({ userId }: Props) {
         if (!p.email && m.email) p.email = m.email;
         if (!p.authUserId && m.auth_user_id) p.authUserId = m.auth_user_id;
         if (m.id && !p.memberIds.includes(m.id)) p.memberIds.push(m.id);
-        if (m.active_in_system !== false) p.aparece_paineis = true;
+        if (m.show_in_live !== false) p.aparece_paineis = true;
         for (const acesso of inferAcessos(m.visible_features, !!m.is_manager)) {
           if (!p.acessos.includes(acesso)) p.acessos.push(acesso);
         }
@@ -341,10 +341,8 @@ export function ResponsaveisTab({ userId }: Props) {
   };
 
   const toggleAparecePaineis = async (p: Pessoa) => {
-    if (p.papel === 'gerente') {
-      toast({ title: 'Gerente nao entra como vendedor nos paineis', description: 'Esse controle vale para vendedores e marketing.' });
-      return;
-    }
+    // Vale pra TODO mundo (inclusive Gerente): é só a visibilidade no Painel ao Vivo,
+    // campo dedicado show_in_live — NÃO mexe no acesso/ativo no sistema (active_in_system).
     if (p.memberIds.length === 0) {
       toast({ title: 'Esta pessoa ainda nao tem cadastro no painel', description: 'Adicione com e-mail para criar o acesso antes de configurar os paineis.', variant: 'destructive' });
       return;
@@ -356,7 +354,7 @@ export function ResponsaveisTab({ userId }: Props) {
     try {
       const { error } = await (supabase as any)
         .from('ai_team_members')
-        .update({ active_in_system: novo })
+        .update({ show_in_live: novo })
         .in('id', p.memberIds);
       if (error) throw error;
     } catch (e: any) {
@@ -425,7 +423,9 @@ export function ResponsaveisTab({ userId }: Props) {
         const { data, error } = await (supabase as any).from('ai_team_members').insert({
           user_id: userId, agent_id: ag, name: nNome.trim(), whatsapp_number: d,
           email: nEmail.trim() || null, visible_features: features,
-          is_manager: isManager, is_active: nTipo === 'vendedor', active_in_system: isManager ? true : nAparecePaineis,
+          is_manager: isManager, is_active: nTipo === 'vendedor',
+          active_in_system: true, // ao cadastrar, a pessoa entra ATIVA no sistema (acesso/CRM)
+          show_in_live: isManager ? false : nAparecePaineis, // Painel ao Vivo: gerente oculto por padrão; vendedor conforme a escolha
         }).select('id').single();
         if (error) throw error;
         if (!firstMemberId) firstMemberId = data.id;
@@ -528,14 +528,12 @@ export function ResponsaveisTab({ userId }: Props) {
                     </button>
                   );
                 })}
-                {p.papel !== 'gerente' && (
-                  <button onClick={() => toggleAparecePaineis(p)} disabled={saving === p.key + 'paineis' || p.memberIds.length === 0}
-                    className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors ${p.aparece_paineis ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'text-muted-foreground border-border/50 hover:bg-accent/40'} ${(saving === p.key + 'paineis' || p.memberIds.length === 0) ? 'opacity-60' : ''}`}
-                    title={p.aparece_paineis ? 'Aparece no Painel ao Vivo e no Painel Geral' : 'Nao aparece no Painel ao Vivo nem no Painel Geral'}>
-                    {saving === p.key + 'paineis' ? <Loader2 className="h-3 w-3 animate-spin" /> : <BarChart3 className="h-3 w-3" />}
-                    {p.aparece_paineis ? 'Aparece nos paineis' : 'Oculto dos paineis'}
-                  </button>
-                )}
+                <button onClick={() => toggleAparecePaineis(p)} disabled={saving === p.key + 'paineis' || p.memberIds.length === 0}
+                  className={`inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border transition-colors ${p.aparece_paineis ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'text-muted-foreground border-border/50 hover:bg-accent/40'} ${(saving === p.key + 'paineis' || p.memberIds.length === 0) ? 'opacity-60' : ''}`}
+                  title={p.aparece_paineis ? 'Aparece no Painel ao Vivo e no Painel Geral (clique para ocultar)' : 'Oculto do Painel ao Vivo e do Painel Geral (clique para mostrar)'}>
+                  {saving === p.key + 'paineis' ? <Loader2 className="h-3 w-3 animate-spin" /> : <BarChart3 className="h-3 w-3" />}
+                  {p.aparece_paineis ? 'Aparece nos painéis' : 'Oculto dos painéis'}
+                </button>
                 {p.agentes.length > 0 ? p.agentes.map((ag) => {
                   const busy = saving === p.key + ag.memberId;
                   return (

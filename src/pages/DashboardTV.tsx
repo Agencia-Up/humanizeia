@@ -706,7 +706,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
 
         // 2. Carrega avatar_url do profile DE CADA VENDEDOR (prioridade > profile_picture do master)
         // Ativos NO SISTEMA (visibilidade no painel) — independe do status no agente de IA.
-        const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
+        // Painel ao Vivo: precisa estar ATIVO NO SISTEMA (active_in_system) E marcado
+        // pra aparecer aqui (show_in_live, campo dedicado). O Gerente tem show_in_live=false
+        // por padrão -> some do painel sem perder o acesso. Controlado na tela de Responsáveis.
+        const sellersList = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false && s.show_in_live !== false) as Array<{ id: string; name: string; profile_picture: string | null; auth_user_id: string | null }>;
         // Fila do rodízio do botão "Transferir (próximo da fila)": SÓ vendedores
         // ATIVOS NO AGENTE DE IA (is_active=true) — igual ao rodízio AUTOMÁTICO do
         // Pedro (transferRouter / uazapi-webhook / bulk-transfer). Diferente dos

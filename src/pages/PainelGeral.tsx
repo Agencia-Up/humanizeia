@@ -369,8 +369,9 @@ export default function PainelGeral() {
 
         let pedroLeads = (pedroRes.data || []) as PedroLead[];
         let marcosLeads = (marcosRes.data || []) as MarcosLead[];
-        // Vendedores ATIVOS NO SISTEMA (não filtra pelo status do agente de IA).
-        const rawSellers = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false) as Array<{ id: string; name: string; whatsapp_number?: string | null; auth_user_id?: string | null; active_in_system?: boolean | null }>;
+        // Vendedores ATIVOS NO SISTEMA e marcados pra aparecer nos painéis (show_in_live,
+        // campo dedicado — Gerente sai por padrão). Não filtra pelo status do agente de IA.
+        const rawSellers = ((sellersRes.data || []) as any[]).filter((s: any) => s.active_in_system !== false && s.show_in_live !== false) as Array<{ id: string; name: string; whatsapp_number?: string | null; auth_user_id?: string | null; active_in_system?: boolean | null }>;
         const normPhone = (value?: string | null) => String(value || '').replace(/\D/g, '');
         const normName = (value?: string | null) => String(value || '').trim().toLowerCase();
         const sellerPersonKey = (seller: typeof rawSellers[number]) =>
