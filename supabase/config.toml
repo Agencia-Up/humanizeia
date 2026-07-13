@@ -283,3 +283,6 @@ verify_jwt = true
 # sessao valida (le o auth.uid do token) e ainda valida o dono internamente.
 [functions.delete-responsavel]
 verify_jwt = true
+
+[functions.subscription-dunning]
+verify_jwt = false

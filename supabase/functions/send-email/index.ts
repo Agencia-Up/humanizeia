@@ -531,7 +531,9 @@ Deno.serve(async (req) => {
       const dias = Number(body.dias) || 2;
       const venc = String(body.venc || '');
       const plano = String(body.plano || 'pro');
-      const url = `${appUrl}/checkout?plano=${plano}&ciclo=mensal`;
+      // Link EXPLÍCITO da fatura da mensalidade (invoiceUrl do Asaas) quando houver;
+      // fallback só pra /meu-plano (NUNCA o /checkout que refaz a implementação).
+      const url = String(body.url || `${appUrl}/meu-plano`);
       subject = `⏰ Sua assinatura LogosIA vence em ${dias} dia${dias > 1 ? 's' : ''}`;
       html = subscriptionExpiringEmail(name, dias, venc, url);
       text = plainText([`Olá, ${name}!`, '', `Sua assinatura da LogosIA vence em ${dias} dia(s) (${venc}).`, 'Garanta a renovação para não perder o acesso:', url]);
@@ -541,7 +543,9 @@ Deno.serve(async (req) => {
       const venc = String(body.venc || '');
       const bloqueio = String(body.bloqueio || '');
       const plano = String(body.plano || 'pro');
-      const url = `${appUrl}/checkout?plano=${plano}&ciclo=mensal`;
+      // Link da FATURA vencida da mensalidade (invoiceUrl do Asaas) — paga só os
+      // R$497. Fallback /meu-plano; NUNCA /checkout (que refaz a implementação).
+      const url = String(body.url || `${appUrl}/meu-plano`);
       subject = '⚠️ Pagamento em atraso — sua conta LogosIA será bloqueada';
       html = subscriptionOverdueEmail(name, venc, bloqueio, url);
       text = plainText([`Olá, ${name}.`, '', `O pagamento da sua assinatura LogosIA venceu em ${venc} e ainda não foi identificado.`, `Regularize agora para evitar o bloqueio da conta${bloqueio ? ` a partir de ${bloqueio}` : ''}:`, url, '', 'Se você paga por débito/recorrência automática, ignore este aviso.']);
