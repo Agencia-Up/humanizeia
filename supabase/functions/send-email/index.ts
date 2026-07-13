@@ -404,6 +404,57 @@ function checkoutWelcomeEmail(name: string, createUrl: string): string {
 // ─── VERSAO TEXTO PURO (multipart) — melhora nota anti-spam ─────────────────
 // Filtros dao nota melhor quando o e-mail traz HTML + texto. Mantem a marca em
 // texto (wordmark "LOGOS | IA" + assinatura) pra respeitar a identidade visual.
+// ─── EMAIL: ASSINATURA VENCE EM BREVE (2 dias antes) ─────────────────────────
+function subscriptionExpiringEmail(name: string, dias: number, venc: string, url: string): string {
+  const content = `
+    <div style="text-align:center; margin-bottom:16px;">
+      <div style="display:inline-block; width:52px; height:52px; background:linear-gradient(135deg,#f59e0b,#f97316); border-radius:18px; line-height:52px; text-align:center; font-size:26px; box-shadow:0 8px 32px #f59e0b44;">⏰</div>
+    </div>
+    <h1 style="text-align:center; color:${COLORS.text}; font-size:24px; font-weight:800; margin-bottom:8px;">
+      Sua assinatura vence em ${dias} dia${dias > 1 ? 's' : ''}
+    </h1>
+    <p style="text-align:center; color:${COLORS.muted}; font-size:15px; margin-bottom:24px;">
+      Olá, <strong style="color:${COLORS.text};">${name}</strong>! A assinatura da sua conta LogosIA vence em <strong style="color:${COLORS.text};">${venc}</strong>. Renove para manter tudo funcionando sem interrupção.
+    </p>
+    ${ctaButton('Renovar Assinatura →', url)}
+    <div style="height:1px; background:${COLORS.cardBorder}; margin:0 0 20px;"></div>
+    <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
+      Se o pagamento já foi feito ou é automático (débito/recorrência), pode ignorar este aviso.<br>
+      Dúvidas? <a href="mailto:suporte@logosiabrasil.com" style="color:${COLORS.secondary};">suporte@logosiabrasil.com</a>
+    </p>
+  `;
+  return baseTemplate(content);
+}
+
+// ─── EMAIL: PAGAMENTO EM ATRASO (carência — conta será bloqueada) ─────────────
+function subscriptionOverdueEmail(name: string, venc: string, bloqueio: string, url: string): string {
+  const content = `
+    <div style="text-align:center; margin-bottom:16px;">
+      <div style="display:inline-block; width:52px; height:52px; background:linear-gradient(135deg,#ef4444,#b91c1c); border-radius:18px; line-height:52px; text-align:center; font-size:26px; box-shadow:0 8px 32px #ef444444;">⚠️</div>
+    </div>
+    <h1 style="text-align:center; color:${COLORS.text}; font-size:24px; font-weight:800; margin-bottom:8px;">
+      Pagamento em atraso
+    </h1>
+    <p style="text-align:center; color:${COLORS.muted}; font-size:15px; margin-bottom:22px;">
+      Olá, <strong style="color:${COLORS.text};">${name}</strong>. O pagamento da sua assinatura LogosIA venceu em <strong style="color:${COLORS.text};">${venc}</strong> e ainda não foi identificado.
+    </p>
+    <table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:24px;">
+      <tr><td style="background:#ef444418; border:1px solid #ef444444; border-left:4px solid #ef4444; border-radius:8px; padding:14px 18px;">
+        <p style="color:#ef4444; font-size:13px; line-height:1.5; margin:0;">
+          Para evitar o <strong>bloqueio da conta${bloqueio ? ` a partir de ${bloqueio}` : ''}</strong>, regularize o pagamento agora. Após esse prazo, o acesso da sua equipe é suspenso por falta de pagamento.
+        </p>
+      </td></tr>
+    </table>
+    ${ctaButton('Regularizar Pagamento →', url)}
+    <div style="height:1px; background:${COLORS.cardBorder}; margin:0 0 20px;"></div>
+    <p style="color:${COLORS.muted}; font-size:13px; text-align:center; line-height:1.6;">
+      Se você paga por débito/recorrência automática, ignore este aviso.<br>
+      Precisa de ajuda? <a href="mailto:suporte@logosiabrasil.com" style="color:${COLORS.secondary};">suporte@logosiabrasil.com</a>
+    </p>
+  `;
+  return baseTemplate(content);
+}
+
 function plainText(lines: string[]): string {
   return ['LOGOS | IA', '', ...lines, '', '— Equipe LogosIA', 'https://logosiabrasil.com'].join('\n');
 }
@@ -474,6 +525,26 @@ Deno.serve(async (req) => {
       const changeUrl = confirmUrl ?? `${appUrl}/auth`;
       html = emailChangeEmail(name, newEmail, changeUrl);
       text = plainText([`Olá, ${name}!`, '', `Você solicitou alterar o e-mail da sua conta para ${newEmail}.`, 'Confirme no link abaixo:', changeUrl, '', 'Se não foi você, ignore este e-mail.']);
+
+    } else if (type === 'subscription_expiring') {
+      // Aviso amigável: assinatura vence em N dias.
+      const dias = Number(body.dias) || 2;
+      const venc = String(body.venc || '');
+      const plano = String(body.plano || 'pro');
+      const url = `${appUrl}/checkout?plano=${plano}&ciclo=mensal`;
+      subject = `⏰ Sua assinatura LogosIA vence em ${dias} dia${dias > 1 ? 's' : ''}`;
+      html = subscriptionExpiringEmail(name, dias, venc, url);
+      text = plainText([`Olá, ${name}!`, '', `Sua assinatura da LogosIA vence em ${dias} dia(s) (${venc}).`, 'Garanta a renovação para não perder o acesso:', url]);
+
+    } else if (type === 'subscription_overdue') {
+      // Cobrança durante a carência: já venceu, conta será bloqueada.
+      const venc = String(body.venc || '');
+      const bloqueio = String(body.bloqueio || '');
+      const plano = String(body.plano || 'pro');
+      const url = `${appUrl}/checkout?plano=${plano}&ciclo=mensal`;
+      subject = '⚠️ Pagamento em atraso — sua conta LogosIA será bloqueada';
+      html = subscriptionOverdueEmail(name, venc, bloqueio, url);
+      text = plainText([`Olá, ${name}.`, '', `O pagamento da sua assinatura LogosIA venceu em ${venc} e ainda não foi identificado.`, `Regularize agora para evitar o bloqueio da conta${bloqueio ? ` a partir de ${bloqueio}` : ''}:`, url, '', 'Se você paga por débito/recorrência automática, ignore este aviso.']);
 
     } else {
       return new Response(JSON.stringify({ error: `Tipo de email desconhecido: ${type}` }), {
