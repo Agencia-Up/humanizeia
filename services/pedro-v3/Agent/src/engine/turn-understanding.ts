@@ -42,7 +42,57 @@ const FINANCING_ACT_RX = /\bfinanc\w*|\bentrada\b|\bparcela\w*|\bprestac\w*/;
 // normalizeText converte os separadores dos tokens internos em espacos.
 const SENSITIVE_DATA_ACT_RX = /\b(?:cpf\s+valido\s+ref|data\s+nascimento\s+valida\s+ref|cpf\s+recebido\s+nao\s+armazenado|data\s+nascimento\s+recebida\s+nao\s+armazenada)\b/;
 
-function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: readonly TurnUnderstandingEvidence[]): string[] {
+// ── P0-A (CONTINUAÇÃO SEMÂNTICA DE AGENDAMENTO): a LLM entende que "Pra segunda" / "Às 15h" continuam a visita, mas a
+//    validação antiga exigia repetir "visita"/"agendar" na evidência e derrubava o understanding (retry -> technical_fallback).
+//    Correção: reconhecimento GERAL de VALOR TEMPORAL (dia da semana / relativo / horário / período) + CONTEXTO legítimo de
+//    visita. NÃO é frase-específico. A mensagem atual continua sendo a evidência; a memória só fornece a RELAÇÃO semântica. ──
+const SCHED_WEEKDAY_RX = /\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:\s*-?\s*feira)?\b/;
+const SCHED_RELATIVE_DAY_RX = /\b(?:hoje|amanha|depois\s+de\s+amanha|fim\s+de\s+semana|feriado|essa\s+semana|semana\s+que\s+vem|proxima\s+semana|qualquer\s+dia)\b/;
+const SCHED_CLOCK_RX = /\b(?:as\s+)?\d{1,2}(?:\s*[:h]\s*\d{2}|\s*(?:h|hs|hrs|horas?))\b|\bmeio[-\s]?dia\b|\bmeia[-\s]?noite\b/;
+const SCHED_DAYPART_RX = /\b(?:de\s+manha|pela\s+manha|a\s+tarde|de\s+tarde|final\s+da\s+tarde|comeco\s+da\s+tarde|a\s+noite|de\s+noite|depois\s+do\s+almoco|antes\s+do\s+almoco|no\s+almoco|no\s+comeco\s+da\s+manha)\b/;
+// Valor TEMPORAL de agendamento no bloco (dia OU horário OU período). PURO/testável. normalizeText troca ":" por espaço,
+// então o horário "HH:MM" (colon) é checado no bloco CRU minúsculo (minutos válidos 00-59) — preciso e sem ambiguidade.
+export function hasSchedulingTemporalValue(block: string): boolean {
+  const n = normalizeText(block);
+  return SCHED_WEEKDAY_RX.test(n) || SCHED_RELATIVE_DAY_RX.test(n) || SCHED_CLOCK_RX.test(n) || SCHED_DAYPART_RX.test(n)
+    || /\b\d{1,2}:[0-5]\d\b/.test(block.toLowerCase());
+}
+// ⭐P1 (falso-verde de resposta visível): DIA e HORÁRIO separados — para o advisory orientar a LLM a acolher o que foi
+// dado e perguntar SÓ a dimensão faltante (nunca reperguntar a já informada). PUROS/testáveis.
+export function scheduleHasDay(block: string): boolean {
+  const n = normalizeText(block);
+  return SCHED_WEEKDAY_RX.test(n) || SCHED_RELATIVE_DAY_RX.test(n);
+}
+export function scheduleHasTime(block: string): boolean {
+  const n = normalizeText(block);
+  return SCHED_CLOCK_RX.test(n) || SCHED_DAYPART_RX.test(n) || /\b\d{1,2}:[0-5]\d\b/.test(block.toLowerCase());
+}
+// A ÚLTIMA fala do agente pediu o DIA/HORÁRIO de uma VISITA/agendamento?
+function lastAgentAskedVisitSchedule(recentTurns: readonly { readonly role: string; readonly text: string }[]): boolean {
+  const lastAgent = [...recentTurns].reverse().find((t) => t.role === "agent")?.text ?? "";
+  const n = normalizeText(lastAgent);
+  if (!(VISIT_ACT_RX.test(n) || /\bvisit|\bagend/.test(n))) return false;
+  return /\b(?:dia|horario|que\s+horas|qual\s+hora|quando|melhor\s+dia|qual\s+dia)\b/.test(n);
+}
+// ⭐P0-A: existe CONTEXTO LEGÍTIMO de visita em andamento? interesseVisita=true OU pergunta pendente de agendamento OU a
+//    última pergunta do agente pediu dia/horário da visita. PURO/testável — a memória só dá a RELAÇÃO, nunca a evidência.
+export function hasActiveVisitContext(input: {
+  readonly interesseVisita: boolean;
+  readonly pendingSchedulingSlot: string | null;
+  readonly recentTurns: readonly { readonly role: string; readonly text: string }[];
+}): boolean {
+  if (input.interesseVisita) return true;
+  if (input.pendingSchedulingSlot === "diaHorario" || input.pendingSchedulingSlot === "interesseVisita") return true;
+  return lastAgentAskedVisitSchedule(input.recentTurns);
+}
+
+// Contexto de validação (opcional): relações semânticas que a MEMÓRIA fornece para o turno atual. Sem ele, só o ato
+// EXPLÍCITO no bloco vale (comportamento legado). Nunca autoriza tool/effect — só permite aceitar um understanding coerente.
+export type TurnValidationContext = {
+  readonly visitActive?: boolean;   // há visita/agendamento em andamento (interesseVisita=true / pergunta pendente / última pergunta pediu dia-horário)
+};
+
+function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: readonly TurnUnderstandingEvidence[], context?: TurnValidationContext): string[] {
   const issues: string[] = [];
   const norm = normalizeText(block);
   const explicitActs = new Set<PrimaryIntent>();
@@ -79,11 +129,21 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   }
   if (u.primaryIntent === "visit") {
     const visitEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
-    if (!VISIT_ACT_RX.test(visitEvidence)) issues.push("visit sem evidencia de visita/agendamento no bloco atual");
+    const explicitVisit = VISIT_ACT_RX.test(visitEvidence);
+    // ⭐P0-A (continuação semântica): sem ato explícito de visita, um VALOR TEMPORAL ("pra segunda"/"às 15h") só valida
+    //    quando há CONTEXTO legítimo de agendamento em andamento (visitActive). A mensagem atual é a evidência; a memória
+    //    fornece só a relação. Sem contexto, "segunda" isolada NÃO inicia agendamento (fica o issue).
+    const contextualScheduling = context?.visitActive === true && hasSchedulingTemporalValue(block);
+    if (!explicitVisit && !contextualScheduling) issues.push("visit sem evidencia de visita/agendamento no bloco atual");
   }
   if (u.primaryIntent === "request_human") {
     const humanEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
-    if (!HUMAN_ACT_RX.test(humanEvidence)) issues.push("request_human sem pedido de humano no bloco atual");
+    // ⭐MISSÃO FINAL: o ATO de pedir humano está no BLOCO atual. Valida quando a evidência casa HUMAN_ACT_RX OU quando o
+    //   próprio bloco pede humano explicitamente (RX ESTRITO: alvo humano concreto/verbo de transferência — NÃO casa "quero
+    //   falar sobre o preço"). O LLM às vezes cita um span curto ("vendedor") que sozinho não casa o ATO; a fala LITERAL do
+    //   lead é a evidência. Proveniência intacta (o pedido está no turno atual) — evita que um pedido de humano fique
+    //   untrusted e o handoff nunca materialize (viraria "qual seu nome?" ou technical_fallback).
+    if (!HUMAN_ACT_RX.test(humanEvidence) && !leadRequestsHumanExplicitly(block)) issues.push("request_human sem pedido de humano no bloco atual");
   }
   if (u.primaryIntent === "sensitive_data" && !SENSITIVE_DATA_ACT_RX.test(norm)) {
     issues.push("sensitive_data sem token sensivel validado no bloco atual");
@@ -91,9 +151,9 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   return issues;
 }
 
-export function validateTurnUnderstanding(u: TurnUnderstanding, block: string, fromBrain: boolean): ValidatedUnderstanding {
+export function validateTurnUnderstanding(u: TurnUnderstanding, block: string, fromBrain: boolean, context?: TurnValidationContext): ValidatedUnderstanding {
   const validEvidence = (u.evidence ?? []).filter((e) => e != null && typeof e.quote === "string" && quoteInBlock(block, e.quote));
-  const semanticIssues = semanticIssuesFor(u, block, validEvidence);
+  const semanticIssues = semanticIssuesFor(u, block, validEvidence, context);
   return { understanding: u, trusted: validEvidence.length > 0 && semanticIssues.length === 0, fromBrain, validEvidence, semanticIssues };
 }
 
@@ -154,6 +214,17 @@ export function isPhotoRecall(v: ValidatedUnderstanding | null): boolean {
 // ── MISSÃO PII (P0-B): pedido EXPLÍCITO de humano/vendedor/atendente como ATO AUTÔNOMO. Autoridade = o
 //    CÉREBRO (primaryIntent request_human OU capability handoff) com evidência VALIDADA no bloco atual —
 //    nunca regex comercial concorrente. Vence o funil: não exige CPF/nascimento/qualificação. ─────────────────
+// ⭐MISSÃO FINAL (backstop determinístico do handoff): pedido EXPLÍCITO de humano NO BLOCO do lead. Usado APENAS para
+//    NÃO deixar um pedido de humano virar coleta de dado quando o entendimento do cérebro vier fraco/sem evidência
+//    (o LLM às vezes responde "qual seu nome?" a "quero falar com um vendedor" sem propor handoff nem prometê-lo no texto,
+//    e aí nem requestsHuman nem promisesHumanHandoff disparam). É MAIS ESTRITO que HUMAN_ACT_RX de propósito: exige um alvo
+//    humano concreto (vendedor/atendente/consultor/gerente/humano) OU verbo de transferência OU "falar com uma pessoa/
+//    alguém/a equipe" — NÃO casa "quero falar sobre o preço". Não decide intenção nem escreve resposta: só garante que a
+//    guarda de handoff (feedback+retry) rode para o LLM RE-AUTORAR incluindo o efeito. Autoridade = a fala LITERAL do lead.
+const HUMAN_REQUEST_EXPLICIT_RX = /\b(?:vendedor|atendente|consultor|gerente)\b|\bhumano\b|\b(?:me\s+)?(?:transfir|transfer|encaminh|repass)\w*|\bfalar\s+com\s+(?:uma?\s+(?:pessoa|atendente|vendedor|consultor)|algu[eé]m|um\s+humano|a\s+equipe|o\s+time)\b/;
+export function leadRequestsHumanExplicitly(block: string): boolean {
+  return HUMAN_REQUEST_EXPLICIT_RX.test(normalizeText(block));
+}
 export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
   if (!v || !v.fromBrain || !v.trusted) return false;
   // An autonomous qualified handoff is not automatically evidence that the

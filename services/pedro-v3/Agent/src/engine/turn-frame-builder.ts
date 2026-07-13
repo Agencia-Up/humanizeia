@@ -66,6 +66,8 @@ export function buildTurnFrame(args: {
   readonly acceptedPhotoOffer?: boolean;
   readonly selectedOfferThisTurn?: boolean;
   readonly handoffAvailable?: boolean;
+  // ⭐RD1 (2026-07-13): orientações de condução injetadas ANTES da geração (advisory; ver turn-advisories.ts).
+  readonly advisories?: readonly string[];
 }): TurnFrame {
   const base = buildFrameSignals(args.block, args.interpretation);
   // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
@@ -90,5 +92,6 @@ export function buildTurnFrame(args: {
     workingMemory: args.workingMemory,
     recentTranscript: buildRecentTranscript(args.state),
     signals,
+    ...(args.advisories && args.advisories.length > 0 ? { advisories: args.advisories } : {}),
   };
 }

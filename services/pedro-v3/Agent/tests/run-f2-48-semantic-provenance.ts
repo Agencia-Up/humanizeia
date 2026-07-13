@@ -239,11 +239,11 @@ async function main(): Promise<void> {
     // T7 "Não": evidence herdada -> deny -> corrige; entrada=0 pela EXTRAÇÃO (pergunta pendente).
     // 1ª tentativa espelha o incidente REAL: re-pergunta a ENTRADA que o "Não" acabou de responder (extração
     // entrada=0) -> deny semântico (slot conhecido) -> o cérebro corrige e avança para a parcela.
-    const t7 = await c.t("Não", (f, obs) => sawStale(obs)
-      ? finU([txt("Sem problema! Seguimos sem entrada. Qual parcela mensal caberia para você?")], U("financing", "Não"))
-      : finU([txt("Você tem um valor para dar de entrada?")], U("financing", "Vocês financiam?")));
+    // ⭐RD1-2: não reperguntar o slot que o "Não" acabou de resolver (entrada=0) é ADVISORY (knownFunnelSlots). A LLM
+    // advertida avança p/ a parcela de 1ª; o engine ENTREGA (brain_final). A EXTRAÇÃO entrada=0 (FATO) segue intacta.
+    const t7 = await c.t("Não", () => finU([txt("Sem problema! Seguimos sem entrada. Qual parcela mensal caberia para você?")], U("financing", "Não")));
     check("[R-T7] 'Não' resolveu SÓ a entrada (=0); troca segue unknown", slotVal(t7.state, "entrada") === 0 && slotVal(t7.state, "possuiTroca") === undefined, JSON.stringify({ entrada: slotVal(t7.state, "entrada"), troca: slotVal(t7.state, "possuiTroca") }));
-    check("[R-T7b] retry de proveniência corrigiu (sem fallback genérico)", t7.staleRetried === true && t7.sentTexts.some((x) => has(x, "parcela")) && !t7.sentTexts.some((x) => has(x, "Me conta um pouco mais")), t7.sentTexts.join("|").slice(0, 100));
+    check("[R-T7b] LLM avança p/ parcela (brain_final), sem fallback genérico", t7.responseSource?.startsWith("brain") === true && t7.sentTexts.some((x) => has(x, "parcela")) && !t7.sentTexts.some((x) => has(x, "Me conta um pouco mais")), t7.sentTexts.join("|").slice(0, 100));
     check("[R-T7c] WM registra a resposta resolvida (entrada)", (t7.state?.workingMemory as { lastResolvedSlotAnswer?: { slot?: string } })?.lastResolvedSlotAnswer?.slot === "entrada", "");
 
     // T8 rajada real: "Quero financiar ele mesmo" + "Mas não tenho entrada" -> NADA de possuiTroca.
@@ -255,10 +255,10 @@ async function main(): Promise<void> {
     check("[R-T9] parcela=1200 (e não faixa de preço)", slotVal(t9.state, "parcelaDesejada") === 1200 && slotVal(t9.state, "faixaPreco") === undefined, JSON.stringify({ p: slotVal(t9.state, "parcelaDesejada") }));
 
     // T10 "Douglas": evidence herdada -> deny -> corrige; nome pela extração.
-    const t10 = await c.t("Douglas", (f, obs) => sawStale(obs)
-      ? finU([txt("Prazer, Douglas! Você tem algum carro para dar de troca?")], U("smalltalk", "Douglas"))
-      : finU([txt("Certo! Para avançar, qual seu nome?")], U("financing", "Até 1200")));
-    check("[R-T10] nome=Douglas + retry corrigiu + pergunta de troca AGORA é possível (slot unknown)", slotVal(t10.state, "nome") === "Douglas" && t10.staleRetried === true && t10.sentTexts.some((x) => has(x, "troca")), t10.sentTexts.join("|").slice(0, 90));
+    // ⭐RD1-2: não reperguntar o nome (extraído "Douglas") é ADVISORY (knownName). A LLM advertida usa o nome e avança
+    // p/ a troca de 1ª; o engine ENTREGA (brain_final). A EXTRAÇÃO nome=Douglas (FATO) segue intacta.
+    const t10 = await c.t("Douglas", () => finU([txt("Prazer, Douglas! Você tem algum carro para dar de troca?")], U("smalltalk", "Douglas")));
+    check("[R-T10] nome=Douglas + LLM avança p/ troca (brain_final), sem reperguntar nome", slotVal(t10.state, "nome") === "Douglas" && t10.responseSource?.startsWith("brain") === true && t10.sentTexts.some((x) => has(x, "troca")), t10.sentTexts.join("|").slice(0, 90));
 
     // Estado/WM/CRM finais da conversa inteira.
     const wm = t10.state?.workingMemory as { activeTopic?: { topic?: string }; currentLeadIntent?: unknown } | undefined;
@@ -378,10 +378,9 @@ async function main(): Promise<void> {
     const db = new FakeCrmDb();
     const c = convWired(db);
     await c.t("tem SUV automático?", searchSuv);
-    const tD = await c.t("Gostei do Aircross", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /DUAS ações/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
-      ? finU([txt("Ótima escolha! Quer que eu te envie as fotos dele?")], U("select_vehicle", "Gostei do Aircross", "select"))
-      : finU([txt("Ótima escolha! Quer ver as fotos dele ou prefere saber as condições?")], U("select_vehicle", "Gostei do Aircross", "select")));
-    check("[C2-D1] pergunta dupla REJEITADA e reescrita com UMA ação", tD.sentTexts.length > 0 && tD.sentTexts.every((x) => !/fotos[^?]*ou[^?]*condi/i.test(x)) && tD.sentTexts.some((x) => has(x, "fotos dele?")), tD.sentTexts.join("|").slice(0, 100));
+    const tD = await c.t("Gostei do Aircross", () => finU([txt("Otima escolha! Quer ver as fotos dele ou prefere saber as condicoes?")], U("select_vehicle", "Gostei do Aircross", "select")));
+    // RD1-2 (Codex #2): alternativa curta e relacionada do MESMO veiculo ("fotos ou condicoes dele?") eh NATURAL e PERMITIDA -> entregue (brain_final).
+    check("[C2-D1] alternativa curta relacionada do MESMO veiculo eh ENTREGUE (brain_final, permitida)", tD.sentTexts.length > 0 && (tD.responseSource ?? "").startsWith("brain") && tD.sentTexts.some((x) => /fotos.*ou.*condi/i.test(x)), tD.sentTexts.join("|").slice(0, 100));
   }
   // ── [C2-H] promessa de consultor SEM efeito -> deny -> reescrita ──
   {
@@ -399,10 +398,9 @@ async function main(): Promise<void> {
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
-    const tF = await c.t("obrigado!", (_f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /DESPEDIDA/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
-      ? finU([txt("Obrigado você! Fico à disposição.")], U("smalltalk", "obrigado!"))
-      : finU([txt("Obrigado! Para avançar, preciso do seu telefone para contato.")], U("trade_in", "obrigado!")));
-    check("[C2-F1] despedida que reabre funil é negada e a LLM encerra sem pergunta", tF.responseSource === "brain_retry" && tF.sentTexts.length === 1 && !tF.sentTexts[0].includes("?") && !has(tF.sentTexts[0], "troca"), tF.sentTexts.join("|").slice(0, 100));
+    const tF = await c.t("obrigado!", () => finU([txt("Obrigado voce! Fico a disposicao.")], U("smalltalk", "obrigado!")));
+    // RD1-2: a forma da despedida (encerrar sem pergunta, sem reabrir funil) eh ADVISORY (disengagementOnly). A LLM advertida encerra -> entregue (brain_final).
+    check("[C2-F1] despedida: LLM encerra (brain_final) sem pergunta e sem reabrir funil", (tF.responseSource ?? "").startsWith("brain") && tF.sentTexts.length === 1 && !tF.sentTexts[0].includes("?") && !has(tF.sentTexts[0], "troca"), tF.sentTexts.join("|").slice(0, 100));
     const c2 = convWired(new FakeCrmDb());
     const tF2 = await c2.t("obrigado!", () => finU([txt("Obrigado pelo contato! Fico à disposição para dar continuidade quando precisar.")], U("smalltalk", "obrigado!")));
     check("[C2-F2] 'contato/continuidade' em despedida válida não vira coleta ou handoff", tF2.responseSource === "brain_final" && tF2.sentTexts.length === 1, tF2.sentTexts.join("|").slice(0, 100));

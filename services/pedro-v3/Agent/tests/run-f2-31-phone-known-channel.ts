@@ -88,10 +88,16 @@ async function main(): Promise<void> {
 
   // ── PARTE 2 — INTEGRAÇÃO ──
   {
-    // WhatsApp: cérebro pede telefone -> POL-PHONE-KNOWN nega + retry; o outbox final NÃO pede telefone.
-    const r = await runOne("wa:8ed13714deadbeef", "douglas", asksPhone);
-    check("[I-1] canal wa: -> signals.contactPhoneKnown=true no frame do cérebro", r.contactPhoneKnownSeen === true);
-    check("[I-2] pergunta de telefone é BLOQUEADA: outbox final NÃO pede telefone", r.committed && !has(r.outbox, "seu telefone") && !has(r.outbox, "seu numero") && !has(r.outbox, "seu número"), `outbox="${r.outbox}"`);
+    // ⭐RD1-2: POL-PHONE-KNOWN virou ADVISORY no central_active — o sinal contactPhoneKnown CHEGA ao cérebro (I-1), que é
+    // orientado a não pedir telefone. A LLM advertida usa o número do canal e não pede telefone; o engine ENTREGA (brain_final).
+    const goodNoPhone: BrainResponder = () => finU([txt("Perfeito, Douglas! Você procura um modelo específico ou um tipo de carro?")], "reply", U("other"));
+    const r = await runOne("wa:8ed13714deadbeef", "douglas", goodNoPhone);
+    check("[I-1] canal wa: -> signals.contactPhoneKnown=true no frame do cérebro (advisory)", r.contactPhoneKnownSeen === true);
+    check("[I-2] com phone-known como advisory, a resposta boa é ENTREGUE sem pedir telefone", r.committed && !has(r.outbox, "seu telefone") && !has(r.outbox, "seu numero") && !has(r.outbox, "seu número"), `outbox="${r.outbox}"`);
+    // ⭐RD1-2 (contrato explícito): se a LLM IGNORA o advisory e pede o telefone, o engine NÃO bloqueia mais (entrega) —
+    // o adversarial de estilo (LLM real seguindo o advisory) é coberto pelos smokes; aqui provamos "zero deny de estilo".
+    const r2 = await runOne("wa:8ed13714deadbee2", "douglas", asksPhone);
+    check("[I-2b] desvio de estilo (pede telefone) é ENTREGUE (committed), sem deny de estilo", r2.committed === true, `outbox="${r2.outbox}"`);
   }
   {
     // Controle: canal NÃO-wa (o guard é gated por canal) -> a pergunta passa (não é o cenário do bug).

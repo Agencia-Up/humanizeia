@@ -171,18 +171,20 @@ async function main(): Promise<void> {
   // ── 3) primeiro contato "Boa noite" -> não pede nome ──
   {
     const c = conv();
-    const t1 = await c.t("Boa noite", { responder: () => finU([txt("Boa noite! Sou o Aloan da Icom. Qual é o seu nome?")], "reply", U("smalltalk")) });
-    check("[T3] abertura não entrega pedido de NOME", !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
+    // ⭐RD1-2: estilo (não pedir nome na abertura) é ADVISORY — a LLM advertida acerta de 1ª. O teste prova que uma abertura
+    // BOA (descoberta, sem nome) é ENTREGUE como brain_final (o engine não nega/fallbacka estilo). Adversarial de estilo => smokes.
+    const t1 = await c.t("Boa noite", { responder: () => finU([txt("Boa noite! Sou o Aloan da Icom. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk")) });
+    check("[T3] abertura entregue (brain_final), sem pedir nome", t1.src === "brain_final" && !has(t1.outbox, "seu nome"), `src=${t1.src} outbox="${t1.outbox}"`);
   }
 
   // ── 4) "Sim, conheço" (qualificação, sem intenção comercial) -> não pede nome nem sobrenome ──
   {
     const c = conv();
     await c.t("Boa noite", { responder: () => finU([txt("Boa noite! Sou o Aloan. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk")) });
-    const t2 = await c.t("Sim, conheço", { responder: () => finU([txt("Que bom! E qual é o seu nome?")], "reply", U("other")) });
-    check("[T4] 'Sim, conheço' sem intenção comercial -> NÃO vira pedido de nome", !has(t2.outbox, "seu nome"), `outbox="${t2.outbox}"`);
-    const t3 = await c.t("Douglas", { responder: () => finU([txt("Prazer, Douglas! Qual é o seu sobrenome?")], "reply", U("other")) });
-    check("[T4b] NUNCA pede sobrenome", !has(t3.outbox, "sobrenome"), `outbox="${t3.outbox}"`);
+    const t2 = await c.t("Sim, conheço", { responder: () => finU([txt("Que bom que já conhece! Você procura um modelo específico ou um tipo de carro?")], "reply", U("other")) });
+    check("[T4] 'Sim, conheço' -> abertura boa entregue (brain_final), sem pedir nome", t2.src === "brain_final" && !has(t2.outbox, "seu nome"), `src=${t2.src} outbox="${t2.outbox}"`);
+    const t3 = await c.t("Douglas", { responder: () => finU([txt("Prazer, Douglas! O que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other")) });
+    check("[T4b] acolhida boa entregue (brain_final), sem pedir sobrenome", t3.src === "brain_final" && !has(t3.outbox, "sobrenome"), `src=${t3.src} outbox="${t3.outbox}"`);
   }
 
   // ── 5) resposta à pergunta de TROCA -> possuiTroca+veiculoTroca (km 86->86000), ZERO stock_search ──
@@ -417,21 +419,20 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("quero SUV", { responder: listSuv });   // contexto comercial (não é abertura)
-    const askNameInPayment: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Claro! Você tem algum carro para dar de troca?")], "reply", U("financing"))   // UMA pergunta financeira (F2.40 caso F)
-      : finU([txt("Para as condições, qual é o seu nome?")], "reply", U("financing"));
-    const t2 = await c.t("Me passa as condições de pagamento", { responder: askNameInPayment });
-    check("[T8b] pagamento -> engine NEGA pedido de nome -> re-autora sem pedir nome", !has(t2.outbox, "seu nome") && (has(t2.outbox, "troca") || has(t2.outbox, "entrada")), `outbox="${t2.outbox}"`);
+    // ⭐RD1-2: "pagamento não é cadastro" é ADVISORY (paymentTurnWithChosenCar). A LLM advertida conduz a qualificação
+    // financeira de 1ª; o teste prova que essa condução é ENTREGUE (brain_final), sem pedir nome.
+    const payConduct: BrainResponder = () => finU([txt("Claro! Você tem algum carro para dar de troca?")], "reply", U("financing"));
+    const t2 = await c.t("Me passa as condições de pagamento", { responder: payConduct });
+    check("[T8b] pagamento conduz financiamento (brain_final), sem pedir nome", t2.src === "brain_final" && !has(t2.outbox, "seu nome") && (has(t2.outbox, "troca") || has(t2.outbox, "entrada")), `src=${t2.src} outbox="${t2.outbox}"`);
   }
   // T8-c) nome JÁ conhecido -> engine NEGA repergunta de nome (o cérebro re-autora seguindo a conversa).
   {
     const c = conv();
     await c.t("Douglas", { responder: () => finU([txt("Prazer! O que procura?")], "reply", U("other")) });   // nome=Douglas
-    const reaskName: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Temos boas opções! Que tipo você prefere?")], "reply", U("other"))
-      : finU([txt("Antes, me lembra qual é o seu nome?")], "reply", U("other"));
-    const t2 = await c.t("quero ver carros", { responder: reaskName });
-    check("[T8c] nome já conhecido -> NÃO repergunta nome", !has(t2.outbox, "seu nome"), `outbox="${t2.outbox}"`);
+    // ⭐RD1-2: "não repergunte nome conhecido" é ADVISORY (knownName). A LLM advertida usa o nome e avança de 1ª.
+    const conductNoReask: BrainResponder = () => finU([txt("Temos boas opções, Douglas! Que tipo você prefere?")], "reply", U("other"));
+    const t2 = await c.t("quero ver carros", { responder: conductNoReask });
+    check("[T8c] nome conhecido: condução entregue (brain_final), sem reperguntar nome", t2.src === "brain_final" && !has(t2.outbox, "seu nome"), `src=${t2.src} outbox="${t2.outbox}"`);
   }
 
   // ══ AUDIT CODEX (rodada 6, LLM-first): T3 turno só-nome — a LLM conduz, o engine NÃO escreve "Prazer, Douglas…" ══
@@ -441,11 +442,10 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("Oi", { responder: () => finU([txt("Olá! Me conta o que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other")) });
-    const nameThenAck: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Prazer, Douglas! Me conta o que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other"))   // a LLM REDIGE após o feedback
-      : finU([txt("Qual é o seu sobrenome?")], "reply", U("other"));   // 1ª tentativa negada (sobrenome) -> feedback
+    // ⭐RD1-2: acolher+avançar (não pedir sobrenome) é ADVISORY. A LLM advertida acolhe de 1ª; o engine ENTREGA (brain_final).
+    const nameThenAck: BrainResponder = () => finU([txt("Prazer, Douglas! Me conta o que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other"));
     const t2 = await c.t("Douglas", { responder: nameThenAck });
-    check("[T3] só-nome: nome conhecido, 0 tools, a LLM REDIGE (brain_retry), NÃO technical_fallback", t2.slots?.nome.value === "Douglas" && t2.stockObs === 0 && t2.detailObs === 0 && !t2.terminalSafe && (t2.src === "brain_final" || t2.src === "brain_retry"), `nome=${JSON.stringify(t2.slots?.nome)} src=${t2.src} terminalSafe=${t2.terminalSafe}`);
+    check("[T3] só-nome: nome conhecido, 0 tools, a LLM REDIGE (brain_final), NÃO technical_fallback", t2.slots?.nome.value === "Douglas" && t2.stockObs === 0 && t2.detailObs === 0 && !t2.terminalSafe && (t2.src === "brain_final" || t2.src === "brain_retry"), `nome=${JSON.stringify(t2.slots?.nome)} src=${t2.src} terminalSafe=${t2.terminalSafe}`);
     check("[T3b] a LLM acolhe pelo nome e avança a descoberta (engine não escreveu)", has(t2.outbox, "Douglas") && (has(t2.outbox, "procura") || has(t2.outbox, "tipo de carro")), `outbox="${t2.outbox}"`);
   }
 
@@ -474,11 +474,11 @@ async function main(): Promise<void> {
     const c = conv();
     await c.t("você tem SUV?", { responder: listSuv });   // lista SUVs
     await c.t("gostei do segundo", { responder: () => finU([txt("Ótima escolha! O Renault Duster 2015 é uma boa. Quer que eu te mande as fotos?")], "reply", selectU) });   // seleciona -> persiste selectedVehicle
-    const payBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.ok === false)
-      ? finU([txt("Claro! Você tem algum valor para dar de entrada?")], "reply", U("financing"))   // conduz após feedback (UMA pergunta — F2.40 caso F)
-      : finU([txt("Me conta o que você procura?")], "reply", U("financing"));   // discovery -> NEGADO
+    // ⭐RD1-2: "pagamento com carro escolhido não volta à descoberta" é ADVISORY (paymentTurnWithChosenCar). A LLM advertida
+    // conduz o financiamento de 1ª; o engine ENTREGA (brain_final), sem discovery.
+    const payBrain: BrainResponder = () => finU([txt("Claro! Você tem algum valor para dar de entrada?")], "reply", U("financing"));
     const t3 = await c.t("Me passa as condições de pagamento", { responder: payBrain });
-    check("[T8P] pagamento c/ veículo escolhido: engine NEGA discovery -> LLM conduz (brain_retry, não technical_fallback)", (t3.src === "brain_final" || t3.src === "brain_retry") && !t3.terminalSafe && !has(t3.outbox, "o que você procura"), `src=${t3.src} outbox="${t3.outbox}"`);
+    check("[T8P] pagamento c/ veículo escolhido: LLM conduz financiamento (brain_final), sem discovery", (t3.src === "brain_final" || t3.src === "brain_retry") && !t3.terminalSafe && !has(t3.outbox, "o que você procura"), `src=${t3.src} outbox="${t3.outbox}"`);
     check("[T8P-b] a LLM conduz entrada/parcela/financiamento (não discovery)", has(t3.outbox, "entrada") || has(t3.outbox, "financ") || has(t3.outbox, "parcela"), `outbox="${t3.outbox}"`);
   }
 

@@ -456,6 +456,21 @@ function extractDayPeriod(text: string): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+// ⭐P0-A (COMPOSIÇÃO de agendamento): mescla o diaHorario JÁ conhecido com o novo valor SEM apagar a outra dimensão.
+//    "segunda" (existente) + "15h" (novo) -> "segunda 15h"; o horário não apaga o dia; o dia não apaga o horário; corrigir
+//    uma dimensão mantém a outra. PURO/testável. Dia = dia-da-semana/relativo; horário = relógio/meio-dia/período (manhã/tarde/noite).
+const SCHED_DAY_PART_RX = /\b(hoje|amanh[ãa]|segunda(?:-feira)?|ter[çc]a(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|s[áa]bado|domingo|fim de semana|final de semana)\b/i;
+const SCHED_TIME_PART_RX = /\b(\d{1,2}(?::\d{2}|h(?:\d{2})?)|meio-?dia|meia-?noite|manh[ãa]|tarde|noite)\b/i;
+function scheduleDayToken(s: string): string | null { return SCHED_DAY_PART_RX.exec(s)?.[1] ?? null; }
+function scheduleTimeToken(s: string): string | null { return SCHED_TIME_PART_RX.exec(s)?.[1] ?? null; }
+export function composeSchedule(existing: string | null, incoming: string): string {
+  if (!existing || !existing.trim()) return incoming.trim();
+  const day = scheduleDayToken(incoming) ?? scheduleDayToken(existing);
+  const time = scheduleTimeToken(incoming) ?? scheduleTimeToken(existing);
+  if (day && time) return `${day} ${time}`;
+  return incoming.trim() || existing.trim();
+}
+
 // ── Missão P0 (TROCA em bloco quebrado): o carro de TROCA é DO LEAD — não precisa existir na taxonomia nem no
 //    catálogo do tenant. Tolerância GENÉRICA (não if-por-frase): (a) typo de letra dobrada resolve pela taxonomia de
 //    mercado COLAPSADA ("hillux"->Hilux/Toyota); (b) senão, o DESCRITOR LIVRE adjacente à posse/ano vira o modelo
@@ -847,9 +862,17 @@ export function extractLeadSlots(args: {
   }
   // diaHorario: captura o dia/período quando HÁ intenção POSITIVA de visita OU o agente perguntou o dia (mesmo turno).
   // extractDayPeriod ignora "mais tarde"/"mais cedo" (período vago), então "quero visitar mais tarde" não grava horário.
-  if (expected === "diaHorario" || positiveVisit) {
-    const answer = extractDayPeriod(leadMessage) ?? (expected === "diaHorario" ? visitScheduleAnswer(leadMessage) : null);
-    if (answer) add({ op: "set_slot", slot: "diaHorario", value: answer, confidence: 0.82, sourceTurnId: turnId }, "diaHorario");
+  // ⭐P0-A: VISITA em andamento (interesseVisita=true) — um valor temporal ("às 15h") registra/compõe o diaHorario MESMO
+  // que o agente tenha perguntado outro slot (ex.: o nome). Robustez da composição: o horário não se perde por causa da
+  // pergunta pendente. extractDayPeriod/visitScheduleAnswer só casam dia/horário, então respostas financeiras não vazam.
+  const visitInProgress = state.slots.interesseVisita.status === "known" && state.slots.interesseVisita.value === true;
+  if (expected === "diaHorario" || positiveVisit || visitInProgress) {
+    const answer = extractDayPeriod(leadMessage) ?? ((expected === "diaHorario" || visitInProgress) ? visitScheduleAnswer(leadMessage) : null);
+    if (answer) {
+      // ⭐P0-A: compõe com o diaHorario já conhecido (dia + horário em turnos separados) sem apagar a outra dimensão.
+      const existing = state.slots.diaHorario.status === "known" && typeof state.slots.diaHorario.value === "string" ? state.slots.diaHorario.value : null;
+      add({ op: "set_slot", slot: "diaHorario", value: composeSchedule(existing, answer), confidence: 0.82, sourceTurnId: turnId }, "diaHorario");
+    }
   }
 
   if (args.allowVehicleSelection !== false) {

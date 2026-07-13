@@ -257,18 +257,14 @@ async function main(): Promise<void> {
   // PARTE 7 — INTEGRAÇÃO: ANTI-REPETIÇÃO (nome já conhecido -> feedback ao cérebro)
   // ─────────────────────────────────────────────────────────────────────────
   {
-    // Nome já conhecido no estado. Cérebro insiste em perguntar o nome -> guarda NEGA (retry). Como o script repete a
-    // mesma pergunta, esgota e cai na recuperação — o importante: a resposta final NÃO sai perguntando o nome de novo.
+    // ⭐RD1-2: não reperguntar o nome CONHECIDO é ADVISORY (knownName). A LLM advertida usa o nome e avança de 1ª; o
+    // engine ENTREGA (brain_final), sem deny/recovery de estilo. O adversarial (LLM repergunta) é coberto pelos smokes.
     const c = conv({ slots: { ...createInitialState({ conversationId: "x", tenantId: TENANT, agentId: AGENT, leadId: null, now: NOW }).slots, nome: knownSlot("Douglas") } } as Partial<ConversationState>);
     await c.seed();
-    const askNameU = U("other", { evidence: [] });
-    let denied = 0;
-    const responder: BrainResponder = (_f, obs) => {
-      if (obs.some((o) => o.tool === "response" && !o.ok)) denied++;
-      return finU([txt("Qual é o seu nome?")], [reply], "ask_name", askNameU);
-    };
+    const okU = U("other", { evidence: [] });
+    const responder: BrainResponder = () => finU([txt("Bom dia, Douglas! Você procura um modelo específico ou um tipo de carro?")], [reply], "reply", okU);
     const r = await c.t("bom dia", "ambiguous", responder);
-    check("[I-rep-a] a guarda NEGOU ao menos 1x (feedback ao cérebro)", denied >= 1, `denied=${denied}`);
+    check("[I-rep-a] condução entregue (brain_final), sem deny/recovery de estilo", r.committed === true && (r.src ?? "").startsWith("brain"), `src=${r.src}`);
     check("[I-rep-b] resposta final NÃO repergunta o nome", !/qual .*nome/i.test(r.outbox), `outbox="${r.outbox}"`);
   }
 

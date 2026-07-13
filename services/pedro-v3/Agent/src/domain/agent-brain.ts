@@ -220,6 +220,11 @@ export type TurnFrame = {
   readonly workingMemory: WorkingMemoryV1;   // persistido + view canônica derivada
   readonly recentTranscript: readonly FrameTranscriptTurn[];
   readonly signals: FrameSignals;
+  // ⭐RODADA 1 (2026-07-13, autoria-LLM): ORIENTAÇÕES de condução deste turno, injetadas ANTES da 1ª geração.
+  // São advisory — guiam o estilo/condução (apresentação, ordem de funil, não repergunte o conhecido, acolha o
+  // dado recém-informado, 1 pergunta). NUNCA escolhem a ação, tool, slot ou veículo, e NUNCA negam depois uma
+  // resposta factual válida. Substituem os antigos denies de QUALIDADE do authorFromBrainDraft.
+  readonly advisories?: readonly string[];
 };
 
 // ── Observação factual das tools (P0-3) — SEPARADA da telemetria ────────────────────────────────────────────

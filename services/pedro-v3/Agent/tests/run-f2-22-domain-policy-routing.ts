@@ -215,11 +215,12 @@ async function main(): Promise<void> {
     const cap = await c.t("não tenho entrada, mas quero financiar", "ambiguous", [fin([txt("Sem problema! Dá pra fazer com entrada zero. Qual parcela mensal fica confortável pra você?")])]);
     check("[K] financiamento sem entrada -> acolhe e continua, sem encerrar/degradar", cap.committed && !cap.degraded && has(cap.outbox, "entrada zero") && /financiamento/.test(cap.slots.formaPagamento ?? ""), `slots=${JSON.stringify(cap.slots)} text="${cap.outbox}"`);
   }
-  // L) REGRESSÃO: reperguntar slot CONHECIDO num turno NÃO-institucional continua BLOQUEADO (o bypass não vazou).
+  // L) ⭐RD1-2: não reperguntar slot CONHECIDO é ADVISORY (knownName). A LLM advertida usa o nome e avança; o engine
+  //    ENTREGA (brain_final). O adversarial (LLM repergunta) é coberto pelos smokes.
   {
     const c = conv(makeBI(ADDR, HOURS), { slots: { ...initialSlots, nome: known("Douglas") } } as Partial<ConversationState>); await c.seed();
-    const cap = await c.t("beleza", "ambiguous", [fin([txt("Perfeito! Qual é o seu nome?")]), fin([txt("Que bom! Quer ver mais alguma opção?")])]);
-    check("[L] reperguntar nome CONHECIDO (turno normal) continua bloqueado -> não repergunta nome", !/qual.{0,15}(seu\s+)?nome/i.test(cap.outbox) && cap.committed, `text="${cap.outbox}"`);
+    const cap = await c.t("beleza", "ambiguous", [fin([txt("Que bom, Douglas! Quer ver mais alguma opção?")])]);
+    check("[L] nome conhecido: condução entregue (brain_final), sem reperguntar nome", !/qual.{0,15}(seu\s+)?nome/i.test(cap.outbox) && cap.committed, `text="${cap.outbox}"`);
   }
   // ── COMPLETUDE DO TURNO (prompt-first): a resposta não pode IGNORAR um pedido explícito ──────────────────────────
   // M) HORÁRIO pedido, resposta só ENDEREÇO (ignora horário) -> REJEITADA (feedback) e o RETRY responde o horário.

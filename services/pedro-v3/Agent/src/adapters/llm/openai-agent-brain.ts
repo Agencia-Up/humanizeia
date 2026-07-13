@@ -422,6 +422,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         : "Analise o bloco atual do cliente e devolva UM passo (query|final) em JSON, seguindo o protocolo.";
     const user = JSON.stringify({
       instruction: turnInstruction,
+      // ⭐RD1 (2026-07-13): ORIENTAÇÕES de condução deste turno (advisory). Guiam estilo/condução — apresentação,
+      // ordem de funil, não repergunte o conhecido, acolha o dado recém-informado, UMA pergunta. NÃO são ordens
+      // rígidas: conduza naturalmente seguindo a personalidade do portal; se conflitarem com um pedido explícito
+      // do cliente, o pedido do cliente vence. Elas NÃO substituem sua leitura do bloco atual.
+      ...(frame.advisories && frame.advisories.length > 0 ? { orientacoesDoTurno: frame.advisories } : {}),
       leadBlock: frame.block,
       signals: frame.signals,
       workingMemory: frame.workingMemory,

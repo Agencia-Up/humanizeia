@@ -107,6 +107,10 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
   // efeitos seguem OFF/simulados) + vínculo de lead p/ crmWriteEnabled (o handoff exige lead vinculado).
   readonly handoff?: { readonly enabled: boolean; readonly available: boolean; readonly precheck?: import("../src/engine/handoff-precheck.ts").HandoffPrecheckDiag };
   readonly crmLeadId?: string | null;
+  // ⭐P0-D (driver ADAPTATIVO/ADVERSARIAL): quando presente, a próxima rajada NÃO vem de `steps` — vem deste driver, que
+  // lê `pendingSlot` (o slot que o agente acabou de perguntar via WM.pendingAgentQuestion) e o último capture. Retorna a
+  // próxima rajada ou null p/ encerrar. Adaptativo: responde ao slot pedido; Adversarial: ignora/contradiz o slot pendente.
+  readonly driver?: (ctx: { readonly turnIndex: number; readonly last: CentralTurnCapture | null; readonly pendingSlot: string | null }) => readonly string[] | null;
 } = {}): Promise<CentralTurnCapture[]> {
   const maxLlmCalls = opts.maxLlmCalls ?? Infinity;
   const base = { ms: Date.parse("2026-07-01T09:00:00.000Z") };
@@ -124,7 +128,19 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
   const captures: CentralTurnCapture[] = [];
   let eventSeq = 0, turnSeq = 0;
 
-  for (const burst of steps) {
+  let stepIdx = 0;
+  while (true) {
+    // Próxima rajada: do DRIVER adaptativo/adversarial (lê pendingSlot do último capture) OU da lista fixa `steps`.
+    let burst: readonly string[];
+    if (opts.driver) {
+      const last = captures[captures.length - 1] ?? null;
+      const next = opts.driver({ turnIndex: turnSeq, last, pendingSlot: last?.pendingAgentQuestion ?? null });
+      if (next == null || next.length === 0) break;
+      burst = next;
+    } else {
+      if (stepIdx >= steps.length) break;
+      burst = steps[stepIdx++];
+    }
     // Teto de custo (R13-D/6): aborta ANTES de um novo turno quando o total de chamadas LLM (brain+compose) atinge o teto.
     if (stack.brainTransport.count + stack.composeTransport.count >= maxLlmCalls) {
       console.log(`[smoke] teto de chamadas LLM atingido (${stack.brainTransport.count + stack.composeTransport.count} >= ${maxLlmCalls}); abortando antes do turno ${turnSeq + 1}.`);
@@ -228,6 +244,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       wmAfterLastPhotoLabel: wmAfter.lastPhotoAction?.label ?? null,
       possuiTrocaBefore, possuiTrocaAfter: possuiTrocaStr(after),
       selectedVehicleKeyAfter: after?.vehicleContext.selected?.key ?? null,
+      pendingAgentQuestion: wmAfter.pendingAgentQuestion?.slot ?? null,
     });
     base.ms += 30_000;
     if (INTER_TURN_DELAY_MS > 0) await realSleep(INTER_TURN_DELAY_MS);

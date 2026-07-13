@@ -220,28 +220,28 @@ async function main(): Promise<void> {
   // 1) primeiro contato genérico SEM anúncio: sinal firstContactNoCommercialTarget + guardrail (deny+feedback -> discovery)
   {
     const c = conv();
-    // responder que ABRE pedindo o nome no passo 0 e, no retry, faz DESCOBERTA comercial (prova o deny+feedback).
-    const nameThenDiscovery: BrainResponder = (_f, _o, step) => step === 0
-      ? finU([txt("Boa tarde! Sou o Aloan da Icom. Qual é o seu nome?")], "reply", U("smalltalk"))
-      : finU([txt("Boa tarde! Sou o Aloan da Icom. Você procura um modelo específico, um tipo de carro (SUV, sedan, hatch) ou uma faixa de preço?")], "reply", U("smalltalk"));
-    const t1 = await c.t("Boa tarde", { responder: nameThenDiscovery });
+    // ⭐RD1-2: descoberta-antes-do-nome é ADVISORY (needsDiscovery). A LLM advertida faz descoberta de 1ª; o engine ENTREGA (brain_final).
+    const discoveryOpening: BrainResponder = () => finU([txt("Boa tarde! Sou o Aloan da Icom. Você procura um modelo específico, um tipo de carro (SUV, sedan, hatch) ou uma faixa de preço?")], "reply", U("smalltalk"));
+    const t1 = await c.t("Boa tarde", { responder: discoveryOpening });
     check("[PA-1] 1º contato sem anúncio -> signals.firstContactNoCommercialTarget=true", sig(c, 0).firstContactNoCommercialTarget === true, JSON.stringify(sig(c, 0)));
-    check("[PA-1b] guardrail deny+feedback: resposta final vira DESCOBERTA (não pede nome)", (has(t1.outbox, "tipo de carro") || has(t1.outbox, "faixa de preço") || has(t1.outbox, "modelo")) && !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
+    check("[PA-1b] abertura de descoberta entregue (brain_final), sem pedir nome", t1.src === "brain_final" && (has(t1.outbox, "tipo de carro") || has(t1.outbox, "faixa de preço") || has(t1.outbox, "modelo")) && !has(t1.outbox, "seu nome"), `src=${t1.src} outbox="${t1.outbox}"`);
   }
-  // 1b) cérebro INSISTE em pedir nome (nunca descobre) -> o sistema NUNCA entrega uma abertura que só pede nome
+  // 1b) ⭐RD1-2: o backstop de estilo foi REMOVIDO — se a LLM ignora o advisory e pede nome, o engine ENTREGA (brain_final),
+  //     NUNCA gera fallback/recovery por estilo. O adversarial de estilo (LLM real seguindo o advisory) é coberto pelos smokes.
   {
     const c = conv();
     const alwaysName: BrainResponder = () => finU([txt("Olá! Qual é o seu nome, por favor?")], "reply", U("smalltalk"));
     const t1 = await c.t("Boa tarde", { responder: alwaysName });
-    check("[PA-1c] abertura nunca ENTREGA só 'qual seu nome' (backstop/recovery cobrem)", !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}" src=${t1.src}`);
+    check("[PA-1c] desvio de estilo na abertura é ENTREGUE (brain_final), sem fallback de estilo", t1.src === "brain_final", `outbox="${t1.outbox}" src=${t1.src}`);
   }
   // 2) anúncio GENÉRICO: adGenericEntry + abertura não pede nome
   {
     const c = conv();
-    const alwaysName: BrainResponder = () => finU([txt("Olá! Qual é o seu nome?")], "reply", U("smalltalk"));
-    const t1 = await c.t("Olá, vim pelo anúncio", { ad: adGeneric, responder: alwaysName });
+    // ⭐RD1-2: abertura de anúncio genérico = descoberta (ADVISORY). A LLM advertida descobre de 1ª; o engine ENTREGA (brain_final).
+    const genericAdOpening: BrainResponder = () => finU([txt("Olá! Que bom que veio pelo anúncio. Você procura um modelo específico, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk"));
+    const t1 = await c.t("Olá, vim pelo anúncio", { ad: adGeneric, responder: genericAdOpening });
     check("[PA-2] anúncio genérico -> signals.adGenericEntry=true", sig(c, 0).adGenericEntry === true, JSON.stringify(sig(c, 0)));
-    check("[PA-2b] abertura de anúncio genérico não entrega 'qual seu nome'", !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
+    check("[PA-2b] abertura de anúncio genérico entregue (brain_final), sem pedir nome", t1.src === "brain_final" && !has(t1.outbox, "seu nome"), `src=${t1.src} outbox="${t1.outbox}"`);
   }
   // 3) anúncio ESPECÍFICO (HB20): specificAdEntry + adVehicle entregues; abertura DEVE reconhecer/conduzir o veículo do anúncio.
   //    Aterramento: o cérebro busca o HB20 (stock_search) e MOSTRA/lista o veículo do anúncio (grounded).
@@ -258,20 +258,20 @@ async function main(): Promise<void> {
     check("[PA-3b] o cérebro recebe o veículo do anúncio (signals.adVehicle ~ HB20)", has(String(sig(c, 0).adVehicle ?? ""), "HB20"), `adVehicle=${sig(c, 0).adVehicle}`);
     check("[PA-3c] abertura que reconhece+MOSTRA o HB20 do anúncio é ACEITA", has(t1.outbox, "HB20") && t1.committed, `outbox="${t1.outbox}"`);
   }
-  // 3d) INVARIANTE P0: saudação genérica ignorando o veículo do anúncio -> NEGADA; cérebro RE-AUTORA mostrando o HB20
+  // 3d) ⭐RD1-2: reconhecer o veículo do anúncio é ADVISORY (adVehicleLabel). A LLM advertida reconhece+mostra o HB20 de 1ª;
+  //     o engine ENTREGA (aterrado, grounded pela busca). O adversarial (LLM ignora o anúncio) é coberto pelos smokes.
   {
     const c = conv();
-    const genericThenList = (_f: unknown, obs: readonly AgentToolObservation[], step: number): AgentBrainStep =>
-      step === 0 ? finU([txt("Bom dia! Sou o Aloan da Icom. Você é aqui de Taubaté? Já conhece a nossa loja?")], "reply", U("smalltalk")) : listHb20(_f, obs);
-    const t1 = await c.t("Olá, tenho interesse", { ad: adHB20, responder: genericThenList });
-    check("[PA-3d] saudação genérica é NEGADA e o cérebro re-autora falando do HB20 (mostrando o veículo)", has(t1.outbox, "HB20") && !has(t1.outbox, "conhece a nossa loja"), `outbox="${t1.outbox}"`);
+    const t1 = await c.t("Olá, tenho interesse", { ad: adHB20, responder: listHb20 });
+    check("[PA-3d] abertura reconhece+MOSTRA o HB20 do anúncio (grounded), sem saudação genérica", has(t1.outbox, "HB20") && !has(t1.outbox, "conhece a nossa loja"), `outbox="${t1.outbox}"`);
   }
-  // 3e) cérebro INSISTE na saudação genérica -> a saudação que IGNORA o anúncio NUNCA é entregue ao lead (sem falso-verde)
+  // 3e) ⭐RD1-2: o guardrail de anúncio foi REMOVIDO — se a LLM ignora o anúncio e saúda genérico, o engine ENTREGA (brain_final),
+  //     NUNCA gera fallback por estilo. A adesão ao anúncio (LLM real + advisory) é coberta pelos smokes.
   {
     const c = conv();
     const alwaysGeneric: BrainResponder = () => finU([txt("Bom dia! Você é aqui de Taubaté? Já conhece a nossa loja?")], "reply", U("smalltalk"));
     const t1 = await c.t("Olá, tenho interesse", { ad: adHB20, responder: alwaysGeneric });
-    check("[PA-3e] saudação genérica que ignora o anúncio NÃO é entregue (guardrail nega, sem falso-verde)", !has(t1.outbox, "conhece a nossa loja"), `outbox="${t1.outbox}" src=${t1.src}`);
+    check("[PA-3e] desvio de estilo (ignora anúncio) é ENTREGUE (brain_final), sem fallback de estilo", t1.src === "brain_final", `outbox="${t1.outbox}" src=${t1.src}`);
   }
   // 4) lead JÁ dá intenção comercial no 1º contato: NÃO é firstContactNoCommercialTarget (vai buscar, não força discovery)
   {

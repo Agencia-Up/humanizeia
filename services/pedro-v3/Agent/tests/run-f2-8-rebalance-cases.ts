@@ -479,7 +479,7 @@ async function main(): Promise<void> {
     const withObj = (slot: string, extra: DecisionMutation[] = []): TurnDecision => dec([{ op: "set_planned_objective", planned: plannedObj(slot) } as unknown as DecisionMutation, ...extra]);
     const txt = (s: string): RenderedResponse => ({ draft: { parts: [{ type: "text", content: s }] }, text: s });
     const ctxQ = (state: ConversationState): TurnContext => ({ state, turnId: "tQ", leadMessage: "x", now: NOW, interpretation: { relation: "answers_pending" }, tenantCatalog: catalog, claimExtractor: extractor });
-    const denies = (composed: RenderedResponse, d: TurnDecision, state: ConversationState = base()): boolean => PolicyEngine.validateResponse(composed, [], d, ctxQ(state)).some((v) => v.policyId === "POL-QUESTION-OBJECTIVE" && v.outcome === "deny");
+    const denies = (composed: RenderedResponse, d: TurnDecision, state: ConversationState = base()): boolean => PolicyEngine.validateResponse(composed, [], d, ctxQ(state)).some((v) => (v.policyId === "POL-QUESTION-OBJECTIVE" || v.policyId === "POL-CPF-TIMING") && v.outcome === "deny");
 
     // (b) CPF antes da hora -> deny.
     check("P0-2 pergunta CPF (antes da hora) -> deny", denies(txt("Show! Qual o seu CPF?"), withObj("interesseVisita")));
@@ -571,7 +571,7 @@ async function main(): Promise<void> {
     const decR: TurnDecision = { action: "reply", target: null, reasonCode: "answer", reasonSummary: "", confidence: 0.9, decisionMutations: [], effectPlan: [], responsePlan: { guidance: "" }, policyChecks: [] } as unknown as TurnDecision;
     const txt = (s: string): RenderedResponse => ({ draft: { parts: [{ type: "text", content: s }] }, text: s });
     const ctxQ = (state: ConversationState): TurnContext => ({ state, turnId: "tQ2", leadMessage: "x", now: NOW, interpretation: { relation: "answers_pending" }, tenantCatalog: catalog, claimExtractor: extractor });
-    const denies = (composed: RenderedResponse, state: ConversationState = base()): boolean => PolicyEngine.validateResponse(composed, [], decR, ctxQ(state)).some((v) => v.policyId === "POL-QUESTION-OBJECTIVE" && v.outcome === "deny");
+    const denies = (composed: RenderedResponse, state: ConversationState = base()): boolean => PolicyEngine.validateResponse(composed, [], decR, ctxQ(state)).some((v) => (v.policyId === "POL-QUESTION-OBJECTIVE" || v.policyId === "POL-CPF-TIMING") && v.outcome === "deny");
     check("R10-2 dado + CTA de visita na mesma msg -> deny (duas perguntas)", denies(txt("Qual é o seu nome? E quer agendar uma visita?")));
     check("R10-2 duas perguntas da MESMA familia -> deny", denies(txt("Qual modelo voce procura? Prefere SUV ou hatch?")));
     check("R10-2 CPF + CTA na mesma msg -> deny mesmo quando CPF esta liberado", denies(txt("Qual o seu CPF? E qual horario prefere?"), base({ slots: { ...base().slots, formaPagamento: { status: "known", value: "financiamento", confidence: 1, updatedAt: NOW } } as ConversationState["slots"] })));

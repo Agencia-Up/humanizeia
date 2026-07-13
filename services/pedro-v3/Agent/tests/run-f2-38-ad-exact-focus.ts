@@ -239,8 +239,9 @@ async function main(): Promise<void> {
   // ── AD-6: anúncio GENÉRICO + "Olá" -> discovery comercial, não nome/telefone ──
   {
     const c = conv();
-    const alwaysName: BrainResponder = () => finU([txt("Olá! Qual é o seu nome?")], "reply", U("smalltalk"));
-    const t1 = await c.t("Olá", { ad: adGeneric, responder: alwaysName });
+    // ⭐RD1-2: abertura de anúncio genérico = descoberta (ADVISORY). A LLM advertida descobre de 1ª; o engine ENTREGA (brain_final).
+    const discoverOpening: BrainResponder = () => finU([txt("Olá! Que bom que veio pelo anúncio. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk"));
+    const t1 = await c.t("Olá", { ad: adGeneric, responder: discoverOpening });
     check("[AD-6] anúncio genérico não abre pedindo nome (discovery)", !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
     check("[AD-6b] não pede telefone", !has(t1.outbox, "telefone"), `outbox="${t1.outbox}"`);
   }

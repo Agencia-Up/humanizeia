@@ -215,11 +215,8 @@ const financialTryThenConduct: BrainResponder = (_f, obs: readonly AgentToolObse
 // Resposta de entrada "tenho não": cérebro conduz sem buscar.
 const entradaConduct: BrainResponder = () => finU([txt("Sem problemas, seguimos com entrada zero. Qual parcela mensal caberia pra você?")], "reply", U("financing"));
 // Caso F: cérebro tenta pergunta DUPLA ("entrada ou financiar?"); ao ser negado, reautora com UMA pergunta.
-const doubleFinThenSingle: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
-  const denied = obs.some((o) => o.tool === "response" && !o.ok);
-  if (!denied) return finU([txt("Perfeito! Você tem algum valor para dar de entrada ou pretende financiar?")], "reply", U("financing"));
-  return finU([txt("Perfeito! Você tem algum carro para dar na troca?")], "reply", U("financing"));
-};
+// ⭐RD1-2: "uma pergunta financeira por vez" é ADVISORY. A LLM advertida faz UMA pergunta de 1ª; o engine ENTREGA (brain_final).
+const singleFin: BrainResponder = () => finU([txt("Perfeito! Você tem algum valor para dar de entrada?")], "reply", U("financing"));
 // Mudança de intenção: "na verdade quero Onix até 80 mil" -> busca de verdade.
 const searchOnix: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
@@ -317,8 +314,8 @@ async function runEngine(): Promise<void> {
     const c = conv();
     await c.t("quero SUV", listSuv);
     await c.t("gostei do primeiro", selectFirst);
-    const t = await c.t("quais as condições?", doubleFinThenSingle);
-    check("[G5] pergunta dupla foi NEGADA -> reautoria (brain_retry)", t.src === "brain_retry", `src=${t.src}`);
+    const t = await c.t("quais as condições?", singleFin);
+    check("[G5] LLM conduz financiamento com UMA pergunta (brain_final, sem fallback)", t.src === "brain_final", `src=${t.src}`);
     check("[G5b] texto final tem UMA pergunta financeira (não entrada E financiamento juntos)", t.committed && !(has(t.outbox, "entrada") && has(t.outbox, "financ")), `outbox="${t.outbox}"`);
   }
 

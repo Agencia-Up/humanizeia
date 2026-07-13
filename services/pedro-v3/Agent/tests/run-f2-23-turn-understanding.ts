@@ -334,6 +334,35 @@ async function main(): Promise<void> {
   }
 
   // ── IDENTIDADE EXATA DE MODELO (P0, 4ª auditoria) — Onix≠Onix Plus, HB20≠HB20S, C3≠C3 Aircross; sem substring ──────
+  // The brain uses a wrong photo key first. The engine blocks it before the
+  // adapter and returns the grounded target; the same brain retries with the
+  // correct call and authors the response. No silent tool replacement.
+  {
+    const c = conv({ ...sel(C3_AIRCROSS), ...offerCtx([C3_AIRCROSS, ONIX]) }); await c.seed();
+    const uP4b = U("request_photos", { caps: ["send_photos"], subject: "selected_vehicle", subjectSource: "memory", evidence: [{ capability: "send_photos", quote: "me manda fotos dele" }] });
+    let wrongProposals = 0;
+    let mismatchCount = 0;
+    const cap = await c.t("me manda fotos dele", "ambiguous", (_f, obs) => {
+      if (obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok && o.data.vehicleKey === C3_AIRCROSS.vehicleKey)) {
+        return finU([txt("Aqui estao as fotos dele:")], [reply, mediaEff(C3_AIRCROSS)], "send_photos", uP4b);
+      }
+      if (obs.some((o) => !o.ok && o.error.code === "PHOTO_TARGET_MISMATCH")) {
+        mismatchCount += 1;
+        if (mismatchCount < 2) {
+          wrongProposals += 1;
+          return photoResolve(ONIX, uP4b);
+        }
+        return photoResolve(C3_AIRCROSS, uP4b);
+      }
+      wrongProposals += 1;
+      return photoResolve(ONIX, uP4b);
+    });
+    const executedPhotoKeys = executed
+      .filter((call) => call.tool === "vehicle_photos_resolve")
+      .map((call) => (call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key ?? "");
+    check("[P4b] wrong key blocked before tool; LLM retries selected vehicle", cap.committed && cap.hasMedia && cap.mediaKey === C3_AIRCROSS.vehicleKey && cap.fromBrain && /^brain_/.test(cap.src) && wrongProposals === 2 && mismatchCount === 2 && executedPhotoKeys.length === 1 && executedPhotoKeys[0] === C3_AIRCROSS.vehicleKey, `src=${cap.src} steps=${cap.brainSteps} wrong=${wrongProposals} mismatch=${mismatchCount} execKeys=${JSON.stringify(executedPhotoKeys)} mediaKey=${cap.mediaKey}`);
+  }
+
   const uPhoto = (subjectValue: string, quote: string): TurnUnderstanding => U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue, subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote }] });
   // NEGATIVO: cérebro tenta enviar a foto de `wrong` (modelo distinto do pedido) -> REJEITADO, ZERO mídia.
   const identNeg = async (name: string, offerVeh: VehicleFact, lead: string, subjectValue: string, quote: string): Promise<void> => {

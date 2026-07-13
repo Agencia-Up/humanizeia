@@ -265,9 +265,14 @@ export const PolicyEngine = {
     const verdicts: PolicyVerdict[] = [];
     const obj = ctx.state.currentObjective;
 
-    // POL-TRACK-001: resposta a pergunta de pagamento não vira busca de estoque se relation=answers_pending
+    // POL-TRACK-001: resposta a pergunta de pagamento não vira busca de estoque se relation=answers_pending.
+    // ⭐P0-B (Codex — AUTORIDADE LLM-first): a MUDANÇA DE ASSUNTO vence, mas a autoridade é o TurnUnderstanding CONFIÁVEL
+    // e VALIDADO da LLM (`acceptedPrimaryIntent === "search_stock"`, que já implica capability stock_search + evidence do
+    // bloco atual porque só é setado quando o understanding é `trusted`), NUNCA um detector heurístico. Sem
+    // acceptedPrimaryIntent (legado kernel/v2/replay) o comportamento antigo (deny) é preservado.
+    const currentTurnIsSearch = ctx.acceptedPrimaryIntent === "search_stock";
     const isPayRelation = ctx.interpretation.relation === "answers_pending" && obj?.type === "perguntou_pagamento" && obj.status === "pending";
-    if (isPayRelation && (proposal.proposedAction === "search_stock" || proposal.proposedAction === "send_photos")) {
+    if (!currentTurnIsSearch && isPayRelation && (proposal.proposedAction === "search_stock" || proposal.proposedAction === "send_photos")) {
       verdicts.push({ policyId: "POL-TRACK-001", outcome: "deny", violations: ["resposta de financiamento virou busca"] });
     }
 
@@ -325,7 +330,10 @@ export const PolicyEngine = {
   },
 
   // (3) GROUNDING DA RESPOSTA RENDERIZADA: valida referências estruturadas e defende contra alucinações.
-  validateResponse(composed: RenderedResponse, facts: QueryResult[], decision: TurnDecision, ctx: TurnContext): PolicyVerdict[] {
+  // ⭐RD1-2 (2026-07-13): `skipStyleChecks` (central_active) PULA as POL de ESTILO (telefone conhecido, "uma pergunta por
+  // vez", reperguntar slot conhecido) — elas viraram advisory. As POL de FATO/PII (grounding, CPF-timing) rodam SEMPRE, e o
+  // fluxo NÃO retorna cedo no estilo (assim o grounding é sempre avaliado). No legado (default false) tudo continua.
+  validateResponse(composed: RenderedResponse, facts: QueryResult[], decision: TurnDecision, ctx: TurnContext, skipStyleChecks = false): PolicyVerdict[] {
     // P0 ROTEAMENTO POR DOMÍNIO (audit Codex): o bypass é pelo DOMÍNIO DA AFIRMAÇÃO, não da mensagem. Numa mensagem
     // MISTA ("onde fica a loja e esse Onix é automático?") a parte institucional libera, MAS todo trecho que cite
     // veículo/atributo/preço/foto continua validado normalmente. Aqui: `instOnlyResponse` = a RESPOSTA não contém NENHUM
@@ -337,7 +345,7 @@ export const PolicyEngine = {
     // O agente NUNCA deve pedir o telefone do LEAD (o prompt do portal não coleta telefone) — usa o número do WhatsApp e
     // avança o funil. Se a resposta pede o telefone do lead num canal onde ele já é conhecido -> deny + retry. A exceção
     // (número ALTERNATIVO/secundário pedido de propósito) já é tratada em asksLeadContactPhone (não dispara).
-    if (contactPhoneKnownFromChannel(ctx.state.conversationId) && asksLeadContactPhone(composed.text)) {
+    if (!skipStyleChecks && contactPhoneKnownFromChannel(ctx.state.conversationId) && asksLeadContactPhone(composed.text)) {
       return [{ policyId: "POL-PHONE-KNOWN", outcome: "deny", violations: ["nao peca o telefone do lead: no WhatsApp o numero de contato ja e conhecido pelo canal. Use-o como contato e avance o funil (nao pergunte telefone salvo se o prompt pedir um numero alternativo)"] }];
     }
     // POL-QUESTION-OBJECTIVE (R10-2 Codex): UMA pergunta por mensagem, SEM exceção. A classificação lê a ÚLTIMA
@@ -363,22 +371,25 @@ export const PolicyEngine = {
         return true;
       };
       const qDeny = (why: string): PolicyVerdict[] => [{ policyId: "POL-QUESTION-OBJECTIVE", outcome: "deny", violations: [why] }];
-      // (a) no MÁXIMO UMA pergunta por mensagem (sem exceção de CTA).
-      if (asked.length > 1) return qDeny(`mais de uma pergunta no mesmo turno (${asked.join(",")})`);
+      // (a) no MÁXIMO UMA pergunta por mensagem (sem exceção de CTA). RD1-2: ESTILO -> advisory no central_active.
+      if (!skipStyleChecks && asked.length > 1) return qDeny(`mais de uma pergunta no mesmo turno (${asked.join(",")})`);
       // (b) CPF é dado de FECHAMENTO (missão SDR real): só na hora de AGENDAR a visita / fechar — quando o lead QUER
       // visitar ou já deu dia/horário. Intenção de financiamento NÃO libera CPF (pedir CPF logo após "quero financiar"
       // é intrusivo/robótico; o dono quer entrada/parcela/estimativa primeiro). Antes do fechamento -> deny.
       const iv = (ctx.state.slots as { interesseVisita?: { status?: string; value?: unknown } }).interesseVisita;
       const dh = (ctx.state.slots as { diaHorario?: { status?: string } }).diaHorario;
       const cpfDueNow = iv?.value === true || dh?.status === "known";
-      if (asked.includes("cpf") && !cpfDueNow) return qDeny(`pergunta CPF antes da hora (CPF so ao agendar visita/fechar)`);
+      // ⭐RD1-2: o CPF-timing é SEGURANÇA/PII (não estilo). policyId PRÓPRIO (POL-CPF-TIMING) para continuar HARD no
+      // central_active, mesmo quando as demais POL-QUESTION-OBJECTIVE (uma pergunta / reask de slot) viram advisory.
+      if (asked.includes("cpf") && !cpfDueNow) return [{ policyId: "POL-CPF-TIMING", outcome: "deny", violations: ["pergunta CPF antes da hora (CPF so ao agendar visita/fechar)"] }];
       // (c) reperguntar um slot JÁ CONHECIDO (incl. visita/horário já respondidos — não reoferte visita se já quer).
       //     ROTEAMENTO POR DOMÍNIO (audit Codex): abstém-se SÓ quando a PERGUNTA do lead é institucional E a RESPOSTA é
       //     institucional PURA (sem claim de veículo) — aí um CTA leve na resposta de endereço não derruba tudo. Numa
       //     resposta MISTA (cita veículo) OU num turno de funil normal a trava continua (não mascara reask indevido).
       const abstainFunnelReask = instOnlyResponse && isInstitutionalTurn(ctx.leadMessage);
       const knownAsked = asked.find((s) => s !== "cpf" && slotKnown(s));
-      if (knownAsked && !abstainFunnelReask) return qDeny(`pergunta o slot '${knownAsked}' que ja e conhecido`);
+      // RD1-2: reperguntar slot conhecido é ESTILO -> advisory no central_active (knownName/knownFunnelSlots).
+      if (!skipStyleChecks && knownAsked && !abstainFunnelReask) return qDeny(`pergunta o slot '${knownAsked}' que ja e conhecido`);
     }
 
     // POL-GROUND-DETAIL (item 2, Codex): afirmar ATRIBUTO de um veículo (câmbio/cor/ano/km/automático/…) exige

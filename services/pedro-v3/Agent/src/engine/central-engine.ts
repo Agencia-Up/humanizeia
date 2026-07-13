@@ -30,12 +30,11 @@ import type {
 import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
-  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
-  understandingAuthorityFeedback,
-  type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel,
+  toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, leadRequestsHumanExplicitly, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
+  understandingAuthorityFeedback, hasActiveVisitContext, hasSchedulingTemporalValue, scheduleHasDay, scheduleHasTime,
+  type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel, type TurnValidationContext,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
-import { detectQuestionRepetition } from "./question-repetition.ts";
 import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, relaxSearchCascade, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
@@ -67,8 +66,9 @@ import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts"
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, lastAgentQuestionText, questionSlotFromAgentText, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
 import { filterBrainSlotMutations, type DroppedSlotMutation } from "./slot-provenance.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
-import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
+import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, deriveSdrQualification, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
+import { buildTurnAdvisories, deriveTurnAdvisoryContext } from "./turn-advisories.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
@@ -152,6 +152,19 @@ export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_reca
 // technical_fallback é exclusivamente uma falha operacional do provedor, sem condução comercial.
 const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback"]);
 function isDegradedSource(src: ResponseSource): boolean { return DEGRADED_SOURCES.has(src); }
+// ⭐RD1-2 (observabilidade): classifica o feedback de um deny HARD em categoria (só p/ auditoria — nunca controla nada).
+// No central_active só sobram denies de FATO/EFEITO/PII/pedido-explícito; o estilo virou advisory. PURO, best-effort.
+export type HardDenyCategory = "grounding" | "tool_safety" | "effect_safety" | "pii" | "explicit_request" | "structural" | "other";
+function classifyDenyCategory(feedback: string): HardDenyCategory {
+  const f = feedback.toLowerCase();
+  if (/\bcpf\b|sens[ií]vel|data de nasc/.test(f)) return "pii";
+  if (/transfer[êe]nc|consultor|vendedor|handoff|visita ser[áa]|agendad/.test(f)) return "effect_safety";
+  if (/foto|m[íi]dia|send_media|imagem/.test(f)) return "tool_safety";
+  if (/chave interna|fato ausente|n[ãa]o consultad|atributo|km\/cor|vehicle_details|aterrad|acima do teto|fora do cat[áa]logo/.test(f)) return "grounding";
+  if (/buscou o estoque|vehicle_offer_list|hor[áa]rio|endere[çc]o|ignorar um pedido|pedido expl[íi]cito|mostre a lista/.test(f)) return "explicit_request";
+  if (/draft|parts estruturadas|malformad|corromp/.test(f)) return "structural";
+  return "other";
+}
 function isDegradedResponse(src: ResponseSource, recoveryReason: string | null): boolean {
   void recoveryReason;
   if (isDegradedSource(src)) return true;
@@ -638,15 +651,21 @@ function authorFromBrainDraft(args: {
   readonly photoRecallLabel?: string | null;            // memória factual: a LLM precisa nomear o veículo lembrado
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
+  // ⭐RD1-2 (2026-07-13, autoria-LLM exclusiva): em central_active (requireBrain/llmFirst) as guardas de ESTILO/QUALIDADE
+  // NÃO negam mais o draft — viraram ADVISORY (orientação ANTES da geração, ver deriveTurnAdvisoryContext/buildTurnAdvisories).
+  // Aqui elas ficam ativas SÓ no legado/replay (!requireBrain), preservando o contrato antigo. As guardas de FATO/EFEITO/PII
+  // (grounding, foto/mídia, transferência/visita, CPF, chave interna, completude de pedido explícito) continuam HARD nos DOIS
+  // caminhos. Zero hard-deny de estilo no central_active; a LLM conduz/escreve seguindo o prompt do portal + os advisories.
+  const applyLegacyStyleGuards = !args.requireBrain;
   if (!draft || draft.parts.length === 0) {
     if (args.disengagementOnly) {
       return { ok: false, feedback: "DESPEDIDA ISOLADA: seu draft veio ausente ou malformado. Devolva FINAL com draft.parts contendo EXATAMENTE UMA part {\"type\":\"text\",\"content\":\"<despedida curta e cordial>\"}. O content não pode ter pergunta, tool, coleta de nome/troca/entrada/parcela/visita nem promessa de transferência." };
     }
     return { ok: false, feedback: "Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre." };
   }
-  // A abertura continua sendo autoria da LLM, mas precisa cumprir o contrato do
-  // prompt do portal. O engine apenas rejeita a omissão; nunca injeta identidade.
-  if (args.openingNeedsIntroduction) {
+  // A abertura continua sendo autoria da LLM. RD1-2: em central_active a APRESENTAÇÃO é ADVISORY (o prompt do portal +
+  // buildTurnAdvisories orientam a se apresentar); o engine não nega mais a omissão. Guarda legada só no replay.
+  if (applyLegacyStyleGuards && args.openingNeedsIntroduction) {
     const openingText = draft.parts.filter((part) => part.type === "text").map((part) => part.content).join(" ");
     if (!mentionsSelfIntroduction(openingText)) {
       return { ok: false, feedback: "PRIMEIRO CONTATO: você cumprimentou, mas não se apresentou. Reescreva a abertura conforme a identidade e personalidade do PROMPT DO PORTAL: diga quem você é e de qual loja fala, e faça UMA pergunta curta de descoberta comercial (modelo, tipo de carro ou faixa de preço). Não peça nome, telefone, troca ou entrada." };
@@ -768,10 +787,12 @@ function authorFromBrainDraft(args: {
   if (hasCorruptedControlChars(composed.text)) {
     return { ok: false, feedback: "Sua resposta veio CORROMPIDA (caracteres de controle/quebrados embutidos — acentos e emoji viraram lixo). Reescreva EXATAMENTE a mesma mensagem em português limpo e correto, com acentuação normal (á é ê ã õ ç) e SEM emojis nem caracteres especiais/de controle." };
   }
-  if (args.financialAnswerSlot === "entrada" && !/\bentrada\b/i.test(normalizeText(composed.text))) {
+  // RD1-2: acolher entrada/parcela é ADVISORY (justAnsweredFinancialSlot em buildTurnAdvisories orienta antes da geração);
+  // guarda legada só no replay. Em central_active a LLM acolhe seguindo o advisory + o prompt do portal.
+  if (applyLegacyStyleGuards && args.financialAnswerSlot === "entrada" && !/\bentrada\b/i.test(normalizeText(composed.text))) {
     return { ok: false, feedback: "O cliente acabou de responder sobre ENTRADA. Acolha explicitamente essa resposta antes de avançar; não a ignore nem volte a outro ponto. Você continua livre para escolher UMA próxima pergunta útil." };
   }
-  if (args.financialAnswerSlot === "parcelaDesejada" && !/\bparcela\w*\b/i.test(normalizeText(composed.text))) {
+  if (applyLegacyStyleGuards && args.financialAnswerSlot === "parcelaDesejada" && !/\bparcela\w*\b/i.test(normalizeText(composed.text))) {
     return { ok: false, feedback: "O cliente acabou de informar a PARCELA mensal desejada. Acolha explicitamente a parcela antes de avançar; não repita apenas a entrada. Você continua livre para escolher UMA próxima pergunta útil." };
   }
   // T2: mesmo sem send_media/reasonCode, o TEXTO não pode PROMETER foto num turno que não autoriza foto (e não é recall,
@@ -815,10 +836,9 @@ function authorFromBrainDraft(args: {
       return { ok: false, feedback: "Voce afirmou que a visita sera/foi agendada, mas nao existe efeito executavel de agendamento neste turno. Nao prometa uma acao que nao ocorreu: reconheca o dia informado e continue VOCE combinando o proximo dado necessario, como o horario, com UMA pergunta." };
     }
   }
-  // ⭐Codex P0: pergunta DUPLA de AÇÃO deixa o "sim" ambíguo (incidente real T4). Deny de OUTPUT com reescrita.
-  if (args.requireBrain && hasDoubleActionQuestion(composed.text)) {
-    return { ok: false, feedback: "Sua pergunta oferece DUAS ações ao mesmo tempo (ex.: fotos OU condições) — um 'sim' do cliente fica ambíguo. Escolha VOCÊ o próximo passo mais útil e faça UMA pergunta acionável só sobre ele." };
-  }
+  // ⭐RD1-2 (Codex #2): a guarda de "pergunta dupla de ação" foi REMOVIDA do central_active — ela banía até a alternativa
+  // curta e relacionada do MESMO veículo ("quer as fotos ou prefere ver as condições dele?"), que é natural. O advisory
+  // (buildTurnAdvisories) orienta a não empilhar perguntas INDEPENDENTES; a LLM decide o próximo passo.
   // P0-2 (audit): a resposta ao lead NUNCA pode conter LITERALMENTE uma vehicleKey conhecida (chave/código interno).
   const slotClaimFeedback = factualSlotClaimFeedback(composed.text, args.ctx.state);
   if (args.requireBrain && slotClaimFeedback) return { ok: false, feedback: slotClaimFeedback };
@@ -829,9 +849,12 @@ function authorFromBrainDraft(args: {
   // Validate against the same structured facts used by the renderer. The last
   // rendered offer is accepted conversation data, not free-form memory. Rules
   // requiring a query in the current turn still use realFacts above.
-  const gv = PolicyEngine.validateResponse(composed, renderFacts, decision0, args.ctx);
+  // ⭐RD1-2: em central_active (requireBrain) as POL de ESTILO (telefone/uma-pergunta/reask de slot) NÃO negam — viraram
+  // advisory. As POL de FATO/PII (grounding, POL-CPF-TIMING) seguem HARD; o grounding é sempre avaliado (sem retorno-cedo de estilo).
+  const gv = PolicyEngine.validateResponse(composed, renderFacts, decision0, args.ctx, args.requireBrain === true);
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
-  if (isServiceOrInstitutionalQuestion(args.leadMessage)
+  // RD1-2: o "gancho SDR" após institucional é ADVISORY (institutionalHookNeeded em buildTurnAdvisories); guarda legada só no replay.
+  if (applyLegacyStyleGuards && isServiceOrInstitutionalQuestion(args.leadMessage)
       && hasCommercialConversationContext(args.ctx.state)
       && !ATTR_QUESTION_RX.test(normalizeText(args.leadMessage))
       && !leadRequestsPhoto(args.leadMessage)
@@ -841,28 +864,32 @@ function authorFromBrainDraft(args: {
       && !proposedEffects.some((e) => e.kind === "send_media")) {
     return { ok: false, feedback: "Responda a duvida do cliente e conduza como SDR com UMA pergunta curta ligada ao contexto atual (fotos, detalhes, condicoes, visita ou proximo passo do carro em conversa). Nao pare seco depois da resposta." };
   }
-  if (args.disengagementOnly && (hasQuestion(composed.text) || promisesHumanHandoff(composed.text)
+  // RD1-2: a forma da DESPEDIDA (sem pergunta/nome/reabrir funil) é ADVISORY (disengagementOnly em buildTurnAdvisories);
+  // guarda legada só no replay. A promessa de transferência numa despedida continua barrada pela guarda HARD de handoff acima.
+  if (applyLegacyStyleGuards && args.disengagementOnly && (hasQuestion(composed.text) || promisesHumanHandoff(composed.text)
       || asksLeadName(composed.text) || asksLeadSurname(composed.text))) {
     if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[DENY_DEBUG_DISENGAGEMENT_TEXT] ${composed.text.slice(0, 500)}`);
     return { ok: false, feedback: "DESPEDIDA: o cliente apenas agradeceu/encerrou e NÃO fez um novo pedido. Não reabra qualificação, não faça pergunta e não repita transferência. Reescreva você mesmo uma despedida curta e cordial, deixando a loja à disposição. Se o bloco também trouxesse um pedido novo, ele teria prioridade — não é o caso deste turno." };
   }
   // Missão P0 INC2/F: NUNCA peça SOBRENOME / nome completo — o primeiro nome basta e só mais adiante. deny SEMPRE (o carro
   // é o assunto, não cadastro). O cérebro RE-AUTORA avançando a intenção comercial.
-  if (asksLeadSurname(composed.text)) {
+  // RD1-2: "não peça sobrenome" é ADVISORY (needsDiscovery em buildTurnAdvisories já orienta "não peça sobrenome nem nome completo"); guarda legada só no replay.
+  if (applyLegacyStyleGuards && asksLeadSurname(composed.text)) {
     return { ok: false, feedback: "NÃO peça sobrenome nem nome completo — nunca nessa fase; o primeiro nome já basta. Em vez de coletar cadastro, avance a conversa: pergunte o que ele procura, ofereça opções, ou trate condições/visita." };
   }
   // PARTE A (missão abertura SDR) + Missão P0 INC2/F: NÃO peça o NOME antes de haver intenção comercial — abertura sem alvo
   // (1º contato/anúncio genérico) OU ainda sem NENHUM contexto comercial (sem interesse/tipo/faixa, sem carro ofertado/
   // selecionado). Se pediu nome sem descoberta (e sem listar/enviar carro) -> deny + feedback (o cérebro RE-AUTORA). INC2:
   // "Sim, conheço" não deve virar pedido de nome. Telefone já é barrado por POL-PHONE-KNOWN.
-  if ((args.openingNeedsDiscovery || args.noCommercialContextYet)
+  // RD1-2: "descoberta antes do nome" na abertura é ADVISORY (needsDiscovery/isFirstContact em buildTurnAdvisories); guardas legadas só no replay.
+  if (applyLegacyStyleGuards && (args.openingNeedsDiscovery || args.noCommercialContextYet)
       && !proposedEffects.some((e) => e.kind === "send_media")
       && !draft.parts.some((p) => p.type === "vehicle_offer_list")
       && asksLeadName(composed.text)
       && !mentionsCommercialDiscovery(composed.text)) {
     return { ok: false, feedback: "O cliente ainda NÃO disse o que procura. NÃO peça o nome agora — primeiro entenda a intenção comercial: pergunte o que ele procura (um modelo, um TIPO de carro — SUV/sedan/hatch/picape — ou uma FAIXA de preço). O nome vem depois, com naturalidade, quando já houver interesse." };
   }
-  if (args.openingNeedsDiscovery
+  if (applyLegacyStyleGuards && args.openingNeedsDiscovery
       && !proposedEffects.some((e) => e.kind === "send_media")
       && !draft.parts.some((p) => p.type === "vehicle_offer_list")
       && !mentionsCommercialDiscovery(composed.text)) {
@@ -871,7 +898,9 @@ function authorFromBrainDraft(args: {
   // Missão P0 (audit Codex smoke real T8): NUNCA repergunte o NOME quando ele JÁ está conhecido (o lead já se apresentou). E
   // NUNCA peça nome num turno de PAGAMENTO/condições/financiamento — pagamento avança a QUALIFICAÇÃO (troca/entrada/parcela/
   // simulação), não coleta cadastro. Deny + feedback -> o cérebro RE-AUTORA conduzindo, sem pedir nome.
-  if (asksLeadName(composed.text)) {
+  // RD1-2: "não reperguntar nome conhecido" e "pagamento não é cadastro" são ADVISORY (knownName/paymentTurnWithChosenCar/
+  // knownFunnelSlots em buildTurnAdvisories); guardas legadas só no replay.
+  if (applyLegacyStyleGuards && asksLeadName(composed.text)) {
     if (args.ctx.state.slots.nome.status === "known") {
       const known = args.ctx.state.slots.nome.value;
       return { ok: false, feedback: `Você JÁ sabe o nome do cliente${typeof known === "string" && known ? ` (${known})` : ""}. NÃO pergunte o nome de novo — use-o e siga a conversa (o que ele procura, opções, condições ou visita).` };
@@ -890,7 +919,8 @@ function authorFromBrainDraft(args: {
   // ⭐T8 (audit Codex, LLM-first): turno de PAGAMENTO com veículo JÁ ESCOLHIDO (selecionado OU há oferta na última lista) ->
   // o agente CONDUZ o financiamento do carro selecionado; NUNCA volta para a DESCOBERTA ("o que você procura?/que tipo?").
   // Draft vira discovery -> deny + feedback (a LLM RE-AUTORA conduzindo). O engine NÃO escreve a resposta.
-  if (isPaymentTurn(args.leadMessage)
+  // RD1-2: "pagamento não volta à descoberta" é ADVISORY (paymentTurnWithChosenCar em buildTurnAdvisories); guarda legada só no replay.
+  if (applyLegacyStyleGuards && isPaymentTurn(args.leadMessage)
       && (args.ctx.state.vehicleContext.selected?.key != null || (args.ctx.state.lastRenderedOfferContext?.items?.length ?? 0) > 0)
       && asksDiscoveryQuestion(composed.text)) {
     const sel = args.ctx.state.vehicleContext.selected;
@@ -900,7 +930,8 @@ function authorFromBrainDraft(args: {
   // ── MISSÃO P0 (Financial Question Context, caso F): NUNCA empilhe DUAS perguntas financeiras no mesmo texto ("tem
   //    entrada ou vai financiar?"). Em pagamento pergunte UMA dimensão por vez. Deny + feedback -> o cérebro RE-AUTORA
   //    com UMA pergunta (o engine NÃO escreve a resposta). Ordem SDR sugerida: troca -> entrada -> parcela.
-  if (financialDimensionsAsked(composed.text).size > 1) {
+  // RD1-2: "uma pergunta financeira por vez" é ADVISORY (advisory geral "no máximo UMA pergunta acionável"); guarda legada só no replay.
+  if (applyLegacyStyleGuards && financialDimensionsAsked(composed.text).size > 1) {
     return { ok: false, feedback: "Você empilhou DUAS perguntas financeiras no mesmo texto (ex.: entrada E financiamento/parcela). Em pagamento pergunte UMA coisa por vez: escolha a MAIS importante agora — nesta ordem, se ainda não sabe: carro na TROCA, senão valor de ENTRADA, senão PARCELA mensal confortável — e REMOVA a outra pergunta. Acolha o que ele já disse antes de perguntar." };
   }
   // PARTE A (missão P0): ENTRADA por anúncio ESPECÍFICO — a abertura DEVE reconhecer/conduzir o VEÍCULO do anúncio (não uma
@@ -908,7 +939,8 @@ function authorFromBrainDraft(args: {
   // não mostra/lista/oferece o veículo E não cita a marca/modelo do anúncio conduzindo sobre ele -> deny + feedback (o
   // cérebro RE-AUTORA). Aceita: send_media/vehicle_offer_list, OU citar o veículo + conduzir (foto/detalhe/condição/
   // disponibilidade/pergunta sobre ele).
-  if (args.specificAdVehicle) {
+  // RD1-2: reconhecer/conduzir o veículo do ANÚNCIO é ADVISORY (adVehicleLabel em buildTurnAdvisories orienta antes da geração); guarda legada só no replay.
+  if (applyLegacyStyleGuards && args.specificAdVehicle) {
     const showsVehicle = proposedEffects.some((e) => e.kind === "send_media") || draft.parts.some((p) => p.type === "vehicle_offer_list");
     const acknowledgesAndConducts = mentionsAdVehicle(composed.text, args.specificAdVehicle) && conductsAboutAdVehicle(composed.text);
     if (!showsVehicle && !acknowledgesAndConducts) {
@@ -930,24 +962,10 @@ function authorFromBrainDraft(args: {
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
   const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) || leadRequestsPhoto(args.leadMessage), photoTargetResolved: args.target.kind === "resolved" });
   if (incomplete) return { ok: false, feedback: incomplete };
-  // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
-  // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
-  // "Qual seu nome?"/"o que você procura?" reperguntados turno após turno mesmo com o nome já conhecido.)
-  if (args.requireBrain) {
-    const slots = args.ctx.state.slots;
-    const rep = detectQuestionRepetition({
-      finalText: composed.text,
-      slotsKnown: {
-        nome: slots.nome?.status === "known",
-        interesse: slots.interesse?.status === "known",
-        tipoVeiculo: slots.tipoVeiculo?.status === "known",
-        faixaPreco: slots.faixaPreco?.status === "known",
-      },
-      recentTurns: args.ctx.state.recentTurns ?? [],
-      advancedThisTurn: args.advancedThisTurn === true,
-    });
-    if (rep) return { ok: false, feedback: rep.feedback };
-  }
+  // ⭐RD1-2 (Codex): a ANTI-REPETIÇÃO de slot conhecido virou ADVISORY (buildTurnAdvisories: knownName/knownFunnelSlots +
+  // "se o cliente já respondeu, reconheça e siga — não repita a mesma pergunta"). Não há mais deny de repetição no
+  // central_active; a LLM conduz sem reperguntar o que já sabe, seguindo as orientações do turno. (Guarda no legado:
+  // o replay não precisa dela — o contrato antigo não a exercitava fora de requireBrain.)
   return { ok: true, decision: decision0, composed, proposedEffects };
 }
 
@@ -1862,7 +1880,65 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         : undefined;
       const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
         && args.crmWriteEnabled === true && leadId != null;
-      const frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
+      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnIntent, adVehicleHint, adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
+      // ⭐RD1 (2026-07-13, autoria-LLM + auditoria Codex): ORIENTAÇÕES de condução do turno injetadas ANTES da 1ª
+      // geração — substituem os antigos denies de QUALIDADE. SÓ no central_active (llmFirst). Advisory ORIENTA;
+      // NUNCA decide ato/tool/slot/veículo e NUNCA nega depois uma resposta factual válida.
+      // ⭐PRECEDÊNCIA DO BLOCO ATUAL (Codex #1): um ato explícito prioritário no bloco atual SUPRIME apresentação/
+      // anúncio/descoberta (pedido atual > funil > memória). Detectores lexicais AQUI são SÓ p/ SUPRIMIR advisory
+      // incompatível — NUNCA autorizam tool/effect/slot/intent. ⭐PORTAL É A AUTORIDADE DO FUNIL (Codex #2): a
+      // próxima pergunta vem de deriveSdrQualification(policy do tenant), nunca de ordem hardcoded.
+      const commercialTargetStated = !!currentConstraintsRaw && (currentConstraintsRaw.tipo != null || (currentConstraintsRaw.modelos?.length ?? 0) > 0 || currentConstraintsRaw.marca != null || currentConstraintsRaw.precoMax != null);
+      const institutionalTurnAdv = isServiceOrInstitutionalQuestion(leadMessage);
+      // ⭐Codex ajuste #2 (RD1-2): a PRECEDÊNCIA DO BLOCO ATUAL é derivada por função PURA (deriveTurnAdvisoryContext),
+      // testável com MENSAGENS REAIS. O engine passa seus detectores CANÔNICOS como override (zero divergência com o resto
+      // do fluxo); a função deriva human/visita/seleção/posse/tipo do texto. SÓ calcula SUPRESSÃO — nunca autoriza nada.
+      const advCtx = deriveTurnAdvisoryContext({
+        leadBlock: leadMessage, commercialTargetStated, financialAnswerTurn, tradeInAnswerTurn, sensitiveAnswerTurn,
+        disengagement: disengagedActionable, explicitBuyIntent,
+        institutionalTurnOverride: institutionalTurnAdv, paymentTurnOverride: isPaymentTurn(leadMessage), photoTurnOverride: leadRequestsPhoto(leadMessage),
+      });
+      const hasExplicitPriorityAct = advCtx.suppressDiscovery;
+      const suppressFunnelQuestion = advCtx.suppressFunnelQuestion;
+      // ⭐P1 (falso-verde da resposta visível): CONTEXTO de AGENDAMENTO para o advisory orientar a LLM a acolher o dia/horário
+      // dado e perguntar SÓ a dimensão faltante (nunca reperguntar a já respondida). dayKnown/timeKnown = memória (diaHorario)
+      // + bloco atual. SÓ ativa em turno de agendamento (visita em curso OU pedido de visita no bloco). Orienta, não escreve.
+      const schedVisitRequested = /\b(agendar|agendamento|marcar\s+(?:uma\s+)?visita|visita|visitar|test ?drive)\b/.test(normalizeText(leadMessage));
+      const schedDiaHorarioExisting = contextState.slots.diaHorario.status === "known" && typeof contextState.slots.diaHorario.value === "string" ? contextState.slots.diaHorario.value : "";
+      const schedDayNow = scheduleHasDay(leadMessage), schedTimeNow = scheduleHasTime(leadMessage);
+      const schedVisitActive = hasActiveVisitContext({
+        interesseVisita: contextState.slots.interesseVisita.status === "known" && contextState.slots.interesseVisita.value === true,
+        pendingSchedulingSlot: persisted0.pendingAgentQuestion?.slot ?? null, recentTurns: contextState.recentTurns ?? [],
+      });
+      const schedActive = (schedVisitActive || schedVisitRequested) && (schedDayNow || schedTimeNow || schedVisitRequested || persisted0.pendingAgentQuestion?.slot === "diaHorario");
+      const schedulingAdvisory = (llmFirst && schedActive)
+        ? { active: true, dayJustGiven: schedDayNow, timeJustGiven: schedTimeNow, dayKnown: schedDayNow || scheduleHasDay(schedDiaHorarioExisting), timeKnown: schedTimeNow || scheduleHasTime(schedDiaHorarioExisting) }
+        : undefined;
+      // ⭐Codex ajuste #1 (RD1-2): o PORTAL é a ÚNICA autoridade da pergunta do funil. Se o tenant NÃO configurou a
+      // pergunta do próximo slot, o advisory NÃO inventa uma (nada de DEFAULT_QUESTIONS interno) — apenas orienta a LLM
+      // a "continuar a qualificação conforme o prompt do portal". Por isso: só a pergunta configurada, senão null.
+      let portalNextQuestionAdv: string | null = null;
+      if (llmFirst && sdrPolicy) {
+        const qview = deriveSdrQualification(contextState, sdrPolicy);
+        if (qview.nextSlot) portalNextQuestionAdv = sdrPolicy.questions[qview.nextSlot] ?? null;
+      }
+      const turnAdvisories = llmFirst ? buildTurnAdvisories({
+        isFirstContact: isOpeningTurn && firstContactNoCommercialTarget === true,
+        adVehicleLabel: specificAdEntry ? (adVehicleHint ?? null) : null,
+        needsDiscovery: (isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget === true)) || noCommercialContextYet,
+        suppressDiscovery: hasExplicitPriorityAct,
+        suppressFunnelQuestion,
+        portalNextQuestion: portalNextQuestionAdv,
+        knownName: contextState.slots.nome.status === "known" && typeof contextState.slots.nome.value === "string" ? contextState.slots.nome.value : null,
+        contactPhoneKnown: frame.signals.contactPhoneKnown === true,
+        paymentTurnWithChosenCar: isPaymentTurn(leadMessage) && (contextState.vehicleContext.selected?.key != null || (contextState.lastRenderedOfferContext?.items?.length ?? 0) > 0),
+        justAnsweredFinancialSlot: financialAnswerTurn && (financialAnswerSlot === "entrada" || financialAnswerSlot === "parcelaDesejada") ? financialAnswerSlot : null,
+        disengagementOnly: disengagedActionable,
+        institutionalHookNeeded: institutionalTurnAdv && hasCommercialConversationContext(contextState),
+        knownFunnelSlots: (Object.keys(contextState.slots) as (keyof typeof contextState.slots)[]).filter((s) => contextState.slots[s].status === "known"),
+        ...(schedulingAdvisory ? { scheduling: schedulingAdvisory } : {}),
+      }) : [];
+      if (turnAdvisories.length > 0) frame = { ...frame, advisories: turnAdvisories };
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -1899,8 +1975,19 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const AUTHORITY_RETRY_CAP = 3;
       let searchActRetries = 0;
       const SEARCH_ACT_RETRY_CAP = 2;
-      const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true) : null);
-      const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false);
+      // ⭐P0-A (continuação semântica de agendamento): CONTEXTO de visita em andamento que a validação usa para aceitar um
+      // understanding de visit cuja evidência é só TEMPORAL ("pra segunda"/"às 15h"). A MEMÓRIA fornece só a relação
+      // (interesseVisita=true / pergunta pendente de agendamento / última pergunta pediu dia-horário); a mensagem atual
+      // continua sendo a evidência. NUNCA autoriza tool/effect — só permite validar um understanding coerente do turno.
+      const turnValidationContext: TurnValidationContext = {
+        visitActive: hasActiveVisitContext({
+          interesseVisita: contextState.slots.interesseVisita.status === "known" && contextState.slots.interesseVisita.value === true,
+          pendingSchedulingSlot: persisted0.pendingAgentQuestion?.slot ?? null,
+          recentTurns: contextState.recentTurns ?? [],
+        }),
+      };
+      const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true, turnValidationContext) : null);
+      const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false, turnValidationContext);
       // ⭐AUTORIDADE (audit Codex): o ATO declarado é PEDIDO DE ESTOQUE — primaryIntent=search_stock E capability de busca
       // validada. É o que autoriza o ENGINE a agir (forçar/garantir busca). Capability solta NÃO basta: "quanto custa o
       // Onix?" (vehicle_detail) pode carregar capability de busca sem o ATO ser busca — o engine não força nada nesse caso.
@@ -2036,7 +2123,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // Fonte única: captura+TRAVA o entendimento do turno (a 1ª compreensão válida é a base; refinamento só adiciona fato).
         if (step.understanding) {
           const candidate = reconcileUnderstanding(lockedU, step.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
-          const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true);
+          const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
           const authorityFeedback = understandingAuthorityFeedback(candidateValidation);
           if (llmFirst && authorityFeedback) {
             policyFeedbackLog.push(authorityFeedback);
@@ -2189,7 +2276,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()?.trusted) ? brainVU()!.understanding.primaryIntent : undefined }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2217,7 +2304,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn || sensitiveAnswerTurn);
             const openingGuidanceTurn = llmFirst && isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget || specificAdEntry);
             const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
-            const humanGuidanceTurn = llmFirst && requestsHuman(brainVU());
+            // ⭐MISSÃO FINAL: o backstop determinístico (fala LITERAL do lead pedindo humano) também mantém o retry NO ATO de
+            //   atendimento humano — evita que um deny do handoff caia em descoberta quando o entendimento veio fraco.
+            const humanGuidanceTurn = llmFirst && (requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage));
             let effFeedback = authored.feedback;
             let keepRetrying = false;
             // ⭐AUTORIDADE: CONTESTAÇÃO (conversation_repair declarado pela LLM) — a resposta certa é TEXTO simples
@@ -2438,6 +2527,27 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           continue;
         }
         // Proíbe loop idêntico: mesma tool + mesmos args -> devolve o fato já obtido (nunca reexecuta).
+        // The brain owns the tool decision, but a photo query cannot contradict the
+        // uniquely grounded subject of this turn. Reject before touching the adapter
+        // so a wrong photo fact never contaminates the observations used on retry.
+        // The engine does not rewrite or execute a corrected call: it returns the
+        // grounded key and the same brain must decide again.
+        if (llmFirst && call.tool === "vehicle_photos_resolve") {
+          const input = call.input as { vehicleRef?: { key?: unknown }; vehicleKey?: unknown };
+          const requestedKey = typeof input.vehicleRef?.key === "string"
+            ? input.vehicleRef.key
+            : (typeof input.vehicleKey === "string" ? input.vehicleKey : null);
+          const groundedTarget = resolveTargetWithAd();
+          if (groundedTarget.kind === "resolved" && requestedKey !== groundedTarget.vehicleKey) {
+            const targetLabel = acceptedSelectionLabel();
+            observations.push({ tool: "response", ok: false, error: {
+              code: "PHOTO_TARGET_MISMATCH",
+              message: `A chamada de fotos contradiz o alvo aterrado deste turno. O vehicleKey correto e '${groundedTarget.vehicleKey}'${targetLabel ? ` (${targetLabel})` : ""}. Nao execute nem mencione o outro veiculo. Decida novamente: chame vehicle_photos_resolve com esse vehicleKey e, depois do resultado, responda ao cliente com as fotos.`,
+            } });
+            if (++dupPhotoLoopCount >= DUP_STOCK_LOOP_CAP) break;
+            continue;
+          }
+        }
         const sig = toolCallSignature(call);
         if (seenToolSigs.has(sig)) {
           if (call.tool === "stock_search") {
@@ -2656,7 +2766,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             }
             if (finalStep.understanding) {
               const candidate = reconcileUnderstanding(lockedU, finalStep.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
-              const validation = validateTurnUnderstanding(candidate, leadMessage, true);
+              const validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
               const authorityFeedback = understandingAuthorityFeedback(validation);
               const staleFinalUnderstanding = !validation.trusted
                 && ((candidate.evidence?.length ?? 0) > 0 || (candidate.requestedCapabilities?.length ?? 0) > 0);
@@ -2673,7 +2783,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               observations.push({ tool: "response", ok: false, error: { code: "FINAL_TOOL_FORBIDDEN", message: "As tools deste turno ja foram resolvidas. Nao consulte novamente; escreva agora a resposta final com os fatos disponiveis." } });
               continue;
             }
-            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()?.trusted) ? brainVU()!.understanding.primaryIntent : undefined }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = finalStep.decision;
               authoredDecision = authored.decision;
@@ -3094,6 +3204,15 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId),
           brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded, brainRetries, finalAuthorshipAttempts,
           brainReason: finalDecision.reasonSummary.slice(0, 160),
+          // ⭐RD1-2 (observabilidade da autoria-LLM exclusiva): quem AUTOROU o final; quantas ORIENTAÇÕES (advisory) foram
+          // injetadas antes da geração; quantos denies HARD (fato/efeito/PII/pedido-explícito) dispararam retry + a categoria
+          // do 1º; o primaryIntent ACEITO; e se o BLOCO ATUAL venceu a memória (precedência do ato explícito). Zero deny de estilo.
+          finalAuthor: (responseSource === "brain_final" || responseSource === "brain_retry") ? "llm_brain" : (responseSource === "technical_fallback" ? "engine_fallback" : "engine_deterministic"),
+          advisoriesProvided: turnAdvisories.length,
+          hardDeniesApplied: policyFeedbackLog.length,
+          hardDenyCategory: policyFeedbackLog[0] ? classifyDenyCategory(policyFeedbackLog[0]) : null,
+          acceptedPrimaryIntent: reconciledUnderstanding.primaryIntent,
+          currentTurnOverridesMemory: hasExplicitPriorityAct === true,
           // T6: semântica do turno (fonte única) + resolução de alvo.
           primaryIntent: reconciledUnderstanding.primaryIntent, subject: finalVU.understanding.subject,
           subjectSource: finalVU.understanding.subjectSource, understandingTrusted: finalVU.trusted,

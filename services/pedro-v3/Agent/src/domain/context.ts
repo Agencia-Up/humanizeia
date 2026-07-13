@@ -3,6 +3,7 @@ import type { Id, Iso } from "./types.ts";
 import type { ConversationState } from "./conversation-state.ts";
 
 import type { TurnInterpretation, TenantCatalog, ClaimExtractor } from "./decision.ts";
+import type { PrimaryIntent } from "./agent-brain.ts";
 
 export type TurnContext = {
   state: ConversationState;
@@ -12,6 +13,10 @@ export type TurnContext = {
   interpretation: TurnInterpretation; // OBRIGATÓRIO — vem pronto dos adapters/orchestrator (N8N-like)
   tenantCatalog: TenantCatalog;
   claimExtractor: ClaimExtractor; // INJETADO — detecta alegações automotivas em texto livre
+  // ⭐P0-B (opcional): PrimaryIntent ACEITO do TurnUnderstanding CONFIÁVEL da LLM (validado, com evidência do bloco atual).
+  // É a AUTORIDADE de mudança de assunto na policy: POL-TRACK-001 só se abstém quando === "search_stock". NUNCA vem de um
+  // detector heurístico (deriveCurrentTurnIntent). Ausente = legado (kernel/v2/replay) -> policy mantém o comportamento antigo.
+  acceptedPrimaryIntent?: PrimaryIntent;
 };
 
 export type QueryLoopLimits = {
