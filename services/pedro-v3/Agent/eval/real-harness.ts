@@ -30,7 +30,7 @@ import { SupabaseServiceGateway } from "../src/runtime/supabase-service-gateway.
 import { SupabaseReadOnlyDatabase } from "../src/adapters/read/supabase-read-database.ts";
 import { resolveTenantAiSecret } from "../src/adapters/read/tenant-openai-key.ts";
 import { createOpenAiModelFactory } from "../src/engine/openai-canary-root.ts";
-import { AiRuntimeSecret, resolveAiProviderRuntime, type AiProviderRuntimeConfig, type RuntimeApiSecret } from "../src/runtime/ai-provider.ts";
+import { AiRuntimeSecret, resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig, type RuntimeApiSecret } from "../src/runtime/ai-provider.ts";
 import { V2PlaintextApiKeyReader } from "../src/adapters/read/v2-api-key-reader.ts";
 import { V2DatabaseReadGateway, V2DatabaseCredentialProvider } from "../src/adapters/read/supabase-v2-read-adapter.ts";
 import { V2TenantConfigSource } from "../src/adapters/read/tenant-config-source.ts";
@@ -236,6 +236,9 @@ export async function buildRealAssembly(clock: { now(): string }): Promise<RealA
   if (evalKeyOverride) {
     openAiSecret = AiRuntimeSecret.fromString(aiProvider.provider, evalKeyOverride);
     keySource = `${evalKeyName} (override do harness)`;
+  } else if (resolveProviderEnvironmentSecret(process.env, aiProvider.provider)) {
+    openAiSecret = resolveProviderEnvironmentSecret(process.env, aiProvider.provider)!;
+    keySource = `${aiProvider.provider} (env do servico)`;
   } else if (process.env.EVAL_USE_PLATFORM_KEY === "1") {
     const raw = await serviceGateway.rpc<unknown>("get_platform_ai_key", { p_provider: aiProvider.provider });
     const key = typeof raw === "string" ? raw.trim() : "";

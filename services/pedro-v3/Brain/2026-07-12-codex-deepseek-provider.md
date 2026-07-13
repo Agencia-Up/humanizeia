@@ -14,8 +14,9 @@ os mesmos componentes.
 - `PEDRO_V3_AI_PROVIDER=openai|deepseek` seleciona o provider; default `openai` preserva producao atual.
 - `resolveAiProviderRuntime` e a fonte unica de endpoint, host permitido, modelo, retry model e parametro
   de tokens.
-- A chave continua BYOK e tenant-scoped por `get_client_ai_key(provider)`, com o mesmo fallback de
-  plataforma para contas grandfathered. Nenhuma chave entra em env, log, estado, outbox ou JSON.
+- A chave pode continuar BYOK e tenant-scoped por `get_client_ai_key(provider)`, com o mesmo fallback de
+  plataforma para contas grandfathered. No piloto DeepSeek, tambem pode vir da env protegida
+  `DEEPSEEK_API_KEY` do Easypanel. Ela nunca entra em log, estado, outbox, health ou JSON.
 - O adapter existente de Chat Completions e reutilizado. DeepSeek usa
   `https://api.deepseek.com/chat/completions` e `max_tokens`; OpenAI preserva
   `https://api.openai.com/v1/chat/completions` e `max_completion_tokens`.
@@ -45,9 +46,8 @@ nao pode ser executado ainda; afirmar PASS real sem a chave seria falso.
 
 ## Ativacao supervisionada
 
-1. No portal, salvar novamente uma chave DeepSeek para a conta/tenant do piloto.
-2. Confirmar por uma consulta opaca que `get_client_ai_key(..., 'deepseek')` retorna valor configurado,
-   sem imprimir o segredo.
+1. Salvar a chave no portal/Vault ou na env protegida `DEEPSEEK_API_KEY` do Easypanel.
+2. Confirmar apenas que uma fonte esta configurada, sem imprimir o segredo.
 3. Rodar barato, efeitos OFF:
    `PEDRO_V3_REAL_EVAL=1 PEDRO_V3_AI_PROVIDER=deepseek npm run smoke:f252`.
 4. Exigir jornada completa, tools corretas, zero fallback tecnico, CRM/handoff apenas nos atos corretos.

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { OpenAiAgentBrain } from "../src/adapters/llm/openai-agent-brain.ts";
 import { OpenAiChatCompletionsModel } from "../src/adapters/llm/openai-chat-model.ts";
 import { resolveTenantAiSecret, type TenantSecretGateway } from "../src/adapters/read/tenant-openai-key.ts";
-import { AiProviderConfigError, AiRuntimeSecret, resolveAiProviderRuntime } from "../src/runtime/ai-provider.ts";
+import { AiProviderConfigError, AiRuntimeSecret, resolveAiProviderRuntime, resolveProviderEnvironmentSecret } from "../src/runtime/ai-provider.ts";
 import type { ModelHttpRequest, ModelHttpResponse, ModelHttpTransport } from "../src/adapters/llm/structured-json-model.ts";
 import type { TurnFrame } from "../src/domain/agent-brain.ts";
 import type { DatabaseFilters, DatabaseRow } from "../src/domain/database-gateway.ts";
@@ -58,6 +58,12 @@ async function main(): Promise<void> {
 
   const secret = AiRuntimeSecret.fromString("deepseek", "ds-DO-NOT-LEAK");
   check("[S-1] segredo DeepSeek nao vaza em JSON", !JSON.stringify(secret).includes("DO-NOT-LEAK") && JSON.stringify(secret).includes("deepseek"));
+  const envSecret = resolveProviderEnvironmentSecret({ DEEPSEEK_API_KEY: "ds-env-secret" }, "deepseek");
+  check("[S-1b] DeepSeek aceita segredo opaco do Easypanel", envSecret !== null && !JSON.stringify(envSecret).includes("ds-env-secret"));
+  check("[S-1c] OpenAI nunca usa DEEPSEEK_API_KEY", resolveProviderEnvironmentSecret({ DEEPSEEK_API_KEY: "ds-env-secret" }, "openai") === null);
+  let invalidEnvRejected = false;
+  try { resolveProviderEnvironmentSecret({ DEEPSEEK_API_KEY: "ds-invalid\nheader" }, "deepseek"); } catch { invalidEnvRejected = true; }
+  check("[S-1d] segredo com whitespace falha fechado", invalidEnvRejected);
   const keyCalls: Array<{ name: string; args: DatabaseRow }> = [];
   const resolved = await resolveTenantAiSecret({ gateway: fakeGateway(keyCalls), tenantId: "tenant", provider: "deepseek" });
   check("[S-2] BYOK consulta o provider DeepSeek do tenant", keyCalls.some((call) => call.name === "get_client_ai_key" && call.args.p_provider === "deepseek"));
@@ -93,6 +99,7 @@ async function main(): Promise<void> {
 
   const server = readFileSync(new URL("../src/runtime/server.ts", import.meta.url), "utf8");
   check("[W-1] runtime resolve provider e chave genericos", /resolveAiProviderRuntime/.test(server) && /resolveTenantAiSecret/.test(server));
+  check("[W-1b] runtime aceita DeepSeek do Easypanel sem habilitar OpenAI global", /resolveProviderEnvironmentSecret/.test(server) && !/OPENAI_API_KEY/.test(server));
   check("[W-2] health expoe provider/model sem segredo", /aiProvider:/.test(server) && /aiModel:/.test(server));
 
   console.log(`\n== F2.53: ${ok} OK | ${fail} FALHA ==`);

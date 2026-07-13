@@ -30,10 +30,10 @@ Variaveis obrigatorias:
 >    `platform_openai_api_key` cadastrado no Vault pelo dono;
 > 3. conta NOVA sem chave propria falha fechado (sem chave global, sem mensagem dupla).
 >
-> Nenhuma chave OpenAI/DeepSeek vem de env do container. As ENVs `PEDRO_V3_*_MODEL` contem somente o
-> NOME do modelo, nunca a credencial. Para trocar o piloto para DeepSeek, a chave `deepseek` precisa estar
-> salva no portal/Vault do tenant e o servico deve usar `PEDRO_V3_AI_PROVIDER=deepseek`. O rollback e voltar
-> essa env para `openai`; engine, prompt, memoria, tools, CRM, handoff e follow-up nao mudam.
+> OpenAI continua sem chave global no container. Para o piloto DeepSeek, a chave pode vir do portal/Vault
+> ou da env protegida `DEEPSEEK_API_KEY` no Easypanel. Para trocar o piloto, use
+> `PEDRO_V3_AI_PROVIDER=deepseek`; o rollback e voltar essa env para `openai`. Engine, prompt, memoria,
+> tools, CRM, handoff e follow-up nao mudam.
 
 Nao habilite o roteamento ativo no webhook antes de o health check estar verde.
 No webhook v2, configure a mesma chave em `PEDRO_V3_BRIDGE_SECRET`, a URL HTTPS do

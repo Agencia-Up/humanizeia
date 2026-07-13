@@ -23,7 +23,7 @@ import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
 import { evaluateFollowupDue } from "../engine/followup-policy.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
-import { resolveAiProviderRuntime, type AiProviderRuntimeConfig } from "./ai-provider.ts";
+import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
 import {
   PilotHttpApp,
@@ -232,7 +232,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       timeoutMs: 15_000,
       maxResponseBytes: 4 * 1024 * 1024,
     });
-    const aiSecret = await resolveTenantAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID, provider: this.#aiProvider.provider });
+    const aiSecret = resolveProviderEnvironmentSecret(process.env, this.#aiProvider.provider)
+      ?? await resolveTenantAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID, provider: this.#aiProvider.provider });
     const brainMode = resolveBrainMode();
     // R13-D/4: AgentBrain REAL (OpenAI) só é fabricado quando o modo pede. Planner em temp baixa (0.2). Segredo por
     // tenant (mesmo openAiSecret do compose); prompt integral vai no system do brain (prova por SHA no adapter).

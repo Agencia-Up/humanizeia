@@ -14,8 +14,11 @@ export class AiRuntimeSecret implements RuntimeApiSecret {
   }
 
   static fromString(provider: PedroAiProvider, apiKey: string): AiRuntimeSecret {
-    if (typeof apiKey !== "string" || apiKey.trim() === "") throw new AiProviderConfigError("AI_SECRET_MISSING");
-    return new AiRuntimeSecret(provider, apiKey.trim());
+    const normalized = typeof apiKey === "string" ? apiKey.trim() : "";
+    if (normalized === "" || normalized.length > 512 || /\s/.test(normalized)) {
+      throw new AiProviderConfigError("AI_SECRET_MISSING");
+    }
+    return new AiRuntimeSecret(provider, normalized);
   }
 
   materialize<T>(fn: (apiKey: string) => T): T {
@@ -72,4 +75,16 @@ export function resolveAiProviderRuntime(env: NodeJS.ProcessEnv): AiProviderRunt
     retryModel: modelValue(env.PEDRO_V3_OPENAI_RETRY_MODEL, "gpt-4.1"),
     tokenParameter: "max_completion_tokens",
   });
+}
+
+// Excecao operacional do piloto: o servico do Easypanel pode receber a chave DeepSeek diretamente.
+// OpenAI permanece exclusivamente BYOK/Vault. A funcao devolve segredo opaco e nunca o valor cru.
+export function resolveProviderEnvironmentSecret(
+  env: NodeJS.ProcessEnv,
+  provider: PedroAiProvider,
+): AiRuntimeSecret | null {
+  if (provider !== "deepseek") return null;
+  const raw = env.DEEPSEEK_API_KEY;
+  if (typeof raw !== "string" || raw.trim() === "") return null;
+  return AiRuntimeSecret.fromString("deepseek", raw);
 }
