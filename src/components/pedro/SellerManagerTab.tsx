@@ -247,11 +247,14 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   const [sellerNotes, setSellerNotes] = useState<any[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
 
-  // Repasse (redistribuir leads de um vendedor que saiu) state
+  // Repasse PROGRAMADO (redistribuir leads de um vendedor que saiu, aos poucos) state
   const [redistFor, setRedistFor] = useState<SellerMember | null>(null);
-  const [redistLoading, setRedistLoading] = useState(false);   // calculando a prévia (dry-run)
-  const [redistPreview, setRedistPreview] = useState<any | null>(null);
-  const [redistRunning, setRedistRunning] = useState(false);   // executando de verdade
+  const [redistLoading, setRedistLoading] = useState(false);   // carregando prévia/status
+  const [redistPreview, setRedistPreview] = useState<any | null>(null);   // {total_trabalhaveis, vendedores, nomes}
+  const [redistJob, setRedistJob] = useState<any | null>(null);           // job vivo (ativo/pausado), se houver
+  const [redistRunning, setRedistRunning] = useState(false);   // começando/pausando/etc
+  const [porVendedor, setPorVendedor] = useState(5);
+  const [intervaloMin, setIntervaloMin] = useState(30);
 
   // Feature config dialog state
   const [configSellerId, setConfigSellerId] = useState<string | null>(null);
@@ -615,49 +618,68 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
     }
   };
 
-  // ── Repasse: abre a prévia (dry-run) dos leads ATIVOS deste vendedor ──
-  // Mostra quem iria pra quem ANTES de mexer em qualquer coisa. Nada é enviado
-  // nem movido até o gestor confirmar.
+  // ── Repasse PROGRAMADO: abre o painel do vendedor (prévia + job em andamento) ──
+  // Só LÊ: mostra quantos leads dá pra repassar, quantos vendedores recebem e se já
+  // existe um repasse rodando. Nada é movido até o gestor clicar em "Começar".
   const handleOpenRedistribute = async (seller: SellerMember) => {
     setRedistFor(seller);
-    setRedistPreview(null);
+    setRedistPreview(null); setRedistJob(null);
+    setPorVendedor(5); setIntervaloMin(30);
     setRedistLoading(true);
     try {
-      const { data, error } = await invokeWithReauth('redistribute-seller-leads', {
-        body: { from_member_id: seller.id, dry_run: true },
-      });
-      if (error) throw new Error((await readFnError(error)) || error.message);
-      setRedistPreview(data);
+      const [prev, st] = await Promise.all([
+        invokeWithReauth('redistribute-job', { body: { action: 'preview', from_member_id: seller.id } }),
+        invokeWithReauth('redistribute-job', { body: { action: 'status', from_member_id: seller.id } }),
+      ]);
+      if (prev.error) throw new Error((await readFnError(prev.error)) || prev.error.message);
+      setRedistPreview(prev.data);
+      const vivo = (st.data?.jobs || []).find((j: any) => j.status === 'ativo' || j.status === 'pausado') || null;
+      setRedistJob(vivo);
+      if (vivo) { setPorVendedor(vivo.por_vendedor); setIntervaloMin(vivo.intervalo_min); }
     } catch (err: any) {
-      toast({ title: 'Erro ao calcular o repasse', description: err.message, variant: 'destructive' });
+      toast({ title: 'Erro ao abrir o repasse', description: err.message, variant: 'destructive' });
       setRedistFor(null);
     } finally {
       setRedistLoading(false);
     }
   };
 
-  // ── Repasse: executa de verdade (envia WhatsApp + atribui aos outros) ──
-  const handleConfirmRedistribute = async () => {
+  const refreshRedistJob = async () => {
+    if (!redistFor) return;
+    const st = await invokeWithReauth('redistribute-job', { body: { action: 'status', from_member_id: redistFor.id } });
+    const vivo = (st.data?.jobs || []).find((j: any) => j.status === 'ativo' || j.status === 'pausado') || null;
+    setRedistJob(vivo);
+  };
+
+  // ── Começar o repasse programado ──
+  const handleStartRedistribute = async () => {
     if (!redistFor) return;
     setRedistRunning(true);
     try {
-      const { data, error } = await invokeWithReauth('redistribute-seller-leads', {
-        body: { from_member_id: redistFor.id, dry_run: false, force: true },
+      const { data, error } = await invokeWithReauth('redistribute-job', {
+        body: { action: 'start', from_member_id: redistFor.id, por_vendedor: porVendedor, intervalo_min: intervaloMin },
       });
       if (error) throw new Error((await readFnError(error)) || error.message);
-      const n = data?.repassados ?? 0;
-      const b = data?.bolsao ?? 0;
-      toast({
-        title: (n + b) > 0 ? `✅ ${n} repassado(s)${b > 0 ? ` + ${b} no bolsão` : ''}` : 'Nada para repassar',
-        description: (n + b) > 0
-          ? 'Ativos já estão no CRM dos outros vendedores (com a conversa). Os parados foram pro bolsão — atribua no Painel ao Vivo.'
-          : 'Esse vendedor não tinha leads para repassar.',
-      });
-      setRedistFor(null);
-      setRedistPreview(null);
-      fetchData();
+      setRedistJob(data.job);
+      toast({ title: '✅ Repasse iniciado', description: 'O time vai receber os leads aos poucos, com a conversa. Você pode pausar quando quiser.' });
     } catch (err: any) {
-      toast({ title: 'Erro ao repassar', description: err.message, variant: 'destructive' });
+      toast({ title: 'Não deu pra começar', description: err.message, variant: 'destructive' });
+    } finally {
+      setRedistRunning(false);
+    }
+  };
+
+  // ── Pausar / Retomar / Cancelar ──
+  const handleRedistAction = async (action: 'pause' | 'resume' | 'cancel') => {
+    if (!redistJob) return;
+    setRedistRunning(true);
+    try {
+      const { error } = await invokeWithReauth('redistribute-job', { body: { action, job_id: redistJob.id } });
+      if (error) throw new Error((await readFnError(error)) || error.message);
+      if (action === 'cancel') { setRedistFor(null); setRedistJob(null); toast({ title: 'Repasse cancelado' }); fetchData(); }
+      else { await refreshRedistJob(); }
+    } catch (err: any) {
+      toast({ title: 'Não deu pra atualizar o repasse', description: err.message, variant: 'destructive' });
     } finally {
       setRedistRunning(false);
     }
@@ -991,67 +1013,118 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
         )}
       </div>
 
-      {/* ── Dialog: Repassar leads de um vendedor (folga/saída/demissão) ── */}
-      <Dialog open={!!redistFor} onOpenChange={open => { if (!open) { setRedistFor(null); setRedistPreview(null); } }}>
+      {/* ── Dialog: Repassar leads (PROGRAMADO, aos poucos) ── */}
+      <Dialog open={!!redistFor} onOpenChange={open => { if (!open) { setRedistFor(null); setRedistPreview(null); setRedistJob(null); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Send className="h-4 w-4 text-cyan-400" /> Repassar leads de {redistFor?.name}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Os leads que <b>{redistFor?.name}</b> está atendendo vão para os outros vendedores ativos,
-              levando a conversa junto. Use quando ele sair (folga, saída antecipada ou demissão).
+              Passa os leads dele pro time <b>aos poucos</b>, no ritmo que você escolher — com a conversa
+              anterior pra cada vendedor. Sem disparar tudo de uma vez.
             </DialogDescription>
           </DialogHeader>
 
           {redistLoading ? (
             <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Calculando o repasse...
+              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Carregando...
             </div>
-          ) : redistPreview ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm">
-                <p><b className="text-cyan-400">{redistPreview.repassados || 0}</b> lead(s) ativo(s) serão repassados para os outros vendedores.</p>
-                {(redistPreview.bolsao || 0) > 0 && (
-                  <p className="text-amber-300 text-xs mt-1">
-                    + <b>{redistPreview.bolsao}</b> lead(s) parado(s) vão pro <b>bolsão</b> (sem dono) — você atribui depois no Painel ao Vivo.
-                  </p>
-                )}
-                {redistPreview.sem_vendedor > 0 && (
-                  <p className="text-amber-400 text-xs mt-1">
-                    ⚠ {redistPreview.sem_vendedor} sem outro vendedor disponível — vão continuar parados.
-                  </p>
-                )}
-                {(redistPreview.ativos_encontrados || 0) === 0 && (redistPreview.bolsao || 0) === 0 && (
-                  <p className="text-muted-foreground text-xs mt-1">Esse vendedor não tem leads pra repassar no momento.</p>
-                )}
-              </div>
-
-              {Array.isArray(redistPreview.detalhe) && redistPreview.detalhe.length > 0 && (
-                <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
-                  {redistPreview.detalhe.map((d: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between text-xs border-b border-border/30 py-1">
-                      <span className="truncate text-foreground">{d.lead_name || 'Lead'}</span>
-                      <span className={`shrink-0 ml-2 ${d.vendedor ? 'text-cyan-400' : 'text-amber-300'}`}>
-                        {d.acao === 'bolsao' ? '→ bolsão' : (d.vendedor ? `→ ${d.vendedor}` : 'sem vendedor')}
-                      </span>
+          ) : redistJob ? (
+            /* ── JÁ TEM UM REPASSE RODANDO: mostra progresso + controles ── */
+            (() => {
+              const total = redistJob.total_alvo || 0;
+              const feitos = redistJob.total_repassados || 0;
+              const restam = redistJob.restam ?? Math.max(0, total - feitos);
+              const pct = total > 0 ? Math.min(100, Math.round((feitos / total) * 100)) : 0;
+              const pausado = redistJob.status === 'pausado';
+              return (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-border/50 bg-muted/30 p-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{pausado ? '⏸ Pausado' : '🔄 Repassando...'}</span>
+                      <span className="tabular-nums text-muted-foreground">{feitos} de {total}</span>
                     </div>
-                  ))}
+                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Faltam <b className="text-foreground">{restam}</b> · {redistJob.por_vendedor} por vendedor a cada {redistJob.intervalo_min} min
+                      {redistJob.ultimo_lote > 0 && ` · última leva: ${redistJob.ultimo_lote}`}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-between">
+                    <div className="flex gap-2">
+                      {pausado ? (
+                        <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white" disabled={redistRunning} onClick={() => handleRedistAction('resume')}>
+                          {redistRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null} Retomar
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled={redistRunning} onClick={() => handleRedistAction('pause')}>
+                          {redistRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null} Pausar
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" disabled={redistRunning} onClick={refreshRedistJob}>Atualizar</Button>
+                    </div>
+                    <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600" disabled={redistRunning} onClick={() => handleRedistAction('cancel')}>Cancelar repasse</Button>
+                  </div>
                 </div>
-              )}
-
-              <div className="flex gap-2 justify-end pt-1">
-                <Button variant="ghost" size="sm" onClick={() => { setRedistFor(null); setRedistPreview(null); }}>
-                  Cancelar
-                </Button>
-                <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white"
-                  disabled={redistRunning || ((redistPreview.repassados || 0) === 0 && (redistPreview.bolsao || 0) === 0)}
-                  onClick={handleConfirmRedistribute}>
-                  {redistRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
-                  Confirmar e repassar
-                </Button>
-              </div>
-            </div>
+              );
+            })()
+          ) : redistPreview ? (
+            /* ── SEM repasse rodando: configura e começa ── */
+            (() => {
+              const total = redistPreview.total_trabalhaveis || 0;
+              const nVend = redistPreview.vendedores || 0;
+              const porRodada = Math.max(1, porVendedor * nVend);
+              const rodadas = total > 0 && porRodada > 0 ? Math.ceil(total / porRodada) : 0;
+              const totalMin = rodadas * intervaloMin;
+              const tempo = totalMin < 60 ? `~${totalMin} min` : `~${(totalMin / 60).toFixed(totalMin % 60 === 0 ? 0 : 1)} h`;
+              return (
+                <div className="space-y-3">
+                  {total === 0 || nVend === 0 ? (
+                    <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm text-muted-foreground">
+                      {nVend === 0 ? 'Não há outro vendedor ativo pra receber os leads. Ative um vendedor primeiro.'
+                        : 'Esse vendedor não tem leads pra repassar no momento.'}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-sm">
+                        <b className="text-cyan-400">{total}</b> lead(s) pra repassar, divididos entre <b>{nVend}</b> vendedor(es).
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Quantos por vendedor por vez</label>
+                          <input type="number" min={1} max={20} value={porVendedor}
+                            onChange={e => setPorVendedor(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">A cada</label>
+                          <select value={intervaloMin} onChange={e => setIntervaloMin(Number(e.target.value))}
+                            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm">
+                            <option value={15}>15 minutos</option>
+                            <option value={30}>30 minutos</option>
+                            <option value={60}>1 hora</option>
+                            <option value={120}>2 horas</option>
+                          </select>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Cada rodada passa até <b>{porRodada}</b> leads ({porVendedor} por vendedor). Termina em <b>{tempo}</b>.
+                        Cada vendedor recebe a conversa anterior pra chamar o cliente de novo.
+                      </p>
+                      <div className="flex gap-2 justify-end pt-1">
+                        <Button variant="ghost" size="sm" onClick={() => { setRedistFor(null); setRedistPreview(null); }}>Fechar</Button>
+                        <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700 text-white" disabled={redistRunning} onClick={handleStartRedistribute}>
+                          {redistRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />} Começar repasse
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()
           ) : null}
         </DialogContent>
       </Dialog>
