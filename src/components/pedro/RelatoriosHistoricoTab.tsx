@@ -156,6 +156,11 @@ export function RelatoriosHistoricoTab() {
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-foreground">{fmtData(r.data_ref)}</span>
+                      {resumo.ref_date && (
+                        <span className="text-[11px] text-muted-foreground">
+                          referente a {fmtData(String(resumo.ref_date))}
+                        </span>
+                      )}
                       <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${st.cls}`}>
                         <StIcon className="h-3 w-3" /> {st.label}
                       </span>

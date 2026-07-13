@@ -210,6 +210,7 @@ Deno.serve(async (req) => {
         enviados,
         destinatarios: dests.map((d) => ({ nome: d.nome, num: d.num })),
         periodo_dias: 7,
+        ref_date: dadosCaption?.ref_date || null,
         leads_recebidos: n(funilCaption.chegaram),
         leads_analisados: n(funilCaption.analisados),
         pendentes_analise: n(funilCaption.pendentes_analise),
