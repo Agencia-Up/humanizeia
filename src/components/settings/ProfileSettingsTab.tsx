@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { User, Loader2, Save, RotateCcw, Sparkles, Camera, Upload } from 'lucide-react';
+import { User, Loader2, Save, RotateCcw, Sparkles, Camera, Upload, Languages } from 'lucide-react';
+import { useLanguage } from '@/i18n/LanguageProvider';
 
 
 interface Profile {
@@ -28,6 +29,7 @@ export function ProfileSettingsTab() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { lang, setLang } = useLanguage();
   const [isResettingQuiz, setIsResettingQuiz] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -166,6 +168,32 @@ export function ProfileSettingsTab() {
 
   return (
     <div className="space-y-6">
+      {/* Idioma / Language */}
+      <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <Languages className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Idioma / Language</CardTitle>
+              <CardDescription>Muda o idioma da tela (só a interface). Não altera o atendimento da IA.</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2">
+            <Button variant={lang === 'pt' ? 'default' : 'outline'} onClick={() => lang !== 'pt' && setLang('pt')}>
+              Português
+            </Button>
+            <Button variant={lang === 'en' ? 'default' : 'outline'} onClick={() => lang !== 'en' && setLang('en')}>
+              English
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Ao trocar, a página recarrega para aplicar o idioma. A escolha vale só pra você (as outras contas continuam em português).</p>
+        </CardContent>
+      </Card>
+
       {/* Profile Info */}
       <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
         <CardHeader>
