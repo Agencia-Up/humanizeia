@@ -102,6 +102,8 @@ export type RenderedOfferItem = {
   // R13 Inc2/G: preço aterrado da oferta (para grounding de MEMÓRIA: um preço já ofertado pode ser citado num
   // turno posterior sem re-consultar). Aditivo/opcional.
   preco?: number | null;
+  cor?: string | null;
+  cambio?: string | null;
   // F2.29: tipo aterrado (classificado do fato) — permite DERIVAR escopo mínimo p/ "mais opções" quando a oferta é
   // HOMOGÊNEA e não há activeSearchConstraints persistido (invariante 3). Aditivo/opcional.
   tipo?: VehicleType | null;
@@ -122,6 +124,7 @@ export type ActiveSearchConstraints = {
   tipo?: VehicleType;
   precoMax?: number;
   cambio?: TransmissionPreference;
+  hibrido?: boolean;
   popular?: boolean;
   anos?: number[];   // F2.28: anos RÍGIDOS ("13/14/15" -> [2013,2014,2015]; "2013 a 2015" -> range). Filtro duro.
 };

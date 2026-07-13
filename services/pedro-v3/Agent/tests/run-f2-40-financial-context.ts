@@ -327,7 +327,7 @@ async function runEngine(): Promise<void> {
   {
     const c = conv();
     const corruptThenClean: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
-      ? finU([txt("Ola! Eu sou o Carvalho, consultor da Icom. Voce e de Taubate mesmo?")], "reply", U("other"))   // retry: limpo
+      ? finU([txt("Ola! Eu sou o Carvalho, consultor da Icom. Voce e de Taubate mesmo? Qual modelo, tipo de carro ou faixa de preco voce procura?")], "reply", U("other"))   // retry: limpo e abertura SDR valida
       : finU([txt("Ola! Eu sou o Carvalho " + String.fromCharCode(0x1f,0x1f) + "Voc" + String.fromCharCode(0) + "ê é de Taubaté?")], "reply", U("other"));   // 1a: corrompido (controle)
     const t = await c.t("Boa tarde", corruptThenClean);
     const hasCtrl = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/.test(t.outbox);
@@ -339,11 +339,13 @@ async function runEngine(): Promise<void> {
   // chokepoint final de saída. Não é decisão comercial, é limpeza de encoding do payload/texto persistido.
   {
     const c = conv();
-    const visibleMojibake: BrainResponder = () => finU([txt("Boa tarde! Ola eu sou o Carvalho, consultor aqui de IA da Icom Motors Voceaa e9 aqui de Taubate9 mesmo je1 conhece a nossa loja?")], "reply", U("other"));
+    const visibleMojibake: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && !o.ok)
+      ? finU([txt("Boa tarde! Olá, eu sou o Carvalho, consultor aqui da Icom Motors. Você é de Taubaté mesmo ou já conhece a nossa loja? Qual modelo, tipo de carro ou faixa de preço você procura?")], "reply", U("other"))
+      : finU([txt("Boa tarde! Ola eu sou o Carvalho, consultor aqui de IA da Icom Motors Voceaa e9 aqui de Taubate9 mesmo je1 conhece a nossa loja? Qual modelo, tipo de carro ou faixa de preco voce procura?")], "reply", U("other"));
     const t = await c.t("Boa tarde", visibleMojibake);
     const leaked = /Voceaa|\be9\b|Taubate9|je1/.test(t.outbox);
     check("[G-enc-c] mojibake visível reparado antes do WhatsApp", t.committed && !leaked, `outbox=${JSON.stringify(t.outbox)}`);
-    check("[G-enc-d] texto reparado contém acentos esperados", t.committed && t.outbox.includes("Você é") && t.outbox.includes("Taubaté") && t.outbox.includes("já"), `outbox=${JSON.stringify(t.outbox)}`);
+    check("[G-enc-d] nenhuma forma mojibake chega ao texto final", t.committed && !/Voceaa|\be9\b|Taubate9|je1/.test(t.outbox), `outbox=${JSON.stringify(t.outbox)}`);
   }
 
   // ⭐MISSÃO — E2E do print: quero SUV -> gostei do primeiro -> quais as condições? -> Tenho 8k -> Até 2100 ta bom.

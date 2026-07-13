@@ -101,6 +101,12 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       });
     }
 
+    // Requisito de propulsão é duro: um carro flex/gasolina não atende um
+    // pedido por híbrido, mesmo que satisfaça tipo, preço e câmbio.
+    if (filters.hibrido === true) {
+      pool = pool.filter((v) => /\b(?:hibrid|hybrid)\b/.test(normalizeText(v.fuelName ?? "")));
+    }
+
     if (filters.precoMax && filters.precoMax > 0) {
       pool = pool.filter(v => v.saleValue !== null && v.saleValue <= filters.precoMax!);
     }

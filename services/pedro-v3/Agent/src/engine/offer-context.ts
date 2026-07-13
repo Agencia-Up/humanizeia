@@ -32,7 +32,7 @@ export function computeRenderedOfferContext(turnOutput: TurnOutput, turnId: Id, 
   const stock = stockItemsFromFacts(turnOutput.facts);
   const items: RenderedOfferItem[] = keys.map((key, i) => {
     const v = stock.find((s) => s.vehicleKey === key);
-    return { ordinal: i + 1, vehicleKey: key, marca: v?.marca ?? null, modelo: v?.modelo ?? null, ano: v?.ano ?? null, preco: typeof v?.preco === "number" ? v.preco : null, tipo: v?.tipo ?? null };
+    return { ordinal: i + 1, vehicleKey: key, marca: v?.marca ?? null, modelo: v?.modelo ?? null, ano: v?.ano ?? null, preco: typeof v?.preco === "number" ? v.preco : null, cor: v?.cor ?? null, cambio: v?.cambio ?? null, tipo: v?.tipo ?? null };
   });
   return { sourceTurnId: turnId, createdAt: now, items };
 }

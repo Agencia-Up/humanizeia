@@ -103,7 +103,20 @@ export function safeCommitSlots(
 ): { contextState: ConversationState; committed: DecisionMutation[] } {
   if (slots.length === 0) return { contextState: state, committed: [] };
   const preview = applyDecision(state, slots, turnId, now);
-  if (!preview.ok) return { contextState: state, committed: [] };
+  if (!preview.ok) {
+    // A extracao pode produzir mais de um fato. Uma mutacao invalida nao pode
+    // apagar as demais: validamos cada fato, na ordem do bloco, e projetamos
+    // apenas os que o reducer aceita para o contexto deste turno.
+    let next = state;
+    const committed: DecisionMutation[] = [];
+    for (const slot of slots) {
+      const single = applyDecision(next, [slot], turnId, now);
+      if (!single.ok) continue;
+      next = { ...single.next, version: state.version, turnNumber: state.turnNumber, updatedAt: state.updatedAt };
+      committed.push(slot);
+    }
+    return { contextState: next, committed };
+  }
   return {
     contextState: { ...preview.next, version: state.version, turnNumber: state.turnNumber, updatedAt: state.updatedAt },
     committed: slots,

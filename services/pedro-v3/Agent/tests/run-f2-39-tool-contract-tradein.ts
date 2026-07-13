@@ -370,11 +370,11 @@ async function main(): Promise<void> {
     const CTRL = String.fromCharCode(0x1f);
     const c = conv();
     const cleanOnFeedback: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Olá! Eu sou o Aloan da Icom. Como posso te ajudar hoje?")], "reply", U("smalltalk"))
-      : finU([txt("Ola" + CTRL + CTRL + "! Como posso te ajudar hoje?")], "reply", U("smalltalk"));
+      ? finU([txt("Olá! Eu sou o Aloan da Icom. Qual modelo, tipo de carro ou faixa de preço você procura?")], "reply", U("smalltalk"))
+      : finU([txt("Ola" + CTRL + CTRL + "! Qual modelo, tipo de carro ou faixa de preço você procura?")], "reply", U("smalltalk"));
     const t1 = await c.t("Oi", { responder: cleanOnFeedback });
     const hasCtrl = [...t1.outbox].some((ch) => { const cc = ch.codePointAt(0) ?? 0; return (cc < 0x20 && cc !== 9 && cc !== 10 && cc !== 13) || cc === 0x7f || cc === 0xfffd; });
-    check("[IN-8] control chars (U+001F) rejeitados + LLM reautora texto limpo", t1.src === "brain_retry" && !hasCtrl && has(t1.outbox, "Como posso te ajudar"), `src=${t1.src} outbox=${JSON.stringify(t1.outbox)}`);
+    check("[IN-8] control chars (U+001F) rejeitados + LLM reautora texto limpo", t1.src === "brain_retry" && !hasCtrl && has(t1.outbox, "Qual modelo"), `src=${t1.src} outbox=${JSON.stringify(t1.outbox)}`);
   }
   // IN-9) rejeição de capability de stock_search (understanding sem evidence válida, ex.: "cadê?") NÃO conta como busca no
   //       relatório do smoke (tool:"response") + cap anti-loop; a busca comercial roda 1x na autoria determinística.

@@ -244,7 +244,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           endpointUrl: this.#aiProvider.endpointUrl,
           allowedHosts: this.#aiProvider.allowedHosts,
           tokenParameter: this.#aiProvider.tokenParameter,
-          temperature: 0.2, maxCompletionTokens: 1_200, timeoutMs: 45_000,
+          temperature: 0.2, maxCompletionTokens: this.#aiProvider.provider === "deepseek" ? 1_600 : 1_200, timeoutMs: 45_000,
           allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
           handoffEnabled: this.#handoffEnabled,
           followupEnabled: this.#followupEnabled,

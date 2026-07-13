@@ -106,6 +106,10 @@ export type NormalizedVehicle = {
 export type StockSearchFilters = {
   readonly tipo?: VehicleType;
   readonly cambio?: TransmissionPreference;
+  // Propulsão explicitamente solicitada pelo lead. Hoje só modelamos híbrido,
+  // pois é o requisito recorrente cujo contrário (combustão comum) não pode ser
+  // apresentado como compatível.
+  readonly hibrido?: boolean;
   readonly precoMax?: number;
   readonly modelo?: string;
   readonly marca?: string;   // busca por fabricante (markName). Canonicalizado pelo engine (volks->volkswagen).

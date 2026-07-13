@@ -379,7 +379,7 @@ await expectThrow(
   });
   const outbox = await persistence.listOutbox("conv-2");
   check("handoff nao executa provider de CRM/handoff nesta fase", outbox.every((record) => record.kind !== "handoff" || record.status !== "succeeded"), JSON.stringify(outbox));
-  check("handoff inseguro cai em resposta WhatsApp segura", result.status === "committed" && result.dispatched === 1 && transport.calls.length === 1 && outbox[0]?.kind === "send_message" && outbox[0].status === "succeeded", JSON.stringify({ outbox: outbox[0], calls: transport.calls.length }));
+  check("pedido humano explicito nao fica refem de nome; adapter ausente falha fechado", result.status === "committed" && result.dispatched === 1 && transport.calls.length === 0 && outbox[0]?.kind === "handoff" && outbox[0].status === "failed", JSON.stringify({ outbox: outbox[0], calls: transport.calls.length }));
 }
 
 {

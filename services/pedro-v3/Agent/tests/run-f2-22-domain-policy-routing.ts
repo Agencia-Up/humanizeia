@@ -97,6 +97,10 @@ class UnderstandingBrain implements AgentBrainPort {
     const step = await this.inner.proposeNextStep(frame, obs);
     if (step.understanding) return step;
     let u = deriveFallbackUnderstanding(frame.block, frame.signals, extractor);
+    // Os scripts historicos nao carregavam entendimento. Para refletir o
+    // contrato do cerebro real, uma intencao explicita de financiamento deve
+    // declarar financing em vez de other.
+    if (/\bfinanci/i.test(frame.block)) u = { ...u, primaryIntent: "financing" };
     if (!u.evidence || u.evidence.length === 0) { const w = frame.block.trim().split(/\s+/).slice(0, 2).join(" ") || frame.block.slice(0, 3); u = { ...u, evidence: [{ quote: w }] }; }
     return { ...step, understanding: u };
   }

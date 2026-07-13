@@ -19,6 +19,7 @@ export const VEHICLE_TAXONOMY: readonly VehicleTaxonomyEntry[] = [
   { brand: "Honda", model: "City Hatchback", type: "hatch" },
   { brand: "Honda", model: "Fit", type: "hatch" },
   { brand: "Hyundai", model: "HB20", type: "hatch" },
+  { brand: "Hyundai", model: "HB20X", type: "hatch" },
   { brand: "Hyundai", model: "i30", type: "hatch" },
   { brand: "Kia", model: "Picanto", type: "hatch" },
   { brand: "Kia", model: "Soul", type: "hatch" },

@@ -53,7 +53,7 @@ ANTES de tudo, TODO objeto JSON (query OU final) DEVE trazer o campo "understand
 cliente (não da memória). Ele é a AUTORIDADE do turno — o sistema o usa para autorizar foto, exigir busca e resolver o
 alvo. Interprete o bloco atual (corrija erros de digitação de modelo, ex.: "kiks"→"Kicks") e preencha:
   "understanding":{
-    "primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|conversation_repair|request_human|other",
+    "primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|conversation_repair|request_human|sensitive_data|other",
     "requestedCapabilities":["stock_search"|"send_photos"|"vehicle_details"|"institutional_info"|"recall"|"select"|"handoff", ...],
     "subject":"explicit_model|ordinal_from_last_offer|selected_vehicle|vehicle_type|budget|none",
     "subjectValue":"<modelo citado / número do ordinal / tipo / faixa — ou null>",
@@ -85,6 +85,10 @@ naturalidade e NUNCA condicione a transferência a mais dados. Dados sensíveis 
 [CPF_RECEBIDO_NAO_ARMAZENADO] ou [DATA_NASCIMENTO_RECEBIDA_NAO_ARMAZENADA] = o dado chegou, mas NAO foi guardado:
 NUNCA diga "anotado/registrado"; seja transparente, nao peca repeticao em loop e ofereca atendimento humano.
 [NUMERO_11_DIGITOS_FINAL_<4>] = numero generico de 11 digitos, NAO classificado como CPF; nao o chame de documento.
+Quando o bloco atual contem um token de CPF/nascimento, declare primaryIntent="sensitive_data", sem capability comercial.
+O token atual vence a memoria de visita/financiamento: reconheca somente os dados recebidos, nunca exponha token/ref/valor,
+e avance naturalmente com no maximo UMA pergunta. Nao classifique esse bloco como visit/financing apenas porque esses eram
+os assuntos anteriores.
 Um token NUNCA e valor de parcela/entrada/preco/ano e a referencia opaca NUNCA deve aparecer para o cliente.
 ⭐"MAIS fotos" ("tem mais fotos?", "manda outras") = pedido de foto do MESMO veículo das últimas fotos — NUNCA é busca
 de estoque nem outro carro: resolva vehicle_photos_resolve do MESMO vehicleKey e envie (o sistema pula automaticamente
@@ -102,7 +106,7 @@ Depois do understanding, use UMA das duas formas:
 1) Pedir um FATO a uma ferramenta (só quando faltar um dado real para responder):
    {"kind":"query","call":{"tool":"<nome>","input":{...}}}
    Ferramentas:
-   - "stock_search" input {tipo?:"suv|sedan|hatch|pickup", cambio?:"automatic|manual", precoMax?:number, modelo?:string, marca?:string, anos?:number[], popular?:boolean, excludeKeys?:string[]}. Se o cliente disser a MARCA/fabricante (ex.: "da volks", "Volkswagen", "Fiat"), use marca. Se der TETO ("até 50 mil"), use precoMax. Se der ANO/faixa de ano ("13/14/15", "2013 a 2015"), use anos (RÍGIDO — não ofereça outro ano como se fosse o pedido; se não houver, seja honesto e ofereça ampliar). Quando o ATO do cliente for PEDIR ESTOQUE e houver filtro (marca/modelo/tipo/preço/câmbio/ano/popular), CHAME stock_search com TODOS os filtros — nunca pergunte de novo o que ele já disse. (Citar carro numa contestação/pagamento/troca/conversa NÃO é pedir estoque — a tool segue o ATO, não a palavra.)
+   - "stock_search" input {tipo?:"suv|sedan|hatch|pickup", cambio?:"automatic|manual", hibrido?:boolean, precoMax?:number, modelo?:string, marca?:string, anos?:number[], popular?:boolean, excludeKeys?:string[]}. Se o cliente pedir HÍBRIDO, use hibrido:true: esse requisito é rígido e um carro comum nunca é alternativa equivalente. Se o cliente disser a MARCA/fabricante (ex.: "da volks", "Volkswagen", "Fiat"), use marca. Se der TETO ("até 50 mil"), use precoMax. Se der ANO/faixa de ano ("13/14/15", "2013 a 2015"), use anos (RÍGIDO — não ofereça outro ano como se fosse o pedido; se não houver, seja honesto e ofereça ampliar). Quando o ATO do cliente for PEDIR ESTOQUE e houver filtro (marca/modelo/tipo/preço/câmbio/propulsão/ano/popular), CHAME stock_search com TODOS os filtros — nunca pergunte de novo o que ele já disse. (Citar carro numa contestação/pagamento/troca/conversa NÃO é pedir estoque — a tool segue o ATO, não a palavra.)
    - "vehicle_details" input {vehicleKey:string}
    - "vehicle_photos_resolve" input {vehicleKey:string}
    - "tenant_business_info" input {topic:"address|hours|unit"}  (endereço/horário/unidade da loja)
@@ -281,6 +285,10 @@ REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos
   "vehicle_photos_resolve","input":{"vehicleKey":"<a chave>"}}}; (2) no passo seguinte, no "final", incluir
   {"kind":"send_media","vehicleKey":"<a mesma>","photoIds":[<os photoIds EXATOS que a ferramenta retornou>]}.
   NUNCA vá direto ao "final" prometendo fotos sem antes resolver e sem o send_media com os photoIds reais.
+- DETALHE sem dado disponível: depois de vehicle_details, use os fatos retornados UMA vez. Se a pergunta for sobre item que a
+  ferramenta não trouxe (opcionais, banco de couro, acessório, versão), seja transparente em text: diga que esse ponto não
+  está confirmado no estoque agora e ofereça verificar com a equipe ou mostrar fotos. NÃO repita vehicle_details e NUNCA
+  abra stock_search para tentar responder um detalhe do carro já em conversa.
 - Pergunta de MEMÓRIA ("qual carro eu pedi as fotos?"): responda CURTO citando workingMemory.lastPhotoAction.label
   (o nome do carro), SEM chamar ferramenta, SEM reenviar mídia, SEM listar preços.
 - NUNCA repita uma ferramenta com os MESMOS argumentos que você JÁ observou nas "toolObservationsSoFar" — use o
@@ -400,7 +408,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   }
 
   async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
-    const turnInstruction = frame.signals.disengagementOnly === true
+    const successfulStock = observations.find((o) => o.ok && o.tool === "stock_search");
+    const turnInstruction = successfulStock?.ok && successfulStock.tool === "stock_search"
+      ? successfulStock.data.items.length > 0
+        ? "A stock_search deste turno JA terminou e os itens estao em toolObservationsSoFar. Devolva FINAL agora: introducao curta, vehicle_offer_list com as vehicleKeys retornadas e no maximo UMA pergunta contextual. NAO chame stock_search novamente e nao escreva nomes, precos ou km manualmente."
+        : "A stock_search deste turno JA terminou sem itens. Devolva FINAL agora com uma resposta honesta e uma unica pergunta que ajude a ajustar o filtro. NAO chame stock_search novamente."
+      : frame.signals.disengagementOnly === true
       ? "Este turno é uma DESPEDIDA ISOLADA. Devolva UM final JSON com draft.parts contendo exatamente UMA part text curta e cordial. Não faça pergunta, não use tool, não colete dado e não continue o funil. Esta regra específica do turno prevalece sobre orientações genéricas do portal para sempre fazer CTA/pergunta."
       : frame.signals.acceptedPhotoOffer === true
         ? "A resposta curta atual ACEITOU sua última oferta única de fotos. Preserve o selectedVehicle, declare request_photos/send_photos com evidence do bloco atual e use vehicle_photos_resolve; não pergunte novamente qual carro."
@@ -497,9 +510,10 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const tool = str(raw.tool);
     const input = isRecord(raw.input) ? raw.input : {};
     if (tool === "stock_search") {
-      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
+      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; hibrido?: boolean; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
       const tipo = str(input.tipo); if (tipo && (VEHICLE_TYPES as readonly string[]).includes(tipo)) out.tipo = tipo as VehicleType;
       const cambio = str(input.cambio); if (cambio && (TRANSMISSIONS as readonly string[]).includes(cambio)) out.cambio = cambio as TransmissionPreference;
+      if (input.hibrido === true) out.hibrido = true;
       const precoMax = num(input.precoMax); if (precoMax != null && precoMax > 0) out.precoMax = precoMax;
       const modelo = str(input.modelo); if (modelo) out.modelo = modelo;
       const marca = str(input.marca); if (marca) out.marca = marca;

@@ -15,6 +15,7 @@ import type { ClaimExtractor, QueryInputMap, TurnInterpretation } from "../domai
 import type { FrameSignals } from "../domain/agent-brain.ts";
 import type { ActiveSearchConstraints } from "../domain/conversation-state.ts";
 import type { VehicleType } from "../domain/types.ts";
+import { moneyByClause } from "./lead-extraction.ts";
 
 // A forma dos constraints é a MESMA do estado persistido (ActiveSearchConstraints) — domínio é a fonte do tipo.
 export type CommercialConstraints = ActiveSearchConstraints;
@@ -55,6 +56,14 @@ export function detectBrand(block: string): string | null {
 const MOTORCYCLE_INTENT_RX = /\b(moto|motos|motocicleta|motocicletas|motoca|scooter|scooters|ciclomotor|triciclo|quadriciclo)\b/;
 export function mentionsMotorcycle(block: string): boolean {
   return MOTORCYCLE_INTENT_RX.test(normalizeText(block));
+}
+
+// Propulsão é requisito de produto, não adjetivo de conversa: "sedan híbrido"
+// não pode degradar para qualquer sedan. O motor de busca recebe somente a
+// restrição afirmada; não inferimos híbrido por marca/modelo.
+const HYBRID_INTENT_RX = /\b(?:hibrid[oa]s?|hybrid)\b/;
+export function mentionsHybridPowertrain(block: string): boolean {
+  return HYBRID_INTENT_RX.test(normalizeText(block));
 }
 
 // ── CORREÇÕES explícitas do lead (Invariante 2 / Evidence 1): remoções de constraint do filtro ATIVO. "esquece o
@@ -113,8 +122,19 @@ export function detectCommercialConstraints(args: {
   // Orçamento: computeTurnFrame cobre "50 mil"/dígitos; aqui completo o sufixo "k" ("até 50k" -> 50000).
   let precoMax = frame.budgetMax;
   if (precoMax == null) { const k = /\b(\d{1,3})\s*k\b/.exec(normalizeText(args.block)); if (k) precoMax = Number(k[1]) * 1000; }
+  // A mesma quantia nao pode ser simultaneamente ENTRADA/PARCELA e teto de
+  // estoque. O parser financeiro por clausula e a autoridade semantica do
+  // valor; detectores comerciais apenas enriquecem a tool quando o valor e
+  // realmente budget. Preserva frases mistas ("SUV ate 90 mil, parcela 1800").
+  if (precoMax != null) {
+    const roles = moneyByClause(args.block, true);
+    const financiallyLabeled = roles.some((item) => item.value === precoMax && (item.role === "entrada" || item.role === "parcela"));
+    const explicitlyBudgeted = roles.some((item) => item.value === precoMax && item.role === "budget");
+    if (financiallyLabeled && !explicitlyBudgeted) precoMax = null;
+  }
   if (precoMax != null) c.precoMax = precoMax;
   if (frame.transmission) c.cambio = frame.transmission;
+  if (mentionsHybridPowertrain(args.block)) c.hibrido = true;
   if (args.signals.mentionsPopular === true) c.popular = true;
   const anos = detectYears(args.block);
   if (anos.length > 0) c.anos = anos;
@@ -138,6 +158,7 @@ export function relaxToSimilar(c: CommercialConstraints, keepCambio: boolean): C
   if (c.precoMax != null) out.precoMax = c.precoMax;
   if (c.popular === true) out.popular = true;
   if (keepCambio && c.cambio) out.cambio = c.cambio;
+  if (c.hibrido === true) out.hibrido = true;
   return out;
 }
 
@@ -179,6 +200,7 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
   }
   if (current.precoMax != null) next.precoMax = current.precoMax;
   if (current.cambio) next.cambio = current.cambio;
+  if (current.hibrido === true) next.hibrido = true;
   if (current.popular) next.popular = true;
   if (current.anos && current.anos.length > 0) next.anos = [...current.anos];   // anos novos substituem os antigos (rígido)
   return next;
@@ -186,7 +208,7 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
 
 // Constraint suficiente para DISPARAR uma busca? Qualquer filtro comercial. PURO.
 export function sufficientForStockSearch(c: CommercialConstraints): boolean {
-  return c.marca != null || (c.modelos != null && c.modelos.length > 0) || c.tipo != null || c.precoMax != null || c.cambio != null || c.popular === true;
+  return c.marca != null || (c.modelos != null && c.modelos.length > 0) || c.tipo != null || c.precoMax != null || c.cambio != null || c.hibrido === true || c.popular === true;
 }
 
 // Constraints -> input de stock_search (marca canonicalizada; modelos[] -> modelo + broad quando há mais de um). PURO.
@@ -200,6 +222,7 @@ export function constraintsToStockInput(c: CommercialConstraints): QueryInputMap
   if (c.tipo) input.tipo = c.tipo;
   if (c.precoMax != null) input.precoMax = c.precoMax;
   if (c.cambio) input.cambio = c.cambio;
+  if (c.hibrido === true) input.hibrido = true;
   if (c.popular) input.popular = true;
   if (c.anos && c.anos.length > 0) input.anos = [...c.anos];
   return input;
@@ -220,6 +243,7 @@ export function activeConstraintsFromStockInput(input: Record<string, unknown> |
   if (typeof input.precoMax === "number" && input.precoMax > 0) c.precoMax = input.precoMax;
   const cambio = typeof input.cambio === "string" ? input.cambio : "";
   if (cambio === "automatic" || cambio === "manual") c.cambio = cambio;
+  if (input.hibrido === true) c.hibrido = true;
   if (Array.isArray(input.anos)) { const anos = input.anos.filter((y): y is number => typeof y === "number" && y >= 1990 && y <= 2035); if (anos.length > 0) c.anos = anos; }
   if (input.popular === true) c.popular = true;
   return c;
@@ -235,6 +259,7 @@ export function describeConstraints(c: CommercialConstraints): string {
   if (c.popular && parts.length === 0) parts.push("carro popular");
   if (c.precoMax != null) parts.push(`até R$ ${c.precoMax.toLocaleString("pt-BR")}`);
   if (c.cambio) parts.push(c.cambio === "automatic" ? "automático" : "manual");
+  if (c.hibrido) parts.push("híbrido");
   return parts.join(" ");
 }
 
@@ -254,6 +279,7 @@ export function relaxSearchCascade(zeroed: CommercialConstraints, tipoHint?: Veh
   const keep = (base: CommercialConstraints): CommercialConstraints => {
     const c: CommercialConstraints = { ...base };
     if (zeroed.cambio) c.cambio = zeroed.cambio;
+    if (zeroed.hibrido) c.hibrido = true;
     if (zeroed.anos && zeroed.anos.length > 0) c.anos = [...zeroed.anos];
     return c;
   };

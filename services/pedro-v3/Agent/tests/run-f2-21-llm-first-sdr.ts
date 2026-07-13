@@ -104,6 +104,10 @@ class UnderstandingBrain implements AgentBrainPort {
     const step = await this.inner.proposeNextStep(frame, obs);
     if (step.understanding) return step;
     let u = deriveFallbackUnderstanding(frame.block, frame.signals, extractor);
+    // O cérebro real declara financing para uma intenção explícita de financiar.
+    // Este harness anexa um understanding equivalente aos steps legados que
+    // foram escritos antes de essa parte do contrato existir.
+    if (/\bfinanci/i.test(frame.block)) u = { ...u, primaryIntent: "financing" };
     if (!u.evidence || u.evidence.length === 0) { const w = frame.block.trim().split(/\s+/).slice(0, 2).join(" ") || frame.block.slice(0, 3); u = { ...u, evidence: [{ quote: w }] }; }
     return { ...step, understanding: u };
   }

@@ -356,8 +356,8 @@ export function leadStatedMoneyValues(message: string): number[] {
 // e classifica cada uma pelo cue presente NELA. O valor da cláusula é o 1º span monetário dela. Assim
 // "picape até 100 mil, parcela até 1.800" separa as cláusulas e não confunde os valores (não depende de
 // distância nem de apagar texto). "unknown" = valor sem cue (resposta pura a uma pergunta pendente).
-type MoneyRoleTag = "parcela" | "entrada" | "budget" | "unknown";
-function moneyByClause(message: string, financialContext = false): Array<{ role: MoneyRoleTag; value: number }> {
+export type MoneyRoleTag = "parcela" | "entrada" | "budget" | "unknown";
+export function moneyByClause(message: string, financialContext = false): Array<{ role: MoneyRoleTag; value: number }> {
   const clauses = message.split(/(?!\d)[,;.](?!\d)|\s+\b(?:e|com|mas|mais)\b\s+/i);
   const out: Array<{ role: MoneyRoleTag; value: number }> = [];
   for (const clause of clauses) {
@@ -376,8 +376,11 @@ function moneyByClause(message: string, financialContext = false): Array<{ role:
 
 export function parseBooleanAnswer(text: string): boolean | null {
   const norm = normalizeText(text).trim();
-  if (/^(nao|nem|nunca)\b|\bsem\b/.test(norm)) return false;
-  if (/^(sim|tenho|conheco|quero|gostaria|pode|vamos|claro|com certeza)\b/.test(norm)) return true;
+  // Resposta booleana e um ATO curto, nao qualquer frase que comece com
+  // "quero". Sem este limite, "quero agendar visita" respondendo a uma
+  // pergunta anterior de troca virava possuiTroca=true e corrompia o funil.
+  if (/^(?:nao|nem|nunca|nao tenho|tenho nao|nao possuo|possuo nao|sem)[.!\s]*$/.test(norm)) return false;
+  if (/^(?:sim|tenho|conheco|quero|gostaria|pode|vamos|claro|com certeza)(?:\s+(?:sim|tambem|por favor))?[.!\s]*$/.test(norm)) return true;
   return null;
 }
 
@@ -474,8 +477,15 @@ const TRADE_DESC_STOP = new Set([
 ]);
 function freeTradeDescriptor(norm: string): string | null {
   const cands: string[] = [];
-  const afterPossession = /\b(?:tenho|possuo)\s+(?:um|uma)\s+([\p{L}][\p{L}\d-]{2,})/u.exec(norm);
-  if (afterPossession) cands.push(afterPossession[1]);
+  // O carro de troca frequentemente tem nome composto ("C4 Lounge", "Range
+  // Rover", "C3 Aircross"). Guardar apenas a primeira ou a última palavra
+  // empobrece o briefing. Recortamos a expressão de posse até o primeiro dado
+  // objetivo (ano/km/troca) e a tratamos como uma identidade declarada pelo lead.
+  const afterPossession = /\b(?:tenho|possuo)\s+(?:um|uma)\s+(.{2,56}?)(?=\s+(?:(?:19|20)\d{2}|\d{1,3}(?:[.,]\d{3})*\s*(?:mil|k)?\s*km|(?:para|pra|na)\s+troca)\b|$)/u.exec(norm);
+  if (afterPossession) {
+    const phrase = afterPossession[1].replace(/\s+/g, " ").trim();
+    if (phrase) cands.push(phrase);
+  }
   for (const m of norm.matchAll(/\b([\p{L}][\p{L}\d-]{2,})\s+(?:19|20)\d{2}\b/gu)) cands.push(m[1]);
   for (const c of cands) if (!TRADE_DESC_STOP.has(c) && !/^\d+$/.test(c)) return c;
   return null;
@@ -490,9 +500,18 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
   const kmMatch = /\b(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(mil|k)?\s*km\b/.exec(norm);
   const result: { marca?: string; modelo?: string; ano?: number; km?: number; estado?: string } = {};
   if (brand) result.marca = brand.text;
-  if (model) result.modelo = model.text;
-  else {
-    const desc = freeTradeDescriptor(norm);
+  const desc = freeTradeDescriptor(norm);
+  if (model) {
+    // Um claim de catálogo parcial ("Lounge") não deve vencer a identidade
+    // composta declarada pelo cliente ("C4 Lounge"). Quando o descritor é
+    // mais específico, a taxonomia o canoniza; se for veículo fora do catálogo,
+    // ele segue como texto do lead para o briefing.
+    if (desc && collapseLetters(desc).length > collapseLetters(model.text).length) {
+      const canon = MARKET_COLLAPSED.get(collapseLetters(desc));
+      if (canon) { result.modelo = canon.modelo; if (!result.marca) result.marca = canon.marca; }
+      else result.modelo = desc;
+    } else result.modelo = model.text;
+  } else {
     if (desc) {
       const canon = MARKET_COLLAPSED.get(collapseLetters(desc));
       if (canon) { result.modelo = canon.modelo; if (!result.marca) result.marca = canon.marca; }
@@ -543,6 +562,18 @@ export function resolveSelectedVehicle(leadMessage: string, state: ConversationS
     const matches = items.filter((it) => { const mm = normalizeText(it.modelo ?? ""); return !!mm && claims.some((cl) => mm.includes(cl) || cl.includes(mm)); });
     const uniqueKeys = [...new Set(matches.map((m) => m.vehicleKey))];
     if (uniqueKeys.length === 1) return { kind: "vehicle", key: matches[0].vehicleKey, label: labelOf(matches[0]) };
+  }
+  // Referencia por atributo visivel da lista ("esse prata"): resolve somente
+  // quando a cor foi aterrada na oferta renderizada e identifica UM item.
+  // Nao consulta catalogo inteiro e nao escolhe em caso ambiguo.
+  const normLead = normalizeText(leadMessage);
+  if (/\b(?:esse|essa|este|esta|ver|gostei|quero|prefiro)\b/.test(normLead)) {
+    const colorMatches = items.filter((it) => {
+      const color = normalizeText(it.cor ?? "");
+      return color.length >= 3 && new RegExp(`\\b${color.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(normLead);
+    });
+    const uniqueColorKeys = [...new Set(colorMatches.map((m) => m.vehicleKey))];
+    if (uniqueColorKeys.length === 1) return { kind: "vehicle", key: colorMatches[0].vehicleKey, label: labelOf(colorMatches[0]) };
   }
   // ⭐SEM (incidente real: "Gostei do Aircross" não selecionou o "C3 Aircross" da lista — o claim do catálogo não
   // reconhece o SUBMODELO solto de um modelo composto). Fallback GROUNDED NA LISTA RENDERIZADA: uma palavra do bloco
@@ -738,10 +769,19 @@ export function extractLeadSlots(args: {
   const pendingTradeBooleanAnswer = expected === "possuiTroca" && !questionLike
     && !negationTargetsOtherObject && !looksLikeMoneyAnswer && !looksLikeBuyRequest
     && parseBooleanAnswer(leadMessage) != null;
-  const positiveTradeAnswer = !questionLike && (explicitTrade || offersTradeByPossession || tradeVehicleDescribed || pendingTradeBooleanAnswer);
+  // Um veiculo concreto declarado como posse em resposta ao contexto de troca
+  // confirma a posse por si so. O modelo capturado e a evidência estrutural;
+  // exigir ainda um "sim" deixava veiculoTroca preenchido com possuiTroca
+  // desconhecido. Perguntas de disponibilidade e clausulas de compra continuam
+  // excluidas pelo contexto e por looksLikeBuyRequest.
+  const ownedTradeVehicleAnswer = !questionLike && !looksLikeBuyRequest
+    && (expected === "possuiTroca" || expected === "veiculoTroca")
+    && tradeCandidate?.modelo != null
+    && /\b(?:tenho|possuo|meu|minha)\b/.test(normalizeText(preBuyText || leadMessage));
+  const positiveTradeAnswer = !questionLike && (explicitTrade || offersTradeByPossession || tradeVehicleDescribed || ownedTradeVehicleAnswer || pendingTradeBooleanAnswer);
   if (noTradeAnswer || positiveTradeAnswer) {
     const value = (explicitNoTrade || trocaNeg) ? false
-      : (explicitTrade || trocaPos || offersTradeByPossession || (expected === "possuiTroca" && tradeVehicleDescribed)) ? true
+      : (explicitTrade || trocaPos || offersTradeByPossession || ownedTradeVehicleAnswer || (expected === "possuiTroca" && tradeVehicleDescribed)) ? true
       : ((looksLikeBuyRequest || looksLikeMoneyAnswer || negationTargetsOtherObject) ? null : parseBooleanAnswer(leadMessage));
     if (value != null) {
       if (value === false) deniedTradeVehicle = true;
@@ -764,7 +804,12 @@ export function extractLeadSlots(args: {
     if (vehicle) add({ op: "set_slot", slot: "veiculoTroca", value: vehicle, confidence: 0.86, sourceTurnId: turnId }, "veiculoTroca");
   }
 
-  const city = (!questionLike && !negatesOwnCity(leadMessage) ? explicitCity(leadMessage) : null) ?? (expected === "cidade" && !questionLike ? bareCityAnswer(leadMessage, claimExtractor) : null);
+  // Uma negacao de origem ("nao sou de Guaratingueta") nao pode cair no
+  // fallback de cidade nua apenas porque a pergunta anterior era sobre cidade.
+  // A semantica negativa vence ambas as formas de extracao.
+  const cityNegated = negatesOwnCity(leadMessage);
+  const city = (!questionLike && !cityNegated ? explicitCity(leadMessage) : null)
+    ?? (expected === "cidade" && !questionLike && !cityNegated ? bareCityAnswer(leadMessage, claimExtractor) : null);
   if (city) add({ op: "set_slot", slot: "cidade", value: titleCase(city), confidence: expected === "cidade" ? 0.86 : 0.95, sourceTurnId: turnId }, "cidade");
 
   if (expected === "conheceLoja" || /\b(?:conheco|ja fui|nunca fui).{0,20}\bloja\b/.test(norm)) {

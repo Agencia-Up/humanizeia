@@ -281,6 +281,10 @@ export const PRIMARY_INTENTS = [
   // NÃO exige CPF/nascimento/qualificação. Evidence obrigatória no bloco atual. A LLM agradece, anuncia a
   // transição e propõe {kind:"handoff", reason:"explicit_human_request"} no MESMO final (saga resolve vendedor).
   "request_human",
+  // Resposta do lead com CPF/data de nascimento ja tokenizados no ingest.
+  // O cerebro acolhe o dado sem repetir o valor; memoria de visita ou
+  // financiamento nao pode transformar esse bloco em outro ato.
+  "sensitive_data",
 ] as const;
 export type PrimaryIntent = (typeof PRIMARY_INTENTS)[number];
 // Capacidades que o turno PEDE (o engine só autoriza a que tem evidência no bloco).

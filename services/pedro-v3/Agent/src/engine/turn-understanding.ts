@@ -35,6 +35,12 @@ export type ValidatedUnderstanding = {
 const VISIT_ACT_RX = /\b(?:visit\w*|agend\w*|marc\w*\s+(?:uma\s+)?visita|presencial\w*)\b/;
 const HUMAN_ACT_RX = /\b(?:quero|preciso|gostaria)\b.{0,35}\b(?:falar|atendente|vendedor|consultor|humano|pessoa)\b|\b(?:me\s+)?(?:transfira|transfere|transferir|encaminhe|encaminha|chame|chama)\b/;
 const SELECTION_ACT_RX = /\b(?:gost\w*|escolh\w*|fico\s+com)\b|\bquero\s+(?:esse|essa|este|esta)\b|\b(?:item|opcao|numero|posicao)\s*[1-9]\b/;
+// Atributo como PERGUNTA/consulta. Um filtro de busca ("quero SUV automatico")
+// nao e vehicle_detail apenas por conter a palavra "automatico".
+const VEHICLE_DETAIL_ACT_RX = /\bquantos?\s+km\b|quilometr|quanto\s+(?:custa|sai|fica)|\bqual\s+(?:a\s+)?(?:cor|cambio|ano|motor|versao)\b|\b(?:tem|ver|saber)\b[^?.!]{0,28}\b(?:cambio|motor|banco|couro|opcionais)\b|\be\s+(?:automatico|manual|hibrido)\b/;
+const FINANCING_ACT_RX = /\bfinanc\w*|\bentrada\b|\bparcela\w*|\bprestac\w*/;
+// normalizeText converte os separadores dos tokens internos em espacos.
+const SENSITIVE_DATA_ACT_RX = /\b(?:cpf\s+valido\s+ref|data\s+nascimento\s+valida\s+ref|cpf\s+recebido\s+nao\s+armazenado|data\s+nascimento\s+recebida\s+nao\s+armazenada)\b/;
 
 function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: readonly TurnUnderstandingEvidence[]): string[] {
   const issues: string[] = [];
@@ -43,10 +49,17 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   if (VISIT_ACT_RX.test(norm)) explicitActs.add("visit");
   if (HUMAN_ACT_RX.test(norm)) explicitActs.add("request_human");
   if (leadRequestsPhoto(block)) explicitActs.add("request_photos");
+  if (VEHICLE_DETAIL_ACT_RX.test(norm)) explicitActs.add("vehicle_detail");
+  if (FINANCING_ACT_RX.test(norm)) explicitActs.add("financing");
   if (institutionalTopicsRequested(block).length > 0 || mentionsContact(block)) explicitActs.add("institutional");
   if (SELECTION_ACT_RX.test(norm) || parseOrdinal(block) != null) explicitActs.add("select_vehicle");
+  if (SENSITIVE_DATA_ACT_RX.test(norm)) explicitActs.add("sensitive_data");
 
-  if (explicitActs.size > 0 && !explicitActs.has(u.primaryIntent)) {
+  const stockGroundingForCurrentVehicle = u.primaryIntent === "search_stock"
+    && u.requestedCapabilities.includes("stock_search")
+    && explicitActs.size === 1
+    && explicitActs.has("vehicle_detail");
+  if (explicitActs.size > 0 && !explicitActs.has(u.primaryIntent) && !stockGroundingForCurrentVehicle) {
     issues.push(`o bloco atual declara ${[...explicitActs].join("/")}, mas primaryIntent=${u.primaryIntent}`);
   }
   if (u.subject === "selected_vehicle" && u.subjectSource === "current_turn") {
@@ -64,6 +77,9 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   if (u.primaryIntent === "request_human") {
     const humanEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
     if (!HUMAN_ACT_RX.test(humanEvidence)) issues.push("request_human sem pedido de humano no bloco atual");
+  }
+  if (u.primaryIntent === "sensitive_data" && !SENSITIVE_DATA_ACT_RX.test(norm)) {
+    issues.push("sensitive_data sem token sensivel validado no bloco atual");
   }
   return issues;
 }
@@ -271,7 +287,7 @@ export function isStockSearchTurn(v: ValidatedUnderstanding | null): boolean {
 //    precedência); subjectValue que CONFLITA com o claim escrito torna o entendimento INVÁLIDO (kind=conflict, zero mídia);
 //    inferência (typo, sem claim exato) só vira candidato se CONFIRMADA por stock_search/catálogo. vehicle_photos_resolve
 //    NUNCA confirma o modelo sozinho (knownModels só vem de stock_search/vehicle_details/oferta/identidade/seleção). ──
-export type TargetResolutionSource = "turn_ordinal" | "turn_explicit_model" | "carryover_selected" | "ad_reference" | "ambiguous" | "none";
+export type TargetResolutionSource = "turn_ordinal" | "turn_explicit_model" | "carryover_selected" | "single_offer" | "ad_reference" | "ambiguous" | "none";
 export type TargetResolution =
   | { readonly kind: "resolved"; readonly vehicleKey: string; readonly source: TargetResolutionSource; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
   | { readonly kind: "ambiguous"; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
@@ -331,6 +347,14 @@ export function resolveTurnTarget(args: {
   if (ord && ord.value >= 1 && ord.value <= offerItems.length) {
     const key = offerItems[ord.value - 1].vehicleKey;
     return { kind: "resolved", vehicleKey: key, source: "turn_ordinal", candidateVehicleKeys: [key], subjectModel: uModel ?? textModels[0] ?? null };
+  }
+  // Uma unica oferta renderizada e um pedido explicito de fotos formam uma
+  // referencia inequívoca mesmo sem "dele". Isto e resolucao de contexto
+  // estruturado (vehicleKey da lista), nao inferencia por palavra ou memoria
+  // antiga. Listas com 2+ itens continuam exigindo ordinal/modelo.
+  if (offerItems.length === 1 && leadRequestsPhoto(leadMessage) && textModels.length === 0) {
+    const key = offerItems[0].vehicleKey;
+    return { kind: "resolved", vehicleKey: key, source: "single_offer", candidateVehicleKeys: [key], subjectModel: null };
   }
   // Determinação do MODELO do assunto (precedência do CLAIM escrito; conflito -> inválido). Identidade EXATA (canonicalModel),
   // NUNCA substring: "Onix"!="Onix Plus", "HB20"!="HB20S", "C3"!="C3 Aircross".
@@ -399,7 +423,7 @@ export function reconcileUnderstanding(base: TurnUnderstanding | null, next: Tur
 // ── FALLBACK conservador (só HINT p/ recuperação TEXTUAL — NUNCA autoriza ação; fromBrain=false no validate). "foto"
 //    SOLTA não vira request_photos: exige verbo de envio + foto (imperativo) OU "fotos do <carro>". ──
 const PHOTO_MEMORY_Q = /\b(qual|que|quais)\b[^?]*\b(foto|carro|ve[ií]culo|modelo)\b[^?]*\b(pedi|pediu|mandei|mostrei|recebi)\b/;
-const PHOTO_REQUEST_STEM = /\b(?:tem\s+)?(?:mais|outr[ao]s?)\s+(?:fotos?|imagens?|midias?|fotografias?)\b|\b(?:fotos?|imagens?)\s+(?:a\s+)?mais\b|\b(?:mand\w*|envi\w*|mostr\w*)\b[^?]*\bfotos?\b|\b(?:quero|posso|pode|gostaria)\b[^?]*\b(?:ver|mandar|enviar)\b[^?]*\bfotos?\b|\bfotos?\s+d(?:o|a|e|esse|essa|ele|ela)\b/;
+const PHOTO_REQUEST_STEM = /\btem\s+(?:fotos?|imagens?)\b|\b(?:tem\s+)?(?:mais|outr[ao]s?)\s+(?:fotos?|imagens?|midias?|fotografias?)\b|\b(?:fotos?|imagens?)\s+(?:a\s+)?mais\b|\b(?:mand\w*|envi\w*|mostr\w*)\b[^?]*\bfotos?\b|\b(?:quero|posso|pode|gostaria)\b[^?]*\b(?:ver|mandar|enviar)\b[^?]*\bfotos?\b|\bfotos?\s+d(?:o|a|e|esse|essa|ele|ela)\b/;
 const BUDGET_RX = /\bate\s+\d|\br\$\s*\d|\b\d{2,3}\s*mil\b|\bbarat|\beconomic|\bfaixa\s+de\s+pre|\bor[çc]amento\b/;
 const ATTR_RX = /\bkm\b|quilometr|rodad|\bcor\b|\bcambio\b|c[aâ]mbio|autom[aá]tic|\bmanual\b|\bpre[çc]o\b|\bvalor\b|quanto\s+(?:custa|sai|fica)|\bano\b|\bconsumo\b|\bmotor\b|\bversao\b|vers[aã]o|\bopcionais\b|\bcompleto\b/;
 const ORDINAL_WORD_RX = /\b(?:primeir|segund|terceir|quart|quint|sext|ultim)\w*|\bnumero\s+\d+|\bopcao\s+\d+/;
@@ -420,6 +444,11 @@ export function deriveFallbackUnderstanding(block: string, signals: FrameSignals
 
   if (PHOTO_MEMORY_Q.test(norm)) add("recall", firstMatch(PHOTO_MEMORY_Q, block), "recall_photos");
   else if (PHOTO_REQUEST_STEM.test(norm) && !isPhotoDeclined(block)) add("send_photos", firstMatch(PHOTO_REQUEST_STEM, block), "request_photos");
+  if (HUMAN_ACT_RX.test(norm)) add("handoff", firstMatch(HUMAN_ACT_RX, block), "request_human");
+  if (SENSITIVE_DATA_ACT_RX.test(norm)) {
+    primaryIntent = "sensitive_data";
+    evidence.push({ capability: undefined, quote: block.slice(0, 80) });
+  }
   if (institutionalTopicsRequested(block).length > 0 || mentionsContact(block)) add("institutional_info", firstMatch(/\benderec|\bhorario|\bloja|\bunidade|\binstagram|\bsite/, block), "institutional");
   // BUSCA: sinal EXPLÍCITO (tipo/mais opções/popular/orçamento) OU um modelo SOLTO sem outra intenção ("tem Onix?"). Um
   // modelo num turno de FOTO/DETALHE ("me manda foto do Onix") NÃO vira busca (evita forçar stock_search indevidamente).
