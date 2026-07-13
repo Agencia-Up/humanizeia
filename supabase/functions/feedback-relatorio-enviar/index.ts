@@ -192,6 +192,9 @@ Deno.serve(async (req) => {
     const enviados = results.filter((x) => x.ok).length;
 
     // 6) Registra no HISTORICO (feedback_relatorios) — alimenta a aba de relatorios.
+    // Importante: "leads recebidos" vem da base real do CRM (Pedro + Marcos).
+    // "leads analisados" e "por_qualidade" vêm do cérebro de feedback. Separar
+    // esses números evita o bug de parecer que chegaram só os leads já analisados.
     try {
       const inicioMes = new Date();
       inicioMes.setUTCDate(1); inicioMes.setUTCHours(0, 0, 0, 0);
@@ -201,11 +204,18 @@ Deno.serve(async (req) => {
         .gte('created_at', inicioMes.toISOString());
       const porQ: Record<string, number> = {};
       for (const c of (convs || [])) { const k = (c as any).qualidade_lead || 'sem'; porQ[k] = (porQ[k] || 0) + 1; }
+      const funilCaption = dadosCaption?.funil || {};
       const resumo = {
         paginas: gen.paginas ?? null,
         enviados,
         destinatarios: dests.map((d) => ({ nome: d.nome, num: d.num })),
-        leads_analisados: (convs || []).length,
+        periodo_dias: 7,
+        leads_recebidos: n(funilCaption.chegaram),
+        leads_analisados: n(funilCaption.analisados),
+        pendentes_analise: n(funilCaption.pendentes_analise),
+        leads_qualificados: n(funilCaption.qualificados),
+        leads_bem_atendidos: n(funilCaption.bem_atendidos),
+        vendas: n(funilCaption.vendas),
         por_qualidade: porQ,
       };
       await admin.from('feedback_relatorios').insert({

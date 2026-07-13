@@ -45,12 +45,14 @@ export function RelatoriosHistoricoTab() {
   const [rows, setRows] = useState<Relatorio[]>([]);
   const [baixando, setBaixando] = useState<string | null>(null);
   const resumoGeral = useMemo(() => {
-    const totalLeads = rows.reduce((acc, r) => acc + (Number(r.resumo?.leads_analisados) || 0), 0);
+    const totalRecebidos = rows.reduce((acc, r) => acc + (Number(r.resumo?.leads_recebidos ?? r.resumo?.leads_analisados) || 0), 0);
+    const totalAnalisados = rows.reduce((acc, r) => acc + (Number(r.resumo?.leads_analisados) || 0), 0);
+    const totalPendentes = rows.reduce((acc, r) => acc + (Number(r.resumo?.pendentes_analise) || 0), 0);
     const enviados = rows.filter((r) => r.status === 'enviado').length;
     const falhas = rows.filter((r) => r.status === 'falhou').length;
     const pendentes = rows.filter((r) => r.status === 'pendente' || r.status === 'gerado').length;
     const ultimo = rows[0]?.data_ref ? fmtData(rows[0].data_ref) : '-';
-    return { totalLeads, enviados, falhas, pendentes, ultimo };
+    return { totalRecebidos, totalAnalisados, totalPendentes, enviados, falhas, pendentes, ultimo };
   }, [rows]);
 
   const load = useCallback(async () => {
@@ -110,8 +112,9 @@ export function RelatoriosHistoricoTab() {
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
-              <div className="text-[11px] text-muted-foreground">Leads analisados</div>
-              <div className="mt-1 text-lg font-semibold text-foreground">{resumoGeral.totalLeads}</div>
+              <div className="text-[11px] text-muted-foreground">Leads recebidos</div>
+              <div className="mt-1 text-lg font-semibold text-foreground">{resumoGeral.totalRecebidos}</div>
+              <div className="text-[10px] text-muted-foreground">{resumoGeral.totalAnalisados} analisados</div>
             </div>
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
               <div className="flex items-center gap-1 text-[11px] text-emerald-200"><Send className="h-3 w-3" /> Enviados</div>
@@ -120,6 +123,7 @@ export function RelatoriosHistoricoTab() {
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
               <div className="text-[11px] text-amber-200">Pendentes</div>
               <div className="mt-1 text-lg font-semibold text-amber-300">{resumoGeral.pendentes}</div>
+              <div className="text-[10px] text-amber-100/80">{resumoGeral.totalPendentes} sem analise</div>
             </div>
             <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3">
               <div className="text-[11px] text-rose-200">Falhas</div>
@@ -155,8 +159,18 @@ export function RelatoriosHistoricoTab() {
                       <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${st.cls}`}>
                         <StIcon className="h-3 w-3" /> {st.label}
                       </span>
-                      {typeof resumo.leads_analisados === 'number' && (
-                        <span className="text-[11px] text-muted-foreground">{resumo.leads_analisados} leads analisados</span>
+                      {(typeof resumo.leads_recebidos === 'number' || typeof resumo.leads_analisados === 'number') && (
+                        <span className="text-[11px] text-muted-foreground">
+                          {Number(resumo.leads_recebidos ?? resumo.leads_analisados) || 0} recebidos
+                          {' · '}
+                          {Number(resumo.leads_analisados) || 0} analisados
+                          {Number(resumo.pendentes_analise) > 0 ? ` · ${Number(resumo.pendentes_analise)} pendentes` : ''}
+                        </span>
+                      )}
+                      {typeof resumo.leads_qualificados === 'number' && (
+                        <span className="text-[11px] text-emerald-300">
+                          {Number(resumo.leads_qualificados) || 0} com interesse real
+                        </span>
                       )}
                     </div>
                     {Object.keys(porQ).length > 0 && (
