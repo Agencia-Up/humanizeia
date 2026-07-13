@@ -598,7 +598,7 @@ export default function Treinamento() {
 
       {/* ── Dialog: Player ── */}
       <Dialog open={!!playerDialog} onOpenChange={() => setPlayerDialog(null)}>
-        <DialogContent className="max-w-3xl p-0 overflow-hidden">
+        <DialogContent className="max-w-3xl max-h-[calc(100dvh-2rem)] p-0 overflow-y-auto">
           {playerDialog && (
             <>
               <div className="aspect-video w-full bg-black">

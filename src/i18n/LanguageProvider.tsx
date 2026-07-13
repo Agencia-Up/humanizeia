@@ -25,6 +25,23 @@ const ATTRS = ['placeholder', 'title', 'aria-label', 'alt'];
 function tr(text: string): string | null {
   const key = text.trim();
   if (key.length < 2) return null;
+
+  // Regras seguras para textos fixos com numeros/nomes da interface.
+  // Nao traduz conteudo de leads, mensagens, carros ou dados digitados.
+  const dynamicRules: Array<[RegExp, (match: RegExpMatchArray) => string]> = [
+    [/^Oi,\s+(.+?)\s*!\s*(.*)$/i, (m) => `Hi, ${m[1]}! ${m[2] || ''}`.trim()],
+    [/^≈\s*(\d+)\s+conversas$/i, (m) => `≈ ${m[1]} conversations`],
+    [/^(\d+)\s+conversas restantes$/i, (m) => `${m[1]} conversations left`],
+    [/^Ciclo reinicia em\s+(\d+)\s+dias$/i, (m) => `Cycle resets in ${m[1]} days`],
+    [/^Renovação em\s+(\d+)\s+dias$/i, (m) => `Renews in ${m[1]} days`],
+    [/^(\d+)\s+lead\(s\)\s+sem vendedor no período$/i, (m) => `${m[1]} lead(s) without seller in the period`],
+    [/^(\d+)\s+conversa\(s\)$/i, (m) => `${m[1]} conversation(s)`],
+  ];
+  for (const [regex, map] of dynamicRules) {
+    const match = key.match(regex);
+    if (match) return text.replace(key, map(match));
+  }
+
   const hit = DICT_EN[key];
   if (hit === undefined || hit === key) return null;
   return text.replace(key, hit); // preserva espaços/quebras nas pontas

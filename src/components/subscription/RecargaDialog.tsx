@@ -194,10 +194,10 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
   /* ── Render ───────────────────────────────────────────────────────── */
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md p-0 overflow-hidden gap-0">
+      <DialogContent className="sm:max-w-md p-0 overflow-hidden gap-0 flex max-h-[calc(100dvh-2rem)] flex-col">
         {/* Cabecalho premium (navy) */}
         <div
-          className="px-6 pt-6 pb-5"
+          className="shrink-0 px-6 pt-6 pb-5"
           style={{ background: 'linear-gradient(135deg, #0F2647 0%, #1B3A66 100%)' }}
         >
           <DialogHeader>
@@ -215,7 +215,7 @@ export default function RecargaDialog({ open, onOpenChange, pkg, savedCard, onCr
           </div>
         </div>
 
-        <div className="px-6 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
           {/* ── Estado: SUCESSO (cartao creditado) ───────────────────── */}
           {result?.credited ? (
             <div className="flex flex-col items-center text-center py-4">

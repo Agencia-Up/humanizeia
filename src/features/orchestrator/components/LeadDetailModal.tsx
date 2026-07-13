@@ -25,8 +25,8 @@ const LeadDetailModal = ({ lead, stages, open, onClose, onEdit }: LeadDetailModa
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl bg-[#0a0a0b] border-white/5 text-white p-0 overflow-hidden glass-morphism">
-        <div className="flex flex-col h-[650px]">
+      <DialogContent className="max-w-4xl max-h-[calc(100dvh-2rem)] bg-[#0a0a0b] border-white/5 text-white p-0 overflow-hidden glass-morphism">
+        <div className="flex h-[650px] max-h-[calc(100dvh-2rem)] flex-col">
           {/* Header Section */}
           <div className="p-6 border-b border-white/5 bg-gradient-to-r from-purple-500/10 to-transparent">
             <div className="flex items-start justify-between">
