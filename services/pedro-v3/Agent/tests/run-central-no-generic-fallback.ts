@@ -1,7 +1,7 @@
 // ============================================================================
-// SCAN anti-fallback genérico (gate da missão fonte única): garante que NENHUMA fala genérica de fallback
-// ("não consegui confirmar", "reformule/reformular") possa chegar ao outbox do central_active. Lê central-engine.ts,
-// remove COMENTÁRIOS (onde as frases aparecem só como documentação) e falha se sobrar a frase em código/string literal.
+// Gate arquitetural da autoria única. Além de proibir o fallback genérico antigo, prova no código que a saída de
+// falha do central_active é somente operacional: nenhum renderer comercial determinístico pode ser promovido a
+// atendente quando a LLM não conclui. Os renderers antigos continuam disponíveis exclusivamente para o legado.
 //   npx tsx tests/run-central-no-generic-fallback.ts
 // ============================================================================
 import { readFileSync } from "node:fs";
@@ -34,8 +34,27 @@ async function main(): Promise<void> {
   }
   // A função buildTechnicalFallback (fala genérica) foi REMOVIDA — não deve mais existir como definição.
   check("buildTechnicalFallback (fala genérica) foi removida", !/function\s+buildtechnicalfallback/.test(norm(engine)), "definição ainda presente");
-  // A recuperação contextual existe e é a fonte do texto de degradação.
-  check("buildContextualRecovery presente (substitui o fallback genérico)", /function\s+buildcontextualrecovery/.test(norm(engine)));
+
+  const llmFailureStart = code.indexOf("} else if (llmfirst) {");
+  const legacyStart = llmFailureStart >= 0 ? code.indexOf("} else {", llmFailureStart + 1) : -1;
+  const centralFailureBranch = llmFailureStart >= 0 && legacyStart > llmFailureStart
+    ? code.slice(llmFailureStart, legacyStart)
+    : "";
+  check("ramo de falha do central_active foi localizado", centralFailureBranch.length > 0);
+  check("central_active usa somente brain_unavailable quando a LLM não autora", centralFailureBranch.includes("buildbrainunavailableresponse"));
+  const forbiddenCommercialAuthors = [
+    "buildcontextualrecovery(", "builddeterministicphotoresponse(", "buildinstitutionalresponse(",
+    "builddisengagementresponse(", "buildmoreoptionsscopequestion(", "buildemptysearchconductingrecovery(",
+    "buildrelaxedofferresponse(", "deterministic_recovery", "deterministic_photo", "deterministic_conduct",
+  ];
+  for (const author of forbiddenCommercialAuthors) {
+    check(`central_active não promove autor comercial: ${author}`, !centralFailureBranch.includes(author));
+  }
+  check("passagem final de autoria da LLM existe", code.includes("final_authorship_required") && code.includes("finalauthorshipattempts"));
+  check(
+    "edição silenciosa trimToOneQuestion fica fora do llmFirst",
+    /if\s*\(!llmfirst\)\s*\{\s*const\s+trimmedtext\s*=\s*trimtoonequestion/.test(code),
+  );
 
   console.log(`\n== SCAN anti-fallback: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }

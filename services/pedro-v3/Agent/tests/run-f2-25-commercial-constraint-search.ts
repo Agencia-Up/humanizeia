@@ -185,18 +185,27 @@ async function main(): Promise<void> {
     check("[I-3a] turno de foto -> NÃO rodou stock_search (não forçado)", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
     check("[I-3b] enviou a foto normalmente", r.hasMedia === true && r.committed);
   }
-  // INT-4: constraint 'até 20 mil da volks' — sem VW ≤20k, MAS há VW acima (Gol/Polo). Fix A (audit CTWA): a busca vazia
-  // CONDUZ nomeando o filtro + relaxando p/ os VW próximos (drop_ceiling), nunca beco "quer parecido?". Se NÃO houvesse
-  // nenhum VW, cairia no honesto recovery_stock_empty. Núcleo preservado: nomeia o filtro (Volkswagen), não re-pergunta.
+  // INT-4: constraint 'até 20 mil da volks' — sem VW ≤20k, MAS há VW acima (Gol/Polo). O engine pode consultar
+  // alternativas factuais; a LLM recebe os resultados e autora a condução. Nunca há recovery comercial escrito pelo engine.
   {
     const c = conv(); await c.seed();
     const searchU = U("search_stock", { caps: ["stock_search"], evidence: [{ capability: "stock_search", quote: "volks" }] });
-    const responder: BrainResponder = (_f, obs) => obs.some((o) => o.tool === "stock_search")
-      ? finU([], [reply], "reply", searchU)   // draft vazio -> rejeitado -> repeatedDeny -> recuperação
-      : qU({ tool: "stock_search", input: { precoMax: 20000, marca: "volkswagen" } } as CentralQueryCall, searchU);
+    const responder: BrainResponder = (_f, obs) => {
+      const searches = obs.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
+      if (searches.length === 0) return qU({ tool: "stock_search", input: { precoMax: 20000, marca: "volkswagen" } } as CentralQueryCall, searchU);
+      const withItems = [...searches].reverse().find((s) => s.data.items.length > 0);
+      return withItems
+        ? finU(
+            [txt("Não encontrei Volkswagen até R$ 20 mil, mas encontrei estes Volkswagen em uma faixa próxima:"), offer(withItems.data.items.map((v) => v.vehicleKey)), txt("Quer que eu detalhe algum deles?")],
+            [reply],
+            "offer_relaxed_stock",
+            searchU,
+          )
+        : finU([txt("Não encontrei Volkswagen até R$ 20 mil no estoque agora. Você prefere ampliar a faixa ou considerar outra marca?")], [reply], "empty_stock_honest", searchU);
+    };
     const r = await c.t("até 20 mil e que seja da volks", responder);
     check("[I-4a] rodou stock_search (vazio)", r.exec.includes("stock_search"));
-    check("[I-4b] busca vazia CONDUZ nomeando o filtro (Volkswagen) + VW próximos, sem re-perguntar", (r.reasonCode === "recovery_relaxed_offer" || r.reasonCode === "recovery_stock_empty") && has(r.outbox, "Volkswagen") && !/qual (modelo|tipo)/i.test(norm(r.outbox)) && (has(r.outbox, "Gol") || has(r.outbox, "Polo") || r.reasonCode === "recovery_stock_empty"), `rc=${r.reasonCode} outbox="${r.outbox}"`);
+    check("[I-4b] LLM conduz a busca vazia nomeando o filtro e opções próximas", (r.src === "brain_final" || r.src === "brain_retry") && has(r.outbox, "Volkswagen") && !/qual (modelo|tipo)/i.test(norm(r.outbox)) && (has(r.outbox, "Gol") || has(r.outbox, "Polo") || r.reasonCode === "empty_stock_honest"), `src=${r.src} rc=${r.reasonCode} outbox="${r.outbox}"`);
   }
 
   console.log(`\n== F2.25: ${ok} OK | ${fail} FALHA ==`);

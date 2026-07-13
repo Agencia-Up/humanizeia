@@ -168,16 +168,27 @@ async function main(): Promise<void> {
   // PARTE 5 — INTEGRAÇÃO: RESOLUÇÃO ÚNICA (bug do Compass "fotos do segundo")
   // ─────────────────────────────────────────────────────────────────────────
   {
-    // Cérebro rotula "fotos do segundo" só como SELEÇÃO (sem send_photos, sem tool) — reproduz o incidente. O ENGINE
-    // resolve o ordinal (item 2 = Compass 2019), roda vehicle_photos_resolve determinístico e ENVIA. Nunca "de qual carro?".
+    // O cérebro inicialmente rotula "fotos do segundo" só como SELEÇÃO. O engine resolve o fato (ordinal + fotos),
+    // devolve a observação e a LLM autora o envio. A engine nunca escreve a resposta comercial.
     const c = conv(offerCtx([COMPASS17, COMPASS19]));
     await c.seed();
     const selU = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "2", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "segundo" }] });
-    const responder: BrainResponder = () => finU([txt("Boa escolha!")], [reply], "select_ack", selU, [selMut(COMPASS19)]);
+    const responder: BrainResponder = (_frame, observations) => {
+      const photoReady = observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok);
+      return photoReady
+        ? finU(
+            [txt("Claro, aqui estão as fotos do Jeep Compass 2019.")],
+            [reply, { kind: "send_media", planId: "photos", order: 1, vehicleKey: COMPASS19.vehicleKey, photoIds: ["p1", "p2"], onSuccess: [] } as ProposedEffectPlan],
+            "send_selected_photos",
+            selU,
+            [selMut(COMPASS19)],
+          )
+        : finU([txt("Boa escolha!")], [reply], "select_ack", selU, [selMut(COMPASS19)]);
+    };
     const r = await c.t("Me mande fotos do segundo", "ambiguous", responder);
     check("[I-compass-a] envia mídia do item 2 (Compass 2019)", r.hasMedia === true && r.mediaKey === COMPASS19.vehicleKey, `hasMedia=${r.hasMedia} key=${r.mediaKey} src=${r.src}`);
     check("[I-compass-b] rodou vehicle_photos_resolve determinístico", r.exec.includes("vehicle_photos_resolve"), `exec=${r.exec.join(",")}`);
-    check("[I-compass-c] fonte = deterministic_photo (não recovery)", r.src === "deterministic_photo", `src=${r.src}`);
+    check("[I-compass-c] resposta comercial é da LLM", r.src === "brain_final" || r.src === "brain_retry", `src=${r.src}`);
     check("[I-compass-d] targetSource = turn_ordinal", r.targetSource === "turn_ordinal", `ts=${r.targetSource}`);
     check("[I-compass-e] NUNCA vira 'de qual carro?' (recovery_photo_which)", r.recoveryReason !== "recovery_photo_which");
   }

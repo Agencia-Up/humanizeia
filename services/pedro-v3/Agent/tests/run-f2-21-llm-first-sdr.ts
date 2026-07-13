@@ -221,8 +221,11 @@ async function main(): Promise<void> {
       if (!obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) return q({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: POP2.vehicleKey } } });
       return fin([txt("Aqui estão! 😊")], [reply, mediaEff(POP2)], "send_vehicle_photos");
     });
-    const c = await turn("qual carro eu pedi as fotos?", "ambiguous", [fin([txt("Foi o carro que te enviei, um ótimo negócio.")])]);   // cérebro vago -> recall determinístico nomeia
-    check("[7] recall nomeia 'Chevrolet Onix' e NÃO reenvia mídia", has(c.outbox, "Chevrolet Onix") && !c.hasMedia && !anyKey(c.outbox), `media=${c.hasMedia} text="${c.outbox}"`);
+    const c = await turn("qual carro eu pedi as fotos?", "ambiguous", [
+      fin([txt("Foi o carro que te enviei, um ótimo negócio.")]),
+      fin([txt("Você pediu as fotos do Chevrolet Onix 2018. Quer saber mais detalhes dele?")]),
+    ]);   // cérebro vago -> recebe o label factual e reautora
+    check("[7] a LLM nomeia 'Chevrolet Onix' após feedback e NÃO reenvia mídia", has(c.outbox, "Chevrolet Onix") && !c.hasMedia && !anyKey(c.outbox) && c.src === "brain_retry", `src=${c.src} media=${c.hasMedia} text="${c.outbox}"`);
   }
   // 8) FORA DE ROTEIRO: "bonito ele" -> resposta contextual, sem menu robótico, engine não injeta funil.
   {
@@ -242,14 +245,14 @@ async function main(): Promise<void> {
   // 10) GUARDRAIL: cérebro tenta citar PREÇO de veículo NÃO consultado -> engine bloqueia (não envia mentira).
   {
     const { turn } = makeConv("c10");
-    const c = await turn("quanto custa o Onix?", "asks_vehicle_detail", [
-      fin([txt("O Onix sai por"), moneyRef(POP2.vehicleKey)]),   // money_ref SEM vehicle_details -> render falha fechado
-      fin([txt("O Onix sai por"), moneyRef(POP2.vehicleKey)]),
-      fin([txt("O Onix sai por"), moneyRef(POP2.vehicleKey)]),
-      fin([txt("O Onix sai por"), moneyRef(POP2.vehicleKey)]),
-    ]);
+    const c = await turn("quanto custa o Onix?", "asks_vehicle_detail", (_frame, obs) => {
+      if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")) {
+        return fin([txt("Ainda não consultei esse valor. Posso confirmar para você?")]);
+      }
+      return fin([txt("O Onix sai por"), moneyRef(POP2.vehicleKey)]);   // money_ref SEM vehicle_details -> render falha fechado
+    });
     check("[10] preço não-aterrado é BLOQUEADO -> fallback honesto (sem valor inventado)", c.committed && !/R\$|\d{2}\.\d{3}|49\.?990/.test(c.outbox), `src=${c.src} text="${c.outbox}"`);
-    check("[10] recuperação contextual segura (não finge preço e não vira falha técnica)", c.committed && !c.degraded && c.src === "deterministic_recovery", `degraded=${c.degraded} src=${c.src}`);
+    check("[10] a LLM faz a deferência honesta (engine não escreve recovery comercial)", c.committed && !c.degraded && c.src === "brain_retry", `degraded=${c.degraded} src=${c.src}`);
   }
 
   // 11) CPF CEDO: cérebro pede CPF na qualificação (sem visita agendada) -> BLOQUEADO (não vai CPF no outbox).

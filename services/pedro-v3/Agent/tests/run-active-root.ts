@@ -244,7 +244,8 @@ const rPlainText: ComposeOverride = (d) => ({ parts: [{ type: "text", content: d
 function rLlm(): FakeLlm { const l = new FakeLlm(); l.setTurnScript([], rPlainText); return l; }
 function rFinalReply(guidance: string): AgentBrainStep {
   const decision: AgentBrainDecision = {
-    reasonCode: "reply", reasonSummary: "resposta", confidence: 0.9, responsePlan: { guidance },
+    reasonCode: "reply", reasonSummary: "resposta", confidence: 0.9,
+    responsePlan: { guidance, draft: { parts: [{ type: "text", content: guidance }] } },
     proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan],
     memoryMutations: [], stateMutations: [],
   };
@@ -453,7 +454,11 @@ console.log("\nR13-D reconciliação durável no runtime central_active:");
   // 2) RESTART + recall via PilotActiveRoot central_active -> #processCentralActive reconcilia ANTES do turno.
   const p2 = new InMemoryPersistence(clock, new FakeIdGen(), backing);
   const recallBrain = new ScriptedAgentBrain();
-  recallBrain.setTurnScript([rFinalReply("Deixa eu verificar aqui pra você.")]);
+  recallBrain.setTurnScript([
+    rFinalReply("Deixa eu verificar aqui pra você."),
+    // LLM-first: o engine devolve o label factual no feedback e a mesma LLM reautora.
+    rFinalReply("Você pediu as fotos do Honda CRV 2010. Quer saber mais detalhes dele?"),
+  ]);
   const transport = new RecordingUazapiTransport();
   const root = await PilotActiveRoot.create({ mode: "active", tenantId: TENANT_ID, agentId: AGENT_ID }, {
     db: seed(), decryptor: new V2PlaintextApiKeyReader(), clock,

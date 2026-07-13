@@ -73,10 +73,17 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
 }
 // ⭐AUTORIDADE (audit Codex): turnos-default desta suíte são BUSCAS — a LLM real classifica search_stock. Declara o
 // ATO mas resiste a chamar a tool: o executor determinístico garante a execução (o que a suíte prova).
-const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resist: BrainResponder = (f, observations) => {
+  const understanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
+    evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  };
+  const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
+  if (!stock) return finU([txt("Certo!")], "reply", understanding);
+  return stock.data.items.length > 0
+    ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
+    : finU([txt("Não encontrei outras opções com esses critérios agora. Quer ajustar a faixa ou o tipo?")], "empty_more_options", understanding);
+};
 
 type Cap = { outbox: string; committed: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; presentedKeys: string[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder): Promise<Cap> {
@@ -172,8 +179,9 @@ async function main(): Promise<void> {
     // T2: cérebro faz stock_search com excludeKeys = 5 mostrados + 2 Compass (o bug real); depois final lista os Compass.
     // (a busca clampada retorna os 2 Compass -> ficam nos fatos do turno -> o offer_list aterra e renderiza.)
     const badBrain: BrainResponder = (_f, _obs, step) => {
-      if (step === 0) return { kind: "query", understanding: U("search_stock"), call: { tool: "stock_search", input: { tipo: "suv", precoMax: 100000, excludeKeys: ["rm:c3", "rm:dus", "rm:2008", "rm:ren16", "rm:ren18", "rm:cmp17", "rm:cmp19"] } } } as AgentBrainStep;
-      return finU([txt("Encontrei estas opções pra você:"), offer(["rm:cmp17", "rm:cmp19"])], "offer_more_suv", U("search_stock"));
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "outros" }] };
+      if (step === 0) return { kind: "query", understanding: u, call: { tool: "stock_search", input: { tipo: "suv", precoMax: 100000, excludeKeys: ["rm:c3", "rm:dus", "rm:2008", "rm:ren16", "rm:ren18", "rm:cmp17", "rm:cmp19"] } } } as AgentBrainStep;
+      return finU([txt("Encontrei estas opções pra você:"), offer(["rm:cmp17", "rm:cmp19"])], "offer_more_suv", u);
     };
     const t2 = await c.t("tem outros de 100k?", "ambiguous", badBrain);
     const ex = (t2.stockInput?.excludeKeys as string[] | undefined) ?? [];

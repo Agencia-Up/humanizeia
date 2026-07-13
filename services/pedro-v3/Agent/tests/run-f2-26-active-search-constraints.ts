@@ -65,6 +65,7 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 type UOpts = { caps?: TurnCapability[]; subject?: TurnSubjectKind; subjectValue?: string | null; evidence?: { capability?: TurnCapability; quote: string }[] };
 const U = (primaryIntent: PrimaryIntent, o: UOpts = {}): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: o.caps ?? [], subject: o.subject ?? "none", subjectValue: o.subjectValue ?? null, subjectSource: "current_turn", evidence: o.evidence ?? [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 const qU = (call: CentralQueryCall, u: TurnUnderstanding): AgentBrainStep => ({ kind: "query", call, understanding: u });
 function finU(parts: ResponsePart[], effects: ProposedEffectPlan[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
@@ -76,10 +77,17 @@ const resist: BrainResponder = () => finU([txt("Certo!")], [reply], "reply", U("
 // Cérebro que CLASSIFICA busca (como a gpt-4.1-mini faria em "Tem Palio? Ou Gol?") mas RESISTE a chamar a tool.
 // ⭐Contrato novo: a LLM AUTORIZOU (ato search_stock + capability), então o executor determinístico GARANTE a execução
 // com o filtro MERGEADO — é o que esta suíte prova (merge entre turnos + nunca promessa falsa), agora sob a autoridade da LLM.
-const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], [reply], "reply", U("search_stock", {
-  caps: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-}));
+const resistSearch: BrainResponder = (f, observations) => {
+  const searchU = U("search_stock", {
+    caps: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  });
+  const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
+  if (!stock) return finU([txt("Certo!")], [reply], "reply", searchU);
+  return stock.data.items.length > 0
+    ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], [reply], "offer_stock", searchU)
+    : finU([txt("Não encontrei novas opções com esses critérios agora. Quer ajustar algum filtro?")], [reply], "empty_stock", searchU);
+};
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; activeAfter: ActiveSearchConstraints | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, script: AgentBrainStep[] | BrainResponder): Promise<Cap> {

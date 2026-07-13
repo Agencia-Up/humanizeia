@@ -147,10 +147,9 @@ export type CentralTurnArgs = {
 };
 
 export type ResponseSource = "brain_final" | "brain_retry" | "deterministic_recall" | "deterministic_photo" | "deterministic_institutional" | "deterministic_recovery" | "deterministic_discovery" | "deterministic_conduct" | "technical_fallback" | "legacy_compose";
-// Degradação não é "o engine ajudou"; é falha técnica/último recurso.
-// Recuperações contextuais (`deterministic_recovery`) continuam sendo respostas úteis ao lead
-// (perguntar qual veículo, ausência honesta, lista aterrada, etc.). O último recurso genérico já sai como
-// `technical_fallback`, então só ele deve acionar terminalSafe/degraded.
+// Os responseSource determinísticos permanecem no contrato por compatibilidade com legacy/shadow.
+// No central_active (llmFirst), somente brain_final/brain_retry podem produzir conversa visível;
+// technical_fallback é exclusivamente uma falha operacional do provedor, sem condução comercial.
 const DEGRADED_SOURCES: ReadonlySet<ResponseSource> = new Set(["technical_fallback"]);
 function isDegradedSource(src: ResponseSource): boolean { return DEGRADED_SOURCES.has(src); }
 function isDegradedResponse(src: ResponseSource, recoveryReason: string | null): boolean {
@@ -504,9 +503,9 @@ function sanitizePolicyFeedback(verdicts: readonly { policyId?: string; outcome:
   return `Resposta REJEITADA pela validação (${msg}). Corrija: afirme km/cor/câmbio/ano/preço só via vehicle_ref/money_ref do vehicleKey EXATO já consultado por vehicle_details; no máximo UMA pergunta; não repita dado já conhecido. Se o slot que você ia perguntar JÁ é conhecido (o cliente pode ter acabado de responder — veja o funil), ACOLHA o valor conhecido e avance com UMA pergunta sobre o PRÓXIMO passo que ainda falta.`;
 }
 
-// DEGRADAÇÃO OBSERVÁVEL (T5): quando o cérebro não aterra no limite, o TEXTO ao lead vem de buildContextualRecovery
-// (contextual/honesto, nunca "não consegui confirmar"/"reformule"). O marcador interno technical_fallback fica só p/
-// observabilidade (degraded=true). Não existe mais fala genérica no outbox do central_active.
+// buildContextualRecovery é compatibilidade exclusiva do legado. No central_active, um draft negado
+// volta ao mesmo cérebro com fatos+feedback; se a autoria final falhar, sai apenas a indisponibilidade
+// operacional observável. A engine nunca assume a conversa comercial.
 
 // Assinatura da chamada de tool p/ PROIBIR loop idêntico (mesma tool + mesmos args). PURO.
 function toolCallSignature(call: CentralQueryCall): string {
@@ -636,6 +635,7 @@ function authorFromBrainDraft(args: {
   readonly handoffPlannable?: boolean;
   readonly humanRequested?: boolean;
   readonly sensitiveAnswerKinds?: readonly ("cpf" | "birthDate")[];
+  readonly photoRecallLabel?: string | null;            // memória factual: a LLM precisa nomear o veículo lembrado
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   if (!draft || draft.parts.length === 0) {
@@ -669,7 +669,15 @@ function authorFromBrainDraft(args: {
     && args.photoVU.understanding.primaryIntent === "request_photos"
     && args.photoVU.understanding.requestedCapabilities.includes("send_photos")
     && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state);
-  const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) || acceptedPhotoAuthorized;
+  // A resposta a "de qual carro você quer as fotos?" pode ser semanticamente uma
+  // seleção ("o número 1") ou apenas o modelo ("T-Cross"). A LLM continua dona
+  // desse ato; a pergunta pendente só autoriza o efeito factual do alvo resolvido.
+  const pendingPhotoTargetAuthorized = args.photoVU?.fromBrain === true
+    && args.photoVU.trusted
+    && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state);
+  const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain)
+    || acceptedPhotoAuthorized
+    || pendingPhotoTargetAuthorized;
   const photoRecall = isPhotoRecall(args.photoVU);
   // P0-1 (audit Codex): CONFLITO — subjectValue do understanding não corresponde ao modelo ESCRITO pelo cliente ->
   // entendimento INVÁLIDO. Nunca envia mídia; pede correção do subject (o claim escrito manda).
@@ -705,6 +713,26 @@ function authorFromBrainDraft(args: {
     reasonCode: args.finalDecision.reasonCode, reasonSummary: args.finalDecision.reasonSummary, confidence: args.finalDecision.confidence,
   };
   const realFacts = [...args.facts];
+  // O renderer precisa materializar novamente uma oferta que o próprio agente já mostrou (por exemplo, para
+  // perguntar de qual dos dois Onix o lead quer fotos). Isso não é uma nova consulta nem um fato inferido: são os
+  // itens estruturados do último vehicle_offer_list efetivamente renderizado. Mantemos esses fatos separados dos
+  // QueryResults do turno para que eles não acionem regras de "busca acabou de retornar itens".
+  const rememberedOfferItems: VehicleFact[] = (args.ctx.state.lastRenderedOfferContext?.items ?? []).flatMap((item) => {
+    if (typeof item.ano !== "number" || typeof item.preco !== "number" || !item.tipo) return [];
+    return [{
+      vehicleKey: item.vehicleKey,
+      marca: item.marca ?? "",
+      modelo: item.modelo ?? "",
+      ano: item.ano,
+      preco: item.preco,
+      cor: item.cor ?? undefined,
+      cambio: item.cambio ?? undefined,
+      tipo: item.tipo,
+    }];
+  });
+  const renderFacts: QueryResult[] = rememberedOfferItems.length > 0
+    ? [...realFacts, { ok: true, tool: "stock_search", data: { items: rememberedOfferItems, filtersUsed: {} }, source: "rendered_offer_memory" }]
+    : realFacts;
   // P0-3 (audit): busca com RESULTADOS deve RESPONDER, não pedir autorização. Se o turno tem itens de stock_search e o
   // draft NÃO traz vehicle_offer_list (nem send_media de um carro específico) -> deny + feedback ao MESMO cérebro. A LLM
   // segue autora da introdução/CTA; o engine só exige que a pergunta atual (disponibilidade) seja respondida com a lista.
@@ -721,10 +749,19 @@ function authorFromBrainDraft(args: {
   // Render: identidade só NOMEIA (marca/modelo/ano); km/cor/câmbio/preço só do fato REAL do MESMO vehicleKey.
   let composed: RenderedResponse;
   try {
-    composed = { draft, text: ResponseRenderer.render(draft, realFacts, args.ctx.state, args.identities) };
+    composed = { draft, text: ResponseRenderer.render(draft, renderFacts, args.ctx.state, args.identities) };
   } catch (err) {
     if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
+  }
+  // LLM-first: memória pode aterrar QUAL veículo recebeu fotos, mas nunca escreve a resposta pelo cérebro.
+  // Se a LLM ignorar o label lembrado, o engine devolve o fato e ela reautora. O override textual
+  // deterministic_recall fica restrito ao caminho legado.
+  if (args.photoRecallLabel
+      && isPhotoMemoryQuestionBlock(args.leadMessage)
+      && !proposedEffects.some((effect) => effect.kind === "send_media")
+      && !mentionsLabel(composed.text, args.photoRecallLabel)) {
+    return { ok: false, feedback: `O cliente perguntou de QUAL carro eram as fotos. O fato de memória aterrado é: "${args.photoRecallLabel}". Responda você mesmo nomeando esse veículo, sem reenviar mídia e sem expor chave interna.` };
   }
   // Corrupted text should be rewritten by the brain, not silently stripped into
   // visible mojibake that can leak to WhatsApp.
@@ -789,7 +826,10 @@ function authorFromBrainDraft(args: {
     if (composed.text.includes(k)) return { ok: false, feedback: `Você escreveu a chave interna do veículo ("${k}") na resposta. Use o NOME do carro (marca modelo ano), NUNCA a chave/código interno.` };
   }
   // Valida contra fatos REAIS (identidade de memória NÃO aterra atributo/oferta).
-  const gv = PolicyEngine.validateResponse(composed, realFacts, decision0, args.ctx);
+  // Validate against the same structured facts used by the renderer. The last
+  // rendered offer is accepted conversation data, not free-form memory. Rules
+  // requiring a query in the current turn still use realFacts above.
+  const gv = PolicyEngine.validateResponse(composed, renderFacts, decision0, args.ctx);
   if (hasDeny(gv)) return { ok: false, feedback: args.selectionTurn ? SELECTION_ATTR_FEEDBACK : sanitizePolicyFeedback(gv) };
   if (isServiceOrInstitutionalQuestion(args.leadMessage)
       && hasCommercialConversationContext(args.ctx.state)
@@ -888,7 +928,7 @@ function authorFromBrainDraft(args: {
   // ok mas pediu horário e respondeu só endereço -> feedback ao MESMO cérebro (retry). Não reescreve, não decide o assunto.
   // P0 (RESOLUÇÃO ÚNICA): foto pedida = semântica do cérebro OU ordinal resolvido + pedido explícito ("foto do segundo").
   // Sem isto, quando o cérebro rotula "foto do segundo" só como seleção, ele podia ignorar a foto e passar batido.
-  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) || leadRequestsPhoto(args.leadMessage) });
+  const incomplete = turnCompletenessFeedback({ leadMessage: args.leadMessage, composed, institutionalObs: args.institutionalObs ?? new Map(), proposedEffects, pendingObjective: args.ctx.state.currentObjective?.status === "pending", photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) || leadRequestsPhoto(args.leadMessage), photoTargetResolved: args.target.kind === "resolved" });
   if (incomplete) return { ok: false, feedback: incomplete };
   // P0 (ANTI-REPETIÇÃO): em llmFirst, não repergunte um slot JÁ CONHECIDO (nome/interesse/tipo/preço) nem repita uma
   // pergunta recente do agente. Devolve feedback ao MESMO cérebro (retry) — nunca reescreve o texto aqui. (Incidente:
@@ -1008,6 +1048,7 @@ function turnCompletenessFeedback(args: {
   readonly proposedEffects: readonly ProposedEffectPlan[];
   readonly pendingObjective: boolean;   // objetivo pendente (ex.: pagamento) -> policy pode ter prioridade sobre a foto
   readonly photoRequested: boolean;     // T2 (fonte única): o turno autoriza foto pela semântica (não regex de frase)
+  readonly photoTargetResolved: boolean;
 }): string | null {
   const normResp = normalizeText(args.composed.text);
   // Institucional: cada tópico PEDIDO tem que aparecer na resposta (valor ou ausência honesta), senão foi ignorado.
@@ -1021,7 +1062,8 @@ function turnCompletenessFeedback(args: {
   if (!args.pendingObjective
       && args.photoRequested
       && !args.proposedEffects.some((e) => e.kind === "send_media")
-      && !PHOTO_HONEST_ABSENCE_RX.test(normResp)) {
+      && !PHOTO_HONEST_ABSENCE_RX.test(normResp)
+      && !(!args.photoTargetResolved && PHOTO_ORDINAL_CLARIFY_RX.test(normResp))) {
     return "O cliente pediu FOTO neste turno e a resposta não enviou (send_media) nem disse honestamente que não localizou. Resolva vehicle_photos_resolve do carro certo e inclua send_media com os photoIds — ou diga que não encontrou as fotos. NÃO responda só outro assunto ignorando o pedido de foto.";
   }
   if (!args.pendingObjective
@@ -1390,6 +1432,25 @@ function buildEmptySearchConductingRecovery(args: { readonly ctx: TurnContext; r
   return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
 }
 
+// Última linha estritamente OPERACIONAL. Não interpreta o pedido, não lista estoque,
+// não conduz funil e não toma decisão comercial. Só pode aparecer quando o provider
+// não entregou nenhum final válido mesmo após a passagem final de autoria da LLM.
+function buildBrainUnavailableResponse(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
+  const text = "Tive uma instabilidade para concluir esta resposta agora. Pode me enviar a mensagem novamente em instantes?";
+  const proposedEffects = ensureSendMessage([]);
+  const proposal: ProposedDecision = {
+    proposedAction: "clarify",
+    facts: [],
+    proposedEffects,
+    responsePlan: { guidance: "Falha operacional do provider; nenhuma decisão comercial foi tomada." },
+    reasonCode: "brain_unavailable",
+    reasonSummary: "provider não produziu final válido após retries",
+    confidence: 0.2,
+  };
+  const decision = finalize(args.turnId, proposal, PolicyEngine.postQuery(proposal, [], args.ctx), []);
+  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects };
+}
+
 // ── T5: RECUPERAÇÃO CONTEXTUAL. Só APÓS a falha do cérebro (esgotou passos OU deny repetido). Usa TurnUnderstanding +
 //    fatos REAIS do turno — NUNCA texto genérico ("não consegui confirmar"/"reformule"), NUNCA menu robótico fora de
 //    contexto. SEMPRE devolve algo aterrado. Não é um chatbot paralelo: atua só na falha e só com o que o turno tem. ──
@@ -1681,7 +1742,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const adGenericEntry = llmFirst && effectiveAdContext != null && !adVehicle && currentTurnIntent !== "institutional"
         && leadEngagement == null && !sufficientForStockSearch(currentConstraints) && contextState.vehicleContext.selected == null;
       // PARTE A (missão abertura SDR): turno de ABERTURA = 1ª mensagem (nenhum turno do agente ainda). PURO (do estado).
-      const isOpeningTurn = contextState.turnNumber === 0 && !(contextState.recentTurns ?? []).some((t) => t.role === "agent");
+      const hasConversationArtifact = contextState.lastRenderedOfferContext != null
+        || contextState.vehicleContext.selected != null
+        || (contextState.offers?.presentedKeys?.length ?? 0) > 0;
+      const isOpeningTurn = contextState.turnNumber === 0
+        && !(contextState.recentTurns ?? []).some((t) => t.role === "agent")
+        && !hasConversationArtifact;
       // PARTE A: PRIMEIRO contato SEM anúncio e SEM alvo comercial ("Boa tarde" cru) -> abrir com DESCOBERTA comercial, nunca
       // pedindo nome/telefone. Complementa adGenericEntry (que exige anúncio): aqui NÃO há anúncio nenhum (porta fria).
       const firstContactNoCommercialTarget = llmFirst && isOpeningTurn && effectiveAdContext == null && !adVehicle
@@ -1819,6 +1885,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let degraded = false;                                         // Falha técnica/último recurso; lista aterrada não é degradação.
       let targetResolutionSource: TargetResolutionSource | null = null;   // T6: como o alvo do turno foi resolvido
       let brainRetries = 0;
+      let finalAuthorshipAttempts = 0;
       const policyFeedbackLog: string[] = [];
       // ── FONTE ÚNICA (audit Codex): SÓ o understanding DO CÉREBRO (fromBrain, evidência⊂bloco) autoriza ação comercial
       //    (send_media/tool/foco). A 1ª compreensão válida TRAVA o assunto (reconcileUnderstanding). O fallback é HINT
@@ -1876,7 +1943,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const acceptedSelectionRef = () => {
         const v = brainVU();
         if (!v?.trusted) return null;
-        const selects = v.understanding.primaryIntent === "select_vehicle" && selectAuthorized(v);
+        // Persistir foco conversacional nao e executar uma tool. A intencao
+        // select_vehicle validada pertence ao cerebro e basta para materializar
+        // a referencia factual contra a ultima oferta. `selectAuthorized` segue
+        // obrigatorio para mutations/effects propostos pela LLM, mas nao pode
+        // apagar da memoria uma escolha que ela ja compreendeu corretamente.
+        const selects = v.understanding.primaryIntent === "select_vehicle";
         const selectsByPhoto = v.understanding.primaryIntent === "request_photos" && authorizesPhotoSend(v, leadMessage, requireBrain);
         if (!selects && !selectsByPhoto) return null;
         // The brain owns the ACT. Only after it has authoritatively declared a
@@ -2117,7 +2189,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2450,12 +2522,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // Fix A+ (dono): descrição do filtro que zerou (busca vazia) + flag de beco descartado -> recuperação honesta+condutora.
         let emptySearchZeroedDesc: string | null = null;
         let emptySearchConduct = false;
-        // ── P0 (audit Codex smoke CTWA #2): INVARIANTE DE FOTO DETERMINÍSTICO — o envio da foto do alvo NÃO pode depender do
-        //    humor do cérebro (gpt-4.1-mini às vezes escreve "não localizei as fotos" SEM consultar; ausência honesta FALSA).
-        //    Se o LEAD pede foto NESTE turno e o ALVO está RESOLVIDO (anúncio/ordinal/seleção/modelo), o engine OBRIGA a
-        //    resolução das fotos do alvo certo (bypassa o gate de autorização do cérebro) e, havendo photoIds>0, DESCARTA a
-        //    autoria que não enviou -> executor determinístico (Path B) materializa send_media. Ausência honesta só sobrevive
-        //    DEPOIS de consultar o alvo certo e vir VAZIO/erro. Fail-closed: alvo ambíguo/ausente -> não força nada. ──
+        // Invariante factual de foto: quando o lead pediu foto e o alvo está inequivocamente
+        // aterrado (anúncio/ordinal/seleção/modelo), a engine resolve apenas o FATO photoIds.
+        // A decisão e os efeitos visíveis continuam sendo reautorados pela LLM na passagem final.
+        // Alvo ambíguo/ausente permanece fail-closed e volta ao cérebro para esclarecimento.
         const photoInvariantTarget = resolveTargetWithAd();
         if (llmFirst && photoInvariantTarget.kind === "resolved" && authorizesPhotoByResolvedTarget(photoInvariantTarget, leadMessage, contextState)) {
           const invKey = photoInvariantTarget.vehicleKey;
@@ -2468,8 +2538,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const targetHasPhotos = facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === invKey && targetAcceptsKey(photoInvariantTarget, f.data.vehicleKey) && f.data.photoIds.length > 0);
           const authoredHasMedia = !!authoredProposedEffects?.some((e) => e.kind === "send_media");
           if (targetHasPhotos && !authoredHasMedia) {
-            // OVERRIDE: a autoria não enviou a foto de um alvo que TEM fotos (ausência honesta falsa/resposta sem foto) ->
-            // descarta -> cai no executor determinístico (buildDeterministicPhotoResponse) que envia send_media do alvo.
+            // O draft contradiz o fato fresco. Descartamos somente o draft; a passagem final da
+            // mesma LLM recebe photoIds e decide/redige o send_media aterrado.
             authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
           }
         }
@@ -2478,12 +2548,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         if (llmFirst && adCandidateKeys.length > 1 && leadRequestsPhoto(leadMessage) && resolveTargetWithAd().kind !== "resolved") {
           authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
         }
-        // ── P0 (RESOLUÇÃO ÚNICA de veículo): completude determinística de FOTO por ORDINAL. Quando o cérebro NÃO autorou
-        //    resposta e o lead pediu foto de um item da última lista ("me manda foto do segundo"), o alvo resolve por
-        //    turn_ordinal (índice EXATO) mas o cérebro às vezes rotulou só como SELEÇÃO e não chamou vehicle_photos_resolve
-        //    — daí o turno degradava em "de qual carro?" (recovery). Aqui o ENGINE resolve as fotos do alvo EXATO (1x) p/ o
-        //    executor determinístico ter photoIds reais. NÃO é "foto solta": só dispara com ordinal resolvido + pedido
-        //    explícito de foto (grounding máximo). A mesma fonte de alvo (resolveTarget) alimenta seleção, foto e recall. ──
+        // Resolução factual única por ordinal: a engine consulta photoIds do item exato uma
+        // única vez. Ela não escreve "aqui estão" nem escolhe o próximo passo; a autoria final
+        // pertence à LLM, alimentada pelo mesmo resolveTarget usado por seleção e memória.
         if (!authoredComposed) {
           const photoTarget = resolveTargetWithAd();   // P0-A: inclui a referência EXATA do anúncio p/ foto pronominal
           const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedTarget(photoTarget, leadMessage, contextState);
@@ -2491,7 +2558,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             try {
               const photoRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: photoTarget.vehicleKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (ordinal) exceeded timeout");
               facts.push(photoRes); observations.push(toAgentObservation(photoRes)); toolResultMems.push(toToolResultMemory(photoRes, turnId));
-            } catch { /* best-effort: sem fotos o executor cai no honesto "não localizei as fotos", nunca "de qual carro?" */ }
+            } catch { /* best-effort: a falha vira observação factual para a autoria final da LLM */ }
           }
           // ── P0 (F2.26 + ⭐AUTORIDADE): busca comercial determinística SÓ com AUTORIZAÇÃO real — a LLM declarou busca
           //    (isStockSearchTurn) mas não executou, fluxo de CONTEXTO (anúncio/similaridade/retomada), ou "mais opções"
@@ -2552,6 +2619,75 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // recuperação abaixo conduz HONESTA (nomeia o filtro + oferece ampliar/outro modelo), nunca o beco vago.
           authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null; emptySearchConduct = true;
         }
+        // LLM-FIRST: fatos e efeitos podem ser resolvidos deterministicamente, mas a resposta visivel
+        // continua pertencendo ao cerebro. O pos-loop oferece uma ultima janela, sem novas tools, para
+        // a MESMA LLM redigir usando apenas as observacoes aterradas. Isto substitui todos os antigos
+        // autores comerciais do engine (lista, busca vazia, esclarecimento, institucional e recall).
+        if (llmFirst && (!authoredComposed || !authoredDecision || !authoredProposedEffects)) {
+          const finalContext = [
+            "AUTORIA FINAL OBRIGATORIA: somente voce escreve a resposta visivel ao cliente.",
+            "Nao chame nenhuma nova tool nesta passagem; use os fatos e resultados que ja estao nas observacoes.",
+            "Responda ao bloco ATUAL e preserve a mudanca de assunto mais recente. Memoria antiga e pergunta pendente sao apenas contexto.",
+            "Se houver itens de estoque, apresente somente os itens pertinentes via vehicle_offer_list. Se a busca estiver vazia ou falhou, seja honesto e conduza naturalmente sem inventar disponibilidade.",
+            "Se houver fotos resolvidas e o cliente as pediu, proponha send_media do alvo aterrado. Se o alvo for ambiguo, pergunte qual sem escolher por conta propria.",
+            "Para fatos institucionais, use apenas a observacao correspondente. Para despedida, identificacao, selecao, pagamento, troca, visita ou pedido humano, acolha o ato atual e avance sem reabrir descoberta.",
+            persisted0.lastPhotoAction?.label && isPhotoMemoryQuestionBlock(leadMessage)
+              ? `Memoria factual de fotos: o veiculo foi ${persisted0.lastPhotoAction.label}; nomeie-o sem reenviar midia.`
+              : "",
+            relaxedOffer
+              ? `A busca exata zerou, mas as observacoes contem alternativas reais de uma busca relaxada (${relaxedOffer.kind}); explique com transparencia e apresente apenas essas alternativas.`
+              : "",
+            emptySearchConduct
+              ? `A busca por ${emptySearchZeroedDesc ?? "esse filtro"} zerou sem alternativa real; responda com transparencia e ofereca uma proxima direcao util.`
+              : "",
+            "Use no maximo UMA pergunta curta. Devolva kind=final com draft estruturado e understanding do bloco atual.",
+          ].filter(Boolean).join(" ");
+          observations.push({ tool: "response", ok: false, error: { code: "FINAL_AUTHORSHIP_REQUIRED", message: finalContext } });
+
+          const FINAL_AUTHORSHIP_RETRY_CAP = 2;
+          for (let attempt = 0; attempt < FINAL_AUTHORSHIP_RETRY_CAP; attempt++) {
+            finalAuthorshipAttempts += 1;
+            brainSteps += 1;
+            let finalStep;
+            try {
+              finalStep = await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: final LLM authorship exceeded timeout");
+            } catch {
+              break;
+            }
+            if (finalStep.understanding) {
+              const candidate = reconcileUnderstanding(lockedU, finalStep.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
+              const validation = validateTurnUnderstanding(candidate, leadMessage, true);
+              const authorityFeedback = understandingAuthorityFeedback(validation);
+              const staleFinalUnderstanding = !validation.trusted
+                && ((candidate.evidence?.length ?? 0) > 0 || (candidate.requestedCapabilities?.length ?? 0) > 0);
+              if (authorityFeedback || staleFinalUnderstanding) {
+                const feedback = authorityFeedback ?? "A understanding desta resposta final nao pertence ao bloco atual. Reemita evidence copiada do bloco atual e mantenha o ato atual.";
+                if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[FINAL_UNDERSTANDING_DEBUG] ${feedback}`);
+                policyFeedbackLog.push(feedback);
+                observations.push({ tool: "response", ok: false, error: { code: "FINAL_UNDERSTANDING_REJECTED", message: feedback } });
+                continue;
+              }
+              lockedU = candidate;
+            }
+            if (finalStep.kind !== "final") {
+              observations.push({ tool: "response", ok: false, error: { code: "FINAL_TOOL_FORBIDDEN", message: "As tools deste turno ja foram resolvidas. Nao consulte novamente; escreva agora a resposta final com os fatos disponiveis." } });
+              continue;
+            }
+            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            if (authored.ok) {
+              finalDecision = finalStep.decision;
+              authoredDecision = authored.decision;
+              authoredComposed = authored.composed;
+              authoredProposedEffects = authored.proposedEffects;
+              responseSource = "brain_retry";
+              break;
+            }
+            brainRetries += 1;
+            if (process.env.PEDRO_V3_DENY_DEBUG) console.error(`[FINAL_AUTHORSHIP_DEBUG] ${authored.feedback}`);
+            policyFeedbackLog.push(authored.feedback);
+            observations.push({ tool: "response", ok: false, error: { code: "FINAL_RESPONSE_REJECTED", message: authored.feedback } });
+          }
+        }
         // Usa a resposta que o cérebro AUTOROU+aterrou (render+validate já feitos no loop). Se nada passou no
         // limite, FALLBACK TÉCNICO DEGRADADO — honesto, responde à pergunta atual; NUNCA lista/menu/muda de assunto/
         // funil; NUNCA promete retorno. JAMAIS chama DecisionLlm.compose. terminalSafe=true (degradação observável).
@@ -2560,6 +2696,22 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         let composed: RenderedResponse;
         if (authoredComposed && authoredDecision && authoredProposedEffects) {
           effectiveDecision = authoredDecision; composed = authoredComposed; proposedEffects = authoredProposedEffects;
+        } else if (llmFirst) {
+          // No central_active, falha de autoria nao promove o engine a atendente. A ultima
+          // linha e apenas operacional, sem interpretar o pedido ou conduzir o funil.
+          const unavailable = buildBrainUnavailableResponse({ ctx: { ...ctx, state: contextState }, turnId });
+          responseSource = "technical_fallback";
+          recoveryReason = repeatedDeny ? "brain_unavailable_after_repeated_deny" : "brain_unavailable";
+          effectiveDecision = unavailable.decision;
+          composed = unavailable.composed;
+          proposedEffects = unavailable.proposedEffects;
+          finalDecision = finalDecision ?? {
+            reasonCode: "brain_unavailable",
+            reasonSummary: "provider nao produziu autoria final valida",
+            confidence: 0.2,
+            responsePlan: { guidance: unavailable.composed.text, draft: null },
+            proposedEffects: [], memoryMutations: [], stateMutations: [],
+          };
         } else {
           // P0-C: EXECUTOR DETERMINÍSTICO de foto. SÓ com understanding do cérebro (P0-2) + alvo VERIFICADO do assunto
           // (P0-1). Sem understanding OU foto do carro errado -> null (a recuperação pergunta qual; nunca envia errado).
@@ -2620,14 +2772,17 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             }
           }
         }
-        // ≤1 pergunta.
-        const trimmedText = trimToOneQuestion(composed.text);
-        if (trimmedText !== composed.text) composed = { ...composed, text: trimmedText };
+        // O central_active valida a quantidade de perguntas durante a autoria. Nao edita
+        // silenciosamente o texto da LLM depois da decisao. O trim permanece apenas no legado.
+        if (!llmFirst) {
+          const trimmedText = trimToOneQuestion(composed.text);
+          if (trimmedText !== composed.text) composed = { ...composed, text: trimmedText };
+        }
         // Recall determinístico de foto (invariante 8): pergunta de MEMÓRIA de foto SEMPRE nomeia o veículo lembrado.
         // O label é FATO de memória (grounded por construção) -> responde MESMO se o cérebro não autorou. NÃO é
         // degradação: marca responseSource=deterministic_recall (resposta aterrada, não fallback técnico).
         const recalledLabel = persisted0.lastPhotoAction?.label ?? null;
-        if (recalledLabel && isPhotoMemoryQuestionBlock(leadMessage) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && !mentionsLabel(composed.text, recalledLabel)) {
+        if (!llmFirst && recalledLabel && isPhotoMemoryQuestionBlock(leadMessage) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && !mentionsLabel(composed.text, recalledLabel)) {
           const recall = `Você pediu as fotos do ${recalledLabel}. Quer que eu te passe mais detalhes dele?`;
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
           responseSource = "deterministic_recall";
@@ -2937,7 +3092,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // por tentativa auditam a recuperação. tools p/ o v3_query_log do central_active.
         makeEvent({ conversationId, turnId, type: "decision_final", suffix: "decision", payload: {
           action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId),
-          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded, brainRetries,
+          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded, brainRetries, finalAuthorshipAttempts,
           brainReason: finalDecision.reasonSummary.slice(0, 160),
           // T6: semântica do turno (fonte única) + resolução de alvo.
           primaryIntent: reconciledUnderstanding.primaryIntent, subject: finalVU.understanding.subject,

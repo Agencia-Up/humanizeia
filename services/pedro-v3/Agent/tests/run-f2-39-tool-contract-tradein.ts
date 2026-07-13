@@ -80,7 +80,12 @@ const listSuv: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
   return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", searchSuvU);
 };
 // Cérebro que PROMETE buscar sem chamar tool (INC1/A) — o engine deve NÃO deixar isso vazar.
-const promiseNoSearch: BrainResponder = () => finU([txt("Boa! Vou buscar as opções de SUV pra você já já.")], "reply", searchSuvU);
+const promiseNoSearch: BrainResponder = (_frame, obs) => {
+  const stock = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  return stock
+    ? finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((i) => i.vehicleKey) } as ResponsePart], "offer_stock", searchSuvU)
+    : finU([txt("Boa! Vou buscar as opções de SUV pra você já já.")], "reply", searchSuvU);
+};
 // ⭐AUTORIDADE: variante do listSuv com EVIDENCE do PRÓPRIO bloco (p/ turnos que não contêm "suv", ex.: "tem Renegade
 // 2019?") — a LLM real cita o trecho literal; evidence com quote fora do bloco é INVÁLIDA (gate P0-2, correto).
 const listSuvB: BrainResponder = (f, obs: readonly AgentToolObservation[]) => {

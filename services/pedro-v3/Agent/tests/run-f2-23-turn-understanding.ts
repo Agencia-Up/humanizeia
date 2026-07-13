@@ -18,6 +18,7 @@ import type { TenantBusinessInfoSource } from "../src/engine/tenant-business-inf
 import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall, TurnUnderstanding, TurnCapability, TurnSubjectKind, PrimaryIntent } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
+import { reconcileUnderstanding, validateTurnUnderstanding } from "../src/engine/turn-understanding.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -122,14 +123,31 @@ const photoMem = (v: VehicleFact) => ({ workingMemory: { ...createInitialState({
 async function main(): Promise<void> {
   console.log("== F2.23 Fonte única (TurnUnderstanding): incidentes Kicks/Onix + guardas ==");
 
+  // Referência pronominal ao veículo selecionado nasce no texto atual, mas sua fonte
+  // semântica é a memória da conversa. A canonicalização não escolhe ato/tool/alvo.
+  {
+    const raw = U("request_photos", {
+      caps: ["send_photos"],
+      subject: "selected_vehicle",
+      subjectSource: "current_turn",
+      evidence: [{ capability: "send_photos", quote: "fotos dele" }],
+    });
+    const canonical = reconcileUnderstanding(null, raw, "me manda fotos dele");
+    const validated = validateTurnUnderstanding(canonical, "me manda fotos dele", true);
+    check("[Meta-1] selected_vehicle/current_turn canonicaliza para memory", canonical.subjectSource === "memory", `source=${canonical.subjectSource}`);
+    check("[Meta-2] canonicalização preserva intent/cap/evidence e fica trusted", validated.trusted && canonical.primaryIntent === raw.primaryIntent && canonical.requestedCapabilities[0] === "send_photos" && canonical.evidence[0]?.quote === "fotos dele", `trusted=${validated.trusted}`);
+  }
+
   // A) INCIDENTE 1: selected=Onix + memória de foto; oferta tem o Kicks (assunto VERIFICÁVEL por modelo); "Quero ver
   //    fotos do Kicks"; cérebro resolve fotos do Kicks -> send_media do KICKS (assunto), NUNCA do Onix selecionado antigo.
   {
     const c = conv({ ...sel(ONIX), ...photoMem(ONIX), ...offerCtx([KICKS_A]) }); await c.seed();
     const uA = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "Kicks", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do Kicks" }], topicChange: true });
-    const cap = await c.t("Certo\nQuero ver fotos do Kicks", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok) ? finU([], [reply], "send_photos", uA) : photoResolve(KICKS_A, uA));
+    const cap = await c.t("Certo\nQuero ver fotos do Kicks", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? finU([txt("Aqui estão as fotos do Nissan Kicks 2022.")], [reply, mediaEff(KICKS_A)], "send_photos", uA)
+      : photoResolve(KICKS_A, uA));
     check("[A] Inc1: envia foto do KICKS (não do Onix antigo)", cap.hasMedia && cap.mediaKey === KICKS_A.vehicleKey && cap.mediaKey !== ONIX.vehicleKey, `mediaKey=${cap.mediaKey} src=${cap.src}`);
-    check("[A] alvo do ASSUNTO verificado por modelo (não selecionado antigo), sem fallback", cap.targetSource === "turn_explicit_model" && cap.src === "deterministic_photo" && !cap.degraded, `targetSource=${cap.targetSource} src=${cap.src}`);
+    check("[A] alvo do ASSUNTO verificado por modelo e resposta autorada pela LLM", cap.targetSource === "turn_explicit_model" && /^brain_/.test(cap.src) && !cap.degraded, `targetSource=${cap.targetSource} src=${cap.src}`);
   }
   // J) P0-1: pediu Kicks, mas o cérebro AUTORA send_media do ONIX (carro errado) -> REJEITADO; NUNCA envia o Onix.
   {
@@ -142,7 +160,7 @@ async function main(): Promise<void> {
   {
     const c = conv({ ...offerCtx([KICKS1, KICKS2, KICKS3]) }); await c.seed();
     const uL = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "Kicks", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do Kicks" }] });
-    const cap = await c.t("me manda fotos do Kicks", "ambiguous", [finU([], [reply], "send_photos", uL), finU([], [reply], "send_photos", uL)]);
+    const cap = await c.t("me manda fotos do Kicks", "ambiguous", [finU([txt("Encontrei mais de um Kicks. Qual ano ou número da lista você quer?")], [reply], "clarify_photo_target", uL)]);
     check("[L] P0-1: 3 variantes sem seleção -> pergunta QUAL, ZERO mídia", !cap.hasMedia && /qual|numero|número|ano/.test(norm(cap.outbox)), `media=${cap.hasMedia} text="${cap.outbox}"`);
   }
   // N) P0-1: selected=Onix, sem Kicks conhecido; "fotos do Kicks"; cérebro autora send_media do Onix herdando o selected
@@ -205,23 +223,26 @@ async function main(): Promise<void> {
   {
     const c = conv(); await c.seed();
     const uH = U("search_stock", { caps: ["stock_search"], subject: "vehicle_type", subjectValue: "suv", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "quero um suv" }] });
-    const cap = await c.t("quero um suv automatico", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "stock_search" && o.ok) ? finU([], [reply], "reply", uH) /* draft VAZIO repetido -> mesmo deny */ : qU({ tool: "stock_search", input: { tipo: "suv", cambio: "automatic" } } as CentralQueryCall, uH));
-    // Fase 1 (LLM-first): num turno de LISTAGEM a LLM ganha retries EXTRAS (bounded, LIST_MONEY_RETRY_CAP) para tentar listar
-    // antes de recuperar — então usa mais passos que antes, mas ainda NÃO gasta todos os 8 (teto). Recupera com repeated_deny.
-    check("[H] deny repetido em listagem -> retries bounded, NÃO gasta todos os passos (brainSteps<=6)", cap.committed && cap.brainSteps <= 6, `brainSteps=${cap.brainSteps} src=${cap.src}`);
-    check("[H] recuperação contextual: lista aterrada, SEM texto genérico no outbox", has(cap.outbox, "Kicks") && !/nao consegui confirmar|reformul/.test(norm(cap.outbox)) && (cap.recoveryReason ?? "").includes("repeated_deny"), `text="${cap.outbox}" reason=${cap.recoveryReason}`);
+    const cap = await c.t("quero um suv automatico", "ambiguous", (_f, obs) => {
+      if (!obs.some((o) => o.tool === "stock_search" && o.ok)) return qU({ tool: "stock_search", input: { tipo: "suv", cambio: "automatic" } } as CentralQueryCall, uH);
+      if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")) return finU([txt("Encontrei estas opções:"), offer([KICKS1, KICKS2, KICKS3, KICKS_A]), txt("Qual chamou mais sua atenção?")], [reply], "offer_suvs", uH);
+      return finU([], [reply], "reply", uH); /* draft vazio repetido -> passe final da LLM */
+    });
+    check("[H] deny repetido em listagem -> autoria final bounded", cap.committed && cap.brainSteps <= 8 && cap.src === "brain_retry", `brainSteps=${cap.brainSteps} src=${cap.src}`);
+    check("[H] a LLM lista os fatos aterrados, sem recovery comercial", has(cap.outbox, "Kicks") && !/nao consegui confirmar|reformul/.test(norm(cap.outbox)) && cap.recoveryReason === null, `text="${cap.outbox}" reason=${cap.recoveryReason}`);
   }
-  // I) Invariante de foto (audit Codex CTWA #2) vs. P0-2: o cérebro propõe mídia SEM understanding (step malformado) -> a
-  //    proposta CRUA do cérebro é rejeitada (P0-2: fromBrain=false), MAS o alvo está resolvido (Onix SELECIONADO) e o lead
-  //    pediu foto explicitamente, então o ENGINE resolve as fotos do alvo e envia a mídia ATERRADA (src=deterministic_photo,
-  //    verificada por vehicle_photos_resolve + targetAcceptsKey). O envio vem do grounding do engine, não do palpite do
-  //    cérebro — recuperação robusta. Codex: alvo resolvido por seleção + pedido explícito + photoIds>0 => DEVE enviar.
-  //    (A trava P0-2 p/ alvo AMBÍGUO/ERRADO segue coberta em [J] carro errado e [L] variantes sem seleção.)
+  // I) Uma proposta de mídia SEM understanding é rejeitada. A mesma LLM corrige o entendimento,
+  //    consulta as fotos e autora a resposta; o engine só resolve/valida o efeito factual.
   {
     const c = conv({ ...sel(ONIX) }); await c.seed();
     const noU = (): AgentBrainStep => ({ kind: "final", decision: { reasonCode: "send_photos", reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estão as fotos:")] } }, proposedEffects: [reply, mediaEff(ONIX)], memoryMutations: [], stateMutations: [] } as AgentBrainDecision });
-    const cap = await c.t("me mande fotos do Onix", "ambiguous", () => noU());
-    check("[I] cérebro sem understanding: proposta crua rejeitada, mas engine ATERRA e envia a foto do alvo resolvido (Onix)", cap.hasMedia && cap.mediaKey === ONIX.vehicleKey && cap.src === "deterministic_photo" && !cap.fromBrain, `media=${cap.hasMedia} mediaKey=${cap.mediaKey} fromBrain=${cap.fromBrain} src=${cap.src}`);
+    const uI = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "Onix", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do Onix" }] });
+    const cap = await c.t("me mande fotos do Onix", "ambiguous", (_frame, obs, step) => {
+      if (step === 0) return noU();
+      if (!obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) return photoResolve(ONIX, uI);
+      return finU([txt("Aqui estão as fotos do Chevrolet Onix.")], [reply, mediaEff(ONIX)], "send_photos", uI);
+    });
+    check("[I] proposta sem understanding é corrigida pela LLM antes do envio aterrado", cap.hasMedia && cap.mediaKey === ONIX.vehicleKey && /^brain_/.test(cap.src) && cap.fromBrain, `media=${cap.hasMedia} mediaKey=${cap.mediaKey} fromBrain=${cap.fromBrain} src=${cap.src}`);
   }
   // O) P0-2: "gostei das fotos" (menção, não pedido) com understanding smalltalk -> ZERO mídia (mesmo se o cérebro errar).
   {
@@ -269,6 +290,19 @@ async function main(): Promise<void> {
     const uY = U("smalltalk", { evidence: [{ quote: "que legal" }] });
     const cap = await c.t("que legal", "ambiguous", [finUMut([txt("Que bom!")], "reply", uY, [selMut(KICKS1)])]);
     check("[Y] P0-2: select_vehicle_focus sem cap select/evidência é DESCARTADO -> foco não muda", cap.committed && cap.selectedKey == null, `sel=${cap.selectedKey}`);
+  }
+  // Y2) Ato de seleção validado não precisa de capability de TOOL para virar
+  // foco conversacional. A engine apenas resolve o ordinal contra a oferta real.
+  {
+    const c = conv({ ...offerCtx([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
+    const uY2 = U("select_vehicle", {
+      subject: "ordinal_from_last_offer",
+      subjectValue: "1",
+      subjectSource: "current_turn",
+      evidence: [{ quote: "gostei do primeiro" }],
+    });
+    const cap = await c.t("gostei do primeiro", "ambiguous", [finU([txt("Boa escolha. Quer ver as fotos dele?")], [reply], "selected", uY2)]);
+    check("[Y2] select_vehicle trusted persiste o foco sem capability de tool", cap.committed && cap.selectedKey === KICKS1.vehicleKey && /^brain_/.test(cap.src), `sel=${cap.selectedKey} src=${cap.src}`);
   }
   // Z) "fotos do Kicks" + understanding.subjectValue=Onix (CONFLITO com o modelo escrito) -> entendimento inválido, ZERO mídia.
   {
@@ -338,21 +372,30 @@ async function main(): Promise<void> {
 
   {
     const c = conv({ ...pendingPhotoAsk([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
-    const uPending = U("other", { subject: "explicit_model", subjectValue: "T-Cross", subjectSource: "current_turn", evidence: [{ quote: "T-Cross" }] });
-    const cap = await c.t("T-Cross", "ambiguous", [finU([txt("Claro, vou separar pra você.")], [reply], "reply", uPending)]);
-    check("[IdH] resposta ao clarify de fotos com modelo exato continua pedido de foto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.src === "deterministic_photo", `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+    const uPending = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "T-Cross", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "T-Cross" }] });
+    const uPhoto = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "T-Cross", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "T-Cross" }] });
+    const cap = await c.t("T-Cross", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? finU([txt("Aqui estão as fotos do T-Cross.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhoto)
+      : finU([txt("Claro, vou separar pra você.")], [reply], "reply", uPending));
+    check("[IdH] resposta ao clarify de fotos com modelo exato continua pedido de foto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
   }
   {
     const c = conv({ ...pendingPhotoAsk([KICKS1, T_CROSS, KICKS2]) }); await c.seed();
-    const uPendingTypo = U("other", { subject: "explicit_model", subjectValue: "tcroos", subjectSource: "inference", evidence: [{ quote: "tcroos" }] });
-    const cap = await c.t("tcroos", "ambiguous", [finU([txt("Entendi.")], [reply], "reply", uPendingTypo)]);
-    check("[IdI] resposta ao clarify de fotos tolera typo do modelo", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.src === "deterministic_photo", `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+    const uPendingTypo = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "tcroos", subjectSource: "inference", evidence: [{ capability: "send_photos", quote: "tcroos" }] });
+    const uPhotoTypo = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "tcroos", subjectSource: "inference", evidence: [{ capability: "send_photos", quote: "tcroos" }] });
+    const cap = await c.t("tcroos", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? finU([txt("Aqui estão as fotos do T-Cross.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhotoTypo)
+      : finU([txt("Entendi.")], [reply], "reply", uPendingTypo));
+    check("[IdI] resposta ao clarify de fotos tolera typo do modelo", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
   }
   {
     const c = conv({ ...pendingPhotoAsk([T_CROSS, KICKS1, KICKS2]) }); await c.seed();
-    const uPendingOrdinal = U("other", { subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ quote: "numero 1" }] });
-    const cap = await c.t("o numero 1 da lista", "ambiguous", [finU([txt("Boa escolha.")], [reply], "reply", uPendingOrdinal)]);
-    check("[IdJ] resposta ao clarify de fotos com ordinal envia foto do item correto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && cap.src === "deterministic_photo", `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+    const uPendingOrdinal = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "numero 1" }] });
+    const uPhotoOrdinal = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "numero 1" }] });
+    const cap = await c.t("o numero 1 da lista", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? finU([txt("Aqui estão as fotos do primeiro veículo.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhotoOrdinal)
+      : finU([txt("Boa escolha.")], [reply], "reply", uPendingOrdinal));
+    check("[IdJ] resposta ao clarify de fotos com ordinal envia foto do item correto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
   }
   {
     const c = conv({ ...offerCtx([KICKS1, T_CROSS, KICKS2]) }); await c.seed();

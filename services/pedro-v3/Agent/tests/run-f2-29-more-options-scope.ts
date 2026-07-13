@@ -82,17 +82,27 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
 // ⭐AUTORIDADE (audit Codex): turnos-default desta suíte são BUSCAS — a LLM real classifica search_stock. Declara o
 // ATO mas resiste a chamar a tool: o executor determinístico garante a execução (o que a suíte prova).
-const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
-const mute: BrainResponder = () => finU([], "reply", U("other"));
+const resist: BrainResponder = (f, observations) => {
+  const understanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
+    evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  };
+  const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
+  if (!stock) return finU([txt("Certo!")], "reply", understanding);
+  return stock.data.items.length > 0
+    ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
+    : finU([txt("Não encontrei outras opções com os mesmos critérios agora. Quer ajustar a faixa ou o tipo?")], "empty_more_options", understanding);
+};
+const mute: BrainResponder = (_f, observations) => observations.some((o) => o.tool === "response" && !o.ok)
+  ? finU([txt("Claro. De qual tipo de carro ou faixa de preço você quer ver mais opções?")], "clarify_more_options_scope", U("other"))
+  : finU([], "reply", U("other"));
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; activeAfter: ActiveSearchConstraints | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder): Promise<Cap> {
@@ -176,10 +186,10 @@ async function main(): Promise<void> {
 
   // ── D — SEM escopo recuperável: "tem outros?" no vácuo -> PERGUNTA (nunca lista genérico/moto) ──
   {
-    // Cérebro MUDO -> o executor determinístico decide. Sem oferta anterior, sem filtro ativo.
+    // Draft inicial inválido -> feedback; a própria LLM pede o escopo ausente. Sem oferta anterior, sem filtro ativo.
     const c = conv();
     const r = await c.t("tem outros?", "ambiguous", mute);
-    check("[D-1] reasonCode=more_options_needs_scope", r.reasonCode === "more_options_needs_scope", `rc=${r.reasonCode}`);
+    check("[D-1] LLM esclarece o escopo ausente", r.reasonCode === "clarify_more_options_scope", `rc=${r.reasonCode}`);
     check("[D-2] PERGUNTA tipo/faixa (não lista)", (has(r.outbox, "tipo") || has(r.outbox, "faixa")) && !has(r.outbox, "CB") && !has(r.outbox, "Prisma"), `outbox="${r.outbox}"`);
     check("[D-3] NÃO roda stock_search sem escopo", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
   }

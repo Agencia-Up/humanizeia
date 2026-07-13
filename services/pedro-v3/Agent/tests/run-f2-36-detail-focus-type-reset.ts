@@ -90,10 +90,21 @@ function final(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding):
 const query = (call: CentralQueryCall, u: TurnUnderstanding): AgentBrainStep => ({ kind: "query", call, understanding: u });
 // ⭐AUTORIDADE (audit Codex): "na verdade quero um SUV..." é BUSCA — a LLM real classifica search_stock; declara o ATO
 // mas resiste (o executor determinístico garante a execução com o reset de tipo).
-const resist: BrainResponder = (f) => final([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resist: BrainResponder = (f, obs) => {
+  const stock = obs.find((o) => o.tool === "stock_search" && o.ok);
+  const understanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnCapability[],
+    evidence: [{ capability: "stock_search" as TurnCapability, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  };
+  if (stock?.ok && stock.tool === "stock_search" && stock.data.items.length > 0) {
+    return final([
+      txt("Encontrei estas opcoes:"),
+      { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) },
+      txt("Qual delas chamou sua atencao?"),
+    ], "list_stock_results", understanding);
+  }
+  return final([txt("Certo!")], "reply", understanding);
+};
 
 const detailU: TurnUnderstanding = { ...U("vehicle_detail", {
   caps: ["vehicle_details"],
@@ -205,7 +216,9 @@ async function main(): Promise<void> {
   const p3 = await runTurn({
     lead: "me manda fotos do segundo",
     relation: "ambiguous",
-    responder: () => final([txt("Nao temos Compass ate 100 mil no estoque para mostrar fotos. Quer que eu te mostre outras opcoes disponiveis?")], "bad_photo_absence", photoU),
+    responder: (_frame, obs) => obs.some((o) => !o.ok)
+      ? final([txt("Nao tenho uma lista valida aqui para identificar o segundo. De qual carro voce quer as fotos?")], "clarify_photo_target", photoU)
+      : final([txt("Nao temos Compass ate 100 mil no estoque para mostrar fotos. Quer que eu te mostre outras opcoes disponiveis?")], "bad_photo_absence", photoU),
   });
   check("[P0-3a] foto por ordinal sem lista valida nao repete busca antiga; pede qual/lista/ordinal", /qual|segundo|lista|item/i.test(p3.outbox) && !/nao temos compass ate 100 mil/i.test(norm(p3.outbox)), `outbox=${p3.outbox} src=${p3.src} reason=${p3.reason}`);
 

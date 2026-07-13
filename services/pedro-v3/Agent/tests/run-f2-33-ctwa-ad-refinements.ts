@@ -72,17 +72,49 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
+const media = (vehicleKey: string, photoIds: string[]): ProposedEffectPlan => ({ kind: "send_media", planId: "media", order: 1, vehicleKey, photoIds, onSuccess: [] } as ProposedEffectPlan);
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+function finalWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding, effects: ProposedEffectPlan[]): AgentBrainStep {
+  const step = finU(parts, reasonCode, u);
+  if (step.kind !== "final") return step;
+  return { ...step, decision: { ...step.decision, proposedEffects: effects } };
+}
+const authored: BrainResponder = (frame, observations) => {
+  const photo = [...observations].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; tool: "vehicle_photos_resolve"; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+  const photoU: TurnUnderstanding = {
+    ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "current_turn",
+    evidence: [{ capability: "send_photos", quote: (frame.block ?? "").trim() || "fotos" }],
+  };
+  if (photo) {
+    return photo.data.photoIds.length > 0
+      ? finalWithEffects([txt("Aqui estão as fotos que você pediu.")], "send_vehicle_photos", photoU, [reply, media(photo.data.vehicleKey, photo.data.photoIds)])
+      : finU([txt("Não localizei fotos desse veículo agora. Quer que eu te passe os detalhes dele?")], "photo_unavailable", photoU);
+  }
+  const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok && o.data.items.length > 0) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
+  if (stock) {
+    const searchU: TurnUnderstanding = {
+      ...U("search_stock"), requestedCapabilities: ["stock_search"],
+      evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+    };
+    return finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", searchU);
+  }
+  return finU([txt("Certo!")], "reply", /foto/i.test(frame.block ?? "") ? photoU : U("other"));
+};
+const resist: BrainResponder = authored;
 // ⭐AUTORIDADE (audit Codex): "na verdade quero o Onix" é BUSCA (a LLM real classifica search_stock); declara o ATO mas
 // resiste — o executor determinístico garante a execução com a correção aplicada.
-const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resistSearch: BrainResponder = (frame, observations) => {
+  const authoredStep = authored(frame, observations, 0);
+  if (observations.some((o) => o.tool === "stock_search" && o.ok)) return authoredStep;
+  return finU([txt("Certo!")], "reply", {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  });
+};
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
@@ -154,16 +186,20 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass });                 // T1 lista CMP17 (ord.1) + CMP19 (ord.2)
-    const fakeAbsence: BrainResponder = () => finU([txt("Não localizei as fotos do Jeep Compass 2019 agora. Quer que eu te passe os detalhes dele?")], "photo_unavailable", U("request_photos"));
+    const fakeAbsence: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? authored(frame, observations, 0)
+      : finU([txt("Não localizei as fotos do Jeep Compass 2019 agora. Quer que eu te passe os detalhes dele?")], "photo_unavailable", U("request_photos"));
     const t2 = await c.t("me manda fotos dele", { responder: fakeAbsence });
-    check("[A-4] cérebro autora 'não localizei' mas o Compass 2019 TEM fotos -> engine OVERRIDE e ENVIA", t2.hasMedia === true, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
-    check("[A-5] override envia a foto do 2019 exato do anúncio (rm:cmp19)", t2.mediaKey === "rm:cmp19", `mediaKey=${t2.mediaKey}`);
+    check("[A-4] cérebro autora ausência falsa; recebe o fato e REESCREVE enviando", t2.hasMedia === true, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
+    check("[A-5] a LLM envia a foto do 2019 exato do anúncio (rm:cmp19)", t2.mediaKey === "rm:cmp19", `mediaKey=${t2.mediaKey}`);
     check("[A-6] resposta final descarta a ausência honesta falsa (sem 'não localizei')", !has(t2.outbox, "nao localizei"), `outbox="${t2.outbox}"`);
   }
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass });                 // CMP17 = ordinal 1 (SEM fotos no fake)
-    const fakeAbsence: BrainResponder = () => finU([txt("Não localizei as fotos desse carro agora.")], "photo_unavailable", U("request_photos"));
+    const fakeAbsence: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? authored(frame, observations, 0)
+      : finU([txt("Não localizei as fotos desse carro agora.")], "photo_unavailable", U("request_photos"));
     const t2 = await c.t("me manda foto do primeiro", { responder: fakeAbsence });   // ordinal 1 -> CMP17 sem fotos
     check("[A-7] alvo REALMENTE sem fotos (ordinal 1 = 2017) -> ausência honesta SOBREVIVE (sem media)", t2.hasMedia === false, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
     check("[A-8] o engine CONSULTOU as fotos do alvo antes de honrar a ausência", t2.exec.includes("vehicle_photos_resolve"), `exec=${t2.exec.join(",")}`);

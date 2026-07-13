@@ -72,17 +72,36 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+function stockAuthoredResponse(frame: Parameters<BrainResponder>[0], observations: Parameters<BrainResponder>[1], forceSearch = false): AgentBrainStep {
+  const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
+  const latestWithItems = [...searches].reverse().find((s) => s.data.items.length > 0);
+  const searchUnderstanding: TurnUnderstanding = {
+    ...U("search_stock"),
+    requestedCapabilities: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  };
+  if (latestWithItems) {
+    const exactSearchWasEmpty = searches.some((s) => s.data.items.length === 0);
+    return finU([
+      txt(exactSearchWasEmpty ? "Não encontrei o veículo exato do anúncio, mas encontrei estas opções do mesmo tipo:" : "Encontrei estas opções para você:"),
+      offer(latestWithItems.data.items.map((v) => v.vehicleKey)),
+      txt("Qual delas chamou sua atenção?"),
+    ], "offer_stock", searchUnderstanding);
+  }
+  if (searches.length > 0) {
+    return finU([txt("Não encontrei esse veículo no estoque agora. Quer que eu procure uma alternativa do mesmo tipo?")], "stock_empty", searchUnderstanding);
+  }
+  return finU([txt("Certo!")], "reply", forceSearch ? searchUnderstanding : U("other"));
+}
+const resist: BrainResponder = (frame, observations) => stockAuthoredResponse(frame, observations);
 // ⭐AUTORIDADE (audit Codex): turnos em que o lead ESPECIFICA busca ("na verdade quero o Onix", "quero um SUV") — a
 // LLM real classifica search_stock; declara o ATO mas resiste (o executor determinístico garante a execução).
-const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resistSearch: BrainResponder = (frame, observations) => stockAuthoredResponse(frame, observations, true);
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; adVehicleSeen: string | null; hasHandoff: boolean };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
@@ -158,7 +177,7 @@ async function main(): Promise<void> {
     const c = conv();
     const r = await c.t("esse ainda tem?", { ad: adKicks });
     check("[D-1] o veículo do anúncio (Nissan/Kicks) dirige o turno (cérebro vê adVehicle)", has(r.adVehicleSeen ?? "", "kicks") || has(r.adVehicleSeen ?? "", "nissan") || has(String(r.stockInput?.tipo ?? ""), "suv"), `adVehicle=${r.adVehicleSeen} input=${JSON.stringify(r.stockInput)}`);
-    check("[D-2] honesto (não achou o do anúncio) + oferece MESMO TIPO (SUV), SEM cruzar p/ Onix hatch, sem media", (r.reasonCode === "recovery_relaxed_offer" || r.reasonCode === "recovery_stock_empty") && !has(r.outbox, "Onix") && !r.hasMedia && /nao encontrei|nao achei|nao temos/.test(norm(r.outbox)), `rc=${r.reasonCode} outbox="${r.outbox}"`);
+    check("[D-2] LLM responde honesta + oferece MESMO TIPO (SUV), SEM cruzar p/ Onix hatch, sem media", (r.reasonCode === "offer_stock" || r.reasonCode === "stock_empty") && !has(r.outbox, "Onix") && !r.hasMedia && /nao encontrei|nao achei|nao temos/.test(norm(r.outbox)), `rc=${r.reasonCode} outbox="${r.outbox}"`);
   }
   // E) Correção: anúncio Compass, lead "na verdade quero Onix" -> Onix vence.
   {

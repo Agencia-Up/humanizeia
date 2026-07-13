@@ -75,20 +75,29 @@ const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent,
 const searchU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "vehicle_type", subjectValue: "suv", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "suv" }], isTopicChange: false, answeredLeadQuestions: [] };
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
+const media = (vehicleKey: string, photoIds: string[]): ProposedEffectPlan => ({ kind: "send_media", planId: "media", order: 1, vehicleKey, photoIds, onSuccess: [] } as ProposedEffectPlan);
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
+function finWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding, effects: ProposedEffectPlan[]): AgentBrainStep {
+  const step = finU(parts, reasonCode, u);
+  if (step.kind !== "final") return step;
+  return { ...step, decision: { ...step.decision, proposedEffects: effects } };
+}
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
-const photoRequest = (quote: string, subject: "ordinal_from_last_offer" | "selected_vehicle", subjectValue: string | null = null): BrainResponder => () => finU(
-  [txt("Vou enviar as fotos do carro que você pediu.")],
-  "send_vehicle_photos",
-  {
+const photoRequest = (quote: string, subject: "ordinal_from_last_offer" | "selected_vehicle", subjectValue: string | null = null): BrainResponder => (_frame, obs) => {
+  const understanding: TurnUnderstanding = {
     ...U("request_photos"), requestedCapabilities: ["send_photos"], subject, subjectValue,
     subjectSource: subject === "selected_vehicle" ? "memory" : "current_turn",
     evidence: [{ capability: "send_photos", quote }],
-  },
-);
+  };
+  const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
+  if (photo && photo.data.photoIds.length > 0) {
+    return finWithEffects([txt("Aqui estao as fotos que voce pediu.")], "send_vehicle_photos", understanding, [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
+  }
+  return finU([txt("Vou confirmar as fotos do carro que voce pediu.")], "resolve_vehicle_photos", understanding);
+};
 // Responder que LISTA SUVs (query stock_search{tipo:suv} -> final com offer_list dos keys retornados).
 const listSuvs: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;

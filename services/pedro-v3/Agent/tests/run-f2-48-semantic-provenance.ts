@@ -77,8 +77,14 @@ const U = (primaryIntent: PrimaryIntent, quote?: string, cap?: TurnCapability): 
 } as never);
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
+const media = (vehicleKey: string, photoIds: string[]): ProposedEffectPlan => ({ kind: "send_media", planId: "media", order: 1, vehicleKey, photoIds, onSuccess: [] } as ProposedEffectPlan);
 function finU(parts: ResponsePart[], u: TurnUnderstanding, mutations: DecisionMutation[] = []): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode: "reply", reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: mutations } as AgentBrainDecision };
+}
+function finWithEffects(parts: ResponsePart[], u: TurnUnderstanding, effects: ProposedEffectPlan[]): AgentBrainStep {
+  const step = finU(parts, u);
+  if (step.kind !== "final") return step;
+  return { ...step, decision: { ...step.decision, proposedEffects: effects } };
 }
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 // ⭐Codex rodada 2: com a NORMALIZAÇÃO de citação em resposta curta, quem segura a 1ª tentativa ruim são os
@@ -212,12 +218,17 @@ async function main(): Promise<void> {
     check("[R-T3] seleção canônica persistiu (token da última oferta)", t3.state?.vehicleContext.selected?.key === "rm:aircross" && has(t3.state?.vehicleContext.selected?.label ?? "", "C3 Aircross"), JSON.stringify(t3.state?.vehicleContext.selected));
 
     // T4 "Sim": o cérebro tenta EVIDENCE HERDADA -> deny UNDERSTANDING_STALE -> corrige no retry.
-    const t4 = await c.t("Sim", (f, obs) => sawStale(obs)
-      ? finU([txt("Perfeito! Já te mando as fotos do C3 Aircross. Prefere ver os detalhes também?")], U("smalltalk", "Sim"))
-      : finU([txt("resposta com base no turno errado")], U("select_vehicle", "Gostei do Aircross")));
-    // ⭐Codex rodada 2: com o aceite de oferta de foto ("Sim" após "quer as fotos dele?"), o executor
-    // determinístico ENVIA as fotos do selected — comportamento superior ao texto scriptado. O assert aceita
-    // o envio real (send_media + nome do carro) e continua exigindo que a evidence herdada foi rejeitada.
+    const t4 = await c.t("Sim", (_f, obs) => {
+      const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
+      if (photo?.data.photoIds.length) {
+        return finWithEffects([txt("Perfeito! Aqui estao as fotos do C3 Aircross.")], U("request_photos", "Sim", "send_photos"), [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
+      }
+      return sawStale(obs)
+        ? finU([txt("Perfeito! Vou buscar as fotos do C3 Aircross.")], U("request_photos", "Sim", "send_photos"))
+        : finU([txt("resposta com base no turno errado")], U("select_vehicle", "Gostei do Aircross"));
+    });
+    // Evidence stale is rejected; after the retry the brain understands the
+    // acceptance, receives grounded photo facts and authors the media effect.
     const t4SentPhotos = t4.outbox.some((o) => o.kind === "send_media");
     check("[R-T4] evidence herdada REJEITADA; 'Sim' aceita a oferta e as fotos do Aircross saem", t4.staleRetried === true && (t4SentPhotos || t4.sentTexts.some((x) => has(x, "Perfeito"))) && t4.sentTexts.some((x) => has(x, "Aircross") || has(x, "Perfeito")), `stale=${t4.staleRetried} media=${t4SentPhotos} texts=${t4.sentTexts.join("|").slice(0, 80)}`);
     check("[R-T4b] seleção NÃO se perdeu com o 'Sim'", t4.state?.vehicleContext.selected?.key === "rm:aircross", String(t4.state?.vehicleContext.selected?.key));
@@ -407,7 +418,7 @@ async function main(): Promise<void> {
     const realPhotoResults = tP.observations.filter((o) => o.tool === "vehicle_photos_resolve" && o.ok).length;
     const duplicateFeedbacks = tP.observations.filter((o) => o.tool === "response" && !o.ok && (o as { error?: { code?: string } }).error?.code === "DUP_PHOTO_RESOLVE").length;
     check("[C2-PH1] photo resolve idêntica executa uma vez e o loop recebe cap", realPhotoResults === 1 && duplicateFeedbacks <= 2, `real=${realPhotoResults} dup=${duplicateFeedbacks}`);
-    check("[C2-PH2] mesmo com cérebro insistente, o executor envia mídia aterrada sem fallback genérico", tP.outbox.some((x) => x.kind === "send_media") && tP.responseSource === "deterministic_photo", `source=${tP.responseSource}`);
+    check("[C2-PH2] cérebro que nunca finaliza NÃO é substituído pela engine: zero mídia comercial fabricada", !tP.outbox.some((x) => x.kind === "send_media") && tP.responseSource === "technical_fallback", `source=${tP.responseSource}`);
   }
   // ── [C2-SC] a fala da LLM também respeita os slots; CRM seguro não basta ──
   {

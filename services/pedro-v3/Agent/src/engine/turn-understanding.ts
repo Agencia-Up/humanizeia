@@ -66,7 +66,14 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
     issues.push("selected_vehicle vem da memoria e nao pode ter subjectSource=current_turn");
   }
   if (u.primaryIntent === "select_vehicle" || u.requestedCapabilities.includes("select")) {
-    const selectEvidence = normalizeText(validEvidence.filter((e) => e.capability === "select").map((e) => e.quote).join("\n"));
+    // O ato semantico de selecionar nao e uma tool: primaryIntent pode ser
+    // comprovado por qualquer evidence valida que contenha a escolha. A
+    // capability `select`, quando usada para autorizar mutation/effect, segue
+    // exigindo evidence propria em selectAuthorized().
+    const selectionEvidence = u.primaryIntent === "select_vehicle"
+      ? validEvidence
+      : validEvidence.filter((e) => e.capability === "select");
+    const selectEvidence = normalizeText(selectionEvidence.map((e) => e.quote).join("\n"));
     const coherent = selectEvidence.length > 0 && (SELECTION_ACT_RX.test(selectEvidence) || parseOrdinal(selectEvidence) != null);
     if (!coherent) issues.push("select/select_vehicle sem evidencia de escolha de veiculo no bloco atual");
   }
@@ -404,19 +411,27 @@ export function targetAcceptsKey(target: TargetResolution, key: string): boolean
 //    não troca primaryIntent/subject sem EVIDÊNCIA NOVA (quote não vista na base). Ex.: search_stock -> request_photos
 //    sem nova evidência de foto = mantém search_stock. ──
 export function reconcileUnderstanding(base: TurnUnderstanding | null, next: TurnUnderstanding, block: string, options: { readonly acceptedPhotoOffer?: boolean } = {}): TurnUnderstanding {
-  if (!base) return next;
+  // `selected_vehicle` is necessarily a conversation reference. Smaller models
+  // sometimes label it as `current_turn` because the pronoun ("dele", "desse")
+  // is written in the current block. Canonicalizing only this structural label
+  // does not choose an intent, target, tool, or response for the brain.
+  const canonicalNext = next.subject === "selected_vehicle" && next.subjectSource === "current_turn"
+    ? { ...next, subjectSource: "memory" as const }
+    : next;
+  if (!base) return canonicalNext;
   const baseQuotes = new Set((base.evidence ?? []).map((e) => normalizeText(e.quote)));
-  const newEvidence = (next.evidence ?? []).filter((e) => quoteInBlock(block, e.quote) && !baseQuotes.has(normalizeText(e.quote)));
-  const changesSubject = next.primaryIntent !== base.primaryIntent || next.subject !== base.subject;
+  const newEvidence = (canonicalNext.evidence ?? []).filter((e) => quoteInBlock(block, e.quote) && !baseQuotes.has(normalizeText(e.quote)));
+  const changesSubject = canonicalNext.primaryIntent !== base.primaryIntent || canonicalNext.subject !== base.subject;
   if (changesSubject && newEvidence.length === 0) {
     const repairsAcceptedPhoto = options.acceptedPhotoOffer === true
-      && next.primaryIntent === "request_photos"
-      && next.requestedCapabilities.includes("send_photos")
-      && next.evidence.some((e) => e.capability === "send_photos" && quoteInBlock(block, e.quote));
-    if (repairsAcceptedPhoto) return next;
+      && canonicalNext.primaryIntent === "request_photos"
+      && canonicalNext.requestedCapabilities.includes("send_photos")
+      && canonicalNext.evidence.some((e) => e.capability === "send_photos" && quoteInBlock(block, e.quote));
+    if (repairsAcceptedPhoto) return canonicalNext;
     // mudança ARBITRÁRIA sem evidência nova -> mantém a base; só preenche subjectValue se faltava.
-    return { ...base, subjectValue: base.subjectValue ?? next.subjectValue };
+    return { ...base, subjectValue: base.subjectValue ?? canonicalNext.subjectValue };
   }
+  if (canonicalNext !== next) return canonicalNext;
   return next;   // refinamento legítimo (subjectValue) ou mudança JUSTIFICADA por evidência nova
 }
 

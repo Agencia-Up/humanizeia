@@ -8,6 +8,7 @@ import { isVehicleKeyGrounded, normalizeText, canonicalModel } from "./catalog-u
 import { leadStatedMoneyValues } from "./lead-extraction.ts";
 import { slotQuestions } from "./question-classify.ts";
 import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone } from "./turn-domain.ts";
+import { loadPersistedWorkingMemory } from "./working-memory.ts";
 
 // P0 audit Codex: a RESPOSTA é INSTITUCIONAL PURA (nenhum claim de marca/modelo no texto)? Só então as policies de
 // FUNIL se abstêm. Se o texto cita veículo (mesmo lembrado), NÃO é institucional-pura -> funil valida normalmente.
@@ -23,6 +24,39 @@ function factByKey(facts: QueryResult[], key: string): VehicleFact | null {
     if (f.ok && f.tool === "vehicle_details" && f.data.vehicle.vehicleKey === key) return f.data.vehicle;
   }
   return null;
+}
+
+function isHonestAbsenceClause(text: string): boolean {
+  const n = normalizeText(text);
+  const denies = /\b(?:nao|nenhum|nenhuma|sem)\b/.test(n) || /\b(?:indisponivel|esgotad[oa])\b/.test(n);
+  const stockMeaning = /\b(?:encontr|ach|localiz|dispon|estoque|temos|tenho)\w*/.test(n);
+  return denies && stockMeaning;
+}
+
+function splitSemanticClauses(text: string): string[] {
+  return text.split(/[.!?;\n]+|\b(?:mas|porem|porém)\b/iu).map((s) => s.trim()).filter(Boolean);
+}
+
+function isLeadVehicleClaimEchoedOnlyAsAbsence(
+  claim: { kind: string; normalized: string },
+  responseText: string,
+  ctx: TurnContext,
+): boolean {
+  const sameClaim = (candidate: { kind: string; normalized: string }): boolean => {
+    const sameKind = candidate.kind === claim.kind
+      || ((candidate.kind === "model" || candidate.kind === "brand_model") && (claim.kind === "model" || claim.kind === "brand_model"))
+      || ((candidate.kind === "brand" || candidate.kind === "brand_model") && (claim.kind === "brand" || claim.kind === "brand_model"));
+    return sameKind && candidate.normalized === claim.normalized;
+  };
+  if (!ctx.claimExtractor.extractClaims(ctx.leadMessage).some(sameClaim)) return false;
+  const containing = splitSemanticClauses(responseText).filter((clause) => ctx.claimExtractor.extractClaims(clause).some(sameClaim));
+  return containing.length > 0 && containing.every(isHonestAbsenceClause);
+}
+
+function isLeadYearEchoedOnlyAsAbsence(year: number, responseText: string, leadMessage: string): boolean {
+  if (!new RegExp(`\\b${year}\\b`).test(leadMessage)) return false;
+  const containing = splitSemanticClauses(responseText).filter((clause) => new RegExp(`\\b${year}\\b`).test(clause));
+  return containing.length > 0 && containing.every(isHonestAbsenceClause);
 }
 
 export type MoneyMention = {
@@ -251,6 +285,12 @@ export const PolicyEngine = {
 
     // POL-GROUND-STOCK: veículo ofertado deve existir nos QueryResults (estoque/detalhes)
     const validKeys = getValidVehicleKeys(facts);
+    // Uma oferta já renderizada e entregue é fato conversacional confiável do próprio tenant. Sem isso, o engine
+    // orienta a LLM a esclarecer "qual dos carros mostrados?" e, ao mesmo tempo, proíbe as mesmas chaves por não
+    // terem sido consultadas novamente neste turno. Apenas o contexto efetivamente renderizado entra aqui; rascunho,
+    // memória inferida e chave textual da LLM continuam sem autoridade.
+    for (const item of ctx.state.lastRenderedOfferContext?.items ?? []) validKeys.add(item.vehicleKey);
+    for (const key of ctx.state.offers?.presentedKeys ?? []) validKeys.add(key);
     const offeredKeys = offeredVehicleKeys(proposal.proposedEffects);
     const invalidOffered = offeredKeys.filter(k => !validKeys.has(k));
     if (invalidOffered.length > 0) {
@@ -459,6 +499,10 @@ export const PolicyEngine = {
       const addClaims = (s: string | null | undefined): void => { if (!s) return; for (const c of ctx.claimExtractor.extractClaims(s)) { if (c.kind === "brand" || c.kind === "brand_model") validBrands.add(c.normalized); if (c.kind === "model" || c.kind === "brand_model") validModels.add(c.normalized); } };
       if (sel?.label) addClaims(sel.label);
       for (const it of ctx.state.lastRenderedOfferContext?.items ?? []) { addClaims(it.marca ?? undefined); addClaims(it.modelo ?? undefined); if (it.marca && it.modelo) addClaims(`${it.marca} ${it.modelo}`); }
+      // A entrega aceita de mídia grava um label canônico e humano na WorkingMemory. Esse label pode
+      // aterrar somente a IDENTIDADE em um recall posterior ("qual carro pedi as fotos?"); não libera
+      // preço, km, cor ou qualquer oferta nova. A LLM continua autora da resposta.
+      addClaims(loadPersistedWorkingMemory(ctx.state.workingMemory).memory.lastPhotoAction?.label);
       // ⭐Missão P0 (TROCA, proveniência do LEAD): o VEÍCULO DE TROCA é o carro DO LEAD (slots.veiculoTroca — já inclui
       // a extração DESTE turno). Nomeá-lo na resposta ("anotei sua Hilux 2020") é conversa aterrada NA FALA DO LEAD,
       // nunca invenção de catálogo — paralelo ao isLeadValue para valores monetários. Cobre o typo do lead nos DOIS
@@ -474,10 +518,10 @@ export const PolicyEngine = {
       }
     }
     const modelGrounded = (norm: string): boolean => validModels.has(norm) || modelGroundedExact(norm, validModels);
-    const claimGrounded = (claim: { kind: string; normalized: string }): boolean => {
+    const claimGrounded = (claim: { kind: string; normalized: string }, responseText: string): boolean => {
       const brandOk = !(claim.kind === "brand" || claim.kind === "brand_model") || validBrands.has(claim.normalized);
       const modelOk = !(claim.kind === "model" || claim.kind === "brand_model") || modelGrounded(claim.normalized);
-      return brandOk && modelOk;
+      return (brandOk && modelOk) || isLeadVehicleClaimEchoedOnlyAsAbsence(claim, responseText, ctx);
     };
 
     // 1. TextPart não pode conter marca/modelo NÃO-ATERRADO (invenção). Modelo aterrado nos fatos do turno é
@@ -488,7 +532,7 @@ export const PolicyEngine = {
         // um modelo continua barrado; nomear o carro lembrado passa (grounding de memória acima).
         const claims = ctx.claimExtractor.extractClaims(part.content);
         for (const claim of claims) {
-          if (!claimGrounded(claim)) brandModelViolations.push(`TextPart contém marca/modelo não-aterrado '${claim.text}' em texto livre`);
+          if (!claimGrounded(claim, part.content)) brandModelViolations.push(`TextPart contém marca/modelo não-aterrado '${claim.text}' em texto livre`);
         }
 
         // Verifica se há valores monetários no TextPart (excluindo km e valores que o LEAD forneceu).
@@ -531,13 +575,13 @@ export const PolicyEngine = {
     for (const claim of renderedClaims) {
       const normVal = claim.normalized;
       if (claim.kind === "brand" || claim.kind === "brand_model") {
-        if (!validBrands.has(normVal)) {
+        if (!validBrands.has(normVal) && !isLeadVehicleClaimEchoedOnlyAsAbsence(claim, composed.text, ctx)) {
           brandModelViolations.push(`marca não-aterrada '${claim.text}' no texto renderizado`);
         }
       }
       if (claim.kind === "model" || claim.kind === "brand_model") {
         // Aterrado só se EXATO (formatação colapsada) de um modelo REAL do turno — nunca por subconjunto (R10-3).
-        if (!validModels.has(normVal) && !modelGroundedExact(normVal, validModels)) {
+        if (!validModels.has(normVal) && !modelGroundedExact(normVal, validModels) && !isLeadVehicleClaimEchoedOnlyAsAbsence(claim, composed.text, ctx)) {
           brandModelViolations.push(`modelo não-aterrado '${claim.text}' no texto renderizado`);
         }
       }
@@ -577,7 +621,8 @@ export const PolicyEngine = {
       for (const [canon, token] of modelTokens) {
         const re = new RegExp(`\\b${token}\\b[^\\d]{0,8}((?:19|20)\\d\\d)\\b`, "g");
         for (let m = re.exec(t); m; m = re.exec(t)) {
-          if (!validModelYear.has(`${canon}|${Number(m[1])}`)) return yearDeny(Number(m[1]), canon);
+          if (!validModelYear.has(`${canon}|${Number(m[1])}`)
+            && !isLeadYearEchoedOnlyAsAbsence(Number(m[1]), composed.text, ctx.leadMessage)) return yearDeny(Number(m[1]), canon);
         }
       }
       const selKey = ctx.state.vehicleContext.selected?.key ?? null;

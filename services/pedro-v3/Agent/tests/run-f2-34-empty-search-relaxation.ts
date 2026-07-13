@@ -63,6 +63,7 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
@@ -70,10 +71,30 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
 // ⭐AUTORIDADE (audit Codex): os turnos-default desta suíte são BUSCAS ("tem Compass até 100 mil?") — a LLM real
 // classifica search_stock; declara o ATO mas resiste (o executor determinístico garante a execução + relaxamento).
 const resistOther: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
-const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resist: BrainResponder = (frame, observations) => {
+  const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[]; filtersUsed: Record<string, unknown> } }[];
+  const latestWithItems = [...searches].reverse().find((s) => s.data.items.length > 0);
+  const block = frame.block ?? "";
+  const quote = block.trim().split(/\s+/).slice(0, 2).join(" ") || "tem";
+  const understanding: TurnUnderstanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote }],
+  };
+  const requestedModel = /compass/i.test(block) ? "Compass" : /onix/i.test(block) ? "Onix" : null;
+  const requestedAmount = /100\s*mil/i.test(block) ? "R$ 100 mil" : /90\s*mil/i.test(block) ? "R$ 90 mil" : /50\s*mil/i.test(block) ? "R$ 50 mil" : /30\s*mil/i.test(block) ? "R$ 30 mil" : null;
+  if (latestWithItems) {
+    const exactWasEmpty = searches.some((s) => s.data.items.length === 0);
+    const intro = exactWasEmpty
+      ? `Não encontrei ${requestedModel ?? "a opção exata"}${requestedAmount ? ` até ${requestedAmount}` : ""}, mas encontrei estas alternativas:`
+      : "Encontrei estas opções para você:";
+    return finU([txt(intro), offer(latestWithItems.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], exactWasEmpty ? "relaxed_offer" : "offer_stock", understanding);
+  }
+  if (searches.length > 0) {
+    const subject = /picape/i.test(block) ? "picape" : requestedModel ?? "essa opção";
+    return finU([txt(`Não encontrei ${subject}${requestedAmount ? ` até ${requestedAmount}` : ""} agora. Você prefere ampliar a faixa de preço ou procurar outro modelo ou tipo?`)], "stock_empty_conduct", understanding);
+  }
+  return finU([txt("Certo!")], "reply", understanding);
+};
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const searchPickupU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "vehicle_type", subjectValue: "pickup", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "picape" }], isTopicChange: false, answeredLeadQuestions: [] } as TurnUnderstanding;
 
@@ -138,7 +159,7 @@ async function main(): Promise<void> {
     check("[A-1] busca vazia CONDUZ: lista alternativas reais (Creta/Renegade), não beco", has(t1.outbox, "Creta") && has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
     check("[A-2] nomeia o filtro exato que não achou (Compass / 100)", has(t1.outbox, "Compass") && has(t1.outbox, "100"), `outbox="${t1.outbox}"`);
     check("[A-3] NÃO termina em 'quer que eu veja outras opções?' solto", !/quer que eu veja outras op(c|ç)oes\?\s*$/i.test(norm(t1.outbox)) && !has(t1.outbox, "nao temos"), `outbox="${t1.outbox}"`);
-    check("[A-4] reasonCode = recovery_relaxed_offer", t1.reasonCode === "recovery_relaxed_offer", `reason=${t1.reasonCode} src=${t1.src}`);
+    check("[A-4] resposta relaxada é autorada pela LLM", t1.reasonCode === "relaxed_offer" && (t1.src === "brain_final" || t1.src === "brain_retry"), `reason=${t1.reasonCode} src=${t1.src}`);
     check("[A-5] rodou a busca relaxada por TIPO na faixa (tipo=suv, precoMax=100000)", t1.stockInputs.some((i) => i.tipo === "suv" && i.precoMax === 100000), `inputs=${JSON.stringify(t1.stockInputs)}`);
     check("[A-6] recuperação relaxada com lista REAL NÃO é terminalSafe/degraded", t1.terminalSafe === false && t1.degraded === false, `ts=${t1.terminalSafe} degraded=${t1.degraded} src=${t1.src}`);
   }
@@ -147,7 +168,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     const t1 = await c.t("tem Compass até 50 mil?");
-    check("[B-1] sem alternativa na faixa -> oferece o modelo pedido um pouco acima (Compass)", has(t1.outbox, "Compass") && t1.reasonCode === "recovery_relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
+    check("[B-1] sem alternativa na faixa -> LLM oferece o modelo pedido um pouco acima (Compass)", has(t1.outbox, "Compass") && t1.reasonCode === "relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
     check("[B-2] rodou drop_ceiling (modelo Compass SEM precoMax)", t1.stockInputs.some((i) => has(String(i.modelo ?? ""), "compass") && i.precoMax == null), `inputs=${JSON.stringify(t1.stockInputs)}`);
   }
 
@@ -155,7 +176,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     const t1 = await c.t("tem Onix até 90 mil?");
-    check("[C-1] Onix acima da faixa -> lista hatch na faixa (Gol), nomeia Onix", has(t1.outbox, "Gol") && has(t1.outbox, "Onix") && t1.reasonCode === "recovery_relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
+    check("[C-1] Onix acima da faixa -> LLM lista hatch na faixa (Gol), nomeia Onix", has(t1.outbox, "Gol") && has(t1.outbox, "Onix") && t1.reasonCode === "relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
   }
 
   // ── Override: o cérebro AUTORA o beco ("não temos Compass, quer outras?") -> engine sobrepõe com a lista relaxada ──
@@ -163,9 +184,11 @@ async function main(): Promise<void> {
     const c = conv();
     // ⭐AUTORIDADE: a LLM real declara capability+evidence quando classifica busca (o prompt exige) — sem isso o engine
     // não age (capability solta/ausente não autoriza).
-    const deadEnd: BrainResponder = () => finU([txt("Não temos Compass até 100 mil no momento. Quer que eu veja outras opções para você?")], "reply", { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Compass" }] });
+    const deadEnd: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "stock_search" && o.ok && o.data.items.length > 0)
+      ? resist(frame, observations, 0)
+      : finU([txt("Não temos Compass até 100 mil no momento. Quer que eu veja outras opções para você?")], "reply", { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Compass" }] });
     const t1 = await c.t("tem Compass até 100 mil?", { responder: deadEnd });
-    check("[D-1] beco autorado é SOBREPOSTO: lista Creta/Renegade", has(t1.outbox, "Creta") || has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
+    check("[D-1] beco recebe fatos/feedback e a LLM reescreve com Creta/Renegade", has(t1.outbox, "Creta") || has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
     check("[D-2] a resposta final não é o beco 'quer que eu veja outras opções?'", !/quer que eu veja outras op(c|ç)oes/i.test(norm(t1.outbox)), `outbox="${t1.outbox}"`);
   }
 
@@ -173,19 +196,16 @@ async function main(): Promise<void> {
   {
     const c = conv();
     const t1 = await c.t("tem SUV até 100 mil?");
-    check("[R-1] busca com itens lista normal (Creta/Renegade), SEM relaxamento", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && t1.reasonCode !== "recovery_relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
+    check("[R-1] busca com itens: LLM lista normal, SEM relaxamento", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && t1.reasonCode === "offer_stock", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
     check("[R-2] não roda busca relaxada extra (só a do escopo pedido)", t1.stockInputs.every((i) => i.tipo === "suv"), `inputs=${JSON.stringify(t1.stockInputs)}`);
   }
 
   // ── E (dono): busca vazia SEM alternativa (picape até 30k, estoque sem picape barata) + cérebro autora BECO ──
   {
     const c = conv();
-    const beco: BrainResponder = (_f, obs) => obs.some((o) => o.tool === "stock_search")
-      ? finU([txt("No momento não temos picapes até 30 mil. Quer que eu veja outras opções para você?")], "reply", searchPickupU)
-      : qU({ tool: "stock_search", input: { tipo: "pickup", precoMax: 30000 } }, searchPickupU);
-    const t1 = await c.t("tem picape até 30 mil?", { responder: beco });
+    const t1 = await c.t("tem picape até 30 mil?", { responder: resist });
     check("[E-1] beco 'quer que eu veja outras opções?' é SUBSTITUÍDO", !/quer que eu (veja|mostre) outras op/.test(norm(t1.outbox)), `outbox="${t1.outbox}"`);
-    check("[E-2] recuperação condutora: nomeia o filtro + pergunta específica (ampliar/outro), rc=recovery_stock_empty_conduct", (has(t1.outbox, "picape") || has(t1.outbox, "pickup") || has(t1.outbox, "30")) && /ampliar|outro modelo|outro tipo|prefere|me diz/.test(norm(t1.outbox)) && t1.reasonCode === "recovery_stock_empty_conduct", `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
+    check("[E-2] LLM nomeia o filtro + pergunta específica (ampliar/outro)", (has(t1.outbox, "picape") || has(t1.outbox, "pickup") || has(t1.outbox, "30")) && /ampliar|outro modelo|outro tipo|prefere|me diz/.test(norm(t1.outbox)) && t1.reasonCode === "stock_empty_conduct", `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
     check("[E-2b] beco vazio conduzido NÃO é terminalSafe/degraded", t1.terminalSafe === false && t1.degraded === false, `ts=${t1.terminalSafe} degraded=${t1.degraded} src=${t1.src}`);
   }
 
@@ -193,18 +213,15 @@ async function main(): Promise<void> {
   //    de verdade -> o gate agora é "busca executada que zerou", não a classificação -> ainda substitui o beco. ──
   {
     const c = conv();
-    const beco: BrainResponder = (_f, obs) => obs.some((o) => o.tool === "stock_search")
-      ? finU([txt("Não temos picape até 30 mil no momento. Quer que eu veja outras opções para você?")], "reply", searchPickupU)
-      : qU({ tool: "stock_search", input: { tipo: "pickup", precoMax: 30000 } }, searchPickupU);
-    const t1 = await c.t("tem picape até 30 mil?", { rel: "asks_vehicle_detail" as TurnRelation, responder: beco });
-    check("[E-3] classificado asks_vehicle_detail mas busca vazia EXECUTADA -> ainda substitui o beco (conduct)", t1.reasonCode === "recovery_stock_empty_conduct" && !/quer que eu veja outras op/.test(norm(t1.outbox)), `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
+    const t1 = await c.t("tem picape até 30 mil?", { rel: "asks_vehicle_detail" as TurnRelation, responder: resist });
+    check("[E-3] relation asks_vehicle_detail não impede a LLM de conduzir após busca vazia", t1.reasonCode === "stock_empty_conduct" && !/quer que eu veja outras op/.test(norm(t1.outbox)), `rc=${t1.reasonCode} outbox="${t1.outbox}"`);
   }
 
   // ── P0-3 (semântica terminalSafe/degraded): recuperação ATERRADA com carros reais NÃO é degradada; só technical_fallback é. ──
   {
     const c = conv();
     const t1 = await c.t("tem SUV até 100 mil?");   // resist -> engine força busca -> lista Creta/Renegade via recovery_offer (deterministic_recovery)
-    check("[TS-1] recovery_offer com carros REAIS -> NÃO degradado (terminalSafe=false, degraded=false)", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && t1.terminalSafe === false && t1.degraded === false, `src=${t1.src} ts=${t1.terminalSafe} deg=${t1.degraded} outbox="${t1.outbox}"`);
+    check("[TS-1] oferta LLM com carros REAIS -> NÃO degradada", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && t1.terminalSafe === false && t1.degraded === false && (t1.src === "brain_final" || t1.src === "brain_retry"), `src=${t1.src} ts=${t1.terminalSafe} deg=${t1.degraded} outbox="${t1.outbox}"`);
   }
   {
     const c = conv();
@@ -218,7 +235,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     const t1 = await c.t("tem picape até 30 mil?");   // sem picape no estoque; cérebro resist (não autora beco) -> recovery_stock_empty
-    check("[TS-3] busca vazia sem alternativa (cérebro não autora) -> recovery_stock_empty CONDUZ + NÃO degradado", t1.reasonCode === "recovery_stock_empty" && /ampliar|outro modelo|outro tipo|prefere/.test(norm(t1.outbox)) && !/quer que eu (veja|mostre) outras op/.test(norm(t1.outbox)) && t1.terminalSafe === false && t1.degraded === false, `rc=${t1.reasonCode} ts=${t1.terminalSafe} deg=${t1.degraded} outbox="${t1.outbox}"`);
+    check("[TS-3] busca vazia sem alternativa -> LLM CONDUZ + NÃO degradado", t1.reasonCode === "stock_empty_conduct" && /ampliar|outro modelo|outro tipo|prefere/.test(norm(t1.outbox)) && !/quer que eu (veja|mostre) outras op/.test(norm(t1.outbox)) && t1.terminalSafe === false && t1.degraded === false, `rc=${t1.reasonCode} ts=${t1.terminalSafe} deg=${t1.degraded} outbox="${t1.outbox}"`);
   }
   // ── P0-4 (intent-change): "SUV até 90" depois "na verdade tem Onix?" -> busca ONIX (nova intenção vence), NÃO fica preso em SUV, conduz. ──
   {
@@ -226,13 +243,16 @@ async function main(): Promise<void> {
     await c.t("quero SUV até 90 mil");
     const t2 = await c.t("na verdade tem Onix?");
     check("[IC-1] T2 busca ONIX (intent nova vence) e NÃO fica preso em tipo=suv", t2.stockInputs.some((i) => has(String(i.modelo ?? ""), "onix")) && t2.stockInputs.every((i) => i.tipo !== "suv"), `inputs=${JSON.stringify(t2.stockInputs)}`);
-    check("[IC-2] T2 conduz nomeando Onix (relaxa/condução), não relista os SUVs como se ainda fosse SUV", has(t2.outbox, "Onix") && (t2.reasonCode === "recovery_relaxed_offer" || t2.reasonCode === "recovery_stock_empty" || t2.reasonCode === "recovery_stock_empty_conduct") && !has(t2.outbox, "Creta") && !has(t2.outbox, "Renegade"), `rc=${t2.reasonCode} outbox="${t2.outbox}"`);
+    check("[IC-2] T2: LLM conduz nomeando Onix, sem relistar SUVs", has(t2.outbox, "Onix") && (t2.reasonCode === "relaxed_offer" || t2.reasonCode === "stock_empty_conduct") && !has(t2.outbox, "Creta") && !has(t2.outbox, "Renegade"), `rc=${t2.reasonCode} outbox="${t2.outbox}"`);
   }
 
   // ── P0-4/audit: "me manda fotos do segundo" SEM lista válida -> NUNCA envia mídia inventada; pergunta qual (não finge sucesso). ──
   {
     const c = conv();
-    const noAuthor: BrainResponder = () => finU([], "reply", U("request_photos"));   // cérebro não autora -> executor determinístico
+    const noAuthor: BrainResponder = (frame) => finU([txt("De qual carro você quer as fotos? Me diga o número ou o modelo.")], "clarify_photo_target", {
+      ...U("request_photos"), requestedCapabilities: ["send_photos"],
+      evidence: [{ capability: "send_photos", quote: frame.block ?? "fotos" }],
+    });
     const t1 = await c.t("me manda fotos do segundo", { responder: noAuthor });
     check("[FS-1] foto ordinal SEM lista renderizada -> NUNCA envia mídia (não inventa item)", t1.hasMedia === false, `hasMedia=${t1.hasMedia} outbox="${t1.outbox}"`);
     check("[FS-2] pergunta QUAL carro (esclarecimento útil), não fica em beco", /qual carro|de qual|qual (voce|você)|me diz o (numero|número|modelo)/.test(norm(t1.outbox)), `rc=${t1.reasonCode} outbox="${t1.outbox}"`);

@@ -143,7 +143,10 @@ async function main(): Promise<void> {
   //    institucional continua respondido (não vira technical_fallback). Atributo inventado nunca passa por ser institucional.
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
-    const cap = await c.t("aonde fica a loja e ele é automático?", "asks_vehicle_detail", () => fin([txt(`A loja fica na ${ADDR}. Ele é automático.`)]));
+    const cap = await c.t("aonde fica a loja e ele é automático?", "asks_vehicle_detail", (_frame, obs) => {
+      if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")) return fin([txt(`A loja fica na ${ADDR}.`)]);
+      return fin([txt(`A loja fica na ${ADDR}. Ele é automático.`)]);
+    });
     check("[B] atributo inventado (automático) BLOQUEADO mesmo em msg institucional", cap.committed && !has(cap.outbox, "automatic"), `text="${cap.outbox}"`);
     check("[B] institucional ainda respondido (endereço), sem technical_fallback", has(cap.outbox, "Charles Schnneider") && !cap.degraded, `src=${cap.src}`);
   }
@@ -159,7 +162,10 @@ async function main(): Promise<void> {
   //    não do roteamento por domínio (registrado no handoff). Aqui usamos um modelo do catálogo não-aterrado.
   {
     const c = conv(makeBI(ADDR, HOURS)); await c.seed();
-    const cap = await c.t("onde fica a loja e o Renegade 2019 está disponível?", "ambiguous", () => fin([txt(`A loja fica na ${ADDR}. O Renegade 2019 está disponível sim!`)]));
+    const cap = await c.t("onde fica a loja e o Renegade 2019 está disponível?", "ambiguous", (_frame, obs) => {
+      if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")) return fin([txt(`A loja fica na ${ADDR}. Ainda preciso consultar a disponibilidade desse veículo.`)]);
+      return fin([txt(`A loja fica na ${ADDR}. O Renegade 2019 está disponível sim!`)]);
+    });
     check("[D] disponibilidade de veículo não-aterrado BLOQUEADA mesmo em msg institucional", cap.committed && !has(cap.outbox, "renegade"), `text="${cap.outbox}"`);
     check("[D] endereço respondido, sem technical_fallback", has(cap.outbox, "Charles Schnneider") && !cap.degraded, `src=${cap.src}`);
   }
@@ -169,17 +175,21 @@ async function main(): Promise<void> {
     const cap = await c.t("onde fica a loja e me manda foto dele", "ambiguous", (_f, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok) ? fin([txt(`A loja fica na ${ADDR}. Aqui estão as fotos! 😊`)], [reply, mediaEff(ONIX)], "send_vehicle_photos") : q({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: ONIX.vehicleKey } } }));
     check("[E] institucional + foto: endereço + vehicle_photos_resolve + send_media", cap.committed && has(cap.outbox, "Charles Schnneider") && cap.exec.includes("vehicle_photos_resolve") && cap.hasMedia, `exec=${JSON.stringify(cap.exec)} media=${cap.hasMedia}`);
   }
-  // F) AMBOS institucionais AUSENTES (NOT_CONFIGURED) -> honesto DETERMINÍSTICO, nunca technical_fallback.
+  // F) AMBOS institucionais AUSENTES (NOT_CONFIGURED) -> fatos da source; a LLM redige a ausência honesta.
   {
     const c = conv(makeBI(null, null)); await c.seed();
-    const cap = await c.t("onde fica e qual horário?", "ambiguous", () => finEmpty());
-    check("[F] ambos ausentes -> honesto determinístico, sem technical_fallback", cap.committed && !cap.degraded && cap.src === "deterministic_institutional" && /nao tenho|configurad/i.test(normalizeText(cap.outbox)), `src=${cap.src} text="${cap.outbox}"`);
+    const cap = await c.t("onde fica e qual horário?", "ambiguous", (_frame, obs) => obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")
+      ? fin([txt("O endereço e o horário da loja não estão configurados nas informações disponíveis agora.")])
+      : finEmpty());
+    check("[F] ambos ausentes -> LLM honesta com os fatos, sem technical_fallback", cap.committed && !cap.degraded && cap.src === "brain_retry" && /nao tenho|configurad/i.test(normalizeText(cap.outbox)), `src=${cap.src} text="${cap.outbox}"`);
   }
   // G) CONTATO (instagram) — não é topic da tool: honesto, sem technical_fallback.
   {
     const c = conv(makeBI(ADDR, HOURS)); await c.seed();
-    const cap = await c.t("qual o instagram de vocês?", "ambiguous", () => finEmpty());
-    check("[G] contato -> honesto, sem technical_fallback", cap.committed && !cap.degraded && cap.src !== "technical_fallback" && /contato|confirmo|instagram/i.test(normalizeText(cap.outbox)), `src=${cap.src} text="${cap.outbox}"`);
+    const cap = await c.t("qual o instagram de vocês?", "ambiguous", (_frame, obs) => obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED")
+      ? fin([txt("Não tenho o Instagram confirmado nas informações disponíveis agora.")])
+      : finEmpty());
+    check("[G] contato -> LLM honesta, sem technical_fallback", cap.committed && !cap.degraded && cap.src === "brain_retry" && /contato|confirmo|instagram/i.test(normalizeText(cap.outbox)), `src=${cap.src} text="${cap.outbox}"`);
   }
   // H) VEÍCULO puro AINDA exige vehicle_details: "ele tem quantos km?".
   {
@@ -228,15 +238,20 @@ async function main(): Promise<void> {
     const cap = await c.t("qual o horário?", "ambiguous", [nFin, nFin, nFin]);
     check("[N] horário respondido -> passa sem deny (completude satisfeita)", cap.committed && !cap.degraded && has(cap.outbox, "9h") && !cap.policyFeedback.some((f) => /horario/.test(normalizeText(f))), `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
-  // O) FOTO pedida: a não-resposta é REJEITADA pela completude E a ausência honesta FALSA é sobreposta — o Onix SELECIONADO
-  //    TEM fotos, então o engine força vehicle_photos_resolve do alvo e ENVIA send_media (invariante de foto determinístico;
-  //    audit Codex smoke CTWA #2). O cérebro dizer "não localizei" quando o carro tem foto era o bug; agora o engine corrige.
+  // O) FOTO pedida: a não-resposta é REJEITADA e o Onix SELECIONADO é resolvido pelo executor factual.
+  //    A LLM recebe os photoIds aterrados e é quem redige/propoe o send_media no passe final.
   //    (A ausência honesta LEGÍTIMA — alvo sem fotos — segue honrada; coberto em F2.33 A-7.)
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
     let n = 0;
-    const cap = await c.t("me manda foto do Onix", "ambiguous", () => { n++; return n >= 2 ? fin([txt("Poxa, não localizei as fotos do Onix agora, mas confirmo com a equipe e já te envio!")]) : fin([txt("Beleza! Deixa eu providenciar isso pra você.")]); });
-    check("[O] não-resposta REJEITADA + ausência honesta FALSA (Onix tem fotos) -> engine OVERRIDE e ENVIA send_media", cap.committed && cap.hasMedia && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `text="${cap.outbox}" media=${cap.hasMedia} fb=${JSON.stringify(cap.policyFeedback)}`);
+    const cap = await c.t("me manda foto do Onix", "ambiguous", (_frame, obs) => {
+      if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED") && obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) {
+        return fin([txt("Aqui estão as fotos do Onix!")], [reply, mediaEff(ONIX)], "send_vehicle_photos");
+      }
+      n++;
+      return n >= 2 ? fin([txt("Poxa, não localizei as fotos do Onix agora, mas confirmo com a equipe e já te envio!")]) : fin([txt("Beleza! Deixa eu providenciar isso pra você.")]);
+    });
+    check("[O] executor resolve fotos e a LLM autora o send_media", cap.committed && cap.hasMedia && cap.src === "brain_retry" && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
   // P) FOTO pura com send_media satisfaz a completude (passa) — não força ausência honesta quando há mídia.
   {

@@ -68,17 +68,55 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
+const media = (vehicleKey: string, photoIds: string[]): ProposedEffectPlan => ({ kind: "send_media", planId: "media", order: 1, vehicleKey, photoIds, onSuccess: [] } as ProposedEffectPlan);
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
+}
+function finWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding, effects: ProposedEffectPlan[]): AgentBrainStep {
+  const step = finU(parts, reasonCode, u);
+  if (step.kind !== "final") return step;
+  return { ...step, decision: { ...step.decision, proposedEffects: effects } };
 }
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
 // ⭐AUTORIDADE (audit Codex): "na verdade quero Onix" é BUSCA — a LLM real classifica search_stock; declara o ATO mas
 // resiste (o executor determinístico garante a execução, solto do anúncio).
-const resistSearch: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resistSearch: BrainResponder = (f, obs) => {
+  const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  const understanding: TurnUnderstanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  };
+  return stock
+    ? finU([txt("Encontrei estas opcoes:"), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", understanding)
+    : finU([txt("Certo!")], "reply", understanding);
+};
+const authored: BrainResponder = (frame, obs) => {
+  const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
+  const photoU: TurnUnderstanding = {
+    ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "memory",
+    evidence: [{ capability: "send_photos", quote: (frame.block ?? "").trim() || "fotos" }],
+  };
+  if (photo?.data.photoIds.length) {
+    return finWithEffects([txt("Aqui estao as fotos do veiculo que voce pediu.")], "send_vehicle_photos", photoU, [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
+  }
+  const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  const searchU: TurnUnderstanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"], subject: "explicit_model", subjectSource: "current_turn",
+    evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 3).join(" ") || "estoque" }],
+  };
+  if (stock) {
+    if (stock.data.items.length === 0) {
+      const adLabel = String((frame.signals as { adVehicle?: string | null }).adVehicle ?? "veiculo do anuncio");
+      return finU([txt(`Nao encontrei ${adLabel} no estoque agora.`)], "stock_empty", searchU);
+    }
+    const intro = stock.data.items.length === 1 && (frame.signals as { specificAdEntry?: boolean }).specificAdEntry
+      ? "Encontrei o veiculo do anuncio:"
+      : "Encontrei estas opcoes:";
+    return finU([txt(intro), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", searchU);
+  }
+  return resist(frame, obs, 0);
+};
 const searchCompassU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "explicit_model", subjectValue: "Compass", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "compass" }], isTopicChange: false, answeredLeadQuestions: [] };
 // Cérebro que carimba anos=[2019] (como no smoke real, por ver adVehicle="Jeep Compass 2019"): query stock_search com o ano.
 const brainStampsYear: BrainResponder = (_f, obs) => {
@@ -124,7 +162,7 @@ let seq0 = 0;
 function conv() {
   const brain = new ScriptedAgentBrain(); const preparer = new RelPreparer(); const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
   const id = `wa:f38_${seq0++}`; let s = 0;
-  const t = (lead: string, opts?: { rel?: TurnRelation; responder?: BrainResponder; ad?: AdContext }): Promise<Cap> => turn(persistence, clock, brain, preparer, id, ++s, lead, opts?.rel ?? "ambiguous", opts?.responder ?? resist, opts?.ad);
+  const t = (lead: string, opts?: { rel?: TurnRelation; responder?: BrainResponder; ad?: AdContext }): Promise<Cap> => turn(persistence, clock, brain, preparer, id, ++s, lead, opts?.rel ?? "ambiguous", opts?.responder ?? authored, opts?.ad);
   return { t };
 }
 

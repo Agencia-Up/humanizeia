@@ -64,13 +64,46 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
+const resist: BrainResponder = (frame, observations) => {
+  const photoU: TurnUnderstanding = {
+    ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "current_turn",
+    evidence: [{ capability: "send_photos", quote: frame.block ?? "fotos" }],
+  };
+  const photo = [...observations].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; tool: "vehicle_photos_resolve"; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+  if (photo) {
+    const step = finU([txt("Aqui estão as fotos que você pediu.")], "send_vehicle_photos", photoU);
+    if (step.kind !== "final") return step;
+    return {
+      ...step,
+      decision: {
+        ...step.decision,
+        proposedEffects: [reply, { kind: "send_media", planId: "media", order: 1, vehicleKey: photo.data.vehicleKey, photoIds: photo.data.photoIds, onSuccess: [] } as ProposedEffectPlan],
+      },
+    };
+  }
+  if (/foto/i.test(frame.block ?? "")) {
+    return finU([
+      txt("Do anúncio, encontrei estes dois Onix 2025. De qual você quer as fotos?"),
+      offer([ONIX25A.vehicleKey, ONIX25B.vehicleKey]),
+    ], "photo_clarify_ad_candidates", photoU);
+  }
+  const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok && o.data.items.length > 0) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
+  if (stock) {
+    const searchU: TurnUnderstanding = {
+      ...U("search_stock"), requestedCapabilities: ["stock_search"],
+      evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim() || "tem" }],
+    };
+    return finU([txt("Encontrei estas opções do anúncio:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", searchU);
+  }
+  return finU([txt("Certo!")], "reply", U("other"));
+};
 
-type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; reasonCode: string | null };
+type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; reasonCode: string | null; feedback: readonly string[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
   executed.length = 0; preparer.relation = "ambiguous"; brain.setResponder(responder);
   const raw = ad ? redact({ text: lead, adContext: ad } as never) : redact({ text: lead });
@@ -96,14 +129,14 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
   }
   const outbox = (await persistence.listOutbox(convId)).filter((o) => o.turnId === turnId) as unknown as { kind: string; payload?: { text?: string; vehicleKey?: string } }[];
   const media = outbox.find((o) => o.kind === "send_media");
-  return { outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "", committed: r.status === "committed", hasMedia: !!media, mediaKey: media?.payload?.vehicleKey ?? null, reasonCode: r.status === "committed" ? r.decision.reasonCode : null };
+  return { outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "", committed: r.status === "committed", hasMedia: !!media, mediaKey: media?.payload?.vehicleKey ?? null, reasonCode: r.status === "committed" ? r.decision.reasonCode : null, feedback: r.status === "committed" ? r.policyFeedback : [] };
 }
 let seq0 = 0;
 function conv() {
   const brain = new ScriptedAgentBrain(); const preparer = new RelPreparer(); const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
   const id = `wa:c${seq0++}`; let s = 0;
   const t = (lead: string, opts?: { responder?: BrainResponder; ad?: AdContext }): Promise<Cap> => turn(persistence, clock, brain, preparer, id, ++s, lead, opts?.responder ?? resist, opts?.ad);
-  return { t };
+  return { t, persistence, id };
 }
 
 async function main(): Promise<void> {
@@ -121,9 +154,10 @@ async function main(): Promise<void> {
     const c = conv();
     const t1 = await c.t("esse ainda tem?", { ad: adOnix25 });
     check("[A-1] T1 lista os Onix 2025 do anúncio", has(t1.outbox, "Onix") && has(t1.outbox, "2025"), `outbox="${t1.outbox}"`);
+    const afterOffer = c.persistence.load(c.id)?.state;
     const t2 = await c.t("me manda fotos dele");
     check("[A-2] T2 NÃO envia foto (2 candidatos -> não escolhe errado)", t2.hasMedia === false, `hasMedia=${t2.hasMedia} mediaKey=${t2.mediaKey}`);
-    check("[A-3] T2 pergunta QUAL dos candidatos do anúncio (clarify de candidatos)", t2.reasonCode === "photo_clarify_ad_candidates" && has(t2.outbox, "Onix"), `rc=${t2.reasonCode} outbox="${t2.outbox}"`);
+    check("[A-3] T2 pergunta QUAL dos candidatos do anúncio (clarify de candidatos)", t2.reasonCode === "photo_clarify_ad_candidates" && has(t2.outbox, "Onix"), `rc=${t2.reasonCode} remembered=${JSON.stringify({ last: afterOffer?.lastRenderedOfferContext, presented: afterOffer?.offers.presentedKeys })} feedback=${JSON.stringify(t2.feedback)} outbox="${t2.outbox}"`);
     check("[A-4] T2 mostra os 2 preços dos candidatos (aterrado), não re-lista o Compass", has(t2.outbox, "76") && has(t2.outbox, "81") && !has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
   }
 

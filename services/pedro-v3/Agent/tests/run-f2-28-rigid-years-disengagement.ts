@@ -69,6 +69,7 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 
 const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
+const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
@@ -76,12 +77,24 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
 // ⭐AUTORIDADE (audit Codex): os turnos-default desta suíte são BUSCAS (anos rígidos/câmbio/tipo) — a LLM real classifica
 // search_stock. Declara o ATO mas resiste a chamar a tool: o executor determinístico garante a execução. Turnos
 // NÃO-comerciais (desengajamento) passam responder próprio com U("other").
-const resist: BrainResponder = (f) => finU([txt("Certo!")], "reply", {
-  ...U("search_stock"), requestedCapabilities: ["stock_search"],
-  evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-});
+const resist: BrainResponder = (f, observations) => {
+  const understanding = {
+    ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
+    evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
+  };
+  const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
+  if (searches.length === 0) return finU([txt("Certo!")], "reply", understanding);
+  const explicit = detectCommercialConstraints({ block: f.block ?? "", signals: buildFrameSignals(f.block ?? "", { relation: "ambiguous" } as TurnInterpretation), claimExtractor: extractor });
+  let items = [...new Map(searches.flatMap((s) => s.data.items).map((v) => [v.vehicleKey, v])).values()];
+  if (explicit.anos?.length) items = items.filter((v) => v.ano != null && explicit.anos!.includes(v.ano));
+  if (explicit.cambio) items = items.filter((v) => (explicit.cambio === "automatic") === /autom/i.test(v.cambio ?? ""));
+  const requested = (f.block ?? "esses critérios").replace(/[?!.]+/g, "").replace(/^\s*(tem|quero|procuro)\s+/i, "").trim();
+  return items.length > 0
+    ? finU([txt("Encontrei estas opções para você:"), offer(items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
+    : finU([txt(`Não encontrei ${requested} no estoque agora. Quer ajustar algum desses critérios?`)], "empty_stock_honest", understanding);
+};
 
-type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null };
+type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; policyFeedback: string[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder = resist): Promise<Cap> {
   executed.length = 0; preparer.relation = relation; brain.setResponder(responder);
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
@@ -99,6 +112,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
   return {
     outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "", committed: r.status === "committed", hasMedia: outbox.some((o) => o.kind === "send_media"),
     exec: executed.map((e) => e.tool), stockInput: stock ? (stock.input as Record<string, unknown>) : null, reasonCode: r.status === "committed" ? r.decision.reasonCode : null,
+    policyFeedback: r.status === "committed" ? [...r.policyFeedback] : [],
   };
 }
 let seq0 = 0;
@@ -137,7 +151,7 @@ async function main(): Promise<void> {
     const c = conv();
     const r = await c.t("Tem EcoSport 2019 manual?");
     check("[E-2a] sem match -> ZERO 2020 automático na resposta", !has(r.outbox, "2020"), `outbox="${r.outbox}"`);
-    check("[E-2b] recuperação honesta nomeando EcoSport 2019 manual", r.reasonCode === "recovery_stock_empty" && has(r.outbox, "EcoSport") && has(r.outbox, "manual"), `rc=${r.reasonCode} outbox="${r.outbox}"`);
+    check("[E-2b] LLM responde honestamente nomeando EcoSport 2019 manual", r.reasonCode === "empty_stock_honest" && has(r.outbox, "EcoSport") && has(r.outbox, "manual"), `rc=${r.reasonCode} outbox="${r.outbox}" feedback=${JSON.stringify(r.policyFeedback)}`);
   }
   {
     const c = conv();
@@ -155,10 +169,12 @@ async function main(): Promise<void> {
     check("[D-1b] resposta SEM lista/oferta (não empurra venda)", r.committed && !r.hasMedia && !has(r.outbox, "opções") && !has(r.outbox, "encontrei"), `outbox="${r.outbox}"`);
   }
   {
-    // Cérebro MUDO (draft vazio -> negado) -> o executor determinístico de desinteresse dispara: resposta curta lead_disengaged.
+    // Draft inicial inválido recebe feedback; a própria LLM reescreve o encerramento curto.
     const c = conv();
-    const r = await c.t2("não solicitei nada", () => finU([], "reply", U("other")));
-    check("[D-1c] cérebro sem autoria -> executor determinístico: lead_disengaged + resposta curta honesta", r.reasonCode === "lead_disengaged" && has(r.outbox, "Sem problema") && !r.exec.includes("stock_search"), `rc=${r.reasonCode} outbox="${r.outbox}"`);
+    const r = await c.t2("não solicitei nada", (_f, observations) => observations.some((o) => o.tool === "response" && !o.ok)
+      ? finU([txt("Sem problema. Se precisar depois, fico à disposição.")], "ack_disengagement", U("other"))
+      : finU([], "reply", U("other")));
+    check("[D-1c] feedback faz a LLM redigir a despedida curta", r.reasonCode === "ack_disengagement" && has(r.outbox, "Sem problema") && !r.exec.includes("stock_search"), `rc=${r.reasonCode} outbox="${r.outbox}"`);
   }
   {
     const c = conv();
