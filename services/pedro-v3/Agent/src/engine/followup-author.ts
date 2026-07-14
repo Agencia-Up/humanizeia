@@ -17,8 +17,27 @@ export async function authorFollowupMessage(args: {
   portalPromptSha256: string;
   maxAttempts?: number;
 }): Promise<string | null> {
+  return (await authorFollowupMessageDetailed(args)).text;
+}
+
+export type FollowupAuthorResult = {
+  readonly text: string | null;
+  readonly attempts: number;
+  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "question_contract";
+};
+
+export async function authorFollowupMessageDetailed(args: {
+  brain: AgentBrainPort;
+  state: ConversationState;
+  stage: FollowupStage;
+  turnId: string;
+  now: string;
+  portalPromptSha256: string;
+  maxAttempts?: number;
+}): Promise<FollowupAuthorResult> {
   const { memory } = buildWorkingMemory(args.state, args.state.workingMemory);
   let feedback = "";
+  let lastReason: FollowupAuthorResult["reason"] = "text_missing";
   const maxAttempts = args.maxAttempts ?? 3;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Redija a mensagem conforme o protocolo de follow-up.${feedback}`;
@@ -40,27 +59,41 @@ export async function authorFollowupMessage(args: {
         followupStage: args.stage,
       },
     };
-    const step = await args.brain.proposeNextStep(frame, []);
+    let step;
+    try {
+      step = await args.brain.proposeNextStep(frame, []);
+    } catch {
+      lastReason = "brain_error";
+      feedback = " FEEDBACK: gere apenas a mensagem curta de follow-up em um final de texto.";
+      continue;
+    }
     if (step.kind !== "final") {
+      lastReason = "query_not_allowed";
       feedback = " FEEDBACK: follow-up nao usa tools; devolva final em texto.";
       continue;
     }
     const draft = step.decision.responsePlan.draft;
-    if (!draft || draft.parts.some((part) => part.type !== "text") || step.decision.proposedEffects.length > 0) {
-      feedback = " FEEDBACK: use somente partes text e nenhum efeito; a infraestrutura cuida das acoes.";
+    const textParts = draft?.parts.filter((part) => part.type === "text") ?? [];
+    if (textParts.length === 0) {
+      lastReason = "text_missing";
+      feedback = " FEEDBACK: inclua uma mensagem em draft.parts usando uma parte text.";
       continue;
     }
+    // A LLM continua sendo a autora. Efeitos ou refs adicionais propostos por ela
+    // sao deliberadamente ignorados: o turno sistemico possui seu proprio plano
+    // seguro e nao deve falhar apenas porque o provider devolveu metadados extras.
     let text: string;
-    try { text = ResponseRenderer.render(draft, [], args.state).trim(); }
+    try { text = ResponseRenderer.render({ parts: textParts }, [], args.state).trim(); }
     catch { text = ""; }
     const questions = questionCount(text);
     if (!text || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+      lastReason = !text ? "text_missing" : "question_contract";
       feedback = args.stage === 3
         ? " FEEDBACK: T3 deve ser uma despedida curta sem pergunta."
         : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";
       continue;
     }
-    return text;
+    return { text, attempts: attempt + 1, reason: "authored" };
   }
-  return null;
+  return { text: null, attempts: maxAttempts, reason: lastReason };
 }

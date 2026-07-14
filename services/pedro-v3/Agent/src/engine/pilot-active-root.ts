@@ -40,7 +40,7 @@ import type { UazapiHttpTransport } from "../adapters/effects/uazapi-whatsapp-se
 import { createPilotWhatsAppDispatcher } from "../adapters/effects/pilot-whatsapp-runtime.ts";
 import { V2WhatsAppInstanceCredentialProvider, V2WhatsAppInstanceSource } from "../adapters/effects/v2-whatsapp-instance-source.ts";
 import { buildSdrQualificationPolicy, type SdrQualificationPolicy } from "./sdr-conductor.ts";
-import { authorFollowupMessage } from "./followup-author.ts";
+import { authorFollowupMessageDetailed } from "./followup-author.ts";
 import type { FollowupDue } from "./followup-policy.ts";
 import type { AutomationRules } from "./automation-rules.ts";
 import { buildHandoffChain } from "./handoff-plan.ts";
@@ -493,11 +493,15 @@ export class PilotActiveRoot {
       if (current?.anchorEffectId === input.due.anchorEffectId && (current.sentStages.includes(input.due.stage) || current.plannedStage != null)) return;
 
       const turnId = `followup:${input.due.anchorEffectId}:${input.due.stage}`;
-      const text = await authorFollowupMessage({
+      const authored = await authorFollowupMessageDetailed({
         brain: this.agentBrain!, state: snapshot.state, stage: input.due.stage,
         turnId, now, portalPromptSha256: this.promptSha256, maxAttempts: 3,
       });
-      if (!text) return;
+      const text = authored.text;
+      if (!text) {
+        commitFailureReason = `author_${authored.reason}`;
+        return;
+      }
 
       const messagePlanId = "followup-message";
       const messageEffectId = `${turnId}:${messagePlanId}`;

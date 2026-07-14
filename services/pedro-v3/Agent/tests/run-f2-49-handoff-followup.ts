@@ -3,8 +3,9 @@ import type { OutboxRecord } from "../src/domain/effect-intent.ts";
 import type { SendMessagePlan, TurnDecision } from "../src/domain/decision.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { resolveAutomationRules } from "../src/engine/automation-rules.ts";
-import { evaluateFollowupDue } from "../src/engine/followup-policy.ts";
-import { authorFollowupMessage } from "../src/engine/followup-author.ts";
+import { evaluateFollowup, evaluateFollowupDue } from "../src/engine/followup-policy.ts";
+import { authorFollowupMessage, authorFollowupMessageDetailed } from "../src/engine/followup-author.ts";
+import { sanitizeOutgoingText } from "../src/engine/central-engine.ts";
 import { buildHandoffChain } from "../src/engine/handoff-plan.ts";
 import { validateEffectPlans } from "../src/engine/finalizer.ts";
 import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
@@ -63,7 +64,25 @@ const b2 = new QueueBrain([{ kind: "query", call: { tool: "stock_search", input:
 check("[L3] tool e negada/reautora", (await authorFollowupMessage({ brain: b2, state: state(), stage: 2, turnId: "fu2", now: NOW, portalPromptSha256: "sha" }))?.startsWith("Posso") === true && b2.frames.length === 2);
 check("[L4] T3 sem pergunta", await authorFollowupMessage({ brain: new QueueBrain([final("Se precisar, sigo por aqui. Ate mais!")]), state: state(), stage: 3, turnId: "fu3", now: NOW, portalPromptSha256: "sha" }) != null);
 check("[L5] T3 pergunta reautorada", await authorFollowupMessage({ brain: new QueueBrain([final("Quer continuar?"), final("Ate mais!")]), state: state(), stage: 3, turnId: "fu4", now: NOW, portalPromptSha256: "sha" }) === "Ate mais!");
-check("[L6] efeito da LLM e removido", await authorFollowupMessage({ brain: new QueueBrain([final("Oi", [{ kind: "handoff" }]), final("Ainda quer ajuda?")]), state: state(), stage: 1, turnId: "fu5", now: NOW, portalPromptSha256: "sha" }) === "Ainda quer ajuda?");
+const extraEffectBrain = new QueueBrain([final("Oi, ainda quer ver as opcoes?", [{ kind: "handoff" }])]);
+check("[L6] texto da LLM sobrevive e efeito extra e ignorado", await authorFollowupMessage({ brain: extraEffectBrain, state: state(), stage: 1, turnId: "fu5", now: NOW, portalPromptSha256: "sha" }) === "Oi, ainda quer ver as opcoes?" && extraEffectBrain.frames.length === 1);
+const errorThenText: AgentBrainPort = {
+  proposeNextStep: (() => {
+    let calls = 0;
+    return async () => { if (calls++ === 0) throw new Error("provider_transient"); return final("Ainda posso ajudar com esse carro?"); };
+  })(),
+};
+const resilientAuthor = await authorFollowupMessageDetailed({ brain: errorThenText, state: state(), stage: 1, turnId: "fu6", now: NOW, portalPromptSha256: "sha" });
+check("[L7] falha transiente do provider reintenta sem texto pronto do engine", resilientAuthor.text === "Ainda posso ajudar com esse carro?" && resilientAuthor.attempts === 2 && resilientAuthor.reason === "authored");
+const alwaysBroken: AgentBrainPort = { async proposeNextStep() { throw new Error("provider_down"); } };
+const failedAuthor = await authorFollowupMessageDetailed({ brain: alwaysBroken, state: state(), stage: 1, turnId: "fu7", now: NOW, portalPromptSha256: "sha", maxAttempts: 2 });
+check("[L8] falha final fica observavel e nunca vira mensagem deterministica", failedAuthor.text === null && failedAuthor.reason === "brain_error" && failedAuthor.attempts === 2);
+
+check("[D1] avaliacao explica estado terminal", evaluateFollowup({ state: handed, outbox: [anchor], rules: rules.followup, now: NOW }).reason === "state_terminal");
+check("[D2] avaliacao explica espera do relogio", evaluateFollowup({ state: state(), outbox: [anchor], rules: rules.followup, now: "2026-07-11T12:04:59.000Z" }).reason === "not_due");
+check("[D3] avaliacao explica lead posterior", evaluateFollowup({ state: spoke, outbox: [anchor], rules: rules.followup, now: NOW }).reason === "lead_replied_after_anchor");
+check("[D4] avaliacao due preserva contrato", evaluateFollowup({ state: state(), outbox: [anchor], rules: rules.followup, now: NOW }).reason === "due");
+check("[TXT-1] separa emoji da palavra sem reescrever autoria", sanitizeOutgoingText("Icom Motors 😊Você procura SUV?") === "Icom Motors 😊 Você procura SUV?");
 
 const turnId = "followup:anchor:3", msgId = `${turnId}:followup-message`;
 const send: SendMessagePlan = { kind: "send_message", planId: "followup-message", effectId: msgId, order: 1, dependsOn: [], onSuccess: [] };

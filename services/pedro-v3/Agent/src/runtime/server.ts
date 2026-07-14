@@ -21,7 +21,7 @@ import { PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../domain/pil
 import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
-import { evaluateFollowupDue } from "../engine/followup-policy.ts";
+import { evaluateFollowup, type FollowupEvaluationReason } from "../engine/followup-policy.ts";
 import { PEDRO_V3_RUNTIME_RELEASE } from "./runtime-release.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
@@ -102,6 +102,15 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #handoffEnabled: boolean;
   readonly #followupEnabled: boolean;
   readonly #sensitiveVault: SupabaseSensitiveVault | null;
+  #followupDiagnostics: {
+    lastTickAt: string | null;
+    checked: number;
+    due: number;
+    planned: number;
+    failed: number;
+    lastFailure: string | null;
+    skipped: Partial<Record<FollowupEvaluationReason, number>>;
+  } = { lastTickAt: null, checked: 0, due: 0, planned: 0, failed: 0, lastFailure: null, skipped: {} };
   #turnSeq = 0;
 
   constructor() {
@@ -140,6 +149,13 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
   get debounceConfig(): DebounceConfig {
     return this.#debounce;
+  }
+
+  get followupDiagnostics(): Readonly<Record<string, unknown>> {
+    return {
+      ...this.#followupDiagnostics,
+      skipped: { ...this.#followupDiagnostics.skipped },
+    };
   }
 
   #gateway(): SupabaseServiceGateway {
@@ -365,23 +381,45 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   }
 
   async processDueFollowups(): Promise<{ checked: number; planned: number; failed: number }> {
-    if (!this.#followupEnabled || !this.#transferStore || !this.#crmLeadStore) return { checked: 0, planned: 0, failed: 0 };
+    const tickAt = this.#clock.now();
+    const skipped: Partial<Record<FollowupEvaluationReason, number>> = {};
+    const skip = (reason: FollowupEvaluationReason) => { skipped[reason] = (skipped[reason] ?? 0) + 1; };
+    if (!this.#followupEnabled || !this.#transferStore) {
+      this.#followupDiagnostics = { lastTickAt: tickAt, checked: 0, due: 0, planned: 0, failed: 0, lastFailure: "worker_disabled", skipped };
+      return { checked: 0, planned: 0, failed: 0 };
+    }
     const gateway = this.#gateway();
-    const candidates = await new FollowupCandidateStore(gateway).list({
-      tenantId: PEDRO_V3_PILOT_TENANT_ID,
-      agentId: PEDRO_V3_PILOT_AGENT_ID,
-    });
-    const config = await this.#transferStore.loadAgentConfig({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID });
-    if (!config?.rules.followup.enabled) return { checked: candidates.length, planned: 0, failed: 0 };
+    let candidates;
+    let config;
+    try {
+      candidates = await new FollowupCandidateStore(gateway).list({
+        tenantId: PEDRO_V3_PILOT_TENANT_ID,
+        agentId: PEDRO_V3_PILOT_AGENT_ID,
+      });
+      config = await this.#transferStore.loadAgentConfig({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID });
+    } catch (error) {
+      const reason = sanitizeTurnError(error instanceof Error ? error.message : String(error));
+      this.#followupDiagnostics = { lastTickAt: tickAt, checked: 0, due: 0, planned: 0, failed: 1, lastFailure: reason, skipped };
+      console.error(JSON.stringify({ event: "pedro_v3_followup_scan_failed", reason }));
+      return { checked: 0, planned: 0, failed: 1 };
+    }
+    if (!config?.rules.followup.enabled) {
+      skip("rules_disabled");
+      this.#followupDiagnostics = { lastTickAt: tickAt, checked: candidates.length, due: 0, planned: 0, failed: 0, lastFailure: config ? null : "agent_config_missing", skipped };
+      return { checked: candidates.length, planned: 0, failed: 0 };
+    }
     let planned = 0;
     let failed = 0;
+    let dueCount = 0;
+    let lastFailure: string | null = null;
     for (const candidate of candidates) {
-      if (!candidate.leadId) continue;
       try {
         const persistence = new PostgresPersistence(gateway, { tenantId: PEDRO_V3_PILOT_TENANT_ID, clock: this.#clock });
         const outbox = await persistence.listOutbox(candidate.conversationId);
-        const due = evaluateFollowupDue({ state: candidate.state, outbox, rules: config.rules.followup, now: this.#clock.now() });
-        if (!due) continue;
+        const evaluation = evaluateFollowup({ state: candidate.state, outbox, rules: config.rules.followup, now: this.#clock.now() });
+        const due = evaluation.due;
+        if (!due) { skip(evaluation.reason); continue; }
+        dueCount += 1;
         const root = await this.#createRoot(PEDRO_V3_PILOT_AGENT_ID, candidate.leadId, gateway);
         const result = await root.processFollowup({
           persistence, conversationId: candidate.conversationId, to: candidate.toAddr,
@@ -391,6 +429,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           planned += 1;
         } else if (result.reason && result.reason !== "not_eligible") {
           failed += 1;
+          lastFailure = result.reason;
           console.error(JSON.stringify({
             event: "pedro_v3_followup_not_planned",
             conversationId: candidate.conversationId,
@@ -400,9 +439,11 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         }
       } catch (error) {
         failed += 1;
-        console.error(JSON.stringify({ event: "pedro_v3_followup_failed", conversationId: candidate.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
+        lastFailure = sanitizeTurnError(error instanceof Error ? error.message : String(error));
+        console.error(JSON.stringify({ event: "pedro_v3_followup_failed", conversationId: candidate.conversationId, reason: lastFailure }));
       }
     }
+    this.#followupDiagnostics = { lastTickAt: tickAt, checked: candidates.length, due: dueCount, planned, failed, lastFailure, skipped };
     return { checked: candidates.length, planned, failed };
   }
 }
@@ -437,6 +478,7 @@ const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, run
   handoff: process.env.PEDRO_V3_HANDOFF?.trim() === "active",
   followup: process.env.PEDRO_V3_FOLLOWUP?.trim() === "active",
   sensitiveVault: Boolean(process.env.PEDRO_V3_SENSITIVE_VAULT_KEY?.trim()),
+  followupWorker: runtime.followupDiagnostics,
 }));
 const server = createServer(async (request, response) => {
   try {
@@ -492,7 +534,7 @@ console.log(JSON.stringify({
 }));
 
 let followupTickRunning = false;
-const followupTimer = setInterval(() => {
+const runFollowupTick = () => {
   if (followupTickRunning) return;
   followupTickRunning = true;
   void runtime.processDueFollowups()
@@ -501,7 +543,9 @@ const followupTimer = setInterval(() => {
     })
     .catch((error) => console.error(JSON.stringify({ event: "pedro_v3_followup_tick_failed", reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) })))
     .finally(() => { followupTickRunning = false; });
-}, 60_000);
+};
+const followupTimer = setInterval(runFollowupTick, 60_000);
+runFollowupTick();
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {

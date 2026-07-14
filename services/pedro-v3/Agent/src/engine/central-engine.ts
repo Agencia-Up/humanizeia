@@ -203,8 +203,10 @@ function repairVisibleLatin1Escapes(text: string): string {
     .replace(/f4/g, "ô")
     .replace(/f5/g, "õ");
 }
-function sanitizeOutgoingText(text: string): string {
-  return repairVisibleLatin1Escapes(stripControlChars(text)).normalize("NFC");
+export function sanitizeOutgoingText(text: string): string {
+  return repairVisibleLatin1Escapes(stripControlChars(text))
+    .replace(/(\p{Extended_Pictographic})(?=\p{L})/gu, "$1 ")
+    .normalize("NFC");
 }
 
 // ⭐Hardening (audit Codex): moreOptionsSearch chega JÁ GATEADO pelo caller ("mais opções" só exige busca quando o ato
