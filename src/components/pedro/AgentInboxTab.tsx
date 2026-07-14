@@ -133,14 +133,6 @@ function cleanPhone(value: string | null | undefined) {
   return (value || '').replace(/@.*$/, '').replace(/\D/g, '');
 }
 
-function phoneCandidates(value: string | null | undefined) {
-  const raw = (value || '').trim();
-  const digits = cleanPhone(raw);
-  const candidates = [raw, digits, digits ? `${digits}@s.whatsapp.net` : '']
-    .filter(Boolean);
-  return Array.from(new Set(candidates));
-}
-
 /* Numero BR canonico = DDD(2) + 8 digitos, sem DDI 55 e sem o 9o digito do celular.
    Ex.: "5512991097564" e "12991097564" -> "1291097564". Usado pra deduplicar leads
    Pedro×Marcos por telefone independente do formato. */
@@ -151,23 +143,6 @@ function phoneCanonical(value: string | null | undefined): string {
   return core;
 }
 
-/* TODAS as variacoes plausiveis do mesmo numero (com/sem DDI 55, com/sem 9o digito),
-   pra casar no .in('phone', ...) do wa_inbox. O crm_leads (Marcos) guarda o telefone
-   sem o 55, enquanto o wa_inbox guarda com o 55 -> sem isto a conversa abre VAZIA. */
-function phoneVariantsBR(value: string | null | undefined): string[] {
-  const base = phoneCandidates(value);
-  const core = phoneCanonical(value);
-  if (core.length !== 10) return base;                 // nao e celular BR reconhecivel
-  const dd = core.slice(0, 2);
-  const rest = core.slice(2);                          // 8 digitos
-  const with9 = `${dd}9${rest}`;                       // 11 digitos (com 9o)
-  const out = new Set<string>(base);
-  for (const f of [core, with9, `55${core}`, `55${with9}`]) {
-    out.add(f);
-    out.add(`${f}@s.whatsapp.net`);
-  }
-  return Array.from(out);
-}
 
 function displayPhone(value: string | null | undefined) {
   return cleanPhone(value) || value || '';
@@ -396,87 +371,43 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   }, [isSeller, userId]);
 
   /* ── Fetch leads for selected agent ──────────────────────────── */
+  // PRIVACIDADE (server-side): a LISTA de conversas vem SÓ da RPC segura
+  // get_allowed_lead_conversations. Nunca consulta ai_crm_leads/crm_leads/wa_inbox
+  // direto aqui — a RPC escopa por atribuição (vendedor vê só os leads dele; master
+  // vê os do tenant) e EXCLUI qualquer conversa interna (vendedor/gerente/responsavel/
+  // instancia). Dedup Pedro×Marcos e ordenação já vêm da RPC.
   const fetchLeads = useCallback(async () => {
     if (!selectedAgentId) return;
     setLoadingLeads(true);
-    let query = (supabase as any)
-      .from('ai_crm_leads')
-      // message_count NÃO está no SELECT porque a coluna não existe em ai_crm_leads.
-      // O valor é calculado dinamicamente abaixo via wa_chat_history (useEffect).
-      .select('id, remote_jid, lead_name, status, ai_paused, instance_id, agent_id, created_at, arrived_at, last_interaction_at, summary, assigned_to_id')
-      .eq('user_id', userId);
-    // Filtra por agente so quando um agente especifico esta selecionado. No modo
-    // "Todos os agentes" escopa apenas por user_id (igual ao CRM, que funciona).
-    if (selectedAgentId !== ALL_AGENTS) {
-      query = query.eq('agent_id', selectedAgentId);
-    }
-    // Vendedor só vê os leads atribuídos a ele (paridade com o CRM). Se ainda não
-    // tem nenhum lead atribuído, mostra vazio (não cai pro inbox inteiro do master).
-    if (isSeller) {
-      query = sellerMemberIds.length > 0
-        ? query.in('assigned_to_id', sellerMemberIds)
-        : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
-    }
-    // Master filtrando por um vendedor: escopa aos member ids dele (todos os rows
-    // do mesmo whatsapp). Sem vendedor selecionado = todos os leads (atual).
-    if (!isSeller && sellerFilter !== ALL_SELLERS) {
-      const ids = sellers.find(s => s.key === sellerFilter)?.memberIds || [];
-      query = ids.length > 0
-        ? query.in('assigned_to_id', ids)
-        : query.eq('assigned_to_id', '00000000-0000-0000-0000-000000000000');
-    }
-    const { data } = await query.order('last_interaction_at', { ascending: false });
-    const pedroLeads: Lead[] = (data || []).map((l: any) => ({ ...l, origem: 'pedro' as const }));
-
-    // UNIFICADO: junta os leads MANUAIS do Marcos (crm_leads), sem duplicar por telefone
-    // (um lead que já veio do Pedro/tráfego não repete). Mensagens continuam sendo por
-    // telefone, então o resto do inbox funciona igual pras duas origens.
-    let marcosLeads: Lead[] = [];
-    if (unified) {
-      let mq = (supabase as any)
-        .from('crm_leads')
-        .select('id, name, phone, assigned_to, created_at, arrived_at')
-        .eq('user_id', userId);
-      if (isSeller) {
-        mq = sellerMemberIds.length > 0
-          ? mq.in('assigned_to', sellerMemberIds)
-          : mq.eq('assigned_to', '00000000-0000-0000-0000-000000000000');
-      } else if (sellerFilter !== ALL_SELLERS) {
-        const ids = sellers.find(s => s.key === sellerFilter)?.memberIds || [];
-        mq = ids.length > 0
-          ? mq.in('assigned_to', ids)
-          : mq.eq('assigned_to', '00000000-0000-0000-0000-000000000000');
-      }
-      const { data: mData } = await mq.order('arrived_at', { ascending: false }).limit(2000);
-      const pedroPhones = new Set(pedroLeads.map(l => phoneCanonical(l.remote_jid)));
-      marcosLeads = (mData || [])
-        .filter((c: any) => { const k = phoneCanonical(c.phone); return !!k && !pedroPhones.has(k); })
-        .map((c: any): Lead => ({
-          id: c.id,
-          remote_jid: c.phone || '',
-          lead_name: c.name || null,
-          status: 'manual',
-          ai_paused: true,           // lead manual não tem IA rodando
-          instance_id: null,
-          agent_id: '',
-          message_count: 0,
-          created_at: c.created_at,
-          arrived_at: c.arrived_at,
-          last_interaction_at: c.arrived_at || c.created_at,
-          summary: null,
-          assigned_to_id: c.assigned_to || null,
-          origem: 'marcos',
-        }));
-    }
-
-    const merged = [...pedroLeads, ...marcosLeads].sort((a, b) => {
-      const ta = new Date(a.last_interaction_at || a.arrived_at || a.created_at || 0).getTime();
-      const tb = new Date(b.last_interaction_at || b.arrived_at || b.created_at || 0).getTime();
-      return tb - ta;
+    const sellerFilterIds = (!isSeller && sellerFilter !== ALL_SELLERS)
+      ? (sellers.find(s => s.key === sellerFilter)?.memberIds || [])
+      : null;
+    const { data, error } = await (supabase as any).rpc('get_allowed_lead_conversations', {
+      p_agent_id: (selectedAgentId && selectedAgentId !== ALL_AGENTS) ? selectedAgentId : null,
+      p_seller_member_ids: (sellerFilterIds && sellerFilterIds.length > 0) ? sellerFilterIds : null,
+      p_include_marcos: !!unified,
+      p_limit: 2000,
     });
+    if (error) { setLeads([]); setLoadingLeads(false); return; }
+    const merged: Lead[] = ((data || []) as any[]).map((l): Lead => ({
+      id: l.lead_id,
+      remote_jid: l.phone || '',
+      lead_name: l.lead_name || null,
+      status: l.status || (l.source === 'marcos' ? 'manual' : ''),
+      ai_paused: l.source === 'marcos' ? true : !!l.ai_paused,
+      instance_id: l.instance_id || null,
+      agent_id: l.agent_id || '',
+      message_count: 0,
+      created_at: l.created_at,
+      arrived_at: l.arrived_at,
+      last_interaction_at: l.last_interaction_at || l.arrived_at || l.created_at,
+      summary: l.summary || null,
+      assigned_to_id: l.assigned_to_id || null,
+      origem: l.source === 'marcos' ? 'marcos' : 'pedro',
+    }));
     setLeads(merged);
     setLoadingLeads(false);
-  }, [selectedAgentId, userId, isSeller, sellerMemberIds, sellerFilter, sellers, unified]);
+  }, [selectedAgentId, isSeller, sellerFilter, sellers, unified]);
 
   useEffect(() => {
     fetchLeads();
@@ -650,57 +581,54 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     if (!selectedLeadId || !selectedLeadPhone) return;
     if (!silent) setLoadingMessages(true);
     try {
-      let inboxQuery = (supabase as any)
-        .from('wa_inbox')
-        .select('id, phone, instance_id, direction, content, message_type, media_url, remote_message_id, created_at, contact_name')
-        .eq('user_id', userId)
-        .in('phone', unified ? phoneVariantsBR(selectedLeadPhone) : phoneCandidates(selectedLeadPhone));
+      // PRIVACIDADE (server-side): a timeline vem SÓ da RPC segura get_allowed_lead_messages.
+      // A RPC revalida no servidor que o telefone é de um LEAD permitido (atribuido ao
+      // vendedor / do tenant p/ master) e NUNCA devolve conversa interna. As variações de
+      // telefone (com/sem 55, com/sem 9º dígito) são resolvidas no servidor. Sem consulta
+      // direta a wa_inbox/wa_chat_history aqui. Fora do unified (aba do Pedro) passa a
+      // instância do lead p/ manter o filtro por número; no unified, timeline completa.
+      const { data: rpcRows } = await (supabase as any).rpc('get_allowed_lead_messages', {
+        p_lead_id: selectedLeadId,
+        p_source: selectedLead?.origem || null,
+        p_phone: selectedLeadPhone,
+        p_instance_id: (!unified && selectedLeadInstanceId) ? selectedLeadInstanceId : null,
+        p_limit: 1500,
+      });
 
-      // Modelo Conversas (unified): a conversa com o lead pode estar em VARIOS numeros — o da
-      // empresa (fase IA) e o do PROPRIO vendedor (follow-up). Nao filtramos por instancia pra
-      // trazer a timeline completa; fora do unified, mantem o filtro do inbox do Pedro.
-      if (!unified && selectedLeadInstanceId) {
-        inboxQuery = inboxQuery.eq('instance_id', selectedLeadInstanceId);
-      }
-
-      const { data: inboxData } = await inboxQuery
-        .order('created_at', { ascending: true })
-        .range(0, 999);
-      const inboxRows: Message[] = inboxData || [];
-
-      // Pedro v2 grava as mensagens (entrada role:"user" / saida role:"assistant")
-      // em wa_chat_history, NAO em wa_inbox. Sem isto a conversa do Pedro v2 abre
-      // vazia ("Nenhuma mensagem"). Buscamos as duas fontes e fundimos por horario.
-      // Defensivo: qualquer erro aqui (ex.: RLS) nao quebra a exibicao do wa_inbox.
-      let historyRows: Message[] = [];
-      try {
-        const { data: histData } = await (supabase as any)
-          .from('wa_chat_history')
-          .select('id, remote_jid, role, content, metadata, created_at')
-          .eq('user_id', userId)
-          .in('remote_jid', unified ? phoneVariantsBR(selectedLeadPhone) : phoneCandidates(selectedLeadPhone))
-          .order('created_at', { ascending: true })
-          .range(0, 999);
-        historyRows = (histData || []).map((r: any): Message => {
+      const inboxRows: Message[] = [];
+      const historyRows: Message[] = [];
+      for (const r of ((rpcRows || []) as any[])) {
+        if (r.source === 'chat') {
+          // Pedro v2 (wa_chat_history): mídia mora em metadata.media.
           const mediaList = r.metadata?.media || null;
           const firstMedia = mediaList?.[0] || null;
-          return {
+          historyRows.push({
             id: `wch-${r.id}`,
-            phone: cleanPhone(r.remote_jid),
-            // wa_chat_history guarda o NOME da instancia, nao o UUID -> nunca usar
-            // pra envio. Deixamos null pra nao poluir o resolveInstanceId().
-            instance_id: null,
-            direction: r.role === 'assistant' ? 'outgoing' : 'incoming',
+            phone: cleanPhone(selectedLeadPhone),
+            instance_id: null,   // guarda NOME, não UUID -> nunca usar p/ envio
+            direction: r.direction === 'outgoing' ? 'outgoing' : 'incoming',
             content: r.content ?? '',
             message_type: firstMedia ? (firstMedia.type || 'image') : 'text',
             media_url: firstMedia ? (firstMedia.file || firstMedia.url) : null,
             media_list: mediaList,
             created_at: r.created_at,
             contact_name: null,
-          };
-        });
-      } catch {
-        // silencioso — mantem somente o wa_inbox
+          });
+        } else {
+          inboxRows.push({
+            id: r.id,
+            phone: cleanPhone(selectedLeadPhone),
+            instance_id: r.instance_id || null,
+            direction: r.direction,
+            content: r.content ?? '',
+            message_type: r.message_type || 'text',
+            media_url: r.media_url || null,
+            media_list: null,
+            remote_message_id: r.remote_message_id || null,
+            created_at: r.created_at,
+            contact_name: null,
+          });
+        }
       }
 
       // Funde as duas fontes evitando balao duplicado. Considera "mesma mensagem"
@@ -775,7 +703,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
     }
-  }, [selectedLeadId, selectedLeadPhone, selectedLeadInstanceId, userId, unified]);
+  }, [selectedLeadId, selectedLeadPhone, selectedLeadInstanceId, selectedLead?.origem, unified]);
 
   useEffect(() => {
     fetchMessages();

@@ -358,133 +358,80 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   }, [effectiveUserId, isSeller, seller, memberIds]);
 
   /* ── Fetch conversas agrupadas ─────────────────────────────────── */
+  // PRIVACIDADE (server-side): a lista vem SÓ da RPC segura get_allowed_lead_inbox
+  // (lead-only). Nunca lê wa_inbox direto aqui — a RPC escopa por atribuição
+  // (vendedor vê só os leads dele; master vê os do tenant) e EXCLUI qualquer
+  // conversa interna (vendedor/gerente/responsavel/instancia). Preview e não-lidas
+  // vêm agregados no servidor por chave de telefone.
   const fetchConversations = useCallback(async (isInitial = false) => {
     if (!effectiveUserId) return;
-    // Vendedor: espera carregar os phones dos leads dele
-    if (isSeller && sellerLeadPhones === null) return;
-    // Master: espera carregar os phones dos leads (p/ filtrar instâncias de vendedor)
-    if (!isSeller && masterLeadPhones === null) return;
     if (isInitial) setLoading(true);
 
-    // Defesa em camadas: limita conversas APENAS às instâncias visíveis ao
-    // user logado (vendedor: as dele; master: só as próprias dele, sem dono).
-    const visibleInstanceIds = allInstances.map(i => i.id);
-    
-    let data: any[] = [];
-    if (visibleInstanceIds.length > 0) {
-      let query = supabase
-        .from('wa_inbox')
-        .select('phone, contact_name, content, message_type, media_url, ai_category, is_read, created_at, instance_id, direction')
-        .eq('user_id', effectiveUserId as string)
-        .neq('is_archived', true)
-        .in('instance_id', visibleInstanceIds)
-        .order('created_at', { ascending: false })
-        .limit(500);
-
-      if (activeInstanceTab !== 'all') {
-        query = query.eq('instance_id', activeInstanceTab);
-      }
-
-      const { data: queryData, error } = await query;
-      if (!error && queryData) {
-        data = queryData;
-      }
+    const { data, error } = await (supabase as any).rpc('get_allowed_lead_inbox', { p_limit: 500 });
+    let convList: Conversation[] = [];
+    if (!error && Array.isArray(data)) {
+      convList = (data as any[]).map((r): Conversation => ({
+        key: `${r.phone}::${r.instance_id ?? 'null'}`,
+        phone: r.phone,
+        instance_id: r.instance_id ?? null,
+        contact_name: r.lead_name ?? null,
+        last_message: r.last_message
+          ? mediaPreviewText(r.last_message_type, r.last_message, r.last_media_url)
+          : 'Conversa iniciada',
+        last_message_at: r.last_message_at,
+        lead_arrived_at: r.lead_arrived_at ?? null,
+        lead_created_at: r.lead_created_at ?? null,
+        unread_count: r.unread_count ?? 0,
+        ai_category: r.ai_category ?? null,
+        has_ai_message: true,
+      }));
     }
 
-    // Agrupar por (phone, instance_id)
-    const convMap = new Map<string, Conversation>();
-    for (const msg of (data || [])) {
-      const key = `${msg.phone}::${msg.instance_id ?? 'null'}`;
-      if (!convMap.has(key)) {
-        convMap.set(key, {
-          key, phone: msg.phone, instance_id: msg.instance_id,
-          contact_name: msg.contact_name, last_message: mediaPreviewText(msg.message_type, msg.content, msg.media_url),
-          last_message_at: msg.created_at, lead_arrived_at: null,
-          lead_created_at: null, unread_count: 0,
-          ai_category: msg.ai_category, has_ai_message: false,
-        });
-      }
-      const c = convMap.get(key)!;
-      if (!msg.is_read && msg.direction === 'incoming') c.unread_count++;
-      if (!c.contact_name && msg.contact_name) c.contact_name = msg.contact_name;
-      if (msg.ai_category) c.ai_category = msg.ai_category;
+    // Aba por instância: filtra client-side pela última instância da conversa.
+    if (activeInstanceTab !== 'all') {
+      convList = convList.filter(c => c.instance_id === activeInstanceTab);
     }
 
-    let convList = Array.from(convMap.values());
-
-    // Mesclar os leads do CRM para garantir que apareçam mesmo sem msg no wa_inbox
-    if (sellerLeads.length > 0) {
-      for (const lead of sellerLeads) {
-        const cleanPhoneNum = (lead.remote_jid || '').split('@')[0];
-        if (!cleanPhoneNum) continue;
-
-        const canonicalLead = leadKey(cleanPhoneNum);
-        // Comparação usando o leadKey canônico para evitar duplicações por formato do telefone
-        const existingIdx = convList.findIndex(c => 
-          leadKey(c.phone) === canonicalLead && 
-          (c.instance_id === lead.instance_id || !c.instance_id || !lead.instance_id)
-        );
-
-        if (existingIdx === -1) {
-          const key = `${cleanPhoneNum}::${lead.instance_id ?? 'null'}`;
-          const arrivedAt = lead.arrived_at || lead.created_at || lead.last_interaction_at || null;
-          convList.push({
-            key,
-            phone: cleanPhoneNum,
-            instance_id: lead.instance_id,
-            contact_name: lead.lead_name,
-            last_message: lead.summary || 'Conversa iniciada',
-            last_message_at: lead.last_interaction_at || new Date().toISOString(),
-            lead_arrived_at: arrivedAt,
-            lead_created_at: lead.created_at || null,
-            unread_count: 0,
-            ai_category: null,
-            has_ai_message: true,
-          });
-        } else {
-          const existing = convList[existingIdx];
-          if (!existing.contact_name && lead.lead_name) existing.contact_name = lead.lead_name;
-          existing.lead_arrived_at = existing.lead_arrived_at || lead.arrived_at || lead.created_at || lead.last_interaction_at || null;
-          existing.lead_created_at = existing.lead_created_at || lead.created_at || null;
-          existing.has_ai_message = true;
-        }
-      }
-    }
-
-    if (isSeller && sellerLeadPhones) {
-      // Vendedor: só conversas dos leads atribuídos a ele (normalizado via leadKey)
-      convList = convList.filter(c => sellerLeadPhones.has(leadKey(c.phone)));
-    } else if (!isSeller && masterLeadPhones) {
-      // Master: mostra apenas conversas com leads do CRM em qualquer instância, evitando poluição com chats pessoais
-      convList = convList.filter(c => masterLeadPhones.has(leadKey(c.phone)));
-    }
     setConversations(convList);
     if (isInitial) setLoading(false);
-  }, [effectiveUserId, activeInstanceTab, isSeller, sellerLeadPhones, masterLeadPhones, allInstances, sellerLeads]);
+  }, [effectiveUserId, activeInstanceTab]);
 
   /* ── Fetch mensagens da conversa selecionada ───────────────────── */
   const fetchMessages = useCallback(async (phone: string, instanceId: string | null) => {
-    if (!effectiveUserId) return;
+    if (!effectiveUserId || !phone) return;
     setLoadingMsgs(true);
 
     try {
-      // 1. Busca mensagens de wa_inbox
-      let inboxQuery = supabase
-        .from('wa_inbox')
-        .select('*')
-        .eq('user_id', effectiveUserId as string)
-        .eq('phone', phone);
-
-      if (instanceId) inboxQuery = inboxQuery.eq('instance_id', instanceId);
-
-      const { data: inboxData } = await inboxQuery
-        .order('created_at', { ascending: true })
-        .limit(300);
-      const inboxRows: InboxMessage[] = (inboxData || []) as unknown as InboxMessage[];
+      // PRIVACIDADE (server-side): timeline via RPC segura get_allowed_lead_messages.
+      // A RPC revalida que o telefone é de um LEAD permitido e NUNCA devolve conversa
+      // interna. Sem leitura direta de wa_inbox aqui.
+      const { data: rpcRows } = await (supabase as any).rpc('get_allowed_lead_messages', {
+        p_phone: phone,
+        p_instance_id: instanceId || null,
+        p_limit: 500,
+      });
+      const inboxRows: InboxMessage[] = ((rpcRows || []) as any[])
+        .filter(r => r.source === 'inbox')
+        .map((r): InboxMessage => ({
+          id: r.id,
+          user_id: effectiveUserId as string,
+          instance_id: r.instance_id ?? null,
+          phone,
+          contact_name: null,
+          direction: r.direction,
+          message_type: r.message_type || 'text',
+          content: r.content ?? null,
+          media_url: r.media_url ?? null,
+          remote_message_id: r.remote_message_id ?? null,
+          ai_category: null,
+          ai_sentiment: null,
+          is_read: true,
+          created_at: r.created_at,
+        }));
 
       setMessages(inboxRows);
 
-      // Marcar como lidas
+      // Marcar como lidas (write operacional — mantido; policy de UPDATE preservada).
       await supabase
         .from('wa_inbox')
         .update({ is_read: true } as any)
