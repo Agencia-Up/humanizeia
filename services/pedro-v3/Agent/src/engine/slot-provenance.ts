@@ -77,6 +77,12 @@ export function filterBrainSlotMutations(args: {
     && blockNorm.split(/\s+/).filter(Boolean).length <= 3;
 
   for (const m of args.mutations) {
+    if (m.op === "decline_slot") {
+      if (!args.understandingTrusted) { dropped.push({ slot: m.slot, reason: "understanding_untrusted" }); continue; }
+      if (args.pendingSlot !== m.slot || questionLike) { dropped.push({ slot: m.slot, reason: "no_provenance" }); continue; }
+      kept.push(m);
+      continue;
+    }
     if (m.op !== "set_slot") { kept.push(m); continue; }
     // (a) extração determinística cobriu o slot neste turno: ELA é a autoridade — a mutação da LLM
     //     (redundante ou conflitante) é descartada; o valor extraído já está nas mutações do turno.

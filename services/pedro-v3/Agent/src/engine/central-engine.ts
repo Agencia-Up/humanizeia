@@ -1421,6 +1421,9 @@ function factualSlotClaimFeedback(text: string, state: ConversationState): strin
       || /\b(?:voce|cliente)\b.{0,45}\btem\b.{0,25}\bentrada\b/.test(clause))
     && !/\b(?:nao|sem|zero)\b.{0,20}\bentrada\b/.test(clause));
   if (entrada.status === "known" && entrada.value === 0 && saysHasEntry) return "Você afirmou que o cliente TEM entrada, mas ele respondeu que está SEM entrada (entrada=0). Corrija a acolhida e não altere esse fato.";
+  const installment = state.slots.parcelaDesejada;
+  const saysInstallmentUndefined = clauses.some((clause) => /\b(?:nao\s+(?:tem|definiu|informou|sabe)|sem)\b.{0,35}\b(?:parcela|valor\s+mensal)\b|\bparcela\b.{0,25}\b(?:nao\s+definid|indefinid|nao\s+informad)/.test(clause));
+  if (installment.status === "known" && saysInstallmentUndefined) return `Você afirmou que a parcela não foi definida, mas o cliente informou ${installment.value}. Acolha o valor factual e conduza sem contradizê-lo.`;
   return null;
 }
 function isServiceOrInstitutionalQuestion(text: string): boolean {
@@ -2002,9 +2005,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // aproximado). A identidade do modelo é EXATA (catalog-utils.modelIdentityMatches), nunca substring.
       const buildKnownModels = (): Map<string, KnownVehicleModel> => {
         const m = new Map<string, KnownVehicleModel>();
-        for (const f of facts) { if (!f.ok) continue; if (f.tool === "stock_search") for (const v of f.data.items) m.set(v.vehicleKey, { marca: v.marca ?? null, modelo: v.modelo ?? null }); if (f.tool === "vehicle_details") m.set(f.data.vehicle.vehicleKey, { marca: f.data.vehicle.marca ?? null, modelo: f.data.vehicle.modelo ?? null }); }
-        for (const it of contextState.lastRenderedOfferContext?.items ?? []) m.set(it.vehicleKey, { marca: it.marca ?? null, modelo: it.modelo ?? null });
-        for (const id of identities) m.set(id.vehicleKey, { marca: id.marca ?? null, modelo: id.modelo ?? null });
+        for (const f of facts) { if (!f.ok) continue; if (f.tool === "stock_search") for (const v of f.data.items) m.set(v.vehicleKey, { marca: v.marca ?? null, modelo: v.modelo ?? null, ano: v.ano ?? null }); if (f.tool === "vehicle_details") m.set(f.data.vehicle.vehicleKey, { marca: f.data.vehicle.marca ?? null, modelo: f.data.vehicle.modelo ?? null, ano: f.data.vehicle.ano ?? null }); }
+        for (const it of contextState.lastRenderedOfferContext?.items ?? []) m.set(it.vehicleKey, { marca: it.marca ?? null, modelo: it.modelo ?? null, ano: it.ano ?? null });
+        for (const id of identities) m.set(id.vehicleKey, { marca: id.marca ?? null, modelo: id.modelo ?? null, ano: id.ano ?? null });
         return m;
       };
       const resolveTarget = (): TargetResolution => resolveTurnTarget({ understanding: brainVU()?.understanding ?? null, leadMessage, state: contextState, claimExtractor: ctx.claimExtractor, knownModels: buildKnownModels() });
@@ -3002,7 +3005,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         if ((askedSlot ?? null) !== (prevPending?.slot ?? null)) {
           semMuts.push({ op: "set_pending_agent_question", question: askedSlot ? { slot: askedSlot, sinceTurnId: turnId } : null, turnId });
         }
-        if (pendingQuestionSlot != null && safeExtractedSlots.some((m) => m.op === "set_slot" && m.slot === pendingQuestionSlot)) {
+        if (pendingQuestionSlot != null && (safeExtractedSlots.some((m) => m.op === "set_slot" && m.slot === pendingQuestionSlot)
+          || (finalDecision.stateMutations ?? []).some((m) => m.op === "decline_slot" && m.slot === pendingQuestionSlot))) {
           semMuts.push({ op: "set_resolved_slot_answer", answer: { slot: pendingQuestionSlot, turnId }, turnId });
         }
         if (semMuts.length > 0) {

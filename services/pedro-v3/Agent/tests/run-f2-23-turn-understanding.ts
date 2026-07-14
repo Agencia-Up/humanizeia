@@ -432,6 +432,23 @@ async function main(): Promise<void> {
     const cap = await c.t("T-Cross", "ambiguous", [finU([txt("Me conta o que você quer saber dele.")], [reply], "reply", uBare)]);
     check("[IdK] modelo solto sem pergunta anterior de foto NÃO autoriza mídia", cap.committed && !cap.hasMedia, `media=${cap.hasMedia} src=${cap.src}`);
   }
+  {
+    const c = conv({ ...offerCtx([KICKS1, KICKS2]) }); await c.seed();
+    const uYear = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "Kicks", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do Kicks 2021" }] });
+    const cap = await c.t("Me mande fotos do Kicks 2021", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
+      ? finU([txt("Aqui estao as fotos do Nissan Kicks 2021.")], [reply, mediaEff(KICKS2)], "send_photos", uYear)
+      : photoResolve(KICKS2, uYear));
+    check("[IdL] modelo+ano atual resolve a unidade exata da lista", cap.hasMedia && cap.mediaKey === KICKS2.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
+  }
+  {
+    const c = conv({ ...offerCtx([KICKS1, KICKS2]) }); await c.seed();
+    const uAmbiguous = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "Kicks", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do Kicks" }] });
+    const cap = await c.t("Me mande fotos do Kicks", "ambiguous", [
+      finU([txt("Aqui estao as fotos do Nissan Kicks 2021.")], [reply, mediaEff(KICKS2)], "send_photos", uAmbiguous),
+      finU([txt("Tenho mais de um Kicks na lista. De qual ano voce quer as fotos?")], [reply], "clarify_photo_target", uAmbiguous),
+    ]);
+    check("[IdM] modelo sem ano continua ambiguo e nunca escolhe uma unidade arbitraria", cap.committed && !cap.hasMedia && has(cap.outbox, "qual ano"), `media=${cap.hasMedia} text=${JSON.stringify(cap.outbox)}`);
+  }
   console.log(`\n== F2.23: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }
 }

@@ -7,8 +7,12 @@ export const ACCEPTED_SAFE_OUTCOME_OPS: ReadonlySet<string> = new Set([
   "append_assistant_turn",
   // The provider accepted the same message that contains the question. This marks
   // what the agent asked, not that the lead read it. Delivery-sensitive outcomes
-  // (offer, focus, media, CRM, handoff and stage) remain delivered-only.
+  // (offer, focus, media, CRM, handoff and scheduling) remain delivered-only.
+  // Follow-up bookkeeping and handoff completion are provider-acceptance facts:
+  // they record that the operational message was accepted for dispatch.
   "activate_objective",
+  "mark_followup_sent",
+  "mark_handoff_completed",
 ]);
 
 export function isCriticalForConversationState(record: OutboxRecord): boolean {
@@ -16,9 +20,12 @@ export function isCriticalForConversationState(record: OutboxRecord): boolean {
     record.kind === "handoff"
     || record.kind === "crm_write"
     || record.kind === "schedule_visit"
-    || record.kind === "notify_seller"
     || record.kind === "send_media"
   ) return true;
+
+  if (record.kind === "notify_seller") {
+    return record.onSuccess.some((o) => !ACCEPTED_SAFE_OUTCOME_OPS.has(o.op));
+  }
 
   // send_message so e "critico" (exige delivered) se tiver ALGUM outcome que nao seja accepted-safe.
   return record.kind === "send_message"

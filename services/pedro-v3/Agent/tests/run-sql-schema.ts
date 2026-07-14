@@ -143,6 +143,11 @@ async function main(): Promise<void> {
   await db.exec(r13dWmPatchSql);
   check("patch R13-D (WM outcome accepted-safe) executa integralmente em PostgreSQL", true);
 
+  const f256PatchUrl = new URL("../../Brain/sql/v3_f2_56_operational_acceptance.sql", import.meta.url);
+  const f256PatchSql = await readFile(f256PatchUrl, "utf8");
+  await db.exec(f256PatchSql);
+  check("patch F2.56 (follow-up/handoff por provider accepted) executa integralmente em PostgreSQL", true);
+
   // F2.7.4-A: a FONTE UNICA (v3_required_receipt_level) — usada pela coluna gerada, pelo check e pelo RPC.
   const reqLevel = async (kind: string, onSuccess: unknown[]): Promise<string> => {
     const r = await db.query<{ r: string }>(
@@ -164,7 +169,8 @@ async function main(): Promise<void> {
   check("F2.7.4-A crm_write -> delivered", await reqLevel("crm_write", []) === "delivered");
   check("F2.7.4-A schedule_visit -> delivered", await reqLevel("schedule_visit", []) === "delivered");
   check("F2.7.4-A handoff -> delivered", await reqLevel("handoff", []) === "delivered");
-  check("F2.7.4-A notify_seller -> delivered", await reqLevel("notify_seller", []) === "delivered");
+  check("F2.56 notify_seller + mark_handoff_completed -> accepted", await reqLevel("notify_seller", [{ op: "mark_handoff_completed" }]) === "accepted");
+  check("F2.56 follow-up + mark_followup_sent -> accepted", await reqLevel("send_message", [{ op: "mark_followup_sent" }]) === "accepted");
 
   // F2.7.4-A check `v3_outbox_applied_only_after_delivery_ck`: outcome_applied_at com receipt_level='accepted'
   // SOMENTE no caso accepted-safe. (sem FK em conversation_id; tenant proprio p/ nao colidir com TENANT abaixo)

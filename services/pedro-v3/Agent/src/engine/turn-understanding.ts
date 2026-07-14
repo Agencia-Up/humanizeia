@@ -11,7 +11,7 @@
 // Módulo PURO, sem ciclo. Memória = contexto/pronome, nunca vence o turno.
 // ============================================================================
 import { normalizeText, canonicalModel, modelIdentityMatches, modelLikelyTypoMatches } from "./catalog-utils.ts";
-export type KnownVehicleModel = { readonly marca: string | null; readonly modelo: string | null };
+export type KnownVehicleModel = { readonly marca: string | null; readonly modelo: string | null; readonly ano?: number | null };
 import { parseOrdinal } from "./ordinal.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
@@ -386,6 +386,12 @@ function uniqueModelCandidates(subject: string, knownModels: ReadonlyMap<string,
   return [...new Set(hits)];
 }
 
+function explicitVehicleYear(block: string): number | null {
+  const years = normalizeText(block).match(/\b(?:19|20)\d{2}\b/g)?.map(Number)
+    .filter((year) => year >= 1990 && year <= 2035) ?? [];
+  return years.length === 1 ? years[0] : null;
+}
+
 function leadTypoSubjectCandidate(block: string, knownModels: ReadonlyMap<string, KnownVehicleModel>, allowBareModelTypo = false): string | null {
   if (!leadRequestsPhoto(block) && !allowBareModelTypo) return null;
   const words = normalizeText(block).split(/\s+/).filter((w) => w.length >= 3 && !/^(?:foto|fotos|imagem|imagens|manda|mande|mandar|envia|enviar|mostra|mostrar|quero|ver|do|da|de|dos|das|me|o|a|um|uma|ele|ela|dele|dela)$/.test(w));
@@ -457,6 +463,8 @@ export function resolveTurnTarget(args: {
   if (subjectModel) {
     let cands = uniqueModelCandidates(subjectModel, knownModels, false);
     if (cands.length === 0) cands = uniqueModelCandidates(subjectModel, knownModels, true);
+    const statedYear = explicitVehicleYear(leadMessage);
+    if (statedYear != null) cands = cands.filter((key) => knownModels.get(key)?.ano === statedYear);
     if (cands.length === 1) return { kind: "resolved", vehicleKey: cands[0], source: "turn_explicit_model", candidateVehicleKeys: cands, subjectModel };
     if (cands.length > 1) return { kind: "ambiguous", candidateVehicleKeys: cands, subjectModel };
     return { kind: "none", subjectModel };   // modelo do assunto sem candidato conhecido -> busca antes (nunca herda outro)
@@ -474,8 +482,9 @@ export function resolveTurnTarget(args: {
 // Uma vehicleKey (send_media autorado OU photo fact) é compatível com o alvo do assunto? conflict/none -> nunca.
 export function targetAcceptsKey(target: TargetResolution, key: string): boolean {
   if (target.kind === "resolved") return target.vehicleKey === key || target.candidateVehicleKeys.includes(key);
-  if (target.kind === "ambiguous") return target.candidateVehicleKeys.includes(key);
-  return false;   // conflict/none -> nenhuma key aceita (fail-closed)
+  // Ambiguidade nao autoriza a LLM a escolher uma unidade arbitraria. O lead
+  // precisa desambiguar por ano/ordinal ou selecionar um veiculo primeiro.
+  return false;   // ambiguous/conflict/none -> nenhuma key aceita (fail-closed)
 }
 
 // ── P1 (trava do assunto): a 1ª compreensão validada é a BASE do turno. Refinamento só ADICIONA fato (subjectValue) —

@@ -8,6 +8,7 @@ import { authorFollowupMessage } from "../src/engine/followup-author.ts";
 import { buildHandoffChain } from "../src/engine/handoff-plan.ts";
 import { validateEffectPlans } from "../src/engine/finalizer.ts";
 import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
+import { requiredReceiptFor } from "../src/domain/effect-policy.ts";
 import { HandoffEffectDispatcher, NotifySellerEffectDispatcher } from "../src/adapters/effects/transfer-dispatchers.ts";
 import type { InsertTransferInput, TransferAgentConfig, TransferLeadRow, TransferRow, TransferSagaStore } from "../src/adapters/effects/transfer-store.ts";
 import type { SellerCandidate } from "../src/engine/transfer-templates.ts";
@@ -39,7 +40,7 @@ check("[P2] T2 vence", evaluateFollowupDue({ state: s, outbox: [anchor], rules: 
 s.followupCycle = { ...s.followupCycle, sentStages: [1, 2] };
 const due3 = evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: NOW });
 check("[P3] T3 vence", due3?.stage === 3);
-check("[P4] accepted nao ancora", evaluateFollowupDue({ state: state(), outbox: [record({ receiptLevel: "accepted" })], rules: rules.followup, now: NOW }) === null);
+check("[P4] accepted ancora quando provider nao publica delivery", evaluateFollowupDue({ state: state(), outbox: [record({ receiptLevel: "accepted" })], rules: rules.followup, now: NOW })?.stage === 1);
 const spoke = state(); spoke.recentTurns.push({ role: "lead", text: "voltei", at: "2026-07-11T12:01:00.000Z" });
 check("[P5] lead cancela", evaluateFollowupDue({ state: spoke, outbox: [anchor], rules: rules.followup, now: NOW }) === null);
 const handed = state(); handed.stage = "handoff";
@@ -74,12 +75,15 @@ check("[H4] correlacao exata", handoff?.kind === "handoff" && notify?.kind === "
 check("[H5] LLM nao escolhe seller", handoff?.kind === "handoff" && !("sellerId" in handoff));
 check("[H6] stage so no notify", handoff?.onSuccess.length === 0 && notify?.onSuccess.some((o) => o.op === "mark_handoff_completed") === true);
 check("[H7] grafo valido", validateEffectPlans(chain.effectPlan).length === 0);
+const handoffReply = chain.effectPlan.find((p) => p.kind === "send_message");
+check("[H8] reply do handoff nao inventa delivery gate", handoffReply?.onSuccess.every((o) => o.op !== "mark_message_delivered") === true);
 
 const os = state(); os.followupCycle = { anchorEffectId: anchor.effectId, anchorAt: ANCHOR, sentStages: [], plannedStage: 1, lastSentAt: null };
 const op: SendMessagePlan = { ...send, effectId: "fu-out", onSuccess: [{ op: "mark_followup_sent", effectId: "fu-out", anchorEffectId: anchor.effectId, stage: 1, sentAt: NOW }] };
-const reduced = applyEffectOutcome(os, op, { status: "succeeded", effectId: "fu-out", receipt: { effectId: "fu-out", level: "delivered", at: NOW } });
+const reduced = applyEffectOutcome(os, op, { status: "succeeded", effectId: "fu-out", receipt: { effectId: "fu-out", level: "accepted", at: NOW } });
 check("[O1] receipt marca stage", reduced.ok && reduced.next.followupCycle?.sentStages.includes(1) === true);
 check("[O2] receipt limpa planned", reduced.ok && reduced.next.followupCycle?.plannedStage === null);
+check("[O3] follow-up exige apenas accepted", requiredReceiptFor(record({ onSuccess: op.onSuccess })) === "accepted");
 
 class FakeTransferStore implements TransferSagaStore {
   lead: TransferLeadRow = { id: LEAD, status: "qualificado", assignedToId: null, leadName: "Douglas", remoteJid: "5512999999999@s.whatsapp.net", summary: null };
@@ -122,10 +126,14 @@ const sentTo: string[] = [];
 const sentTexts: string[] = [];
 transferStore.config = { ...transferStore.config, gerentePhones: ["5511888888888"] };
 const notifyPlan = notify!;
-const notifyRecord = record({ effectId: notifyPlan.effectId, turnId, planId: notifyPlan.planId, kind: "notify_seller", idempotencyKey: notifyPlan.effectId, payload: { leadId: LEAD, reason: "followup_timeout_handoff", etiquetas: { nome: "Douglas", telefone: "5512999999999" }, sensitiveRefs: { cpf: "cpf-ref", birthDate: "birth-ref" }, correlationId: notifyPlan.kind === "notify_seller" ? notifyPlan.correlationId : "", __redacted: true }, status: "pending", receiptLevel: null, outcomeAppliedAt: null });
+const notifyRecord = record({ effectId: notifyPlan.effectId, turnId, planId: notifyPlan.planId, kind: "notify_seller", idempotencyKey: notifyPlan.effectId, payload: { leadId: LEAD, reason: "followup_timeout_handoff", etiquetas: { nome: "Douglas", telefone: "5512999999999" }, sensitiveRefs: { cpf: "cpf-ref", birthDate: "birth-ref" }, correlationId: notifyPlan.kind === "notify_seller" ? notifyPlan.correlationId : "", __redacted: true }, onSuccess: notifyPlan.onSuccess, status: "pending", receiptLevel: null, outcomeAppliedAt: null });
 const notifyResult = await new NotifySellerEffectDispatcher({ ref: { tenantId: TENANT, agentId: AGENT }, clock: { now: () => NOW }, store: transferStore, sender: { async sendText(input) { sentTo.push(input.to); sentTexts.push(input.text); return { ok: true as const, level: "accepted" as const, providerMessageId: "wa-seller-1" }; }, async sendImage() { return { ok: false as const, code: "VALIDATION" as const, message: "unused", retryable: false }; } }, sensitiveVault: { async store() { throw new Error("unused"); }, async resolve(input) { return input.kind === "cpf" ? "11144477735" : "01/10/1997"; } } }).dispatch(notifyRecord);
 check("[S5] notify usa vendedor da transfer", sentTo[0] === "12999999999");
 check("[S6] notify nao mente delivered", notifyResult.status === "succeeded" && notifyResult.receipt.level === "accepted");
+check("[S6d] accepted do notify satisfaz outcome operacional", requiredReceiptFor(notifyRecord) === "accepted");
+const handoffState = state();
+const notifyReduced = applyEffectOutcome(handoffState, notifyPlan, notifyResult);
+check("[S6e] accepted do notify conclui stage handoff", notifyReduced.ok && notifyReduced.next.stage === "handoff");
 check("[S6a] PII abre somente na mensagem direta do vendedor", sentTexts[0]?.includes("CPF: 11144477735") === true && sentTexts[0]?.includes("Data de nascimento: 01/10/1997") === true);
 check("[S6b] gerente nunca recebe CPF/data", sentTexts[1] != null && !sentTexts[1].includes("11144477735") && !sentTexts[1].includes("01/10/1997"));
 check("[S6c] outbox guarda somente refs opacas", !JSON.stringify(notifyRecord.payload).includes("11144477735") && !JSON.stringify(notifyRecord.payload).includes("01/10/1997"));

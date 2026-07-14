@@ -33,7 +33,7 @@ const RELATIONS = new Set<TurnInterpretation["relation"]>([
 const QUERY_TOOLS = new Set(["stock_search", "vehicle_details", "vehicle_photos_resolve", "crm_read"]);
 const EFFECT_KINDS = new Set(["send_message", "send_media", "crm_write", "schedule_visit", "handoff", "notify_seller"]);
 const MUTATION_OPS = new Set([
-  "set_slot", "set_slot_ref", "resolve_objective", "supersede_objective",
+  "set_slot", "set_slot_ref", "decline_slot", "resolve_objective", "supersede_objective",
   "add_rejected", "set_planned_objective", "append_lead_turn",
 ]);
 const MONEY_ROLES = new Set(["vehicle_price", "down_payment", "installment", "budget"]);
@@ -203,6 +203,9 @@ function validMutation(value: unknown): boolean {
     return value.slot === "cpf" && isRecord(value.ref) && isNonEmptyString(value.ref.ref) &&
       ["cpf", "secret"].includes(String(value.ref.kind)) && isNonEmptyString(value.sourceTurnId);
   }
+  if (value.op === "decline_slot") {
+    return ["entrada", "parcelaDesejada"].includes(String(value.slot)) && isNonEmptyString(value.sourceTurnId);
+  }
   if (value.op === "resolve_objective") {
     return isNonEmptyString(value.objectiveId) && ["satisfied", "declined"].includes(String(value.status));
   }
@@ -357,7 +360,7 @@ export class PromptBoundConversationAdapter implements DecisionLlm, TurnUndersta
     const step = decodeStep(raw);
     if (step.kind === "final") {
       for (const mutation of step.proposal.facts) {
-        if ((mutation.op === "set_slot" || mutation.op === "set_slot_ref") && mutation.sourceTurnId !== ctx.turnId) {
+        if ((mutation.op === "set_slot" || mutation.op === "set_slot_ref" || mutation.op === "decline_slot") && mutation.sourceTurnId !== ctx.turnId) {
           throw new ModelOutputError("MODEL_DECISION_INVALID", "facts.sourceTurnId");
         }
         if (mutation.op === "set_planned_objective" && mutation.planned.plannedInTurnId !== ctx.turnId) {

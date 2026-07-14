@@ -30,8 +30,15 @@ export type SlotMutation =
   | { op: "set_slot"; slot: "conheceLoja"; value: boolean; confidence: number; sourceTurnId: Id }
   | { op: "set_slot"; slot: "interesseVisita"; value: boolean; confidence: number; sourceTurnId: Id };
 
+export type DeclineSlotMutation = {
+  op: "decline_slot";
+  slot: "entrada" | "parcelaDesejada";
+  sourceTurnId: Id;
+};
+
 export type DecisionMutation =
   | SlotMutation
+  | DeclineSlotMutation
   | { op: "resolve_objective"; objectiveId: Id; status: "satisfied" | "declined" }
   | { op: "supersede_objective"; objectiveId: Id }
   // item 5 (Codex): o slot pendente foi DEFERIDO neste turno (o lead falou de outra coisa) — incrementa o

@@ -11,11 +11,11 @@ export type FollowupDue = {
   cycle: FollowupCycle;
 };
 
-function latestOrdinaryDeliveredMessage(records: readonly OutboxRecord[]): OutboxRecord | null {
+function latestOrdinaryAcceptedMessage(records: readonly OutboxRecord[]): OutboxRecord | null {
   return records
     .filter((record) => record.kind === "send_message"
       && record.status === "succeeded"
-      && record.receiptLevel === "delivered"
+      && (record.receiptLevel === "accepted" || record.receiptLevel === "delivered")
       && !record.effectId.startsWith("followup:"))
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
 }
@@ -41,7 +41,7 @@ export function evaluateFollowupDue(args: {
     && record.status !== "failed"
     && record.status !== "skipped");
   if (handoffInFlight) return null;
-  const anchor = latestOrdinaryDeliveredMessage(args.outbox);
+  const anchor = latestOrdinaryAcceptedMessage(args.outbox);
   if (!anchor) return null;
   const anchorMs = Date.parse(anchor.createdAt);
   const nowMs = Date.parse(args.now);

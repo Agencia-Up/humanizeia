@@ -3,15 +3,13 @@
 // O cérebro PROPÕE apenas o ATO ({kind:"handoff", reason}); o ENGINE (aqui)
 // materializa a cadeia executável com autoridade de domínio:
 //
-//   send_message (anúncio ao lead, DELIVERED-gated) ->
+//   send_message (aceito pelo provedor) ->
 //   crm_write (delivered síncrono) ->
 //   handoff (saga: claim + pendente + briefing) ->
 //   notify_seller (vendedor resolvido pela saga + gerente best-effort)
 //
-// Ordem/dependência = missão HF (efeitos só avançam com o receipt exigido):
-// o send_message do turno ganha o outcome `mark_message_delivered` (NÃO é
-// accepted-safe) => o effect-policy passa a exigir receipt DELIVERED do reply
-// antes de liberar a cadeia — o flush pós-receipt (server) despacha o resto.
+// Ordem/dependência = missão HF: cada efeito avança com o receipt realmente
+// suportado por ele; mídia e mutações críticas continuam exigindo delivered.
 // A LLM NUNCA fornece sellerId/UUID; leadId/briefing/etiquetas nascem AQUI do
 // estado factual. Módulo puro: zero IO, testável offline.
 // ============================================================================
@@ -104,17 +102,9 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
   const reply = withoutHandoff.find((p): p is SendMessagePlan => p.kind === "send_message");
   const crm = withoutHandoff.find((p) => p.kind === "crm_write");
 
-  // DELIVERED-gate do anúncio (missão HF ordem mínima): mark_message_delivered NÃO é accepted-safe,
-  // então o effect-policy exige receipt delivered do reply p/ satisfazer a dependência da cadeia.
-  const gatedPlans = withoutHandoff.map((p) => {
-    if (p !== reply) return p;
-    const alreadyGated = p.onSuccess.some((o) => o.op === "mark_message_delivered");
-    return alreadyGated ? p : {
-      ...p,
-      onSuccess: [...p.onSuccess, { op: "mark_message_delivered" as const, effectId: p.effectId, messageId: "handoff_delivery_gate" }],
-    };
-  });
-
+  // The reply dependency uses the receipt level supported by its outcomes. A
+  // regular text reply is accepted-safe; media and state-bearing outcomes keep
+  // their stronger delivered requirement in effect-policy.
   const handoffPlanId = "handoff";
   const notifyPlanId = "notify-seller";
   const correlationId = effectIdFor(args.turnId, handoffPlanId);
@@ -154,5 +144,5 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
     onSuccess: [{ op: "mark_handoff_completed", effectId: effectIdFor(args.turnId, notifyPlanId) }],
   };
 
-  return { planned: true, reason, effectPlan: [...gatedPlans, handoffPlan, notifyPlan], briefing };
+  return { planned: true, reason, effectPlan: [...withoutHandoff, handoffPlan, notifyPlan], briefing };
 }

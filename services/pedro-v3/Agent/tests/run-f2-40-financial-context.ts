@@ -193,6 +193,9 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
+function finUM(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding, stateMutations: AgentBrainDecision["stateMutations"]): AgentBrainStep {
+  return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations } as AgentBrainDecision };
+}
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 
 // Cérebro lista SUVs; depois seleciona o primeiro (Compass); depois pergunta parcela.
@@ -317,6 +320,38 @@ async function runEngine(): Promise<void> {
     const t = await c.t("quais as condições?", singleFin);
     check("[G5] LLM conduz financiamento com UMA pergunta (brain_final, sem fallback)", t.src === "brain_final", `src=${t.src}`);
     check("[G5b] texto final tem UMA pergunta financeira (não entrada E financiamento juntos)", t.committed && !(has(t.outbox, "entrada") && has(t.outbox, "financ")), `outbox="${t.outbox}"`);
+  }
+
+  // CASO REAL: o lead nao tem uma parcela ideal. A LLM registra a ausencia de
+  // preferencia no slot pendente e avanca; nao repete a mesma pergunta.
+  {
+    const c = await selectedCompassThenAsk(askParcela);
+    const declineParcela: BrainResponder = (frame) => finUM(
+      [txt("Sem problema, a simulacao pode definir a parcela. Vou seguir com os demais dados.")],
+      "financial_preference_declined",
+      finConductU(frame.block.slice(0, 40)),
+      [{ op: "decline_slot", slot: "parcelaDesejada", sourceTurnId: frame.turnId }] as never,
+    );
+    const t = await c.t("nao sei, depende do financiamento", declineParcela);
+    check("[G1g] ausencia de preferencia de parcela vira slot declined", t.slots?.parcelaDesejada.status === "declined", JSON.stringify(t.slots?.parcelaDesejada));
+    check("[G1h] ausencia de preferencia nao busca estoque", t.stockCalls === 0 && t.stockObs === 0, `calls=${t.stockCalls} obs=${t.stockObs}`);
+    check("[G1i] LLM acolhe e avanca sem repetir a pergunta", /^brain_/.test(t.src ?? "") && !has(t.outbox, "qual parcela"), `src=${t.src} outbox=${JSON.stringify(t.outbox)}`);
+  }
+
+  // Se o lead informar um valor explicito, o fato novo substitui a ausencia.
+  // Uma resposta que contradiga o slot conhecido e negada e volta para a LLM.
+  {
+    const c = await selectedCompassThenAsk(askParcela);
+    let attempt = 0;
+    const contradictThenCorrect: BrainResponder = (frame) => {
+      attempt += 1;
+      return attempt === 1
+        ? finU([txt("Como voce nao tem uma parcela ideal definida, vou chamar o consultor.")], "wrong_financial_echo", finConductU(frame.block.slice(0, 40)))
+        : finU([txt("Anotei a parcela de ate R$ 2.000. Vou seguir com a qualificacao.")], "financial_value_ack", finConductU(frame.block.slice(0, 40)));
+    };
+    const t = await c.t("ate 2k ta bom", contradictThenCorrect);
+    check("[G1j] 'ate 2k' grava parcela=2000", t.slots?.parcelaDesejada.status === "known" && t.slots?.parcelaDesejada.value === 2000, JSON.stringify(t.slots?.parcelaDesejada));
+    check("[G1k] contradicao ao valor conhecido e negada e reautora pela LLM", t.src === "brain_retry" && has(t.outbox, "2.000"), `src=${t.src} outbox=${JSON.stringify(t.outbox)}`);
   }
 
   // CASO ENCODING (incidente real): a gpt-4.1-mini emite a resposta com CARACTERES DE CONTROLE embutidos (corrompida) ->

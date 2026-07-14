@@ -333,11 +333,18 @@ REGRAS DE FERRO (o sistema BLOQUEIA respostas que citem veículo/preço fora dos
   unica proxima pergunta e o horario; nao peca nome nem outro dado antes. Nao diga "agendei/vou agendar/agendo"
   sem um effect schedule_visit ou handoff executavel.
 
+- RESPOSTA FINANCEIRA SEM VALOR: se o cliente responder a uma pergunta de ENTRADA ou PARCELA dizendo que nao sabe,
+  nao tem preferencia, depende da simulacao ou aceita qualquer valor, ele RESPONDEU o slot sem fornecer numero. Emita
+  {"op":"decline_slot","slot":"entrada"|"parcelaDesejada"}; acolha UMA vez e avance segundo o funil do portal.
+  NUNCA repita indefinidamente a mesma pergunta e NUNCA invente zero ou outro valor. Se depois ele informar um valor
+  explicito, set_slot substitui normalmente a preferencia anterior.
+
 memoryMutations (opcional): [{"op":"set_active_topic","topic":"..","origin":"lead_message|agent_offer|recall|carryover"},
   {"op":"set_lead_intent","intent":"discover_stock|more_options|vehicle_detail|photo_request|photo_memory_question|institutional_question|funnel_answer|buy_now|objection|greeting|smalltalk|other","confidence":0-1,"evidence":["..."]},
   {"op":"set_conversation_summary","summary":".."}]
-stateMutations (opcional, SÓ fatos que o cliente REALMENTE disse): [{"op":"set_slot","slot":"tipoVeiculo|interesse|faixaPreco|possuiTroca|formaPagamento|nome|entrada|parcelaDesejada|cidade|diaHorario","value":<valor>},
-  {"op":"select_vehicle_focus","vehicleKey":".."}]  // NÃO grave possuiTroca a menos que o cliente responda claramente sobre TROCA.
+stateMutations (opcional, SO fatos que o cliente REALMENTE disse): [{"op":"set_slot","slot":"tipoVeiculo|interesse|faixaPreco|possuiTroca|formaPagamento|nome|entrada|parcelaDesejada|cidade|diaHorario","value":<valor>},
+  {"op":"decline_slot","slot":"entrada|parcelaDesejada"}, {"op":"select_vehicle_focus","vehicleKey":".."}]
+  // NAO grave possuiTroca a menos que o cliente responda claramente sobre TROCA.
 Devolva SOMENTE o JSON.`;
 
 const HANDOFF_PROTOCOL = `
@@ -665,6 +672,9 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         else if (slot === "parcelaDesejada") { const v = num(m.value); if (v != null && v >= 0) out.push({ op: "set_slot", slot: "parcelaDesejada", value: v, confidence, sourceTurnId: turnId }); }
         else if (slot === "possuiTroca") { if (typeof m.value === "boolean") out.push({ op: "set_slot", slot: "possuiTroca", value: m.value, confidence, sourceTurnId: turnId }); }
         else if (slot === "formaPagamento") { const v = str(m.value); if (v && ["a_vista", "financiamento", "consorcio", "troca"].includes(v)) out.push({ op: "set_slot", slot: "formaPagamento", value: v as never, confidence, sourceTurnId: turnId }); }
+      } else if (m.op === "decline_slot") {
+        const slot = str(m.slot);
+        if (slot === "entrada" || slot === "parcelaDesejada") out.push({ op: "decline_slot", slot, sourceTurnId: turnId });
       } else if (m.op === "select_vehicle_focus") {
         const key = str(m.vehicleKey) ?? (isRecord(m.vehicle) ? str(m.vehicle.key) : null);
         if (key) out.push({ op: "select_vehicle_focus", vehicle: { kind: "vehicle", key, label: str(m.label) ?? key }, sourceTurnId: turnId });

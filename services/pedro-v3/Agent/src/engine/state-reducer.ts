@@ -175,6 +175,19 @@ export function applyDecision(
         next.slots[m.slot] = { status: "known", ref: m.ref, sourceTurnId: m.sourceTurnId, updatedAt: expectedNow };
         break;
       }
+      case "decline_slot": {
+        if (m.sourceTurnId !== expectedTurnId) {
+          rejected.push({ mutation: m, reason: `sourceTurnId '${m.sourceTurnId}' diferente do turno atual '${expectedTurnId}'` }); continue;
+        }
+        next.slots[m.slot] = {
+          status: "declined",
+          value: null,
+          confidence: 1,
+          sourceTurnId: m.sourceTurnId,
+          updatedAt: expectedNow,
+        };
+        break;
+      }
       case "resolve_objective": {
         if (next.currentObjective?.id === m.objectiveId) next.currentObjective.status = m.status;
         else rejected.push({ mutation: m, reason: "objetivo ativo não corresponde" });
