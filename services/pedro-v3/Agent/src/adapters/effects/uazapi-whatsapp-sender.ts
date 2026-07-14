@@ -25,6 +25,11 @@ export type UazapiSenderConfig = {
   readonly instanceName?: string | null;
   readonly tokenRef: SecretRef;
   readonly timeoutMs?: number;
+  readonly typingDelay?: {
+    readonly minMs?: number;
+    readonly maxMs?: number;
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
 };
 
 export class UazapiSenderError extends Error {
@@ -101,6 +106,11 @@ function validationFailure(message: string): WhatsAppSendResult {
   return { ok: false, code: "VALIDATION", message, retryable: false };
 }
 
+function delayForTyping(text: string, minMs: number, maxMs: number): number {
+  const estimated = Math.round(text.trim().length * 45);
+  return Math.max(minMs, Math.min(maxMs, estimated));
+}
+
 export class UazapiWhatsAppSender implements WhatsAppSendPort {
   readonly endpointBase: string;
   readonly timeoutMs: number;
@@ -108,6 +118,9 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
   readonly #transport: UazapiHttpTransport;
   readonly #tokenRef: SecretRef;
   readonly #instanceName: string | null;
+  readonly #typingMinMs: number;
+  readonly #typingMaxMs: number;
+  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(config: UazapiSenderConfig, credentialProvider: CredentialProvider, transport: UazapiHttpTransport) {
     const base = parseBaseUrl(config.baseUrl, config.allowedHosts);
@@ -124,6 +137,14 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
     this.#transport = transport;
     this.#tokenRef = config.tokenRef;
     this.#instanceName = typeof config.instanceName === "string" && config.instanceName.trim() ? config.instanceName.trim() : null;
+    const typingMinMs = config.typingDelay?.minMs ?? 700;
+    const typingMaxMs = config.typingDelay?.maxMs ?? 2_800;
+    if (!Number.isInteger(typingMinMs) || !Number.isInteger(typingMaxMs) || typingMinMs < 0 || typingMaxMs < typingMinMs || typingMaxMs > 10_000) {
+      throw new UazapiSenderError("UAZAPI_CONFIG_INVALID");
+    }
+    this.#typingMinMs = typingMinMs;
+    this.#typingMaxMs = typingMaxMs;
+    this.#sleep = config.typingDelay?.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   toJSON(): Record<string, unknown> {
@@ -132,6 +153,7 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
       timeoutMs: this.timeoutMs,
       tokenRef: this.#tokenRef,
       hasInstanceName: this.#instanceName !== null,
+      typing: { minMs: this.#typingMinMs, maxMs: this.#typingMaxMs },
     };
   }
 
@@ -148,14 +170,23 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
       attempts.push({ url: this.url(`/message/sendText/${encodeURIComponent(this.#instanceName)}`), body: { number: destination, text: input.text, track_source: "pedro_v3", track_id: input.idempotencyKey } });
     }
 
-    let last: WhatsAppSendResult = failure("uazapi_http_failure", true);
-    for (const attempt of attempts) {
-      const result = await this.post(attempt.url, attempt.body);
-      if (result.ok) return result;
-      last = result;
-      if (!result.retryable) break;
+    const showTyping = input.showTyping === true;
+    if (showTyping) {
+      await this.setPresence(destination, "composing");
+      await this.#sleep(delayForTyping(input.text, this.#typingMinMs, this.#typingMaxMs));
     }
-    return last;
+    try {
+      let last: WhatsAppSendResult = failure("uazapi_http_failure", true);
+      for (const attempt of attempts) {
+        const result = await this.post(attempt.url, attempt.body);
+        if (result.ok) return result;
+        last = result;
+        if (!result.retryable) break;
+      }
+      return last;
+    } finally {
+      if (showTyping) await this.setPresence(destination, "paused");
+    }
   }
 
   async sendImage(input: WhatsAppMediaInput): Promise<WhatsAppSendResult> {
@@ -176,6 +207,33 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
 
   private url(path: string): string {
     return appendPath(new URL(this.endpointBase), path);
+  }
+
+  // Presence e puramente visual. Falhas aqui nunca impedem o envio da mensagem.
+  private async setPresence(destination: string, presence: "composing" | "paused"): Promise<void> {
+    const secret = await this.#credentialProvider.resolve(this.#tokenRef);
+    if (!secret.ok || secret.secret.purpose !== "whatsapp_instance" || !secret.secret.material.trim()) return;
+    for (const path of ["/message/presence", "/chat/presence"]) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), Math.min(this.timeoutMs, 5_000));
+      try {
+        const response = await this.#transport.postJson(this.url(path), {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            token: secret.secret.material,
+            apikey: secret.secret.material,
+          },
+          body: JSON.stringify({ number: destination, presence }),
+          signal: controller.signal,
+        });
+        if (response.ok) return;
+      } catch {
+        // Best-effort: tenta o endpoint compativel seguinte ou segue para o envio.
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   private async post(url: string, body: Record<string, unknown>): Promise<WhatsAppSendResult> {

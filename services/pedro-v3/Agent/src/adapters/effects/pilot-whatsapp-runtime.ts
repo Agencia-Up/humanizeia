@@ -33,6 +33,7 @@ export type PilotWhatsAppRuntimeConfig = {
   readonly conversationId: string;
   readonly to: string;
   readonly allowedUazapiHosts: readonly string[];
+  readonly typingEnabled?: boolean;
 };
 
 export type PilotWhatsAppRuntimeErrorCode =
@@ -85,6 +86,7 @@ export async function createPilotWhatsAppDispatcher(
       clock: deps.clock,
       sender,
       photoSource: deps.photoSource,
+      typingEnabled: config.typingEnabled === true,
     }),
   };
 }

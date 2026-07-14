@@ -161,6 +161,7 @@ function makeUazapiSender(args: { transport?: FakeUazapiTransport; material?: st
     instanceName: args.instanceName ?? "pilot-instance",
     tokenRef,
     timeoutMs: 250,
+    typingDelay: { minMs: 0, maxMs: 0, sleep: async () => undefined },
   }, credentials, transport);
   return { sender, transport, credentials };
 }
@@ -418,6 +419,16 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   const serialized = JSON.stringify(result);
   check("uazapi", "text retries remoteJid fallback after retryable 500", result.ok && result.providerMessageId === "fallback-ok" && transport.calls.length === 2, JSON.stringify({ result, calls: transport.calls.map(c => c.url) }));
   check("uazapi", "failed body with token is not returned", !serialized.includes("SECRET-UAZAPI-TOKEN") && !serialized.includes("api.uazapi.example"), serialized);
+}
+
+// 12b) O indicador visual e best-effort e acontece apenas quando o dispatcher envia ao lead.
+{
+  const { sender, transport } = makeUazapiSender();
+  const result = await sender.sendText({ to: "5512999999999", text: "Oi, posso ajudar?", idempotencyKey: "typing-1", showTyping: true });
+  const calls = transport.calls.map((call) => ({ url: call.url, body: JSON.parse(call.request.body) as Record<string, unknown> }));
+  check("uazapi", "typing envia composing antes do texto", calls[0]?.url.endsWith("/message/presence") && calls[0]?.body.presence === "composing", JSON.stringify(calls));
+  check("uazapi", "typing envia texto entre composing e paused", calls[1]?.url.endsWith("/send/text") && calls[2]?.url.endsWith("/message/presence") && calls[2]?.body.presence === "paused", JSON.stringify(calls));
+  check("uazapi", "typing preserva a entrega do texto", result.ok && result.level === "accepted", JSON.stringify(result));
 }
 
 // 13) Uazapi media sends only HTTPS media URL and returns accepted.

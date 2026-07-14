@@ -292,6 +292,8 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }),
       whatsappTransport: new FetchUazapiHttpTransport(),
       allowedUazapiHosts: this.#allowedUazapiHosts,
+      // UX de WhatsApp: presence falha aberta e nunca participa da decisao comercial da LLM.
+      typingEnabled: process.env.PEDRO_V3_TYPING?.trim().toLowerCase() !== "off",
       brainMode,
       agentBrainFactory,
       // FASE 1 CRM (missão 2026-07-09): OFF por default (fail-closed). Liga SÓ com PEDRO_V3_CRM_WRITE=active

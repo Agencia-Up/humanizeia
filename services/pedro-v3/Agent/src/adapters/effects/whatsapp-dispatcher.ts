@@ -27,6 +27,9 @@ export type WhatsAppTextInput = {
   readonly to: string;
   readonly text: string;
   readonly idempotencyKey: string;
+  // UX de transporte: somente a mensagem que vai ao lead pede presenca "digitando".
+  // Notificacoes de vendedor usam a mesma porta, mas nao devem simular digitacao.
+  readonly showTyping?: boolean;
 };
 
 export type WhatsAppMediaInput = {
@@ -48,6 +51,8 @@ export type WhatsAppDispatcherOptions = {
   readonly clock: Clock;
   readonly sender: WhatsAppSendPort;
   readonly photoSource: VehiclePhotoSource;
+  // Ativado pelo runtime de producao. Em testes e composicoes antigas, ausente = sem delay visual.
+  readonly typingEnabled?: boolean;
 };
 
 function toolError(code: ToolError["code"], message: string, retryable: boolean): ToolError {
@@ -142,6 +147,7 @@ export class WhatsAppEffectDispatcher implements EffectDispatcher {
         to: this.opts.to,
         text,
         idempotencyKey: record.idempotencyKey,
+        showTyping: this.opts.typingEnabled === true,
       });
     } catch (error) {
       const label = safeErrLabel(error);

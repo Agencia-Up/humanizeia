@@ -74,6 +74,7 @@ export type PilotActiveDeps = {
   readonly independentClaimExtractor?: ClaimExtractor;
   readonly whatsappTransport: UazapiHttpTransport;
   readonly allowedUazapiHosts: readonly string[];
+  readonly typingEnabled?: boolean;
   // R13-D/4: modo do cérebro (default off) + fábrica do AgentBrain REAL (OpenAI). Sem a fábrica, central_* cai em off.
   readonly brainMode?: PilotBrainMode;
   readonly agentBrainFactory?: (config: TenantRuntimeConfig) => AgentBrainPort;
@@ -197,6 +198,7 @@ export class PilotActiveRoot {
     private readonly whatsappTransport: UazapiHttpTransport,
     private readonly photoSource: V2VehiclePhotoSource,
     private readonly allowedUazapiHosts: readonly string[],
+    private readonly typingEnabled: boolean,
     private readonly sdrPolicy: SdrQualificationPolicy,
     private readonly brainMode: PilotBrainMode,
     private readonly agentBrain: AgentBrainPort | null,
@@ -278,6 +280,7 @@ export class PilotActiveRoot {
       deps.whatsappTransport,
       photoSource,
       deps.allowedUazapiHosts,
+      deps.typingEnabled === true,
       buildSdrQualificationPolicy(runtimeConfig),
       brainMode,
       agentBrain,
@@ -449,7 +452,7 @@ export class PilotActiveRoot {
   async #dispatchIfCommitted(input: PilotActiveProcessInput, committed: boolean): Promise<number> {
     if (!committed) return 0;
     const dispatcherRuntime = await createPilotWhatsAppDispatcher({
-      ref: this.ref, conversationId: input.conversationId, to: input.to, allowedUazapiHosts: this.allowedUazapiHosts,
+      ref: this.ref, conversationId: input.conversationId, to: input.to, allowedUazapiHosts: this.allowedUazapiHosts, typingEnabled: this.typingEnabled,
     }, {
       configSource: this.configSource, instanceSource: this.instanceSource, credentialProvider: this.credentialProvider,
       httpTransport: this.whatsappTransport, photoSource: this.photoSource, clock: this.clock,
