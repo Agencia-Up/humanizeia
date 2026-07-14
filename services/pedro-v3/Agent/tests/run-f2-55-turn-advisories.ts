@@ -76,7 +76,7 @@ console.log("\n== F2.55 (parte 1b) — buildTurnAdvisories: orientações respei
 function base(over: Partial<TurnAdvisoryInput> = {}): TurnAdvisoryInput {
   return {
     isFirstContact: false, adVehicleLabel: null, needsDiscovery: false, suppressDiscovery: false,
-    suppressFunnelQuestion: false, portalNextQuestion: null, knownName: null, contactPhoneKnown: false,
+    suppressFunnelQuestion: false, portalNextQuestion: null, knownName: null, identifiedNameThisTurn: null, contactPhoneKnown: false,
     paymentTurnWithChosenCar: false, justAnsweredFinancialSlot: null, disengagementOnly: false,
     institutionalHookNeeded: false, knownFunnelSlots: [], ...over,
   };
@@ -127,6 +127,10 @@ const hasFunnelNext = (a: string[]) => a.some((s) => /proximo passo da qualifica
 {
   const a = buildTurnAdvisories(base({ knownName: "Douglas" }));
   check("[G] nome conhecido -> não repergunte", a.some((s) => /ja sabe o nome do cliente \(douglas\)/.test(N(s))), a.join(" | ").slice(0, 120));
+}
+{
+  const a = buildTurnAdvisories(base({ knownName: "Eliana", identifiedNameThisTurn: "Eliana" }));
+  check("[G2] nome informado agora -> acolhe sem retomar veiculo/tool", a.some((s) => /bloco atual identifica.*eliana/.test(N(s)) && /nao e um veiculo/.test(N(s)) && /nao retome ferramenta/.test(N(s))), a.join(" | ").slice(0, 160));
 }
 // H. ordem financeira configurada no portal -> respeitada (a pergunta do portal aparece).
 {

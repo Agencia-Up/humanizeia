@@ -22,6 +22,7 @@ export type PilotIngestInput = {
   // F2.32 (CTWA): contexto de anúncio SANITIZADO (do bridge). Guardado no raw do inbox; o engine resolve o veículo e
   // persiste no state (herda em rajada). CONTEXTO, não resposta do lead. Opaco aqui (o engine valida o shape).
   readonly adContext?: unknown;
+  readonly mediaContext?: unknown;
   // ⭐SEM inv.7: hint de nome do WhatsApp (pushName sanitizado no bridge). Viaja no raw; o engine valida (isRealLeadName).
   readonly leadNameHint?: string | null;
   readonly tenantId?: string;
@@ -76,6 +77,7 @@ export async function ingestPilotMessage(
       text: sanitizedText,
       ...(sensitive.findings.length > 0 ? { sensitive: sensitive.findings.map((f) => ({ kind: f.kind, valid: f.valid, ...(f.kind !== "birth_date" ? { last4: f.last4 } : {}) })) } : {}),
       ...(input.adContext != null ? { adContext: input.adContext } : {}),
+      ...(input.mediaContext != null ? { mediaContext: input.mediaContext } : {}),
       ...(input.leadNameHint ? { leadNameHint: input.leadNameHint } : {}),
     }) as unknown as Record<string, JsonValue>),
     receivedAt: input.receivedAt ?? clock.now(),

@@ -17,7 +17,12 @@ function stockItemsFromFacts(facts: QueryResult[]): VehicleFact[] {
 }
 
 // Devolve a lista estruturada SE este turno renderizou uma oferta; senao null (preserva a anterior).
-export function computeRenderedOfferContext(turnOutput: TurnOutput, turnId: Id, now: Iso): LastRenderedOfferContext | null {
+export function computeRenderedOfferContext(
+  turnOutput: TurnOutput,
+  turnId: Id,
+  now: Iso,
+  previous: LastRenderedOfferContext | null = null,
+): LastRenderedOfferContext | null {
   // 1) handler deterministico (ex.: economy) ja forneceu os itens (na ordem)
   if (turnOutput.renderedOfferContext && turnOutput.renderedOfferContext.length > 0) {
     return { sourceTurnId: turnId, createdAt: now, items: [...turnOutput.renderedOfferContext] };
@@ -32,7 +37,22 @@ export function computeRenderedOfferContext(turnOutput: TurnOutput, turnId: Id, 
   const stock = stockItemsFromFacts(turnOutput.facts);
   const items: RenderedOfferItem[] = keys.map((key, i) => {
     const v = stock.find((s) => s.vehicleKey === key);
-    return { ordinal: i + 1, vehicleKey: key, marca: v?.marca ?? null, modelo: v?.modelo ?? null, ano: v?.ano ?? null, preco: typeof v?.preco === "number" ? v.preco : null, cor: v?.cor ?? null, cambio: v?.cambio ?? null, tipo: v?.tipo ?? null };
+    // Reapresentar uma lista para desambiguar foto/seleção não deve apagar a
+    // identidade estruturada que o próprio agente exibiu no turno anterior.
+    // O carry-over é estritamente pela mesma vehicleKey; texto livre e chaves
+    // propostas pela LLM nunca criam metadados novos.
+    const remembered = previous?.items.find((item) => item.vehicleKey === key);
+    return {
+      ordinal: i + 1,
+      vehicleKey: key,
+      marca: v?.marca ?? remembered?.marca ?? null,
+      modelo: v?.modelo ?? remembered?.modelo ?? null,
+      ano: v?.ano ?? remembered?.ano ?? null,
+      preco: typeof v?.preco === "number" ? v.preco : remembered?.preco ?? null,
+      cor: v?.cor ?? remembered?.cor ?? null,
+      cambio: v?.cambio ?? remembered?.cambio ?? null,
+      tipo: v?.tipo ?? remembered?.tipo ?? null,
+    };
   });
   return { sourceTurnId: turnId, createdAt: now, items };
 }

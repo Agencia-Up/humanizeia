@@ -95,26 +95,31 @@ export type TurnValidationContext = {
 function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: readonly TurnUnderstandingEvidence[], context?: TurnValidationContext): string[] {
   const issues: string[] = [];
   const norm = normalizeText(block);
-  const explicitActs = new Set<PrimaryIntent>();
-  if (VISIT_ACT_RX.test(norm)) explicitActs.add("visit");
-  if (HUMAN_ACT_RX.test(norm)) explicitActs.add("request_human");
-  if (leadRequestsPhoto(block)) explicitActs.add("request_photos");
-  if (VEHICLE_DETAIL_ACT_RX.test(norm)) explicitActs.add("vehicle_detail");
-  if (FINANCING_ACT_RX.test(norm)) explicitActs.add("financing");
-  if (institutionalTopicsRequested(block).length > 0 || mentionsContact(block)) explicitActs.add("institutional");
-  if (SELECTION_ACT_RX.test(norm) || parseOrdinal(block) != null) explicitActs.add("select_vehicle");
-  if (SENSITIVE_DATA_ACT_RX.test(norm)) explicitActs.add("sensitive_data");
-
-  const stockGroundingForCurrentVehicle = u.primaryIntent === "search_stock"
-    && u.requestedCapabilities.includes("stock_search")
-    && explicitActs.size === 1
-    && explicitActs.has("vehicle_detail");
-  if (explicitActs.size > 0 && !explicitActs.has(u.primaryIntent) && !stockGroundingForCurrentVehicle) {
-    issues.push(`o bloco atual declara ${[...explicitActs].join("/")}, mas primaryIntent=${u.primaryIntent}`);
+  // A LLM e a autoridade semantica do turno. Nao derive um segundo
+  // primaryIntent por regex: mensagens reais frequentemente combinam loja,
+  // estoque, foto e selecao no mesmo bloco. As validacoes especificas abaixo
+  // continuam provando evidencia para cada acao de risco. Apenas pedidos
+  // explicitamente prioritarios (humano e PII, nesta ordem) impedem que uma
+  // intencao antiga da memoria tome o turno atual.
+  const asksHumanNow = HUMAN_ACT_RX.test(norm) || leadRequestsHumanExplicitly(block);
+  const hasSensitiveNow = SENSITIVE_DATA_ACT_RX.test(norm);
+  if (asksHumanNow && u.primaryIntent !== "request_human") {
+    issues.push(`o bloco atual pede atendimento humano, mas primaryIntent=${u.primaryIntent}`);
+  } else if (hasSensitiveNow && u.primaryIntent !== "sensitive_data") {
+    issues.push(`o bloco atual contem dado sensivel validado, mas primaryIntent=${u.primaryIntent}`);
   }
   if (u.subject === "selected_vehicle" && u.subjectSource === "current_turn") {
     issues.push("selected_vehicle vem da memoria e nao pode ter subjectSource=current_turn");
   }
+  // Coerência interna do ato declarado pela própria LLM: dizer que o ato é
+  // busca sem autorizar stock_search no mesmo understanding produz um agente
+  // que promete/procura em texto, mas não consulta nada. O engine não infere
+  // busca por palavras; ele apenas rejeita um contrato semanticamente
+  // incompleto emitido pelo cérebro.
+  // primaryIntent and a proposed tool call are already semantic decisions made
+  // by the brain. Requiring the same decision again as a capability label made
+  // real multi-request turns fail on output-shape redundancy. Current-turn
+  // evidence, target resolution and grounding remain mandatory at execution.
   if (u.primaryIntent === "select_vehicle" || u.requestedCapabilities.includes("select")) {
     // O ato semantico de selecionar nao e uma tool: primaryIntent pode ser
     // comprovado por qualquer evidence valida que contenha a escolha. A
@@ -347,10 +352,19 @@ const TOOL_CAPABILITY: Record<string, TurnCapability> = {
   stock_search: "stock_search", vehicle_details: "vehicle_details", vehicle_photos_resolve: "send_photos",
 };
 export function toolCapabilityAuthorized(v: ValidatedUnderstanding | null, tool: string): boolean {
-  if (!v || !v.fromBrain) return false;
+  if (!v || !v.fromBrain || !v.trusted) return false;
   const cap = TOOL_CAPABILITY[tool];
   if (!cap) return false;
-  return v.understanding.requestedCapabilities.includes(cap) && capabilityHasOwnEvidence(v, cap);
+  if (v.understanding.requestedCapabilities.includes(cap) && capabilityHasOwnEvidence(v, cap)) return true;
+
+  // The LLM owns the act. Valid evidence proves that act belongs to the current
+  // block; capability labels are useful metadata, not a competing authority.
+  if (tool === "stock_search") return v.understanding.primaryIntent === "search_stock" && v.validEvidence.length > 0;
+  if (tool === "vehicle_details") return v.understanding.primaryIntent === "vehicle_detail" && v.validEvidence.length > 0;
+  if (tool === "vehicle_photos_resolve") {
+    return v.validEvidence.some((e) => PHOTO_EVIDENCE_RX.test(normalizeText(e.quote)));
+  }
+  return false;
 }
 // select_vehicle_focus proposto pela LLM exige capability select + evidência própria (ordinal determinístico à parte).
 export function selectAuthorized(v: ValidatedUnderstanding | null): boolean {

@@ -10,6 +10,7 @@
 // use the right stock tool to conduct the conversation?"
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 
 import { SupabaseReadOnlyDatabase } from "../src/adapters/read/supabase-read-database.ts";
@@ -60,7 +61,7 @@ import type {
   PhotoResolveResult,
 } from "../src/domain/read-ports.ts";
 import type { AgentBrainPort, AgentBrainStep, AgentToolObservation, TurnFrame } from "../src/domain/agent-brain.ts";
-import type { QueryCall, QueryResult, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
+import type { QueryCall, QueryResult, EffectReceipt, EffectResult, OutboxRecord } from "../src/domain/decision.ts";
 import type {
   OwnedAgentRow,
   OwnedCrmLeadRow,
@@ -82,7 +83,7 @@ const MODEL = "deepseek-chat";
 const DEEPSEEK_PROXY_URL = "https://seyljsqmhlopkcauhlor.supabase.co/functions/v1/pedro-v3-deepseek-eval-proxy";
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const RUNTIME: TenantAgentRef = { tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID };
-const CARVALHO_BNDV: TenantAgentRef = { tenantId: "f49fd48a-4386-4009-95f3-26a5100b84f7", agentId: "aee7e916-31b1-431c-ba6f-f38178fd4899" };
+export const CARVALHO_BNDV: TenantAgentRef = { tenantId: "f49fd48a-4386-4009-95f3-26a5100b84f7", agentId: "aee7e916-31b1-431c-ba6f-f38178fd4899" };
 const MANU_REVENDA: TenantAgentRef = { tenantId: "7e23b020-0377-4120-a6a4-502701d62208", agentId: "03421f26-f4e3-48f1-a791-24fc438e9b3d" };
 const LIMITS = { maxSteps: 4, totalTimeoutMs: 200_000, proposeTimeoutMs: 90_000, queryTimeoutMs: 25_000, composeTimeoutMs: 40_000 } as const;
 const ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] as const;
@@ -90,7 +91,7 @@ const ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolv
 type AdRow = { created_at: string; content: string; metadata: Record<string, unknown> };
 type ToolLog = { tool: string; input: Record<string, unknown>; ok: boolean; itemCount?: number; keys?: string[] };
 type EffectLog = { kind: string; vehicleKey?: string; photoCount?: number; status: string };
-type TurnLog = {
+export type TurnLog = {
   turn: number;
   lead: string;
   response: string;
@@ -108,8 +109,9 @@ type TurnLog = {
   policyFeedback: string[];
   controlFeedback: string[];
   brainSteps: number;
+  effectRecords: OutboxRecord[];
 };
-type Scenario = {
+export type Scenario = {
   id: string;
   label: string;
   sourceRef: TenantAgentRef;
@@ -169,7 +171,7 @@ async function restRows<T>(table: string, params: URLSearchParams): Promise<T[]>
   return await res.json() as T[];
 }
 
-function adFromMetadata(meta: Record<string, unknown>): AdContext | null {
+export function adFromMetadata(meta: Record<string, unknown>): AdContext | null {
   const raw = (meta.ctwa_ad ?? meta.ad_context ?? meta.externalAdReply) as Record<string, unknown> | undefined;
   if (!raw || typeof raw !== "object") return null;
   const str = (v: unknown): string | null => typeof v === "string" && v.trim() ? v.trim() : null;
@@ -401,14 +403,17 @@ function diffSlots(
     .map((slot) => ({ slot, from: left[slot] ?? "-", to: right[slot] ?? "-" }));
 }
 
-async function runScenario(s: Scenario): Promise<TurnLog[]> {
+export async function runScenario(
+  s: Scenario,
+  opts: { readonly leadId?: string; readonly leadPhone?: string; readonly conversationIdPrefix?: string } = {},
+): Promise<TurnLog[]> {
   const a = await buildAssembly(s.sourceRef);
   const base = { ms: Date.parse("2026-07-07T10:00:00.000Z") };
   const clock = { now: () => new Date(base.ms).toISOString() };
   const persistence = new InMemoryPersistence(clock as never, new FakeIdGen());
-  const convId = `crossad-${s.id}-${Date.now()}`;
+  const convId = `${opts.conversationIdPrefix ?? "crossad"}-${s.id}-${Date.now()}`;
   const tx = persistence.begin();
-  const fakeLeadId = "54545454-5454-4454-8454-545454545454";
+  const fakeLeadId = opts.leadId ?? "54545454-5454-4454-8454-545454545454";
   tx.casState(convId, 0, createInitialState({ conversationId: convId, tenantId: RUNTIME.tenantId, agentId: RUNTIME.agentId, leadId: fakeLeadId, now: clock.now() }));
   const seeded = await tx.commit();
   if (!seeded.ok) throw new Error(`SEED_FAILED:${seeded.reason}`);
@@ -464,7 +469,7 @@ async function runScenario(s: Scenario): Promise<TurnLog[]> {
         enabled: true,
         available: true,
         agentName: a.runtimeConfig.agentName,
-        leadPhone: "5512999999999",
+        leadPhone: opts.leadPhone ?? "5512999999999",
         nowLocal: "12/07/2026 15:00",
       },
     });
@@ -498,6 +503,7 @@ async function runScenario(s: Scenario): Promise<TurnLog[]> {
       policyFeedback: r.status === "committed" ? [...r.policyFeedback] : [],
       controlFeedback: r.status === "committed" ? r.toolObservations.flatMap((o) => !o.ok ? [`${o.error.code}:${o.error.message}`] : []) : [],
       brainSteps: r.status === "committed" ? r.brainSteps : 0,
+      effectRecords: outbox as unknown as OutboxRecord[],
     });
     base.ms += 30_000;
   }
@@ -538,7 +544,7 @@ async function pickGenericAds(sourceRef: TenantAgentRef, label: string): Promise
   return chosen;
 }
 
-function baseViolations(turns: TurnLog[]): string[] {
+export function baseViolations(turns: TurnLog[]): string[] {
   const out: string[] = [];
   for (const t of turns) {
     if (t.status !== "committed") out.push(`T${t.turn}: status=${t.status}`);
@@ -722,7 +728,7 @@ async function buildScenarios(): Promise<Scenario[]> {
   return [hb20, fastback, ecosport];
 }
 
-function mdTable(turns: TurnLog[]): string {
+export function mdTable(turns: TurnLog[]): string {
   const rows = turns.map((t) => {
     const tools = t.tools.map((x) => {
       const n = x.itemCount != null ? `(${x.itemCount})` : "";
@@ -782,4 +788,5 @@ async function main(): Promise<void> {
   if (failures) process.exitCode = 1;
 }
 
-await main();
+const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
+if (import.meta.url === invokedPath) await main();

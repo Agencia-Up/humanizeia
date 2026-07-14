@@ -10,9 +10,11 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldBridgePedroV3Identity } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldBridgePedroV3Identity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
+import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260524.ts";
+import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
 const PEDRO_V2_BUILD = "2026-06-29-pedro-v3-no-dispatch-fallback-v222";
 
@@ -43,6 +45,48 @@ function isReactionMessage(payload: any): boolean {
     m?.reaction || m?.message?.reactionMessage || payload?.reaction ||
     payload?.message?.reactionMessage || payload?.data?.reaction || payload?.data?.message?.reactionMessage,
   );
+}
+
+function mayContainLeadMedia(payload: any): boolean {
+  const message = pickIncomingMessage(payload);
+  const kinds = [
+    message?.messageType, message?.type, message?.mediaType, message?.mimetype, message?.mimeType,
+    payload?.messageType, payload?.type, payload?.mediaType, payload?.mimetype, payload?.mimeType,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+  if (/(audio|ptt|image|video|document|sticker)/.test(kinds)) return true;
+  return Boolean(
+    message?.imageMessage || message?.audioMessage || message?.videoMessage || message?.documentMessage ||
+    message?.mediaUrl || message?.media_url || message?.fileUrl || message?.file_url ||
+    payload?.imageMessage || payload?.audioMessage || payload?.videoMessage || payload?.documentMessage,
+  );
+}
+
+async function resolvePedroV3InboundMediaContext(input: {
+  payload: any;
+  instance: any;
+  userId: string | null | undefined;
+  supabase: any;
+}): Promise<PedroV3MediaContext | null> {
+  if (!mayContainLeadMedia(input.payload)) return null;
+  try {
+    const allowPlatform = await isAccountGrandfathered(input.supabase, input.userId);
+    const resolved = await resolveAiKey(input.supabase, input.userId, "openai", { allowPlatformFallback: allowPlatform });
+    const media = await resolvePedroMediaContext(input.payload, input.instance, resolved.key || undefined);
+    if (!media.has_media_context) return null;
+    const kind = ["audio", "image", "video", "document"].includes(String(media.kind)) ? String(media.kind) as PedroV3MediaContext["kind"] : "unknown";
+    return {
+      kind,
+      text: media.text || null,
+      summary: media.summary || null,
+      vehicleQuery: media.vehicle_query || null,
+      vehicleType: media.vehicle_type || null,
+      confidence: Number(media.confidence || 0),
+      transcriptionAvailable: kind === "audio" ? Boolean(media.text) : null,
+    };
+  } catch (error) {
+    console.warn("[pedro-v3-media] context_unavailable", String((error as any)?.message || error).slice(0, 160));
+    return null;
+  }
 }
 
 // ── Connection/status event helpers ──────────────────────────────────────────
@@ -621,16 +665,29 @@ Deno.serve(async (req) => {
     }
   }
   if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
-    const bridgeTurn = await buildPedroV3BridgeTurn({
-      payload,
-      tenantId: (agent as any)?.user_id,
-      agentId: (agent as any)?.id,
-      build: PEDRO_V2_BUILD,
-    });
-    if (bridgeTurn.ok) {
-      const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
-      const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
-      _waitUntil((async () => {
+    const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
+    const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
+    _waitUntil((async () => {
+      // Keep the webhook acknowledgement fast. Media extraction is context for
+      // the v3 brain, never an edge-authored reply, and runs after the 200.
+      const mediaContext = await resolvePedroV3InboundMediaContext({
+        payload,
+        instance: waInstance,
+        userId: (agent as any)?.user_id,
+        supabase,
+      });
+      const bridgeTurn = await buildPedroV3BridgeTurn({
+        payload,
+        tenantId: (agent as any)?.user_id,
+        agentId: (agent as any)?.id,
+        build: PEDRO_V2_BUILD,
+        mediaContext,
+      });
+      if (!bridgeTurn.ok) {
+        console.warn(`[pedro-v3-bridge] unsupported inbound reason=${bridgeTurn.reason}; fallback=v2`);
+        await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+        return;
+      }
         const bridgeResult = await callPedroV3Bridge({
           serviceUrl,
           secret: bridgeSecret,
@@ -657,9 +714,7 @@ Deno.serve(async (req) => {
         // Unexpected bridge exceptions are uncertain: never risk a double reply.
         console.error("[pedro-v3-bridge] unexpected_uncertain", String((error as any)?.message || error).slice(0, 300));
       }));
-      return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3", build: PEDRO_V2_BUILD });
-    }
-    console.warn(`[pedro-v3-bridge] unsupported inbound reason=${bridgeTurn.reason}; fallback=v2`);
+    return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3", build: PEDRO_V2_BUILD });
   }
   if (!_dryRun && typeof _waitUntil === "function") {
     _waitUntil(processPedroV2Turn(supabase, _turnInput).catch(_logTurnError));

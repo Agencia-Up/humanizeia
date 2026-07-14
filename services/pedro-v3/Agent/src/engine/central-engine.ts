@@ -1935,6 +1935,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         const qview = deriveSdrQualification(contextState, sdrPolicy);
         if (qview.nextSlot) portalNextQuestionAdv = sdrPolicy.questions[qview.nextSlot] ?? null;
       }
+      const identifiedNameThisTurn = safeExtractedSlots.flatMap((mutation) => (
+        mutation.op === "set_slot" && mutation.slot === "nome" && typeof mutation.value === "string"
+          ? [mutation.value]
+          : []
+      )).at(-1) ?? null;
       const turnAdvisories = llmFirst ? buildTurnAdvisories({
         isFirstContact: isOpeningTurn && firstContactNoCommercialTarget === true,
         adVehicleLabel: specificAdEntry ? (adVehicleHint ?? null) : null,
@@ -1943,6 +1948,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         suppressFunnelQuestion,
         portalNextQuestion: portalNextQuestionAdv,
         knownName: contextState.slots.nome.status === "known" && typeof contextState.slots.nome.value === "string" ? contextState.slots.nome.value : null,
+        identifiedNameThisTurn,
         contactPhoneKnown: frame.signals.contactPhoneKnown === true,
         paymentTurnWithChosenCar: isPaymentTurn(leadMessage) && (contextState.vehicleContext.selected?.key != null || (contextState.lastRenderedOfferContext?.items?.length ?? 0) > 0),
         justAnsweredFinancialSlot: financialAnswerTurn && (financialAnswerSlot === "entrada" || financialAnswerSlot === "parcelaDesejada") ? financialAnswerSlot : null,
@@ -3024,7 +3030,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       const nextWM = persistedWM;
 
       // ── Estado: o ENGINE é a única fonte do append_lead_turn; foco invalidado pela AÇÃO do turno. ──
-      const renderedOfferContext = computeRenderedOfferContext(turnOutput, turnId, cutoff);
+      const renderedOfferContext = computeRenderedOfferContext(
+        turnOutput,
+        turnId,
+        cutoff,
+        contextState.lastRenderedOfferContext,
+      );
       const renderedItems = renderedOfferContext?.items ?? [];
       const leadTurnMutations: DecisionMutation[] = leadMessage.trim().length > 0 ? [{ op: "append_lead_turn", turn: { role: "lead", text: leadMessage, at: cutoff } }] : [];
       // ── MISSÃO P0 (Financial Question Context): o engine (extractLeadSlots) é a FONTE DE VERDADE dos VALORES monetários

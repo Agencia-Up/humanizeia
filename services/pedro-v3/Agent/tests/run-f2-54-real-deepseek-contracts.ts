@@ -1,9 +1,10 @@
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
-import { deriveFallbackUnderstanding, resolveTurnTarget, validateTurnUnderstanding } from "../src/engine/turn-understanding.ts";
+import { deriveFallbackUnderstanding, isStockSearchTurn, resolveTurnTarget, validateTurnUnderstanding } from "../src/engine/turn-understanding.ts";
 import { resolveSelectedVehicle } from "../src/engine/lead-extraction.ts";
 import { constraintsToStockInput, detectCommercialConstraints } from "../src/engine/commercial-constraints.ts";
+import { parseMoneyMentions } from "../src/engine/policy-engine.ts";
 import type { TurnUnderstanding } from "../src/domain/agent-brain.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 
@@ -35,7 +36,7 @@ console.log("== F2.54: contratos achados no audit real DeepSeek ==");
     subjectSource: "memory", isTopicChange: false, answeredLeadQuestions: [], evidence: [{ quote: block }],
   };
   const staleValidation = validateTurnUnderstanding(staleVisit, block, true);
-  check("[S-2] memoria de visita nao vence CPF/data atuais", !staleValidation.trusted && (staleValidation.semanticIssues ?? []).some((x) => x.includes("sensitive_data")), JSON.stringify(staleValidation.semanticIssues));
+  check("[S-2] memoria de visita nao vence CPF/data atuais", !staleValidation.trusted && (staleValidation.semanticIssues ?? []).some((x) => /sensivel|sensitive_data/.test(x)), JSON.stringify(staleValidation.semanticIssues));
   const current: TurnUnderstanding = { ...staleVisit, primaryIntent: "sensitive_data", subjectSource: "current_turn" };
   check("[S-3] understanding sensitive_data atual e confiavel", validateTurnUnderstanding(current, block, true).trusted);
 }
@@ -78,6 +79,11 @@ console.log("== F2.54: contratos achados no audit real DeepSeek ==");
     evidence: [{ capability: "stock_search", quote: searchBlock }],
   };
   check("[M-3] automatico em filtro de busca nao vira vehicle_detail", validateTurnUnderstanding(search, searchBlock, true).trusted);
+  const searchWithoutCapability: TurnUnderstanding = {
+    ...search, requestedCapabilities: [], evidence: [{ quote: searchBlock }],
+  };
+  const searchWithoutCapabilityValidated = validateTurnUnderstanding(searchWithoutCapability, searchBlock, true);
+  check("[M-3b] primaryIntent search_stock com evidence atual autoriza busca sem contrato duplicado", searchWithoutCapabilityValidated.trusted && isStockSearchTurn(searchWithoutCapabilityValidated));
   const adDetailSearch: TurnUnderstanding = {
     ...search, subject: "explicit_model", subjectValue: "HB20X",
     evidence: [{ capability: "stock_search", quote: "Quantos km" }],
@@ -123,6 +129,14 @@ console.log("== F2.54: contratos achados no audit real DeepSeek ==");
   check("[C-1] atributo unico da oferta resolve o item prata", selected?.key === "v-silver", JSON.stringify(selected));
   state.lastRenderedOfferContext.items.push({ ordinal: 3, vehicleKey: "v-silver-2", marca: "Fiat", modelo: "Cronos", ano: 2024, cor: "Prata" });
   check("[C-2] cor ambigua nao escolhe arbitrariamente", resolveSelectedVehicle("quero esse prata", state, extractor) == null);
+}
+
+{
+  check(
+    "[K-1] quilometragem antes do valor nunca vira dinheiro",
+    parseMoneyMentions("A quilometragem informada e de 35 mil, conforme o cliente disse.").length === 0,
+    JSON.stringify(parseMoneyMentions("A quilometragem informada e de 35 mil, conforme o cliente disse.")),
+  );
 }
 
 console.log(`\n== F2.54: ${ok} OK | ${fail} FALHA ==`);

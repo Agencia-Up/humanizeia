@@ -9,7 +9,7 @@ import { runCentralConversationTurn, applyAcceptedPhotoActionOutcome, type Centr
 import { commitEffectOutcome } from "../src/engine/effect-outcome-commit.ts";
 import {
   extractLeadSlots, inferExpectedAnswerContext, hasExplicitNewCommercialSearchIntent, isAnswerToFinancialQuestion,
-  isFinancialValueDuringSelectedFinancing,
+  isFinancialValueDuringSelectedFinancing, leadStatedMoneyValues,
 } from "../src/engine/lead-extraction.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
@@ -104,6 +104,33 @@ function runPure(): void {
   check("[P-progress-2] financiamento em andamento + compra nova explicita ainda vence", !isFinancialValueDuringSelectedFinancing("na verdade quero Onix ate 80 mil", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
   check("[P-progress-3] financiamento em andamento + 'Compass 2019' (ref. a veículo) -> NÃO é resposta financeira (ano/carro)", !isFinancialValueDuringSelectedFinancing("Compass 2019", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
   check("[P-progress-4] financiamento em andamento + '2100' pelado -> resposta financeira (ano vira valor no contexto)", isFinancialValueDuringSelectedFinancing("2100", stFinancing("Beleza, vamos seguir."), { relation: "ambiguous" } as never, extractor));
+  check("[P-money-1] '2,000 mil' informal -> 2000", leadStatedMoneyValues("Eu so recebo 2,000 mil por mes")[0] === 2000);
+  check("[P-money-2] '2.000' agrupado -> 2000", leadStatedMoneyValues("Minha renda e 2.000")[0] === 2000);
+  check("[P-money-3] '2,5 mil' decimal -> 2500", leadStatedMoneyValues("Minha renda e 2,5 mil")[0] === 2500);
+  {
+    const s = slotsOf(ENTRADA_Q, "Eu so recebo 2,000 mil por mes");
+    check("[P-income-1] renda mensal nao vira entrada/parcela/faixa", s.entrada === undefined && s.parcelaDesejada === undefined && s.faixaPreco === undefined, JSON.stringify(s));
+  }
+  {
+    const s = slotsOf(PARCELA_Q, "Minha renda e 2.000 por mes");
+    check("[P-income-2] renda respondendo parcela nao vira parcela aceita", s.parcelaDesejada === undefined && s.entrada === undefined, JSON.stringify(s));
+  }
+  {
+    const s = slotsOf("Quer ver as fotos?", "Voces financia");
+    check("[P-name-1] ato financeiro nao vira nome", s.nome === undefined, JSON.stringify(s));
+  }
+  {
+    const s = slotsOf(ENTRADA_Q, "nao tenho carro para troca");
+    check("[P-object-1] negacao explicita de troca nao vira entrada zero", s.entrada === undefined && s.possuiTroca === false, JSON.stringify(s));
+  }
+  {
+    const s = slotsOf(PARCELA_Q, "tenho 10 mil de entrada");
+    check("[P-object-2] entrada explicita vence parcela pendente", s.entrada === 10000 && s.parcelaDesejada === undefined, JSON.stringify(s));
+  }
+  {
+    const s = slotsOf(ENTRADA_Q, "parcela ate 2500");
+    check("[P-object-3] parcela explicita vence entrada pendente", s.parcelaDesejada === 2500 && s.entrada === undefined, JSON.stringify(s));
+  }
   // extractLeadSlots — CASO 1: "até 1200" respondendo parcela -> parcelaDesejada=1200, faixaPreco NÃO setado.
   {
     const s = slotsOf(PARCELA_Q, "até 1200");

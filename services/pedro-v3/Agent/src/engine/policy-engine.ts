@@ -67,6 +67,12 @@ export type MoneyMention = {
 
 export function parseMoneyMentions(text: string): MoneyMention[] {
   const mentions: MoneyMention[] = [];
+  const isKilometrageValue = (raw: string): boolean => {
+    const value = raw.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!value) return false;
+    const unit = "(?:km|quil[oô]metr(?:o|os|agem)|rodad[oa]s?)";
+    return new RegExp(`(?:${unit})[^\\d]{0,32}${value}\\b|\\b${value}\\s*${unit}`, "i").test(text);
+  };
 
   // Dividir o texto em cláusulas usando pontuação (não cercada por dígitos) e conjunções/preposições
   const clauses = text.split(/(?!\d)[,.;!?+](?!\d)|\b(?:e|mas|ou|mais|como|com)\b/i);
@@ -104,8 +110,11 @@ export function parseMoneyMentions(text: string): MoneyMention[] {
       // Excluir km/quilometragem/rodado do parser monetário
       const index = match.index;
       const endPos = index + match[0].length;
+      const textBefore = trimmedClause.slice(Math.max(0, index - 32), index).toLowerCase();
       const textAfter = trimmedClause.slice(endPos, endPos + 15).toLowerCase();
       if (
+        /\b(?:km|quil[oô]metr(?:o|os|agem)|rodad[oa]s?)\b/.test(textBefore) ||
+        isKilometrageValue(match[0]) ||
         textAfter.includes("km") ||
         textAfter.includes("quilômetro") ||
         textAfter.includes("quilometro") ||

@@ -219,6 +219,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         messageText: payload.messageText,
         receivedAt: payload.receivedAt,
         adContext: payload.adReferral,   // F2.32 (CTWA): forwardado pelo bridge; guardado no raw do inbox
+        mediaContext: payload.mediaContext,
         tenantId: payload.tenantId,
         sensitiveVault: this.#sensitiveVault,
       });

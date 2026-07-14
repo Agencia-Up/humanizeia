@@ -252,6 +252,50 @@ test("PII-6: bridge não imprime conteúdo de mensagem em log", async () => {
   assert(!logged.some((l) => l.includes("11144477735")), "bridge must never log message content");
 });
 
+test("MEDIA-1: audio sem texto entra no v3 com contexto", async () => {
+  const payload = uazapiTextPayload("wamid.media1", "");
+  delete (payload.message as Record<string, unknown>).text;
+  (payload.message as Record<string, unknown>).messageType = "audio";
+  const built = await buildPedroV3BridgeTurn({
+    payload, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test",
+    mediaContext: {
+      kind: "audio", text: "procuro um Corolla automatico", summary: null,
+      vehicleQuery: "Toyota Corolla", vehicleType: "sedan", confidence: 0.9, transcriptionAvailable: true,
+    },
+  });
+  assert(built.ok, "media context must make the bridge turn ingestible");
+  if (built.ok) {
+    assert(built.turn.messageText.includes("Corolla"), "transcript must be visible to the v3 brain");
+    assert(built.turn.mediaContext?.kind === "audio", "media metadata must cross the bridge");
+  }
+});
+
+test("MEDIA-2: image without OCR reaches v3 honestly", async () => {
+  const payload = uazapiTextPayload("wamid.media2", "");
+  delete (payload.message as Record<string, unknown>).text;
+  (payload.message as Record<string, unknown>).messageType = "image";
+  const built = await buildPedroV3BridgeTurn({
+    payload, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test",
+    mediaContext: { kind: "image", text: null, summary: null, vehicleQuery: null, vehicleType: null, confidence: 0, transcriptionAvailable: null },
+  });
+  assert(built.ok, "image marker must not be rejected as text_unsupported");
+  if (built.ok) assert(built.turn.messageText.includes("image"), "brain must receive an honest image marker");
+});
+
+test("MEDIA-3: caption and extracted media context reach the brain together", async () => {
+  const payload = uazapiTextPayload("wamid.media3", "quero saber se esse carro esta disponivel");
+  (payload.message as Record<string, unknown>).messageType = "image";
+  const built = await buildPedroV3BridgeTurn({
+    payload, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, build: "test",
+    mediaContext: { kind: "image", text: "foto de um Toyota Corolla", summary: null, vehicleQuery: "Toyota Corolla", vehicleType: "sedan", confidence: 0.8, transcriptionAvailable: null },
+  });
+  assert(built.ok, "captioned media must build a turn");
+  if (built.ok) {
+    assert(built.turn.messageText.includes("esse carro esta disponivel"), "caption must remain primary context");
+    assert(built.turn.messageText.includes("Toyota Corolla"), "extracted media context must enrich the caption");
+  }
+});
+
 async function main(): Promise<void> {
   let passed = 0;
   for (const item of tests) {

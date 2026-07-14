@@ -28,7 +28,7 @@ const NON_NAME = new Set([
   "ali", "esse", "essa", "esses", "essas", "ainda", "mas", "porem", "entao", "ver", "vendo", "procuro", "procurando",
   "busco", "buscando", "preciso", "manda", "mandar", "envia", "enviar", "foto", "fotos", "preco", "valor", "quanto",
   "qual", "quais", "bom", "boa", "dia", "tarde", "noite", "obrigado", "obrigada", "valeu", "carro", "carros",
-  "modelo", "modelos", "veiculo", "veiculos", "com", "sem", "por", "pra", "para", "que", "comprar", "financiar", "ai",
+  "modelo", "modelos", "veiculo", "veiculos", "com", "sem", "por", "pra", "para", "que", "comprar", "financiar", "financia", "financiamento", "voces", "voce", "ai",
 ]);
 
 const NAME_TOKEN = /^\p{L}[\p{L}'’-]{1,}$/u;
@@ -73,6 +73,7 @@ function classifyAnswerKinds(message: string, claimExtractor: ClaimExtractor): S
   if (bool === false) kinds.add("negacao");
   if (bool === true) kinds.add("afirmacao");
   if (visitScheduleAnswer(message)) kinds.add("data");
+  if (parsePayment(message) != null || /\bfinanci|\bparcel|\bpagament|\bconsorci/.test(n)) kinds.add("command");
   if (/\b(mostra|mostrar|manda|mandar|envia|enviar|ver|fotos?|imagens?)\b/.test(n)) kinds.add("command");            // comando imperativo/foto
   if (/\bmais\s+\w|\boutr[ao]s?\b|\bbarat|\bcar[oa]\b|\beconomic|\bautomatic|\bmanual\b|\bflex\b|\bcompleto\b|\bpossibilidade/.test(n)) kinds.add("command"); // comparativo/atributo
   if (/\b(primeir|segund|terceir|quart|quint)o?\b|\b(?:do|no|opcao|numero|item)\s*\d\b/.test(n)) kinds.add("command"); // ordinal
@@ -319,10 +320,18 @@ function moneySpans(message: string, financialContext = false): MoneySpan[] {
   //    Ordem: sensível/data > km/ano > dinheiro. Defesa em profundidade (o ingest já sanitiza). ──────────────
   const lower = reserveSensitiveNumericSpans(message).toLowerCase();
   const out: MoneySpan[] = [];
-  const re = /(?:r\$\s*)?(\d{1,3}(?:[.\s]\d{3})+|\d+(?:,\d{1,2})?)\s*(mil|k)?\b/gi;
+  const re = /(?:r\$\s*)?(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:,\d{1,2})?)\s*(mil|k)?\b/gi;
   for (let m = re.exec(lower); m; m = re.exec(lower)) {
     const hasCurrency = /r\$/.test(m[0]);
-    let v = Number(m[1].replace(/[.\s]/g, "").replace(",", "."));
+    const rawNumber = m[1];
+    const groupedThousands = /^\d{1,3}(?:[.,\s]\d{3})+$/.test(rawNumber);
+    // No português informal, "2,000 mil" e "2.500 mil" usam o separador
+    // como decimal antes do multiplicador (2 x mil / 2,5 x mil). Sem o
+    // multiplicador, o mesmo formato representa agrupamento de milhares.
+    const normalizedNumber = groupedThousands && !m[2]
+      ? rawNumber.replace(/[.,\s]/g, "")
+      : rawNumber.replace(/\s/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, ".").replace(",", ".");
+    let v = Number(normalizedNumber);
     if (!Number.isFinite(v)) continue;
     const mult = m[2];
     if (mult) v *= 1000;
@@ -713,26 +722,38 @@ export function extractLeadSlots(args: {
   // Respondendo parcela/entrada pendente (ou financiamento em andamento) SEM compra nova: o valor é a PARCELA/ENTRADA —
   // mesmo com cue "budget" ("até 1200") ou no range de ano ("até 2100") — NUNCA orçamento de compra (faixaPreco). Trade
   // real ("tenho um Renegade...") excluído. "quero Onix até 80 mil" (compra nova) VENCE e volta a alimentar faixaPreco.
-  const financingValue = paymentInProgress && expected !== "entrada" && expected !== "faixaPreco"
+  // Renda/salário descreve capacidade financeira, mas não responde qual é a
+  // entrada nem qual parcela o cliente aceita. O valor continua disponível
+  // para a LLM no bloco atual, porém não contamina slots com outro significado.
+  const statesIncome = /\b(?:minha\s+)?renda\b|\bsal[aá]rio\b|\b(?:eu\s+)?(?:ganho|recebo)\b|\brendimento\b/.test(norm)
+    && !/\bentrada\b|\bparcela\b|\bpresta[cç][aã]o\b/.test(norm);
+  const financingValue = !statesIncome && paymentInProgress && expected !== "entrada" && expected !== "faixaPreco"
     && money.length > 0 && !statesTradeVehiclePossession(leadMessage, claimExtractor) && !newBuyIntent && !msgHasVehicleRef;
-  const answeringParcela = !newBuyIntent && (expected === "parcelaDesejada" || financingValue);
-  const answeringEntrada = !newBuyIntent && expected === "entrada";
-  const firstMoney = money[0]?.value;
+  const answeringParcela = !statesIncome && !newBuyIntent && (expected === "parcelaDesejada" || financingValue);
+  const answeringEntrada = !statesIncome && !newBuyIntent && expected === "entrada";
+  const explicitParcelaValue = money.find((item) => item.role === "parcela")?.value;
+  const explicitEntradaValue = money.find((item) => item.role === "entrada")?.value;
+  const contextualMoneyValue = money.find((item) => item.role === "unknown" || item.role === "budget")?.value;
 
-  const parcelaVal = answeringParcela && firstMoney != null ? firstMoney : roleVal("parcela", "parcelaDesejada");
+  // Um papel explícito no bloco atual vence a pergunta pendente. Somente um
+  // valor sem papel ("2 mil", "até 2 mil") herda o slot esperado.
+  const parcelaVal = statesIncome ? undefined
+    : explicitParcelaValue ?? (answeringParcela ? contextualMoneyValue : undefined);
   if (parcelaVal != null) add({ op: "set_slot", slot: "parcelaDesejada", value: parcelaVal, confidence: 0.9, sourceTurnId: turnId }, "parcelaDesejada");
 
   // LLM-first (missão SDR): NEGAÇÃO a uma pergunta de ENTRADA = entrada zero (MEMÓRIA, p/ o cérebro não repergunta e
   // seguir no financiamento). "não"/"tenho não"/"não tenho"/"não tenho dinheiro pra entrada"/"não dá"/"não consigo" -> 0.
   // Bare "não"/"tenho não" só quando entrada foi PERGUNTADA (expected); "... entrada" explícito vale mesmo espontâneo.
+  const negationNamesTradeObject = /\b(?:carro|veiculo|troca)\b/.test(norm);
   const entradaNegada = !questionLike && (
-    (expected === "entrada" && (/\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+da\b|\bnao\s+consigo\b|\bnao\s+posso\b|\bsem\s+(?:dinheiro|grana|condic)/.test(norm) || /^(?:nao|nem)\b/.test(norm)))
+    (expected === "entrada" && !negationNamesTradeObject && (/\btenho\s+nao\b|\bnao\s+tenho\b|\bnao\s+da\b|\bnao\s+consigo\b|\bnao\s+posso\b|\bsem\s+(?:dinheiro|grana|condic)/.test(norm) || /^(?:nao|nem)\b/.test(norm)))
     || /\bnao\s+(?:tenho|vou|posso|consigo|pretendo)\b[^.?!]{0,25}\bentrada\b|\bsem\s+condic[^.?!]{0,20}\bentrada\b/.test(norm)
   );
   if (!questionLike && (/\b(?:sem|nao tenho|zero de)\s+entrada\b|\bentrada\s+zero\b/.test(norm) || entradaNegada)) {
     add({ op: "set_slot", slot: "entrada", value: 0, confidence: entradaNegada ? 0.9 : 0.98, sourceTurnId: turnId }, "entrada");
   } else {
-    const entradaVal = answeringEntrada && firstMoney != null ? firstMoney : roleVal("entrada", "entrada");
+    const entradaVal = statesIncome ? undefined
+      : explicitEntradaValue ?? (answeringEntrada ? contextualMoneyValue : undefined);
     if (entradaVal != null) add({ op: "set_slot", slot: "entrada", value: entradaVal, confidence: 0.9, sourceTurnId: turnId }, "entrada");
   }
 

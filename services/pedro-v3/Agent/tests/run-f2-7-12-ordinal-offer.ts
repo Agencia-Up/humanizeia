@@ -124,6 +124,21 @@ async function main(): Promise<void> {
     const ctx = computeRenderedOfferContext(turnOutput, "tX", NOW);
     check("7 compute: 3 itens na ORDEM renderizada", !!ctx && ctx.items.length === 3 && ctx.items[2].vehicleKey === HB20_2021 && ctx.items[2].ordinal === 3, JSON.stringify(ctx?.items.map((i) => i.vehicleKey)));
     check("7 compute: enriquece com marca/modelo/ano dos fatos", !!ctx && ctx.items[2].modelo === "HB20" && ctx.items[2].ano === 2021);
+
+    // Reapresentar a mesma lista num turno de foto não traz stock_search de
+    // novo. A memória estruturada anterior deve preservar a identidade por
+    // chave, sem transformar texto livre em fato.
+    const photoOnly: any = {
+      ...turnOutput,
+      facts: [{ ok: true, tool: "vehicle_photos_resolve", data: { vehicleKey: HB20_2015, ambiguous: false, photoIds: ["a1"] }, source: "fake" }],
+    };
+    const replayed = computeRenderedOfferContext(photoOnly, "tY", NOW, ctx);
+    check("7b relista sem stock_search e preserva identidade da mesma key", !!replayed
+      && replayed.items[1].vehicleKey === HB20S_2017
+      && replayed.items[1].marca === "Hyundai"
+      && replayed.items[1].modelo === "HB20 S"
+      && replayed.items[1].ano === 2017,
+    JSON.stringify(replayed?.items[1]));
   }
 
   // 8) E2E: render de vehicle_offer_list grava lastRenderedOfferContext; depois "foto do 3" -> HB20 2021 (nao C3)

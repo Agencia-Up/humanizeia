@@ -19,6 +19,16 @@ export type PedroV3AdReferral = {
   imageUrls: string[];
 };
 
+export type PedroV3MediaContext = {
+  kind: "audio" | "image" | "video" | "document" | "unknown";
+  text: string | null;
+  summary: string | null;
+  vehicleQuery: string | null;
+  vehicleType: string | null;
+  confidence: number;
+  transcriptionAvailable: boolean | null;
+};
+
 export type PedroV3BridgeTurn = {
   tenantId: string;
   agentId: string;
@@ -30,6 +40,7 @@ export type PedroV3BridgeTurn = {
   messageText: string;
   receivedAt: string;
   leadId: null;
+  mediaContext?: PedroV3MediaContext;
   leadNameHint: string | null;   // ⭐SEM inv.7: pushName/notifyName do WhatsApp, SANITIZADO (hint p/ lead_name inicial; nunca autoridade)
   adReferral?: PedroV3AdReferral;   // F2.32: só quando o payload traz externalAdReply (1ª msg do anúncio)
 };
@@ -220,13 +231,14 @@ export async function buildPedroV3BridgeTurn(input: {
   tenantId: string | null | undefined;
   agentId: string | null | undefined;
   build: string;
+  mediaContext?: PedroV3MediaContext | null;
 }): Promise<PedroV3BridgeBuildResult> {
   if (!isPedroV3PilotIdentity(input)) return { ok: false, reason: "not_pilot_identity" };
   const messageId = incomingMessageId(input.payload);
   if (!messageId) return { ok: false, reason: "message_id_missing" };
   const phone = normalizePhone(incomingRemoteJid(input.payload));
   if (!phone) return { ok: false, reason: "phone_invalid" };
-  const text = incomingText(input.payload);
+  const text = mergeInboundLeadText(incomingText(input.payload), mediaContextLeadText(input.mediaContext));
   if (!text) return { ok: false, reason: "text_unsupported" };
 
   const eventHash = await sha256(`${PEDRO_V3_PILOT_TENANT_ID}|${PEDRO_V3_PILOT_AGENT_ID}|${messageId}`);
@@ -247,8 +259,27 @@ export async function buildPedroV3BridgeTurn(input: {
       leadId: null,
       leadNameHint: extractLeadNameHint(input.payload),
       ...(adReferral ? { adReferral } : {}),
+      ...(input.mediaContext ? { mediaContext: input.mediaContext } : {}),
     },
   };
+}
+
+function mediaContextLeadText(context: PedroV3MediaContext | null | undefined): string | null {
+  if (!context) return null;
+  const detail = [context.text, context.summary, context.vehicleQuery, context.vehicleType]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(" | ");
+  if (detail) return `[${context.kind} recebida; contexto extraido: ${detail}]`;
+  if (context.kind === "audio") return "[audio recebido sem transcricao disponivel]";
+  return `[${context.kind} recebida sem descricao disponivel]`;
+}
+
+function mergeInboundLeadText(messageText: string | null, mediaText: string | null): string | null {
+  if (!messageText) return mediaText;
+  if (!mediaText) return messageText;
+  // A caption is the lead's own instruction; extracted media context only enriches it.
+  return `${messageText}\n${mediaText}`;
 }
 
 function eventType(payload: any): string {

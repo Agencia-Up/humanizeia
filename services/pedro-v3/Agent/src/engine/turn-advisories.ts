@@ -107,6 +107,9 @@ export type TurnAdvisoryInput = {
   readonly portalNextQuestion: string | null;
   // Nome já conhecido (não repergunte).
   readonly knownName: string | null;
+  // O bloco ATUAL acabou de identificar o cliente. É apenas contexto para a
+  // LLM; não decide intent, tool, effect ou texto.
+  readonly identifiedNameThisTurn: string | null;
   // Telefone de contato já conhecido pelo canal (WhatsApp) — não peça telefone.
   readonly contactPhoneKnown: boolean;
   // Turno de PAGAMENTO com carro JÁ escolhido — conduzir financiamento, não voltar à descoberta.
@@ -157,7 +160,9 @@ export function buildTurnAdvisories(input: TurnAdvisoryInput): string[] {
   }
 
   // ── Não repergunte o que já é conhecido. ──
-  if (input.knownName) {
+  if (input.identifiedNameThisTurn) {
+    out.push(`O bloco atual identifica o cliente como ${input.identifiedNameThisTurn}: acolha o nome e continue a conversa conforme o prompt do portal. Este nome NÃO é um veículo, uma seleção nem um pedido de estoque; não retome ferramenta ou assunto antigo só por causa da memória.`);
+  } else if (input.knownName) {
     out.push(`Você já sabe o nome do cliente (${input.knownName}): use-o e siga a conversa; não pergunte o nome de novo.`);
   }
   if (input.contactPhoneKnown) {
