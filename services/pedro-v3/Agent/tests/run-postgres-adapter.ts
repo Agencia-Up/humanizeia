@@ -256,6 +256,23 @@ async function main(): Promise<void> {
 
   {
     const gateway = new ScriptedGateway();
+    gateway.queueRpc("v3_commit_turn", 1);
+    const persistence = store(gateway);
+    const initial = createInitialState({ conversationId: "c-system", tenantId: TENANT, agentId: "a1", leadId: "lead-1", now: NOW });
+    const next = { ...initial, turnNumber: 1, version: 1 };
+    const systemDecision = { ...decision(), turnId: "followup:anchor:1" };
+    const uow = persistence.begin({ lease: { ...lease(), conversationId: "c-system", owner: "followup-worker" } });
+    uow.casState("c-system", 0, next);
+    uow.appendDecision("c-system", systemDecision);
+    uow.appendOutbox([{ ...outbox(), conversationId: "c-system", turnId: systemDecision.turnId }]);
+    uow.markInboxDone([], "followup-worker", systemDecision.turnId);
+    const committed = await uow.commit();
+    const call = gateway.rpcCalls[0];
+    check("turno sistemico explicita inbox vazio e commita", committed.ok && call.name === "v3_commit_turn" && Array.isArray(call.args.p_event_ids) && call.args.p_event_ids.length === 0);
+  }
+
+  {
+    const gateway = new ScriptedGateway();
     const persistence = store(gateway);
     const uow = persistence.begin();
     uow.updateOutbox(outbox());

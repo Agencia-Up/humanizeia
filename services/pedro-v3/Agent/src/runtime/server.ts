@@ -386,7 +386,17 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           persistence, conversationId: candidate.conversationId, to: candidate.toAddr,
           workerId: "followup-worker", due, rules: config.rules,
         });
-        if (result.planned) planned += 1;
+        if (result.planned) {
+          planned += 1;
+        } else if (result.reason && result.reason !== "not_eligible") {
+          failed += 1;
+          console.error(JSON.stringify({
+            event: "pedro_v3_followup_not_planned",
+            conversationId: candidate.conversationId,
+            stage: due.stage,
+            reason: sanitizeTurnError(result.reason),
+          }));
+        }
       } catch (error) {
         failed += 1;
         console.error(JSON.stringify({ event: "pedro_v3_followup_failed", conversationId: candidate.conversationId, reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));

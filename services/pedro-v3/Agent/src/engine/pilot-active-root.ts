@@ -485,6 +485,7 @@ export class PilotActiveRoot {
     if (!this.agentBrain) return { planned: false, dispatched: 0, reason: "brain_unavailable" };
     const now = this.clock.now();
     let committed = false;
+    let commitFailureReason: string | undefined;
     await input.persistence.withLease(input.conversationId, input.workerId, 60_000, async (lease) => {
       const snapshot = await input.persistence.load(input.conversationId);
       if (!snapshot || snapshot.state.stage === "handoff" || snapshot.state.stage === "closed") return;
@@ -543,9 +544,16 @@ export class PilotActiveRoot {
       uow.casState(input.conversationId, snapshot.version, next);
       uow.appendDecision(input.conversationId, decision);
       uow.appendOutbox(outbox);
-      committed = (await uow.commit()).ok;
+      // Follow-up e um turno SISTEMICO: nao existe mensagem de inbox para
+      // concluir, mas o commit atomico do Postgres exige que essa ausencia
+      // seja declarada explicitamente. Sem isto, todo T1/T2/T3 falhava com
+      // postgres_turn_uow_incompleto antes de chegar ao outbox.
+      uow.markInboxDone([], input.workerId, turnId);
+      const commit = await uow.commit();
+      committed = commit.ok;
+      if (!commit.ok) commitFailureReason = commit.reason;
     });
-    if (!committed) return { planned: false, dispatched: 0, reason: "not_committed" };
+    if (!committed) return { planned: false, dispatched: 0, reason: commitFailureReason ?? "not_committed" };
     const dispatched = await this.#dispatchIfCommitted({
       persistence: input.persistence, conversationId: input.conversationId, to: input.to,
       workerId: input.workerId, turnId: "followup-dispatch", limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 0,
