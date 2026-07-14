@@ -55,7 +55,7 @@ import type { RenderedResponse, ResponsePart } from "../domain/decision.ts";
 import { finalize, validateEffectPlans } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
-import { buildCrmWritePlan } from "./crm-write.ts";
+import { buildCrmWritePlan, isRealLeadName, sanitizeLeadNameHint } from "./crm-write.ts";
 import { buildHandoffChain } from "./handoff-plan.ts";
 
 // MISSÃO PII (P0-C): shape do diagnóstico do precheck de handoff — módulo testável handoff-precheck.ts.
@@ -712,7 +712,15 @@ function authorFromBrainDraft(args: {
     const alvo = args.target.kind !== "conflict" && args.target.subjectModel ? `o ${args.target.subjectModel}` : "o carro que o cliente pediu";
     return { ok: false, feedback: `A foto que você resolveu NÃO é de ${alvo}. Resolva vehicle_photos_resolve do vehicleKey CORRETO do assunto atual (o carro que o cliente citou/selecionou) — nunca envie a foto de outro veículo. Se houver mais de uma variante possível, pergunte QUAL antes de enviar.` };
   }
-  const brainEffects = photoAuthorized ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
+  const photoSafeEffects = photoAuthorized ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
+  // O pedido humano explícito do bloco atual é a autoridade do motivo da
+  // transferência. Alguns modelos propõem corretamente o efeito, mas o rotulam
+  // como `qualified_handoff`; isso não pode transformar um pedido de atendente
+  // em coleta obrigatória de nome. O engine não cria o efeito nem escreve a
+  // resposta: apenas canonicaliza a semântica do efeito que a LLM propôs.
+  const brainEffects = args.humanRequested === true
+    ? photoSafeEffects.map((effect) => effect.kind === "handoff" ? { ...effect, reason: "explicit_human_request" } : effect)
+    : photoSafeEffects;
   const proposedEffects = ensureSendMessage(brainEffects);
   // P0-2 (audit Codex): filtra select_vehicle_focus proposto pela LLM SEM capability select + evidência (descarta; o foco
   // não muda). Ordinal determinístico válido (target=turn_ordinal do mesmo key) AINDA seleciona. Só em llmFirst (requireBrain).
@@ -1613,6 +1621,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
       const leadMessage = aggregateLeadMessage(inboxRecords);
       const prepared = await contextPreparer.prepare({ state, turnId, leadMessage, now: cutoff });
+      const channelLeadName = sanitizeLeadNameHint(leadNameHintFromInbox(inboxRecords));
+      const leadDisplayNameKnown = isRealLeadName(channelLeadName);
 
       // Bind factual answers before the brain runs. This does not choose the reply; it only projects
       // conservative slot facts (for example, a bare name when the previous accepted question asked for it).
@@ -1655,6 +1665,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const ctx: TurnContext = {
         state: contextState, turnId, leadMessage, now: cutoff,
         interpretation: prepared.interpretation, tenantCatalog: prepared.tenantCatalog, claimExtractor: prepared.claimExtractor,
+        leadDisplayNameKnown,
       };
 
       // ── WorkingMemory: parte persistida (WM-owned) + view canônica derivada do estado. ──

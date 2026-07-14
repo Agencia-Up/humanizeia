@@ -443,6 +443,16 @@ const VISIT_INTENT_RX = /\bvisit|\bagend|\bconhecer\s+(?:o\s+carro|a\s+loja|de\s
 // (1) RECUSA explícita: negação LIGADA ao ato de visitar ("não quero visitar", "não vou passar na loja",
 //     "não pretendo ir aí", "não quero presencial"). Só recusa quando o alvo é a visita — "não quero ir longe" NÃO conta.
 const VISIT_REFUSAL_RX = /\bnao\s+(?:quero|posso|vou|pretendo|preciso|gostaria|tenho\s+interesse)\b[^.?!]{0,30}\b(?:visit|agend|conhecer|presencial|na\s+loja|(?:ir|passar)\s+(?:a[ií]|na\s+loja|ate\s+a\s+loja|l[aá]))/;
+function containsVisitRefusal(text: string): boolean {
+  // A negação precisa pertencer à mesma cláusula do ato de visita.
+  // "precisa não, vou aí visitar" contém uma recusa de fotos seguida de
+  // uma intenção positiva de visita; normalizar o bloco inteiro apagava a
+  // vírgula e ligava o "não" ao verbo "visitar" da cláusula seguinte.
+  return text
+    .split(/[,;.!?\n]+/)
+    .map((clause) => normalizeText(clause))
+    .some((clause) => VISIT_REFUSAL_RX.test(clause));
+}
 // (2) ADIAMENTO/INCERTEZA (sem o ato de visitar): "talvez", "agora não", "mais tarde", "depois", "outro dia",
 //     "qualquer dia", "não sei", "quem sabe". NÃO é recusa NEM intenção -> não grava interesseVisita (nem false nem true).
 const VISIT_POSTPONE_RX = /\btalvez\b|\bagora\s+nao\b|\bmais\s+(?:tarde|pra\s+frente|adiante)\b|\bdepois\s+(?:eu|vejo|a\s+gente|vemos|marco)\b|\boutro\s+dia\b|\bqualquer\s+dia\b|\bnao\s+sei\b|\bquem\s+sabe\b/;
@@ -840,7 +850,7 @@ export function extractLeadSlots(args: {
   // seleção/mídia, NÃO visita (refersVehicleOrMedia).
   const refersVehicleOrMedia = /\b(?:primeir|segund|terceir|quart|quint|ultim)[oa]\b|\bo\s+\d+\b|\bop[cç][aã]o\b|\bfotos?\b|\bimagens?\b|\bv[ií]deos?\b/.test(norm);
   const visitIntentPresent = VISIT_INTENT_RX.test(norm);
-  const visitRefusal = VISIT_REFUSAL_RX.test(norm);
+  const visitRefusal = containsVisitRefusal(leadMessage);
   // A weekday can share spelling with a feminine ordinal ("segunda"). It is
   // only a vehicle reference when the hardened ordinal parser accepts it.
   const vehicleOrMediaConflict = refersVehicleOrMedia

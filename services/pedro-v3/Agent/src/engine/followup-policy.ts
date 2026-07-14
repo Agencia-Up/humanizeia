@@ -45,7 +45,11 @@ export function evaluateFollowupDue(args: {
   if (!anchor) return null;
   const anchorMs = Date.parse(anchor.createdAt);
   const nowMs = Date.parse(args.now);
-  if (!Number.isFinite(anchorMs) || !Number.isFinite(nowMs) || latestLeadAt(args.state) >= anchorMs) return null;
+  // O turno do lead e a resposta do agente podem compartilhar o mesmo
+  // timestamp (resolução do banco em milissegundos). Nesse caso a mensagem
+  // do lead ocorreu ANTES da resposta que ancora o follow-up. Só uma mensagem
+  // estritamente posterior cancela o ciclo.
+  if (!Number.isFinite(anchorMs) || !Number.isFinite(nowMs) || latestLeadAt(args.state) > anchorMs) return null;
 
   const previous = args.state.followupCycle;
   const cycle: FollowupCycle = previous?.anchorEffectId === anchor.effectId

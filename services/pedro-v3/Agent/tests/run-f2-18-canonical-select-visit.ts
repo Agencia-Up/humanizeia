@@ -130,6 +130,10 @@ async function main(): Promise<void> {
     check("H2.2 'quero visitar sábado' -> interesseVisita=true", iv?.value === true, JSON.stringify(muts));
     check("H2.2 '... sábado' -> diaHorario com sábado", typeof dh?.value === "string" && /s[áa]bado/i.test(dh.value), JSON.stringify(dh));
   }
+  {
+    const muts = visit("precisa não, vou ai visitar\naonde fica a loja?", base());
+    check("H2.2b negação em outra cláusula não cancela visita", slot(muts, "interesseVisita")?.value === true, JSON.stringify(muts));
+  }
   // 11) ADIAMENTO -> NÃO grava interesseVisita (nem false nem true), mesmo com a visita perguntada
   {
     for (const [msg, tag] of [["talvez depois", "talvez depois"], ["agora não", "agora não"], ["mais tarde", "mais tarde"]] as const) {

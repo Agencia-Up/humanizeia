@@ -17,6 +17,11 @@ export type TurnContext = {
   // É a AUTORIDADE de mudança de assunto na policy: POL-TRACK-001 só se abstém quando === "search_stock". NUNCA vem de um
   // detector heurístico (deriveCurrentTurnIntent). Ausente = legado (kernel/v2/replay) -> policy mantém o comportamento antigo.
   acceptedPrimaryIntent?: PrimaryIntent;
+  // Nome real já conhecido pelo envelope do canal (por exemplo, pushName do
+  // WhatsApp), validado antes de entrar no contexto. Ele satisfaz requisitos
+  // operacionais de identificação, mas nunca escreve o slot `nome` nem altera
+  // a conversa por conta própria.
+  leadDisplayNameKnown?: boolean;
 };
 
 export type QueryLoopLimits = {

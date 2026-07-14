@@ -41,6 +41,8 @@ s.followupCycle = { ...s.followupCycle, sentStages: [1, 2] };
 const due3 = evaluateFollowupDue({ state: s, outbox: [anchor], rules: rules.followup, now: NOW });
 check("[P3] T3 vence", due3?.stage === 3);
 check("[P4] accepted ancora quando provider nao publica delivery", evaluateFollowupDue({ state: state(), outbox: [record({ receiptLevel: "accepted" })], rules: rules.followup, now: NOW })?.stage === 1);
+const sameTick = state(); sameTick.recentTurns.push({ role: "lead", text: "tem sedan?", at: ANCHOR });
+check("[P4b] lead e resposta no mesmo timestamp permitem T1", evaluateFollowupDue({ state: sameTick, outbox: [anchor], rules: rules.followup, now: NOW })?.stage === 1);
 const spoke = state(); spoke.recentTurns.push({ role: "lead", text: "voltei", at: "2026-07-11T12:01:00.000Z" });
 check("[P5] lead cancela", evaluateFollowupDue({ state: spoke, outbox: [anchor], rules: rules.followup, now: NOW }) === null);
 const handed = state(); handed.stage = "handoff";

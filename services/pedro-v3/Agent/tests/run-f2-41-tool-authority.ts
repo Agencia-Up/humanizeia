@@ -193,6 +193,9 @@ async function main(): Promise<void> {
   // deve rejeitar essa leitura antes de texto/mutacao, e a mesma LLM reautora.
   {
     check("[F-0] parser ordinal nao transforma 'pra segunda' em item 2", parseOrdinal("pra segunda") == null);
+    check("[F-0b] parser ordinal nao transforma 'pode ser na quinta' em item 5", parseOrdinal("pode ser na quinta") == null);
+    check("[F-0c] parser ordinal nao transforma 'quinta as 13h' em item 5", parseOrdinal("quinta as 13h") == null);
+    check("[F-0d] parser preserva selecao explicita 'quinta opcao'", parseOrdinal("quero a quinta opcao")?.value === 5);
     const c = conv();
     await c.t("tem corolla?", searchCorolla);
     const selectedU: TurnUnderstanding = {

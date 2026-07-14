@@ -69,7 +69,9 @@ class RelPreparer implements TurnContextPreparer { relation: TurnRelation = "amb
 const U = (primaryIntent: PrimaryIntent, evidence: TurnUnderstanding["evidence"] = []): TurnUnderstanding => ({ primaryIntent, requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence, isTopicChange: false, answeredLeadQuestions: [] });
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
-const handoffAct = { kind: "handoff", planId: "handoff-req", order: 1, dependsOn: [], onSuccess: [], leadId: "", reason: "explicit_human_request", briefing: "" } as unknown as ProposedEffectPlan;
+// Adversarial: alguns modelos rotulam até o pedido humano explícito como
+// qualified_handoff. O engine precisa canonicalizar o motivo pelo ato atual.
+const handoffAct = { kind: "handoff", planId: "handoff-req", order: 1, dependsOn: [], onSuccess: [], leadId: "", reason: "qualified_handoff", briefing: "" } as unknown as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding, effects: ProposedEffectPlan[] = [reply]): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: effects, memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
@@ -95,13 +97,13 @@ const sendPhotos: BrainResponder = (_f, obs) => {
 
 let seq0 = 0;
 type Cap = { outbox: string; committed: boolean; stockObs: number; detailObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; slots: ConversationState["slots"] | null; selected: string | null; hasMedia: boolean; hasHandoff: boolean; hasNotify: boolean; pendingSlot: string | null };
-function conv() {
+function conv(withLeadNameHint = true) {
   const brain = new ScriptedAgentBrain(); const preparer = new RelPreparer(); const clock = new FakeClock(NOW); const persistence = new InMemoryPersistence(clock, new FakeIdGen());
   const id = `wa:f55b_${seq0++}`; let s = 0;
   const t = async (leadMsgs: string | string[], responder: BrainResponder, rel: TurnRelation = "ambiguous"): Promise<Cap> => {
     preparer.relation = rel; brain.setResponder(responder);
     const bursts = Array.isArray(leadMsgs) ? leadMsgs : [leadMsgs];
-    for (const m of bursts) { await persistence.tryInsert({ eventId: `${id}-e${++s}-${Math.random().toString(36).slice(2, 6)}`, conversationId: id, raw: redact({ text: m }), receivedAt: clock.now() }); clock.advance(300); }
+    for (const m of bursts) { await persistence.tryInsert({ eventId: `${id}-e${++s}-${Math.random().toString(36).slice(2, 6)}`, conversationId: id, raw: redact({ text: m, ...(withLeadNameHint ? { leadNameHint: "Douglas Aloan" } : {}) }), receivedAt: clock.now() }); clock.advance(300); }
     clock.advance(700);
     const turnId = `${id}-t${s}`;
     const r: CentralTurnResult = await runCentralConversationTurn({
@@ -249,7 +251,7 @@ async function main(): Promise<void> {
   // → request_human EXATO vence o funil de agendamento, gera handoff + notify_seller.
   // ══════════════════════════════════════════════════════════════════════════
   console.log("\n-- Cenário D: pedido humano no meio do agendamento --");
-  const cd = conv();
+  const cd = conv(false);
   await cd.t("Boa tarde", () => finU([txt("Boa tarde! Sou o Aloan da Icom. Que tipo de carro você procura?")], "reply", U("smalltalk", [ev(undefined, "boa tarde")])));
   await cd.t("gostei do Compass", () => finU([txt("Ótima escolha, o Jeep Compass 2019! Quer agendar uma visita?")], "reply", { primaryIntent: "select_vehicle", requestedCapabilities: ["select"], subject: "explicit_model", subjectValue: "Compass", subjectSource: "current_turn", evidence: [ev("select", "gostei")], isTopicChange: false, answeredLeadQuestions: [] }));
   await cd.t("Quero agendar uma visita", () => finU([txt("Perfeito! Qual o melhor dia pra você?")], "reply", U("visit", [ev(undefined, "agendar uma visita")])));
@@ -257,6 +259,15 @@ async function main(): Promise<void> {
   const cdH = await cd.t("quero falar com um vendedor agora", () => finU([txt("Claro! Vou te transferir agora para um consultor.")], "handoff", { primaryIntent: "request_human", requestedCapabilities: ["handoff"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [ev("handoff", "quero falar com um vendedor")], isTopicChange: false, answeredLeadQuestions: [] }, [reply, handoffAct]), "direction_change");
   check("[D1] ⭐pedido humano no meio do agendamento: request_human EXATO + handoff + notify", cdH.primaryIntent === "request_human" && cdH.hasHandoff && cdH.hasNotify, `pi=${cdH.primaryIntent} handoff=${cdH.hasHandoff} notify=${cdH.hasNotify}`);
   check("[D2] handoff sem tool comercial + brain, NÃO technical_fallback", cdH.stockObs === 0 && cdH.detailObs === 0 && isBrain(cdH.src) && !cdH.terminalSafe, `src=${cdH.src}`);
+
+  // CENÁRIO F — o nome válido do WhatsApp satisfaz a identificação da
+  // visita qualificada sem obrigar o agente a pedir o nome novamente.
+  console.log("\n-- Cenário F: visita qualificada usa nome válido do canal --");
+  const cf = conv(true);
+  await cf.t("Quero agendar uma visita", () => finU([txt("Claro! Qual dia e horário ficam melhores para você?")], "reply", U("visit", [ev(undefined, "agendar uma visita")])), "direction_change");
+  const cfH = await cf.t(["Pode ser na quinta", "As 13:00"], () => finU([txt("Combinado! Vou encaminhar sua visita de quinta às 13h para o consultor.")], "handoff", U("visit", [ev(undefined, "quinta"), ev(undefined, "13:00")]), [reply, handoffAct]), "answers_pending");
+  check("[F1] nome do canal libera handoff qualificado da visita", cfH.hasHandoff && cfH.hasNotify && isBrain(cfH.src), `handoff=${cfH.hasHandoff} notify=${cfH.hasNotify} src=${cfH.src}`);
+  check("[F2] visita real não cai em fallback", !cfH.terminalSafe && has(String(slotVal(cfH, "diaHorario") ?? ""), "quinta") && has(String(slotVal(cfH, "diaHorario") ?? ""), "13"), `src=${cfH.src} dia=${String(slotVal(cfH, "diaHorario") ?? "")}`);
 
   // ══════════════════════════════════════════════════════════════════════════
   // CENÁRIO E — BACKSTOP DETERMINÍSTICO do handoff (reproduz o T10 flaky do smoke real): o cérebro emite request_human com

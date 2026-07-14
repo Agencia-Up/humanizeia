@@ -321,7 +321,8 @@ export const PolicyEngine = {
 
     // POL-HANDOFF-001: handoff exige slots mínimos (nome).
     const handoffReason = proposal.proposedEffects.find((effect) => effect.kind === "handoff")?.reason ?? null;
-    if (proposal.proposedAction === "handoff" && handoffReason !== "explicit_human_request" && ctx.state.slots.nome.status !== "known") {
+    const leadNameKnown = ctx.state.slots.nome.status === "known" || ctx.leadDisplayNameKnown === true;
+    if (proposal.proposedAction === "handoff" && handoffReason !== "explicit_human_request" && !leadNameKnown) {
       verdicts.push({ policyId: "POL-HANDOFF-001", outcome: "deny", requirements: ["nome"], violations: ["handoff sem nome"] });
     }
 
