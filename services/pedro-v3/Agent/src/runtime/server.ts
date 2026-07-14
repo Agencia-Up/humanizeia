@@ -22,6 +22,7 @@ import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
 import { evaluateFollowupDue } from "../engine/followup-policy.ts";
+import { PEDRO_V3_RUNTIME_RELEASE } from "./runtime-release.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
@@ -428,6 +429,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RuntimeConfi
 
 const runtime = new ProductionPilotRunner();
 const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime, () => ({
+  runtimeRelease: PEDRO_V3_RUNTIME_RELEASE,
   configuredBrainMode: resolveBrainMode(),
   aiProvider: resolveAiProviderRuntime(process.env).provider,
   aiModel: resolveAiProviderRuntime(process.env).model,
@@ -459,7 +461,13 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(JSON.stringify({ event: "pedro_v3_service_started", port, mode: "pilot", brainMode: resolveBrainMode() }));
+  console.log(JSON.stringify({
+    event: "pedro_v3_service_started",
+    runtimeRelease: PEDRO_V3_RUNTIME_RELEASE,
+    port,
+    mode: "pilot",
+    brainMode: resolveBrainMode(),
+  }));
 });
 
 // F2.7.6: poller de debounce — processa as conversas que ja assentaram (quietas >= debounce
