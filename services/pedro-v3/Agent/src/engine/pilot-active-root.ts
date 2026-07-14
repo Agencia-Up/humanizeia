@@ -517,12 +517,20 @@ export class PilotActiveRoot {
 
       if (input.due.stage === 3 && input.rules.followup.t3Transfers && input.rules.transfer.enabled && this.handoffEnabled && this.transferStore && this.leadId) {
         const memory = loadPersistedWorkingMemory(snapshot.state.workingMemory).memory;
+        let leadDisplayName = snapshot.state.slots.nome.status === "known" ? snapshot.state.slots.nome.value : null;
+        if (!leadDisplayName) {
+          try {
+            leadDisplayName = (await this.transferStore.fetchOwnedLeadForTransfer(this.ref, this.leadId))?.leadName ?? null;
+          } catch {
+            // Nome enriquece o briefing, mas nunca bloqueia o T3/handoff.
+          }
+        }
         const chain = buildHandoffChain({
           decision, turnId, leadId: this.leadId, stateAfter: snapshot.state,
           adContext: snapshot.state.adContext ?? null, adVehicleLabel: null,
           lastPhotoAction: memory.lastPhotoAction ? { label: memory.lastPhotoAction.label, photoIds: memory.lastPhotoAction.photoIds } : null,
           agentName: this.runtimeConfig.agentName, leadPhone: input.to,
-          leadDisplayName: snapshot.state.slots.nome.status === "known" ? snapshot.state.slots.nome.value : null,
+          leadDisplayName,
           nowLocal: new Date(now).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
           plannable: true, forcedReason: "followup_timeout_handoff",
         });

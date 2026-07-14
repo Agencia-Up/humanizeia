@@ -16,7 +16,7 @@
 // resumido, a LLM recebe ESTE briefing como fato e só REESCREVE — nunca cria.)
 // ============================================================================
 import type { ConversationState, AdContext } from "../domain/conversation-state.ts";
-import { interestVehicleText, tradeVehicleText } from "./crm-write.ts";
+import { interestVehicleText, isRealLeadName, sanitizeLeadNameHint, tradeVehicleText } from "./crm-write.ts";
 
 export type SdrCategory = "inativo" | "pouco_qualificado" | "qualificado";
 
@@ -60,17 +60,95 @@ const CATEGORY_LINE: Record<SdrCategory, string> = {
   qualificado: "🏷️ *Status:* 🎯 LEAD QUALIFICADO",
 };
 
-// Próximo passo SUGERIDO — derivado DETERMINISTICAMENTE do que falta no funil
-// (troca -> entrada -> parcela -> visita), nunca inventado.
-export function suggestNextStep(state: ConversationState): string {
+export type BriefingHandoffReason =
+  | "explicit_human_request"
+  | "qualified_handoff"
+  | "followup_timeout_handoff"
+  | "returning_lead_renotify";
+
+type BriefingContext = {
+  readonly handoffReason?: BriefingHandoffReason | null;
+  readonly adContext?: AdContext | null;
+  readonly adVehicleLabel?: string | null;
+  readonly lastPhotoAction?: { label: string; photoIds: readonly string[] } | null;
+};
+
+function vehicleLabel(item: { marca?: string | null; modelo?: string | null; ano?: number | null }): string | null {
+  const text = [item.marca, item.modelo, item.ano != null ? String(item.ano) : null].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+function offeredVehicleLabels(state: ConversationState): string[] {
+  return (state.lastRenderedOfferContext?.items ?? []).map(vehicleLabel).filter((value): value is string => value != null);
+}
+
+function adDescription(ad: AdContext | null | undefined, adVehicleLabel: string | null | undefined): string | null {
+  if (!ad) return null;
+  const descriptor = adVehicleLabel?.trim()
+    || ad.title?.replace(/\s+/g, " ").trim()
+    || ad.body?.replace(/\s+/g, " ").trim().slice(0, 100)
+    || null;
+  const source = ad.source?.replace(/\s+/g, " ").trim() || null;
+  if (descriptor && source) return `${descriptor} (${source})`;
+  return descriptor || source || "anúncio de tráfego pago";
+}
+
+function leadTopics(state: ConversationState): string[] {
+  const text = (state.recentTurns ?? []).filter((turn) => turn.role === "lead").map((turn) => turn.text).join(" \n ")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const topics: string[] = [];
+  const add = (label: string, rx: RegExp): void => { if (rx.test(text)) topics.push(label); };
+  add("fotos", /\b(?:foto|fotos|imagem|imagens)\b/);
+  add("garantia", /\bgaranti/);
+  add("financiamento/condições", /\b(?:financi|condi[cç][aã]o|entrada|parcela)\b/);
+  add("troca", /\b(?:troca|dar meu carro|meu veiculo|meu carro)\b/);
+  add("localização/horário da loja", /\b(?:onde fica|endereco|loja|horario)\b/);
+  add("visita/test-drive", /\b(?:visita|visitar|test.?drive|conhecer o carro)\b/);
+  add("preço", /\b(?:pre[cç]o|valor|quanto custa)\b/);
+  return topics;
+}
+
+function leadDisplayName(args: Pick<BriefingArgs, "state" | "leadDisplayName" | "leadPhone">): string {
+  const declared = textOf(known(args.state.slots, "nome"));
+  if (declared && isRealLeadName(declared)) return declared;
+  const hinted = sanitizeLeadNameHint(args.leadDisplayName);
+  if (hinted && isRealLeadName(hinted)) return hinted;
+  const digits = String(args.leadPhone ?? "").replace(/\D/g, "");
+  return digits ? `Contato WhatsApp • final ${digits.slice(-4)}` : "Contato do WhatsApp";
+}
+
+function interestSummary(state: ConversationState, adVehicleLabel: string | null | undefined): string | null {
+  return interestVehicleText(state, adVehicleLabel ?? null)
+    || textOf(known(state.slots, "tipoVeiculo"))
+    || null;
+}
+
+// Próximo passo operacional para o vendedor. Ele usa o estágio REAL do atendimento,
+// não uma ordem fixa de perguntas do funil. O prompt do portal continua sendo a
+// autoridade da conversa; isto é apenas uma recomendação no briefing interno.
+export function suggestNextStep(state: ConversationState, context: BriefingContext = {}): string {
   const s = state.slots;
-  if (known(s, "possuiTroca") === undefined && known(s, "veiculoTroca") === undefined) return "Confirmar se há carro para troca.";
+  const selected = state.vehicleContext.selected?.label?.trim() || null;
+  const interest = interestSummary(state, context.adVehicleLabel);
+  const offered = offeredVehicleLabels(state);
+  const visitAt = textOf(known(s, "diaHorario"));
+  if (context.handoffReason === "explicit_human_request") {
+    return `Assumir o atendimento agora${interest ? ` e responder sobre ${interest}` : ""}, sem repetir perguntas já respondidas.`;
+  }
+  if (context.handoffReason === "followup_timeout_handoff") {
+    if (offered.length > 0) return `Retomar as ${offered.length} opções apresentadas e perguntar qual chamou mais atenção; oferecer fotos, detalhes ou alternativas.`;
+    if (interest) return `Retomar o interesse em ${interest} e oferecer fotos, detalhes ou opções equivalentes.`;
+    return "Retomar o contato pelo contexto já coletado e entender qual veículo faz sentido, sem reiniciar o atendimento.";
+  }
+  if (visitAt) return `Confirmar a visita em ${visitAt} e alinhar quem receberá o cliente na loja.`;
+  if (known(s, "interesseVisita") === true) return `Combinar dia e horário da visita${selected ? ` ao ${selected}` : interest ? ` para ver ${interest}` : ""}.`;
+  if (selected && context.lastPhotoAction?.photoIds.length) return `Retomar o ${selected}, confirmar as dúvidas após as fotos e avançar para condições ou visita.`;
+  if (selected) return `Retomar o interesse no ${selected} e avançar para fotos, condições ou visita conforme a necessidade do cliente.`;
+  if (offered.length > 0) return `Perguntar qual das ${offered.length} opções apresentadas chamou mais atenção e oferecer fotos ou detalhes do escolhido.`;
+  if (interest) return `Continuar a partir do interesse em ${interest}, confirmando a necessidade atual antes de apresentar a melhor opção.`;
+  if (context.adContext) return `Confirmar o interesse no ${adDescription(context.adContext, context.adVehicleLabel) ?? "anúncio"} e atender a solicitação atual do cliente.`;
   if (known(s, "possuiTroca") === true && known(s, "veiculoTroca") === undefined) return "Coletar dados do carro de troca (modelo/ano/km) e agendar avaliação.";
-  if (known(s, "entrada") === undefined) return "Confirmar valor de entrada.";
-  if (known(s, "parcelaDesejada") === undefined && textOf(known(s, "formaPagamento")) !== "a_vista") return "Confirmar parcela que cabe no orçamento.";
-  if (known(s, "interesseVisita") === undefined && known(s, "diaHorario") === undefined) return "Convidar para visita/test-drive e combinar dia/horário.";
-  if (known(s, "diaHorario") === undefined) return "Fechar dia/horário da visita.";
-  return "Lead qualificado — retomar a negociação e fechar.";
+  return "Responder ao cliente e identificar o veículo ou necessidade principal antes de avançar a negociação.";
 }
 
 export type BriefingArgs = {
@@ -80,16 +158,58 @@ export type BriefingArgs = {
   readonly lastPhotoAction: { label: string; photoIds: readonly string[] } | null;  // WM (fotos JÁ enviadas)
   readonly agentName: string;
   readonly leadPhone: string | null;                    // wa.me; omitido se ausente
+  readonly leadDisplayName?: string | null;             // pushName/lead_name sanitizado; nome declarado continua prioritário
+  readonly handoffReason?: BriefingHandoffReason | null;
   readonly recentTurnsLimit?: number;                   // default 6
   readonly readyToTransfer?: boolean;
 };
+
+// Resumo factual e legível para o vendedor. Não é transcrição e não chama uma
+// segunda LLM: usa somente fatos aceitos no estado, portanto não inventa nem
+// adiciona custo/latência à transferência.
+export function buildAgentSummary(args: BriefingArgs): string[] {
+  const { state } = args;
+  const summary: string[] = [];
+  const ad = adDescription(args.adContext, args.adVehicleLabel);
+  const interest = interestSummary(state, args.adVehicleLabel);
+  const selected = state.vehicleContext.selected?.label?.trim() || null;
+  const offered = offeredVehicleLabels(state);
+  const topics = leadTopics(state);
+  const troca = tradeVehicleText(state.slots);
+  const entrada = moneyBr(known(state.slots, "entrada")) ?? (known(state.slots, "entrada") === 0 ? "sem entrada" : null);
+  const parcela = moneyBr(known(state.slots, "parcelaDesejada"));
+  const visita = textOf(known(state.slots, "diaHorario"));
+
+  if (ad) summary.push(`Chegou pelo anúncio de ${ad}.`);
+  if (interest) summary.push(`Demonstrou interesse em ${interest}.`);
+  if (offered.length > 0) {
+    const labels = offered.slice(0, 5).join(", ");
+    summary.push(`Recebeu ${offered.length} ${offered.length === 1 ? "opção" : "opções"}${labels ? `: ${labels}` : ""}.`);
+  }
+  if (selected) summary.push(`Escolheu ou destacou o ${selected}.`);
+  if (args.lastPhotoAction?.photoIds.length) summary.push(`Recebeu ${args.lastPhotoAction.photoIds.length} foto${args.lastPhotoAction.photoIds.length === 1 ? "" : "s"} do ${args.lastPhotoAction.label}.`);
+  if (topics.length > 0) summary.push(`Assuntos tratados: ${topics.join(", ")}.`);
+  if (troca) summary.push(`Informou troca: ${troca}.`);
+  if (entrada || parcela) summary.push(`Condição informada: ${[entrada ? `entrada ${entrada}` : null, parcela ? `parcela até ${parcela}/mês` : null].filter(Boolean).join(" e ")}.`);
+  if (visita) summary.push(`Visita combinada para ${visita}.`);
+  else if (known(state.slots, "interesseVisita") === true) summary.push("Demonstrou interesse em visitar a loja; data e horário ainda precisam ser combinados.");
+  if (args.handoffReason === "followup_timeout_handoff") {
+    summary.push(offered.length > 0 ? "Ficou inativo após receber as opções." : "Ficou inativo antes de concluir o atendimento.");
+  } else if (args.handoffReason === "explicit_human_request") {
+    summary.push("Pediu atendimento humano diretamente.");
+  } else if (args.handoffReason === "qualified_handoff") {
+    summary.push("Chegou ao ponto de continuidade com o vendedor.");
+  }
+  if (summary.length === 0) summary.push("Iniciou o contato, mas ainda não informou o veículo ou a necessidade principal.");
+  return summary;
+}
 
 // Briefing completo do vendedor. SÓ fatos; ausência = omissão/"não informado".
 export function buildSellerBriefing(args: BriefingArgs): string {
   const { state } = args;
   const s = state.slots;
   const lines: string[] = [];
-  const nome = textOf(known(s, "nome")) ?? "não informado";
+  const nome = leadDisplayName(args);
   const category = classifySdrCategory(state, { readyToTransfer: args.readyToTransfer });
   lines.push(`📋 *LEAD — ${nome}*`);
   lines.push(CATEGORY_LINE[category]);
@@ -149,21 +269,14 @@ export function buildSellerBriefing(args: BriefingArgs): string {
     lines.push(`⏳ *Pendente:* aguardando ${slotLabel[pending.slot] ?? `resposta (${pending.slot})`}`);
   }
 
-  // Próximo passo (derivado do funil, nunca inventado).
+  // Resumo do agente: fatos consolidados, sem transcrição crua.
   lines.push("");
-  lines.push(`👉 *Próxima ação sugerida:* ${suggestNextStep(state)}`);
+  lines.push("📝 *Resumo do agente:*");
+  for (const item of buildAgentSummary(args)) lines.push(`• ${item}`);
 
-  // Últimas mensagens (fatos do histórico), truncadas.
-  const limit = args.recentTurnsLimit ?? 6;
-  const turns = (state.recentTurns ?? []).slice(-limit);
-  if (turns.length > 0) {
-    lines.push("");
-    lines.push("🗨️ *Últimas mensagens:*");
-    for (const t of turns) {
-      const who = t.role === "lead" ? "Cliente" : "IA";
-      lines.push(`${who}: ${String(t.text ?? "").replace(/\s+/g, " ").slice(0, 160)}`);
-    }
-  }
+  // Próximo passo contextual para o vendedor.
+  lines.push("");
+  lines.push(`👉 *Próxima ação sugerida:* ${suggestNextStep(state, args)}`);
 
   if (args.leadPhone) {
     const digits = args.leadPhone.replace(/\D/g, "");

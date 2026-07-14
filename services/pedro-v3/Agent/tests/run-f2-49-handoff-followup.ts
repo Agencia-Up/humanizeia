@@ -162,9 +162,10 @@ check("[S4] handoff banco e delivered", handoffResult.status === "succeeded" && 
 
 const sentTo: string[] = [];
 const sentTexts: string[] = [];
-transferStore.config = { ...transferStore.config, gerentePhones: ["5511888888888"] };
+transferStore.lead = { ...transferStore.lead, leadName: "Douglas Aloan" };
+transferStore.config = { ...transferStore.config, briefingTemplateVendedor: "{nome}\n{resumo}", gerentePhones: ["5511888888888"] };
 const notifyPlan = notify!;
-const notifyRecord = record({ effectId: notifyPlan.effectId, turnId, planId: notifyPlan.planId, kind: "notify_seller", idempotencyKey: notifyPlan.effectId, payload: { leadId: LEAD, reason: "followup_timeout_handoff", etiquetas: { nome: "Douglas", telefone: "5512999999999" }, sensitiveRefs: { cpf: "cpf-ref", birthDate: "birth-ref" }, correlationId: notifyPlan.kind === "notify_seller" ? notifyPlan.correlationId : "", __redacted: true }, onSuccess: notifyPlan.onSuccess, status: "pending", receiptLevel: null, outcomeAppliedAt: null });
+const notifyRecord = record({ effectId: notifyPlan.effectId, turnId, planId: notifyPlan.planId, kind: "notify_seller", idempotencyKey: notifyPlan.effectId, payload: { leadId: LEAD, reason: "followup_timeout_handoff", etiquetas: { nome: "Contato WhatsApp • final 9999", telefone: "5512999999999", resumo: "Resumo curto do agente" }, sensitiveRefs: { cpf: "cpf-ref", birthDate: "birth-ref" }, correlationId: notifyPlan.kind === "notify_seller" ? notifyPlan.correlationId : "", __redacted: true }, onSuccess: notifyPlan.onSuccess, status: "pending", receiptLevel: null, outcomeAppliedAt: null });
 const notifyResult = await new NotifySellerEffectDispatcher({ ref: { tenantId: TENANT, agentId: AGENT }, clock: { now: () => NOW }, store: transferStore, sender: { async sendText(input) { sentTo.push(input.to); sentTexts.push(input.text); return { ok: true as const, level: "accepted" as const, providerMessageId: "wa-seller-1" }; }, async sendImage() { return { ok: false as const, code: "VALIDATION" as const, message: "unused", retryable: false }; } }, sensitiveVault: { async store() { throw new Error("unused"); }, async resolve(input) { return input.kind === "cpf" ? "11144477735" : "01/10/1997"; } } }).dispatch(notifyRecord);
 check("[S5] notify usa vendedor da transfer", sentTo[0] === "12999999999");
 check("[S6] notify nao mente delivered", notifyResult.status === "succeeded" && notifyResult.receipt.level === "accepted");
@@ -175,6 +176,8 @@ check("[S6e] accepted do notify conclui stage handoff", notifyReduced.ok && noti
 check("[S6a] PII abre somente na mensagem direta do vendedor", sentTexts[0]?.includes("CPF: 11144477735") === true && sentTexts[0]?.includes("Data de nascimento: 01/10/1997") === true);
 check("[S6b] gerente nunca recebe CPF/data", sentTexts[1] != null && !sentTexts[1].includes("11144477735") && !sentTexts[1].includes("01/10/1997"));
 check("[S6c] outbox guarda somente refs opacas", !JSON.stringify(notifyRecord.payload).includes("11144477735") && !JSON.stringify(notifyRecord.payload).includes("01/10/1997"));
+check("[S6f] notify promove placeholder para lead_name canônico do CRM", sentTexts[0]?.includes("Douglas Aloan") === true && !sentTexts[0]?.includes("Contato WhatsApp • final 9999"));
+check("[S6g] template do portal recebe resumo do agente, não início do briefing integral", sentTexts[0]?.includes("Resumo curto do agente") === true && !sentTexts[0]?.includes("Resumo factual"));
 const wrong = { ...notifyRecord, effectId: "wrong-notify", idempotencyKey: "wrong-notify", payload: { ...notifyRecord.payload, correlationId: "wrong" } };
 const wrongResult = await new NotifySellerEffectDispatcher({ ref: { tenantId: TENANT, agentId: AGENT }, clock: { now: () => NOW }, store: transferStore, sender: { async sendText() { return { ok: true as const, level: "accepted" as const, providerMessageId: "never" }; }, async sendImage() { return { ok: false as const, code: "VALIDATION" as const, message: "unused", retryable: false }; } } }).dispatch(wrong);
 check("[S7] correlation errada nao notifica", wrongResult.status === "failed");

@@ -16,7 +16,7 @@
 import type { EffectPlan, HandoffPlan, NotifySellerPlan, SendMessagePlan, TurnDecision } from "../domain/decision.ts";
 import type { AdContext, ConversationState } from "../domain/conversation-state.ts";
 import { effectIdFor } from "./finalizer.ts";
-import { buildSellerBriefing, classifySdrCategory } from "./briefing-builder.ts";
+import { buildAgentSummary, buildSellerBriefing, classifySdrCategory } from "./briefing-builder.ts";
 import {
   HANDOFF_REASON_LABEL, buildTransferEtiquetas, isHandoffReasonKind,
   type HandoffReasonKind,
@@ -73,15 +73,18 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
   }
 
   const category = classifySdrCategory(args.stateAfter, { readyToTransfer: reason === "qualified_handoff" });
-  const briefingBase = buildSellerBriefing({
+  const briefingArgs = {
     state: args.stateAfter,
     adContext: args.adContext,
     adVehicleLabel: args.adVehicleLabel,
     lastPhotoAction: args.lastPhotoAction,
     agentName: args.agentName,
     leadPhone: args.leadPhone,
+    leadDisplayName: args.leadDisplayName,
+    handoffReason: reason,
     readyToTransfer: reason === "qualified_handoff",
-  });
+  } as const;
+  const briefingBase = buildSellerBriefing(briefingArgs);
   // Motivo/origem da transferência SEMPRE declarado no briefing (contrato HF-2).
   const briefing = `${briefingBase}\n\n🎯 *Motivo da transferência:* ${HANDOFF_REASON_LABEL[reason]}`;
 
@@ -95,7 +98,9 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
     adVehicleLabel: args.adVehicleLabel,
     classificacao: SDR_CATEGORY_TEXT[category] ?? "",
     horario: args.nowLocal,
-    resumo: briefing,
+    // Templates personalizados recebem um resumo factual curto. O fallback
+    // padrão continua usando o briefing integral abaixo.
+    resumo: buildAgentSummary(briefingArgs).join(" "),
   });
 
   const maxOrder = withoutHandoff.reduce((max, p) => Math.max(max, p.order), 0);

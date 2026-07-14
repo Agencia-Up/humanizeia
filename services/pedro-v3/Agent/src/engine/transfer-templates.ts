@@ -153,7 +153,7 @@ export function buildTransferEtiquetas(args: TransferEtiquetasArgs): Record<stri
   const nomeSlot = known(s, "nome");
   const nome = (typeof nomeSlot === "string" && nomeSlot.trim())
     ? nomeSlot.trim()
-    : (args.leadDisplayName?.trim() || (digits ? `Lead (final ${digits.slice(-4)})` : "Lead"));
+    : (args.leadDisplayName?.trim() || (digits ? `Contato WhatsApp • final ${digits.slice(-4)}` : "Contato do WhatsApp"));
   const forma = known(s, "formaPagamento");
   return {
     agente: args.agentName || "Agente",

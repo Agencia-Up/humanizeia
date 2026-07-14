@@ -36,6 +36,7 @@ import type { Clock } from "../../domain/ports.ts";
 import type { TenantAgentRef } from "../../domain/read-ports.ts";
 import type { JsonValue } from "../../domain/types.ts";
 import type { EffectDispatcher } from "../../engine/outbox-dispatcher.ts";
+import { isRealLeadName, sanitizeLeadNameHint } from "../../engine/crm-write.ts";
 import {
   composeManagerMessage, composeSellerMessage, isHandoffReasonKind, parseTransferReasonTag,
   pickFairRoundRobin, sellerPhoneKey, transferReasonTag, uniqueSellersByPhone,
@@ -269,20 +270,38 @@ export class NotifySellerEffectDispatcher implements EffectDispatcher {
       return failed(record, "VALIDATION", "seller_without_valid_phone", false);
     }
 
+    // O lead_name canônico do CRM pode ter sido promovido depois que o plano
+    // nasceu (ex.: pushName da UAZAPI). A leitura é best-effort: nome jamais
+    // bloqueia a notificação ou a transferência.
+    let canonicalLeadName: string | null = null;
+    try {
+      canonicalLeadName = sanitizeLeadNameHint((await store.fetchOwnedLeadForTransfer(ref, payload.leadId))?.leadName);
+    } catch { /* fallback para etiqueta/telefone */ }
+    const payloadLeadName = sanitizeLeadNameHint(payload.etiquetas.nome);
+    const leadDigits = String(payload.etiquetas.telefone ?? "").replace(/\D/g, "");
+    const effectiveLeadName = canonicalLeadName && isRealLeadName(canonicalLeadName)
+      ? canonicalLeadName
+      : payloadLeadName && isRealLeadName(payloadLeadName)
+        ? payloadLeadName
+        : (leadDigits ? `Contato WhatsApp • final ${leadDigits.slice(-4)}` : "Contato do WhatsApp");
+
     // Composição (template do portal OU fallback v2-compatível). O briefing integral vem
     // das notes da transfer (autoria da saga — determinístico e auditável no banco).
     const etiquetas: Record<string, string> = {
       ...payload.etiquetas,
+      nome: effectiveLeadName,
       vendedor: seller.name ?? payload.etiquetas.vendedor ?? "",
       telefone_vendedor: seller.whatsappNumber ?? payload.etiquetas.telefone_vendedor ?? "",
-      resumo: (transfer.notes ?? payload.etiquetas.resumo ?? "").substring(0, 300),
+      // {resumo} do portal recebe o resumo operacional produzido no plano.
+      // transfer.notes continua sendo o briefing integral usado pelo fallback.
+      resumo: (payload.etiquetas.resumo ?? transfer.notes ?? "").substring(0, 300),
     };
     const baseSellerMessage = composeSellerMessage({
       template: config.briefingTemplateVendedor,
       mensagensSemEmoji: config.mensagensSemEmoji,
       etiquetas,
       reason,
-      leadDisplayName: payload.etiquetas.nome ?? null,
+      leadDisplayName: effectiveLeadName,
       leadPhone: payload.etiquetas.telefone ?? null,
       agentName: config.agentName,
       briefing: transfer.notes ?? "",
@@ -325,7 +344,7 @@ export class NotifySellerEffectDispatcher implements EffectDispatcher {
         sellerName: seller.name,
         sellerPhone: seller.whatsappNumber,
         agentName: config.agentName,
-        leadDisplayName: payload.etiquetas.nome ?? null,
+        leadDisplayName: effectiveLeadName,
         leadPhone: payload.etiquetas.telefone ?? null,
         classificacaoText: etiquetas.classificacao ?? "",
         horario: payload.etiquetas.horario ?? "",

@@ -17,7 +17,7 @@ import { runCentralConversationTurn, type CentralTurnResult } from "../src/engin
 import { OutboxDispatcher, type EffectDispatcher } from "../src/engine/outbox-dispatcher.ts";
 import { CompositeEffectDispatcher, CrmWriteEffectDispatcher, type CrmLeadRow, type CrmLeadStore, CRM_SUMMARY_PREFIX } from "../src/adapters/effects/crm-write-dispatcher.ts";
 import { buildCrmFields, buildCrmWritePlan, CRM_WRITE_ORDER } from "../src/engine/crm-write.ts";
-import { buildSellerBriefing, classifySdrCategory, suggestNextStep } from "../src/engine/briefing-builder.ts";
+import { buildAgentSummary, buildSellerBriefing, classifySdrCategory, suggestNextStep } from "../src/engine/briefing-builder.ts";
 import { InMemoryPersistence, FakeClock, FakeIdGen } from "../src/adapters/persistence/in-memory-store.ts";
 import { ScriptedAgentBrain, type BrainResponder } from "../src/adapters/llm/fake-agent-brain.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
@@ -264,21 +264,47 @@ async function main(): Promise<void> {
     check("[8] crm_write FORBIDDEN (lead não pertence ao tenant/agente) e nada foi escrito", crm?.status === "failed" && store.rows[0].fields.client_name == null && store.updates === 0, `crm=${crm?.status} updates=${store.updates}`);
   }
 
-  // ── 9) briefing sem dado NÃO inventa (omite/"não informado") + fail-closed sem leadId ──
+  // ── 9) briefing sem dado NÃO inventa + resumo operacional substitui transcrição ──
   {
     const empty = createInitialState({ conversationId: "c9", tenantId: TENANT, agentId: AGENT, leadId: null, now: NOW });
     const briefing = buildSellerBriefing({ state: empty, adContext: null, adVehicleLabel: null, lastPhotoAction: null, agentName: "Aloan", leadPhone: null });
-    check("[9a] briefing vazio: 'não informado' + sem R$, sem carro, sem troca, sem visita", has(briefing, "não informado") && !/r\$\s*\d/i.test(briefing) && !has(briefing, "Troca:") && !has(briefing, "Visita:") && !has(briefing, "Fotos enviadas"), briefing.slice(0, 200));
-    check("[9b] categoria = inativo + próximo passo = começo do funil", classifySdrCategory(empty) === "inativo" && has(suggestNextStep(empty), "troca"), `${classifySdrCategory(empty)} | ${suggestNextStep(empty)}`);
+    check("[9a] briefing vazio usa placeholder humano e não inventa dado", has(briefing, "Contato do WhatsApp") && !/r\$\s*\d/i.test(briefing) && !has(briefing, "Troca:") && !has(briefing, "Visita:") && !has(briefing, "Fotos enviadas"), briefing.slice(0, 240));
+    check("[9b] categoria = inativo + próxima ação começa pela necessidade", classifySdrCategory(empty) === "inativo" && has(suggestNextStep(empty), "necessidade principal"), `${classifySdrCategory(empty)} | ${suggestNextStep(empty)}`);
+    check("[9c] briefing tem Resumo do agente e nunca Últimas mensagens", has(briefing, "Resumo do agente") && !has(briefing, "Últimas mensagens"), briefing);
     // buildCrmWritePlan fail-closed: sem leadId -> null; sem campos -> null; sem mudança -> null
-    check("[9c] plan fail-closed: sem leadId => null; estado vazio => null", buildCrmWritePlan({ stateAfter: empty, stateBefore: null, adContext: null, adVehicleLabel: null, leadId: null, turnId: "t" }) === null && buildCrmWritePlan({ stateAfter: empty, stateBefore: null, adContext: null, adVehicleLabel: null, leadId: LEAD_ID, turnId: "t" }) === null);
+    check("[9d] plan fail-closed: sem leadId => null; estado vazio => null", buildCrmWritePlan({ stateAfter: empty, stateBefore: null, adContext: null, adVehicleLabel: null, leadId: null, turnId: "t" }) === null && buildCrmWritePlan({ stateAfter: empty, stateBefore: null, adContext: null, adVehicleLabel: null, leadId: LEAD_ID, turnId: "t" }) === null);
     const store = new FakeCrmStore([{ id: LEAD_ID, tenantId: TENANT, agentId: AGENT, fields: {} }]);
     const c = conv(store, { leadId: null });
     const t1 = await c.t("meu nome é Douglas", () => finU([txt("Prazer! O que você procura?")], "reply", U("other")));
-    check("[9d] sem leadId: NENHUM crm_write no outbox (fail-closed)", crmOf(t1) === undefined);
+    check("[9e] sem leadId: NENHUM crm_write no outbox (fail-closed)", crmOf(t1) === undefined);
     const c2 = conv(new FakeCrmStore([{ id: LEAD_ID, tenantId: TENANT, agentId: AGENT, fields: {} }]), { crmEnabled: false });
     const t2 = await c2.t("meu nome é Douglas", () => finU([txt("Prazer! O que você procura?")], "reply", U("other")));
-    check("[9e] flag OFF: NENHUM crm_write no outbox (default fail-closed)", crmOf(t2) === undefined);
+    check("[9f] flag OFF: NENHUM crm_write no outbox (default fail-closed)", crmOf(t2) === undefined);
+  }
+
+  // ── 9R) relatório para vendedor: resume fatos, anúncio e inatividade sem despejar conversa crua ──
+  {
+    const s = createInitialState({ conversationId: "c9r", tenantId: TENANT, agentId: AGENT, leadId: LEAD_ID, now: NOW });
+    s.slots.tipoVeiculo = { status: "known", value: "suv", confidence: 1, updatedAt: NOW, sourceTurnId: "t1" };
+    s.lastRenderedOfferContext = {
+      sourceTurnId: "t1", createdAt: NOW,
+      items: [
+        { ordinal: 1, vehicleKey: "rm:compass", marca: "Jeep", modelo: "Compass", ano: 2019, tipo: "suv" },
+        { ordinal: 2, vehicleKey: "rm:renegade", marca: "Jeep", modelo: "Renegade", ano: 2021, tipo: "suv" },
+      ],
+    };
+    s.recentTurns = [
+      { role: "lead", text: "Tem SUV? Quero ver fotos", at: NOW },
+      { role: "agent", text: "Separei duas opções", at: NOW },
+    ];
+    const ad: AdContext = { adId: "ad-9", source: "facebook", sourceUrl: "https://fb.me/x", title: "Jeep Compass 2019", body: "Oferta Jeep Compass", greeting: "Olá", imageUrls: [], capturedAtTurn: 0 };
+    const args = { state: s, adContext: ad, adVehicleLabel: "Jeep Compass 2019", lastPhotoAction: { label: "Jeep Compass 2019", photoIds: ["p1", "p2", "p3"] }, agentName: "Aloan", leadPhone: "55129888823679", leadDisplayName: "Douglas 🚗", handoffReason: "followup_timeout_handoff" as const };
+    const summary = buildAgentSummary(args).join(" ");
+    const briefing = buildSellerBriefing(args);
+    check("[9R-1] nome usa pushName saneado, nunca Lead/não informado", has(briefing, "LEAD — Douglas") && !has(briefing, "não informado"), briefing.slice(0, 120));
+    check("[9R-2] resumo registra anúncio, opções, fotos e inatividade", has(summary, "anúncio") && has(summary, "2 opções") && has(summary, "3 fotos") && has(summary, "inativo"), summary);
+    check("[9R-3] briefing não replica falas cruas", !has(briefing, "Cliente:") && !has(briefing, "IA:") && !has(briefing, "Últimas mensagens"), briefing);
+    check("[9R-4] próxima ação retoma opções apresentadas", has(suggestNextStep(s, args), "2 opções apresentadas"), suggestNextStep(s, args));
   }
 
   // ── delta por turno: turno sem coleta nova NÃO emite crm_write ──
