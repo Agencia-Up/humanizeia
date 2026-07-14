@@ -607,6 +607,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   // Refs estáveis — subscription recriada apenas quando user muda, não a cada render
   const fetchConversationsRef = useRef(fetchConversations);
   useEffect(() => { fetchConversationsRef.current = fetchConversations; }, [fetchConversations]);
+  const fetchMessagesRef = useRef(fetchMessages);
+  useEffect(() => { fetchMessagesRef.current = fetchMessages; }, [fetchMessages]);
   const selectedConvKeyRef = useRef(selectedConvKey);
   useEffect(() => { selectedConvKeyRef.current = selectedConvKey; }, [selectedConvKey]);
 
@@ -622,30 +624,27 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         event: 'INSERT', schema: 'public', table: 'wa_inbox',
         filter: `user_id=eq.${effectiveUserId}`,
       }, (payload) => {
-        const msg = payload.new as unknown as InboxMessage;
-        // Defesa: ignora mensagens de instâncias que não são visíveis ao user
+        // ENDURECIDO (privacidade): o payload bruto de wa_inbox NUNCA é anexado ao
+        // estado nem renderizado. Os campos de payload.new são usados só como SINAL
+        // (roteamento: "chegou algo nesta conversa?"). A lista e a timeline vêm
+        // SEMPRE das RPCs seguras (lead-only) — que revalidam autorização no servidor.
+        const sig = payload.new as { phone?: string; instance_id?: string | null };
+        const sigPhone = sig?.phone || '';
+        const sigInstance = sig?.instance_id ?? null;
+        // Defesa: ignora sinal de instâncias que não são visíveis ao user
         const visibleIds = allInstancesRef.current.map(i => i.id);
-        if (msg.instance_id && !visibleIds.includes(msg.instance_id)) return;
-        // Vendedor: ignora mensagens de leads que não são dele
-        if (isSeller && sellerLeadPhones && !sellerLeadPhones.has(msg.phone)) return;
+        if (sigInstance && !visibleIds.includes(sigInstance)) return;
+        // Vendedor: ignora sinal de leads que não são dele (só roteamento)
+        if (isSeller && sellerLeadPhones && !sellerLeadPhones.has(sigPhone)) return;
+        // Reconsulta a lista (preview/não-lidas) pela RPC.
         fetchConversationsRef.current(false);
+        // Se a conversa aberta é a que recebeu algo, revalida a timeline pela RPC
+        // segura (que também marca como lida por telefone). Sem setMessages(payload).
         const convKey = selectedConvKeyRef.current;
         if (convKey) {
           const [selPhone, selInst] = convKey.split('::');
-          if (msg.phone === selPhone && (selInst === 'null' || selInst === msg.instance_id)) {
-            setMessages(prev => {
-              // Já temos a linha real do banco? Não duplica.
-              if (prev.some(m => m.id === msg.id)) return prev;
-              // Reconcilia: remove a mensagem otimista (id "temp-") equivalente
-              const reconciled = prev.filter(m => !(
-                m.id.startsWith('temp-') &&
-                m.direction === msg.direction &&
-                (m.content || '') === (msg.content || '') &&
-                (m.media_url || '') === (msg.media_url || '')
-              ));
-              return [...reconciled, msg];
-            });
-            supabase.from('wa_inbox').update({ is_read: true } as any).eq('id', msg.id).then(() => {});
+          if (sigPhone === selPhone && (selInst === 'null' || selInst === sigInstance)) {
+            fetchMessagesRef.current(selPhone, selInst === 'null' ? null : selInst);
           }
         }
       })
