@@ -39,6 +39,20 @@ const brl = (n: number) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'cu
 function pct(n: number): string {
   return `${Math.round(Number(n) || 0)}%`;
 }
+// Custo por lead: SÓ com gasto E denominador > 0 -> senão "—" (nunca NaN, Infinity ou 0 falso).
+function cpl(invest: number, qtd: number): string {
+  const i = Number(invest) || 0, q = Number(qtd) || 0;
+  return i > 0 && q > 0 ? brl(i / q) : '—';
+}
+// Cor do CPL do lead bom (quanto menor, melhor). Sem base pra calcular -> cinza.
+function cplBomCls(invest: number, qtd: number): string {
+  const i = Number(invest) || 0, q = Number(qtd) || 0;
+  if (!(i > 0 && q > 0)) return 'text-muted-foreground';
+  const v = i / q;
+  if (v <= 150) return 'text-emerald-600 dark:text-emerald-400';
+  if (v <= 300) return 'text-amber-600 dark:text-amber-400';
+  return 'text-red-600 dark:text-red-400';
+}
 function confiancaProduto(totalProdutos: number, produtosComTrafego: number, joseTemDados: boolean): { label: string; cls: string; desc: string } {
   if (!joseTemDados) {
     return {
@@ -261,7 +275,8 @@ export function FeedbackPorProdutoTab() {
   const tot = linhasVis.reduce((a, r) => ({
     total: a.total + r.total, q: a.q + r.qualificados, p: a.p + r.pouco_qualificados,
     r: a.r + r.ruins, n: a.n + r.nao_lead,
-  }), { total: 0, q: 0, p: 0, r: 0, n: 0 });
+    gasto: a.gasto + (r.jose?.gasto || 0), // Fase: soma do investido das linhas visíveis/filtradas
+  }), { total: 0, q: 0, p: 0, r: 0, n: 0, gasto: 0 });
   const produtosComTrafego = useMemo(() => linhas.filter((l) => !!l.jose).length, [linhas]);
   const confianca = useMemo(
     () => confiancaProduto(linhas.length, produtosComTrafego, jose.tem_dados),
@@ -309,9 +324,11 @@ export function FeedbackPorProdutoTab() {
       linhasCsv.push(['OUTROS (cauda)', brl(outros), '', '', '', '', '']);
       linhasCsv.push(['TOTAL DA CONTA', brl(jose.gastoTotal), '', '', '', '', '']);
     } else {
-      head = ['Produto', 'Leads', 'Qualificados', 'Pouco', 'Ruins', 'Nem e lead', '% Bom', 'Status trafego', 'Gasto Meta'];
+      head = ['Produto', 'Leads', 'Qualificados', 'Pouco', 'Ruins', 'Nem e lead', '% Bom', 'Status trafego', 'Gasto Meta', 'CPL bom'];
       linhasCsv = linhasVis.map((r) => [r.produto, r.total, r.qualificados, r.pouco_qualificados, r.ruins, r.nao_lead,
-        r.pct_qualificado + '%', !jose.tem_dados ? '' : !r.jose ? 'Nao anunciado' : r.jose.ativo ? 'Ativo' : 'Pausado', r.jose ? brl(r.jose.gasto) : '']);
+        r.pct_qualificado + '%', !jose.tem_dados ? '' : !r.jose ? 'Nao anunciado' : r.jose.ativo ? 'Ativo' : 'Pausado', r.jose ? brl(r.jose.gasto) : '', cpl(r.jose?.gasto || 0, r.qualificados)]);
+      linhasCsv.push(['TOTAL', tot.total, tot.q, tot.p, tot.r, tot.n,
+        (tot.total ? Math.round((100 * tot.q) / tot.total) : 0) + '%', '', tot.gasto > 0 ? brl(tot.gasto) : '', cpl(tot.gasto, tot.q)]);
     }
     const csv = [head, ...linhasCsv].map((l) => l.map(esc).join(';')).join('\r\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -324,8 +341,8 @@ export function FeedbackPorProdutoTab() {
   const StatusPillC = ({ s }: { s?: string }) => s === 'ACTIVE'
     ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Ativo</span>
     : <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">Pausado</span>;
-  const Th = ({ k, children, align = 'right' }: { k: SortKey; children: any; align?: 'left' | 'right' }) => (
-    <th className={`px-3 py-2 font-medium ${align === 'right' ? 'text-right' : 'text-left'}`}>
+  const Th = ({ k, children, align = 'right', title }: { k: SortKey; children: any; align?: 'left' | 'right'; title?: string }) => (
+    <th title={title} className={`px-3 py-2 font-medium ${align === 'right' ? 'text-right' : 'text-left'}`}>
       <button onClick={() => toggleSort(k)} className={`inline-flex items-center gap-1 hover:text-foreground ${sortKey === k ? 'text-foreground' : ''} ${align === 'right' ? 'flex-row-reverse' : ''}`}>
         {children}
         {sortKey === k ? (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />) : <ChevronsUpDown className="h-3 w-3 opacity-40" />}
@@ -501,13 +518,18 @@ export function FeedbackPorProdutoTab() {
         rows.length === 0 ? (
           <div className="rounded-xl border border-border/50 py-10 text-center text-sm text-muted-foreground">Sem análises no período.</div>
         ) : (
+          <>
           <div className="overflow-x-auto rounded-xl border border-border/50">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[820px] text-sm">
               <thead>
                 <tr className="border-b border-border/50 bg-muted/30 text-[11px] uppercase text-muted-foreground">
                   <Th k="produto" align="left">Produto</Th><Th k="total">Leads</Th><Th k="qualificados">Qualif.</Th>
-                  <Th k="pouco">Pouco</Th><Th k="ruins">Ruim</Th><Th k="nao_lead">Nem é lead</Th><Th k="pct">% Bom</Th>
-                  <th className="px-3 py-2 text-left font-medium">Tráfego</th><Th k="gasto">Gasto Meta</Th>
+                  <Th k="pouco">Pouco</Th><Th k="ruins">Ruim</Th>
+                  <Th k="nao_lead" title="Nem é lead = contato sem intenção real de compra">Nem é lead</Th>
+                  <Th k="pct" title="Taxa de qualificação = % de leads bons sobre o total recebido">% Bom</Th>
+                  <th className="px-3 py-2 text-left font-medium">Tráfego</th>
+                  <Th k="gasto" title="Investido = gasto da Meta no anúncio deste produto">Gasto Meta</Th>
+                  <th className="px-3 py-2 text-right font-medium" title="CPL bom = quanto custou cada lead bom (investido ÷ leads bons)">CPL bom</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
@@ -522,10 +544,12 @@ export function FeedbackPorProdutoTab() {
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-foreground">{r.pct_qualificado}%</td>
                     <td className="px-3 py-2">{!jose.tem_dados ? <span className="text-muted-foreground">—</span> : !r.jose ? <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[11px] text-slate-500">Não anunciado</span> : <StatusPillC s={r.jose.ativo ? 'ACTIVE' : 'PAUSED'} />}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.jose && r.jose.gasto > 0 ? brl(r.jose.gasto) : '·'}</td>
+                    <td className={`px-3 py-2 text-right font-semibold tabular-nums ${cplBomCls(r.jose?.gasto || 0, r.qualificados)}`}>{cpl(r.jose?.gasto || 0, r.qualificados)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
+                {/* Linha 1: totais alinhados às colunas + investido e CPL bom destacados */}
                 <tr className="border-t border-border/50 bg-muted/20 text-[12px] font-medium">
                   <td className="px-3 py-2">Total</td>
                   <td className="px-3 py-2 text-right tabular-nums">{tot.total}</td>
@@ -534,11 +558,31 @@ export function FeedbackPorProdutoTab() {
                   <td className="px-3 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{tot.r}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-slate-500">{tot.n}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{tot.total ? Math.round((100 * tot.q) / tot.total) : 0}%</td>
-                  <td className="px-3 py-2" /><td className="px-3 py-2" />
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-foreground">{tot.gasto > 0 ? brl(tot.gasto) : '—'}</td>
+                  <td className={`px-3 py-2 text-right font-bold tabular-nums ${cplBomCls(tot.gasto, tot.q)}`}>{cpl(tot.gasto, tot.q)}</td>
+                </tr>
+                {/* Linha 2: leitura pro gestor leigo — investido + todos os CPLs, com "—" quando não dá pra calcular */}
+                <tr className="border-t border-border/40 bg-muted/10">
+                  <td colSpan={10} className="px-3 py-2.5">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
+                      <span className="font-semibold text-foreground">💰 Investido: {tot.gasto > 0 ? brl(tot.gasto) : '—'}</span>
+                      <span className="text-muted-foreground">CPL geral: <b className="text-foreground">{cpl(tot.gasto, tot.total)}</b></span>
+                      <span className="text-muted-foreground">CPL bom: <b className={cplBomCls(tot.gasto, tot.q)}>{cpl(tot.gasto, tot.q)}</b></span>
+                      <span className="text-muted-foreground">CPL pouco: <b className="text-foreground">{cpl(tot.gasto, tot.p)}</b></span>
+                      <span className="text-muted-foreground">CPL ruim: <b className="text-foreground">{cpl(tot.gasto, tot.r)}</b></span>
+                      <span className="text-muted-foreground">CPL nem-é-lead: <b className="text-foreground">{cpl(tot.gasto, tot.n)}</b></span>
+                    </div>
+                  </td>
                 </tr>
               </tfoot>
             </table>
           </div>
+          <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span><b className="text-foreground">CPL bom</b> = quanto custou cada lead bom (investido ÷ leads bons). <b className="text-foreground">Taxa de qualificação</b> (% Bom) = leads bons sobre o total recebido. <b className="text-foreground">Nem é lead</b> = contato sem intenção real de compra. <b className="text-foreground">"—"</b> = sem gasto ou sem base pra calcular.</span>
+          </p>
+          </>
         )
       )}
 

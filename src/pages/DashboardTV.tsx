@@ -784,7 +784,16 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           if (extraTransferredError) {
             console.warn('[DashboardTV] Falha ao incluir leads Pedro confirmados no periodo', extraTransferredError.message);
           } else if (Array.isArray(extraTransferredLeads) && extraTransferredLeads.length > 0) {
-            pedroLeads = [...pedroLeads, ...extraTransferredLeads];
+            // REGRA (dono 13/07): estes leads ENTRARAM na Logos ANTES do período
+            // (por isso a query principal por arrived_at/created_at não os pegou) —
+            // só surgiram aqui por um REPASSE/aceite dentro do período. Um lead que
+            // já estava na Logos e foi apenas re-atribuído (ex.: vendedor saiu e os
+            // leads dele foram remanejados) NUNCA pode recontar como "tráfego pago
+            // novo": ele já foi contabilizado no dia em que chegou pela 1ª vez.
+            // Marca `_foraDoPeriodo` pra a contagem de tráfego pago ignorar (mas o
+            // lead segue visível). Só conta tráfego pago o lead adicionado pela 1ª
+            // vez dentro do período.
+            pedroLeads = [...pedroLeads, ...extraTransferredLeads.map((l: any) => ({ ...l, _foraDoPeriodo: true }))];
           }
         }
         const pendingOrConfirmedTransferIds = new Set<string>();
@@ -803,6 +812,11 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         let pedroAtribuidos = 0;  // leads Pedro com assigned_to_id != null
         let naoAtribuidos = 0;    // leads (Pedro+Marcos) que não foram pra vendedor — contam no total mas não no card de vendedor
         for (const l of pedroLeads) {
+          // Lead que entrou na Logos FORA do período (só surgiu aqui por um
+          // repasse/re-atribuição no período) não conta como tráfego pago novo —
+          // já foi contabilizado na 1ª entrada. Fica de fora de trafico_pago,
+          // pedroTotal (taxa) e do denominador de Custo por Lead.
+          if ((l as any)._foraDoPeriodo) continue;
           pedroTotal++;
           const assignedToId = l.assigned_to_id || transferAssigneeByLead.get(l.id) || null;
           if (assignedToId) {
@@ -911,6 +925,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // 7. Calcula score de qualidade de cada lead, depois média geral
         const scores: number[] = [];
         for (const l of pedroLeads) {
+          if ((l as any)._foraDoPeriodo) continue; // fora do período: não entra na qualidade do período
           const iaScore    = scorePedroStatus(l.status_crm);
           const fbPriority = feedbackByLead.get(l.id);
           const fbScore    = fbPriority ? scoreFeedbackPriority(fbPriority) : null;

@@ -18,7 +18,7 @@
 //  Regra de ouro: este arquivo (fonte NOVA) nunca toca em repasse/CRM/follow-up.
 // ============================================================================
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { buildLeadThread, LeadThread } from './ingestor.ts';
+import { buildLeadThread, LeadThread, Cobertura } from './ingestor.ts';
 
 export type LlmCall = (
   system: string, userText: string, userId: string,
@@ -37,6 +37,7 @@ export interface AnaliseResultado {
   tokens?: number;
   nepq_score?: number | null;
   nepq_semaforo?: string | null;
+  confianca_analise?: 'alta' | 'media' | 'baixa';
 }
 
 function montarPromptUsuario(t: LeadThread): string {
@@ -174,6 +175,42 @@ export function decidirVeredito(
   return null;
 }
 
+// ── Fase 3 — Confiança da análise (função PURA, testável) ────────────────────
+// A confiança é DETERMINÍSTICA e calculada em código a partir da cobertura real
+// da conversa (não pela IA). Régua aprovada pelo dono. Mensagens úteis = do
+// vendedor + do cliente (a IA é só contexto).
+export function calcularConfianca(cob: Cobertura): {
+  confianca_analise: 'alta' | 'media' | 'baixa';
+  motivo_confianca: string;
+  conversa_vendedor_suficiente: boolean;
+} {
+  const v = cob.mensagens_vendedor_lidas;
+  const c = cob.mensagens_cliente_lidas;
+  const at = cob.audios_total;
+  const atr = cob.audios_transcritos;
+  const asem = cob.audios_sem_transcricao;
+  const uteis = v + c;
+  const conversa_vendedor_suficiente = v >= 2;
+
+  // BAIXA
+  if (v === 0) return { confianca_analise: 'baixa', motivo_confianca: 'sem conversa do vendedor', conversa_vendedor_suficiente };
+  if (c === 0) return { confianca_analise: 'baixa', motivo_confianca: 'sem mensagens do cliente', conversa_vendedor_suficiente };
+  if (uteis < 3) return { confianca_analise: 'baixa', motivo_confianca: 'conversa muito curta (pouca evidencia)', conversa_vendedor_suficiente };
+  if (at >= 3 && atr === 0) return { confianca_analise: 'baixa', motivo_confianca: `${at} audios sem transcricao`, conversa_vendedor_suficiente };
+
+  // ALTA
+  const audioOk = at === 0 || (atr / at) >= 0.7;
+  if (c >= 2 && v >= 2 && audioOk) {
+    return { confianca_analise: 'alta', motivo_confianca: 'conversa completa do cliente e do vendedor', conversa_vendedor_suficiente };
+  }
+
+  // MEDIA (o resto)
+  let motivo = 'conversa parcial';
+  if (v >= 1 && v <= 2) motivo = 'poucas mensagens do vendedor';
+  else if (asem > 0 && asem >= atr) motivo = 'audios sem transcricao relevantes';
+  return { confianca_analise: 'media', motivo_confianca: motivo, conversa_vendedor_suficiente };
+}
+
 function parseContrato(text: string): any {
   if (!text) return null;
   const tryParse = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
@@ -279,6 +316,11 @@ export async function analisarLead(
   const nepqScore = temNepq ? calcScoreNepq(dimsSaida, rubrica) : null;
   const nepqSemaforo = temNepq ? semaforoNepq(nepqScore as number, rubrica) : null;
 
+  // Fase 3 — confiança da análise (determinística, a partir da cobertura real).
+  // Não altera o prompt (custo de IA inalterado); só descreve o que foi lido.
+  const cobertura = thread.cobertura;
+  const conf = calcularConfianca(cobertura);
+
   const resultado = {
     ...contrato,
     versao: contrato.versao || '1.0',
@@ -288,6 +330,12 @@ export async function analisarLead(
     custo_usd: out.custo,
     tokens: out.tokens,
     ...(temNepq ? { nepq_score: nepqScore, nepq_semaforo: nepqSemaforo, nepq_rubrica_slug: 'nepq-auto-whatsapp-v1' } : {}),
+    // Fase 3 (aditivo): cobertura + confiança pra o painel/relatório nunca afirmarem
+    // com 100% de certeza quando faltou conversa/áudio.
+    cobertura,
+    confianca_analise: conf.confianca_analise,
+    motivo_confianca: conf.motivo_confianca,
+    conversa_vendedor_suficiente: conf.conversa_vendedor_suficiente,
     _parse_ok: !!parsed,
     _raw: parsed ? null : out.text.slice(0, 1800),
   };
@@ -305,6 +353,7 @@ export async function analisarLead(
     qualidade_lead: q, score_atendimento: score, veredito, rotulagem_incorreta: rotulagem,
     resultado, custo_usd: out.custo, tokens: out.tokens,
     rubrica_id: rubrica?.id || null,
+    confianca_analise: conf.confianca_analise,
     status: 'concluido', analisado_em: new Date().toISOString(),
   }, { onConflict: 'lead_source,lead_id,versao_thread' }).select('id').single();
 
@@ -353,5 +402,6 @@ export async function analisarLead(
     status: 'concluido', qualidade_lead: q, score_atendimento: score,
     veredito, rotulagem_incorreta: rotulagem, custo_usd: out.custo, tokens: out.tokens,
     nepq_score: nepqScore, nepq_semaforo: nepqSemaforo,
+    confianca_analise: conf.confianca_analise,
   };
 }

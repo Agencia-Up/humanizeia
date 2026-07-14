@@ -57,19 +57,35 @@ export function FeedbackNepqTab() {
   const [rows, setRows] = useState<Rollup[]>([]);
   const [nomes, setNomes] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<string>('');
+  // Fase 3 (front-only) — selo agregado "X de Y análises parciais" por vendedor,
+  // calculado a partir da confianca_analise já exposta em feedback_relatorio_por_vendedor.
+  const [parcialPorVendedor, setParcialPorVendedor] = useState<Record<string, { parciais: number; total: number }>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: roll, error: e1 }, { data: team }] = await Promise.all([
+      const [{ data: roll, error: e1 }, { data: team }, { data: convs }] = await Promise.all([
         (supabase as any).rpc('feedback_rollup_por_vendedor'),
         (supabase as any).from('ai_team_members').select('id, name'),
+        (supabase as any).rpc('feedback_relatorio_por_vendedor'), // só pra agregar confiança
       ]);
       if (e1) throw e1;
       const map: Record<string, string> = {};
       for (const m of (team || [])) map[m.id] = m.name;
       setNomes(map);
       setRows(Array.isArray(roll) ? roll : []);
+
+      // Agrega confiança por vendedor (NULL/legado não conta).
+      const pmap: Record<string, { parciais: number; total: number }> = {};
+      for (const c of (Array.isArray(convs) ? convs : [])) {
+        const conf = (c as any)?.confianca_analise;
+        const vid = (c as any)?.vendedor_id;
+        if (!conf || !vid) continue;
+        const e = pmap[String(vid)] || (pmap[String(vid)] = { parciais: 0, total: 0 });
+        e.total += 1;
+        if (conf === 'media' || conf === 'baixa') e.parciais += 1;
+      }
+      setParcialPorVendedor(pmap);
     } catch (e: any) {
       toast({ title: 'Erro ao carregar NEPQ', description: e?.message, variant: 'destructive' });
     } finally {
@@ -231,9 +247,19 @@ export function FeedbackNepqTab() {
                 className={`w-full text-left bg-card border rounded-xl px-3 py-2.5 flex items-center gap-3 transition-colors ${on ? 'border-indigo-500/50 ring-1 ring-indigo-500/30' : 'border-border/50 hover:border-border'}`}
               >
                 <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${s.dot}`} />
-                <span className="text-sm font-medium text-foreground flex-1 truncate">{v.nome}</span>
-                <span className="text-[11px] text-muted-foreground">{v.conversas} conv.</span>
-                <span className={`text-base font-semibold w-9 text-right ${s.txt}`}>{v.score_medio ?? '—'}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-foreground truncate">{v.nome}</span>
+                  {(() => {
+                    const parc = parcialPorVendedor[v.vendedor_id];
+                    return parc && parc.parciais > 0 ? (
+                      <span className="block text-[10px] text-amber-500 dark:text-amber-400 truncate">
+                        {parc.parciais} de {parc.total} análises parciais
+                      </span>
+                    ) : null;
+                  })()}
+                </span>
+                <span className="text-[11px] text-muted-foreground shrink-0">{v.conversas} conv.</span>
+                <span className={`text-base font-semibold w-9 text-right shrink-0 ${s.txt}`}>{v.score_medio ?? '—'}</span>
               </button>
             );
           })}

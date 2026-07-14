@@ -7,6 +7,7 @@ import {
   Users, Loader2, Download, Trophy, AlertTriangle, Clock, Star, MessageSquareQuote,
   CheckCircle2, ClipboardList, Target,
 } from 'lucide-react';
+import { ConfiancaAnaliseBadge } from './ConfiancaAnaliseBadge';
 
 // ── Feedbacks > Por vendedor ─────────────────────────────────────────────────
 // A visão que faltava: filtra por vendedor e mostra, conversa a conversa, COMO
@@ -35,6 +36,8 @@ interface Conversa {
   tempo_resposta_min: number | null;
   houve_venda: string | null;
   vehicle_interest: string | null;
+  confianca_analise?: string | null; // Fase 3 (só leitura)
+  motivo_confianca?: string | null;
 }
 
 const QMAP: Record<string, { label: string; cls: string }> = {
@@ -440,6 +443,7 @@ export function FeedbackPorVendedorTab() {
                         {perdeu && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full border bg-rose-500/15 text-rose-300 border-rose-500/30">Perdeu chance boa</span>
                         )}
+                        <ConfiancaAnaliseBadge confianca={c.confianca_analise} motivo={c.motivo_confianca} showMotivo={false} className="text-[10px]" />
                       </div>
                       {c.vehicle_interest && (
                         <div className="text-[11px] text-muted-foreground truncate">Interesse: {c.vehicle_interest}</div>

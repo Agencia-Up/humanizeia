@@ -10,6 +10,18 @@ export interface ThreadMessage {
   canal: 'pedro' | 'marcos';
 }
 
+// Cobertura = o que a analise REALMENTE leu (base pra confianca, calculada no
+// analista de forma deterministica). Fase 3.
+export interface Cobertura {
+  mensagens_ia_lidas: number;
+  mensagens_vendedor_lidas: number;
+  mensagens_cliente_lidas: number;
+  audios_total: number;
+  audios_transcritos: number;
+  audios_sem_transcricao: number;
+  imagens_detectadas: number;
+}
+
 export interface LeadThread {
   lead_id: string;
   lead_source: 'pedro' | 'marcos';
@@ -23,6 +35,7 @@ export interface LeadThread {
   sinais_estruturados: Record<string, unknown>;
   thread: ThreadMessage[];
   contexto_ia: ThreadMessage[];
+  cobertura: Cobertura;
 }
 
 export function digits(s?: string | null): string {
@@ -122,6 +135,10 @@ export async function buildLeadThread(
   let nome: string | null = null;
   let telefone: string | null = null;
   let jid = '';
+  // Fase 3 — contadores de cobertura (audio/imagem do canal humano wa_inbox).
+  let audiosTotal = 0;
+  let audiosTranscritos = 0;
+  let imagensDetectadas = 0;
 
   if (leadSource === 'pedro') {
     const { data: lead } = await admin
@@ -225,6 +242,13 @@ export async function buildLeadThread(
       .map((m: any) => ({ id: m.id as string, media_url: m.media_url as string }));
     const trans = await transcreverAudios(admin, audioMsgs);
 
+    // Fase 3 — cobertura de midia do canal humano: conta TODOS os audios (com ou
+    // sem media_url), quantos transcreveram, e quantas imagens apareceram.
+    const audiosDoInbox = (inbox || []).filter((m: any) => m.message_type === 'audio');
+    audiosTotal = audiosDoInbox.length;
+    audiosTranscritos = audiosDoInbox.filter((m: any) => !!trans.get(m.id)).length;
+    imagensDetectadas = (inbox || []).filter((m: any) => m.message_type === 'image').length;
+
     for (const m of (inbox || [])) {
       let texto: string = m.content || '';
       if (m.message_type === 'audio') {
@@ -251,11 +275,23 @@ export async function buildLeadThread(
   thread.sort(byTime);
   contexto.sort(byTime);
 
+  // Fase 3 — cobertura real do que foi lido (base pra confianca no analista).
+  const cobertura: Cobertura = {
+    mensagens_ia_lidas: contexto.length,
+    mensagens_vendedor_lidas: thread.filter((m) => m.from === 'vendedor').length,
+    mensagens_cliente_lidas: thread.filter((m) => m.from === 'cliente').length,
+    audios_total: audiosTotal,
+    audios_transcritos: audiosTranscritos,
+    audios_sem_transcricao: Math.max(0, audiosTotal - audiosTranscritos),
+    imagens_detectadas: imagensDetectadas,
+  };
+
   return {
     lead_id: leadId, lead_source: leadSource, tenant_id: tenant,
     vendedor_id: vendedor, vendedor_nome: vendedorNome, campanha_id: campanha, ad_name: adName,
     lead_nome: nome, telefone,
     sinais_estruturados: sinais,
     thread, contexto_ia: contexto,
+    cobertura,
   };
 }

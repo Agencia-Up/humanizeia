@@ -24,6 +24,8 @@ interface Conversa {
   oportunidades_perdidas: any[] | null;
   houve_venda: string | null;
   vehicle_interest: string | null;
+  confianca_analise?: string | null; // Fase 3 (só leitura)
+  motivo_confianca?: string | null;
 }
 
 interface Produto {
@@ -261,6 +263,11 @@ export function FeedbackResumoExecutivoTab() {
     const relatoriosComFalha = relatorios.filter((r) => r.status === 'falhou').length;
     const confianca = nivelConfianca(conversas.length, produtos.length === 0);
 
+    // Fase 3 — quantas análises têm confiança calculada e quantas são parciais.
+    // NULL (análise antiga sem cálculo) não entra na conta.
+    const comConfianca = conversas.filter((c) => !!c.confianca_analise);
+    const analisesParciais = comConfianca.filter((c) => c.confianca_analise === 'media' || c.confianca_analise === 'baixa').length;
+
     return {
       total: conversas.length,
       leadsBons: leadsBons.length,
@@ -275,6 +282,8 @@ export function FeedbackResumoExecutivoTab() {
       ultimoRelatorio,
       relatoriosComFalha,
       confianca,
+      analisesComConfianca: comConfianca.length,
+      analisesParciais,
     };
   }, [conversas, nomes, produtos, relatorios, rollup]);
 
@@ -325,6 +334,12 @@ export function FeedbackResumoExecutivoTab() {
                     ? 'Nao encontrei perda critica neste recorte. Use os cards abaixo para treinar consistencia.'
                     : 'Ainda nao ha conversas analisadas suficientes para uma decisao segura.'}
               </p>
+              {leitura.analisesParciais > 0 && (
+                <p className="flex items-center gap-1.5 text-xs text-amber-500 dark:text-amber-300/90">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  {leitura.analisesParciais} de {leitura.analisesComConfianca} análises recentes são parciais — leia com cautela (faltou parte da conversa ou do áudio).
+                </p>
+              )}
             </div>
             <div className={`rounded-xl border px-3 py-2 text-xs ${leitura.confianca.cls}`}>
               <div className="flex items-center gap-2 font-semibold">

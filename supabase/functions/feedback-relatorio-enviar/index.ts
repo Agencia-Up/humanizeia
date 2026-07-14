@@ -61,7 +61,27 @@ function gargaloGerencial(funil: any): string {
   return 'rotina saudavel, manter acompanhamento diario';
 }
 
-function captionGerencial(dados: any): string {
+// Caption CURTA (padrao atual): SO o PDF em anexo + um resumo de 3 numeros.
+// NUNCA manda o relatorio completo em texto — o detalhe fica dentro do PDF.
+// Numeros do NEPQ do dia: atendimentos avaliados, nota media e pontos de atencao.
+function captionCurta(nepq: { total: number; nota: number | null; alertas: number }, funil: any): string {
+  const total = nepq.total || n(funil?.analisados) || 0;
+  const notaTxt = nepq.nota != null ? `${nepq.nota}/100` : '—';
+  return [
+    `📊 Relatório diário de Feedback — ${dataBRT()}`,
+    ``,
+    `O PDF com a análise completa está em anexo.`,
+    ``,
+    `Resumo rápido:`,
+    `• ${total} atendimento(s) avaliado(s)`,
+    `• Nota média: ${notaTxt}`,
+    `• ${nepq.alertas} ponto(s) de atenção`,
+    ``,
+    `Logos IA`,
+  ].join('\n');
+}
+
+function captionGerencial(dados: any, obs?: string): string {
   if (!dados?.funil) return captionPadrao();
   const funil = dados.funil || {};
   const vendedores = Array.isArray(dados.vendedores) ? dados.vendedores : [];
@@ -94,6 +114,8 @@ function captionGerencial(dados: any): string {
   if (risco) {
     linhas.push(`Olhar primeiro: ${risco.nome} recebeu ${risco.chance} lead(s) com interesse e teve ${risco.bem} bem atendido(s).`);
   }
+  // Fase 3 (apresentacao) — 1 linha so, se houve analise PARCIAL no periodo.
+  if (obs) linhas.push(``, obs);
   linhas.push(
     ``,
     `PDF em anexo: funil, vendedores e qualidade dos leads.`,
@@ -143,6 +165,23 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: 'a instancia da IA e Meta (2a via) — envio de documento por aqui ainda nao suportado; use uma instancia UAZAPI' }, 200);
     }
 
+    const baseIA = String(inst.api_url).replace(/\/+$/, '');
+    // Fallback de falha do PDF: manda NO MAXIMO 1 linha curta (nunca o relatorio
+    // completo em texto). Em dry_run nao envia nada.
+    const enviarFalhaPdf = async () => {
+      if (body?.dry_run) return;
+      const msg = 'Nao foi possivel gerar o PDF do relatorio diario de Feedback hoje. Verifique o painel da Logos IA.';
+      for (const d of dests) {
+        try {
+          await fetch(`${baseIA}/send/text`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', token: inst.token, apikey: inst.token },
+            body: JSON.stringify({ number: d.num, text: msg }),
+          });
+        } catch (_e) { /* best-effort */ }
+      }
+    };
+
     // 3) Gera o PDF DIARIO simplificado (2 paginas: funil + gargalo + vendedores).
     //    O completo (conversa por conversa) e o feedback-relatorio-pdf, usado
     //    sob demanda na area de Feedbacks — nao no disparo diario.
@@ -158,13 +197,18 @@ Deno.serve(async (req) => {
     const gen = await genRes.json().catch(() => ({}));
     if (!gen?.ok) {
       await logJob('falhou', { etapa: 'gerar_pdf' }, String(gen?.error || genRes.status));
+      await enviarFalhaPdf();
       return json({ ok: false, error: `falha ao gerar o PDF: ${gen?.error || genRes.status}` }, 200);
     }
 
     // 4) URL assinada (o bucket e privado; a UAZAPI baixa por essa URL).
     const { data: signed, error: sErr } = await admin.storage
       .from('feedback-relatorios').createSignedUrl(uploadNome, 3600);
-    if (sErr || !signed?.signedUrl) return json({ ok: false, error: `falha ao assinar URL: ${sErr?.message || 'sem url'}` }, 200);
+    if (sErr || !signed?.signedUrl) {
+      await logJob('falhou', { etapa: 'assinar_url' }, sErr?.message || 'sem url');
+      await enviarFalhaPdf();
+      return json({ ok: false, error: `falha ao assinar URL: ${sErr?.message || 'sem url'}` }, 200);
+    }
 
     // 5) Envia o documento a cada destinatario, pelo numero da IA.
     let dadosCaption: any = null;
@@ -174,8 +218,36 @@ Deno.serve(async (req) => {
     } catch (_e) {
       dadosCaption = null;
     }
-    const caption = String(body?.caption || captionGerencial(dadosCaption));
-    const base = String(inst.api_url).replace(/\/+$/, '');
+    // Fase 3 (apresentacao) — conta analises PARCIAIS dos ultimos 7 dias lendo a
+    // coluna confianca_analise ja pronta (NULL nao conta). Sem IA, sem reprocessar,
+    // sem tocar na analise. Vira 1 linha curta na caption.
+    // Resumo NEPQ do dia (ontem) pro corpo curto da caption: atendimentos avaliados,
+    // nota media e pontos de atencao. Le a RPC de dados (nao envia nada, nao toca analise).
+    let nepqResumo = { total: 0, nota: null as number | null, alertas: 0 };
+    try {
+      const ontemBRT = new Date(Date.now() - 3 * 3600e3 - 24 * 3600e3).toISOString().slice(0, 10);
+      const { data: nd } = await admin.rpc('feedback_nepq_diario_dados', { p_tenant: tenant, p_ref: ontemBRT });
+      const arr = Array.isArray(nd) ? nd : [];
+      const scores = arr.map((x: any) => Number(x?.nepq_score)).filter((v: number) => Number.isFinite(v));
+      nepqResumo = {
+        total: arr.length,
+        nota: scores.length ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length) : null,
+        alertas: arr.filter((x: any) => Number(x?.nepq_score) < 45).length,
+      };
+    } catch (_e) { /* usa fallback do funil */ }
+    const caption = String(body?.caption || captionCurta(nepqResumo, dadosCaption?.funil));
+
+    // dry_run (smoke test): prova o payload SEM enviar de verdade. type=document (PDF) + caption curta.
+    if (body?.dry_run) {
+      return json({
+        ok: true, dry_run: true,
+        payload: { type: 'document', file: signed.signedUrl ? 'PDF (signed url)' : null, caption },
+        caption_linhas: caption.split('\n').length,
+        caption_chars: caption.length,
+        destinatarios: dests.length,
+      });
+    }
+    const base = baseIA;
     const results: any[] = [];
     for (const d of dests) {
       try {

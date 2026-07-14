@@ -379,6 +379,17 @@ Deno.serve(async (req) => {
       if (!l.venda && l.score < 45 && (l.pot === 'bom' || l.pot === 'forte') && l.frase_coaching) {
         calloutBox(`O que conversar com ${firstName(l.vend) || 'o vendedor'}`, `"${cap(S(maskCpf(l.frase_coaching)), 380)}"`, BLUE, BLUE_BG, true, true);
       }
+      // Fase 3 (apresentacao) — quando a analise foi PARCIAL, avisar o gestor com
+      // linguagem cuidadosa. confianca_analise NULL (analise antiga) ou 'alta' => sem nota.
+      const _conf = String(l.confianca_analise || '');
+      if (_conf === 'baixa' || _conf === 'media') {
+        const _mot = S(cap(String(l.motivo_confianca || ''), 60));
+        const _txt = S(`Analise parcial - feita com os dados disponiveis${_mot ? `. Motivo: ${_mot}` : ''}.`);
+        const _bl = doc.splitTextToSize(_txt, CW - 20);
+        pageBreak(_bl.length * 11 + 10);
+        T(8.2, 'normal', AMBER); doc.text(_bl, ML, y);
+        y += _bl.length * 11 + 4;
+      }
       y += 6;
     }
 
