@@ -768,34 +768,25 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
           id: string; lead_name: string | null; remote_jid: string | null; agent_id: string | null; assigned_to_id: string | null; status_crm: string | null; seller_notes_count: number | null;
         }>;
         const pedroLeadIds = pedroLeads.map(l => l.id);
-        const pedroLeadIdSet = new Set(pedroLeadIds);
-        const transferredTodayMissingIds = [...new Set(
-          confirmedPedroTransferRows
-            .map(tr => tr.lead_id)
-            .filter((id): id is string => !!id && !pedroLeadIdSet.has(id))
-        )];
-        if (transferredTodayMissingIds.length > 0) {
-          let extraTransferredQuery = (supabase as any)
-            .from('ai_crm_leads')
-            .select('id, lead_name, remote_jid, agent_id, assigned_to_id, status_crm, seller_notes_count')
-            .eq('user_id', effectiveUserId)
-            .in('id', transferredTodayMissingIds);
-          const { data: extraTransferredLeads, error: extraTransferredError } = await extraTransferredQuery;
-          if (extraTransferredError) {
-            console.warn('[DashboardTV] Falha ao incluir leads Pedro confirmados no periodo', extraTransferredError.message);
-          } else if (Array.isArray(extraTransferredLeads) && extraTransferredLeads.length > 0) {
-            // REGRA (dono 13/07): estes leads ENTRARAM na Logos ANTES do período
-            // (por isso a query principal por arrived_at/created_at não os pegou) —
-            // só surgiram aqui por um REPASSE/aceite dentro do período. Um lead que
-            // já estava na Logos e foi apenas re-atribuído (ex.: vendedor saiu e os
-            // leads dele foram remanejados) NUNCA pode recontar como "tráfego pago
-            // novo": ele já foi contabilizado no dia em que chegou pela 1ª vez.
-            // Marca `_foraDoPeriodo` pra a contagem de tráfego pago ignorar (mas o
-            // lead segue visível). Só conta tráfego pago o lead adicionado pela 1ª
-            // vez dentro do período.
-            pedroLeads = [...pedroLeads, ...extraTransferredLeads.map((l: any) => ({ ...l, _foraDoPeriodo: true }))];
-          }
-        }
+        // ────────────────────────────────────────────────────────────────────
+        // REGRA DEFINITIVA (dono) — "TRÁFEGO PAGO" CONTA O LEAD UMA ÚNICA VEZ:
+        // na 1ª ENTRADA dele na Logos (arrived_at/created_at DENTRO do período —
+        // já filtrado pela pedroQuery). Lead TRANSFERIDO/REPASSADO (vendedor saiu,
+        // re-atribuição, resgate de órfão, etc.) JÁ ESTÁ na Logos e NUNCA reconta
+        // como tráfego pago novo — senão infla o Painel ao Vivo e derruba o custo
+        // por lead das campanhas.
+        //
+        // POR ISSO NÃO PUXAMOS lead por EVENTO de transferência pra dentro da
+        // contagem (`pedroLeads`). Este trecho existia e era a causa do bug: puxava
+        // os leads de `confirmedPedroTransfersQuery` que a pedroQuery não pegou
+        // (justamente por já serem antigos) e os somava como novos. REMOVIDO.
+        //
+        // ⚠️ NÃO reintroduzir um fetch de `ai_crm_leads` por `ai_lead_transfers`
+        // aqui. Visibilidade de repasse tem seção própria (transfersRes) e não
+        // pode virar contagem de tráfego pago. O mapa `transferAssigneeByLead`
+        // (acima) permanece SÓ pra resolver o vendedor de um lead DO PERÍODO cujo
+        // `assigned_to_id` ainda esteja null — nunca pra adicionar leads.
+        // ────────────────────────────────────────────────────────────────────
         const pendingOrConfirmedTransferIds = new Set<string>();
         if (pedroLeadIds.length > 0) {
           const { data: transferRows } = await (supabase as any)
@@ -811,12 +802,10 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         let pedroTotal = 0;       // total leads Pedro no período (todos)
         let pedroAtribuidos = 0;  // leads Pedro com assigned_to_id != null
         let naoAtribuidos = 0;    // leads (Pedro+Marcos) que não foram pra vendedor — contam no total mas não no card de vendedor
+        // pedroLeads = SÓ os leads do PERÍODO (pedroQuery por arrived_at/created_at).
+        // Nenhum lead repassado/transferido entra aqui (ver regra acima), então
+        // cada lead conta no máximo 1x como tráfego pago — na sua 1ª entrada.
         for (const l of pedroLeads) {
-          // Lead que entrou na Logos FORA do período (só surgiu aqui por um
-          // repasse/re-atribuição no período) não conta como tráfego pago novo —
-          // já foi contabilizado na 1ª entrada. Fica de fora de trafico_pago,
-          // pedroTotal (taxa) e do denominador de Custo por Lead.
-          if ((l as any)._foraDoPeriodo) continue;
           pedroTotal++;
           const assignedToId = l.assigned_to_id || transferAssigneeByLead.get(l.id) || null;
           if (assignedToId) {
@@ -925,7 +914,6 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
         // 7. Calcula score de qualidade de cada lead, depois média geral
         const scores: number[] = [];
         for (const l of pedroLeads) {
-          if ((l as any)._foraDoPeriodo) continue; // fora do período: não entra na qualidade do período
           const iaScore    = scorePedroStatus(l.status_crm);
           const fbPriority = feedbackByLead.get(l.id);
           const fbScore    = fbPriority ? scoreFeedbackPriority(fbPriority) : null;
