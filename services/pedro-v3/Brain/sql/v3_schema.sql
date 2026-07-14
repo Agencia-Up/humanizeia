@@ -767,7 +767,14 @@ begin
   if p_expected_version < 0 then
     raise exception 'v3_invalid_expected_version' using errcode = '22023';
   end if;
-  if coalesce(array_length(p_event_ids, 1), 0) = 0 then
+  -- Follow-up é um turno sistêmico legítimo: não existe mensagem nova do lead
+  -- para claimar no inbox. A exceção é estreita e cruza identidade do turnId
+  -- com o reasonCode; qualquer turno comercial comum continua obrigado a
+  -- apresentar ao menos um event_id claimado.
+  if coalesce(array_length(p_event_ids, 1), 0) = 0 and not (
+    p_turn_id ~ '^followup:.+:[123]$'
+    and p_decision ->> 'reasonCode' = 'followup_t' || right(p_turn_id, 1)
+  ) then
     raise exception 'v3_empty_inbox_claim' using errcode = '22023';
   end if;
   if (select count(*) from unnest(p_event_ids)) <>
@@ -935,9 +942,9 @@ begin
      and turn_id = p_turn_id;
   get diagnostics v_event_count = row_count;
 
-  if v_event_count <> array_length(p_event_ids, 1) then
+  if v_event_count <> coalesce(array_length(p_event_ids, 1), 0) then
     raise exception 'v3_inbox_claim_mismatch:expected=%,updated=%',
-      array_length(p_event_ids, 1), v_event_count
+      coalesce(array_length(p_event_ids, 1), 0), v_event_count
       using errcode = '40001';
   end if;
 

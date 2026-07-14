@@ -83,7 +83,12 @@ export function deriveTurnAdvisoryContext(i: TurnAdvisoryContextInput): TurnAdvi
   const suppressDiscovery = institutionalTurn || i.financialAnswerTurn || i.tradeInAnswerTurn || paymentTurn
     || i.sensitiveAnswerTurn || photoTurn || selectionTurn || i.disengagement || i.explicitBuyIntent
     || commercialTarget || leadRequestsHuman || leadWantsVisit || possession;
-  const suppressFunnelQuestion = institutionalTurn || leadRequestsHuman || leadWantsVisit || i.disengagement || photoTurn;
+  // Um alvo comercial dito AGORA (ex.: "tem SUV?") ocupa o turno com a
+  // descoberta/oferta daquele alvo. A pergunta cadastral do funil continua
+  // disponível nos turnos seguintes, mas não concorre com a apresentação da
+  // lista. Isto só suprime uma orientação; não autoriza busca nem valida texto.
+  const suppressFunnelQuestion = institutionalTurn || leadRequestsHuman || leadWantsVisit || i.disengagement
+    || photoTurn || commercialTarget;
   return { suppressDiscovery, suppressFunnelQuestion, leadRequestsHuman, leadWantsVisit, institutionalTurn, paymentTurn, photoTurn, selectionTurn };
 }
 
@@ -143,10 +148,9 @@ export function buildTurnAdvisories(input: TurnAdvisoryInput): string[] {
       out.push(`O cliente chegou por um anúncio do ${input.adVehicleLabel}: reconheça esse veículo e conduza sobre ele (fotos, detalhes, condições ou disponibilidade). Não abra com saudação genérica pedindo nome, telefone, cidade ou loja.`);
       discoveryEmitted = true;
     } else if (input.isFirstContact) {
-      out.push("Primeiro contato: cumprimente e APRESENTE-SE conforme a identidade e a personalidade do prompt do portal (diga quem você é e de qual loja fala). Depois, faça a primeira pergunta de qualificação do portal para descobrir o que o cliente procura. Não peça nome nem telefone agora.");
+      out.push("Primeiro contato: execute a abertura definida no prompt do portal, preservando a apresentação, a identidade, a personalidade e a primeira pergunta configuradas pelo lojista. Não substitua essa sequência por uma abertura genérica criada pelo sistema.");
       discoveryEmitted = true;
-    }
-    if (input.needsDiscovery && !input.adVehicleLabel) {
+    } else if (input.needsDiscovery && !input.adVehicleLabel) {
       out.push("O cliente ainda não disse o que procura: entenda primeiro a intenção comercial conforme o prompt do portal. O nome vem depois, com naturalidade. Não peça sobrenome nem nome completo nesta fase.");
       discoveryEmitted = true;
     }

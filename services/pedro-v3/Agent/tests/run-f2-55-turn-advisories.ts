@@ -59,7 +59,7 @@ console.log("== F2.55 (parte 1a) — deriveTurnAdvisoryContext: MENSAGENS REAIS 
 }
 {
   const d = deriveTurnAdvisoryContext(ctx("quero SUV"));
-  check("[real-8] 'quero SUV' -> alvo comercial atual vence (discovery suprimido, sem reperguntar tipo)", d.suppressDiscovery);
+  check("[real-8] 'quero SUV' -> alvo comercial atual vence discovery E pergunta cadastral do funil", d.suppressDiscovery && d.suppressFunnelQuestion);
 }
 {
   const d = deriveTurnAdvisoryContext(ctx("boa tarde"));
@@ -93,7 +93,10 @@ const hasFunnelNext = (a: string[]) => a.some((s) => /proximo passo da qualifica
 // A. Saudação sem contexto -> apresentação/discovery presentes (mensagem real "boa tarde" NÃO suprime).
 {
   const a = buildTurnAdvisories(fromMsg("boa tarde", { isFirstContact: true, needsDiscovery: true }));
-  check("[A] saudação crua -> apresentação + discovery", hasDiscovery(a), a.join(" | ").slice(0, 120));
+  check("[A] saudação crua -> abertura literal do portal, sem discovery genérica concorrente",
+    a[0]?.includes("abertura definida no prompt do portal") === true
+      && !a.some((s) => /cliente ainda não disse o que procura|modelo.*tipo.*faixa/i.test(s)),
+    a.join(" | ").slice(0, 160));
 }
 // B. request_human sem nome -> zero discovery (supressão DERIVADA da mensagem real).
 {
@@ -117,8 +120,8 @@ const hasFunnelNext = (a: string[]) => a.some((s) => /proximo passo da qualifica
 }
 // F. SUV explícito -> não perguntar de novo modelo/tipo (supressão DERIVADA de "quero SUV").
 {
-  const a = buildTurnAdvisories(fromMsg("quero SUV", { needsDiscovery: false, knownFunnelSlots: ["tipoVeiculo"] }));
-  check("[F] SUV explícito -> não reperguntar tipo", !hasDiscovery(a) && a.some((s) => /ja sabe.*tipo de carro/.test(N(s))), a.join(" | ").slice(0, 120));
+  const a = buildTurnAdvisories(fromMsg("quero SUV", { needsDiscovery: false, knownFunnelSlots: ["tipoVeiculo"], portalNextQuestion: "Qual é o seu nome?" }));
+  check("[F] SUV explícito -> não reperguntar tipo nem empurrar cadastro no turno da oferta", !hasDiscovery(a) && !hasFunnelNext(a) && a.some((s) => /ja sabe.*tipo de carro/.test(N(s))), a.join(" | ").slice(0, 120));
 }
 // G. nome conhecido -> advisory de não repetir o nome.
 {

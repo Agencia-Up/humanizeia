@@ -5,6 +5,7 @@ import { createInitialState } from "../src/domain/conversation-state.ts";
 import { resolveAutomationRules } from "../src/engine/automation-rules.ts";
 import { evaluateFollowup, evaluateFollowupDue } from "../src/engine/followup-policy.ts";
 import { authorFollowupMessage, authorFollowupMessageDetailed } from "../src/engine/followup-author.ts";
+import { readFileSync } from "node:fs";
 import { sanitizeOutgoingText } from "../src/engine/central-engine.ts";
 import { buildHandoffChain } from "../src/engine/handoff-plan.ts";
 import { validateEffectPlans } from "../src/engine/finalizer.ts";
@@ -32,6 +33,22 @@ class QueueBrain implements AgentBrainPort {
 
 console.log("== F2.49 Handoff + Follow-up LLM-first ==");
 const rules = resolveAutomationRules({ followup: { enabled: true, t1_min: 5, t2_min: 8, t3_min: 12, t3_transfers: true }, transfer: { enabled: true, seller_response_min: 10 } });
+
+// Contrato do banco real: follow-up sistêmico não possui mensagem nova do lead
+// no inbox. O fake já aceitava [], mas o RPC de produção rejeitava e fazia o
+// worker falhar depois de detectar corretamente o T1 vencido.
+const canonicalSql = readFileSync(new URL("../../Brain/sql/v3_schema.sql", import.meta.url), "utf8");
+const followupMigration = readFileSync(new URL("../../../../supabase/migrations/20260714161000_pedro_v3_system_followup_commit.sql", import.meta.url), "utf8");
+check("[DB1] RPC aceita claim vazio somente para identidade de follow-up correlacionada",
+  canonicalSql.includes("p_turn_id ~ '^followup:.+:[123]$'")
+    && canonicalSql.includes("p_decision ->> 'reasonCode' = 'followup_t' || right(p_turn_id, 1)"));
+check("[DB2] turno comum continua bloqueado sem inbox claim",
+  canonicalSql.includes("and not (") && canonicalSql.includes("raise exception 'v3_empty_inbox_claim'"));
+check("[DB3] contagem vazia é comparada como zero, não NULL",
+  canonicalSql.includes("v_event_count <> coalesce(array_length(p_event_ids, 1), 0)"));
+check("[DB4] migração tolera somente diferença de line ending da função em produção",
+  followupMigration.includes("replace(v_definition, E'\\r\\n', E'\\n')")
+    && followupMigration.includes("raise exception 'v3_commit_turn_definition_drift'"));
 check("[R1] T1=5", rules.followup.t1Min === 5); check("[R2] T2=8", rules.followup.t2Min === 8); check("[R3] T3=12", rules.followup.t3Min === 12); check("[R4] T3 transfere", rules.followup.t3Transfers); check("[R5] seller timeout=10", rules.transfer.sellerResponseMin === 10);
 
 const s = state(), anchor = record();
