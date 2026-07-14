@@ -319,12 +319,9 @@ export const PolicyEngine = {
       }
     }
 
-    // POL-HANDOFF-001: handoff exige slots mínimos (nome).
-    const handoffReason = proposal.proposedEffects.find((effect) => effect.kind === "handoff")?.reason ?? null;
-    const leadNameKnown = ctx.state.slots.nome.status === "known" || ctx.leadDisplayNameKnown === true;
-    if (proposal.proposedAction === "handoff" && handoffReason !== "explicit_human_request" && !leadNameKnown) {
-      verdicts.push({ policyId: "POL-HANDOFF-001", outcome: "deny", requirements: ["nome"], violations: ["handoff sem nome"] });
-    }
+    // Nome enriquece CRM e briefing, mas nunca é pré-condição operacional de
+    // handoff. O canal/leadId já identifica o contato; quando existir, o
+    // pushName sanitizado continua seguindo no payload do vendedor.
 
     if (verdicts.length === 0) verdicts.push({ policyId: "POL-OK", outcome: "allow" });
     return verdicts;

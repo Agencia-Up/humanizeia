@@ -260,13 +260,14 @@ async function main(): Promise<void> {
   check("[D1] ⭐pedido humano no meio do agendamento: request_human EXATO + handoff + notify", cdH.primaryIntent === "request_human" && cdH.hasHandoff && cdH.hasNotify, `pi=${cdH.primaryIntent} handoff=${cdH.hasHandoff} notify=${cdH.hasNotify}`);
   check("[D2] handoff sem tool comercial + brain, NÃO technical_fallback", cdH.stockObs === 0 && cdH.detailObs === 0 && isBrain(cdH.src) && !cdH.terminalSafe, `src=${cdH.src}`);
 
-  // CENÁRIO F — o nome válido do WhatsApp satisfaz a identificação da
-  // visita qualificada sem obrigar o agente a pedir o nome novamente.
-  console.log("\n-- Cenário F: visita qualificada usa nome válido do canal --");
-  const cf = conv(true);
+  // CENÁRIO F — nome enriquece o briefing, mas nunca bloqueia a operação.
+  // Mesmo sem slot de nome e sem pushName, o leadId/canal já identificam o
+  // contato e a saga de handoff precisa prosseguir.
+  console.log("\n-- Cenário F: visita qualificada não depende de nome --");
+  const cf = conv(false);
   await cf.t("Quero agendar uma visita", () => finU([txt("Claro! Qual dia e horário ficam melhores para você?")], "reply", U("visit", [ev(undefined, "agendar uma visita")])), "direction_change");
   const cfH = await cf.t(["Pode ser na quinta", "As 13:00"], () => finU([txt("Combinado! Vou encaminhar sua visita de quinta às 13h para o consultor.")], "handoff", U("visit", [ev(undefined, "quinta"), ev(undefined, "13:00")]), [reply, handoffAct]), "answers_pending");
-  check("[F1] nome do canal libera handoff qualificado da visita", cfH.hasHandoff && cfH.hasNotify && isBrain(cfH.src), `handoff=${cfH.hasHandoff} notify=${cfH.hasNotify} src=${cfH.src}`);
+  check("[F1] handoff qualificado sem nome não trava", cfH.hasHandoff && cfH.hasNotify && isBrain(cfH.src), `handoff=${cfH.hasHandoff} notify=${cfH.hasNotify} src=${cfH.src}`);
   check("[F2] visita real não cai em fallback", !cfH.terminalSafe && has(String(slotVal(cfH, "diaHorario") ?? ""), "quinta") && has(String(slotVal(cfH, "diaHorario") ?? ""), "13"), `src=${cfH.src} dia=${String(slotVal(cfH, "diaHorario") ?? "")}`);
 
   // ══════════════════════════════════════════════════════════════════════════

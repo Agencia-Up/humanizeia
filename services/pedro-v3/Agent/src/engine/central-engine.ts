@@ -55,7 +55,7 @@ import type { RenderedResponse, ResponsePart } from "../domain/decision.ts";
 import { finalize, validateEffectPlans } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
-import { buildCrmWritePlan, isRealLeadName, sanitizeLeadNameHint } from "./crm-write.ts";
+import { buildCrmWritePlan } from "./crm-write.ts";
 import { buildHandoffChain } from "./handoff-plan.ts";
 
 // MISSÃO PII (P0-C): shape do diagnóstico do precheck de handoff — módulo testável handoff-precheck.ts.
@@ -915,8 +915,9 @@ function authorFromBrainDraft(args: {
     }
     if (isPaymentTurn(args.leadMessage)) {
       // ⭐F2.43 (varredura exige-e-proíbe, fase): o veto vale ENQUANTO a qualificação financeira está incompleta.
-      // Com troca+entrada+parcela CONHECIDAS, pedir o nome é o avanço legítimo do funil (o handoff EXIGE nome,
-      // POL-HANDOFF-001) — manter o veto aqui era "colete para o handoff" e "nunca peça o nome" ao mesmo tempo.
+      // Com troca+entrada+parcela CONHECIDAS, o portal ainda pode orientar a
+      // coleta opcional do nome para enriquecer o CRM. Isso nunca condiciona o
+      // handoff: canal e leadId já identificam operacionalmente o contato.
       const sl = args.ctx.state.slots;
       const qualificationDone = sl.possuiTroca.status === "known" && sl.entrada.status === "known" && sl.parcelaDesejada.status === "known";
       if (!qualificationDone) {
@@ -1621,9 +1622,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       }
       const leadMessage = aggregateLeadMessage(inboxRecords);
       const prepared = await contextPreparer.prepare({ state, turnId, leadMessage, now: cutoff });
-      const channelLeadName = sanitizeLeadNameHint(leadNameHintFromInbox(inboxRecords));
-      const leadDisplayNameKnown = isRealLeadName(channelLeadName);
-
       // Bind factual answers before the brain runs. This does not choose the reply; it only projects
       // conservative slot facts (for example, a bare name when the previous accepted question asked for it).
       // Mode is fixed for the whole turn. In LLM-first the engine may extract
@@ -1665,7 +1663,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const ctx: TurnContext = {
         state: contextState, turnId, leadMessage, now: cutoff,
         interpretation: prepared.interpretation, tenantCatalog: prepared.tenantCatalog, claimExtractor: prepared.claimExtractor,
-        leadDisplayNameKnown,
       };
 
       // ── WorkingMemory: parte persistida (WM-owned) + view canônica derivada do estado. ──
@@ -2340,9 +2337,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             } else if (corruptionDeny) {
               // Encoding corruption is transient; retry with the same intent and
               // an explicit cleanup instruction before any commercial feedback.
-              keepRetrying = true;
-            } else if (visitGuidanceTurn && /handoff sem nome/i.test(authored.feedback)) {
-              effFeedback = `ATO ATUAL = visit. O cliente pediu visita, mas ainda nao ha dados para handoff automatico. REMOVA handoff/notify_seller e nao prometa que a visita ja foi agendada. Acolha o dia/horario informado e continue VOCE atendendo com no maximo UMA pergunta natural sobre um dado realmente faltante (por exemplo, o primeiro nome). Motivo exato: ${authored.feedback}`;
               keepRetrying = true;
             } else if (humanGuidanceTurn || visitGuidanceTurn || openingGuidanceTurn) {
               // Estes atos nao possuem recovery comercial correto: uma falha

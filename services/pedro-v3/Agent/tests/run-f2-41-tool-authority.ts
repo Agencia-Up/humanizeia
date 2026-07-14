@@ -196,6 +196,9 @@ async function main(): Promise<void> {
     check("[F-0b] parser ordinal nao transforma 'pode ser na quinta' em item 5", parseOrdinal("pode ser na quinta") == null);
     check("[F-0c] parser ordinal nao transforma 'quinta as 13h' em item 5", parseOrdinal("quinta as 13h") == null);
     check("[F-0d] parser preserva selecao explicita 'quinta opcao'", parseOrdinal("quero a quinta opcao")?.value === 5);
+    check("[F-0e] parser ordinal nao transforma 'pode ser na quarta' em item 4", parseOrdinal("pode ser na quarta") == null);
+    check("[F-0f] parser ordinal nao transforma 'quarta as 15h' em item 4", parseOrdinal("quarta as 15h") == null);
+    check("[F-0g] parser preserva selecao explicita 'quarta opcao'", parseOrdinal("quero a quarta opcao")?.value === 4);
     const c = conv();
     await c.t("tem corolla?", searchCorolla);
     const selectedU: TurnUnderstanding = {
