@@ -45,6 +45,7 @@ interface InboxMessage {
   message_type: string;
   content: string | null;
   media_url: string | null;
+  media_list?: Array<{ type?: string; file?: string; url?: string }> | null;
   remote_message_id?: string | null;
   ai_category: string | null;
   ai_sentiment: string | null;
@@ -151,6 +152,17 @@ function isRenderableMedia(url: string | null | undefined): boolean {
   if (u.startsWith('data:') || u.startsWith('blob:')) return true;
   if (u.includes('mmg.whatsapp.net') || u.includes('.enc')) return false;
   return /^https?:\/\//.test(u);
+}
+
+function msgHasRenderableMedia(msg: Pick<InboxMessage, 'media_url' | 'media_list'>): boolean {
+  return isRenderableMedia(msg.media_url)
+    || Boolean(msg.media_list?.some((m) => isRenderableMedia(m.file || m.url)));
+}
+
+function primaryMediaUrl(msg: Pick<InboxMessage, 'media_url' | 'media_list'>): string | null {
+  if (isRenderableMedia(msg.media_url)) return msg.media_url || null;
+  const item = msg.media_list?.find((m) => isRenderableMedia(m.file || m.url));
+  return item ? (item.file || item.url || null) : null;
 }
 
 function isPlaceholderContent(content: string | null | undefined) {
@@ -410,26 +422,74 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
         p_instance_id: instanceId || null,
         p_limit: 500,
       });
-      const inboxRows: InboxMessage[] = ((rpcRows || []) as any[])
-        .filter(r => r.source === 'inbox')
-        .map((r): InboxMessage => ({
-          id: r.id,
-          user_id: effectiveUserId as string,
-          instance_id: r.instance_id ?? null,
-          phone,
-          contact_name: null,
-          direction: r.direction,
-          message_type: r.message_type || 'text',
-          content: r.content ?? null,
-          media_url: r.media_url ?? null,
-          remote_message_id: r.remote_message_id ?? null,
-          ai_category: null,
-          ai_sentiment: null,
-          is_read: true,
-          created_at: r.created_at,
-        }));
+      const inboxRows: InboxMessage[] = [];
+      const historyRows: InboxMessage[] = [];
+      for (const r of ((rpcRows || []) as any[])) {
+        if (r.source === 'chat') {
+          const mediaList = Array.isArray(r.metadata?.media) ? r.metadata.media : null;
+          const firstMedia = mediaList?.[0] || null;
+          historyRows.push({
+            id: `wch-${r.id}`,
+            user_id: effectiveUserId as string,
+            instance_id: null,
+            phone,
+            contact_name: null,
+            direction: r.direction === 'outgoing' ? 'outgoing' : 'incoming',
+            message_type: firstMedia ? (firstMedia.type || 'image') : (r.message_type || 'text'),
+            content: r.content ?? null,
+            media_url: firstMedia ? (firstMedia.file || firstMedia.url || null) : (r.media_url ?? null),
+            media_list: mediaList,
+            remote_message_id: null,
+            ai_category: null,
+            ai_sentiment: null,
+            is_read: true,
+            created_at: r.created_at,
+          });
+        } else {
+          inboxRows.push({
+            id: r.id,
+            user_id: effectiveUserId as string,
+            instance_id: r.instance_id ?? null,
+            phone,
+            contact_name: null,
+            direction: r.direction,
+            message_type: r.message_type || 'text',
+            content: r.content ?? null,
+            media_url: r.media_url ?? null,
+            media_list: null,
+            remote_message_id: r.remote_message_id ?? null,
+            ai_category: null,
+            ai_sentiment: null,
+            is_read: true,
+            created_at: r.created_at,
+          });
+        }
+      }
 
-      setMessages(inboxRows);
+      const sameMessage = (a: InboxMessage, b: InboxMessage) => {
+        if (a.direction !== b.direction) return false;
+        if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
+        const aMedia = mediaKind(a.message_type) !== null;
+        const bMedia = mediaKind(b.message_type) !== null;
+        if (aMedia && bMedia) return mediaKind(a.message_type) === mediaKind(b.message_type);
+        return (a.content || '').trim() === (b.content || '').trim();
+      };
+
+      const merged: InboxMessage[] = [...inboxRows];
+      for (const h of historyRows) {
+        const idx = merged.findIndex((row) => sameMessage(row, h));
+        if (idx === -1) {
+          merged.push(h);
+          continue;
+        }
+        if (msgHasRenderableMedia(h) && !msgHasRenderableMedia(merged[idx])) {
+          merged[idx] = { ...h, id: merged[idx].id };
+        }
+      }
+
+      setMessages(merged.sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      ));
 
       // Marcar como lidas (write operacional — mantido; policy de UPDATE preservada).
       await supabase
@@ -1396,7 +1456,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                         const sameDir = prevMsg && prevMsg.direction === msg.direction;
                         const gap = sameDir ? 'mt-0.5' : 'mt-3';
                         const kind = mediaKind(msg.message_type);
-                        const hasMedia = isRenderableMedia(msg.media_url);
+                        const renderableMediaUrl = primaryMediaUrl(msg);
+                        const hasMedia = Boolean(renderableMediaUrl);
                         const isResolvingMedia = resolvingMediaIds.has(msg.id);
                         const showText = Boolean(msg.content)
                           && msg.message_type !== 'document'
@@ -1424,9 +1485,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                   {showMediaBlock && kind && (
                                     <div className={showText ? 'mb-2' : 'mb-0'}>
                                       {kind === 'image' && hasMedia ? (
-                                        <a href={msg.media_url!} target="_blank" rel="noopener noreferrer" className="block group">
+                                        <a href={renderableMediaUrl!} target="_blank" rel="noopener noreferrer" className="block group">
                                           <img
-                                            src={msg.media_url!}
+                                            src={renderableMediaUrl!}
                                             alt="Imagem recebida"
                                             loading="lazy"
                                             className={`rounded-xl ${zoomClasses.media} object-cover border border-white/10 group-hover:opacity-95 transition-opacity`}
@@ -1440,13 +1501,13 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                                             </span>
                                             <span className="text-xs font-semibold opacity-80">Audio</span>
                                           </div>
-                                          <audio controls src={msg.media_url!} className="h-9 w-full max-w-[280px] accent-[#00a884]" />
+                                          <audio controls src={renderableMediaUrl!} className="h-9 w-full max-w-[280px] accent-[#00a884]" />
                                         </div>
                                       ) : kind === 'video' && hasMedia ? (
-                                        <video controls src={msg.media_url!} className={`rounded-xl ${zoomClasses.media} border border-white/10`} />
+                                        <video controls src={renderableMediaUrl!} className={`rounded-xl ${zoomClasses.media} border border-white/10`} />
                                       ) : kind === 'document' && hasMedia ? (
                                         <a
-                                          href={msg.media_url!} target="_blank" rel="noopener noreferrer"
+                                          href={renderableMediaUrl!} target="_blank" rel="noopener noreferrer"
                                           className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm min-w-[240px] ${isOut ? 'bg-primary-foreground/10' : 'bg-muted/60'}`}
                                         >
                                           <FileText className="h-4 w-4 shrink-0" />
