@@ -219,6 +219,7 @@ export type TurnFrame = {
   readonly portalPromptSha256: string;   // prova do prompt (integral vai só no binding do modelo)
   readonly workingMemory: WorkingMemoryV1;   // persistido + view canônica derivada
   readonly recentTranscript: readonly FrameTranscriptTurn[];
+  readonly conversationContext: ConversationContext;
   readonly signals: FrameSignals;
   // ⭐RODADA 1 (2026-07-13, autoria-LLM): ORIENTAÇÕES de condução deste turno, injetadas ANTES da 1ª geração.
   // São advisory — guiam o estilo/condução (apresentação, ordem de funil, não repergunte o conhecido, acolha o
@@ -228,6 +229,29 @@ export type TurnFrame = {
 };
 
 // ── Observação factual das tools (P0-3) — SEPARADA da telemetria ────────────────────────────────────────────
+// Read-only facts projected from committed conversation state. This is context
+// for the LLM, never a second decision maker.
+export type ConversationContextOfferItem = {
+  readonly ordinal: number;
+  readonly vehicleKey: string;
+  readonly marca: string | null;
+  readonly modelo: string | null;
+  readonly ano: number | null;
+  readonly cor: string | null;
+  readonly preco: number | null;
+  readonly cambio: string | null;
+  readonly tipo: string | null;
+};
+
+export type ConversationContext = {
+  readonly lastAgentMessage: string | null;
+  readonly pendingAgentQuestion: { readonly slot: string; readonly sinceTurnId: string } | null;
+  readonly selectedVehicle: { readonly vehicleKey: string; readonly label: string } | null;
+  readonly lastVisibleOffer: { readonly sourceTurnId: string; readonly items: readonly ConversationContextOfferItem[] } | null;
+  readonly lastResolvedSlotAnswer: { readonly slot: string; readonly turnId: string } | null;
+  readonly conversationSummary: string | null;
+};
+
 export type StoreInfoFact = { readonly topic: "address" | "hours" | "unit"; readonly value: string; readonly source: string };
 // União discriminada por tool, ligada ao QueryOutputMap existente (tenant_business_info é local até o inc2).
 export type AgentToolObservation =
@@ -296,7 +320,7 @@ export type PrimaryIntent = (typeof PRIMARY_INTENTS)[number];
 // "handoff" (MISSÃO PII P0-B): o turno PEDE transferência humana — capability semântica, evidência no bloco.
 export const TURN_CAPABILITIES = ["stock_search", "send_photos", "vehicle_details", "institutional_info", "recall", "select", "handoff"] as const;
 export type TurnCapability = (typeof TURN_CAPABILITIES)[number];
-export const TURN_SUBJECT_KINDS = ["explicit_model", "ordinal_from_last_offer", "selected_vehicle", "vehicle_type", "budget", "none"] as const;
+export const TURN_SUBJECT_KINDS = ["explicit_model", "ordinal_from_last_offer", "offer_reference", "selected_vehicle", "vehicle_type", "budget", "none"] as const;
 export type TurnSubjectKind = (typeof TURN_SUBJECT_KINDS)[number];
 // De onde vem o subject: escrito no turno atual, herdado da memória, ou inferido/corrigido pelo cérebro (typo kiks→Kicks).
 export const SUBJECT_SOURCES = ["current_turn", "memory", "inference", "none"] as const;

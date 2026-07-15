@@ -32,7 +32,9 @@ function frame(block: string): TurnFrame {
   return {
     turnId: "t-brain-1", now: "2026-07-03T12:00:00.000Z", block, portalPromptSha256: "sha",
     workingMemory: { ...createInitialPersistedWorkingMemory(), funnel: { known: [], declined: [], deferred: [], suggestedObjective: null }, selectedVehicle: null, lastOffer: null },
-    recentTranscript: [], signals: { mentionsPhoto: false, mentionsStore: false, mentionsMoreOptions: false, mentionsVehicleType: "suv", isMemoryQuestion: false, relation: "direction_change" },
+    recentTranscript: [],
+    conversationContext: { lastAgentMessage: null, pendingAgentQuestion: null, selectedVehicle: null, lastVisibleOffer: null, lastResolvedSlotAnswer: null, conversationSummary: null },
+    signals: { mentionsPhoto: false, mentionsStore: false, mentionsMoreOptions: false, mentionsVehicleType: "suv", isMemoryQuestion: false, relation: "direction_change" },
   };
 }
 function brainWith(content: string, status = 200): { brain: OpenAiAgentBrain; transport: CannedTransport } {
@@ -92,6 +94,26 @@ async function main(): Promise<void> {
     const expectedSha = crypto.createHash("sha256").update(PORTAL_PROMPT, "utf8").digest("hex");
     check("[5] prompt do portal presente INTEGRALMENTE no system", sys.includes(PORTAL_PROMPT) && sys.includes("PROMPT-INTEGRAL-MARKER-42"));
     check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
+
+    const contextFrame: TurnFrame = {
+      ...frame("mostra o azul"),
+      conversationContext: {
+        lastAgentMessage: "Qual carro da lista voce quer ver as fotos?",
+        pendingAgentQuestion: { slot: "possuiTroca", sinceTurnId: "old-turn" },
+        selectedVehicle: null,
+        lastVisibleOffer: {
+          sourceTurnId: "offer-turn",
+          items: [{ ordinal: 2, vehicleKey: "rm:corolla-2016", marca: "Toyota", modelo: "Corolla", ano: 2016, cor: "Azul", preco: 89990, cambio: "Automatico", tipo: "sedan" }],
+        },
+        lastResolvedSlotAnswer: null,
+        conversationSummary: "Lead pediu fotos de um sedan.",
+      },
+    };
+    await brain.proposeNextStep(contextFrame, []);
+    const contextBody = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
+    const userPayload = contextBody.messages.find((m) => m.role === "user")?.content ?? "";
+    check("[5c] contexto estruturado da conversa chega ao payload do cerebro", userPayload.includes("conversationContext")
+      && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca"));
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {

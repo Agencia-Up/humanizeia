@@ -10,7 +10,7 @@
 //  - P1: a 1ª compreensão validada TRAVA o assunto do turno (reconcile só adiciona fato; não troca sem evidência nova).
 // Módulo PURO, sem ciclo. Memória = contexto/pronome, nunca vence o turno.
 // ============================================================================
-import { normalizeText, canonicalModel, modelIdentityMatches, modelLikelyTypoMatches } from "./catalog-utils.ts";
+import { normalizeText, canonicalModel, modelIdentityMatches, modelLikelyTypoMatches, escapeRegex } from "./catalog-utils.ts";
 export type KnownVehicleModel = { readonly marca: string | null; readonly modelo: string | null; readonly ano?: number | null };
 import { parseOrdinal } from "./ordinal.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
@@ -328,7 +328,7 @@ function lastAgentAskedPhotoTarget(state?: ConversationState | null): boolean {
 function answersPendingPhotoTargetQuestion(target: TargetResolution, state?: ConversationState | null): boolean {
   if (target.kind !== "resolved") return false;
   if (!lastAgentAskedPhotoTarget(state)) return false;
-  return target.source === "turn_ordinal" || target.source === "turn_explicit_model" || target.source === "ad_reference";
+  return target.source === "turn_ordinal" || target.source === "turn_offer_reference" || target.source === "turn_explicit_model" || target.source === "ad_reference";
 }
 // ⭐Codex rodada 2 (smoke T4): "Sim" ACEITANDO a oferta de foto que o AGENTE acabou de fazer ("quer que eu te
 // envie as fotos dele?") — com pergunta ÚNICA por design (dupla é deny), o aceite booleano curto é inequívoco.
@@ -379,7 +379,7 @@ export function isStockSearchTurn(v: ValidatedUnderstanding | null): boolean {
 //    precedência); subjectValue que CONFLITA com o claim escrito torna o entendimento INVÁLIDO (kind=conflict, zero mídia);
 //    inferência (typo, sem claim exato) só vira candidato se CONFIRMADA por stock_search/catálogo. vehicle_photos_resolve
 //    NUNCA confirma o modelo sozinho (knownModels só vem de stock_search/vehicle_details/oferta/identidade/seleção). ──
-export type TargetResolutionSource = "turn_ordinal" | "turn_explicit_model" | "carryover_selected" | "single_offer" | "ad_reference" | "ambiguous" | "none";
+export type TargetResolutionSource = "turn_ordinal" | "turn_offer_reference" | "turn_explicit_model" | "carryover_selected" | "single_offer" | "ad_reference" | "ambiguous" | "none";
 export type TargetResolution =
   | { readonly kind: "resolved"; readonly vehicleKey: string; readonly source: TargetResolutionSource; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
   | { readonly kind: "ambiguous"; readonly candidateVehicleKeys: readonly string[]; readonly subjectModel: string | null }
@@ -446,6 +446,40 @@ export function resolveTurnTarget(args: {
     const key = offerItems[ord.value - 1].vehicleKey;
     return { kind: "resolved", vehicleKey: key, source: "turn_ordinal", candidateVehicleKeys: [key], subjectModel: uModel ?? textModels[0] ?? null };
   }
+  // The LLM declares the semantic reference; this only resolves it against the
+  // exact rendered offer. It does not classify a turn or authorize a search.
+  if (u?.subject === "offer_reference") {
+    const normalizedBlock = normalizeText(leadMessage);
+    type OfferReferenceField = "marca" | "modelo" | "cor" | "ano";
+    const fields: readonly OfferReferenceField[] = ["marca", "modelo", "cor", "ano"];
+    const readReference = (item: typeof offerItems[number], field: OfferReferenceField): string => {
+      const value = item[field];
+      return normalizeText(value == null ? "" : String(value));
+    };
+    const appearsInBlock = (reference: string): boolean =>
+      reference.length > 1 && new RegExp(`(^|\\s)${escapeRegex(reference)}(?=\\s|$)`).test(normalizedBlock);
+    // Every grounded attribute the lead actually cited must be true for the
+    // resolved item. "Corolla 2016" therefore narrows to that year instead of
+    // matching every Corolla, while "o azul" stays a valid unique reference.
+    const mentionedReferences = [...new Map(
+      offerItems.flatMap((item) => fields.map((field) => ({ field, value: readReference(item, field) })))
+        .filter((reference) => appearsInBlock(reference.value))
+        .map((reference) => [`${reference.field}:${reference.value}`, reference] as const),
+    ).values()];
+    const matches = mentionedReferences.length === 0
+      ? []
+      : offerItems.filter((item) => mentionedReferences.every((reference) => readReference(item, reference.field) === reference.value));
+    if (matches.length === 1) {
+      return {
+        kind: "resolved",
+        vehicleKey: matches[0].vehicleKey,
+        source: "turn_offer_reference",
+        candidateVehicleKeys: [matches[0].vehicleKey],
+        subjectModel: matches[0].modelo ?? null,
+      };
+    }
+    if (matches.length > 1) return { kind: "ambiguous", candidateVehicleKeys: matches.map((item) => item.vehicleKey), subjectModel: null };
+  }
   // Uma unica oferta renderizada e um pedido explicito de fotos formam uma
   // referencia inequívoca mesmo sem "dele". Isto e resolucao de contexto
   // estruturado (vehicleKey da lista), nao inferencia por palavra ou memoria
@@ -509,7 +543,7 @@ export function reconcileUnderstanding(base: TurnUnderstanding | null, next: Tur
   // sometimes label it as `current_turn` because the pronoun ("dele", "desse")
   // is written in the current block. Canonicalizing only this structural label
   // does not choose an intent, target, tool, or response for the brain.
-  const canonicalNext = next.subject === "selected_vehicle" && next.subjectSource === "current_turn"
+  const canonicalNext = (next.subject === "selected_vehicle" || next.subject === "offer_reference") && next.subjectSource === "current_turn"
     ? { ...next, subjectSource: "memory" as const }
     : next;
   if (!base) return canonicalNext;

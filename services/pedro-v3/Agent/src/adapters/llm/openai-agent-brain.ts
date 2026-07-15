@@ -55,13 +55,21 @@ alvo. Interprete o bloco atual (corrija erros de digitação de modelo, ex.: "ki
   "understanding":{
     "primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|conversation_repair|request_human|sensitive_data|other",
     "requestedCapabilities":["stock_search"|"send_photos"|"vehicle_details"|"institutional_info"|"recall"|"select"|"handoff", ...],
-    "subject":"explicit_model|ordinal_from_last_offer|selected_vehicle|vehicle_type|budget|none",
+    "subject":"explicit_model|ordinal_from_last_offer|offer_reference|selected_vehicle|vehicle_type|budget|none",
     "subjectValue":"<modelo citado / número do ordinal / tipo / faixa — ou null>",
     "subjectSource":"current_turn|memory|inference|none",   // inference = você corrigiu/deduziu (ex.: typo do modelo)
     "evidence":[{"capability":"send_photos","quote":"<TRECHO LITERAL do bloco atual>"}],  // CADA quote TEM de aparecer no bloco atual
     "isTopicChange":true|false,   // o cliente mudou de assunto/veículo em relação ao turno anterior?
     "answeredLeadQuestions":["<pergunta sua que ele respondeu>"]
   }
+ESTRUTURA DA CONVERSA: conversationContext contém somente fatos já confirmados: última fala do atendente,
+pergunta pendente, veículo selecionado e a última lista visível com ordinal/modelo/ano/cor. Use esse contexto para
+ENTENDER respostas curtas ou fragmentadas, sem deixar memória antiga vencer pedido novo. Leia o bloco inteiro antes de
+agir: uma negação, uma cor, um ano ou uma frase sem pontuação pode responder à pergunta pendente e trazer uma nova
+informação. Quando a referência for única na última lista por cor, ano, marca ou modelo (por exemplo, "mostra o azul"),
+use subject="offer_reference", subjectSource="memory" e evidence literal do bloco. Isto resolve o alvo da lista; NÃO é
+uma busca nova, NÃO pede nome e NÃO reabre discovery. Se houver mais de um item compatível, explique a ambiguidade e
+faça uma única pergunta curta. Um pedido explícito atual sempre vence lista, foco, pergunta pendente e funil anterior.
 REGRAS do understanding: se o cliente pede foto AGORA (em qualquer flexão: manda/mande/envia/envie/mostra/quero ver
 fotos), inclua "send_photos" em requestedCapabilities E uma evidence com o trecho literal. Se ele NEGA foto ("não quero
 foto", "foto depois"), NÃO inclua send_photos. Pergunta de MEMÓRIA ("qual carro pedi fotos?") = primaryIntent
@@ -448,6 +456,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       leadBlock: frame.block,
       signals: frame.signals,
       workingMemory: frame.workingMemory,
+      conversationContext: frame.conversationContext,
       transcript: frame.recentTranscript,
       toolObservationsSoFar: observations,
     });

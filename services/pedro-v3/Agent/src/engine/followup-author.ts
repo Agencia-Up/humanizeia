@@ -2,6 +2,7 @@ import type { AgentBrainPort, TurnFrame } from "../domain/agent-brain.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import { ResponseRenderer } from "./response-renderer.ts";
 import { buildWorkingMemory } from "./working-memory.ts";
+import { buildConversationContext } from "./conversation-context.ts";
 import type { FollowupStage } from "./followup-policy.ts";
 
 function questionCount(text: string): number {
@@ -48,6 +49,7 @@ export async function authorFollowupMessageDetailed(args: {
       portalPromptSha256: args.portalPromptSha256,
       workingMemory: memory,
       recentTranscript: (args.state.recentTurns ?? []).slice(-12).map((turn) => ({ role: turn.role, text: turn.text })),
+      conversationContext: buildConversationContext({ state: args.state, workingMemory: memory }),
       signals: {
         mentionsPhoto: false,
         mentionsStore: false,
