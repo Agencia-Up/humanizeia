@@ -3171,7 +3171,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       const explicitHumanRequest = requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage);
       const forcedHandoffReason = llmFirst
         ? forcedSilentDisengagementReason({
-          disengaged: disengagedActionable,
+          // Encaminhamento silencioso e uma acao operacional irreversivel: so
+          // desinteresse EXPLICITO a dispara. "Obrigado", "vou pensar" e,
+          // principalmente, um "nao" que responde a uma pergunta anterior nao
+          // podem encerrar a conversa por inferencia. Esses casos continuam
+          // pertencendo a LLM e ao ciclo normal de follow-up.
+          disengaged: disengagedActionable && leadEngagement === "not_interested",
           explicitHumanRequest,
           stage: contextState.stage,
         })

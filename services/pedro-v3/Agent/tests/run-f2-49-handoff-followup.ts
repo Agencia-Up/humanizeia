@@ -73,6 +73,12 @@ check("[P9] saga de handoff cancela follow-up antes do callback do vendedor", ev
   rules: rules.followup,
   now: NOW,
 }) === null);
+check("[P9b] handoff pendente cancela follow-up imediatamente", evaluateFollowup({
+  state: state(),
+  outbox: [anchor, record({ effectId: "handoff-pending", kind: "handoff", status: "pending", receiptLevel: null, outcomeAppliedAt: null })],
+  rules: rules.followup,
+  now: NOW,
+}).reason === "handoff_in_flight");
 
 const b1 = new QueueBrain([final("Oi, ainda procura um carro?")]);
 check("[L1] LLM autora T1", await authorFollowupMessage({ brain: b1, state: state(), stage: 1, turnId: "fu1", now: NOW, portalPromptSha256: "sha" }) === "Oi, ainda procura um carro?");

@@ -139,6 +139,7 @@ async function main(): Promise<void> {
   check("[G-3] 'obrigado, vou pensar' -> low_intent", detectDisengagement("obrigado, vou pensar") === "low_intent");
   check("[G-3b] 'não gostei de nenhum' encerra mesmo sem agradecimento", detectDisengagement("não gostei de nenhum") === "not_interested");
   check("[G-4] 'quero um onix' -> null (não é desinteresse)", detectDisengagement("quero um onix") === null);
+  check("[G-4b] 'não' isolado é resposta contextual, nunca encerramento", detectDisengagement("não") === null);
 
   // ── PARTE 3 — INTEGRAÇÃO Fase 2 (rígido) ──
   {
