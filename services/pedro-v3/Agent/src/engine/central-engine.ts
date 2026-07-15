@@ -2346,7 +2346,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               // Encoding corruption is transient; retry with the same intent and
               // an explicit cleanup instruction before any commercial feedback.
               keepRetrying = true;
-            } else if (humanGuidanceTurn || visitGuidanceTurn || openingGuidanceTurn) {
+            } else if (humanGuidanceTurn || visitGuidanceTurn) {
               // Estes atos nao possuem recovery comercial correto: uma falha
               // de forma deve voltar para a mesma LLM, nao encerrar cedo pelo
               // fingerprint e cair em "o que voce procura?". O feedback da
@@ -2379,6 +2379,15 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               } else {
                 effFeedback = "A busca encontrou itens, mas TODOS acima do teto de preço que o cliente informou. Responda com UMA parte text HONESTA: diga que nessa faixa não encontrou opções agora e CONDUZA com UMA pergunta curta (ele topa ampliar um pouco a faixa, ver outro tipo/modelo, ou prefere que um consultor ajude?). NÃO use vehicle_offer_list, NÃO escreva R$/km, NÃO chame tools.";
               }
+              keepRetrying = true;
+            } else if (openingGuidanceTurn) {
+              // A abertura continua pertencendo a LLM, mas nao pode esconder
+              // um resultado de estoque que a propria tool acabou de trazer.
+              // Quando ha itens, o ramo de LISTAGEM acima fornece as chaves
+              // aterradas e o formato seguro; sem itens, esta orientacao geral
+              // preserva o ato de abertura. Assim o engine nao exige uma lista
+              // e simultaneamente impede a LLM de saber quais keys pode usar.
+              effFeedback = `Mantenha o ATO ATUAL (${lockedU?.primaryIntent ?? "abertura"}) e corrija somente a violacao: ${authored.feedback} Nao volte para descoberta de outro assunto, nao use tool comercial e responda com no maximo UMA pergunta.`;
               keepRetrying = true;
             } else if (conductTurn) {
               // CONDUÇÃO (pagamento / avaliação de troca): o ÚNICO desfecho válido é ACOLHER + conduzir com UMA pergunta de
@@ -2505,9 +2514,19 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // send_photos). Exceção SISTÊMICA: vehicle_details do key que o engine exigiu p/ grounding (systemDetailKeys).
         // Sem autorização -> rejeita (REQUIRED_TURN_UNDERSTANDING) e o cérebro re-emite. (tenant_business_info isento.)
         const sysDetailOk = call.tool === "vehicle_details" && systemDetailKeys.has(((call.input as { vehicleKey?: string }).vehicleKey) ?? "");
-        if (singleAuthor && llmFirst && COMMERCIAL_TOOLS.has(call.tool) && !sysDetailOk && !toolCapabilityAuthorized(brainVU(), call.tool)) {
+        // Declarar a capability send_photos nao basta para consultar fotos: o
+        // bloco atual precisa realmente pedir/aceitar fotos ou responder qual
+        // alvo da pergunta pendente. Isto impede prefetch proativo na abertura
+        // sem tirar da LLM a liberdade de OFERECER fotos em texto.
+        const photoQuerySemanticallyAuthorized = call.tool !== "vehicle_photos_resolve"
+          || authorizesPhotoSend(brainVU(), leadMessage, requireBrain)
+          || authorizesPhotoByResolvedTarget(resolveTargetWithAd(), leadMessage, contextState);
+        if (singleAuthor && llmFirst && COMMERCIAL_TOOLS.has(call.tool) && !sysDetailOk
+            && (!toolCapabilityAuthorized(brainVU(), call.tool) || !photoQuerySemanticallyAuthorized)) {
           const capNeeded = call.tool === "vehicle_photos_resolve" ? "send_photos" : call.tool;
-          const capMsg = `Para usar '${call.tool}' inclua NO MESMO passo um 'understanding' com requestedCapabilities contendo '${capNeeded}' e uma evidence (capability '${capNeeded}') citando o TRECHO LITERAL do bloco atual que justifica isso.`;
+          const capMsg = call.tool === "vehicle_photos_resolve" && !photoQuerySemanticallyAuthorized
+            ? "O cliente nao pediu nem aceitou fotos neste bloco. Voce pode OFERECER fotos na resposta, mas nao consulte vehicle_photos_resolve agora. Use essa tool somente quando o pedido/aceite de foto pertencer ao bloco atual ou quando ele responder qual carro quer ver."
+            : `Para usar '${call.tool}' inclua NO MESMO passo um 'understanding' com requestedCapabilities contendo '${capNeeded}' e uma evidence (capability '${capNeeded}') citando o TRECHO LITERAL do bloco atual que justifica isso.`;
           // T5 (audit Codex smoke): stock_search SEM understanding válido (ex.: "cadê?" não tem substantivo comercial p/ a
           // evidence) NÃO é execução — empurra como tool:"response" (não infla a contagem de stock_search do smoke) + cap
           // anti-loop. A busca de retomada/comercial roda DETERMINÍSTICA na autoria (não depende de o cérebro autorar evidence).

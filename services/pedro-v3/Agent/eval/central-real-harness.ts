@@ -111,6 +111,10 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
   // lê `pendingSlot` (o slot que o agente acabou de perguntar via WM.pendingAgentQuestion) e o último capture. Retorna a
   // próxima rajada ou null p/ encerrar. Adaptativo: responde ao slot pedido; Adversarial: ignora/contradiz o slot pendente.
   readonly driver?: (ctx: { readonly turnIndex: number; readonly last: CentralTurnCapture | null; readonly pendingSlot: string | null }) => readonly string[] | null;
+  // Eval-only fidelity hooks: production persists these on the inbox record
+  // when the Edge bridge receives a Click-to-WhatsApp ad or inbound media.
+  readonly firstTurnAdContext?: unknown;
+  readonly mediaContextByTurn?: Readonly<Record<number, unknown>>;
 } = {}): Promise<CentralTurnCapture[]> {
   const maxLlmCalls = opts.maxLlmCalls ?? Infinity;
   const base = { ms: Date.parse("2026-07-01T09:00:00.000Z") };
@@ -164,9 +168,19 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       const refs = new Map<string, string>();
       sensitive.secrets.forEach((secret, index) => refs.set(secret.placeholder,
         createHash("sha256").update(`${convId}\0${eventId}\0${index}\0${secret.kind}`).digest("hex")));
+      // `turnSeq` is zero-based until after this burst is committed. Keep the
+      // eval hooks aligned with the one-based turn numbers used by callers and
+      // by the production bridge (the ad/media belong to this first inbound
+      // message, never the following one).
+      const inboundTurnNumber = turnSeq + 1;
+      const raw = {
+        text: materializeSensitiveTokens(sensitive, refs),
+        ...(inboundTurnNumber === 1 && opts.firstTurnAdContext ? { adContext: opts.firstTurnAdContext } : {}),
+        ...(opts.mediaContextByTurn?.[inboundTurnNumber] ? { mediaContext: opts.mediaContextByTurn[inboundTurnNumber] } : {}),
+      };
       await persistence.tryInsert({
         eventId, conversationId: convId,
-        raw: redact({ text: materializeSensitiveTokens(sensitive, refs) }) as never,
+        raw: redact(raw) as never,
         receivedAt: clock.now(),
       });
     }

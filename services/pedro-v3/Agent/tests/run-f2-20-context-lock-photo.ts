@@ -159,6 +159,7 @@ async function main(): Promise<void> {
   check("[U3] 'qual carro eu pedi as fotos?' -> photo_memory", deriveCurrentTurnIntent("qual carro eu pedi as fotos?", sig("qual carro eu pedi as fotos?"), extractor) === "photo_memory");
   check("[U4] 'quero um onix' (modelo) -> search", deriveCurrentTurnIntent("quero um onix", sig("quero um onix"), extractor) === "search");
   check("[U5] 'quero algo até 50 mil' (orçamento) -> search", deriveCurrentTurnIntent("quero algo até 50 mil", sig("quero algo até 50 mil"), extractor) === "search");
+  check("[U5b] explicit commercial pivot -> search", deriveCurrentTurnIntent("na verdade quero um sedan automatico ate 120 mil", sig("na verdade quero um sedan automatico ate 120 mil"), extractor) === "search");
   {
     const wmPhoto: WorkingMemoryV1 = { ...createInitialPersistedWorkingMemory(), activeTopic: { topic: "photo_request", sinceTurnId: "t0", origin: "lead_message" }, currentLeadIntent: { intent: "photo_request", confidence: 0.9, evidence: [] }, selectedVehicle: null, lastOffer: null, funnel: {} as never, photoLedger: [] as never } as never;
     const cleared = clearStalePhotoIntent(wmPhoto, "search");

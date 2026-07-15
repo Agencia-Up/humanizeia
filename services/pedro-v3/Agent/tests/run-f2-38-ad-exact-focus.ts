@@ -125,7 +125,46 @@ const brainStampsYear: BrainResponder = (_f, obs) => {
   return finU([txt("Encontrei:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", searchCompassU);
 };
 
-type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; mediaPhotoIds: string[]; stockInput: Record<string, unknown> | null; src: string | null };
+// Reproduz o P0 visto com o gpt-4.1-mini no anuncio do Fastback: a tool retorna
+// o carro certo, mas o primeiro draft usa texto livre em vez da estrutura
+// segura. O engine deve devolver as keys aterradas ao MESMO cerebro e a LLM
+// deve reescrever; a abertura generica nunca pode esconder esse feedback.
+const malformedOpeningThenList: BrainResponder = (_f, obs) => {
+  const currentU: TurnUnderstanding = {
+    ...searchCompassU,
+    evidence: [{ capability: "stock_search", quote: "desse carro" }],
+  };
+  const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  const listFeedback = [...obs].reverse().find((o) => o.tool === "response" && !o.ok && o.error.message.includes("Turno de LISTAGEM"));
+  if (listFeedback && stock) {
+    return finU([
+      txt("Encontrei o veiculo exato do anuncio:"),
+      { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart,
+      txt("Quer ver as fotos dele ou saber mais detalhes?"),
+    ], "ad_exact_offer", currentU);
+  }
+  if (stock) return finU([txt("Tenho um Jeep Compass 2019 por R$ 96.990 para voce. Quer fotos?")], "malformed_free_text_offer", currentU);
+  return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, currentU);
+};
+
+const proactivePhotoThenList: BrainResponder = (_f, obs) => {
+  const u: TurnUnderstanding = {
+    ...searchCompassU,
+    primaryIntent: "vehicle_detail",
+    requestedCapabilities: ["send_photos", "stock_search"],
+    evidence: [
+      { capability: "send_photos", quote: "desse carro" },
+      { capability: "stock_search", quote: "desse carro" },
+    ],
+  };
+  const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  if (stock) return finU([txt("Encontrei o veiculo do anuncio:"), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart, txt("Quer ver as fotos dele?")], "ad_offer", u);
+  const photoDenied = obs.some((o) => o.tool === "response" && !o.ok && o.error.message.includes("nao pediu nem aceitou fotos"));
+  if (photoDenied) return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, u);
+  return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp19" } } }, u);
+};
+
+type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; mediaPhotoIds: string[]; photoResolveCalls: number; stockInput: Record<string, unknown> | null; src: string | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
   executed.length = 0; preparer.relation = relation; brain.setResponder(responder);
   const raw = ad ? redact({ text: lead, adContext: ad } as never) : redact({ text: lead });
@@ -155,6 +194,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
   return {
     outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "", committed: r.status === "committed",
     hasMedia: !!media, mediaKey: media?.payload?.vehicleKey ?? null, mediaPhotoIds: media?.payload?.photoIds ?? [],
+    photoResolveCalls: executed.filter((call) => call.tool === "vehicle_photos_resolve").length,
     stockInput: stock ? (stock.input as Record<string, unknown>) : null, src: r.status === "committed" ? (r.responseSource ?? null) : null,
   };
 }
@@ -183,6 +223,22 @@ async function main(): Promise<void> {
     check("[AD-1b] a resposta fala do Compass 2019 e NÃO lista o 2017", has(t1.outbox, "2019") && !has(t1.outbox, "2017"), `outbox="${t1.outbox}"`);
     check("[AD-1c] não pede telefone/nome", !has(t1.outbox, "telefone") && !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
     check("[AD-1d] polimento: 1 resultado do foco -> texto SINGULAR nomeando 'do anúncio' (não 'estas opções')", has(t1.outbox, "do anuncio") && !has(t1.outbox, "estas opcoes"), `outbox="${t1.outbox}"`);
+  }
+
+  // P0: o feedback factual de listagem deve vencer a orientacao generica de
+  // abertura. A LLM continua sendo a autora e converge em brain_retry.
+  {
+    const c = conv();
+    const t1 = await c.t("Boa tarde, queria saber mais desse carro", { ad: adCompass19, responder: malformedOpeningThenList });
+    check("[AD-1e] draft livre invalido na abertura -> LLM reautora com a key real", t1.src === "brain_retry" && has(t1.outbox, "Compass") && has(t1.outbox, "2019"), `src=${t1.src} outbox="${t1.outbox}"`);
+    check("[AD-1f] abertura corrigida nao cai em fallback nem oferece outro ano", !has(t1.outbox, "2017") && !has(t1.outbox, "nao consegui"), `outbox="${t1.outbox}"`);
+  }
+
+  {
+    const c = conv();
+    const t1 = await c.t("Boa tarde, queria saber mais desse carro", { ad: adCompass19, responder: proactivePhotoThenList });
+    check("[AD-1g] oferecer foto nao autoriza prefetch: zero vehicle_photos_resolve sem pedido", t1.photoResolveCalls === 0, `photoCalls=${t1.photoResolveCalls}`);
+    check("[AD-1h] a LLM segue livre para oferecer fotos depois de apresentar o carro", has(t1.outbox, "Compass") && has(t1.outbox, "fotos"), `outbox="${t1.outbox}"`);
   }
 
   // ── AD-2: anúncio Compass 2019 + "me manda fotos dele" -> send_media do 2019, <=5 fotos ──
