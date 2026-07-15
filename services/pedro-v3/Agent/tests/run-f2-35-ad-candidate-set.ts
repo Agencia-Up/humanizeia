@@ -69,6 +69,9 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
+function qU(call: QueryCall, understanding: TurnUnderstanding): AgentBrainStep {
+  return { kind: "query", call, understanding };
+}
 const resist: BrainResponder = (frame, observations) => {
   const photoU: TurnUnderstanding = {
     ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "current_turn",
@@ -87,10 +90,10 @@ const resist: BrainResponder = (frame, observations) => {
     };
   }
   if (/foto/i.test(frame.block ?? "")) {
-    return finU([
-      txt("Do anúncio, encontrei estes dois Onix 2025. De qual você quer as fotos?"),
-      offer([ONIX25A.vehicleKey, ONIX25B.vehicleKey]),
-    ], "photo_clarify_ad_candidates", photoU);
+    if (has(frame.signals.adVehicle ?? "", "Compass 2019")) {
+      return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: CMP19.vehicleKey } } }, photoU);
+    }
+    return finU([txt("Do anúncio, encontrei duas unidades do Onix 2025. De qual delas você quer as fotos?")], "photo_clarify_ad_candidates", photoU);
   }
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok && o.data.items.length > 0) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
   if (stock) {
@@ -99,6 +102,20 @@ const resist: BrainResponder = (frame, observations) => {
       evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim() || "tem" }],
     };
     return finU([txt("Encontrei estas opções do anúncio:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", searchU);
+  }
+  if (has(frame.signals.adVehicle ?? "", "Onix")) {
+    const searchU: TurnUnderstanding = {
+      ...U("search_stock"), requestedCapabilities: ["stock_search"],
+      evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim() || "esse" }],
+    };
+    return qU({ tool: "stock_search", input: { marca: "Chevrolet", modelo: "Onix" } }, searchU);
+  }
+  if (has(frame.signals.adVehicle ?? "", "Compass")) {
+    const searchU: TurnUnderstanding = {
+      ...U("search_stock"), requestedCapabilities: ["stock_search"],
+      evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim() || "esse" }],
+    };
+    return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass" } }, searchU);
   }
   return finU([txt("Certo!")], "reply", U("other"));
 };
@@ -158,7 +175,7 @@ async function main(): Promise<void> {
     const t2 = await c.t("me manda fotos dele");
     check("[A-2] T2 NÃO envia foto (2 candidatos -> não escolhe errado)", t2.hasMedia === false, `hasMedia=${t2.hasMedia} mediaKey=${t2.mediaKey}`);
     check("[A-3] T2 pergunta QUAL dos candidatos do anúncio (clarify de candidatos)", t2.reasonCode === "photo_clarify_ad_candidates" && has(t2.outbox, "Onix"), `rc=${t2.reasonCode} remembered=${JSON.stringify({ last: afterOffer?.lastRenderedOfferContext, presented: afterOffer?.offers.presentedKeys })} feedback=${JSON.stringify(t2.feedback)} outbox="${t2.outbox}"`);
-    check("[A-4] T2 mostra os 2 preços dos candidatos (aterrado), não re-lista o Compass", has(t2.outbox, "76") && has(t2.outbox, "81") && !has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
+    check("[A-4] T2 reconhece DUAS unidades sem inventar preços nem re-listar Compass", has(t2.outbox, "duas") && !has(t2.outbox, "R$") && !has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
   }
 
   // ── C-B: anúncio Compass 2019 (único) -> "fotos dele" envia direto (contraste) ──

@@ -1,8 +1,8 @@
 // ============================================================================
-// F2.34 — Fix A (audit CTWA — condução SDR): RELAXAMENTO determinístico de busca vazia.
-//   Quando uma busca EXATA volta 0, o engine roda a cascata relaxada (mesmo tipo na faixa / mesmo modelo sem teto / mesma
-//   marca / tipo / faixa) até achar itens REAIS e CONDUZ nomeando o filtro original + o relaxamento — NUNCA "quer que eu
-//   veja outras opções?" solto. Cobre RC3 (Compass até 100 = 0) e RC4 (Onix até 90 stale) do relatório real do Codex.
+// F2.34 — Busca vazia LLM-first.
+//   A cascata e apenas uma sugestao pura de filtros. A LLM decide se consulta
+//   mesmo tipo, remove teto ou encerra honestamente; a engine nunca executa
+//   relaxamento nem escreve a conducao por conta propria.
 //   npx tsx tests/run-f2-34-empty-search-relaxation.ts
 // ============================================================================
 import { runCentralConversationTurn, type CentralTurnResult } from "../src/engine/central-engine.ts";
@@ -68,8 +68,6 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
-// ⭐AUTORIDADE (audit Codex): os turnos-default desta suíte são BUSCAS ("tem Compass até 100 mil?") — a LLM real
-// classifica search_stock; declara o ATO mas resiste (o executor determinístico garante a execução + relaxamento).
 const resistOther: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
 const resist: BrainResponder = (frame, observations) => {
   const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[]; filtersUsed: Record<string, unknown> } }[];
@@ -93,7 +91,15 @@ const resist: BrainResponder = (frame, observations) => {
     const subject = /picape/i.test(block) ? "picape" : requestedModel ?? "essa opção";
     return finU([txt(`Não encontrei ${subject}${requestedAmount ? ` até ${requestedAmount}` : ""} agora. Você prefere ampliar a faixa de preço ou procurar outro modelo ou tipo?`)], "stock_empty_conduct", understanding);
   }
-  return finU([txt("Certo!")], "reply", understanding);
+  const input: Record<string, unknown> = {};
+  if (requestedModel) input.modelo = requestedModel;
+  if (/suv/i.test(block) && !requestedModel) input.tipo = "suv";
+  if (/picape/i.test(block)) input.tipo = "pickup";
+  if (/100\s*mil/i.test(block)) input.precoMax = 100000;
+  if (/90\s*mil/i.test(block)) input.precoMax = 90000;
+  if (/50\s*mil/i.test(block)) input.precoMax = 50000;
+  if (/30\s*mil/i.test(block)) input.precoMax = 30000;
+  return qU({ tool: "stock_search", input }, understanding);
 };
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const searchPickupU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "vehicle_type", subjectValue: "pickup", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "picape" }], isTopicChange: false, answeredLeadQuestions: [] } as TurnUnderstanding;
@@ -131,7 +137,7 @@ function conv() {
 }
 
 async function main(): Promise<void> {
-  console.log("== F2.34: Fix A — relaxamento determinístico de busca vazia ==");
+  console.log("== F2.34: busca vazia e relaxamento sob autoridade da LLM ==");
 
   // ── PARTE 1 — PURO (relaxSearchCascade) ──
   check("[U-1] {Compass, ≤100k}+suv -> começa por same_type_in_range {suv,≤100k}", (() => {
@@ -152,44 +158,44 @@ async function main(): Promise<void> {
   })());
   check("[U-5] {popular} sem preço/tipo -> cascata vazia (nada seguro a relaxar)", relaxSearchCascade({ popular: true }).length === 0);
 
-  // ── RC3: "tem Compass até 100 mil?" (Compass só >100k) -> nessa faixa lista SUVs (Creta/Renegade), nomeia Compass ──
+  // ── RC3: busca exata vazia -> a LLM responde honestamente; nenhuma
+  // cascata escondida consulta alternativas sem decisao conversacional. ──
   {
     const c = conv();
     const t1 = await c.t("tem Compass até 100 mil?");
-    check("[A-1] busca vazia CONDUZ: lista alternativas reais (Creta/Renegade), não beco", has(t1.outbox, "Creta") && has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
+    check("[A-1] busca vazia CONDUZ com honestidade, sem inventar alternativas", has(t1.outbox, "Compass") && !has(t1.outbox, "Creta") && !has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
     check("[A-2] nomeia o filtro exato que não achou (Compass / 100)", has(t1.outbox, "Compass") && has(t1.outbox, "100"), `outbox="${t1.outbox}"`);
     check("[A-3] NÃO termina em 'quer que eu veja outras opções?' solto", !/quer que eu veja outras op(c|ç)oes\?\s*$/i.test(norm(t1.outbox)) && !has(t1.outbox, "nao temos"), `outbox="${t1.outbox}"`);
-    check("[A-4] resposta relaxada é autorada pela LLM", t1.reasonCode === "relaxed_offer" && (t1.src === "brain_final" || t1.src === "brain_retry"), `reason=${t1.reasonCode} src=${t1.src}`);
-    check("[A-5] rodou a busca relaxada por TIPO na faixa (tipo=suv, precoMax=100000)", t1.stockInputs.some((i) => i.tipo === "suv" && i.precoMax === 100000), `inputs=${JSON.stringify(t1.stockInputs)}`);
+    check("[A-4] resposta vazia é autorada pela LLM", t1.reasonCode === "stock_empty_conduct" && (t1.src === "brain_final" || t1.src === "brain_retry"), `reason=${t1.reasonCode} src=${t1.src}`);
+    check("[A-5] exatamente UMA busca, com o filtro pedido; zero relaxamento oculto", t1.stockInputs.length === 1 && has(String(t1.stockInputs[0]?.modelo ?? ""), "compass") && t1.stockInputs[0]?.precoMax === 100000, `inputs=${JSON.stringify(t1.stockInputs)}`);
     check("[A-6] recuperação relaxada com lista REAL NÃO é terminalSafe/degraded", t1.terminalSafe === false && t1.degraded === false, `ts=${t1.terminalSafe} degraded=${t1.degraded} src=${t1.src}`);
   }
 
-  // ── drop_ceiling: "tem Compass até 50 mil?" (nenhum SUV ≤50k) -> Compass um pouco acima ──
+  // ── O teto do lead nao e removido sem ele decidir ampliar. ──
   {
     const c = conv();
     const t1 = await c.t("tem Compass até 50 mil?");
-    check("[B-1] sem alternativa na faixa -> LLM oferece o modelo pedido um pouco acima (Compass)", has(t1.outbox, "Compass") && t1.reasonCode === "relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
-    check("[B-2] rodou drop_ceiling (modelo Compass SEM precoMax)", t1.stockInputs.some((i) => has(String(i.modelo ?? ""), "compass") && i.precoMax == null), `inputs=${JSON.stringify(t1.stockInputs)}`);
+    check("[B-1] sem alternativa na faixa -> LLM pergunta se pode ampliar, sem ofertar acima do teto", has(t1.outbox, "Compass") && t1.reasonCode === "stock_empty_conduct" && !has(t1.outbox, "119.990"), `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
+    check("[B-2] zero drop_ceiling oculto: uma busca preserva precoMax=50000", t1.stockInputs.length === 1 && t1.stockInputs[0]?.precoMax === 50000, `inputs=${JSON.stringify(t1.stockInputs)}`);
   }
 
-  // ── RC4: "tem Onix até 90 mil?" (Onix hatch só >90k) -> nessa faixa lista hatches (Gol), nomeia Onix ──
+  // ── RC4: pedido de Onix nao vira lista de hatches por decisao da engine. ──
   {
     const c = conv();
     const t1 = await c.t("tem Onix até 90 mil?");
-    check("[C-1] Onix acima da faixa -> LLM lista hatch na faixa (Gol), nomeia Onix", has(t1.outbox, "Gol") && has(t1.outbox, "Onix") && t1.reasonCode === "relaxed_offer", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
+    check("[C-1] Onix acima da faixa -> LLM nomeia Onix, sem empurrar Gol", !has(t1.outbox, "Gol") && has(t1.outbox, "Onix") && t1.reasonCode === "stock_empty_conduct", `outbox="${t1.outbox}" reason=${t1.reasonCode}`);
   }
 
-  // ── Override: o cérebro AUTORA o beco ("não temos Compass, quer outras?") -> engine sobrepõe com a lista relaxada ──
+  // ── Autoridade: o cerebro pode encerrar depois da busca exata; a engine nao
+  // executa uma cascata escondida nem sobrescreve a autoria comercial. ──
   {
     const c = conv();
-    // ⭐AUTORIDADE: a LLM real declara capability+evidence quando classifica busca (o prompt exige) — sem isso o engine
-    // não age (capability solta/ausente não autoriza).
-    const deadEnd: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "stock_search" && o.ok && o.data.items.length > 0)
-      ? resist(frame, observations, 0)
-      : finU([txt("Não temos Compass até 100 mil no momento. Quer que eu veja outras opções para você?")], "reply", { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Compass" }] });
+    const deadEnd: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "stock_search")
+      ? finU([txt("Não temos Compass até 100 mil no momento. Quer que eu veja outras opções para você?")], "reply", { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Compass" }] })
+      : qU({ tool: "stock_search", input: { modelo: "Compass", precoMax: 100000 } }, { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Compass" }] });
     const t1 = await c.t("tem Compass até 100 mil?", { responder: deadEnd });
-    check("[D-1] beco recebe fatos/feedback e a LLM reescreve com Creta/Renegade", has(t1.outbox, "Creta") || has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
-    check("[D-2] a resposta final não é o beco 'quer que eu veja outras opções?'", !/quer que eu veja outras op(c|ç)oes/i.test(norm(t1.outbox)), `outbox="${t1.outbox}"`);
+    check("[D-1] engine nao executa relaxamento que a LLM nao pediu", t1.stockInputs.length === 1, `inputs=${JSON.stringify(t1.stockInputs)}`);
+    check("[D-2] resposta continua autorada pela LLM, sem handler comercial", (t1.src === "brain_final" || t1.src === "brain_retry") && has(t1.outbox, "Compass"), `src=${t1.src} outbox="${t1.outbox}"`);
   }
 
   // ── Regressão: busca COM resultado não vira relaxamento ──

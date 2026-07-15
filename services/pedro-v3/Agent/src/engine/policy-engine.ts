@@ -5,6 +5,7 @@ import type {
 } from "../domain/decision.ts";
 import type { VehicleFact } from "../domain/types.ts";
 import { isVehicleKeyGrounded, normalizeText, canonicalModel } from "./catalog-utils.ts";
+import { canonicalBrand, detectBrand } from "./commercial-constraints.ts";
 import { leadStatedMoneyValues } from "./lead-extraction.ts";
 import { slotQuestions } from "./question-classify.ts";
 import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone } from "./turn-domain.ts";
@@ -48,7 +49,16 @@ function isLeadVehicleClaimEchoedOnlyAsAbsence(
       || ((candidate.kind === "brand" || candidate.kind === "brand_model") && (claim.kind === "brand" || claim.kind === "brand_model"));
     return sameKind && candidate.normalized === claim.normalized;
   };
-  if (!ctx.claimExtractor.extractClaims(ctx.leadMessage).some(sameClaim)) return false;
+  const extractedFromLead = ctx.claimExtractor.extractClaims(ctx.leadMessage).some(sameClaim);
+  // O filtro comercial reconhece apelidos de marca que o lexico do catalogo
+  // pode nao conter ("volks"/"vw" -> "volkswagen"). Essa equivalencia vale
+  // somente para ecoar a marca pedida numa clausula honesta de ausencia. Ela
+  // nao aterra modelo, oferta, disponibilidade ou qualquer atributo.
+  const canonicalBrandFromLead = detectBrand(ctx.leadMessage);
+  const canonicalBrandEcho = claim.kind === "brand"
+    && canonicalBrandFromLead != null
+    && canonicalBrand(claim.normalized) === canonicalBrandFromLead;
+  if (!extractedFromLead && !canonicalBrandEcho) return false;
   const containing = splitSemanticClauses(responseText).filter((clause) => ctx.claimExtractor.extractClaims(clause).some(sameClaim));
   return containing.length > 0 && containing.every(isHonestAbsenceClause);
 }

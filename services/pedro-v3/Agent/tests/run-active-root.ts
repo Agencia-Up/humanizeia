@@ -20,7 +20,7 @@ import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { loadPersistedWorkingMemory } from "../src/engine/working-memory.ts";
 import type { OutboxRecord } from "../src/domain/effect-intent.ts";
-import type { AgentBrainStep, AgentBrainDecision } from "../src/domain/agent-brain.ts";
+import type { AgentBrainStep, AgentBrainDecision, TurnUnderstanding } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
@@ -428,9 +428,19 @@ console.log("\nR13-D reconciliação durável no runtime central_active:");
   await p1.tryInsert({ eventId: `${CONV}-e1`, conversationId: CONV, raw: redact({ text: "manda as fotos" }), receivedAt: clock.now() });
   clock.advance(1000);
   const photoBrain = new ScriptedAgentBrain();
+  const photoUnderstanding: TurnUnderstanding = {
+    primaryIntent: "request_photos",
+    requestedCapabilities: ["send_photos"],
+    subject: "selected_vehicle",
+    subjectValue: null,
+    subjectSource: "memory",
+    evidence: [{ capability: "send_photos", quote: "fotos" }],
+    isTopicChange: false,
+    answeredLeadQuestions: [],
+  };
   photoBrain.setTurnScript([
-    { kind: "query", call: { tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:2" } } } },
-    { kind: "final", decision: { reasonCode: "send_photos", reasonSummary: "envia fotos", confidence: 0.9, responsePlan: { guidance: "Aqui estão as fotos 📸" }, proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan, rSendMedia("rm:2", RPHOTOS["rm:2"])], memoryMutations: [], stateMutations: [] } },
+    { kind: "query", understanding: photoUnderstanding, call: { tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:2" } } } },
+    { kind: "final", understanding: photoUnderstanding, decision: { reasonCode: "send_photos", reasonSummary: "envia fotos", confidence: 0.9, responsePlan: { guidance: "Aqui estão as fotos 📸" }, proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan, rSendMedia("rm:2", RPHOTOS["rm:2"])], memoryMutations: [], stateMutations: [] } },
   ]);
   await runCentralConversationTurn({
     persistence: p1, clock, brain: photoBrain, llm: rLlm(), runQuery: rRunQuery, businessInfo: new RBusinessInfo(),

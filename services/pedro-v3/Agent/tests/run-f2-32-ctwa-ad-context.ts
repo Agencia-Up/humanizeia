@@ -77,6 +77,17 @@ const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
 }
+function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep {
+  return { kind: "query", call: call as never, understanding: u } as AgentBrainStep;
+}
+function currentSearchUnderstanding(frame: Parameters<BrainResponder>[0]): TurnUnderstanding {
+  const quote = (frame.block ?? "").trim().split(/\s+/).slice(0, 3).join(" ") || "oi";
+  return {
+    ...U("search_stock"),
+    requestedCapabilities: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote }],
+  };
+}
 function stockAuthoredResponse(frame: Parameters<BrainResponder>[0], observations: Parameters<BrainResponder>[1], forceSearch = false): AgentBrainStep {
   const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
   const latestWithItems = [...searches].reverse().find((s) => s.data.items.length > 0);
@@ -98,9 +109,35 @@ function stockAuthoredResponse(frame: Parameters<BrainResponder>[0], observation
   }
   return finU([txt("Certo!")], "reply", forceSearch ? searchUnderstanding : U("other"));
 }
-const resist: BrainResponder = (frame, observations) => stockAuthoredResponse(frame, observations);
-// ⭐AUTORIDADE (audit Codex): turnos em que o lead ESPECIFICA busca ("na verdade quero o Onix", "quero um SUV") — a
-// LLM real classifica search_stock; declara o ATO mas resiste (o executor determinístico garante a execução).
+// O anuncio e contexto para a LLM, nao uma ordem da engine. Este cerebro de
+// teste interpreta o contexto recebido no frame e escolhe a tool. Se o veiculo
+// exato nao existir, ele proprio decide consultar o mesmo tipo; nenhuma cascata
+// deterministica da engine participa.
+const adAwareSearch: BrainResponder = (frame, observations) => {
+  const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
+  const understanding = currentSearchUnderstanding(frame);
+  const adVehicle = frame.signals.adVehicle ?? "";
+  const market = resolveAdVehicleFromMarket(adVehicle);
+  if (searches.length === 0) {
+    const input: Record<string, unknown> = {};
+    if (market?.marca) input.marca = market.marca;
+    if (market?.modelo) input.modelo = market.modelo;
+    if (!market?.modelo && market?.tipo) input.tipo = market.tipo;
+    if (!market?.modelo && /\bsuvs?\b/i.test(adVehicle)) input.tipo = "suv";
+    if (/\b100\s*k\b/i.test(frame.block ?? "")) input.precoMax = 100_000;
+    return qU({ tool: "stock_search", input }, understanding);
+  }
+  const last = searches[searches.length - 1];
+  if (last.data.items.length === 0 && searches.length === 1 && market?.tipo) {
+    // Strings vazias sao argumentos explicitos: impedem que o enriquecimento
+    // recoloque marca/modelo do anuncio na consulta de alternativas por tipo.
+    return qU({ tool: "stock_search", input: { marca: "", modelo: "", tipo: market.tipo } }, understanding);
+  }
+  return stockAuthoredResponse(frame, observations, true);
+};
+const resist: BrainResponder = adAwareSearch;
+// Turnos em que o lead especifica uma busca: a LLM declara o ato e recebe os
+// fatos da tool para redigir. A engine nao infere nem executa busca por texto.
 const resistSearch: BrainResponder = (frame, observations) => stockAuthoredResponse(frame, observations, true);
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; adVehicleSeen: string | null; hasHandoff: boolean };
@@ -190,14 +227,24 @@ async function main(): Promise<void> {
   // F) Institucional: anúncio Compass, "onde fica a loja?" -> responde loja, NÃO força estoque.
   {
     const c = conv();
-    const r = await c.t("onde fica a loja?", { ad: adCompass, rel: "asks_store" as TurnRelation });
+    const institutional: BrainResponder = () => finU(
+      [txt("Nossa loja fica na Rua Teste 100, em Taubaté. Posso ajudar em mais alguma coisa?")],
+      "institutional_answer",
+      U("institutional"),
+    );
+    const r = await c.t("onde fica a loja?", { ad: adCompass, rel: "asks_store" as TurnRelation, responder: institutional });
     check("[F-1] institucional NÃO força stock_search do anúncio", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
     check("[F-2] responde a loja (endereço), não lista Compass", has(r.outbox, "Taubaté") || has(r.outbox, "Rua") || !has(r.outbox, "Compass"), `outbox="${r.outbox}"`);
   }
   // G) Desinteresse: anúncio Compass, "não solicitei" -> não lista carro.
   {
     const c = conv();
-    const r = await c.t("não solicitei nada", { ad: adCompass });
+    const disengaged: BrainResponder = () => finU(
+      [txt("Entendi, sem problema. Obrigado pelo contato e fico à disposição se precisar.")],
+      "lead_disengaged",
+      U("smalltalk"),
+    );
+    const r = await c.t("não solicitei nada", { ad: adCompass, responder: disengaged });
     check("[G-1] desinteresse -> NÃO roda stock_search do anúncio", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
     check("[G-2] NÃO lista Compass; resposta curta", r.committed && !has(r.outbox, "Compass") && !has(r.outbox, "opções"), `outbox="${r.outbox}"`);
   }

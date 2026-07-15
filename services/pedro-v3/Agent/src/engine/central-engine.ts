@@ -35,7 +35,7 @@ import {
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel, type TurnValidationContext,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
-import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, relaxSearchCascade, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
+import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, type LeadEngagement } from "./lead-intent.ts";
@@ -69,6 +69,13 @@ import { safeCommitSlots } from "./conversation-engine.ts";
 import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, deriveSdrQualification, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
 import { buildTurnAdvisories, deriveTurnAdvisoryContext } from "./turn-advisories.ts";
+import {
+  assertToolExecutionAuthority,
+  capabilityForTool,
+  toToolAuthorityRecord,
+  type ToolAuthorityRecord,
+  type ToolExecutionAuthority,
+} from "./tool-authority.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
@@ -251,6 +258,7 @@ export type CentralTurnResult =
       workingMemory: PersistedWorkingMemory;
       toolObservations: AgentToolObservation[];
       toolTelemetry: ToolTelemetry[];
+      toolAuthorities: ToolAuthorityRecord[];
       brainSteps: number;
       responseSource: ResponseSource;
       degraded: boolean;   // audit B1: technical_fallback é degradação observável (nunca "sucesso normal")
@@ -415,6 +423,8 @@ async function groundNamedVehicles(args: {
   readonly identities: readonly RememberedVehicleIdentity[];
   readonly runQuery: QueryRunner;
   readonly timeoutMs: number;
+  readonly beforeExecute?: (vehicleKey: string) => void;
+  readonly onExecuted?: (result: QueryResult, ms: number) => void;
 }): Promise<QueryResult[]> {
   const keys = new Set<string>();
   for (const e of args.proposedEffects) if (e.kind === "send_media" && typeof e.vehicleKey === "string" && e.vehicleKey) keys.add(e.vehicleKey);
@@ -433,7 +443,10 @@ async function groundNamedVehicles(args: {
   const out: QueryResult[] = [];
   for (const vehicleKey of toFetch) {
     try {
+      args.beforeExecute?.(vehicleKey);
+      const started = Date.now();
       const res = await withTimeout(args.runQuery({ tool: "vehicle_details", input: { vehicleKey } }), args.timeoutMs, "query: ground vehicle_details");
+      args.onExecuted?.(res, Math.max(0, Date.now() - started));
       if (res.ok) out.push(res);
     } catch { /* best-effort: grounding ausente só significa que o compose não poderá nomear o veículo */ }
   }
@@ -545,11 +558,9 @@ export function enrichStockSearchCall(
     readonly enforceShownClamp?: boolean;
     // P0-B (audit Codex smoke): turno de SIMILARIDADE ("algo parecido") -> a busca ignora modelo/marca do cérebro e roda
     // só por tipo/preço (constraints já relaxado). Mercado por TIPO, não preso ao modelo do anúncio.
-    readonly relaxToType?: boolean;
     // FOCO EXATO do anúncio (missão P0): o lead pediu ALTERNATIVA do carro do anúncio ("tem outro Compass?", "outro ano",
     // "mais barato") e NÃO citou ano próprio -> remove o ANO da chamada EXECUTADA (nunca fica preso no ano do anúncio).
     // Preserva modelo/marca/excludeKeys. É a chamada que VAI RODAR — não depende de retry.
-    readonly dropAdYear?: boolean;
   },
 ): QueryCall {
   if (call.tool !== "stock_search") return call;
@@ -574,21 +585,6 @@ export function enrichStockSearchCall(
   }
   // P0-B (SIMILARIDADE): a busca sai SÓ do escopo relaxado (tipo/preço/câmbio/popular) — IGNORA modelo/marca/anos que o
   // cérebro tenha posto. "Algo parecido" nunca fica preso no modelo do anúncio; busca por TIPO no mercado.
-  if (options.relaxToType) {
-    const rc = options.constraints ?? {};
-    return {
-      ...call,
-      input: {
-        ...(rc.tipo ? { tipo: rc.tipo } : {}),
-        ...(rc.precoMax != null ? { precoMax: rc.precoMax } : {}),
-        ...(rc.cambio ? { cambio: rc.cambio } : {}),
-        ...(rc.hibrido ? { hibrido: true } : {}),
-        ...(rc.popular ? { popular: true } : {}),
-        ...(excludeKeys ? { excludeKeys } : {}),
-        ...(options.wantsMotorcycle || call.input.includeMotorcycles === true ? { includeMotorcycles: true } : {}),
-      },
-    };
-  }
   // Lacunas preenchidas com o constraint do turno (o do cérebro vence; marca canonicalizada volks->volkswagen).
   const c = options.constraints;
   const filled: Partial<QueryCall["input"]> = {};
@@ -618,7 +614,6 @@ export function enrichStockSearchCall(
   };
   // FOCO EXATO do anúncio (missão P0): alternativa pedida + sem ano do lead -> o ANO (do anúncio, seja do cérebro ou do
   // filled) SAI da chamada EXECUTADA. Preserva modelo/marca/excludeKeys. Não depende de retry.
-  if (options.dropAdYear && "anos" in mergedInput) delete (mergedInput as { anos?: number[] }).anos;
   return { ...call, input: mergedInput };
 }
 
@@ -1809,7 +1804,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // FOCO EXATO (missão P0 audit smoke): lead pediu ALTERNATIVA do carro do anúncio ("outro Compass/outro ano/mais
       // barato") e NÃO citou um ano PRÓPRIO -> o ANO sai da chamada EXECUTADA de stock_search (o cérebro às vezes carimba
       // anos=[2019] por ver adVehicle="Jeep Compass 2019"). Se o lead citar ano ("outro Compass 2018"), respeita o dele.
-      const dropAdYear = llmFirst && asksAdAlternatives(leadMessage) && !(currentConstraints.anos && currentConstraints.anos.length > 0);
       // ⭐REFATORAÇÃO DE AUTORIDADE (audit Codex — "dois cérebros"): o detector de constraint NÃO autoriza mais busca.
       // A AUTORIDADE da tool é da LLM (TurnUnderstanding: capability stock_search + evidence, via isStockSearchTurn(brainVU())
       // nos pontos de decisão). Sem isto, "Corolla não é um sedan? pq disse que não tinha?" (contestação) virava re-lista:
@@ -1832,7 +1826,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const constraintishTurn = !financialAnswerTurn && !tradeInAnswerTurn && (currentTurnIntent === "search" || currentTurnIntent === "other") && !isVehicleDetailTurn && sufficientForStockSearch(currentConstraints);
       // Missão P0 INC1/A: turno em que a busca é ESPERADA por CONTEXTO (anúncio/similaridade/retomada) -> proíbe promessa sem
       // tool. A expectativa vinda da PRÓPRIA LLM (capability de busca declarada) é somada no ponto da autoria (brainVU()).
-      const searchExpectedThisTurn = llmFirst && contextualSearchTurn && !tradeInAnswerTurn && !financialAnswerTurn;
+      // Somente o ato aceito da LLM cria expectativa de tool. Contexto, memória e
+      // detectores seguem disponíveis para prompt e enriquecimento factual.
       // Fase 4 (Evidence H): DESENGAJAMENTO acionável = lead desinteressado E o turno NÃO tem constraint comercial suficiente,
       // "mais opções", foto ou institucional (senão o PEDIDO vence o desinteresse: "obrigado, quero Onix" ainda busca).
       // Suprime funil/lista; o executor determinístico responde curto e deixa a porta aberta. (Anúncio não muda isto:
@@ -1963,6 +1958,17 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const facts: QueryResult[] = [];                 // só os 4 QueryCall (grounding comercial)
       const toolResultMems: ToolResultMemory[] = [];   // memória sanitizada das tools executadas
       const toolTelemetry: ToolTelemetry[] = [];
+      const toolAuthorities: ToolAuthorityRecord[] = [];
+      const recordQueryExecution = (result: QueryResult, ms: number, authority: ToolExecutionAuthority): void => {
+        toolTelemetry.push(toToolTelemetry(result, ms));
+        // Tool authority is a central_active contract. The legacy/shadow path is
+        // kept only for compatibility and has no accepted TurnUnderstanding to
+        // prove current-block authority; pretending otherwise would make this
+        // telemetry lie. Production llmFirst executions remain fail-closed.
+        if (!llmFirst) return;
+        assertToolExecutionAuthority(result.tool, authority);
+        toolAuthorities.push(toToolAuthorityRecord({ tool: result.tool, authority, ok: result.ok, ms }));
+      };
       let finalDecision: AgentBrainDecision | null = null;
       let brainSteps = 0;
       // AUTORIA ÚNICA (audit): singleAuthor/llmFirst já declarados acima (perto do currentTurnIntent) p/ o gate do filtro comercial.
@@ -1991,8 +1997,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let evidenceNormalized = false;                               // ⭐Codex rodada 2: citação mecânica em resposta curta sem ação
       let authorityRetries = 0;
       const AUTHORITY_RETRY_CAP = 3;
-      let searchActRetries = 0;
-      const SEARCH_ACT_RETRY_CAP = 2;
       // ⭐P0-A (continuação semântica de agendamento): CONTEXTO de visita em andamento que a validação usa para aceitar um
       // understanding de visit cuja evidência é só TEMPORAL ("pra segunda"/"às 15h"). A MEMÓRIA fornece só a relação
       // (interesseVisita=true / pergunta pendente de agendamento / última pergunta pediu dia-horário); a mensagem atual
@@ -2079,6 +2083,18 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // linha do lead). Governa o deny de promessa E a montagem da cadeia no chokepoint.
       const handoffPlannable = handoffCapabilityAvailable;
       const photoVU = (): ValidatedUnderstanding | null => (llmFirst ? brainVU() : authoritativeVU());
+      const brainAuthorizesResolvedPhotoAct = (target: TargetResolution): boolean => {
+        const v = photoVU();
+        return v?.fromBrain === true
+          && v.trusted
+          && v.understanding.primaryIntent === "request_photos"
+          && v.understanding.requestedCapabilities.includes("send_photos")
+          && v.validEvidence.length > 0
+          && authorizesPhotoByResolvedTarget(target, leadMessage, contextState);
+      };
+      const currentPhotoActAuthorized = (target: TargetResolution): boolean =>
+        authorizesPhotoSend(photoVU(), leadMessage, requireBrain)
+        || brainAuthorizesResolvedPhotoAct(target);
       const seenDenyFingerprints = new Set<string>();               // deny repetido -> recupera já (não gasta tentativas)
       let repeatedDeny = false;
       const seenToolSigs = new Set<string>();
@@ -2091,12 +2107,28 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const resolveInstitutional = async (topic: BusinessInfoTopic): Promise<AgentToolObservation> => {
         const cached = institutionalObs.get(topic);
         if (cached) return cached;
+        const authority: ToolExecutionAuthority = {
+          principal: "engine_factual",
+          source: "engine_institutional_lookup",
+          primaryIntent: "institutional",
+          capability: "institutional_info",
+          currentTurnEvidence: true,
+          callSite: "resolveInstitutional",
+        };
+        assertToolExecutionAuthority("tenant_business_info", authority);
         const started = Date.parse(clock.now());
         const obs = await resolveTenantBusinessInfo(businessInfo, ref, topic);
         institutionalObs.set(topic, obs);
         observations.push(obs);
         toolResultMems.push(businessInfoToolResultMemory(topic, obs.ok, turnId));
-        toolTelemetry.push({ tool: "tenant_business_info", ok: obs.ok, ms: Math.max(0, Date.parse(clock.now()) - started) });
+        const ms = Math.max(0, Date.parse(clock.now()) - started);
+        toolTelemetry.push({ tool: "tenant_business_info", ok: obs.ok, ms });
+        toolAuthorities.push(toToolAuthorityRecord({
+          tool: "tenant_business_info",
+          ok: obs.ok,
+          ms,
+          authority,
+        }));
         return obs;
       };
 
@@ -2216,25 +2248,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // com filtro suficiente, mas a LLM encerrou como "other". A própria LLM
           // recebe o feedback, reavalia o ato e continua dona da tool e da resposta.
           // Atos semânticos explícitos nunca entram aqui.
-          const currentBlockExpectsSearchAct = llmFirst
-            && constraintishTurn
-            && sufficientForStockSearch(effectiveSearchScope)
-            && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn
-            && !isVehicleDetailTurn
-            && (lockedU?.primaryIntent === "other" || lockedU?.primaryIntent === "search_stock");
-          if (currentBlockExpectsSearchAct && !brainSearchAct()) {
-            if (searchActRetries < SEARCH_ACT_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
-              searchActRetries += 1;
-              const feedback = `ATO ATUAL INCOMPLETO: o bloco atual do cliente ("${leadMessage.slice(0, 160)}") pede estoque e já informa filtro suficiente (${describeConstraints(effectiveSearchScope)}). Reavalie SOMENTE este bloco. Se ele realmente pede disponibilidade/opções, emita primaryIntent=search_stock, capability stock_search com evidence copiada do bloco atual e chame stock_search agora. Não repita pergunta sobre modelo/tipo/faixa já informados. Se for contestação, troca, financiamento, foto, visita, institucional, humano ou conversa, declare esse ato explicitamente e responda sem busca.`;
-              policyFeedbackLog.push(feedback);
-              observations.push({ tool: "response", ok: false, error: { code: "SEARCH_ACT_EXPECTED", message: feedback } });
-              lockedU = null;
-              continue;
-            }
-            lockedU = null;
-            provenanceExhausted = true;
-            break;
-          }
           // T4 + ⭐AUTORIDADE (audit Codex): a busca é exigida pela SEMÂNTICA do CÉREBRO (isStockSearchTurn(brainVU()) —
           // a LLM declarou a capability de busca com evidence) OU por fluxo de CONTEXTO (anúncio/similaridade/retomada).
           // A perna heurística "constraint suficiente força busca" FOI REMOVIDA: o detector via Corolla/sedan numa
@@ -2245,30 +2258,17 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // ⭐Missão P0 (exige-e-proíbe, varredura): a perna CONTEXTUAL (anúncio/similaridade/retomada) também respeita o
           // ato conversacional declarado pela LLM (contestação/financiamento/troca/smalltalk) — senão o missingTool EXIGE
           // stock_search que o gate de INTENT CONTRADITÓRIO NEGA (loop). Mesmo helper do hardening F2.41.
-          const missingTool = requiredToolBeforeFinal(frame, observations, llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && (brainSearchAct() || (contextualSearchTurn && !conversationalActDeclared())), moreOptionsNeedsScope, frame.signals.mentionsMoreOptions === true && !conversationalActDeclared());
+          const missingTool = requiredToolBeforeFinal(
+            frame,
+            observations,
+            llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct(),
+            moreOptionsNeedsScope,
+            frame.signals.mentionsMoreOptions === true && brainSearchAct(),
+          );
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
             const stockReq = !frame.signals.mentionsStore;
-            // ⭐Fase 1 (LLM-first, regra P0 do dono [[pedro-v3-llm-first-no-handler]]): SÓ na RETOMADA ("cadê?/e aí?/achou?/
-            //   me mostra", resumeSearchTurn) — o lead cobra o resultado de uma busca que ele JÁ pediu. Em vez de só mandar
-            //   "busque" (e o engine acabar LISTANDO no lugar da LLM via recovery_offer), o ENGINE EXECUTA a busca (fato) com o
-            //   FILTRO ATIVO e devolve o RESULTADO ao MESMO cérebro + feedback "liste com vehicle_offer_list e conduza". A LLM
-            //   REDIGE a lista — o engine NÃO escreve. Fresh search / "tem X?" seguem o caminho antigo (o cérebro chama a tool).
-            if (stockReq && resumeSearchTurn && sufficientForStockSearch(effectiveSearchScope)) {
-              if (!facts.some((f) => f.ok && f.tool === "stock_search")) {
-                try {
-                  const forcedCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, { popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true, moreOptions: frame.signals.mentionsMoreOptions, previousVehicleKeys: shownVehicleKeys, constraints: effectiveSearchScope, wantsMotorcycle, enforceShownClamp: llmFirst, relaxToType: similarityTurn, dropAdYear });
-                  const startedF = Date.parse(clock.now());
-                  const forcedRes = await withTimeout(runQueryDedup(forcedCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (resume list-it) exceeded timeout");
-                  facts.push(forcedRes); observations.push(toAgentObservation(forcedRes)); toolResultMems.push(toToolResultMemory(forcedRes, turnId)); toolTelemetry.push(toToolTelemetry(forcedRes, Math.max(0, Date.parse(clock.now()) - startedF)));
-                } catch { /* best-effort: sem o fato, cai no feedback padrão abaixo */ }
-              }
-              if (facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0)) {
-                observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: "Você JÁ tem o resultado da busca (está nas observações deste turno). Responda ao lead LISTANDO os veículos encontrados com uma parte vehicle_offer_list e conduza com UMA pergunta curta (quer ver as fotos, os detalhes ou as condições?). NÃO chame stock_search de novo." } });
-                if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
-                continue;
-              }
-            }
-            // Fresh search / "tem X?" / sem escopo / tenant_business_info: mantém o feedback original ("chame a tool").
+            // A engine exige consistência com o ato que a própria LLM declarou, mas
+            // nunca executa estoque por retomada, anúncio, memória ou regex.
             observations.push({ tool: stockReq ? "response" : "tenant_business_info", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
             if (stockReq) { duplicateStockCallsBlocked += 1; if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break; }
             continue;
@@ -2294,7 +2294,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()?.trusted) ? brainVU()!.understanding.primaryIntent : undefined }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: searchExpectedThisTurn || (llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct()), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()?.trusted) ? brainVU()!.understanding.primaryIntent : undefined }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2518,10 +2518,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // alvo da pergunta pendente. Isto impede prefetch proativo na abertura
         // sem tirar da LLM a liberdade de OFERECER fotos em texto.
         const photoQuerySemanticallyAuthorized = call.tool !== "vehicle_photos_resolve"
-          || authorizesPhotoSend(brainVU(), leadMessage, requireBrain)
-          || authorizesPhotoByResolvedTarget(resolveTargetWithAd(), leadMessage, contextState);
+          || currentPhotoActAuthorized(resolveTargetWithAd());
+        const toolActAuthorized = call.tool === "vehicle_photos_resolve"
+          ? (toolCapabilityAuthorized(brainVU(), call.tool) || brainAuthorizesResolvedPhotoAct(resolveTargetWithAd()))
+          : toolCapabilityAuthorized(brainVU(), call.tool);
         if (singleAuthor && llmFirst && COMMERCIAL_TOOLS.has(call.tool) && !sysDetailOk
-            && (!toolCapabilityAuthorized(brainVU(), call.tool) || !photoQuerySemanticallyAuthorized)) {
+            && (!toolActAuthorized || !photoQuerySemanticallyAuthorized)) {
           const capNeeded = call.tool === "vehicle_photos_resolve" ? "send_photos" : call.tool;
           const capMsg = call.tool === "vehicle_photos_resolve" && !photoQuerySemanticallyAuthorized
             ? "O cliente nao pediu nem aceitou fotos neste bloco. Voce pode OFERECER fotos na resposta, mas nao consulte vehicle_photos_resolve agora. Use essa tool somente quando o pedido/aceite de foto pertencer ao bloco atual ou quando ele responder qual carro quer ver."
@@ -2629,8 +2631,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           constraints: commercialConstraints,   // P0: preenche lacunas (marca/preço/tipo/câmbio) que o cérebro omitiu
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
           enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
-          relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
-          dropAdYear,                            // FOCO EXATO (missão P0): alternativa sem ano do lead -> tira anos=[2019] da chamada EXECUTADA
         });
         // Missão P0 (audit Codex smoke): DEDUP SEMÂNTICO NO LOOP. Se ESTA busca (filtro ENRIQUECIDO) já foi executada neste
         // turno, NÃO re-observa como stock_search (é aqui, no push de toAgentObservation abaixo, que o relatório contava 7x) —
@@ -2642,6 +2642,25 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
           continue;
         }
+        const isSystemGroundingCall = execCall.tool === "vehicle_details"
+          && systemDetailKeys.has(execCall.input.vehicleKey)
+          && !toolCapabilityAuthorized(brainVU(), "vehicle_details");
+        const executionAuthority: ToolExecutionAuthority = isSystemGroundingCall ? {
+          principal: "engine_safety",
+          source: "engine_grounding",
+          primaryIntent: lockedU?.primaryIntent ?? null,
+          capability: null,
+          currentTurnEvidence: true,
+          callSite: "required_vehicle_grounding",
+        } : {
+          principal: "llm",
+          source: "llm_tool_call",
+          primaryIntent: lockedU?.primaryIntent ?? null,
+          capability: capabilityForTool(execCall.tool),
+          currentTurnEvidence: brainVU()?.trusted === true,
+          callSite: "brain_query_loop",
+        };
+        assertToolExecutionAuthority(execCall.tool, executionAuthority);
         const started = Date.parse(clock.now());
         let res: QueryResult;
         try {
@@ -2653,7 +2672,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         facts.push(res);
         observations.push(toAgentObservation(res));
         toolResultMems.push(toToolResultMemory(res, turnId));
-        toolTelemetry.push(toToolTelemetry(res, Math.max(0, Date.parse(clock.now()) - started)));
+        recordQueryExecution(res, Math.max(0, Date.parse(clock.now()) - started), executionAuthority);
       }
 
       // ── AUTORIA: single-author (draft do cérebro, SEM 2º compose) OU legacy (DecisionLlm.compose). ──
@@ -2661,22 +2680,24 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       let proposedEffects: ProposedEffectPlan[];
       let composeFacts: QueryResult[];   // fatos p/ resolver label do veículo (foto) no commit
       if (singleAuthor) {
-        // Fix A (audit CTWA): alternativa RELAXADA encontrada p/ uma busca comercial que zerou (preenchida após o loop; consumida na recuperação).
-        let relaxedOffer: { readonly zeroedDesc: string; readonly kind: RelaxKind; readonly items: readonly VehicleFact[] } | null = null;
-        // Fix A+ (dono): descrição do filtro que zerou (busca vazia) + flag de beco descartado -> recuperação honesta+condutora.
-        let emptySearchZeroedDesc: string | null = null;
-        let emptySearchConduct = false;
         // Invariante factual de foto: quando o lead pediu foto e o alvo está inequivocamente
         // aterrado (anúncio/ordinal/seleção/modelo), a engine resolve apenas o FATO photoIds.
         // A decisão e os efeitos visíveis continuam sendo reautorados pela LLM na passagem final.
         // Alvo ambíguo/ausente permanece fail-closed e volta ao cérebro para esclarecimento.
         const photoInvariantTarget = resolveTargetWithAd();
-        if (llmFirst && photoInvariantTarget.kind === "resolved" && authorizesPhotoByResolvedTarget(photoInvariantTarget, leadMessage, contextState)) {
+        if (llmFirst && photoInvariantTarget.kind === "resolved" && currentPhotoActAuthorized(photoInvariantTarget)) {
           const invKey = photoInvariantTarget.vehicleKey;
           if (!facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === invKey)) {
             try {
+              const authority: ToolExecutionAuthority = {
+                principal: "llm", source: "llm_intent_completion", primaryIntent: lockedU?.primaryIntent ?? null,
+                capability: "send_photos", currentTurnEvidence: brainVU()?.trusted === true, callSite: "photo_fact_completion",
+              };
+              assertToolExecutionAuthority("vehicle_photos_resolve", authority);
+              const started = Date.parse(clock.now());
               const invRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: invKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (photo invariant) exceeded timeout");
               facts.push(invRes); observations.push(toAgentObservation(invRes)); toolResultMems.push(toToolResultMemory(invRes, turnId));
+              recordQueryExecution(invRes, Math.max(0, Date.parse(clock.now()) - started), authority);
             } catch { /* best-effort: sem fato de foto do alvo -> ausência honesta legítima abaixo */ }
           }
           const targetHasPhotos = facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === invKey && targetAcceptsKey(photoInvariantTarget, f.data.vehicleKey) && f.data.photoIds.length > 0);
@@ -2697,11 +2718,18 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // pertence à LLM, alimentada pelo mesmo resolveTarget usado por seleção e memória.
         if (!authoredComposed) {
           const photoTarget = resolveTargetWithAd();   // P0-A: inclui a referência EXATA do anúncio p/ foto pronominal
-          const wantsPhotoNow = authorizesPhotoSend(photoVU(), leadMessage, requireBrain) || authorizesPhotoByResolvedTarget(photoTarget, leadMessage, contextState);
+          const wantsPhotoNow = currentPhotoActAuthorized(photoTarget);
           if (wantsPhotoNow && photoTarget.kind === "resolved" && !facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === photoTarget.vehicleKey)) {
             try {
+              const authority: ToolExecutionAuthority = {
+                principal: "llm", source: "llm_intent_completion", primaryIntent: lockedU?.primaryIntent ?? null,
+                capability: "send_photos", currentTurnEvidence: brainVU()?.trusted === true, callSite: "photo_target_completion",
+              };
+              assertToolExecutionAuthority("vehicle_photos_resolve", authority);
+              const started = Date.parse(clock.now());
               const photoRes = await withTimeout(runQuery({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: photoTarget.vehicleKey } } }), limits.queryTimeoutMs ?? 20_000, "query: vehicle_photos_resolve (ordinal) exceeded timeout");
               facts.push(photoRes); observations.push(toAgentObservation(photoRes)); toolResultMems.push(toToolResultMemory(photoRes, turnId));
+              recordQueryExecution(photoRes, Math.max(0, Date.parse(clock.now()) - started), authority);
             } catch { /* best-effort: a falha vira observação factual para a autoria final da LLM */ }
           }
           // ── P0 (F2.26 + ⭐AUTORIDADE): busca comercial determinística SÓ com AUTORIZAÇÃO real — a LLM declarou busca
@@ -2710,7 +2738,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           //    numa CONTESTAÇÃO ("Corolla não é um sedan?") só porque a frase citava modelo/tipo. ──
           // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
           // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
-          if (llmFirst && ((contextualSearchTurn && !conversationalActDeclared()) || brainSearchAct() || (frame.signals.mentionsMoreOptions === true && !conversationalActDeclared())) && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+          if (llmFirst && brainSearchAct() && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
             try {
               const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, {
                 popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true,
@@ -2719,50 +2747,22 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
                 constraints: effectiveSearchScope,
                 wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
                 enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
-                relaxToType: similarityTurn,           // P0-B: "algo parecido" relaxa modelo/marca -> busca por tipo
-                dropAdYear,                            // FOCO EXATO (missão P0): alternativa sem ano do lead -> sem anos=[2019]
               });
+              const authority: ToolExecutionAuthority = {
+                principal: "llm", source: "llm_intent_completion", primaryIntent: lockedU?.primaryIntent ?? null,
+                capability: "stock_search", currentTurnEvidence: brainVU()?.trusted === true, callSite: "search_fact_completion",
+              };
+              assertToolExecutionAuthority("stock_search", authority);
               const startedS = Date.parse(clock.now());
               const searchRes = await withTimeout(runQueryDedup(searchCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (commercial) exceeded timeout");
-              facts.push(searchRes); observations.push(toAgentObservation(searchRes)); toolResultMems.push(toToolResultMemory(searchRes, turnId)); toolTelemetry.push(toToolTelemetry(searchRes, Math.max(0, Date.parse(clock.now()) - startedS)));
+              facts.push(searchRes); observations.push(toAgentObservation(searchRes)); toolResultMems.push(toToolResultMemory(searchRes, turnId));
+              recordQueryExecution(searchRes, Math.max(0, Date.parse(clock.now()) - startedS), authority);
             } catch { observations.push({ tool: "stock_search", ok: false, error: { code: "UPSTREAM", message: "tool indisponivel" } }); }
           }
         }
-        // ── Fix A (audit CTWA — condução SDR): RELAXAMENTO de busca vazia. Roda INDEPENDENTE de o cérebro ter autorado: se o
-        //    turno é comercial e TODA busca executada voltou 0 itens, o engine roda a cascata relaxada (mesmo tipo na faixa /
-        //    mesmo modelo sem teto / mesma marca / tipo / faixa) até achar itens REAIS. Achou E o cérebro não apresentou
-        //    veículo (autoria = beco "não temos X, quer outras?") -> DESCARTA a autoria -> a recuperação CONDUZ com a lista
-        //    relaxada nomeando o filtro. Foto/detalhe/institucional não entram. Cap de 3 buscas. Só central_active. ──
-        // GATE = existe uma busca EXECUTADA que voltou 0 (é o sinal REAL de busca vazia, robusto à classificação de relação do
-        // interpretador — "tem Compass até 100 mil?" às vezes vira asks_vehicle_detail, mas rodou stock_search de verdade).
-        // "mais opções"/"tem mais?" tem semântica PRÓPRIA (F2.29: herda escopo+excludeKeys) — fica FORA.
-        if (llmFirst && !frame.signals.mentionsMoreOptions) {
-          const stockFacts = facts.filter((f): f is Extract<QueryResult, { ok: true; tool: "stock_search" }> => f.ok && f.tool === "stock_search");
-          if (stockFacts.length > 0 && !stockFacts.some((f) => f.data.items.length > 0)) {
-            const zeroed = activeConstraintsFromStockInput(stockFacts[stockFacts.length - 1].data.filtersUsed as Record<string, unknown>);
-            if (sufficientForStockSearch(zeroed)) {
-              emptySearchZeroedDesc = describeConstraints(zeroed);   // Fix A+: filtro que zerou, p/ recuperação condutora se não houver alternativa
-              const tipoHint = zeroed.tipo ?? (zeroed.modelos && zeroed.modelos.length > 0 ? resolveVehicleTypeFromTaxonomy({ model: zeroed.modelos[0], brand: zeroed.marca ?? null }) : null);
-              for (const step of relaxSearchCascade(zeroed, tipoHint).slice(0, 3)) {
-                try {
-                  const relaxCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(step.constraints) }, { popular: false, moreOptions: false, previousVehicleKeys: shownVehicleKeys, constraints: step.constraints, wantsMotorcycle, enforceShownClamp: llmFirst });
-                  const relaxRes = await withTimeout(runQueryDedup(relaxCall), limits.queryTimeoutMs ?? 20_000, "query: stock_search (relax) exceeded timeout");
-                  facts.push(relaxRes); observations.push(toAgentObservation(relaxRes)); toolResultMems.push(toToolResultMemory(relaxRes, turnId));
-                  if (relaxRes.ok && relaxRes.tool === "stock_search" && relaxRes.data.items.length > 0) { relaxedOffer = { zeroedDesc: describeConstraints(zeroed), kind: step.kind, items: relaxRes.data.items }; break; }
-                } catch { /* best-effort: sem relaxamento cai na recuperação honesta abaixo */ }
-              }
-            }
-          }
-        }
-        if (relaxedOffer && !authoredPresentsVehicles(authoredComposed, authoredProposedEffects)) {
-          // OVERRIDE: o cérebro finalizou sem apresentar carro num turno de busca que zerou, mas há alternativa relaxada real.
-          authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null;
-        }
-        if (!relaxedOffer && emptySearchZeroedDesc != null && authoredComposed && isEmptySearchBeco(authoredComposed.text)) {
-          // Fix A+ (dono): busca vazia SEM alternativa + o cérebro autorou um BECO ("quer outras opções?") -> descarta -> a
-          // recuperação abaixo conduz HONESTA (nomeia o filtro + oferece ampliar/outro modelo), nunca o beco vago.
-          authoredComposed = null; authoredDecision = null; authoredProposedEffects = null; finalDecision = null; emptySearchConduct = true;
-        }
+        // No central_active, uma busca vazia volta como fato para a mesma LLM.
+        // Somente ela pode decidir se amplia faixa, relaxa filtros ou pergunta ao
+        // lead. A cascata determinística permanece restrita ao caminho legado.
         // LLM-FIRST: fatos e efeitos podem ser resolvidos deterministicamente, mas a resposta visivel
         // continua pertencendo ao cerebro. O pos-loop oferece uma ultima janela, sem novas tools, para
         // a MESMA LLM redigir usando apenas as observacoes aterradas. Isto substitui todos os antigos
@@ -2777,12 +2777,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             "Para fatos institucionais, use apenas a observacao correspondente. Para despedida, identificacao, selecao, pagamento, troca, visita ou pedido humano, acolha o ato atual e avance sem reabrir descoberta.",
             persisted0.lastPhotoAction?.label && isPhotoMemoryQuestionBlock(leadMessage)
               ? `Memoria factual de fotos: o veiculo foi ${persisted0.lastPhotoAction.label}; nomeie-o sem reenviar midia.`
-              : "",
-            relaxedOffer
-              ? `A busca exata zerou, mas as observacoes contem alternativas reais de uma busca relaxada (${relaxedOffer.kind}); explique com transparencia e apresente apenas essas alternativas.`
-              : "",
-            emptySearchConduct
-              ? `A busca por ${emptySearchZeroedDesc ?? "esse filtro"} zerou sem alternativa real; responda com transparencia e ofereca uma proxima direcao util.`
               : "",
             "Use no maximo UMA pergunta curta. Devolva kind=final com draft estruturado e understanding do bloco atual.",
           ].filter(Boolean).join(" ");
@@ -2887,20 +2881,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               responseSource = "deterministic_institutional";
               effectiveDecision = detScope.decision; composed = detScope.composed; proposedEffects = detScope.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "more_options_needs_scope", reasonSummary: "mais opções sem escopo -> pergunta tipo/faixa", confidence: 0.8, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
-            } else if (emptySearchConduct) {
-              // Fix A+ (dono): busca vazia SEM alternativa -> recuperação HONESTA+CONDUTORA (nomeia o filtro + pergunta específica:
-              // ampliar faixa? outro modelo/tipo?), resposta BOA (deterministic_conduct, não degradada), nunca o beco vago.
-              const detConduct = buildEmptySearchConductingRecovery({ ctx, turnId, desc: emptySearchZeroedDesc ?? "" });
-              responseSource = "deterministic_conduct"; recoveryReason = "empty_search_conduct";
-              effectiveDecision = detConduct.decision; composed = detConduct.composed; proposedEffects = detConduct.proposedEffects;
-              finalDecision = finalDecision ?? { reasonCode: "recovery_stock_empty_conduct", reasonSummary: "busca vazia sem alternativa -> honesto + condutor", confidence: 0.6, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
-            } else if (relaxedOffer) {
-              // Fix A: busca EXATA zerou mas a cascata relaxada achou itens REAIS -> CONDUZ com a lista relaxada nomeando o
-              // filtro original + o relaxamento (nunca "quer que eu veja outras opções?" solto). NÃO é degradação (aterrado).
-              const detRelax = buildRelaxedOfferResponse({ zeroedDesc: relaxedOffer.zeroedDesc, kind: relaxedOffer.kind, items: relaxedOffer.items, facts, identities, ctx, turnId });
-              responseSource = "deterministic_recovery"; recoveryReason = `relaxed_offer:${relaxedOffer.kind}`;
-              effectiveDecision = detRelax.decision; composed = detRelax.composed; proposedEffects = detRelax.proposedEffects;
-              finalDecision = finalDecision ?? { reasonCode: "recovery_relaxed_offer", reasonSummary: `busca vazia -> relaxamento ${relaxedOffer.kind}`, confidence: 0.7, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
             } else {
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
@@ -2964,7 +2944,30 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         const post = PolicyEngine.postQuery(proposal, facts, ctx);           // postQuery só com fatos de TOOL (não autoriza oferta por memória)
         const decision0 = finalize(turnId, proposal, post, facts);
         // audit: identidade LEMBRADA (nome) via `identities`; atributos só de fato REAL (facts + auto-grounding real).
-        const groundFacts = await groundNamedVehicles({ proposedEffects, state: contextState, facts, identities, runQuery, timeoutMs: limits.queryTimeoutMs ?? 20_000 });
+        const groundFacts = await groundNamedVehicles({
+          proposedEffects,
+          state: contextState,
+          facts,
+          identities,
+          runQuery,
+          timeoutMs: limits.queryTimeoutMs ?? 20_000,
+          beforeExecute: () => assertToolExecutionAuthority("vehicle_details", {
+            principal: "engine_safety",
+            source: "engine_grounding",
+            primaryIntent: lockedU?.primaryIntent ?? null,
+            capability: null,
+            currentTurnEvidence: true,
+            callSite: "effect_vehicle_grounding",
+          }),
+          onExecuted: (result, ms) => recordQueryExecution(result, ms, {
+            principal: "engine_safety",
+            source: "engine_grounding",
+            primaryIntent: lockedU?.primaryIntent ?? null,
+            capability: null,
+            currentTurnEvidence: true,
+            callSite: "effect_vehicle_grounding",
+          }),
+        });
         composeFacts = [...facts, ...groundFacts];
         const cv = await composeAndVerify({ decision: decision0, facts: composeFacts, ctx, llm, limits, maxValidationAttempts, identities });
         let effectiveDecision = cv.decision;
@@ -3280,7 +3283,19 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null,
           resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
           targetResolutionSource, recoveryReason,
-          toolsExecuted: toolTelemetry.map((t) => t.tool), policyFeedback: policyFeedbackLog.slice(0, 5),
+          toolsExecuted: toolTelemetry.map((t) => t.tool),
+          toolAuthorities: toolAuthorities.map((a) => ({
+            tool: a.tool,
+            principal: a.principal,
+            source: a.source,
+            primaryIntent: a.primaryIntent,
+            capability: a.capability,
+            currentTurnEvidence: a.currentTurnEvidence,
+            callSite: a.callSite,
+            ok: a.ok,
+            ms: a.ms,
+          })),
+          policyFeedback: policyFeedbackLog.slice(0, 5),
           institutionalResolved, droppedSelectKeys,
           // ⭐Missão P0 (fatos frescos vencem snapshot): degradação do catálogo é OBSERVÁVEL, nunca silenciosa.
           catalogEntries: prepared.tenantCatalog.entries.length, catalogDegraded: prepared.catalogDegraded === true,
@@ -3309,7 +3324,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           toolMs: toolTelemetry.reduce((sum, t) => sum + (t.ms ?? 0), 0),
           firstFailureReason: policyFeedbackLog[0] ? policyFeedbackLog[0].slice(0, 140) : null,
           // Missão P0 INC3/1/2: intenção do turno p/ auditoria de troca vs busca vs abertura.
-          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn, pendingQuestionSlot, tradeBuyTurn, financialAnswerTurn,
+          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn: brainSearchAct(), pendingQuestionSlot, tradeBuyTurn, financialAnswerTurn,
           // Missão P0 (audit Codex): separação compra/troca + dedup de busca.
           buyConstraints: tradeBuyTurn ? buyConstraints : null,
           interesseBefore: contextState.slots.interesse.value ?? null,
@@ -3352,7 +3367,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
 
       return {
         status: "committed", turnId, claimedEventIds, decision, composedText: outComposed.text, terminalSafe,
-        facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, brainSteps, responseSource,
+        facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, toolAuthorities, brainSteps, responseSource,
         degraded, institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
         understanding: reconciledUnderstanding, understandingFromBrain: lockedU != null, targetResolutionSource,
         resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,

@@ -83,12 +83,31 @@ function finalWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnde
   if (step.kind !== "final") return step;
   return { ...step, decision: { ...step.decision, proposedEffects: effects } };
 }
+function qU(call: QueryCall, understanding: TurnUnderstanding): AgentBrainStep {
+  return { kind: "query", call, understanding };
+}
+function evidenceQuote(frame: Parameters<BrainResponder>[0]): string {
+  return (frame.block ?? "").trim().split(/\s+/).slice(0, 4).join(" ") || "oi";
+}
+function searchUnderstanding(frame: Parameters<BrainResponder>[0]): TurnUnderstanding {
+  return {
+    ...U("search_stock"),
+    requestedCapabilities: ["stock_search"],
+    evidence: [{ capability: "stock_search", quote: evidenceQuote(frame) }],
+  };
+}
+function photoUnderstanding(frame: Parameters<BrainResponder>[0]): TurnUnderstanding {
+  return {
+    ...U("request_photos"),
+    requestedCapabilities: ["send_photos"],
+    subject: "selected_vehicle",
+    subjectSource: "current_turn",
+    evidence: [{ capability: "send_photos", quote: evidenceQuote(frame) }],
+  };
+}
 const authored: BrainResponder = (frame, observations) => {
   const photo = [...observations].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; tool: "vehicle_photos_resolve"; data: { vehicleKey: string; photoIds: string[] } } | undefined;
-  const photoU: TurnUnderstanding = {
-    ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "current_turn",
-    evidence: [{ capability: "send_photos", quote: (frame.block ?? "").trim() || "fotos" }],
-  };
+  const photoU = photoUnderstanding(frame);
   if (photo) {
     return photo.data.photoIds.length > 0
       ? finalWithEffects([txt("Aqui estão as fotos que você pediu.")], "send_vehicle_photos", photoU, [reply, media(photo.data.vehicleKey, photo.data.photoIds)])
@@ -96,25 +115,30 @@ const authored: BrainResponder = (frame, observations) => {
   }
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok && o.data.items.length > 0) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
   if (stock) {
-    const searchU: TurnUnderstanding = {
-      ...U("search_stock"), requestedCapabilities: ["stock_search"],
-      evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-    };
+    const searchU = searchUnderstanding(frame);
     return finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", searchU);
   }
-  return finU([txt("Certo!")], "reply", /foto/i.test(frame.block ?? "") ? photoU : U("other"));
+  const block = norm(frame.block ?? "");
+  if (/foto|imagem/.test(block)) {
+    const vehicleKey = /primeir/.test(block) ? CMP17.vehicleKey : CMP19.vehicleKey;
+    return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: vehicleKey } } }, photoU);
+  }
+  if (detectSimilarityIntent(frame.block ?? "")) {
+    return qU({ tool: "stock_search", input: { marca: "", modelo: "", tipo: "pickup", precoMax: 100000 } }, searchUnderstanding(frame));
+  }
+  if (/onix/.test(block)) {
+    return qU({ tool: "stock_search", input: { marca: "Chevrolet", modelo: "Onix" } }, searchUnderstanding(frame));
+  }
+  if (has(frame.signals.adVehicle ?? "", "Compass")) {
+    return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass" } }, searchUnderstanding(frame));
+  }
+  if (has(frame.signals.adVehicle ?? "", "Ranger")) {
+    return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "Ranger" } }, searchUnderstanding(frame));
+  }
+  return finU([txt("Certo!")], "reply", U("other"));
 };
 const resist: BrainResponder = authored;
-// ⭐AUTORIDADE (audit Codex): "na verdade quero o Onix" é BUSCA (a LLM real classifica search_stock); declara o ATO mas
-// resiste — o executor determinístico garante a execução com a correção aplicada.
-const resistSearch: BrainResponder = (frame, observations) => {
-  const authoredStep = authored(frame, observations, 0);
-  if (observations.some((o) => o.tool === "stock_search" && o.ok)) return authoredStep;
-  return finU([txt("Certo!")], "reply", {
-    ...U("search_stock"), requestedCapabilities: ["stock_search"],
-    evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-  });
-};
+const resistSearch: BrainResponder = authored;
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {
@@ -188,7 +212,7 @@ async function main(): Promise<void> {
     await c.t("esse ainda tem?", { ad: adCompass });                 // T1 lista CMP17 (ord.1) + CMP19 (ord.2)
     const fakeAbsence: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
       ? authored(frame, observations, 0)
-      : finU([txt("Não localizei as fotos do Jeep Compass 2019 agora. Quer que eu te passe os detalhes dele?")], "photo_unavailable", U("request_photos"));
+      : finU([txt("Não localizei as fotos do Jeep Compass 2019 agora. Quer que eu te passe os detalhes dele?")], "photo_unavailable", photoUnderstanding(frame));
     const t2 = await c.t("me manda fotos dele", { responder: fakeAbsence });
     check("[A-4] cérebro autora ausência falsa; recebe o fato e REESCREVE enviando", t2.hasMedia === true, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
     check("[A-5] a LLM envia a foto do 2019 exato do anúncio (rm:cmp19)", t2.mediaKey === "rm:cmp19", `mediaKey=${t2.mediaKey}`);
@@ -199,7 +223,7 @@ async function main(): Promise<void> {
     await c.t("esse ainda tem?", { ad: adCompass });                 // CMP17 = ordinal 1 (SEM fotos no fake)
     const fakeAbsence: BrainResponder = (frame, observations) => observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
       ? authored(frame, observations, 0)
-      : finU([txt("Não localizei as fotos desse carro agora.")], "photo_unavailable", U("request_photos"));
+      : finU([txt("Não localizei as fotos desse carro agora.")], "photo_unavailable", photoUnderstanding(frame));
     const t2 = await c.t("me manda foto do primeiro", { responder: fakeAbsence });   // ordinal 1 -> CMP17 sem fotos
     check("[A-7] alvo REALMENTE sem fotos (ordinal 1 = 2017) -> ausência honesta SOBREVIVE (sem media)", t2.hasMedia === false, `hasMedia=${t2.hasMedia} outbox="${t2.outbox}"`);
     check("[A-8] o engine CONSULTOU as fotos do alvo antes de honrar a ausência", t2.exec.includes("vehicle_photos_resolve"), `exec=${t2.exec.join(",")}`);
@@ -225,7 +249,8 @@ async function main(): Promise<void> {
   }
   {
     const c = conv();
-    const r = await c.t("onde fica a loja?", { ad: adCompass, rel: "asks_store" as TurnRelation });
+    const institutional: BrainResponder = () => finU([txt("Nossa loja fica na Rua Teste 100, em Taubaté.")], "institutional_answer", U("institutional"));
+    const r = await c.t("onde fica a loja?", { ad: adCompass, rel: "asks_store" as TurnRelation, responder: institutional });
     check("[R-2] institucional NÃO roda stock_search do anúncio", !r.exec.includes("stock_search"), `exec=${r.exec.join(",")}`);
   }
 

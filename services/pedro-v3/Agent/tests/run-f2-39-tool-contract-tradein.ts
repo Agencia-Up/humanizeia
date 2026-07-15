@@ -163,7 +163,14 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("quero SUV", { responder: listSuv });   // T1: fixa activeSearchConstraints=suv
-    const t2 = await c.t("cadê?");                      // T2: retomada
+    const resumeU: TurnUnderstanding = { ...searchSuvU, evidence: [{ capability: "stock_search", quote: "cadê" }] };
+    const resumeSearch: BrainResponder = (_frame, obs) => {
+      const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+      return so
+        ? finU([txt("Aqui estão as opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "resume_stock", resumeU)
+        : qU({ tool: "stock_search", input: { tipo: "suv" } }, resumeU);
+    };
+    const t2 = await c.t("cadê?", { responder: resumeSearch });
     check("[T2] 'cadê?' retoma a busca SUV (stock_search roda, não repergunta)", t2.stockCalls >= 1 && has(JSON.stringify(t2.stockInput ?? {}), "suv"), `calls=${t2.stockCalls} input=${JSON.stringify(t2.stockInput)}`);
     check("[T2b] não repergunta 'qual modelo/tipo'", !has(t2.outbox, "qual modelo") && !has(t2.outbox, "qual tipo") && !has(t2.outbox, "o que voce procura"), `outbox="${t2.outbox}"`);
   }

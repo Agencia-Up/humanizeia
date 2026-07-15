@@ -419,8 +419,11 @@ async function main(): Promise<void> {
   }
   {
     const c = conv({ ...pendingPhotoAsk([T_CROSS, KICKS1, KICKS2]) }); await c.seed();
-    const uPendingOrdinal = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "numero 1" }] });
-    const uPhotoOrdinal = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "numero 1" }] });
+    // The pending question resolves the referent, but the brain still owns the
+    // current act: it must classify this answer as a photo request and declare
+    // send_photos. Memory alone never authorizes the tool.
+    const uPendingOrdinal = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "numero 1" }] });
+    const uPhotoOrdinal = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "numero 1" }] });
     const cap = await c.t("o numero 1 da lista", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
       ? finU([txt("Aqui estão as fotos do primeiro veículo.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhotoOrdinal)
       : finU([txt("Boa escolha.")], [reply], "reply", uPendingOrdinal));

@@ -168,21 +168,26 @@ async function main(): Promise<void> {
   // PARTE 5 — INTEGRAÇÃO: RESOLUÇÃO ÚNICA (bug do Compass "fotos do segundo")
   // ─────────────────────────────────────────────────────────────────────────
   {
-    // O cérebro inicialmente rotula "fotos do segundo" só como SELEÇÃO. O engine resolve o fato (ordinal + fotos),
-    // devolve a observação e a LLM autora o envio. A engine nunca escreve a resposta comercial.
+    // O cérebro inicialmente rotula "fotos do segundo" só como SELEÇÃO. O engine
+    // não executa por esse rótulo: devolve feedback semântico e a própria LLM
+    // corrige o ato para request_photos antes de a tool ser autorizada.
     const c = conv(offerCtx([COMPASS17, COMPASS19]));
     await c.seed();
     const selU = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "2", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "segundo" }] });
+    const photoU = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "2", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do segundo" }] });
     const responder: BrainResponder = (_frame, observations) => {
       const photoReady = observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok);
+      const actCorrectionRequested = observations.some((o) => o.tool === "response" && o.error?.code === "PHOTO_ACT_EXPECTED");
       return photoReady
         ? finU(
             [txt("Claro, aqui estão as fotos do Jeep Compass 2019.")],
             [reply, { kind: "send_media", planId: "photos", order: 1, vehicleKey: COMPASS19.vehicleKey, photoIds: ["p1", "p2"], onSuccess: [] } as ProposedEffectPlan],
             "send_selected_photos",
-            selU,
+            photoU,
             [selMut(COMPASS19)],
           )
+        : actCorrectionRequested
+          ? finU([txt("Vou buscar as fotos do segundo veículo.")], [reply], "resolve_selected_photos", photoU, [selMut(COMPASS19)])
         : finU([txt("Boa escolha!")], [reply], "select_ack", selU, [selMut(COMPASS19)]);
     };
     const r = await c.t("Me mande fotos do segundo", "ambiguous", responder);

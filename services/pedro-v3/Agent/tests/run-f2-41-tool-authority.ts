@@ -21,6 +21,7 @@ import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, Response
 import type { VehicleFact } from "../src/domain/types.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
 import { parseOrdinal } from "../src/engine/ordinal.ts";
+import { assertToolExecutionAuthority, type ToolAuthorityRecord, type ToolExecutionAuthority } from "../src/engine/tool-authority.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -74,7 +75,7 @@ const searchCorolla: BrainResponder = (_f, obs: readonly AgentToolObservation[])
 };
 
 type Slots = ConversationState["slots"];
-type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; slots: Slots | null; selectedKey: string | null; pf: string[] };
+type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; slots: Slots | null; selectedKey: string | null; pf: string[]; authorities: readonly ToolAuthorityRecord[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, responder: BrainResponder): Promise<Cap> {
   executed.length = 0; brain.setResponder(responder);
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
@@ -109,6 +110,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     slots: persistedState?.slots ?? null,
     selectedKey: persistedState?.vehicleContext.selected?.key ?? null,
     pf: r.status === "committed" ? r.policyFeedback.map((x) => x.slice(0, 120)) : [],
+    authorities: r.status === "committed" ? r.toolAuthorities : [],
   };
 }
 let seq0 = 0;
@@ -122,12 +124,30 @@ function conv() {
 async function main(): Promise<void> {
   console.log("== F2.41: AUTORIDADE da tool = LLM (ato conversacional), detector só enriquece ==");
 
+  const authority = (overrides: Partial<ToolExecutionAuthority> = {}): ToolExecutionAuthority => ({
+    principal: "llm",
+    source: "llm_tool_call",
+    primaryIntent: "search_stock",
+    capability: "stock_search",
+    currentTurnEvidence: true,
+    callSite: "test",
+    ...overrides,
+  });
+  const rejects = (fn: () => void): boolean => { try { fn(); return false; } catch { return true; } };
+  check("[AUTH-1] engine nunca autoriza stock_search comercial", rejects(() => assertToolExecutionAuthority("stock_search", authority({ principal: "engine_factual", source: "engine_institutional_lookup" }))));
+  check("[AUTH-2] engine nunca autoriza vehicle_photos_resolve comercial", rejects(() => assertToolExecutionAuthority("vehicle_photos_resolve", authority({ principal: "engine_safety", source: "engine_grounding", capability: null }))));
+  check("[AUTH-3] evidence stale nunca autoriza tool da LLM", rejects(() => assertToolExecutionAuthority("stock_search", authority({ currentTurnEvidence: false }))));
+  check("[AUTH-4] capability incompatível nunca autoriza tool", rejects(() => assertToolExecutionAuthority("stock_search", authority({ capability: "send_photos" }))));
+  check("[AUTH-5] vehicle_details de grounding é a única exceção comercial do engine", (() => { try { assertToolExecutionAuthority("vehicle_details", authority({ principal: "engine_safety", source: "engine_grounding", capability: null })); return true; } catch { return false; } })());
+  check("[AUTH-6] lookup institucional factual do engine permanece permitido", (() => { try { assertToolExecutionAuthority("tenant_business_info", authority({ principal: "engine_factual", source: "engine_institutional_lookup", capability: "institutional_info" })); return true; } catch { return false; } })());
+
   // ── A) O PRINT: "tem corolla?" (busca) -> lista; "Corolla não é um sedan? pq disse que não tinha?" (CONTESTAÇÃO) ->
   //    a LLM reconhece/corrige/conduz. ZERO stock_search no turno de contestação; NUNCA re-lista. ──
   {
     const c = conv();
     const t1 = await c.t("tem corolla?", searchCorolla);
     check("[A-1] 'tem corolla?' (a LLM classificou busca) -> stock_search roda e LISTA", t1.stockCalls === 1 && has(t1.outbox, "Corolla"), `calls=${t1.stockCalls} outbox="${t1.outbox}"`);
+    check("[A-1b] execução registra autoridade LLM + evidence do turno", t1.authorities.length === 1 && t1.authorities[0]?.principal === "llm" && t1.authorities[0]?.source === "llm_tool_call" && t1.authorities[0]?.currentTurnEvidence === true, JSON.stringify(t1.authorities));
     const repair: BrainResponder = () => finU([txt("Você tem razão, me confundi — o Corolla é um sedan sim, me desculpe pela confusão! Os dois Corolla que te mostrei são ótimas opções de sedan. Quer ver as condições de algum deles?")], "conversation_repair", U("conversation_repair"));
     const t2 = await c.t("Corolla não é um sedan? pq disse que não tinha?", repair);
     check("[A-2] contestação -> ZERO stock_search (o detector via Corolla/sedan mas NÃO autoriza mais)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
@@ -173,6 +193,7 @@ async function main(): Promise<void> {
     };
     const t1 = await c.t("tem corolla?", lazy);
     check("[D-1] LLM declarou busca sem executar -> engine garante a execução (stock_search rodou)", t1.stockCalls >= 1, `calls=${t1.stockCalls}`);
+    check("[D-2] complemento factual herda autoridade da LLM, não da engine", t1.authorities.length === 1 && t1.authorities[0]?.principal === "llm" && t1.authorities[0]?.source === "llm_intent_completion", JSON.stringify(t1.authorities));
   }
 
   // ── E) ADVERSARIAL (hardening do audit): "outras opções" DENTRO de uma CONTESTAÇÃO — o regex de 'mais opções' casa,
@@ -185,6 +206,22 @@ async function main(): Promise<void> {
     check("[E-1] 'outras opções' numa CONTESTAÇÃO não força busca (0 stock_search exec+obs)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
     check("[E-2] a LLM conversa (brain_*), sem pergunta de escopo determinística nem re-lista", (t2.src === "brain_final" || t2.src === "brain_retry") && !has(t2.outbox, "Qual modelo ou tipo") && !has(t2.outbox, "Encontrei estas opções"), `src=${t2.src} outbox="${t2.outbox}"`);
     check("[E-3] primaryIntent = conversation_repair", t2.primaryIntent === "conversation_repair", `intent=${t2.primaryIntent}`);
+    check("[E-4] turno sem tool não produz autoridade fantasma", t2.authorities.length === 0, JSON.stringify(t2.authorities));
+  }
+
+  // H) BUSCA VAZIA: a engine não relaxa filtros por conta própria. A LLM vê o
+  // fato vazio e decide se conversa ou se faz uma segunda busca diferente.
+  {
+    const c = conv();
+    const emptyThenTalk: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
+      const stock = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+      if (!stock) return qU({ tool: "stock_search", input: { modelo: "Compass" } }, searchU("tem compass"));
+      return finU([txt("Não encontrei Compass no estoque agora. Você prefere ampliar a busca ou ver outro SUV?")], "empty_honest", searchU("tem compass"));
+    };
+    const t1 = await c.t("tem compass?", emptyThenTalk);
+    check("[H-1] busca vazia executa somente a consulta escolhida pela LLM", t1.stockCalls === 1, `calls=${t1.stockCalls}`);
+    check("[H-2] nenhuma cascata de relaxamento da engine aparece na autoridade", t1.authorities.length === 1 && t1.authorities.every((a) => a.source === "llm_tool_call"), JSON.stringify(t1.authorities));
+    check("[H-3] a própria LLM conduz o resultado vazio", (t1.src === "brain_final" || t1.src === "brain_retry") && has(t1.outbox, "não encontrei"), `src=${t1.src} out=${t1.outbox}`);
   }
 
   // F) INCIDENTE REAL: "pra segunda" e dia de visita, nunca ordinal da lista.
@@ -232,8 +269,8 @@ async function main(): Promise<void> {
   }
 
   // G) INCIDENTE REAL 12/07: abertura sem identidade + burst "Quero suv / Tem?".
-  // O engine nao escreve a apresentacao nem executa busca por keyword. Ele devolve
-  // feedback semantico e a mesma LLM reautora, declara o ato e usa a tool.
+  // O engine não escreve a apresentação nem infere busca por keyword. A própria
+  // LLM entende o pedido atual, declara o ato e usa a tool.
   {
     const c = conv();
     // ⭐RD1-2: a APRESENTAÇÃO na abertura é ADVISORY (isFirstContact). A LLM advertida se apresenta de 1ª; o engine ENTREGA (brain_final).
@@ -251,12 +288,10 @@ async function main(): Promise<void> {
           txt("Qual delas chamou mais sua atenção?"),
         ], "list_suv", searchU("Quero suv"));
       }
-      const corrected = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "SEARCH_ACT_EXPECTED");
-      if (corrected) return qU({ tool: "stock_search", input: { tipo: "suv" } }, searchU("Quero suv"));
-      return finU([txt("Qual modelo ou tipo de carro você procura? Já busco no estoque para você.")], "wrong_clarify", U("other"));
+      return qU({ tool: "stock_search", input: { tipo: "suv" } }, searchU("Quero suv"));
     };
     const t2 = await c.t("Quero suv\nTem?", suvSearch);
-    check("[G-3] pedido SUV malclassificado recebe feedback de ato e a LLM redecide", t2.pf.some((p) => has(p, "ATO ATUAL INCOMPLETO")), JSON.stringify(t2.pf));
+    check("[G-3] pedido SUV é interpretado pela LLM sem coerção de intent do engine", !t2.pf.some((p) => has(p, "ATO ATUAL INCOMPLETO")), JSON.stringify(t2.pf));
     check("[G-4] a LLM chama stock_search uma vez e lista o SUV", t2.stockCalls === 1 && has(t2.outbox, "Creta"), `calls=${t2.stockCalls} out=${t2.outbox}`);
     check("[G-5] nao repete modelo/tipo ja informado nem usa recovery", !has(t2.outbox, "Qual modelo ou tipo") && (t2.src === "brain_retry" || t2.src === "brain_final"), `src=${t2.src} out=${t2.outbox}`);
     check("[G-6] ato final e search_stock", t2.primaryIntent === "search_stock", `intent=${t2.primaryIntent}`);

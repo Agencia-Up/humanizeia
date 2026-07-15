@@ -79,50 +79,72 @@ function finWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnders
 }
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
-// ⭐AUTORIDADE (audit Codex): "na verdade quero Onix" é BUSCA — a LLM real classifica search_stock; declara o ATO mas
-// resiste (o executor determinístico garante a execução, solto do anúncio).
-const resistSearch: BrainResponder = (f, obs) => {
-  const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-  const understanding: TurnUnderstanding = {
-    ...U("search_stock"), requestedCapabilities: ["stock_search"],
-    evidence: [{ capability: "stock_search", quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
-  };
-  return stock
-    ? finU([txt("Encontrei estas opcoes:"), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", understanding)
-    : finU([txt("Certo!")], "reply", understanding);
-};
+const currentEvidence = (frame: Parameters<BrainResponder>[0], capability: "stock_search" | "send_photos") => ({
+  capability,
+  quote: (frame.block ?? "").trim() || "Olá",
+});
+const searchU = (frame: Parameters<BrainResponder>[0], subjectValue: string): TurnUnderstanding => ({
+  ...U("search_stock"),
+  requestedCapabilities: ["stock_search"],
+  subject: "explicit_model",
+  subjectValue,
+  subjectSource: "current_turn",
+  evidence: [currentEvidence(frame, "stock_search")],
+});
+const photoIntentU = (frame: Parameters<BrainResponder>[0]): TurnUnderstanding => ({
+  ...U("request_photos"),
+  requestedCapabilities: ["send_photos"],
+  subject: "selected_vehicle",
+  subjectSource: "memory",
+  evidence: [currentEvidence(frame, "send_photos")],
+});
 const authored: BrainResponder = (frame, obs) => {
   const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
-  const photoU: TurnUnderstanding = {
-    ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "memory",
-    evidence: [{ capability: "send_photos", quote: (frame.block ?? "").trim() || "fotos" }],
-  };
+  const photoU = photoIntentU(frame);
   if (photo?.data.photoIds.length) {
     return finWithEffects([txt("Aqui estao as fotos do veiculo que voce pediu.")], "send_vehicle_photos", photoU, [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
   }
   const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-  const searchU: TurnUnderstanding = {
-    ...U("search_stock"), requestedCapabilities: ["stock_search"], subject: "explicit_model", subjectSource: "current_turn",
-    evidence: [{ capability: "stock_search", quote: (frame.block ?? "").trim().split(/\s+/).slice(0, 3).join(" ") || "estoque" }],
-  };
+  const block = norm(frame.block ?? "");
+  const adVehicle = norm(String((frame.signals as { adVehicle?: string | null }).adVehicle ?? ""));
+  const requestedModel = block.includes("onix") ? "Onix" : "Compass";
+  const currentSearchU = searchU(frame, requestedModel);
   if (stock) {
     if (stock.data.items.length === 0) {
       const adLabel = String((frame.signals as { adVehicle?: string | null }).adVehicle ?? "veiculo do anuncio");
-      return finU([txt(`Nao encontrei ${adLabel} no estoque agora.`)], "stock_empty", searchU);
+      return finU([txt(`Nao encontrei ${adLabel} no estoque agora.`)], "stock_empty", currentSearchU);
     }
     const intro = stock.data.items.length === 1 && (frame.signals as { specificAdEntry?: boolean }).specificAdEntry
-      ? "Encontrei o veiculo do anuncio:"
+      ? `Encontrei o ${stock.data.items[0]!.marca} ${stock.data.items[0]!.modelo} ${stock.data.items[0]!.ano} do anuncio:`
       : "Encontrei estas opcoes:";
-    return finU([txt(intro), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", searchU);
+    return finU([txt(intro), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", currentSearchU);
+  }
+  if (block.includes("foto")) {
+    return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp19" } } }, photoU);
+  }
+  if (block.includes("onix")) {
+    return qU({ tool: "stock_search", input: { marca: "Chevrolet", modelo: "Onix" } }, currentSearchU);
+  }
+  if (block.includes("outro") && block.includes("compass")) {
+    const years = block.includes("2018") ? { anos: [2018] } : {};
+    return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", ...years, excludeKeys: ["rm:cmp19"] } }, currentSearchU);
+  }
+  if (adVehicle.includes("compass 2015")) {
+    return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2015] } }, currentSearchU);
+  }
+  if (adVehicle.includes("compass 2019")) {
+    return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass", anos: [2019] } }, currentSearchU);
   }
   return resist(frame, obs, 0);
 };
 const searchCompassU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "explicit_model", subjectValue: "Compass", subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "compass" }], isTopicChange: false, answeredLeadQuestions: [] };
-// Cérebro que carimba anos=[2019] (como no smoke real, por ver adVehicle="Jeep Compass 2019"): query stock_search com o ano.
-const brainStampsYear: BrainResponder = (_f, obs) => {
+// A LLM interpreta "outro" como uma nova busca do mesmo modelo, sem herdar o
+// ano do anúncio. O engine não corrige semanticamente os argumentos depois.
+const brainChoosesAlternative: BrainResponder = (frame, obs) => {
   const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-  if (!so) return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, searchCompassU);
-  return finU([txt("Encontrei:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", searchCompassU);
+  const u = searchU(frame, "Compass");
+  if (!so) return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", excludeKeys: ["rm:cmp19"] } }, u);
+  return finU([txt("Encontrei:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "reply", u);
 };
 
 // Reproduz o P0 visto com o gpt-4.1-mini no anuncio do Fastback: a tool retorna
@@ -259,12 +281,12 @@ async function main(): Promise<void> {
     // "outro Compass" = OUTRO (não o 2019 já mostrado): lista o Compass 2017 (o alternativo). Prova que o ano relaxou.
     check("[AD-3b] T2 lista o OUTRO Compass (2017), agora que o lead pediu alternativa", has(t2.outbox, "2017") && has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
   }
-  // ── AD-3c (audit smoke real): o CÉREBRO carimba anos=[2019] em "tem outro compass?" -> a chamada EXECUTADA sai SEM anos ──
+  // ── AD-3c: a própria LLM interpreta a alternativa sem herdar o ano do anúncio ──
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass19 });
-    const t2 = await c.t("tem outro compass?", { responder: brainStampsYear });
-    check("[AD-3c] cérebro carimbou anos=[2019], mas a stock_search EXECUTADA sai SEM anos (dropAdYear, não via retry)", !t2.stockInput?.anos || (t2.stockInput!.anos as number[]).length === 0, `input=${JSON.stringify(t2.stockInput)}`);
+    const t2 = await c.t("tem outro compass?", { responder: brainChoosesAlternative });
+    check("[AD-3c] LLM pede o outro Compass sem ano herdado; engine preserva a decisão", !t2.stockInput?.anos || (t2.stockInput!.anos as number[]).length === 0, `input=${JSON.stringify(t2.stockInput)}`);
     check("[AD-3c2] preserva modelo Compass na chamada executada", has(String(t2.stockInput?.modelo ?? ""), "compass"), `input=${JSON.stringify(t2.stockInput)}`);
   }
   // ── AD-3d: se o LEAD cita o ano ("tem outro Compass 2018?"), RESPEITA o ano do lead (não dropa) — engine força a busca ──
@@ -279,7 +301,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("esse ainda tem?", { ad: adCompass19 });
-    const t2 = await c.t("na verdade quero Onix", { responder: resistSearch });
+    const t2 = await c.t("na verdade quero Onix");
     check("[AD-4] T2 busca Onix (não Compass) e sem ano do anúncio", has(String(t2.stockInput?.modelo ?? ""), "onix") && !has(String(t2.stockInput?.modelo ?? ""), "compass") && (!t2.stockInput?.anos || (t2.stockInput!.anos as number[]).length === 0), `input=${JSON.stringify(t2.stockInput)}`);
     check("[AD-4b] resposta traz o Onix, não fica presa no Compass", has(t2.outbox, "Onix") && !has(t2.outbox, "Compass"), `outbox="${t2.outbox}"`);
   }
