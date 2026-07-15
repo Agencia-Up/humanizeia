@@ -12,6 +12,7 @@ import { runConversationTurn } from "../src/engine/conversation-engine.ts";
 import type { QueryRunner } from "../src/engine/decision-engine.ts";
 import { isConversationSettled, resolveDebounceConfig } from "../src/engine/debounce-policy.ts";
 import { DebouncePoller } from "../src/runtime/debounce-poller.ts";
+import { findSettledAcrossScopes } from "../src/runtime/settled-scope-finder.ts";
 import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
@@ -215,6 +216,32 @@ async function main(): Promise<void> {
     const poller3 = new DebouncePoller(async () => { throw new Error("db down"); }, async () => { /* */ }, fakeClock);
     const r3 = await poller3.runOnce();
     check("poller: finder que lanÃ§a nao crasha o tick", r3.found === 0 && r3.processed === 0, JSON.stringify(r3));
+  }
+
+  // A falha de leitura de um tenant nunca pode impedir o processamento dos demais.
+  {
+    const brokenScope = { tenantId: "tenant-broken", agentId: "agent-broken" };
+    const healthyScope = { tenantId: "tenant-healthy", agentId: "agent-healthy" };
+    const result = await findSettledAcrossScopes([brokenScope, healthyScope], async (scope) => {
+      if (scope.tenantId === brokenScope.tenantId) throw new Error("scope unavailable");
+      return [{
+        conversationId: "healthy-conversation",
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        leadId: null,
+        toAddr: TO,
+        pendingCount: 1,
+      }];
+    });
+    check(
+      "multi-tenant: scope quebrado nao paralisa conversa saudavel",
+      result.succeededScopes === 1
+        && result.failures.length === 1
+        && result.failures[0]?.scope.tenantId === brokenScope.tenantId
+        && result.settled.length === 1
+        && result.settled[0]?.conversationId === "healthy-conversation",
+      `succeeded=${result.succeededScopes}; failures=${result.failures.length}; settled=${result.settled.length}`,
+    );
   }
 
   console.log(`\n=== F2.7.6: ${ok} OK | ${fail} FALHA ===`);

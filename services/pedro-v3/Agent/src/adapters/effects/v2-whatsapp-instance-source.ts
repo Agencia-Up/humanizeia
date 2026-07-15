@@ -27,9 +27,13 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
-function normalizeProvider(value: unknown): "uazapi" | "unsupported" {
+export function normalizeWhatsAppTransportProvider(value: unknown): "uazapi" | "unsupported" {
   const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (raw === "" || raw === "uazapi") return "uazapi";
+  // The legacy portal stored some Uazapi-backed instances as `evolution`.
+  // Pedro v2 already sends every non-Meta instance through the Uazapi HTTP
+  // contract. Keep that proven compatibility explicit while still rejecting
+  // Meta and unknown providers fail-closed.
+  if (raw === "" || raw === "uazapi" || raw === "evolution") return "uazapi";
   return "unsupported";
 }
 
@@ -59,7 +63,7 @@ export class V2WhatsAppInstanceSource implements WhatsAppInstanceSource {
     const apiUrl = asString(row.api_url);
     if (id !== instanceId || tenantId !== ref.tenantId || !apiUrl) return null;
 
-    const provider = normalizeProvider(row.provider);
+    const provider = normalizeWhatsAppTransportProvider(row.provider);
     if (provider !== "uazapi") {
       return {
         tenantId,
@@ -101,7 +105,7 @@ export class V2WhatsAppInstanceCredentialProvider {
     const tenantId = asString(row.user_id);
     if (tenantId !== ref.tenantId) return { ok: false, error: "SECRET_OWNERSHIP_MISMATCH" };
 
-    const provider = normalizeProvider(row.provider);
+    const provider = normalizeWhatsAppTransportProvider(row.provider);
     if (provider !== "uazapi") return { ok: false, error: "SECRET_PROVIDER_MISMATCH" };
 
     const encrypted = asString(row.api_key_encrypted) ?? asString(row.api_key);

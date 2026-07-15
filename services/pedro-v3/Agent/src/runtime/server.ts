@@ -23,6 +23,7 @@ import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
 import { evaluateFollowup, type FollowupEvaluationReason } from "../engine/followup-policy.ts";
 import { PEDRO_V3_RUNTIME_RELEASE } from "./runtime-release.ts";
+import { findSettledAcrossScopes } from "./settled-scope-finder.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
@@ -113,6 +114,12 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     skipped: Partial<Record<FollowupEvaluationReason, number>>;
   } = { lastTickAt: null, checked: 0, due: 0, planned: 0, failed: 0, lastFailure: null, skipped: {} };
   #turnSeq = 0;
+  #pollDiagnostics: {
+    lastFindAt: string | null;
+    succeededScopes: number;
+    failedScopes: number;
+    lastFailure: string | null;
+  } = { lastFindAt: null, succeededScopes: 0, failedScopes: 0, lastFailure: null };
 
   constructor() {
     this.#supabaseUrl = requiredEnv("SUPABASE_URL");
@@ -166,6 +173,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       ...this.#followupDiagnostics,
       skipped: { ...this.#followupDiagnostics.skipped },
     };
+  }
+
+  get pollDiagnostics(): Readonly<Record<string, unknown>> {
+    return { ...this.#pollDiagnostics };
   }
 
   #gateway(): SupabaseServiceGateway {
@@ -247,14 +258,29 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
   // Consulta cada escopo autorizado isoladamente. Nunca ha leitura cross-tenant.
   async findSettled(nowIso: string): Promise<SettledConversation[]> {
-    const batches = await Promise.all(this.#activeScopes.map(async (scope) => {
+    const result = await findSettledAcrossScopes(this.#activeScopes, async (scope) => {
       const persistence = new PostgresPersistence(this.#gateway(), { tenantId: scope.tenantId, clock: this.#clock });
       const settled = await persistence.findSettledConversations(nowIso, this.#debounce.debounceMs, this.#debounce.maxWaitMs, 20);
       return settled
         .filter((item) => item.agentId === scope.agentId)
         .map((item) => ({ ...item, tenantId: scope.tenantId }));
-    }));
-    return batches.flat();
+    });
+    const lastFailure = result.failures.at(-1);
+    this.#pollDiagnostics = {
+      lastFindAt: nowIso,
+      succeededScopes: result.succeededScopes,
+      failedScopes: result.failures.length,
+      lastFailure: lastFailure ? sanitizeTurnError(lastFailure.error) : null,
+    };
+    for (const failure of result.failures) {
+      console.error(JSON.stringify({
+        event: "pedro_v3_settled_scope_failed",
+        tenantId: failure.scope.tenantId,
+        agentId: failure.scope.agentId,
+        reason: sanitizeTurnError(failure.error),
+      }));
+    }
+    return [...result.settled];
   }
 
   async #createRoot(scope: PedroV3ActiveScope, leadId: string | null, gateway: SupabaseServiceGateway): Promise<PilotActiveRoot> {
@@ -379,7 +405,14 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     let root: PilotActiveRoot;
     try {
       root = await this.#createRoot(scope, turnLeadId, gateway);
-    } catch {
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "pedro_v3_root_bootstrap_failed",
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        conversationId: settled.conversationId,
+        reason: sanitizeTurnError(error),
+      }));
       return;
     }
     this.#turnSeq += 1;
@@ -502,6 +535,7 @@ const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, run
   sensitiveVault: Boolean(process.env.PEDRO_V3_SENSITIVE_VAULT_KEY?.trim()),
   activeScopeCount: runtime.activeScopes.length,
   followupWorker: runtime.followupDiagnostics,
+  conversationWorker: runtime.pollDiagnostics,
 }), runtime.activeScopes);
 const server = createServer(async (request, response) => {
   try {

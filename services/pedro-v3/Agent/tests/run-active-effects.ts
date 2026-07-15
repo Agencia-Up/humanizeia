@@ -558,7 +558,20 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   check("v2-wa-instance", "credential query nao seleciona coluna inexistente api_key", !!call && call.columns.includes("api_key_encrypted") && !call.columns.includes("api_key"), JSON.stringify(call));
 }
 
-// 22) V2 wa_instances source and credentials fail closed on cross-tenant/provider mismatch.
+// 22) Legacy `evolution` rows are Uazapi-backed and remain executable.
+{
+  const db = new TinyV2ReadDatabase({
+    wa_instances: [{ id: "wa-evolution", user_id: ref.tenantId, instance_name: "legacy", api_url: "https://api.uazapi.example", provider: "evolution", api_key_encrypted: "SECRET-UAZAPI-TOKEN" }],
+  });
+  const source = new V2WhatsAppInstanceSource(db);
+  const instance = await source.loadOwnedInstance(ref, "wa-evolution");
+  const provider = new V2WhatsAppInstanceCredentialProvider(db, new V2PlaintextApiKeyReader());
+  const secret = await provider.resolve(makeSecretRef({ tenantId: ref.tenantId, integrationId: "wa-evolution", provider: "uazapi", purpose: "whatsapp_instance" }));
+  check("v2-wa-instance", "legacy evolution label uses the proven uazapi transport", instance?.provider === "uazapi" && instance.apiUrl === "https://api.uazapi.example", JSON.stringify(instance));
+  check("v2-wa-instance", "legacy evolution label resolves its owned uazapi credential", secret.ok && secret.secret.material === "SECRET-UAZAPI-TOKEN", JSON.stringify(secret));
+}
+
+// 23) V2 wa_instances source and credentials fail closed on cross-tenant/provider mismatch.
 {
   const db = new TinyV2ReadDatabase({
     wa_instances: [
