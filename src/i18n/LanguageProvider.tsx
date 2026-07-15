@@ -36,6 +36,19 @@ function tr(text: string): string | null {
     [/^Renovação em\s+(\d+)\s+dias$/i, (m) => `Renews in ${m[1]} days`],
     [/^(\d+)\s+lead\(s\)\s+sem vendedor no período$/i, (m) => `${m[1]} lead(s) without seller in the period`],
     [/^(\d+)\s+conversa\(s\)$/i, (m) => `${m[1]} conversation(s)`],
+    [/^Anúncios ativos\s+\((\d+)\)$/i, (m) => `Active ads (${m[1]})`],
+    [/^Resumo do investimento\s+\((.+)\)$/i, (m) => `Investment summary (${tr(m[1]) || m[1]})`],
+    [/^(\d+)\s+conversas no Meta\s+\((.+)\)$/i, (m) => `${m[1]} Meta conversations (${tr(m[2]) || m[2]})`],
+    [/^(\d+)\s+leads que avançaram no funil\s+\((.+)\)$/i, (m) => `${m[1]} leads moved through the funnel (${tr(m[2]) || m[2]})`],
+    [/^(\d+)\s+venda\(s\)\s+fechada\(s\)\s+\((.+)\)$/i, (m) => `${m[1]} closed sale(s) (${tr(m[2]) || m[2]})`],
+    [/^Score\s+(\d+)\/100$/i, (m) => `Score ${m[1]}/100`],
+    [/^(\d+)\s+recomendação\(ões\)$/i, (m) => `${m[1]} recommendation(s)`],
+    [/^(\d+)\s+ação\(ões\)\s+já foram executadas\.$/i, (m) => `${m[1]} action(s) have already been executed.`],
+    [/^O José preparou\s+(\d+)\s+recomendação\(ões\)\s+para você:$/i, (m) => `José prepared ${m[1]} recommendation(s) for you:`],
+    [/^Confirmar todas seguras\s+\((\d+)\)$/i, (m) => `Confirm all safe actions (${m[1]})`],
+    [/^Última análise:\s+(.+)$/i, (m) => `Last analysis: ${m[1]}`],
+    [/^Hoje,\s+(.+)$/i, (m) => `Today, ${m[1]}`],
+    [/^Renovação\s+(.+)$/i, (m) => `Renewal ${m[1]}`],
   ];
   for (const [regex, map] of dynamicRules) {
     const match = key.match(regex);
