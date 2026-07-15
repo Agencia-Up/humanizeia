@@ -5,13 +5,16 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft } from 'lucide-react';
+import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 
-// Reconexão: sem linha => defaults = comportamento legado do wa-instance-health-check.
-const DEFAULTS = { reconexao_enabled: true, reconexao_intervalo_min: 60, reconexao_hora_ini: 7, reconexao_hora_fim: 21 };
+// Reconexão + relatório de atendimento: sem linha => defaults = comportamento legado.
+const DEFAULTS = {
+  reconexao_enabled: true, reconexao_intervalo_min: 60, reconexao_hora_ini: 7, reconexao_hora_fim: 21,
+  relatorio_atendimento_enabled: true, relatorio_atendimento_hora: 8,
+};
 const INTERVALOS = [
   { v: 30, l: '30 minutos' }, { v: 60, l: '1 hora' }, { v: 120, l: '2 horas' },
   { v: 180, l: '3 horas' }, { v: 360, l: '6 horas' }, { v: 720, l: '12 horas' },
@@ -29,7 +32,15 @@ export function RegrasAutomacoesTab() {
   // ── Reconexão (config de conta) ──
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingRel, setSavingRel] = useState(false);
   const [cfg, setCfg] = useState(DEFAULTS);
+
+  // ── Destinatários do relatório de atendimento (conta_responsaveis.recebe_atendimento) ──
+  const [resp, setResp] = useState<any[]>([]);
+  const [loadingResp, setLoadingResp] = useState(true);
+  const [novoNome, setNovoNome] = useState('');
+  const [novoWa, setNovoWa] = useState('');
+  const [addingResp, setAddingResp] = useState(false);
 
   // ── Follow-up / Transferência (por agente, em wa_ai_agents.automation_rules) ──
   const [agents, setAgents] = useState<any[]>([]);
@@ -46,9 +57,17 @@ export function RegrasAutomacoesTab() {
       setLoading(true);
       const { data } = await (supabase as any)
         .from('conta_automacao_regras')
-        .select('reconexao_enabled, reconexao_intervalo_min, reconexao_hora_ini, reconexao_hora_fim')
+        .select('reconexao_enabled, reconexao_intervalo_min, reconexao_hora_ini, reconexao_hora_fim, relatorio_atendimento_enabled, relatorio_atendimento_hora')
         .eq('user_id', user.id).maybeSingle();
       if (!cancelled) { setCfg(data ? { ...DEFAULTS, ...data } : DEFAULTS); setLoading(false); }
+    })();
+    (async () => {
+      setLoadingResp(true);
+      const { data } = await (supabase as any)
+        .from('conta_responsaveis')
+        .select('id, nome, whatsapp, recebe_atendimento, ativo')
+        .eq('user_id', user.id).order('created_at', { ascending: true });
+      if (!cancelled) { setResp(Array.isArray(data) ? data : []); setLoadingResp(false); }
     })();
     (async () => {
       setLoadingAg(true);
@@ -98,6 +117,48 @@ export function RegrasAutomacoesTab() {
     setSaving(false);
     error ? toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' })
           : toast({ title: '✅ Regra salva', description: 'O lembrete de reconexão foi atualizado.' });
+  };
+
+  // Salva a config do relatório de atendimento (mesma linha da conta; upserta cfg inteiro
+  // pra não zerar a reconexão). O cron roda de hora em hora e dispara na hora configurada.
+  const salvarRelatorioAtendimento = async () => {
+    if (!user?.id) return;
+    setSavingRel(true);
+    const { error } = await (supabase as any).from('conta_automacao_regras')
+      .upsert({ user_id: user.id, ...cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    setSavingRel(false);
+    error ? toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' })
+          : toast({ title: '✅ Relatório atualizado', description: 'Horário e envio do relatório de atendimento salvos.' });
+  };
+
+  // Liga/desliga um responsável no relatório de atendimento (só mexe em recebe_atendimento).
+  const toggleRecebe = async (id: string, val: boolean) => {
+    setResp((prev) => prev.map((r) => r.id === id ? { ...r, recebe_atendimento: val } : r));
+    const { error } = await (supabase as any).from('conta_responsaveis')
+      .update({ recebe_atendimento: val, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) {
+      setResp((prev) => prev.map((r) => r.id === id ? { ...r, recebe_atendimento: !val } : r));
+      toast({ title: 'Erro', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  // Adiciona um destinatário (mesmo padrão do ResponsaveisTab: upsert por user_id+whatsapp).
+  const addResp = async () => {
+    if (!user?.id) return;
+    const wa = novoWa.replace(/\D/g, '');
+    if (!novoNome.trim() || wa.length < 10) {
+      toast({ title: 'Dados incompletos', description: 'Informe nome e um WhatsApp válido (com DDD).', variant: 'destructive' }); return;
+    }
+    setAddingResp(true);
+    const { error } = await (supabase as any).from('conta_responsaveis')
+      .upsert({ user_id: user.id, nome: novoNome.trim(), whatsapp: wa, recebe_atendimento: true, ativo: true, updated_at: new Date().toISOString() }, { onConflict: 'user_id,whatsapp' });
+    if (error) { setAddingResp(false); toast({ title: 'Erro ao adicionar', description: error.message, variant: 'destructive' }); return; }
+    const { data } = await (supabase as any).from('conta_responsaveis')
+      .select('id, nome, whatsapp, recebe_atendimento, ativo')
+      .eq('user_id', user.id).order('created_at', { ascending: true });
+    setResp(Array.isArray(data) ? data : []);
+    setNovoNome(''); setNovoWa(''); setAddingResp(false);
+    toast({ title: '✅ Destinatário adicionado', description: `${novoNome.trim()} vai receber o relatório de atendimento.` });
   };
 
   const salvarAgente = async () => {
@@ -325,11 +386,83 @@ export function RegrasAutomacoesTab() {
         </>
       )}
 
-      {/* Próximas regras */}
+      {/* ── Relatório de atendimento (feedback diário no WhatsApp) ── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 border border-amber-500/30">
+                <FileClock className="h-5 w-5 text-amber-400" />
+              </div>
+              <div>
+                <CardTitle className="text-base">Relatório de atendimento</CardTitle>
+                <CardDescription className="text-xs mt-0.5">
+                  Todo dia a plataforma envia no WhatsApp o resumo do atendimento (funil + gargalo + por vendedor). Aqui você define se envia, a que horas e quem recebe.
+                </CardDescription>
+              </div>
+            </div>
+            <Switch checked={cfg.relatorio_atendimento_enabled} onCheckedChange={(v) => setCfg((c) => ({ ...c, relatorio_atendimento_enabled: v }))} disabled={loading} />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
+          ) : (
+            <>
+              <div className={cfg.relatorio_atendimento_enabled ? '' : 'opacity-50 pointer-events-none'}>
+                <div className="max-w-xs space-y-2">
+                  <Label className="text-xs flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Enviar todo dia às (horário de Brasília)</Label>
+                  <Select value={String(cfg.relatorio_atendimento_hora)} onValueChange={(v) => setCfg((c) => ({ ...c, relatorio_atendimento_hora: Number(v) }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{horas.map((h) => <SelectItem key={h} value={String(h)}>{String(h).padStart(2, '0')}:00</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {!cfg.relatorio_atendimento_enabled && <p className="text-xs text-amber-500">Desligado: o relatório diário de atendimento não será enviado.</p>}
+              <div className="flex justify-end">
+                <Button onClick={salvarRelatorioAtendimento} disabled={savingRel} className="gap-2">
+                  {savingRel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar horário
+                </Button>
+              </div>
+
+              {/* Destinatários */}
+              <div className="border-t border-border/40 pt-4">
+                <Label className="text-xs flex items-center gap-1.5 mb-3"><Users className="h-3.5 w-3.5" /> Quem recebe este relatório</Label>
+                {loadingResp ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
+                ) : (
+                  <div className="space-y-2">
+                    {resp.length === 0 && <p className="text-[11px] text-muted-foreground">Nenhum responsável cadastrado ainda. Adicione abaixo.</p>}
+                    {resp.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{r.nome || 'Sem nome'}</p>
+                          <p className="text-[11px] text-muted-foreground">{r.whatsapp}</p>
+                        </div>
+                        <Switch checked={!!r.recebe_atendimento} onCheckedChange={(v) => toggleRecebe(r.id, v)} />
+                      </div>
+                    ))}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center pt-1">
+                      <Input placeholder="Nome" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} className="sm:max-w-[40%]" />
+                      <Input placeholder="WhatsApp com DDD" value={novoWa} onChange={(e) => setNovoWa(e.target.value)} className="sm:max-w-[40%]" />
+                      <Button variant="outline" onClick={addResp} disabled={addingResp} className="gap-1.5 shrink-0">
+                        {addingResp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Adicionar
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Ligar/desligar aqui só controla este relatório — não remove o responsável da conta. Os mesmos responsáveis aparecem na aba <span className="font-medium text-foreground">Responsáveis</span>.</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Relatório do José — mecanismo a confirmar (report_templates dormente) */}
       <Card className="border-dashed">
         <CardContent className="py-4">
           <p className="text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">Em breve nesta aba:</span> relatório do José (campanhas) e relatório de atendimento — horário + quem recebe + liga/desliga.
+            <span className="font-medium text-foreground">Relatório do José (campanhas):</span> em breve nesta aba. O canal de agendamento configurável ainda está sendo definido — assim que fechado, o horário e os destinatários entram aqui do mesmo jeito.
           </p>
         </CardContent>
       </Card>
