@@ -372,7 +372,13 @@ export function shouldFallbackToPedroV2(input: {
   classification: PedroV3BridgeCallResult["kind"];
   hasV3Routing: boolean;
   hasV3State: boolean;
+  exclusiveOwnership?: boolean;
 }): { fallback: boolean; reason: string } {
+  // An active v3 scope owns every lead turn from the first message. The v2
+  // fallback remains available only to non-exclusive migration callers.
+  if (input.exclusiveOwnership) {
+    return { fallback: false, reason: "v3_exclusive_scope_blocked_v2_fallback" };
+  }
   // Só um pre_ingest_failure PROVADO pode deixar o v2 responder (evita lead silencioso). accepted/uncertain e os
   // estados de sucesso do v3 (duplicate/no_op/superseded chegam como accepted) NUNCA caem pro v2.
   if (input.classification !== "pre_ingest_failure") {

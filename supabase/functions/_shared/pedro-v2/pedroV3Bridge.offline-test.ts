@@ -89,6 +89,17 @@ test("S-3: pre_ingest_failure falls back only before v3 ownership", () => {
   assert(result.fallback === true, "pre_ingest_failure without ownership should fallback");
 });
 
+test("S-3b: exclusive v3 scope never falls back before first ingestion", () => {
+  const result = shouldFallbackToPedroV2({
+    classification: "pre_ingest_failure",
+    hasV3Routing: false,
+    hasV3State: false,
+    exclusiveOwnership: true,
+  });
+  assert(result.fallback === false, "exclusive scope must never invoke the v2 conversational agent");
+  assert(result.reason === "v3_exclusive_scope_blocked_v2_fallback", `unexpected reason ${result.reason}`);
+});
+
 test("S-4: v3 routing blocks v2 fallback", () => {
   const result = shouldFallbackToPedroV2({ classification: "pre_ingest_failure", hasV3Routing: true, hasV3State: false });
   assert(result.fallback === false, "routing should block fallback");
@@ -154,6 +165,17 @@ test("M-3: no routing and no state may fallback before v3 owns the conversation"
   const classification = classifyPedroV3BridgeResponse(200, { ingested: false, status: "commit_failed" }).kind;
   const result = shouldFallbackToPedroV2({ classification, hasV3Routing: false, hasV3State: false });
   assert(result.fallback === true, "conversation with no v3 ownership may fallback");
+});
+
+test("M-3b: active cutover keeps v2 disabled even without persisted v3 state", () => {
+  const classification = classifyPedroV3BridgeResponse(200, { ingested: false, status: "commit_failed" }).kind;
+  const result = shouldFallbackToPedroV2({
+    classification,
+    hasV3Routing: false,
+    hasV3State: false,
+    exclusiveOwnership: true,
+  });
+  assert(result.fallback === false, "exclusive cutover must fail closed to v3");
 });
 
 test("M-4: state-only v3 ownership blocks v2 fallback", async () => {

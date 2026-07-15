@@ -693,8 +693,9 @@ Deno.serve(async (req) => {
         activeScopes: pedroV3Scopes,
       });
       if (!bridgeTurn.ok) {
-        console.warn(`[pedro-v3-bridge] unsupported inbound reason=${bridgeTurn.reason}; fallback=v2`);
-        await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+        // Active v3 scopes are exclusive. Unsupported events remain visible,
+        // but never hand the lead to a second conversational agent.
+        console.error(`[pedro-v3-bridge] v3_exclusive_scope_unsupported reason=${bridgeTurn.reason}; fallback=blocked`);
         return;
       }
         const bridgeResult = await callPedroV3Bridge({
@@ -709,7 +710,12 @@ Deno.serve(async (req) => {
           // pre_ingest_failure). Observabilidade: reason + conversationId + hasV3Routing.
           const hasV3Routing = await conversationHasV3Routing(supabase, bridgeTurn.turn.tenantId, bridgeTurn.turn.conversationId);
           const hasV3State = await conversationHasV3State(supabase, bridgeTurn.turn.tenantId, bridgeTurn.turn.conversationId);
-          const decision = shouldFallbackToPedroV2({ classification: bridgeResult.kind, hasV3Routing, hasV3State });
+          const decision = shouldFallbackToPedroV2({
+            classification: bridgeResult.kind,
+            hasV3Routing,
+            hasV3State,
+            exclusiveOwnership: true,
+          });
           if (!decision.fallback) {
             console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false`);
             return;
