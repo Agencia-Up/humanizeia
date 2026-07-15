@@ -143,8 +143,8 @@ export function incomingRemoteJid(payload: any): string | null {
   ]) ?? primary;
 }
 
-export function shouldBridgePedroV3Identity(kind: "lead" | "seller" | "unknown"): boolean {
-  return kind !== "seller";
+export function shouldBridgePedroV3Identity(kind: "lead" | "seller" | "manager" | "internal" | "unknown"): boolean {
+  return kind === "lead" || kind === "unknown";
 }
 
 function normalizePhone(value: string | null): string | null {

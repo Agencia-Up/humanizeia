@@ -12,6 +12,8 @@ import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_s
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldBridgePedroV3Identity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
+import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
+import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260524.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
@@ -658,6 +660,7 @@ Deno.serve(async (req) => {
   // happened before inbox ingestion. Timeout/network/unknown never invoke both.
   const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
   let _pilotSellerInbound = false;
+  let _postTransferPlan = null;
   if (!_dryRun && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active") {
     const _remoteJid = incomingRemoteJid(payload);
     if (_remoteJid) {
@@ -668,9 +671,22 @@ Deno.serve(async (req) => {
       });
       _pilotSellerInbound = !shouldBridgePedroV3Identity(_identity.kind);
       if (_pilotSellerInbound) {
-        console.log(`[pedro-v3-bridge] seller_identity_bypassed sellerId=${_identity.seller?.id || "unknown"}`);
+        console.log(`[pedro-v3-bridge] internal_identity_bypassed kind=${_identity.kind}`);
+      } else if (_identity.kind === "lead") {
+        _postTransferPlan = await resolvePostTransferPlan({
+          supabase,
+          tenantId: (agent as any).user_id,
+          agentId: (agent as any).id,
+          remoteJid: _remoteJid,
+        });
       }
     }
+  }
+  if (!_dryRun && _postTransferPlan && typeof _waitUntil === "function") {
+    _waitUntil(executePostTransferPlan({ supabase, instance: waInstance, plan: _postTransferPlan, sendText: sendPedroText }).catch((error) => {
+      console.error("[pedro-v3-post-transfer] execution_failed", String((error as any)?.message || error).slice(0, 180));
+    }));
+    return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_post_transfer_hold", action: _postTransferPlan.action, build: PEDRO_V2_BUILD });
   }
   if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
     const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";

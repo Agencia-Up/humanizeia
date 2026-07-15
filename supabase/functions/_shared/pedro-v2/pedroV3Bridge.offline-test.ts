@@ -7,6 +7,8 @@ import {
   shouldFallbackToPedroV2,
   shouldBridgePedroV3Identity,
 } from "./pedroV3Bridge.ts";
+import { matchesAnyInternalPhone } from "./contactIdentity.ts";
+import { evaluatePostTransferAction, POST_TRANSFER_HOLD_MS, POST_TRANSFER_SILENCE_MS } from "./postTransferOwnership.ts";
 
 type TestFn = () => void | Promise<void>;
 
@@ -202,6 +204,75 @@ test("HF-2: lead identity still enters Pedro v3", () => {
 
 test("HF-3: unknown identity does not silently drop the lead", () => {
   assert(shouldBridgePedroV3Identity("unknown") === true, "unknown should remain on guarded v3 path");
+});
+
+test("HF-4: another connected agent line never enters Pedro v3", () => {
+  assert(shouldBridgePedroV3Identity("internal") === false, "connected AI line must never become a lead");
+});
+
+test("HF-5: tenant manager never enters Pedro v3", () => {
+  assert(shouldBridgePedroV3Identity("manager") === false, "manager must never become a lead");
+});
+
+test("HF-6: phone normalization identifies another connected agent line", () => {
+  assert(matchesAnyInternalPhone("551231972498", ["+55 12 3197-2498"]), "formatted internal number must match");
+});
+
+test("PT-1: first 30 minutes are silent", () => {
+  const nowMs = Date.parse("2026-07-15T12:20:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferCreatedAt: new Date(nowMs - POST_TRANSFER_SILENCE_MS + 1).toISOString(),
+    transferStatus: "pending",
+    nowMs,
+  });
+  assert(result.action === "silence", `expected silence, got ${result.action}`);
+  assert(!result.notifyLead && !result.notifySeller, "silence must notify nobody");
+});
+
+test("PT-2: after 30 minutes both notices are due once", () => {
+  const nowMs = Date.parse("2026-07-15T13:00:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferCreatedAt: new Date(nowMs - POST_TRANSFER_SILENCE_MS).toISOString(),
+    transferStatus: "confirmed",
+    nowMs,
+  });
+  assert(result.action === "notice_once", `expected notice_once, got ${result.action}`);
+  assert(result.notifyLead && result.notifySeller, "lead and seller notices must both be due");
+});
+
+test("PT-3: notices already recorded keep the conversation held without duplicates", () => {
+  const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
+  const transferCreatedAt = new Date(nowMs - 60 * 60_000).toISOString();
+  const noticedAt = new Date(nowMs - 10 * 60_000).toISOString();
+  const result = evaluatePostTransferAction({
+    transferCreatedAt,
+    transferStatus: "confirmed",
+    leadNoticeAt: noticedAt,
+    sellerNoticeAt: noticedAt,
+    nowMs,
+  });
+  assert(result.action === "hold", `expected hold, got ${result.action}`);
+  assert(!result.notifyLead && !result.notifySeller, "recorded notices must not repeat");
+});
+
+test("PT-4: after 24 hours the LLM may serve the lead again", () => {
+  const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferCreatedAt: new Date(nowMs - POST_TRANSFER_HOLD_MS).toISOString(),
+    transferStatus: "confirmed",
+    nowMs,
+  });
+  assert(result.action === "continue", `expected continue, got ${result.action}`);
+});
+
+test("PT-5: failed transfer never captures the conversation", () => {
+  const nowMs = Date.parse("2026-07-15T14:00:00.000Z");
+  const result = evaluatePostTransferAction({
+    transferCreatedAt: new Date(nowMs - 60_000).toISOString(),
+    transferStatus: "failed",
+    nowMs,
+  });
+  assert(result.action === "continue", `expected continue, got ${result.action}`);
 });
 
 // ── MISSÃO PII (P0-D): entrega NUMÉRICA edge→v3 com payloads uazapi realistas. Causa-raiz do incidente
