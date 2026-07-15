@@ -93,6 +93,9 @@ Deno.serve(async (req) => {
 
     let checked = 0, status_mudou = 0, avisos = 0, erros = 0;
     const masterCache: Record<string, any> = {};
+    // Config de RECONEXÃO por conta (aba Regras & Automações). Sem linha => defaults
+    // = comportamento legado (ligado, 60min, 07-21h). O gestor pode desligar/ajustar.
+    const regrasCache: Record<string, any> = {};
 
     for (const inst of (instances || []) as any[]) {
       if (!inst.api_url) continue;
@@ -118,11 +121,27 @@ Deno.serve(async (req) => {
       // Guard `last_connected_at`: só lembra quem JÁ conectou antes (caiu) — não fica
       // cutucando número de vendedor que nunca chegou a conectar (teste/abandonado).
       if (!isConnected && inst.seller_member_id && inst.last_connected_at) {
+        // Regra de reconexão (config por conta; defaults = comportamento legado).
+        let regras = regrasCache[inst.user_id];
+        if (regras === undefined) {
+          const { data: rg } = await admin.from("conta_automacao_regras")
+            .select("reconexao_enabled, reconexao_intervalo_min, reconexao_hora_ini, reconexao_hora_fim")
+            .eq("user_id", inst.user_id).maybeSingle();
+          regras = rg || null; regrasCache[inst.user_id] = regras;
+        }
+        if (regras && regras.reconexao_enabled === false) continue; // lembrete desligado pelo gestor
+        const intervaloMin = Math.min(Math.max(Number(regras?.reconexao_intervalo_min ?? 60), 5), 1440);
+        const horaIni = Number(regras?.reconexao_hora_ini ?? 7);
+        const horaFim = Number(regras?.reconexao_hora_fim ?? 21);
+
         const horaBRT = new Date(Date.now() - 3 * 3600 * 1000).getUTCHours();
-        if (horaBRT < 7 || horaBRT >= 21) continue; // não acordar o vendedor de madrugada
+        if (horaBRT < horaIni || horaBRT >= horaFim) continue; // fora da janela configurada
         const jaAvisou = inst.disconnect_alert_sent_at &&
-          (Date.now() - new Date(inst.disconnect_alert_sent_at).getTime() < 55 * 60 * 1000);
+          (Date.now() - new Date(inst.disconnect_alert_sent_at).getTime() < intervaloMin * 60 * 1000);
         if (jaAvisou) continue;
+        const cadencia = intervaloMin % 60 === 0
+          ? `${intervaloMin / 60} hora${intervaloMin / 60 > 1 ? 's' : ''}`
+          : `${intervaloMin} minutos`;
 
         const { data: vend } = await admin.from("ai_team_members")
           .select("name, whatsapp_number").eq("id", inst.seller_member_id).maybeSingle();
@@ -149,7 +168,7 @@ Seu WhatsApp está *desconectado da plataforma*. Fica tranquilo: *seus leads con
 
 Reconectar leva 1 minuto: entre no painel da Logos, em *WhatsApp > Instâncias*, e escaneie o QR Code.
 
-Vou te lembrar a cada 1 hora até você reconectar. Qualquer dificuldade, chama o gerente.`;
+Vou te lembrar a cada ${cadencia} até você reconectar. Qualquer dificuldade, chama o gerente.`;
         const ok = await sendText(String(master.api_url), master.api_key_encrypted || "", vend.whatsapp_number, msg);
         if (ok) {
           avisos++;
