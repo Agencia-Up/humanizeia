@@ -103,7 +103,6 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'marcos_contatos',    label: 'Contatos',               desc: 'Base de contatos',               icon: Users,          group: 'marcos' },
   { key: 'marcos_disparo',     label: 'Disparo em Massa',       desc: 'Campanhas WhatsApp',             icon: Send,           group: 'marcos' },
   { key: 'marcos_inbox',       label: 'Conversas',              desc: 'Mensagens diretas',              icon: MessageCircle,  group: 'marcos' },
-  { key: 'marcos_instancias',  label: 'Instâncias',             desc: 'Gerenciar conexões',             icon: Smartphone,     group: 'marcos' },
   { key: 'marcos_automacoes',  label: 'Automações',             desc: 'Fluxos automáticos',             icon: Zap,            group: 'marcos' },
   // ── Menu Lateral ──
   { key: 'sidebar_dashboard',     label: 'Dashboard',           desc: 'Painel principal',               icon: LayoutDashboard, group: 'sidebar' },
@@ -111,6 +110,9 @@ const FEATURE_LABELS: FeatureItem[] = [
   { key: 'sidebar_treinamento',   label: 'Treinamento',         desc: 'Base de conhecimento',           icon: GraduationCap,   group: 'sidebar' },
   { key: 'sidebar_meu_plano',     label: 'Meu Plano',           desc: 'Assinatura e tokens',            icon: CreditCard,      group: 'sidebar' },
   { key: 'sidebar_integracoes',   label: 'Integrações',         desc: 'Conexões externas',              icon: Plug,            group: 'sidebar' },
+  // Instâncias (conexão de WhatsApp) vive na área de Integrações, NÃO dentro do Marcos.
+  // key segue 'marcos_instancias' (mesmo gate + rota /whatsapp/instances); só muda o grupo do editor.
+  { key: 'marcos_instancias',     label: 'Instâncias',          desc: 'Conectar números de WhatsApp',   icon: Smartphone,      group: 'sidebar' },
   { key: 'sidebar_configuracoes', label: 'Configurações',       desc: 'Opções do sistema',              icon: Settings,        group: 'sidebar' },
 ];
 
