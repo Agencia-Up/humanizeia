@@ -93,6 +93,19 @@ export function evaluatePedroV3Pilot(input: {
   return { enabled: true, mode, identityMatched, reason: "pilot_allowed" };
 }
 
+// Ownership boundary shared by every legacy v2 entry point. Once a scope is
+// active in v3, no webhook, recovery worker or follow-up cron may invoke v2
+// for that same tenant+agent pair.
+export function isPedroV3ExclusiveScope(input: {
+  tenantId?: string | null;
+  agentId?: string | null;
+  mode?: unknown;
+  activeScopes?: readonly PedroV3ActiveScope[];
+}): boolean {
+  const decision = evaluatePedroV3Pilot(input);
+  return decision.enabled && decision.mode === "active";
+}
+
 export function evaluatePedroV3PilotAgent(
   agent: any,
   waInstance: any,

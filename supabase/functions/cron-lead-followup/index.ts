@@ -7,6 +7,10 @@ import { classifyLeadSdrCategory, sdrCategoryLine, sdrCategoryText, classifyLead
 import { composeSellerMsg, composeGerenteMsg, buildEtiquetas, maybeStripEmojis } from "../_shared/transfer/messageTemplates.ts";
 import { setSdrLabelOnChat } from "../_shared/pedro-v2/uazapiLabels.ts";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
+import {
+  isPedroV3ExclusiveScope,
+  parsePedroV3ActiveScopes,
+} from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -681,6 +685,8 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createSupabaseClient(supabaseUrl, supabaseKey)
+    const v3Scopes = parsePedroV3ActiveScopes(Deno.env.get("PEDRO_V3_ACTIVE_SCOPES"));
+    const v3Mode = Deno.env.get("PEDRO_V3_PILOT_MODE");
 
     const now = new Date();
     const fiveMinsAgo = new Date(now.getTime() - 5 * 60000).toISOString();
@@ -1054,6 +1060,16 @@ Deno.serve(async (req) => {
     for (const lead of leads) {
       // Ignorar se o usuario falou depois do agente
       if (new Date(lead.last_user_reply_at) >= new Date(lead.last_agent_reply_at)) continue;
+
+      if (isPedroV3ExclusiveScope({
+        tenantId: lead.user_id,
+        agentId: lead.agent_id,
+        mode: v3Mode,
+        activeScopes: v3Scopes,
+      })) {
+        console.log(`[Cron] v3_exclusive_scope_blocked_v2_followup lead=${lead.id}`);
+        continue;
+      }
 
       const agentData = lead.wa_ai_agents;
       let targetInstanceId = agentData?.instance_id;

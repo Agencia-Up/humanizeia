@@ -14,6 +14,10 @@
 // =============================================================================
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
+import {
+  isPedroV3ExclusiveScope,
+  parsePedroV3ActiveScopes,
+} from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,6 +50,8 @@ Deno.serve(async (req) => {
   // dry=1 -> só escaneia e LISTA quem seria reprocessado (não manda mensagem). Pra validar com segurança.
   const dry = new URL(req.url).searchParams.get("dry") === "1";
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const v3Scopes = parsePedroV3ActiveScopes(Deno.env.get("PEDRO_V3_ACTIVE_SCOPES"));
+  const v3Mode = Deno.env.get("PEDRO_V3_PILOT_MODE");
   const result = { dry, scanned: 0, candidates: 0, recovered: 0, would_recover: [] as string[], skipped: [] as string[], errors: 0 };
 
   try {
@@ -90,6 +96,15 @@ Deno.serve(async (req) => {
         const { data: agent } = await supabase
           .from("wa_ai_agents").select("*").eq("id", c.agent_id).maybeSingle();
         if (!agent) { result.skipped.push("no_agent"); continue; }
+        if (isPedroV3ExclusiveScope({
+          tenantId: agent.user_id,
+          agentId: agent.id,
+          mode: v3Mode,
+          activeScopes: v3Scopes,
+        })) {
+          result.skipped.push("v3_exclusive_scope");
+          continue;
+        }
 
         const { data: waInstance } = await supabase
           .from("wa_instances").select("*").eq("instance_name", c.instance_id).eq("is_active", true).maybeSingle();

@@ -1,5 +1,9 @@
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt } from "./pedroV3Bridge.ts";
-import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "./pedroV3PilotGate.ts";
+import {
+  evaluatePedroV3PilotAgent,
+  isPedroV3ExclusiveScope,
+  parsePedroV3ActiveScopes,
+} from "./pedroV3PilotGate.ts";
 
 const DOUGLAS = { tenantId: "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0", agentId: "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185" };
 const BRUNO = { tenantId: "f49fd48a-4386-4009-95f3-26a5100b84f7", agentId: "aee7e916-31b1-431c-ba6f-f38178fd4899" };
@@ -31,6 +35,25 @@ check("gate Edge aceita Bruno somente pela allowlist", agentDecision.enabled && 
 
 const crossDecision = evaluatePedroV3PilotAgent({ id: DOUGLAS.agentId, user_id: BRUNO.tenantId }, null, "active", scopes);
 check("gate Edge rejeita tenant Bruno com agente Douglas", !crossDecision.enabled);
+
+check("workers v2 bloqueiam Bruno quando o escopo v3 esta active", isPedroV3ExclusiveScope({
+  ...BRUNO,
+  mode: "active",
+  activeScopes: scopes,
+}));
+
+check("workers v2 nao bloqueiam Bruno quando o v3 esta shadow", !isPedroV3ExclusiveScope({
+  ...BRUNO,
+  mode: "shadow",
+  activeScopes: scopes,
+}));
+
+check("workers v2 nao bloqueiam identidade cruzada", !isPedroV3ExclusiveScope({
+  tenantId: BRUNO.tenantId,
+  agentId: DOUGLAS.agentId,
+  mode: "active",
+  activeScopes: scopes,
+}));
 
 const brunoTurn = await buildPedroV3BridgeTurn({ payload: payload("wamid.bruno.1", "Tem HB20?"), ...BRUNO, build: "test", activeScopes: scopes });
 check("bridge mantém tenant e agent Bruno no turno", brunoTurn.ok && brunoTurn.turn.tenantId === BRUNO.tenantId && brunoTurn.turn.agentId === BRUNO.agentId);

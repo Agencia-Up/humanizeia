@@ -13,6 +13,10 @@ import {
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
+import {
+  isPedroV3ExclusiveScope,
+  parsePedroV3ActiveScopes,
+} from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 
 const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v25.0";
 const META_GRAPH_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
@@ -211,6 +215,17 @@ async function handleInbound(supabase: any, value: any) {
     const agent = selectActiveAgent(allAgents || [], waInstance.id);
     if (!agent) {
       console.log("[meta-webhook] nenhum agente ativo p/ user:", waInstance.user_id);
+      continue;
+    }
+
+    const v3Scopes = parsePedroV3ActiveScopes(Deno.env.get("PEDRO_V3_ACTIVE_SCOPES"));
+    if (isPedroV3ExclusiveScope({
+      tenantId: waInstance.user_id,
+      agentId: agent.id,
+      mode: Deno.env.get("PEDRO_V3_PILOT_MODE"),
+      activeScopes: v3Scopes,
+    })) {
+      console.log("[meta-webhook] v3_exclusive_scope_blocked_v2_direct_entry");
       continue;
     }
 
