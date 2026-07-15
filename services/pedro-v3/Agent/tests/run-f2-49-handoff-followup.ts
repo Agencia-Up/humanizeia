@@ -7,7 +7,7 @@ import { evaluateFollowup, evaluateFollowupDue } from "../src/engine/followup-po
 import { authorFollowupMessage, authorFollowupMessageDetailed } from "../src/engine/followup-author.ts";
 import { readFileSync } from "node:fs";
 import { sanitizeOutgoingText } from "../src/engine/central-engine.ts";
-import { buildHandoffChain } from "../src/engine/handoff-plan.ts";
+import { buildHandoffChain, forcedSilentDisengagementReason } from "../src/engine/handoff-plan.ts";
 import { validateEffectPlans } from "../src/engine/finalizer.ts";
 import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
 import { requiredReceiptFor } from "../src/domain/effect-policy.ts";
@@ -115,6 +115,21 @@ check("[H6] stage so no notify", handoff?.onSuccess.length === 0 && notify?.onSu
 check("[H7] grafo valido", validateEffectPlans(chain.effectPlan).length === 0);
 const handoffReply = chain.effectPlan.find((p) => p.kind === "send_message");
 check("[H8] reply do handoff nao inventa delivery gate", handoffReply?.onSuccess.every((o) => o.op !== "mark_message_delivered") === true);
+
+// Encerramento/desinteresse é uma transferência OPERACIONAL silenciosa: a LLM
+// já escreveu a despedida e o plan apenas acopla CRM -> handoff -> vendedor.
+// Não há segunda mensagem para o lead nem reescrita pelo engine.
+const silentDecision: TurnDecision = { ...decision, turnId: "turn-silent", effectPlan: [{ ...send, planId: "farewell", effectId: "turn-silent:farewell" }] };
+const silent = buildHandoffChain({ decision: silentDecision, turnId: "turn-silent", leadId: LEAD, stateAfter: state(), adContext: null, adVehicleLabel: null, lastPhotoAction: null, agentName: "Pedro", leadPhone: "5512999999999", leadDisplayName: "Douglas", nowLocal: "11/07/2026 09:15", plannable: true, forcedReason: "silent_disengagement_handoff" });
+const silentReply = silent.effectPlan.find((p) => p.kind === "send_message");
+const silentHandoff = silent.effectPlan.find((p) => p.kind === "handoff");
+const silentNotify = silent.effectPlan.find((p) => p.kind === "notify_seller");
+check("[H9a] desinteresse força motivo operacional apenas antes do handoff", forcedSilentDisengagementReason({ disengaged: true, explicitHumanRequest: false, stage: "negotiating" }) === "silent_disengagement_handoff");
+check("[H9b] pedido humano e conversa já transferida preservam o fluxo normal", forcedSilentDisengagementReason({ disengaged: true, explicitHumanRequest: true, stage: "negotiating" }) === null && forcedSilentDisengagementReason({ disengaged: true, explicitHumanRequest: false, stage: "handoff" }) === null);
+check("[H9] encerramento silencioso monta cadeia tipada", silent.planned && silent.reason === "silent_disengagement_handoff");
+check("[H10] encerramento preserva a unica despedida da LLM", silent.effectPlan.filter((p) => p.kind === "send_message").length === 1 && silentReply?.planId === "farewell");
+check("[H11] briefing explica encerramento sem interesse", silent.planned && silent.briefing.includes("encerrou o atendimento sem interesse"));
+check("[H12] handoff silencioso depende da despedida e notifica vendedor", silentHandoff?.dependsOn?.includes("farewell") === true && silentNotify?.dependsOn?.includes("handoff") === true);
 
 const os = state(); os.followupCycle = { anchorEffectId: anchor.effectId, anchorAt: ANCHOR, sentStages: [], plannedStage: 1, lastSentAt: null };
 const op: SendMessagePlan = { ...send, effectId: "fu-out", onSuccess: [{ op: "mark_followup_sent", effectId: "fu-out", anchorEffectId: anchor.effectId, stage: 1, sentAt: NOW }] };

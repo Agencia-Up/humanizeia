@@ -137,6 +137,7 @@ async function main(): Promise<void> {
   check("[G-1] 'não solicitei nada' -> not_interested", detectDisengagement("não solicitei nada") === "not_interested");
   check("[G-2] 'não me interessa' -> not_interested", detectDisengagement("não me interessa, valeu") === "not_interested");
   check("[G-3] 'obrigado, vou pensar' -> low_intent", detectDisengagement("obrigado, vou pensar") === "low_intent");
+  check("[G-3b] 'não gostei de nenhum' encerra mesmo sem agradecimento", detectDisengagement("não gostei de nenhum") === "not_interested");
   check("[G-4] 'quero um onix' -> null (não é desinteresse)", detectDisengagement("quero um onix") === null);
 
   // ── PARTE 3 — INTEGRAÇÃO Fase 2 (rígido) ──

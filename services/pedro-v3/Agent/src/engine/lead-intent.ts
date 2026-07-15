@@ -9,7 +9,7 @@ import { normalizeText } from "./catalog-utils.ts";
 
 export type LeadEngagement = "not_interested" | "low_intent";
 
-const NOT_INTERESTED_RX = /\bnao\s+(?:solicitei|pedi|chamei|procurei|contratei|pedi\s+nada)\b|\bnao\s+(?:tenho|to\s+com|estou\s+com)\s+interesse\b|\bnao\s+me\s+interessa\b|\bnao\s+quero\s+(?:nada|comprar)\b|\bnada\s+ok\b|\bpar[ae]\s+de\s+(?:mandar|enviar|me\s+mandar)\b|\bnao\s+(?:me\s+)?enche\b|\bme\s+tira\s+(?:da\s+lista|dessa)\b|\bsai\s+fora\b/;
+const NOT_INTERESTED_RX = /\bnao\s+(?:solicitei|pedi|chamei|procurei|contratei|pedi\s+nada)\b|\bnao\s+(?:tenho|to\s+com|estou\s+com)\s+interesse\b|\bnao\s+me\s+interessa\b|\bnao\s+quero\s+(?:nada|comprar)\b|\bnao\s+gostei\s+de\s+(?:nenhum|nenhuma)\b|\bnenhum(?:a)?\s+(?:das\s+)?op(?:cao|coes)\b|\bnada\s+ok\b|\bpar[ae]\s+de\s+(?:mandar|enviar|me\s+mandar)\b|\bnao\s+(?:me\s+)?enche\b|\bme\s+tira\s+(?:da\s+lista|dessa)\b|\bsai\s+fora\b/;
 const LOW_INTENT_RX = /\bso\s+(?:olhando|dando\s+uma\s+olhada|pesquisando|de\s+olho|por\s+curiosidade)\b|\bobrigad[oa]\b|\bvaleu\b|\bnada\s+(?:por\s+enquanto|no\s+momento)\b|\bdepois\s+(?:eu\s+)?(?:vejo|volto|penso|te\s+chamo)\b|\bvou\s+pensar\b|\bvou\s+ver\b/;
 
 export function detectDisengagement(block: string): LeadEngagement | null {

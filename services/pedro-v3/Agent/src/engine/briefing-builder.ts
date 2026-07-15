@@ -64,6 +64,7 @@ export type BriefingHandoffReason =
   | "explicit_human_request"
   | "qualified_handoff"
   | "followup_timeout_handoff"
+  | "silent_disengagement_handoff"
   | "returning_lead_renotify";
 
 type BriefingContext = {
@@ -140,6 +141,9 @@ export function suggestNextStep(state: ConversationState, context: BriefingConte
     if (interest) return `Retomar o interesse em ${interest} e oferecer fotos, detalhes ou opções equivalentes.`;
     return "Retomar o contato pelo contexto já coletado e entender qual veículo faz sentido, sem reiniciar o atendimento.";
   }
+  if (context.handoffReason === "silent_disengagement_handoff") {
+    return "Registrar o encerramento e acompanhar o lead sem retomar a abordagem agora; só responder se ele voltar a demonstrar interesse.";
+  }
   if (visitAt) return `Confirmar a visita em ${visitAt} e alinhar quem receberá o cliente na loja.`;
   if (known(s, "interesseVisita") === true) return `Combinar dia e horário da visita${selected ? ` ao ${selected}` : interest ? ` para ver ${interest}` : ""}.`;
   if (selected && context.lastPhotoAction?.photoIds.length) return `Retomar o ${selected}, confirmar as dúvidas após as fotos e avançar para condições ou visita.`;
@@ -195,6 +199,8 @@ export function buildAgentSummary(args: BriefingArgs): string[] {
   else if (known(state.slots, "interesseVisita") === true) summary.push("Demonstrou interesse em visitar a loja; data e horário ainda precisam ser combinados.");
   if (args.handoffReason === "followup_timeout_handoff") {
     summary.push(offered.length > 0 ? "Ficou inativo após receber as opções." : "Ficou inativo antes de concluir o atendimento.");
+  } else if (args.handoffReason === "silent_disengagement_handoff") {
+    summary.push("Encerrou o atendimento sem interesse nas opções apresentadas; transferência feita em silêncio para acompanhamento.");
   } else if (args.handoffReason === "explicit_human_request") {
     summary.push("Pediu atendimento humano diretamente.");
   } else if (args.handoffReason === "qualified_handoff") {

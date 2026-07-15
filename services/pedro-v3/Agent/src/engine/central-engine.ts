@@ -56,7 +56,7 @@ import { finalize, validateEffectPlans } from "./finalizer.ts";
 import { applyDecision } from "./state-reducer.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
 import { buildCrmWritePlan } from "./crm-write.ts";
-import { buildHandoffChain } from "./handoff-plan.ts";
+import { buildHandoffChain, forcedSilentDisengagementReason } from "./handoff-plan.ts";
 
 // MISSÃO PII (P0-C): shape do diagnóstico do precheck de handoff — módulo testável handoff-precheck.ts.
 import type { HandoffPrecheckDiag } from "./handoff-precheck.ts";
@@ -3164,6 +3164,19 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       //    plannable (flag+vendedor+CRM vinculado+crm_write do turno), reconstruímos a cadeia executável:
       //    reply (delivered-gate) -> crm_write -> handoff (saga) -> notify_seller. briefing/etiquetas = fatos. ──
       const wmPhoto = reduced.next.workingMemory?.lastPhotoAction ?? null;
+      // Encerramento por desinteresse também precisa chegar ao CRM/vendedor, mas
+      // sem mudar a despedida já autorada pela LLM. Pedido explícito de humano
+      // mantém a precedência e seu motivo próprio; após handoff concluído não
+      // abrimos uma nova cadeia.
+      const explicitHumanRequest = requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage);
+      const forcedHandoffReason = llmFirst
+        ? forcedSilentDisengagementReason({
+          disengaged: disengagedActionable,
+          explicitHumanRequest,
+          stage: contextState.stage,
+        })
+        : null;
+      const silentDisengagementHandoff = forcedHandoffReason === "silent_disengagement_handoff";
       const handoffChain = buildHandoffChain({
         decision: decisionWithCrm,
         turnId,
@@ -3181,6 +3194,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // CRM pode ja estar sincronizado: ausencia de delta neste turno nao bloqueia
         // um pedido explicito de humano. Se houver crmPlan, ele entra como dependencia.
         plannable: handoffPlannable && crmLeadId != null,
+        forcedReason: forcedHandoffReason ?? undefined,
       });
       const decisionForOutbox = { ...decisionWithCrm, effectPlan: handoffChain.effectPlan };
       const handoffGraphViolations = validateEffectPlans(decisionForOutbox.effectPlan);
@@ -3253,7 +3267,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // HF-1/3 (auditoria por turno): plannable (flag+vendedor+vínculo), se a cadeia foi montada, o motivo
           // tipado e por que um handoff proposto foi REMOVIDO (nunca silencioso). P0-C: precheck INTEIRO
           // (flag/crm/lead/config/portal/contagens/motivo/erro sanitizado) — a caixa-preta acabou.
-          handoff: { plannable: handoffPlannable, planned: handoffChain.planned, reason: handoffChain.planned ? handoffChain.reason : null, stripped: handoffChain.planned ? null : handoffChain.strippedReason, precheck: (args.handoff?.precheck ?? null) as unknown as JsonValue },
+          handoff: { plannable: handoffPlannable, planned: handoffChain.planned, reason: handoffChain.planned ? handoffChain.reason : null, stripped: handoffChain.planned ? null : handoffChain.strippedReason, silentDisengagement: silentDisengagementHandoff, precheck: (args.handoff?.precheck ?? null) as unknown as JsonValue },
           // ⭐SEM (invariantes 1/2 — auditoria por turno): retries de proveniência do understanding + mutações de
           // slot da LLM descartadas por falta de proveniência (o incidente possuiTroca=false fantasma fica visível).
           provenanceRetries, provenanceExhausted, evidenceNormalized, droppedSlotMutations: droppedSlotMutations.slice(0, 6),

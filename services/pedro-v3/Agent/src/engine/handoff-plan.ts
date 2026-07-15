@@ -57,6 +57,20 @@ export function proposedHandoffReason(decision: TurnDecision): HandoffReasonKind
   return reason === "explicit_human_request" || reason === "qualified_handoff" ? reason : null;
 }
 
+// Encerrar a conversa por desinteresse também é um evento operacional: o
+// vendedor recebe o briefing, enquanto a mensagem ao lead continua sendo só a
+// despedida que a LLM já autorou. Pedido explícito de humano conserva o motivo
+// visível/original e uma conversa já entregue ao vendedor não cria nova saga.
+export function forcedSilentDisengagementReason(input: {
+  readonly disengaged: boolean;
+  readonly explicitHumanRequest: boolean;
+  readonly stage: ConversationState["stage"];
+}): HandoffReasonKind | null {
+  if (!input.disengaged || input.explicitHumanRequest) return null;
+  if (input.stage === "handoff" || input.stage === "closed") return null;
+  return "silent_disengagement_handoff";
+}
+
 // Monta a cadeia final. SEMPRE remove handoff/notify_seller propostos (autoria do engine);
 // quando `plannable`, reconstrói a cadeia completa com briefing/etiquetas factuais.
 export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable: boolean; readonly forcedReason?: HandoffReasonKind }): HandoffChainResult {

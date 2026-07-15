@@ -29,6 +29,9 @@ export const HANDOFF_REASON_KINDS = [
   "explicit_human_request",
   "qualified_handoff",
   "followup_timeout_handoff",
+  // O lead encerrou/desistiu. A despedida continua sendo autoria da LLM;
+  // este motivo existe apenas para a cadeia operacional e o briefing interno.
+  "silent_disengagement_handoff",
   "returning_lead_renotify",
 ] as const;
 export type HandoffReasonKind = (typeof HANDOFF_REASON_KINDS)[number];
@@ -43,6 +46,7 @@ export const HANDOFF_REASON_LABEL: Record<HandoffReasonKind, string> = {
   explicit_human_request: "Lead pediu atendimento humano",
   qualified_handoff: "Lead qualificado — próximo passo é o vendedor",
   followup_timeout_handoff: "Inatividade do lead (follow-up T3)",
+  silent_disengagement_handoff: "Lead encerrou o atendimento sem interesse nas opções",
   returning_lead_renotify: "Lead retornou e voltou a demonstrar interesse",
 };
 
