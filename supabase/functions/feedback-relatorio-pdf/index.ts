@@ -11,7 +11,7 @@ import { jsPDF } from 'https://esm.sh/jspdf@2.5.1';
 // Guard interno das funcoes de feedback: secret FEEDBACK_VIEW_KEY (setado no
 // dashboard). Sem literal no codigo — se o secret faltar, falha fechado.
 const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || '';
-const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const NAVY = [11, 30, 58], GOLD = [198, 161, 91], INK = [29, 36, 48], MUTED = [107, 116, 130];
 const LINE = [230, 233, 239], GREEN = [31, 157, 85], GREEN_BG = [232, 246, 238];
@@ -93,7 +93,14 @@ Deno.serve(async (req) => {
 
     // Filtro opcional: relatório completo de UM vendedor (Feedbacks > Por vendedor).
     const vendedorId = body?.vendedor_id ? String(body.vendedor_id) : null;
-    const tenant = authedTenant || String(body?.tenant_id || TENANT_DEFAULT);
+    const tenant = authedTenant || String(body?.tenant_id || '').trim();
+    if (!UUID_RE.test(tenant)) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: 'tenant_id obrigatorio',
+        motivo: 'PDF bloqueado: chamada interna sem conta master explicita. Nao existe fallback para tenant padrao.',
+      }), { status: 400 });
+    }
     // No modo autenticado gera um arquivo único (não sobrescreve o do disparo) e
     // devolve URL assinada; no legado mantém o nome/comportamento antigos.
     const uploadNome = authedTenant

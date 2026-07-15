@@ -14,7 +14,7 @@ import { jsPDF } from 'https://esm.sh/jspdf@2.5.1';
 // Guard interno das funcoes de feedback: secret FEEDBACK_VIEW_KEY (setado no
 // dashboard). Sem literal no codigo — se o secret faltar, falha fechado.
 const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || '';
-const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const NAVY = [11, 30, 58], GOLD = [224, 168, 46], INK = [29, 36, 48], MUTED = [107, 116, 130];
 const LINE = [230, 233, 239], GREEN = [31, 157, 85], GREEN_BG = [231, 245, 238];
@@ -49,7 +49,14 @@ Deno.serve(async (req) => {
     if (req.method !== 'POST') return new Response('POST only', { status: 405 });
     const body = await req.json().catch(() => ({}));
     if (body?.k !== VIEW_KEY) return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403 });
-    const tenant = String(body?.tenant_id || TENANT_DEFAULT);
+    const tenant = String(body?.tenant_id || '').trim();
+    if (!UUID_RE.test(tenant)) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: 'tenant_id obrigatorio',
+        motivo: 'PDF bloqueado: chamada sem conta master explicita. Nao existe fallback para tenant padrao.',
+      }), { status: 400 });
+    }
     const uploadNome = String(body?.upload_nome || 'relatorio-diario.pdf');
     const loja = String(body?.loja || 'Sua loja');
     const dias = Number(body?.dias) || 7;

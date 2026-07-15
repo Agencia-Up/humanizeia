@@ -11,8 +11,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // Guard interno das funcoes de feedback: secret FEEDBACK_VIEW_KEY (setado no
 // dashboard). Sem literal no codigo — se o secret faltar, falha fechado.
 const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || '';
-const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
 const SUPA_URL = Deno.env.get('SUPABASE_URL')!;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -132,7 +132,14 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body?.k !== VIEW_KEY) return json({ ok: false, error: 'forbidden' }, 403);
 
-    const tenant = String(body?.tenant_id || TENANT_DEFAULT);
+    const tenant = String(body?.tenant_id || '').trim();
+    if (!UUID_RE.test(tenant)) {
+      return json({
+        ok: false,
+        error: 'tenant_id obrigatorio',
+        motivo: 'Relatorio bloqueado: chamada sem conta master explicita. Nao existe fallback para tenant padrao.',
+      }, 400);
+    }
     const admin = createClient(SUPA_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     // Item 10: log rastreavel (nao deixa falha silenciosa no cron diario).
