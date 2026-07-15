@@ -7,7 +7,7 @@
 // Brain (planner) temp 0.2 + compose temp 0.3: o cérebro decide o conteúdo, o compose só REDIGE aterrado — menos
 // alucinação -> menos terminal_safe. Cada um com seu transporte contador (prova de prompt integral por papel).
 // ============================================================================
-import { buildRealAssembly, CountingModelHttpTransport, RetryingModelHttpTransport, sanitize, PILOT_TENANT, PILOT_AGENT, type RealAssembly } from "./real-harness.ts";
+import { CountingModelHttpTransport, RetryingModelHttpTransport, sanitize, type RealAssembly } from "./real-harness.ts";
 import { FetchModelHttpTransport } from "../src/runtime/fetch-transports.ts";
 import { OpenAiAgentBrain } from "../src/adapters/llm/openai-agent-brain.ts";
 import { PromptBoundConversationAdapter } from "../src/adapters/llm/prompt-bound-conversation.ts";
@@ -120,7 +120,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
   const businessInfo = opts.businessInfo ?? new RuntimeConfigBusinessInfoSource(assembly.runtimeConfig);
 
   const seed = persistence.begin();
-  seed.casState(convId, 0, createInitialState({ conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: opts.crmLeadId ?? null, now: clock.now() }));
+  seed.casState(convId, 0, createInitialState({ conversationId: convId, tenantId: assembly.ref.tenantId, agentId: assembly.ref.agentId, leadId: opts.crmLeadId ?? null, now: clock.now() }));
   const seeded = seed.commit();
   if (!seeded.ok) throw new Error(`central_seed_failed: ${seeded.reason}`);
 
@@ -181,7 +181,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
     try {
       r = await runCentralConversationTurn({
         persistence, clock: clock as never, brain: recordingBrain, llm: stack.composeLlm, runQuery: assembly.runQuery, businessInfo,
-        contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: PILOT_TENANT, agentId: PILOT_AGENT, leadId: opts.crmLeadId ?? null,
+        contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: assembly.ref.tenantId, agentId: assembly.ref.agentId, leadId: opts.crmLeadId ?? null,
         workerId: "central-eval", turnId, leaseTtlMs: 120_000, portalPromptSha256: assembly.promptSha,
         limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
         providerCapability: { send_message: "none", send_media: "none" },

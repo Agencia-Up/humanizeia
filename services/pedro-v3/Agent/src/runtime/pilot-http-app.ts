@@ -2,9 +2,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { PilotActiveTurnResult } from "../engine/pilot-active-root.ts";
 import type { ProviderDeliveryResult } from "../engine/provider-delivery-receipt.ts";
 import {
-  PEDRO_V3_PILOT_AGENT_ID,
-  PEDRO_V3_PILOT_TENANT_ID,
-  isPedroV3PilotScope,
+  isPedroV3ActiveScope,
+  type PedroV3ActiveScope,
 } from "../domain/pilot-scope.ts";
 
 const MAX_BODY_BYTES = 32 * 1024;
@@ -204,7 +203,13 @@ function parseReceiptPayload(bodyText: string): PilotReceiptPayload | null {
 export class PilotHttpApp {
   readonly #secretDigest: Buffer;
 
-  constructor(secret: string, private readonly runner: PilotTurnRunner, private readonly receiptRunner?: PilotReceiptRunner, private readonly healthInfo?: PilotHealthInfo) {
+  constructor(
+    secret: string,
+    private readonly runner: PilotTurnRunner,
+    private readonly receiptRunner?: PilotReceiptRunner,
+    private readonly healthInfo?: PilotHealthInfo,
+    private readonly activeScopes?: readonly PedroV3ActiveScope[],
+  ) {
     if (typeof secret !== "string" || secret.trim().length < 32) {
       throw new PilotHttpConfigError("BRIDGE_SECRET_INVALID");
     }
@@ -231,7 +236,7 @@ export class PilotHttpApp {
     if (request.pathname === "/v1/pilot/receipt") {
       const receipt = parseReceiptPayload(request.bodyText ?? "");
       if (!receipt) return json(400, { ok: false, error: "receipt_payload_invalid" });
-      if (!isPedroV3PilotScope({ tenantId: receipt.tenantId, agentId: receipt.agentId })) {
+      if (!isPedroV3ActiveScope({ tenantId: receipt.tenantId, agentId: receipt.agentId }, this.activeScopes)) {
         return json(403, { ok: false, error: "pilot_scope_denied" });
       }
       if (!this.receiptRunner) return json(503, { ok: false, error: "receipt_runner_unavailable" });
@@ -244,13 +249,7 @@ export class PilotHttpApp {
     }
     const payload = parsePayload(request.bodyText ?? "");
     if (!payload) return json(400, { ok: false, error: "payload_invalid", ingested: false });
-    if (!isPedroV3PilotScope(payload)) {
-      return json(403, { ok: false, error: "pilot_scope_denied", ingested: false });
-    }
-    if (
-      payload.tenantId !== PEDRO_V3_PILOT_TENANT_ID
-      || payload.agentId !== PEDRO_V3_PILOT_AGENT_ID
-    ) {
+    if (!isPedroV3ActiveScope(payload, this.activeScopes)) {
       return json(403, { ok: false, error: "pilot_scope_denied", ingested: false });
     }
 

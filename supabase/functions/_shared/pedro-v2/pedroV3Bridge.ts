@@ -1,6 +1,5 @@
 import {
-  PEDRO_V3_PILOT_AGENT_ID,
-  PEDRO_V3_PILOT_TENANT_ID,
+  type PedroV3ActiveScope,
   isPedroV3PilotIdentity,
 } from "./pedroV3PilotGate.ts";
 
@@ -232,8 +231,9 @@ export async function buildPedroV3BridgeTurn(input: {
   agentId: string | null | undefined;
   build: string;
   mediaContext?: PedroV3MediaContext | null;
+  activeScopes?: readonly PedroV3ActiveScope[];
 }): Promise<PedroV3BridgeBuildResult> {
-  if (!isPedroV3PilotIdentity(input)) return { ok: false, reason: "not_pilot_identity" };
+  if (!isPedroV3PilotIdentity(input, input.activeScopes)) return { ok: false, reason: "not_pilot_identity" };
   const messageId = incomingMessageId(input.payload);
   if (!messageId) return { ok: false, reason: "message_id_missing" };
   const phone = normalizePhone(incomingRemoteJid(input.payload));
@@ -241,14 +241,16 @@ export async function buildPedroV3BridgeTurn(input: {
   const text = mergeInboundLeadText(incomingText(input.payload), mediaContextLeadText(input.mediaContext));
   if (!text) return { ok: false, reason: "text_unsupported" };
 
-  const eventHash = await sha256(`${PEDRO_V3_PILOT_TENANT_ID}|${PEDRO_V3_PILOT_AGENT_ID}|${messageId}`);
-  const conversationHash = await sha256(`${PEDRO_V3_PILOT_TENANT_ID}|${PEDRO_V3_PILOT_AGENT_ID}|${phone}`);
+  const tenantId = input.tenantId!;
+  const agentId = input.agentId!;
+  const eventHash = await sha256(`${tenantId}|${agentId}|${messageId}`);
+  const conversationHash = await sha256(`${tenantId}|${agentId}|${phone}`);
   const adReferral = extractAdReferral(input.payload);   // F2.32 (CTWA): só na 1ª msg do anúncio; senão null.
   return {
     ok: true,
     turn: {
-      tenantId: PEDRO_V3_PILOT_TENANT_ID,
-      agentId: PEDRO_V3_PILOT_AGENT_ID,
+      tenantId,
+      agentId,
       conversationId: `wa:${conversationHash}`,
       turnId: `turn:${eventHash}`,
       eventId: `uazapi:${eventHash}`,
@@ -292,8 +294,9 @@ export function buildPedroV3DeliveryReceipt(input: {
   payload: any;
   tenantId: string | null | undefined;
   agentId: string | null | undefined;
+  activeScopes?: readonly PedroV3ActiveScope[];
 }): PedroV3ReceiptBuildResult {
-  if (!isPedroV3PilotIdentity(input)) return { ok: false, reason: "not_pilot_identity" };
+  if (!isPedroV3PilotIdentity(input, input.activeScopes)) return { ok: false, reason: "not_pilot_identity" };
   const type = eventType(input.payload);
   if (type !== "messages_update" && type !== "message_update" && type !== "messages.update") {
     return { ok: false, reason: "not_message_update" };
@@ -317,8 +320,8 @@ export function buildPedroV3DeliveryReceipt(input: {
   return {
     ok: true,
     receipt: {
-      tenantId: PEDRO_V3_PILOT_TENANT_ID,
-      agentId: PEDRO_V3_PILOT_AGENT_ID,
+      tenantId: input.tenantId!,
+      agentId: input.agentId!,
       providerMessageId,
       status: rawStatus,
       occurredAt: receivedAt(input.payload),

@@ -17,7 +17,7 @@ import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
 import { resolveTenantAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
 import { DebouncePoller } from "./debounce-poller.ts";
-import { PEDRO_V3_PILOT_AGENT_ID, PEDRO_V3_PILOT_TENANT_ID } from "../domain/pilot-scope.ts";
+import { parsePedroV3ActiveScopes, type PedroV3ActiveScope } from "../domain/pilot-scope.ts";
 import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
@@ -92,6 +92,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #serviceRoleKey: string;
   readonly #aiProvider: AiProviderRuntimeConfig;
   readonly #allowedUazapiHosts: readonly string[];
+  readonly #activeScopes: readonly PedroV3ActiveScope[];
   readonly #clock = new RealClock();
   readonly #debounce: DebounceConfig;
   // FASE 1 CRM + Opção A: UMA instância (stateless) implementa as DUAS portas — CrmLeadStore (update
@@ -119,6 +120,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     // F2.6J: a chave OpenAI NAO vem de env global. E resolvida por tenant (BYOK) via Vault/RPC.
     this.#aiProvider = resolveAiProviderRuntime(process.env);
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
+    this.#activeScopes = parsePedroV3ActiveScopes(process.env.PEDRO_V3_ACTIVE_SCOPES);
     // F2.7.6: janela de debounce + intervalo do poller (defaults 6000/12000/2000ms).
     this.#debounce = resolveDebounceConfig(process.env);
     this.#crmLeadStore = process.env.PEDRO_V3_CRM_WRITE?.trim() === "active"
@@ -149,6 +151,14 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
   get debounceConfig(): DebounceConfig {
     return this.#debounce;
+  }
+
+  get activeScopes(): readonly PedroV3ActiveScope[] {
+    return this.#activeScopes;
+  }
+
+  #scopeFor(tenantId: string | null | undefined, agentId: string | null | undefined): PedroV3ActiveScope | null {
+    return this.#activeScopes.find((scope) => scope.tenantId === tenantId && scope.agentId === agentId) ?? null;
   }
 
   get followupDiagnostics(): Readonly<Record<string, unknown>> {
@@ -186,7 +196,9 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     // cadeia ficaria parada ate a proxima mensagem do lead.
     if (result.status === "applied" && result.conversationId) {
       try {
-        const root = await this.#createRoot(PEDRO_V3_PILOT_AGENT_ID, null, this.#gateway());
+        const scope = this.#scopeFor(payload.tenantId, payload.agentId);
+        if (!scope) throw new Error("ACTIVE_SCOPE_DENIED");
+        const root = await this.#createRoot(scope, null, this.#gateway());
         await root.flushConversationEffects({
           persistence,
           conversationId: result.conversationId,
@@ -233,16 +245,19 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     }
   }
 
-  // F2.7.6: o poller pergunta quais conversas do tenant do piloto ja assentaram.
+  // Consulta cada escopo autorizado isoladamente. Nunca ha leitura cross-tenant.
   async findSettled(nowIso: string): Promise<SettledConversation[]> {
-    const persistence = new PostgresPersistence(this.#gateway(), {
-      tenantId: PEDRO_V3_PILOT_TENANT_ID,
-      clock: this.#clock,
-    });
-    return persistence.findSettledConversations(nowIso, this.#debounce.debounceMs, this.#debounce.maxWaitMs, 20);
+    const batches = await Promise.all(this.#activeScopes.map(async (scope) => {
+      const persistence = new PostgresPersistence(this.#gateway(), { tenantId: scope.tenantId, clock: this.#clock });
+      const settled = await persistence.findSettledConversations(nowIso, this.#debounce.debounceMs, this.#debounce.maxWaitMs, 20);
+      return settled
+        .filter((item) => item.agentId === scope.agentId)
+        .map((item) => ({ ...item, tenantId: scope.tenantId }));
+    }));
+    return batches.flat();
   }
 
-  async #createRoot(agentId: string, leadId: string | null, gateway: SupabaseServiceGateway): Promise<PilotActiveRoot> {
+  async #createRoot(scope: PedroV3ActiveScope, leadId: string | null, gateway: SupabaseServiceGateway): Promise<PilotActiveRoot> {
     const readDb = SupabaseReadOnlyDatabase.create({
       url: this.#supabaseUrl,
       apiKey: this.#serviceRoleKey,
@@ -251,7 +266,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       maxResponseBytes: 4 * 1024 * 1024,
     });
     const aiSecret = resolveProviderEnvironmentSecret(process.env, this.#aiProvider.provider)
-      ?? await resolveTenantAiSecret({ gateway, tenantId: PEDRO_V3_PILOT_TENANT_ID, provider: this.#aiProvider.provider });
+      ?? await resolveTenantAiSecret({ gateway, tenantId: scope.tenantId, provider: this.#aiProvider.provider });
     const brainMode = resolveBrainMode();
     // R13-D/4: AgentBrain REAL (OpenAI) só é fabricado quando o modo pede. Planner em temp baixa (0.2). Segredo por
     // tenant (mesmo openAiSecret do compose); prompt integral vai no system do brain (prova por SHA no adapter).
@@ -270,9 +285,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       : undefined;
     return PilotActiveRoot.create({
       mode: "active",
-      tenantId: PEDRO_V3_PILOT_TENANT_ID,
-      agentId,
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
       leadId,
+      activeScopes: this.#activeScopes,
     }, {
       db: readDb,
       decryptor: new V2PlaintextApiKeyReader(),
@@ -308,9 +324,14 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   // F2.7.6: processa UMA conversa assentada (claim do BLOCO -> decide -> dispatch).
   // Falha de bootstrap (ex.: sem chave do tenant) NAO derruba o poller: deixa pendente p/ o proximo tick.
   async processSettled(settled: SettledConversation): Promise<void> {
+    const scope = this.#scopeFor(settled.tenantId, settled.agentId);
+    if (!scope) {
+      console.error(JSON.stringify({ event: "pedro_v3_settled_scope_denied", conversationId: settled.conversationId }));
+      return;
+    }
     const gateway = this.#gateway();
     const persistence = new PostgresPersistence(gateway, {
-      tenantId: PEDRO_V3_PILOT_TENANT_ID,
+      tenantId: scope.tenantId,
       clock: this.#clock,
     });
 
@@ -330,7 +351,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }
       const binding = await resolveConversationLeadBinding({
         identity: this.#crmLeadStore,
-        ref: { tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: settled.agentId },
+        ref: scope,
         toAddr: settled.toAddr,
         settledLeadId: settled.leadId,
         stateLeadId,
@@ -350,14 +371,14 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         } catch { /* best-effort: nunca bloqueia o turno */ }
       }
       if (binding.leadId != null && binding.crmEnabled) {
-        try { await this.#crmLeadStore.touchOwnedLeadActivity({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: settled.agentId }, binding.leadId, this.#clock.now()); }
+        try { await this.#crmLeadStore.touchOwnedLeadActivity(scope, binding.leadId, this.#clock.now()); }
         catch { /* atividade do CRM nunca silencia o lead */ }
       }
     }
 
     let root: PilotActiveRoot;
     try {
-      root = await this.#createRoot(settled.agentId, turnLeadId, gateway);
+      root = await this.#createRoot(scope, turnLeadId, gateway);
     } catch {
       return;
     }
@@ -392,62 +413,60 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       return { checked: 0, planned: 0, failed: 0 };
     }
     const gateway = this.#gateway();
-    let candidates;
-    let config;
-    try {
-      candidates = await new FollowupCandidateStore(gateway).list({
-        tenantId: PEDRO_V3_PILOT_TENANT_ID,
-        agentId: PEDRO_V3_PILOT_AGENT_ID,
-      });
-      config = await this.#transferStore.loadAgentConfig({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID });
-    } catch (error) {
-      const reason = sanitizeTurnError(error instanceof Error ? error.message : String(error));
-      this.#followupDiagnostics = { lastTickAt: tickAt, checked: 0, due: 0, planned: 0, failed: 1, lastFailure: reason, skipped };
-      console.error(JSON.stringify({ event: "pedro_v3_followup_scan_failed", reason }));
-      return { checked: 0, planned: 0, failed: 1 };
-    }
-    if (!config?.rules.followup.enabled) {
-      skip("rules_disabled");
-      this.#followupDiagnostics = { lastTickAt: tickAt, checked: candidates.length, due: 0, planned: 0, failed: 0, lastFailure: config ? null : "agent_config_missing", skipped };
-      return { checked: candidates.length, planned: 0, failed: 0 };
-    }
+    let checked = 0;
     let planned = 0;
     let failed = 0;
     let dueCount = 0;
     let lastFailure: string | null = null;
-    for (const candidate of candidates) {
+    for (const scope of this.#activeScopes) {
       try {
-        const persistence = new PostgresPersistence(gateway, { tenantId: PEDRO_V3_PILOT_TENANT_ID, clock: this.#clock });
-        const outbox = await persistence.listOutbox(candidate.conversationId);
-        const evaluation = evaluateFollowup({ state: candidate.state, outbox, rules: config.rules.followup, now: this.#clock.now() });
-        const due = evaluation.due;
-        if (!due) { skip(evaluation.reason); continue; }
-        dueCount += 1;
-        const root = await this.#createRoot(PEDRO_V3_PILOT_AGENT_ID, candidate.leadId, gateway);
-        const result = await root.processFollowup({
-          persistence, conversationId: candidate.conversationId, to: candidate.toAddr,
-          workerId: "followup-worker", due, rules: config.rules,
-        });
-        if (result.planned) {
-          planned += 1;
-        } else if (result.reason && result.reason !== "not_eligible") {
-          failed += 1;
-          lastFailure = result.reason;
-          console.error(JSON.stringify({
-            event: "pedro_v3_followup_not_planned",
-            conversationId: candidate.conversationId,
-            stage: due.stage,
-            reason: sanitizeTurnError(result.reason),
-          }));
+        const candidates = await new FollowupCandidateStore(gateway).list(scope);
+        checked += candidates.length;
+        const config = await this.#transferStore.loadAgentConfig(scope);
+        if (!config?.rules.followup.enabled) {
+          skip("rules_disabled");
+          if (!config) lastFailure ??= "agent_config_missing";
+          continue;
+        }
+        for (const candidate of candidates) {
+          try {
+            const persistence = new PostgresPersistence(gateway, { tenantId: scope.tenantId, clock: this.#clock });
+            const outbox = await persistence.listOutbox(candidate.conversationId);
+            const evaluation = evaluateFollowup({ state: candidate.state, outbox, rules: config.rules.followup, now: this.#clock.now() });
+            if (!evaluation.due) { skip(evaluation.reason); continue; }
+            dueCount += 1;
+            const root = await this.#createRoot(scope, candidate.leadId, gateway);
+            const result = await root.processFollowup({
+              persistence, conversationId: candidate.conversationId, to: candidate.toAddr,
+              workerId: "followup-worker", due: evaluation.due, rules: config.rules,
+            });
+            if (result.planned) {
+              planned += 1;
+            } else if (result.reason && result.reason !== "not_eligible") {
+              failed += 1;
+              lastFailure = result.reason;
+              console.error(JSON.stringify({
+                event: "pedro_v3_followup_not_planned",
+                conversationId: candidate.conversationId,
+                tenantId: scope.tenantId,
+                stage: evaluation.due.stage,
+                reason: sanitizeTurnError(result.reason),
+              }));
+            }
+          } catch (error) {
+            failed += 1;
+            lastFailure = sanitizeTurnError(error instanceof Error ? error.message : String(error));
+            console.error(JSON.stringify({ event: "pedro_v3_followup_failed", conversationId: candidate.conversationId, tenantId: scope.tenantId, reason: lastFailure }));
+          }
         }
       } catch (error) {
         failed += 1;
         lastFailure = sanitizeTurnError(error instanceof Error ? error.message : String(error));
-        console.error(JSON.stringify({ event: "pedro_v3_followup_failed", conversationId: candidate.conversationId, reason: lastFailure }));
+        console.error(JSON.stringify({ event: "pedro_v3_followup_scan_failed", tenantId: scope.tenantId, agentId: scope.agentId, reason: lastFailure }));
       }
     }
-    this.#followupDiagnostics = { lastTickAt: tickAt, checked: candidates.length, due: dueCount, planned, failed, lastFailure, skipped };
-    return { checked: candidates.length, planned, failed };
+    this.#followupDiagnostics = { lastTickAt: tickAt, checked, due: dueCount, planned, failed, lastFailure, skipped };
+    return { checked, planned, failed };
   }
 }
 
@@ -481,8 +500,9 @@ const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, run
   handoff: process.env.PEDRO_V3_HANDOFF?.trim() === "active",
   followup: process.env.PEDRO_V3_FOLLOWUP?.trim() === "active",
   sensitiveVault: Boolean(process.env.PEDRO_V3_SENSITIVE_VAULT_KEY?.trim()),
+  activeScopeCount: runtime.activeScopes.length,
   followupWorker: runtime.followupDiagnostics,
-}));
+}), runtime.activeScopes);
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -512,6 +532,7 @@ server.listen(port, "0.0.0.0", () => {
     port,
     mode: "pilot",
     brainMode: resolveBrainMode(),
+    activeScopeCount: runtime.activeScopes.length,
   }));
 });
 

@@ -25,7 +25,7 @@ import { sellerPhoneKey } from "./transfer-templates.ts";
 import { PromptBoundConversationAdapter } from "../adapters/llm/prompt-bound-conversation.ts";
 import { createReadQueryRunner } from "./read-query-runner.ts";
 import { ConversationTurnContextPreparer, StockTenantCatalogSource, type TenantCatalogSource } from "./turn-context-preparer.ts";
-import { evaluatePedroV3PilotScope } from "../domain/pilot-scope.ts";
+import { evaluatePedroV3PilotScope, type PedroV3ActiveScope } from "../domain/pilot-scope.ts";
 import type { OutboxRecord } from "../domain/effect-intent.ts";
 import { runConversationTurn, type ConversationEngineResult } from "./conversation-engine.ts";
 import { runCentralConversationTurn, reconcileAcceptedPhotoOutcomes } from "./central-engine.ts";
@@ -60,6 +60,7 @@ export type PilotActiveConfig = {
   readonly tenantId: string;
   readonly agentId: string;
   readonly leadId?: string | null;
+  readonly activeScopes?: readonly PedroV3ActiveScope[];
 };
 
 export type PilotActiveDeps = {
@@ -220,7 +221,7 @@ export class PilotActiveRoot {
   }
 
   static async create(config: PilotActiveConfig, deps: PilotActiveDeps): Promise<PilotActiveRoot> {
-    const scope = evaluatePedroV3PilotScope({ tenantId: config.tenantId, agentId: config.agentId, mode: config.mode });
+    const scope = evaluatePedroV3PilotScope({ tenantId: config.tenantId, agentId: config.agentId, mode: config.mode, activeScopes: config.activeScopes });
     if (!scope.enabled || scope.mode !== "active") throw new PilotActiveRootError("PILOT_ACTIVE_SCOPE_DENIED");
 
     const ref: TenantAgentRef = { tenantId: config.tenantId, agentId: config.agentId };

@@ -216,10 +216,15 @@ export type RealAssembly = {
 };
 
 export async function buildRealAssembly(clock: { now(): string }): Promise<RealAssembly> {
+  return buildRealAssemblyFor({ tenantId: PILOT_TENANT, agentId: PILOT_AGENT }, clock);
+}
+
+// Allows production-equivalent canaries for another explicitly selected tenant
+// without changing the legacy Douglas eval contract.
+export async function buildRealAssemblyFor(ref: TenantAgentRef, clock: { now(): string }): Promise<RealAssembly> {
   const url = requiredEnv("SUPABASE_URL");
   const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
   const allowedHosts = [hostOf(url)];
-  const ref: TenantAgentRef = { tenantId: PILOT_TENANT, agentId: PILOT_AGENT };
   const aiProvider = resolveAiProviderRuntime(process.env);
 
   const serviceGateway = new SupabaseServiceGateway({ url, serviceRoleKey, allowedHosts, timeoutMs: 20_000, maxResponseBytes: 8 * 1024 * 1024 });

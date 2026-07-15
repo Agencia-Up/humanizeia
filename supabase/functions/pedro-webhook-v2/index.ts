@@ -9,7 +9,7 @@ import {
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
-import { evaluatePedroV3PilotAgent } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
+import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldBridgePedroV3Identity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
@@ -548,7 +548,14 @@ Deno.serve(async (req) => {
     console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${waInstance.id} (Carvalho copia)`);
     return jsonResponse({ ok: true, ignored: "agent_not_found_or_inactive", instance: instanceName });
   }
-  const pedroV3Pilot = evaluatePedroV3PilotAgent(agent, waInstance, Deno.env.get("PEDRO_V3_PILOT_MODE"));
+  let pedroV3Scopes;
+  try {
+    pedroV3Scopes = parsePedroV3ActiveScopes(Deno.env.get("PEDRO_V3_ACTIVE_SCOPES"));
+  } catch (error) {
+    console.error(`[pedro-v3-pilot] active_scope_config_invalid reason=${String((error as Error)?.message || error)}`);
+    pedroV3Scopes = [];
+  }
+  const pedroV3Pilot = evaluatePedroV3PilotAgent(agent, waInstance, Deno.env.get("PEDRO_V3_PILOT_MODE"), pedroV3Scopes);
   if (pedroV3Pilot.enabled) {
     console.log(
       `[pedro-v3-pilot] matched tenant=${agent.user_id} agent=${agent.id} mode=${pedroV3Pilot.mode}`,
@@ -562,6 +569,7 @@ Deno.serve(async (req) => {
         payload,
         tenantId: (agent as any)?.user_id,
         agentId: (agent as any)?.id,
+        activeScopes: pedroV3Scopes,
       });
       const receiptWaitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
       if (receipt.ok && typeof receiptWaitUntil === "function") {
@@ -682,6 +690,7 @@ Deno.serve(async (req) => {
         agentId: (agent as any)?.id,
         build: PEDRO_V2_BUILD,
         mediaContext,
+        activeScopes: pedroV3Scopes,
       });
       if (!bridgeTurn.ok) {
         console.warn(`[pedro-v3-bridge] unsupported inbound reason=${bridgeTurn.reason}; fallback=v2`);

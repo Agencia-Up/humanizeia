@@ -3,10 +3,16 @@
 
 import {
   evaluatePedroV3PilotScope,
+  parsePedroV3ActiveScopes,
   normalizePilotMode,
   PEDRO_V3_PILOT_AGENT_ID,
   PEDRO_V3_PILOT_TENANT_ID,
 } from "../src/domain/pilot-scope.ts";
+
+const BRUNO_SCOPE = {
+  tenantId: "f49fd48a-4386-4009-95f3-26a5100b84f7",
+  agentId: "aee7e916-31b1-431c-ba6f-f38178fd4899",
+} as const;
 
 let ok = 0;
 let fail = 0;
@@ -26,6 +32,27 @@ console.log("Pedro v3 pilot scope:");
 check("modo shadow normaliza", normalizePilotMode("shadow") === "shadow");
 check("modo active normaliza", normalizePilotMode("active") === "active");
 check("modo desconhecido vira off", normalizePilotMode("prod") === "off");
+
+{
+  const scopes = parsePedroV3ActiveScopes(JSON.stringify([
+    { tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID },
+    BRUNO_SCOPE,
+  ]));
+  check("allowlist explicita preserva dois pares tenant+agent", scopes.length === 2 && scopes[1]?.tenantId === BRUNO_SCOPE.tenantId);
+  const decision = evaluatePedroV3PilotScope({ ...BRUNO_SCOPE, mode: "active", activeScopes: scopes });
+  check("Bruno so entra quando esta na allowlist", decision.enabled && decision.mode === "active", JSON.stringify(decision));
+  const crossed = evaluatePedroV3PilotScope({ tenantId: BRUNO_SCOPE.tenantId, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active", activeScopes: scopes });
+  check("allowlist nunca combina tenant e agent de escopos diferentes", !crossed.enabled, JSON.stringify(crossed));
+}
+
+{
+  check("allowlist ausente preserva somente o piloto legado", parsePedroV3ActiveScopes(undefined).length === 1);
+  for (const value of ["{", "[]", JSON.stringify([{ tenantId: BRUNO_SCOPE.tenantId, agentId: "invalido" }])]) {
+    let rejected = false;
+    try { parsePedroV3ActiveScopes(value); } catch { rejected = true; }
+    check("allowlist malformada falha fechada", rejected);
+  }
+}
 
 {
   const decision = evaluatePedroV3PilotScope({

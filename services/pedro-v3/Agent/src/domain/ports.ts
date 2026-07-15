@@ -44,6 +44,7 @@ export interface InboxStore {
 // despachar a resposta de forma assincrona, fora do request do webhook.
 export type SettledConversation = {
   readonly conversationId: Id;
+  readonly tenantId?: string;
   readonly agentId: string;
   readonly leadId: string | null;
   readonly toAddr: string;
