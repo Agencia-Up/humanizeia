@@ -6,6 +6,7 @@ import {
   conversationHasV3State,
   shouldFallbackToPedroV2,
   shouldBridgePedroV3Identity,
+  shouldIgnorePedroInternalIdentity,
 } from "./pedroV3Bridge.ts";
 import { matchesAnyInternalPhone } from "./contactIdentity.ts";
 import { evaluatePostTransferAction, POST_TRANSFER_HOLD_MS, POST_TRANSFER_SILENCE_MS } from "./postTransferOwnership.ts";
@@ -216,6 +217,15 @@ test("HF-5: tenant manager never enters Pedro v3", () => {
 
 test("HF-6: phone normalization identifies another connected agent line", () => {
   assert(matchesAnyInternalPhone("551231972498", ["+55 12 3197-2498"]), "formatted internal number must match");
+});
+
+test("HF-7: seller still reaches the v2 confirmation flow", () => {
+  assert(!shouldIgnorePedroInternalIdentity("seller"), "seller acknowledgement must not be swallowed");
+});
+
+test("HF-8: agents and managers stop before every conversational engine", () => {
+  assert(shouldIgnorePedroInternalIdentity("internal"), "connected agent must stop at the webhook");
+  assert(shouldIgnorePedroInternalIdentity("manager"), "manager must stop at the webhook");
 });
 
 test("PT-1: first 30 minutes are silent", () => {

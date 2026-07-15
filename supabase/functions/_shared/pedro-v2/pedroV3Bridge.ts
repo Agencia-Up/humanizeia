@@ -147,6 +147,10 @@ export function shouldBridgePedroV3Identity(kind: "lead" | "seller" | "manager" 
   return kind === "lead" || kind === "unknown";
 }
 
+export function shouldIgnorePedroInternalIdentity(kind: "lead" | "seller" | "manager" | "internal" | "unknown"): boolean {
+  return kind === "manager" || kind === "internal";
+}
+
 function normalizePhone(value: string | null): string | null {
   const digits = String(value ?? "").replace(/@.*$/, "").replace(/\D+/g, "");
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;

@@ -10,7 +10,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldBridgePedroV3Identity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
@@ -660,6 +660,7 @@ Deno.serve(async (req) => {
   // happened before inbox ingestion. Timeout/network/unknown never invoke both.
   const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
   let _pilotSellerInbound = false;
+  let _pilotInternalInbound = false;
   let _postTransferPlan = null;
   if (!_dryRun && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active") {
     const _remoteJid = incomingRemoteJid(payload);
@@ -669,9 +670,12 @@ Deno.serve(async (req) => {
         agent_id: (agent as any).id,
         remote_jid: _remoteJid,
       });
-      _pilotSellerInbound = !shouldBridgePedroV3Identity(_identity.kind);
+      _pilotSellerInbound = _identity.kind === "seller";
+      _pilotInternalInbound = shouldIgnorePedroInternalIdentity(_identity.kind);
       if (_pilotSellerInbound) {
-        console.log(`[pedro-v3-bridge] internal_identity_bypassed kind=${_identity.kind}`);
+        console.log("[pedro-v3-bridge] seller_identity_forwarded_to_confirmation_flow");
+      } else if (_pilotInternalInbound) {
+        console.log(`[pedro-v3-bridge] internal_identity_ignored kind=${_identity.kind}`);
       } else if (_identity.kind === "lead") {
         _postTransferPlan = await resolvePostTransferPlan({
           supabase,
@@ -681,6 +685,9 @@ Deno.serve(async (req) => {
         });
       }
     }
+  }
+  if (!_dryRun && _pilotInternalInbound) {
+    return jsonResponse({ ok: true, accepted: true, routed: "internal_identity_ignored", build: PEDRO_V2_BUILD });
   }
   if (!_dryRun && _postTransferPlan && typeof _waitUntil === "function") {
     _waitUntil(executePostTransferPlan({ supabase, instance: waInstance, plan: _postTransferPlan, sendText: sendPedroText }).catch((error) => {
