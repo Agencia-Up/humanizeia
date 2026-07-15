@@ -12,23 +12,19 @@ import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_s
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
+import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
 import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260524.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
-const PEDRO_V2_BUILD = "2026-06-29-pedro-v3-no-dispatch-fallback-v222";
+const PEDRO_V2_BUILD = "2026-07-15-private-audience-boundary";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
   if (Array.isArray(payload?.data) && payload.data.length > 0) return payload.data[0];
   return payload?.message || payload?.data || payload;
-}
-
-function isOutgoingMessage(payload: any): boolean {
-  const message = pickIncomingMessage(payload);
-  return message?.fromMe === true || message?.key?.fromMe === true || payload?.fromMe === true;
 }
 
 // REAÇÃO do WhatsApp (👍/❤️/😂 numa mensagem) NÃO é uma mensagem do lead — é só um "ack". O uazapi V6 manda
@@ -334,6 +330,15 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, ignored: "reaction" });
   }
 
+  // Transport boundary: Pedro only serves private one-to-one chats. Uazapi's
+  // canonical Message shape carries `isGroup`; JID suffixes cover legacy and
+  // nested payloads. Stop before instance lookup, CRM, v2 or v3.
+  const inboundAudience = classifyUazapiInboundAudience(payload);
+  if (inboundAudience.kind === "group" || inboundAudience.kind === "broadcast") {
+    console.log(`[pedro-webhook-v2] non_private_chat_ignored kind=${inboundAudience.kind}`);
+    return jsonResponse({ ok: true, ignored: inboundAudience.kind });
+  }
+
   // NÃO descartar fromMe aqui — instâncias de VENDEDOR precisam capturar o que o
   // vendedor envia (auditoria). O descarte de fromMe acontece ABAIXO, escopado às
   // instâncias que NÃO são de vendedor, depois de resolver a instância.
@@ -595,7 +600,7 @@ Deno.serve(async (req) => {
 
   // fromMe on the AI instance is ignored only after message_update receipts had
   // the chance to be reconciled. Seller instances were handled above.
-  if (isOutgoingMessage(payload)) {
+  if (inboundAudience.kind === "self") {
     return jsonResponse({ ok: true, ignored: "from_me" });
   }
 
@@ -662,7 +667,9 @@ Deno.serve(async (req) => {
   let _pilotSellerInbound = false;
   let _pilotInternalInbound = false;
   let _postTransferPlan = null;
-  if (!_dryRun && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active") {
+  // Resolve internal identities for every conversational route, not only v3.
+  // A connected AI line or tenant manager must never reach either engine.
+  if (!_dryRun) {
     const _remoteJid = incomingRemoteJid(payload);
     if (_remoteJid) {
       const _identity = await identifyPedroContact(supabase, {
@@ -676,7 +683,11 @@ Deno.serve(async (req) => {
         console.log("[pedro-v3-bridge] seller_identity_forwarded_to_confirmation_flow");
       } else if (_pilotInternalInbound) {
         console.log(`[pedro-v3-bridge] internal_identity_ignored kind=${_identity.kind}`);
-      } else if (_identity.kind === "lead") {
+      } else if (
+        _identity.kind === "lead" &&
+        pedroV3Pilot.enabled &&
+        pedroV3Pilot.mode === "active"
+      ) {
         _postTransferPlan = await resolvePostTransferPlan({
           supabase,
           tenantId: (agent as any).user_id,

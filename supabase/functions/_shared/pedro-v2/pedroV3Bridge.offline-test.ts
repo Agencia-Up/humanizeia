@@ -8,7 +8,8 @@ import {
   shouldBridgePedroV3Identity,
   shouldIgnorePedroInternalIdentity,
 } from "./pedroV3Bridge.ts";
-import { matchesAnyInternalPhone } from "./contactIdentity.ts";
+import { matchesAnyInternalPhone, matchesConnectedAgentPhone } from "./contactIdentity.ts";
+import { classifyUazapiInboundAudience } from "./inboundAudience.ts";
 import { evaluatePostTransferAction, POST_TRANSFER_HOLD_MS, POST_TRANSFER_SILENCE_MS } from "./postTransferOwnership.ts";
 
 type TestFn = () => void | Promise<void>;
@@ -226,6 +227,72 @@ test("HF-7: seller still reaches the v2 confirmation flow", () => {
 test("HF-8: agents and managers stop before every conversational engine", () => {
   assert(shouldIgnorePedroInternalIdentity("internal"), "connected agent must stop at the webhook");
   assert(shouldIgnorePedroInternalIdentity("manager"), "manager must stop at the webhook");
+});
+
+test("HF-9: a master agent instance wins over an accidental seller duplicate", () => {
+  assert(
+    matchesConnectedAgentPhone("551231972498", [{ phone_number: "+55 12 3197-2498", seller_member_id: null }]),
+    "master connected instance must be classified as an agent",
+  );
+});
+
+test("HF-10: a genuine seller instance remains eligible for confirmation", () => {
+  assert(
+    !matchesConnectedAgentPhone("551231972498", [{ phone_number: "+55 12 3197-2498", seller_member_id: "seller-1" }]),
+    "seller instance must not be mistaken for an AI master line",
+  );
+});
+
+test("AUD-1: official Uazapi isGroup blocks a group before every engine", () => {
+  const audience = classifyUazapiInboundAudience({
+    EventType: "messages",
+    message: { chatid: "120363123456789@g.us", sender: "5512999999999@s.whatsapp.net", isGroup: true, fromMe: false },
+  });
+  assert(audience.kind === "group", `expected group, got ${audience.kind}`);
+});
+
+test("AUD-2: group JID blocks legacy payload even without isGroup", () => {
+  const audience = classifyUazapiInboundAudience({
+    message: { key: { remoteJid: "120363123456789@g.us", fromMe: false }, text: "oi" },
+  });
+  assert(audience.kind === "group", `expected group by JID, got ${audience.kind}`);
+});
+
+test("AUD-3: nested Chat wa_isGroup blocks a group", () => {
+  const audience = classifyUazapiInboundAudience({
+    data: { chatid: "120363123456789@g.us", chat: { wa_isGroup: true } },
+  });
+  assert(audience.kind === "group", `expected group by chat flag, got ${audience.kind}`);
+});
+
+test("AUD-4: official Uazapi fromMe blocks the connected AI's own message", () => {
+  const audience = classifyUazapiInboundAudience({
+    EventType: "messages",
+    message: { chatid: "5512988887777@s.whatsapp.net", fromMe: true, isGroup: false },
+  });
+  assert(audience.kind === "self", `expected self, got ${audience.kind}`);
+});
+
+test("AUD-5: direct lead remains eligible", () => {
+  const audience = classifyUazapiInboundAudience({
+    EventType: "messages",
+    message: { chatid: "5512988887777@s.whatsapp.net", fromMe: false, isGroup: false },
+  });
+  assert(audience.kind === "direct", `expected direct, got ${audience.kind}`);
+});
+
+test("AUD-6: status, broadcast and newsletter are never leads", () => {
+  for (const chatid of ["status@broadcast", "12345@broadcast", "12345@newsletter"]) {
+    const audience = classifyUazapiInboundAudience({ message: { chatid, fromMe: false } });
+    assert(audience.kind === "broadcast", `${chatid} must be blocked, got ${audience.kind}`);
+  }
+});
+
+test("AUD-7: false-like flags do not block a direct lead", () => {
+  const audience = classifyUazapiInboundAudience({
+    message: { chatid: "5512988887777@s.whatsapp.net", fromMe: "false", isGroup: 0 },
+  });
+  assert(audience.kind === "direct", `expected direct, got ${audience.kind}`);
 });
 
 test("PT-1: first 30 minutes are silent", () => {
