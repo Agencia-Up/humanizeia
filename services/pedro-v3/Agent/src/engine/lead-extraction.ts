@@ -495,10 +495,11 @@ export function composeSchedule(existing: string | null, incoming: string): stri
 //    mercado COLAPSADA ("hillux"->Hilux/Toyota); (b) senão, o DESCRITOR LIVRE adjacente à posse/ano vira o modelo
 //    (palavra do lead, para o briefing do vendedor). Dígitos nunca colapsam (ano/km intactos). ─────────────────────
 const collapseLetters = (s: string): string => s.replace(/(\p{L})\1+/gu, "$1");
+const marketIdentity = (s: string): string => collapseLetters(normalizeText(s)).replace(/[^a-z0-9]/g, "");
 const MARKET_COLLAPSED: ReadonlyMap<string, { marca: string; modelo: string }> = (() => {
   const m = new Map<string, { marca: string; modelo: string }>();
   for (const e of VEHICLE_TAXONOMY) {
-    const key = collapseLetters(normalizeText(e.model));
+    const key = marketIdentity(e.model);
     if (key && !m.has(key)) m.set(key, { marca: e.brand, modelo: e.model });
   }
   return m;
@@ -515,9 +516,14 @@ function freeTradeDescriptor(norm: string): string | null {
   // Rover", "C3 Aircross"). Guardar apenas a primeira ou a última palavra
   // empobrece o briefing. Recortamos a expressão de posse até o primeiro dado
   // objetivo (ano/km/troca) e a tratamos como uma identidade declarada pelo lead.
-  const afterPossession = /\b(?:tenho|possuo)\s+(?:um|uma)\s+(.{2,56}?)(?=\s+(?:(?:19|20)\d{2}|\d{1,3}(?:[.,]\d{3})*\s*(?:mil|k)?\s*km|(?:para|pra|na)\s+troca)\b|$)/u.exec(norm);
+  const afterPossession = /\b(?:tenho|possuo)\s+(?:um|uma)\s+(.{2,56}?)(?=\s+(?:(?:19|20)\d{2}|\d{1,3}(?:[.,]\d{3})*\s*(?:mil|k)?\s*(?:km|kms|quilometros?|kilometros?)|(?:para|pra|na)\s+troca)\b|$)/u.exec(norm);
   if (afterPossession) {
-    const phrase = afterPossession[1].replace(/\s+/g, " ").trim();
+    const phrase = afterPossession[1]
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter((token) => token.length > 1 && !TRADE_DESC_STOP.has(token) && token !== "com")
+      .join(" ");
     if (phrase) cands.push(phrase);
   }
   for (const m of norm.matchAll(/\b([\p{L}][\p{L}\d-]{2,})\s+(?:19|20)\d{2}\b/gu)) cands.push(m[1]);
@@ -531,7 +537,7 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
   const model = claims.find((c) => c.kind === "model" || c.kind === "brand_model");
   const brand = claims.find((c) => c.kind === "brand" || c.kind === "brand_model");
   const yearMatch = /\b(?:ano\s*)?((?:19|20)\d{2})\b/.exec(norm);
-  const kmMatch = /\b(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(mil|k)?\s*km\b/.exec(norm);
+  const kmMatch = /\b(\d{1,3}(?:[.,]\d{3})*|\d+)\s*(mil|k)?\s*(?:km|kms|quilometros?|kilometros?)(?:\s+rodad[oa]s?)?\b/.exec(norm);
   const result: { marca?: string; modelo?: string; ano?: number; km?: number; estado?: string } = {};
   if (brand) result.marca = brand.text;
   const desc = freeTradeDescriptor(norm);
@@ -541,18 +547,25 @@ function tradeVehicle(text: string, claimExtractor: ClaimExtractor): { marca?: s
     // mais específico, a taxonomia o canoniza; se for veículo fora do catálogo,
     // ele segue como texto do lead para o briefing.
     if (desc && collapseLetters(desc).length > collapseLetters(model.text).length) {
-      const canon = MARKET_COLLAPSED.get(collapseLetters(desc));
+      const canon = MARKET_COLLAPSED.get(marketIdentity(desc));
       if (canon) { result.modelo = canon.modelo; if (!result.marca) result.marca = canon.marca; }
       else result.modelo = desc;
     } else result.modelo = model.text;
   } else {
     if (desc) {
-      const canon = MARKET_COLLAPSED.get(collapseLetters(desc));
+      const canon = MARKET_COLLAPSED.get(marketIdentity(desc));
       if (canon) { result.modelo = canon.modelo; if (!result.marca) result.marca = canon.marca; }
       else result.modelo = desc;
     }
   }
   if (yearMatch) result.ano = Number(yearMatch[1]);
+  // Versões curtas normalmente aparecem entre o ano e a quilometragem
+  // ("HRV 2023/24 EXL 30 mil quilômetros"). Elas pertencem ao veículo do
+  // lead e enriquecem o briefing; nunca participam de busca de estoque.
+  const versionMatch = /(?:19|20)\d{2}(?:\/\d{2,4})?[\s\S]{0,32}?\b([A-Z][A-Z0-9-]{1,7})\b(?=[\s\S]{0,32}?\d{1,3}(?:[.,]\d{3})*\s*(?:mil|k)?\s*(?:km|kms|quil[oô]metros?|kil[oô]metros?))/u.exec(text);
+  if (versionMatch && result.modelo && !normalizeText(result.modelo).includes(normalizeText(versionMatch[1]))) {
+    result.modelo = `${result.modelo} ${versionMatch[1]}`;
+  }
   if (kmMatch) {
     let km = Number(kmMatch[1].replace(/[.,]/g, ""));
     // Normalização BR (missão P0 D): no veículo de TROCA (usado), um km BAIXO é abreviação de milhares — "86km"/"86 km"/

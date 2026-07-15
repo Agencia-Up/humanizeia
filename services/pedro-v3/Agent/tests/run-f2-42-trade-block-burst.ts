@@ -140,6 +140,15 @@ const NO_DISCOVERY = (out: string): boolean => !has(out, "me conta um pouco mais
 // Acolhimento REAL de troca: nomeia o carro DO LEAD + avança UMA pergunta (o que a gpt-4.1-mini autora).
 const ackTradeHilux: BrainResponder = () => finU([txt("Perfeito! Anotei sua Hilux 2020 com 85 mil km para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", U("trade_in"));
 
+// Reproduz a falha real da Suzi: a LLM entende troca, mas tenta consultar os
+// detalhes do veículo selecionado. O engine deve negar a tool e devolver o ato
+// para a própria LLM concluir, sem escrever a resposta comercial por ela.
+const tradeBrainTryingWrongDetail: BrainResponder = (_frame, obs) => {
+  const wasBlocked = obs.some((o) => o.tool === "response" && !o.ok);
+  if (!wasBlocked) return qU({ tool: "vehicle_details", input: { vehicleKey: NIVUS.vehicleKey } }, U("trade_in"));
+  return finU([txt("Anotei sua Honda HR-V EXL 2023/24 com 30 mil quilômetros para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", U("trade_in"));
+};
+
 async function main(): Promise<void> {
   console.log("== F2.42: troca em BLOCO QUEBRADO (incidente hillux) — 0 fallback, 0 busca, briefing completo ==");
 
@@ -214,6 +223,19 @@ async function main(): Promise<void> {
     const t4 = await c.t("tenho um onix 2018 70 mil km", () => finU([txt("Perfeito! Anotei seu Onix 2018 com 70 mil km para avaliação na troca. Você pretende dar algum valor de entrada?")], "reply", U("trade_in")));
     check("[G-1] acolhimento NOMEANDO o Onix do lead PASSA (brain_*, sem fallback)", (t4.src === "brain_final" || t4.src === "brain_retry") && has(t4.outbox, "onix") && NO_DISCOVERY(t4.outbox), `src=${t4.src} outbox="${t4.outbox}"`);
     check("[G-2] veiculoTroca=Onix/2018/70000 + 0 busca + selecionado segue Nivus", has(String(tv(t4).modelo ?? ""), "onix") && tv(t4).ano === 2018 && tv(t4).km === 70000 && t4.stockCalls === 0 && t4.selected === NIVUS.vehicleKey, `veic=${JSON.stringify(tv(t4))} calls=${t4.stockCalls} selected=${t4.selected}`);
+  }
+
+  // H) Conversa real Bruno/Suzi: rajada espontânea, sem pergunta prévia de
+  // troca, com ano 2023/24, versão EXL e "quilômetros" por extenso.
+  {
+    const c = conv();
+    await c.t("quero um Nivus", searchB({ modelo: "Nivus" }));
+    await c.t("gostei do primeiro", selectFirst);
+    const t3 = await c.t("Sim\nTemos\nBom dia\nTenho uma HRV ano 2023/24 e l\nEXL\n30mil kilometros\nPara troca!", tradeBrainTryingWrongDetail);
+    check("[H-1] rajada espontânea e ato de troca: 0 stock_search e 0 vehicle_details executado", t3.stockCalls === 0 && t3.stockObs === 0 && t3.detailObs === 0, `stock=${t3.stockCalls}/${t3.stockObs} detail=${t3.detailObs}`);
+    check("[H-2] veiculoTroca preserva HR-V EXL, ano 2023 e 30000 km", has(String(tv(t3).modelo ?? ""), "hr-v") && has(String(tv(t3).modelo ?? ""), "exl") && tv(t3).ano === 2023 && tv(t3).km === 30000, `veiculoTroca=${JSON.stringify(tv(t3))}`);
+    check("[H-3] resposta continua autorada pela LLM e não repete pergunta já respondida", (t3.src === "brain_final" || t3.src === "brain_retry") && has(t3.outbox, "hr-v") && !has(t3.outbox, "qual o modelo"), `src=${t3.src} outbox=${JSON.stringify(t3.outbox)}`);
+    check("[H-4] interesse e selecionado de compra não são contaminados pela HR-V da troca", t3.selected === NIVUS.vehicleKey && !has(String(t3.slots?.interesse.value ?? ""), "hr-v"), `selected=${t3.selected} interesse=${JSON.stringify(t3.slots?.interesse.value)}`);
   }
 
   console.log(`\n== F2.42: ${ok} OK | ${fail} FALHA ==`);

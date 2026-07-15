@@ -1721,12 +1721,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // ── Missão P0 INC3/G: TURNO DE RESPOSTA DE TROCA. A última pergunta do agente foi sobre TROCA (possuiTroca/veiculoTroca)
       //    e o lead NÃO está pedindo COMPRA explícita ("tem X?", "quero comprar X") -> o bloco é RESPOSTA DE TROCA: o carro
       //    citado ("tenho um Renegade 2019 86km") é do LEAD, não pedido de estoque. NUNCA vira stock_search. gate llmFirst. ──
-      // Missão P0 (audit Codex smoke real): o turno é RESPOSTA/OFERTA de TROCA quando NÓS perguntamos sobre troca
-      // (pendingTradeQuestion) OU quando o LEAD oferece espontaneamente um veículo que POSSUI com km
-      // (statesTradeVehiclePossession) — em ambos, sem intenção de COMPRA explícita. O entendimento REFLETE a conversa:
-      // "Tenho um Renegade 2019 86km" respondendo sobre entrada/financiamento é TROCA, não busca de estoque.
-      const leadOffersTradeVehicle = llmFirst && statesTradeVehiclePossession(leadMessage, prepared.claimExtractor);
-      const tradeInAnswerTurn = llmFirst && !explicitBuyIntent && (pendingTradeQuestion || leadOffersTradeVehicle);
+      // O contexto semântico de troca já foi resolvido acima a partir da
+      // pergunta pendente, posse comprovada ou declaração explícita de troca.
+      // Ele deve governar o ato mesmo quando o lead escreve em rajada ou usa
+      // "quilômetros" por extenso. O alvo de compra explícito continua vencendo.
+      const tradeInAnswerTurn = llmFirst && !explicitBuyIntent && tradeContextInBlock;
       // ── MISSÃO P0 (Financial Question Context): TURNO DE RESPOSTA FINANCEIRA. A última pergunta do agente foi financeira
       //    (parcela/entrada/forma de pagamento) e o lead está RESPONDENDO com valor/negação/pagamento ("até 1200"
       //    respondendo parcela, "tenho não" respondendo entrada) — SEM intenção de COMPRA nova explícita. Isso NUNCA é
@@ -2480,9 +2479,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // do cérebro com evidence inválida cairia no gate REQUIRED_TURN_UNDERSTANDING (linha abaixo), que empurra
         // tool:"stock_search" e INFLA a contagem do smoke (o "obs=8"). Empurra feedback de controle (tool:"response", nenhuma
         // busca EXECUTADA) + cap anti-loop. LLM-first: o cérebro re-decide (registra a troca e avança), sem handler escrever.
-        if (call.tool === "stock_search" && tradeInAnswerTurn) {
+        if (tradeInAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
           duplicateStockCallsBlocked += 1;
-          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: "O cliente está RESPONDENDO à sua pergunta sobre o VEÍCULO DE TROCA dele — o carro que ele citou (modelo/ano/km) é a troca, NÃO um pedido de estoque. NÃO chame stock_search. Confirme que anotou a troca e siga para a próxima etapa (entrada/condições/visita). Só busque estoque se ele disser explicitamente que quer COMPRAR outro carro." } });
+          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: "O cliente está falando do VEÍCULO DE TROCA dele. Modelo, versão, ano e quilometragem declarados pelo lead são fatos do próprio lead, não um pedido de estoque e não exigem consulta de detalhes ou fotos. Não use tool comercial neste ato. Acolha os dados e continue o atendimento conforme o prompt do portal. Só consulte estoque se o lead declarar um novo alvo de COMPRA." } });
           if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
           continue;
         }
