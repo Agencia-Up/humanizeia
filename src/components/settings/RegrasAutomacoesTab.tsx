@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus } from 'lucide-react';
+import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus, Target } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -50,6 +50,14 @@ export function RegrasAutomacoesTab() {
   const [fu, setFu] = useState(FU_DEFAULT);
   const [tr, setTr] = useState(TR_DEFAULT);
 
+  // ── Relatório do José (Fluxo A — apollo_cron_config, por conta) ──
+  // Só mexemos nos campos DO RELATÓRIO (send_daily_report / run_hour / run_minute /
+  // whatsapp_report_number). NÃO tocamos em is_enabled/auto_execute/account_id — isso
+  // é a autonomia do agente José e sai do escopo desta aba.
+  const [jose, setJose] = useState<any>(null); // null = sem linha (José não configurado)
+  const [loadingJose, setLoadingJose] = useState(true);
+  const [savingJose, setSavingJose] = useState(false);
+
   useEffect(() => {
     if (!user?.id) return;
     let cancelled = false;
@@ -80,6 +88,14 @@ export function RegrasAutomacoesTab() {
       setAgents(list);
       if (list.length > 0) setAgentId((prev) => prev || list[0].id);
       setLoadingAg(false);
+    })();
+    (async () => {
+      setLoadingJose(true);
+      const { data } = await (supabase as any)
+        .from('apollo_cron_config')
+        .select('id, is_enabled, send_daily_report, run_hour, run_minute, timezone, whatsapp_report_number')
+        .eq('user_id', user.id).maybeSingle();
+      if (!cancelled) { setJose(data || null); setLoadingJose(false); }
     })();
     return () => { cancelled = true; };
   }, [user?.id]);
@@ -159,6 +175,25 @@ export function RegrasAutomacoesTab() {
     setResp(Array.isArray(data) ? data : []);
     setNovoNome(''); setNovoWa(''); setAddingResp(false);
     toast({ title: '✅ Destinatário adicionado', description: `${novoNome.trim()} vai receber o relatório de atendimento.` });
+  };
+
+  // Salva SÓ os campos do relatório do José (Fluxo A). Nunca toca em is_enabled/auto_execute.
+  const salvarJose = async () => {
+    if (!user?.id || !jose) return;
+    const wa = String(jose.whatsapp_report_number || '').replace(/\D/g, '');
+    if (jose.send_daily_report && wa.length < 10) {
+      toast({ title: 'WhatsApp inválido', description: 'Informe o número (com DDD) que recebe o relatório do José.', variant: 'destructive' }); return;
+    }
+    const hour = Math.min(23, Math.max(0, Math.round(Number(jose.run_hour)) || 0));
+    const minute = Math.min(59, Math.max(0, Math.round(Number(jose.run_minute)) || 0));
+    setSavingJose(true);
+    const { error } = await (supabase as any).from('apollo_cron_config')
+      .update({ send_daily_report: !!jose.send_daily_report, run_hour: hour, run_minute: minute, whatsapp_report_number: wa || jose.whatsapp_report_number })
+      .eq('user_id', user.id);
+    setSavingJose(false);
+    if (error) { toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' }); return; }
+    setJose((j: any) => ({ ...j, run_hour: hour, run_minute: minute, whatsapp_report_number: wa || j.whatsapp_report_number }));
+    toast({ title: '✅ Relatório do José atualizado', description: 'Vale a partir do próximo ciclo diário.' });
   };
 
   const salvarAgente = async () => {
@@ -458,12 +493,68 @@ export function RegrasAutomacoesTab() {
         </CardContent>
       </Card>
 
-      {/* Relatório do José — mecanismo a confirmar (report_templates dormente) */}
-      <Card className="border-dashed">
-        <CardContent className="py-4">
-          <p className="text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">Relatório do José (campanhas):</span> em breve nesta aba. O canal de agendamento configurável ainda está sendo definido — assim que fechado, o horário e os destinatários entram aqui do mesmo jeito.
-          </p>
+      {/* ── Relatório do José (campanhas — Fluxo A / apollo_cron_config) ── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 border border-orange-500/30">
+                <Target className="h-5 w-5 text-orange-400" />
+              </div>
+              <div>
+                <CardTitle className="text-base">Relatório do José (campanhas)</CardTitle>
+                <CardDescription className="text-xs mt-0.5">
+                  Resumo diário do tráfego pago que o José envia no WhatsApp. Defina se envia, a que horas e para qual número.
+                </CardDescription>
+              </div>
+            </div>
+            {jose && (
+              <Switch checked={!!jose.send_daily_report} onCheckedChange={(v) => setJose((j: any) => ({ ...j, send_daily_report: v }))} disabled={loadingJose} />
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {loadingJose ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
+          ) : !jose ? (
+            <p className="text-xs text-muted-foreground">
+              O relatório do José ainda não está configurado nesta conta. Ele é ativado quando você conecta a conta de anúncios e liga o José no painel dele — depois o controle de horário e destinatário aparece aqui.
+            </p>
+          ) : (
+            <>
+              <div className={jose.send_daily_report ? '' : 'opacity-50 pointer-events-none'}>
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="text-xs flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Enviar todo dia às</Label>
+                    <div className="flex items-center gap-2">
+                      <Select value={String(jose.run_hour ?? 8)} onValueChange={(v) => setJose((j: any) => ({ ...j, run_hour: Number(v) }))}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>{horas.map((h) => <SelectItem key={h} value={String(h)}>{String(h).padStart(2, '0')}h</SelectItem>)}</SelectContent>
+                      </Select>
+                      <span className="text-muted-foreground text-sm">:</span>
+                      <Select value={String(jose.run_minute ?? 0)} onValueChange={(v) => setJose((j: any) => ({ ...j, run_minute: Number(v) }))}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>{[0, 15, 30, 45].map((m) => <SelectItem key={m} value={String(m)}>{String(m).padStart(2, '0')}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Fuso: {jose.timezone || 'America/Sao_Paulo'}. Vale a partir do próximo ciclo.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">WhatsApp que recebe</Label>
+                    <Input placeholder="Número com DDD" value={jose.whatsapp_report_number || ''} onChange={(e) => setJose((j: any) => ({ ...j, whatsapp_report_number: e.target.value }))} />
+                    <p className="text-[11px] text-muted-foreground">O relatório do José vai para este único número.</p>
+                  </div>
+                </div>
+              </div>
+              {!jose.send_daily_report && <p className="text-xs text-amber-500">Desligado: o relatório diário do José não será enviado.</p>}
+              {jose.is_enabled === false && <p className="text-xs text-amber-500">Atenção: o José está pausado no painel dele — enquanto isso o relatório não sai, mesmo ligado aqui.</p>}
+              <div className="flex justify-end">
+                <Button onClick={salvarJose} disabled={savingJose} className="gap-2">
+                  {savingJose ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
