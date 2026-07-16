@@ -195,8 +195,12 @@ serve(async (req) => {
         .eq('user_id', requesterId).in('seller_member_id', memberIds);
 
       // Soft-delete operacional: tira do painel/fila/login preservando FKs/historico.
+      // removed_at = marcador de REMOCAO EXPLICITA. E o unico sinal que autoriza a
+      // revoke_seller_login a banir. Sem ele, "sem vinculo ativo" NAO bane — senao
+      // usuario que nunca esta no rodizio de vendas (marketing/trafego, __restrito)
+      // seria banido por natureza (incidente Lucas/Monaco 16/07).
       const { error: updErr } = await admin.from('ai_team_members')
-        .update({ is_active: false, active_in_system: false, show_in_live: false, visible_features: {} })
+        .update({ is_active: false, active_in_system: false, show_in_live: false, visible_features: {}, removed_at: new Date().toISOString() })
         .eq('user_id', requesterId)
         .in('id', memberIds);
       if (updErr) throw updErr;
