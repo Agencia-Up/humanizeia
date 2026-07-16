@@ -4,6 +4,7 @@ import { ResponseRenderer } from "./response-renderer.ts";
 import { buildWorkingMemory } from "./working-memory.ts";
 import { buildConversationContext } from "./conversation-context.ts";
 import type { FollowupStage } from "./followup-policy.ts";
+import { adText, resolveAdVehicleFromMarket } from "./ad-context.ts";
 
 function questionCount(text: string): number {
   return (text.match(/\?/g) ?? []).length;
@@ -39,6 +40,22 @@ function claimsUnseenOutboundMaterial(text: string, state: ConversationState): b
     .filter((turn) => turn.role === "agent")
     .some((turn) => /\b(?:r\$|km|modelo|ano|carro|veiculo|foto|endereco|avenida|rua|opcao|informac)/.test(normalizeFollowupText(turn.text)));
   return !hasVisibleOffer && !hasConcreteAgentMaterial;
+}
+
+function recentAgentQuestions(state: ConversationState): string[] {
+  return (state.recentTurns ?? [])
+    .filter((turn) => turn.role === "agent" && turn.text.includes("?"))
+    .slice(-6)
+    .map((turn) => turn.text);
+}
+
+function adVehicleLabel(state: ConversationState): string | null {
+  const ad = state.adContext;
+  if (!ad) return null;
+  const vehicle = resolveAdVehicleFromMarket(adText(ad));
+  if (!vehicle) return null;
+  const year = adText(ad).match(/\b(?:19|20)\d{2}\b/)?.[0] ?? null;
+  return [vehicle.marca, vehicle.modelo, year].filter(Boolean).join(" ");
 }
 
 // A T3 may mention an analyst only when the surrounding pilot is about to
@@ -105,6 +122,8 @@ export async function authorFollowupMessageDetailed(args: {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const previousAgent = lastAgentMessage(args.state);
     const previousLead = lastLeadMessage(args.state);
+    const agentQuestions = recentAgentQuestions(args.state);
+    const advertisedVehicle = adVehicleLabel(args.state);
     const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel.${feedback}`;
     const conversationContext = buildConversationContext({ state: args.state, workingMemory: memory });
     const frame: TurnFrame = {
@@ -120,7 +139,10 @@ export async function authorFollowupMessageDetailed(args: {
           stage: args.stage,
           lastLeadMessage: previousLead,
           lastAgentMessage: previousAgent,
+          recentAgentQuestions: agentQuestions,
           hasVisibleOffer: (args.state.lastRenderedOfferContext?.items.length ?? 0) > 0,
+          adEntry: args.state.adContext != null,
+          adVehicleLabel: advertisedVehicle,
           handoffAvailable: args.handoffAvailable === true,
         },
       },
@@ -135,6 +157,7 @@ export async function authorFollowupMessageDetailed(args: {
         currentTurnIntent: "other",
         followupStage: args.stage,
         handoffAvailable: args.handoffAvailable === true,
+        ...(advertisedVehicle ? { adVehicle: advertisedVehicle } : {}),
       },
     };
     let step;

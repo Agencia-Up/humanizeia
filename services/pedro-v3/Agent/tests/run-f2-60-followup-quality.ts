@@ -69,6 +69,49 @@ const t2Brain = new QueueBrain([
 const t2 = await authorFollowupMessageDetailed({ brain: t2Brain, state: t2State, stage: 2, turnId: "fu60-t2", now: NOW, portalPromptSha256: "sha" });
 check("T2 rejeita repeticao da pergunta anterior", t2.text === "Se ainda estiver avaliando, posso te ajudar com os detalhes desse carro. Quer continuar por aqui?" && t2.attempts === 2);
 
+const adState = state();
+adState.adContext = {
+  adId: "ad-f260",
+  source: "facebook",
+  sourceUrl: null,
+  title: "Fiat Toro 2020",
+  body: "",
+  greeting: "Oi! Como podemos ajudar?",
+  imageUrls: ["https://example.com/toro.jpg"],
+  capturedAtTurn: 1,
+};
+const adBrain = new QueueBrain([
+  final("Voce conhece a nossa loja?"),
+  final("Quer ver fotos ou mais detalhes da Fiat Toro 2020 do anuncio?"),
+]);
+const adFollowup = await authorFollowupMessageDetailed({
+  brain: adBrain, state: adState, stage: 1, turnId: "fu60-ad", now: NOW, portalPromptSha256: "sha",
+});
+check("follow-up de anuncio nao repete pergunta institucional e retoma o veiculo", adFollowup.attempts === 2
+  && adFollowup.text?.includes("Toro") === true);
+check("follow-up entrega anuncio e perguntas recentes como contexto read-only", adBrain.frames[0]?.conversationContext.followup?.adEntry === true
+  && adBrain.frames[0]?.conversationContext.followup?.adVehicleLabel?.includes("Toro") === true
+  && adBrain.frames[0]?.conversationContext.followup?.recentAgentQuestions.length === 1);
+
+const imageOnlyAdState = state();
+imageOnlyAdState.adContext = {
+  adId: "ad-f260-image",
+  source: "facebook",
+  sourceUrl: null,
+  title: null,
+  body: null,
+  greeting: "Oi! Como podemos ajudar?",
+  imageUrls: ["https://example.com/car.jpg"],
+  capturedAtTurn: 1,
+};
+const imageOnlyBrain = new QueueBrain([final("Quer saber mais sobre o veiculo do anuncio?")]);
+const imageOnlyFollowup = await authorFollowupMessageDetailed({
+  brain: imageOnlyBrain, state: imageOnlyAdState, stage: 1, turnId: "fu60-ad-image", now: NOW, portalPromptSha256: "sha",
+});
+check("anuncio sem modelo textual nao inventa veiculo", imageOnlyFollowup.attempts === 1
+  && imageOnlyBrain.frames[0]?.conversationContext.followup?.adEntry === true
+  && imageOnlyBrain.frames[0]?.conversationContext.followup?.adVehicleLabel === null);
+
 const t3Brain = new QueueBrain([
   final("Prefiro ser honesto com voce — talvez nao seja o melhor cenario."),
   final("Tudo bem, vou encerrar por aqui para nao te incomodar. Quando quiser retomar, e so me chamar."),

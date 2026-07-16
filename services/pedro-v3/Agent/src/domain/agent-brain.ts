@@ -251,7 +251,10 @@ export type ConversationContext = {
     readonly stage: 1 | 2 | 3;
     readonly lastLeadMessage: string | null;
     readonly lastAgentMessage: string | null;
+    readonly recentAgentQuestions: readonly string[];
     readonly hasVisibleOffer: boolean;
+    readonly adEntry: boolean;
+    readonly adVehicleLabel: string | null;
     readonly handoffAvailable?: boolean;
   };
 };
