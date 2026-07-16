@@ -130,6 +130,17 @@ check("T3 com transferencia disponivel informa continuidade com analista", t3Tra
   && t3Transfer.text?.includes("analista") === true
   && t3TransferBrain.frames[0]?.conversationContext.followup?.handoffAvailable === true);
 
+const t3MissingTransferClaimBrain = new QueueBrain([
+  final("Entendo que voce deve estar ocupado. Quando quiser retomar, e so me chamar."),
+  final("Entendo que voce deve estar ocupado. Seu contato ja esta encaminhado para um consultor de vendas, que dara continuidade. Obrigado pelo contato."),
+]);
+const t3MissingTransferClaim = await authorFollowupMessageDetailed({
+  brain: t3MissingTransferClaimBrain, state: state(), stage: 3, turnId: "fu60-t3-required-transfer", now: NOW,
+  portalPromptSha256: "sha", handoffAvailable: true,
+});
+check("T3 disponivel rejeita despedida sem avisar o consultor", t3MissingTransferClaim.attempts === 2
+  && t3MissingTransferClaim.text?.includes("consultor") === true);
+
 const t3NoTransferBrain = new QueueBrain([
   final("Seu contato ja esta com um dos nossos analistas."),
   final("Entendo que voce deve estar ocupado. Quando quiser retomar, e so me chamar."),

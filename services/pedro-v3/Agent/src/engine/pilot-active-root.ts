@@ -502,15 +502,27 @@ export class PilotActiveRoot {
       if (current?.anchorEffectId === input.due.anchorEffectId && (current.sentStages.includes(input.due.stage) || current.plannedStage != null)) return;
 
       const turnId = `followup:${input.due.anchorEffectId}:${input.due.stage}`;
+      // O vínculo pode ter sido criado/persistido durante um turno anterior,
+      // mesmo quando este root foi construído com leadId nulo pelo bridge.
+      // T3 deve usar a identidade durável da conversa para não perder a
+      // transferência por depender apenas do snapshot de inicialização.
+      const followupLeadId = snapshot.state.leadId ?? this.leadId;
+      const t3HandoffAvailable = input.due.stage === 3
+        && input.rules.followup.t3Transfers
+        && input.rules.transfer.enabled
+        && this.handoffEnabled
+        && this.transferStore != null
+        && (await evaluateHandoffPrecheck({
+          flagEnabled: this.handoffEnabled,
+          crmEnabled: this.crmLeadStore != null,
+          leadBound: followupLeadId != null,
+          store: this.transferStore,
+          ref: this.ref,
+        })).available;
       const authored = await authorFollowupMessageDetailed({
         brain: this.agentBrain!, state: snapshot.state, stage: input.due.stage,
         turnId, now, portalPromptSha256: this.promptSha256,
-        handoffAvailable: input.due.stage === 3
-          && input.rules.followup.t3Transfers
-          && input.rules.transfer.enabled
-          && this.handoffEnabled
-          && this.transferStore != null
-          && this.leadId != null,
+        handoffAvailable: t3HandoffAvailable,
         maxAttempts: 3,
       });
       const text = authored.text;
@@ -535,18 +547,18 @@ export class PilotActiveRoot {
       };
 
       let handoffPlanned = false;
-      if (input.due.stage === 3 && input.rules.followup.t3Transfers && input.rules.transfer.enabled && this.handoffEnabled && this.transferStore && this.leadId) {
+      if (input.due.stage === 3 && input.rules.followup.t3Transfers && input.rules.transfer.enabled && this.handoffEnabled && this.transferStore && followupLeadId) {
         const memory = loadPersistedWorkingMemory(snapshot.state.workingMemory).memory;
         let leadDisplayName = snapshot.state.slots.nome.status === "known" ? snapshot.state.slots.nome.value : null;
         if (!leadDisplayName) {
           try {
-            leadDisplayName = (await this.transferStore.fetchOwnedLeadForTransfer(this.ref, this.leadId))?.leadName ?? null;
+            leadDisplayName = (await this.transferStore.fetchOwnedLeadForTransfer(this.ref, followupLeadId))?.leadName ?? null;
           } catch {
             // Nome enriquece o briefing, mas nunca bloqueia o T3/handoff.
           }
         }
         const chain = buildHandoffChain({
-          decision, turnId, leadId: this.leadId, stateAfter: snapshot.state,
+          decision, turnId, leadId: followupLeadId, stateAfter: snapshot.state,
           adContext: snapshot.state.adContext ?? null, adVehicleLabel: null,
           lastPhotoAction: memory.lastPhotoAction ? { label: memory.lastPhotoAction.label, photoIds: memory.lastPhotoAction.photoIds } : null,
           agentName: this.runtimeConfig.agentName, leadPhone: input.to,

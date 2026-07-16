@@ -63,8 +63,8 @@ function adVehicleLabel(state: ConversationState): string | null {
 // not choose whether the lead should be transferred.
 function claimsHandoffContinuity(text: string): boolean {
   const normalized = normalizeFollowupText(text);
-  const mentionsTeam = /\b(?:analistas?|vendedores?|consultores?|equipe)\b/.test(normalized);
-  const claimsAction = /\b(?:seu contato|contato)\b.{0,70}\b(?:ja\s+est[aá]|esta\s+com|ficara?\s+com|sera?\s+encaminhad|vai\s+(?:falar|receber)|entrara?\s+em\s+contato|dar[aá]\s+continuidade|encaminhad|transferid)/.test(normalized);
+  const mentionsTeam = /\b(?:analista(?:s)?|vendedor(?:es)?|consultor(?:es)?|equipe)\b/.test(normalized);
+  const claimsAction = /\b(?:seu contato|contato)\b.{0,120}\b(?:encaminhad\w*|transferid\w*|esta\s+com|ja\s+esta|ficara?\s+com|vai\s+(?:falar|receber)|entrara?\s+em\s+contato|dara?\s+continuidade)/.test(normalized);
   return mentionsTeam && claimsAction;
 }
 
@@ -78,11 +78,11 @@ function repeatsLastAgentQuestion(text: string, previous: string | null): boolea
   });
 }
 
-function violatesFollowupStyle(text: string): boolean {
+function violatesFollowupStyle(text: string, stage: FollowupStage): boolean {
   const normalized = normalizeFollowupText(text);
   const startsWithGreeting = /^(?:bom dia|boa tarde|boa noite|ola|oi)\b/.test(normalized);
   const repeatsPresentation = /\b(?:sou o|sou a|aqui e o|aqui e a|meu nome e)\b/.test(normalized)
-    || /\bconsultor(?:a)?\b/.test(normalized);
+    || (stage !== 3 && /\bconsultor(?:a)?\b/.test(normalized));
   const coldFarewell = /\bprefiro ser honesto\b|\btalvez nao seja o melhor cenario\b/.test(normalized);
   return startsWithGreeting || repeatsPresentation || coldFarewell;
 }
@@ -187,15 +187,18 @@ export async function authorFollowupMessageDetailed(args: {
     try { text = ResponseRenderer.render({ parts: textParts }, [], args.state).trim(); }
     catch { text = ""; }
     const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
-    const invalidStyle = violatesFollowupStyle(text);
+    const invalidStyle = violatesFollowupStyle(text, args.stage);
     const unsupportedClaim = claimsUnseenOutboundMaterial(text, args.state);
     const unsupportedHandoffClaim = args.stage === 3 && claimsHandoffContinuity(text) && args.handoffAvailable !== true;
+    const missingHandoffClaim = args.stage === 3 && args.handoffAvailable === true && !claimsHandoffContinuity(text);
     const questions = questionCount(text);
-    if (!text || invalidStyle || repeatedQuestion || unsupportedClaim || unsupportedHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+    if (!text || invalidStyle || repeatedQuestion || unsupportedClaim || unsupportedHandoffClaim || missingHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
       lastReason = !text ? "text_missing" : unsupportedHandoffClaim ? "unsupported_handoff_claim" : unsupportedClaim ? "unsupported_claim" : "question_contract";
       feedback = args.stage === 3
         ? unsupportedHandoffClaim
           ? " FEEDBACK: o contexto deste T3 nao confirma uma transferencia executavel. Despeca-se sem dizer que o contato esta com analista/vendedor/equipe; deixe a porta aberta de forma cordial."
+          : missingHandoffClaim
+            ? " FEEDBACK: a transferencia deste T3 esta disponivel e sera materializada junto com a despedida. Despeca-se sem pergunta e informe claramente que o contato ja esta encaminhado a um consultor de vendas, que dara continuidade."
           : " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
         : unsupportedClaim
           ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
