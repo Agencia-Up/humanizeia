@@ -20,7 +20,7 @@ import {
   Bot, MonitorPlay, BarChart3, Loader2, Users, MessageSquare, Inbox,
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
-  ChevronRight, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
+  ChevronRight, ChevronLeft, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Upload, X, Trash2, Download,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
   Pencil, Check, Trophy, FileText,
@@ -959,8 +959,15 @@ const STATUS_DISPLAY_MAP: Record<string, string> = {
  */
 function normalizeStatus(status: string, columns?: readonly { id: string }[]): string {
   const s = status || 'novo';
-  if (columns?.some(c => c.id === s)) return s; // coluna real: nunca traduzir
-  return STATUS_DISPLAY_MAP[s] || s;            // só alias legado
+  if (columns?.some(c => c.id === s)) return s; // coluna real (inclui UUID do Marcos): nunca traduzir
+  const legacy = STATUS_DISPLAY_MAP[s];
+  if (legacy) return legacy;                    // alias legado conhecido
+  if (!columns?.length) return s;               // sem lista de colunas: devolve como veio
+  // ÓRFÃO: status que não é coluna atual nem alias conhecido (ex.: a coluna foi
+  // apagada depois). Sem este fallback o lead não casava com NENHUMA coluna e
+  // sumia do board — invisível, sem erro. Cai na primeira coluna pra continuar
+  // visível e movível.
+  return columns.some(c => c.id === 'novo') ? 'novo' : columns[0].id;
 }
 
 const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string; bg: string; dot: string }> = {
@@ -1272,6 +1279,12 @@ export function CrmAvancadoTab({
   }, [isMarcosCrm, effectiveUserIdState]);
   // Popup "Registrar venda" — aberto quando um lead entra em "Venda concluída".
   // Grava carro + data (+ valor) na venda criada pelo gatilho (comercial_vendas).
+  // Menu "Mover" do card: alternativa ao arraste (essencial no celular, onde
+  // arrastar card dentro de board com scroll é sofrível pra usuário leigo).
+  const [moverLead, setMoverLead] = useState<{ id: string; nome: string; atual: string } | null>(null);
+  // Coluna de ONDE o lead saiu (só durante o arraste), pra dar o contraste
+  // origem-fraca x destino-forte e o usuário enxergar de onde pra onde está indo.
+  const [dragSourceCol, setDragSourceCol] = useState<string | null>(null);
   const [vendaDialog, setVendaDialog] = useState<{ leadId: string; nome: string; modo: 'novo' | 'editar' } | null>(null);
   const [vendaCarro, setVendaCarro] = useState('');
   const [vendaData, setVendaData] = useState('');
@@ -3578,35 +3591,38 @@ export function CrmAvancadoTab({
     }
   };
 
-  const handleDragEnd = async (result: DropResult) => {
-    isLeadDraggingRef.current = false;
-    const { draggableId, destination, source, type } = result;
-    if (!destination) return;
-
-    if (type === 'COLUMN') {
-      if (destination.index === source.index) return;
-      const previousOrder = columnOrder;
-      const nextColumns = reorderItems(pipelineColumns, source.index, destination.index);
-      const nextOrder = nextColumns.map(column => column.id);
-      setColumnOrder(nextOrder);
-      try {
-        await saveColumnOrder(nextOrder);
-        toast({ title: '✅ Ordem das colunas salva!' });
-      } catch (err: any) {
-        setColumnOrder(previousOrder);
-        toast({ title: 'Erro ao salvar ordem', description: descricaoErro(err), variant: 'destructive' });
-      }
-      return;
+  /**
+   * Reordena coluna e persiste. Caminho único: o arraste da coluna e os botoes
+   * ←/→ do header chamam esta mesma funcao.
+   */
+  const moveColumnTo = async (from: number, to: number) => {
+    if (from === to || to < 0 || to >= pipelineColumns.length) return;
+    const previousOrder = columnOrder;
+    const nextOrder = reorderItems(pipelineColumns, from, to).map(column => column.id);
+    setColumnOrder(nextOrder);
+    try {
+      await saveColumnOrder(nextOrder);
+      toast({ title: '✅ Ordem das colunas salva!' });
+    } catch (err: any) {
+      setColumnOrder(previousOrder);
+      console.error('[CRM] Falha ao reordenar coluna', { de: from, para: to, modo: mode, erro: err });
+      toast({ title: 'Não foi possível mover a coluna', description: 'A ordem voltou como estava. Tente novamente.', variant: 'destructive' });
     }
+  };
 
-    // Só lead daqui pra baixo. Sem type explicito nao move nada (evita drop de
-    // outra fonte cair aqui e mexer no status do lead sem querer).
-    if (type !== 'LEAD') return;
-    if (destination.droppableId === source.droppableId) return;
+  /**
+   * Move o lead pra uma coluna e PERSISTE. Caminho único: o arraste e o menu
+   * "Mover" do celular chamam esta mesma funcao — se um funciona, o outro
+   * funciona igual (mesma confirmacao no banco, mesmo desfazer).
+   */
+  const moveLeadToColumn = async (leadId: string, newStatus: string) => {
+    const lead = leads.find(l => l.id === leadId);
+    if (!lead) return;
+    const currentStatus = normalizeStatus(lead.status_crm || 'novo', pipelineColumns);
+    if (currentStatus === newStatus) return; // ja esta la
 
-    const newStatus = destination.droppableId;
-    // O destino TEM que ser uma coluna que existe. Sem isso, um droppableId
-    // invalido gravaria um status fantasma e o lead sumiria do board.
+    // O destino TEM que ser uma coluna que existe. Sem isso, um id invalido
+    // gravaria um status fantasma e o lead sumiria do board.
     if (!pipelineColumns.some(c => c.id === newStatus)) {
       toast({ title: 'Coluna inválida', description: 'Não consegui identificar a coluna de destino. Atualize a página e tente de novo.', variant: 'destructive' });
       return;
@@ -3619,7 +3635,7 @@ export function CrmAvancadoTab({
 
     // Otimista: no Marcos a coluna vem de stage_id, mas o render le status_crm —
     // por isso os DOIS precisam andar juntos, senao o card volta no proximo fetch.
-    setLeads(prev => prev.map(l => l.id === draggableId ? {
+    setLeads(prev => prev.map(l => l.id === leadId ? {
       ...l,
       status_crm: newStatus,
       ...(isMarcosCrm ? { stage_id: newStatus } : {}),
@@ -3630,7 +3646,7 @@ export function CrmAvancadoTab({
         const { data, error } = await (supabase as any)
           .from('crm_leads')
           .update({ stage_id: newStatus })
-          .eq('id', draggableId)
+          .eq('id', leadId)
           .select('id, stage_id')
           .single();
         if (error) throw error;
@@ -3641,7 +3657,7 @@ export function CrmAvancadoTab({
         const { data, error } = await (supabase as any)
           .from('ai_crm_leads')
           .update({ status_crm: newStatus })
-          .eq('id', draggableId)
+          .eq('id', leadId)
           .select('id, status_crm')
           .single();
         if (error) throw error;
@@ -3650,11 +3666,25 @@ export function CrmAvancadoTab({
       toast({ title: `✅ Lead movido para ${destTitle}` });
       // Venda abre o popup, mas NAO prende o lead: o card ja esta na coluna e
       // continua livre pra ser movido de novo depois.
-      if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
+      if (isWinStatus(newStatus)) openVendaDialogFor(leadId);
     } catch (err: any) {
       setLeads(previousLeads); // desfaz exatamente o que estava antes
-      toast({ title: 'Erro ao mover lead', description: descricaoErro(err), variant: 'destructive' });
+      // Detalhe tecnico fica no console; o usuario le uma frase simples.
+      console.error('[CRM] Falha ao mover lead', { leadId, de: currentStatus, para: newStatus, modo: mode, erro: err });
+      toast({ title: 'Não foi possível mover', description: 'O lead voltou para a coluna anterior. Tente novamente.', variant: 'destructive' });
     }
+  };
+
+  const handleDragEnd = async (result: DropResult) => {
+    isLeadDraggingRef.current = false;
+    const { draggableId, destination, source, type } = result;
+    if (!destination) return;
+
+    // SO lead. Coluna nao arrasta mais (reordena por botao) — qualquer outro type
+    // e ignorado de proposito, pra nenhum drop estranho mexer no status do lead.
+    if (type !== 'LEAD') return;
+    if (destination.droppableId === source.droppableId) return;
+    await moveLeadToColumn(draggableId, destination.droppableId);
   };
 
   // BUG-NOVO-04: carregar pending transfers pra mostrar "Aguardando confirmacao"
@@ -5318,17 +5348,20 @@ export function CrmAvancadoTab({
         <DragDropContext
           onDragStart={(start) => {
             isLeadDraggingRef.current = start.type !== 'COLUMN';
+            setDragSourceCol(start.type === 'LEAD' ? start.source.droppableId : null);
             if (isLeadDraggingRef.current) startBoardAutoScroll();
           }}
-          onDragEnd={(result) => { stopBoardAutoScroll(); handleDragEnd(result); }}
+          onDragEnd={(result) => { stopBoardAutoScroll(); setDragSourceCol(null); handleDragEnd(result); }}
         >
           <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 overflow-x-auto px-2 pb-2 sm:-mx-4 sm:px-4">
-            {/* Reordenar coluna também é @hello-pangea/dnd (type COLUMN). Antes o
-                header usava drag NATIVO do HTML5 no mesmo board do lead: as duas
-                engines disputavam o mesmo gesto e o drop do lead saía errado. */}
-            <Droppable droppableId="board" type="COLUMN" direction="horizontal">
-              {(boardProvided) => (
-            <div className="flex gap-3 min-w-max" ref={boardProvided.innerRef} {...boardProvided.droppableProps}>
+            {/* O board NAO e droppable. Historico: (1) coluna usava drag NATIVO do
+                HTML5 brigando com o dnd do lead; (2) troquei por Droppable type=COLUMN
+                — melhorou, mas um droppable horizontal ENVOLVENDO os droppables de
+                lead, ainda por cima com scroll horizontal, deixava o drop do lead
+                instavel nas colunas da direita. Agora o DragDropContext cuida SO do
+                lead e reordenar coluna e por botao (deterministico). Uma engine, um
+                gesto. NAO reintroduzir drag de coluna aqui. */}
+            <div className="flex gap-3 min-w-max">
               {pipelineColumns.map((col, colIndex) => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo', pipelineColumns) === col.id);
                 // Destaque da etapa de venda (Pedro: id 'fechado'; Marcos: etapa "Venda concluída").
@@ -5339,36 +5372,51 @@ export function CrmAvancadoTab({
                 const hex = col.color || null;
                 const useHex = !!hex && !isWin;
                 return (
-                  <Draggable key={col.id} draggableId={`col:${col.id}`} index={colIndex}>
-                    {(colProvided, colSnapshot) => (
                   <div
-                    ref={colProvided.innerRef}
-                    {...colProvided.draggableProps}
-                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''} ${colSnapshot.isDragging ? 'opacity-90 shadow-2xl' : ''}`}
-                    style={{ ...colProvided.draggableProps.style, ...(useHex ? { borderColor: `${hex}4d` } : {}) }}
+                    key={col.id}
+                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
+                    style={useHex ? { borderColor: `${hex}4d` } : undefined}
                   >
-                    {/* Column header = drag handle da COLUNA (só ele arrasta a coluna;
-                        o corpo fica livre pro drag do LEAD). */}
+                    {/* Header da coluna: SEM arraste. Reordenar e so pelos botoes ←/→
+                        (deterministico e acessivel no celular). Nada de grip aqui —
+                        grip sem drag so engana o usuario. */}
                     <div
-                      {...colProvided.dragHandleProps}
-                      className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between cursor-grab active:cursor-grabbing select-none`}
+                      className={`px-2.5 py-2 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between gap-1 select-none`}
                       style={useHex ? { backgroundColor: `${hex}1a` } : undefined}
-                      title="Arraste para reorganizar esta coluna"
                     >
-                      <div className="flex items-center gap-2">
-                        <GripVertical className="h-3.5 w-3.5 text-muted-foreground/60" />
-                        <span className="text-sm">{col.emoji}</span>
-                        <span className={`text-xs font-semibold ${isWin ? 'text-emerald-200' : 'text-foreground'}`}>{col.title}</span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-sm shrink-0">{col.emoji}</span>
+                        <span className={`text-xs font-semibold truncate ${isWin ? 'text-emerald-200' : 'text-foreground'}`}>{col.title}</span>
                         {isWin && (
-                          <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-emerald-100">
+                          <span className="shrink-0 text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-emerald-100">
                             Venda
                           </span>
                         )}
                       </div>
-                      <span className={`w-5 h-5 rounded-full ${useHex ? '' : col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}
-                        style={useHex ? { backgroundColor: `${hex}26` } : undefined}>
-                        {colLeads.length}
-                      </span>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          disabled={colIndex === 0}
+                          onClick={() => moveColumnTo(colIndex, colIndex - 1)}
+                          className="rounded p-1 text-muted-foreground/70 hover:bg-background/40 hover:text-foreground disabled:opacity-25 disabled:pointer-events-none"
+                          title="Mover coluna para a esquerda"
+                          aria-label="Mover coluna para a esquerda"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          disabled={colIndex === pipelineColumns.length - 1}
+                          onClick={() => moveColumnTo(colIndex, colIndex + 1)}
+                          className="rounded p-1 text-muted-foreground/70 hover:bg-background/40 hover:text-foreground disabled:opacity-25 disabled:pointer-events-none"
+                          title="Mover coluna para a direita"
+                          aria-label="Mover coluna para a direita"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                        <span className={`ml-0.5 w-5 h-5 rounded-full ${useHex ? '' : col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}
+                          style={useHex ? { backgroundColor: `${hex}26` } : undefined}>
+                          {colLeads.length}
+                        </span>
+                      </div>
                     </div>
                     {/* Column body — droppable de LEAD (type explicito: o handleDragEnd
                         só move lead quando type === 'LEAD'). */}
@@ -5377,10 +5425,14 @@ export function CrmAvancadoTab({
                         <div
                           ref={provided.innerRef}
                           {...provided.droppableProps}
-                          className={`p-2 space-y-2 max-h-[60vh] overflow-y-auto min-h-[180px] rounded-b-xl border border-dashed transition-colors ${
+                          className={`p-2 space-y-2 max-h-[60vh] overflow-y-auto min-h-[220px] rounded-b-xl border-2 border-dashed transition-colors ${
                             snapshot.isDraggingOver
-                              ? 'border-blue-400/60 bg-blue-500/10 ring-1 ring-blue-400/30'
-                              : 'border-transparent'
+                              // destino: destaque FORTE — nao tem como errar onde vai cair
+                              ? 'border-blue-400 bg-blue-500/20 ring-2 ring-blue-400/40'
+                              : dragSourceCol === col.id
+                                // origem: destaque fraco — mostra de onde saiu
+                                ? 'border-muted-foreground/25 bg-muted/20'
+                                : 'border-transparent'
                           }`}
                         >
                           {colLeads.length === 0 && !snapshot.isDraggingOver && (
@@ -5399,7 +5451,9 @@ export function CrmAvancadoTab({
                                   {...dragProvided.draggableProps}
                                   role="button"
                                   tabIndex={0}
-                                  onClick={() => loadLeadDetail(lead)}
+                                  // Durante o arraste o clique nao pode abrir o detalhe:
+                                  // soltar o card disparava onClick e o popup abria sozinho.
+                                  onClick={() => { if (!isLeadDraggingRef.current && !dragSnapshot.isDragging) loadLeadDetail(lead); }}
                                   onKeyDown={(event) => {
                                     if (event.key === 'Enter' || event.key === ' ') {
                                       event.preventDefault();
@@ -5424,13 +5478,16 @@ export function CrmAvancadoTab({
                                         title="Marcar pra disparo"
                                       />
                                     )}
+                                    {/* Handle do LEAD. Alvo de toque maior (p-2) porque no
+                                        celular 14px era quase impossivel de pegar. */}
                                     <div
                                       {...dragProvided.dragHandleProps}
                                       onClick={(event) => event.stopPropagation()}
-                                      className="-m-1.5 mt-[-3px] rounded-md p-1.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground"
-                                      title="Arraste o lead para outra coluna"
+                                      className="-ml-1.5 mt-[-4px] rounded-md p-2 cursor-grab active:cursor-grabbing text-muted-foreground/60 hover:bg-muted/60 hover:text-foreground touch-none"
+                                      title="Arrastar lead"
+                                      aria-label="Arrastar lead"
                                     >
-                                      <GripVertical className="h-3.5 w-3.5" />
+                                      <GripVertical className="h-4 w-4" />
                                     </div>
                                     <button
                                       onClick={(event) => {
@@ -5529,11 +5586,30 @@ export function CrmAvancadoTab({
                                         </span>
                                       )}
                                     </div>
-                                    {!isSeller && !lead.member && sellerStatusForLead(lead).status === 'none' && (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
-                                        {sellerLabelForLead(lead)}
-                                      </span>
-                                    )}
+                                    <div className="flex items-center gap-1">
+                                      {!isSeller && !lead.member && sellerStatusForLead(lead).status === 'none' && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 font-medium">
+                                          {sellerLabelForLead(lead)}
+                                        </span>
+                                      )}
+                                      {/* Alternativa ao arraste. No celular arrastar card num board
+                                          com scroll e sofrivel — aqui o usuario so escolhe a coluna
+                                          numa lista. Usa a MESMA funcao do drag (moveLeadToColumn). */}
+                                      <button
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          setMoverLead({
+                                            id: lead.id,
+                                            nome: lead.lead_name || 'Lead',
+                                            atual: normalizeStatus(lead.status_crm || 'novo', pipelineColumns),
+                                          });
+                                        }}
+                                        className="shrink-0 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-blue-500/10 hover:text-blue-400 border border-border/40"
+                                        title="Mover para outra coluna"
+                                      >
+                                        Mover
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -5544,17 +5620,49 @@ export function CrmAvancadoTab({
                       )}
                     </Droppable>
                   </div>
-                    )}
-                  </Draggable>
                 );
               })}
-              {boardProvided.placeholder}
             </div>
-              )}
-            </Droppable>
           </div>
         </DragDropContext>
       )}
+
+      {/* ── Popup: "Mover para" — caminho sem arrastar (essencial no celular) ── */}
+      <Dialog open={!!moverLead} onOpenChange={(o) => { if (!o) setMoverLead(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">Mover lead</DialogTitle>
+            <DialogDescription className="text-xs">
+              {moverLead?.nome} — escolha a coluna de destino.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
+            {pipelineColumns.map(col => {
+              const atual = moverLead?.atual === col.id;
+              return (
+                <button
+                  key={col.id}
+                  disabled={atual}
+                  onClick={async () => {
+                    const alvo = moverLead;
+                    setMoverLead(null);
+                    if (alvo) await moveLeadToColumn(alvo.id, col.id);
+                  }}
+                  className={`w-full flex items-center gap-2 rounded-lg border px-3 py-3 text-left transition-colors ${
+                    atual
+                      ? 'border-border/40 bg-muted/40 opacity-60 cursor-default'
+                      : 'border-border/40 hover:border-blue-500/50 hover:bg-blue-500/10'
+                  }`}
+                >
+                  <span className="text-base">{col.emoji}</span>
+                  <span className="flex-1 text-sm font-medium">{col.title}</span>
+                  {atual && <span className="text-[10px] text-muted-foreground">está aqui</span>}
+                </button>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Popup: registrar/editar venda (carro + data + valor) ─────────── */}
       {vendaDialogEl}
