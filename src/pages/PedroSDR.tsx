@@ -1329,6 +1329,21 @@ export function CrmAvancadoTab({
   const [fuUploading, setFuUploading]     = useState(false);
   const fuFileRef = useRef<HTMLInputElement>(null);
   const draggedColumnIdRef = useRef<string | null>(null);
+  const isLeadDraggingRef = useRef(false);
+  const pendingLeadStageRef = useRef<Map<string, { status: string; expiresAt: number }>>(new Map());
+  const applyPendingLeadStages = useCallback((items: CrmLead[]) => {
+    const now = Date.now();
+    pendingLeadStageRef.current.forEach((entry, leadId) => {
+      if (entry.expiresAt <= now) pendingLeadStageRef.current.delete(leadId);
+    });
+    if (pendingLeadStageRef.current.size === 0) return items;
+    return items.map(lead => {
+      const pending = pendingLeadStageRef.current.get(lead.id);
+      return pending
+        ? { ...lead, status_crm: pending.status, ...(isMarcosCrm ? { stage_id: pending.status } : {}) }
+        : lead;
+    });
+  }, [isMarcosCrm]);
   // Auto-scroll horizontal do board enquanto arrasta o lead. O @hello-pangea/dnd só
   // rola o scroll do PRÓPRIO droppable (cada coluna tem overflow-y) + a janela; o
   // scroll horizontal do board é um ancestral, então o card não alcançava as colunas
@@ -1619,7 +1634,7 @@ export function CrmAvancadoTab({
           };
         });
 
-        setLeads(mappedLeads);
+        setLeads(applyPendingLeadStages(mappedLeads));
         setFeedbacks([]);
         const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected' || i.is_active);
         setInstances(connectedInstances);
@@ -1797,7 +1812,7 @@ export function CrmAvancadoTab({
         };
       });
 
-      setLeads(leadsData);
+      setLeads(applyPendingLeadStages(leadsData));
       setLeadMetrics({
         total: totalCountRes.count ?? 0,
         today: todayCountRes.count ?? 0,
@@ -3573,6 +3588,7 @@ export function CrmAvancadoTab({
   };
 
   const handleDragEnd = async (result: DropResult) => {
+    isLeadDraggingRef.current = false;
     const { draggableId, destination, source, type } = result;
     if (!destination) return;
 
@@ -3594,8 +3610,13 @@ export function CrmAvancadoTab({
 
     if (destination.droppableId === source.droppableId) return;
     const newStatus = destination.droppableId;
+    pendingLeadStageRef.current.set(draggableId, { status: newStatus, expiresAt: Date.now() + 15000 });
     // Atualiza localmente de imediato (optimistic)
-    setLeads(prev => prev.map(l => l.id === draggableId ? { ...l, status_crm: newStatus } : l));
+    setLeads(prev => prev.map(l => l.id === draggableId ? {
+      ...l,
+      status_crm: newStatus,
+      ...(isMarcosCrm ? { stage_id: newStatus } : {}),
+    } : l));
     try {
       if (isMarcosCrm) {
         const { error } = await (supabase as any)
@@ -3604,6 +3625,7 @@ export function CrmAvancadoTab({
           .eq('id', draggableId);
         if (error) throw error;
         toast({ title: `✅ Lead movido para ${manualStages.find(c => c.id === newStatus)?.title || newStatus}` });
+        window.setTimeout(() => pendingLeadStageRef.current.delete(draggableId), 12000);
         if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
         return;
       }
@@ -3613,8 +3635,10 @@ export function CrmAvancadoTab({
         .eq('id', draggableId);
       if (error) throw error;
       toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : (pedroStages.length ? pedroStages : PIPELINE_COLUMNS)).find(c => c.id === newStatus)?.title || newStatus}` });
+      window.setTimeout(() => pendingLeadStageRef.current.delete(draggableId), 12000);
       if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
     } catch (err: any) {
+      pendingLeadStageRef.current.delete(draggableId);
       toast({ title: 'Erro ao mover lead', description: descricaoErro(err), variant: 'destructive' });
       await fetchData(true); // Revert on failure
     }
@@ -5279,7 +5303,10 @@ export function CrmAvancadoTab({
       {/* ── PIPELINE (Kanban) com Drag & Drop ──────────────────────── */}
       {view === 'pipeline' && (
         <DragDropContext
-          onDragStart={startBoardAutoScroll}
+          onDragStart={(start) => {
+            isLeadDraggingRef.current = start.type !== 'COLUMN';
+            if (isLeadDraggingRef.current) startBoardAutoScroll();
+          }}
           onDragEnd={(result) => { stopBoardAutoScroll(); handleDragEnd(result); }}
         >
           <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 overflow-x-auto px-2 pb-2 sm:-mx-4 sm:px-4">
@@ -5296,8 +5323,15 @@ export function CrmAvancadoTab({
                 return (
                   <div
                     key={col.id}
-                    onDragOver={event => event.preventDefault()}
-                    onDrop={() => {
+                    onDragOver={event => {
+                      if (!draggedColumnIdRef.current) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(event) => {
+                      if (!draggedColumnIdRef.current) return;
+                      event.preventDefault();
+                      event.stopPropagation();
                       const draggedId = draggedColumnIdRef.current;
                       draggedColumnIdRef.current = null;
                       if (draggedId) handleColumnReorder(draggedId, col.id);
@@ -5309,13 +5343,16 @@ export function CrmAvancadoTab({
                     <div
                       draggable
                       onDragStart={event => {
+                        event.stopPropagation();
                         draggedColumnIdRef.current = col.id;
                         event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', col.id);
                       }}
-                      onDragEnd={() => {
+                      onDragEnd={(event) => {
+                        event.stopPropagation();
                         draggedColumnIdRef.current = null;
                       }}
-                      className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between cursor-grab active:cursor-grabbing`}
+                      className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between cursor-grab active:cursor-grabbing select-none`}
                       style={useHex ? { backgroundColor: `${hex}1a` } : undefined}
                       title="Arraste para reorganizar esta coluna"
                     >
@@ -5340,12 +5377,19 @@ export function CrmAvancadoTab({
                         <div
                           ref={provided.innerRef}
                           {...provided.droppableProps}
-                          className={`p-2 space-y-2 max-h-[60vh] overflow-y-auto min-h-[60px] transition-colors ${
-                            snapshot.isDraggingOver ? 'bg-blue-500/5' : ''
+                          className={`p-2 space-y-2 max-h-[60vh] overflow-y-auto min-h-[180px] rounded-b-xl border border-dashed transition-colors ${
+                            snapshot.isDraggingOver
+                              ? 'border-blue-400/60 bg-blue-500/10 ring-1 ring-blue-400/30'
+                              : 'border-transparent'
                           }`}
                         >
                           {colLeads.length === 0 && !snapshot.isDraggingOver && (
                             <p className="text-center text-[10px] text-muted-foreground py-6">Nenhum lead</p>
+                          )}
+                          {colLeads.length === 0 && snapshot.isDraggingOver && (
+                            <p className="rounded-lg border border-blue-400/40 bg-blue-500/10 py-6 text-center text-[11px] font-semibold text-blue-200">
+                              Solte o lead aqui
+                            </p>
                           )}
                           {colLeads.map((lead, index) => (
                             <Draggable key={lead.id} draggableId={lead.id} index={index}>
@@ -5353,7 +5397,16 @@ export function CrmAvancadoTab({
                                 <div
                                   ref={dragProvided.innerRef}
                                   {...dragProvided.draggableProps}
-                                  className={`w-full text-left bg-background border rounded-lg p-3 transition-all space-y-2 group ${
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => loadLeadDetail(lead)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      loadLeadDetail(lead);
+                                    }
+                                  }}
+                                  className={`w-full text-left bg-background border rounded-lg p-3 transition-all space-y-2 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
                                     dragSnapshot.isDragging
                                       ? 'border-blue-500/60 shadow-lg shadow-blue-500/10 ring-1 ring-blue-500/30'
                                       : 'border-border/40 hover:border-blue-500/40 hover:bg-blue-500/5'
@@ -5373,12 +5426,17 @@ export function CrmAvancadoTab({
                                     )}
                                     <div
                                       {...dragProvided.dragHandleProps}
-                                      className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground"
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="-m-1.5 mt-[-3px] rounded-md p-1.5 cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground"
+                                      title="Arraste o lead para outra coluna"
                                     >
                                       <GripVertical className="h-3.5 w-3.5" />
                                     </div>
                                     <button
-                                      onClick={() => loadLeadDetail(lead)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        loadLeadDetail(lead);
+                                      }}
                                       className="flex-1 text-left min-w-0"
                                     >
                                       <p className="text-xs font-semibold text-foreground truncate">{lead.lead_name || 'Lead'}</p>
@@ -5435,7 +5493,13 @@ export function CrmAvancadoTab({
                                     </div>
                                   )}
                                   {lead.summary && (
-                                    <button onClick={() => loadLeadDetail(lead)} className="w-full text-left">
+                                    <button
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        loadLeadDetail(lead);
+                                      }}
+                                      className="w-full text-left"
+                                    >
                                       <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2 whitespace-pre-line">{lead.summary}</p>
                                     </button>
                                   )}
