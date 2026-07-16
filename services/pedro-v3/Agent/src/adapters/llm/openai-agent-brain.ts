@@ -85,6 +85,9 @@ CONTEXTO DA CONVERSA
 - Se currentTurnFacts.extracted ja traz um dado, nao o pergunte novamente. formaPagamento=consorcio/carta contemplada e pagamento, nunca troca, estoque ou cadastro.
 - Se offerReference.status=unique, use o candidateVehicleKey para foto/detalhe/selecao; cor, ano, ordinal ou marca isolados da ultima lista nao sao nome de modelo.
 - Uma referencia ambigua deve gerar uma pergunta curta de esclarecimento, sem escolher arbitrariamente e sem nova busca.
+- Antes de redigir, explique para si mesmo qual fala do lead este turno responde: o leadBlock inteiro e uma rajada logica, e a ultima fala do agente serve apenas para interpretar respostas curtas.
+- pendingAgentQuestion, objetivo antigo, funil e memoria nunca sao uma ordem para repetir uma pergunta. Se o lead fizer um pedido novo ou mudar de assunto, responda esse ato primeiro; nao peca nome, nome completo, CPF ou outro slot apenas porque uma pergunta antiga ficou pendente.
+- Uma pergunta pessoal so pode aparecer quando for realmente o proximo dado necessario para o ato que voce escolheu e estiver alinhada ao prompt do portal. Nunca use coleta de dados para adiar uma resposta ao pedido atual.
 
 ATOS E TOOLS
 - stock_search: somente quando o ato atual pede estoque, disponibilidade, filtro, mais opcoes ou um carro novo para compra. Use todos os filtros presentes: tipo, cambio, hibrido, precoMax, modelo, marca, anos, popular, excludeKeys e broad.
@@ -256,13 +259,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       ? successfulStock.data.items.length > 0
         ? "A stock_search deste turno JA terminou e os itens estao em toolObservationsSoFar. Devolva FINAL agora: introducao curta, vehicle_offer_list com as vehicleKeys retornadas e no maximo UMA pergunta contextual. NAO chame stock_search novamente e nao escreva nomes, precos ou km manualmente."
         : "A stock_search deste turno JA terminou sem itens. Devolva FINAL agora com uma resposta honesta e uma unica pergunta que ajude a ajustar o filtro. NAO chame stock_search novamente."
-      : frame.signals.disengagementOnly === true
-      ? "Este turno é uma DESPEDIDA ISOLADA. Devolva UM final JSON com draft.parts contendo exatamente UMA part text curta e cordial. Não faça pergunta, não use tool, não colete dado e não continue o funil. Esta regra específica do turno prevalece sobre orientações genéricas do portal para sempre fazer CTA/pergunta."
-      : frame.signals.acceptedPhotoOffer === true
-        ? "A resposta curta atual ACEITOU sua última oferta única de fotos. Preserve o selectedVehicle, declare request_photos/send_photos com evidence do bloco atual e use vehicle_photos_resolve; não pergunte novamente qual carro."
-        : frame.signals.selectedOfferThisTurn === true
-          ? "O bloco atual SELECIONOU um veículo da última oferta. Acolha e nomeie essa escolha em FINAL, sem tool e sem iniciar cadastro/financiamento/troca. Faça somente UMA pergunta oferecendo as fotos; espere a resposta antes de enviá-las."
-        : "Leia leadBlock primeiro. Antes de qualquer query ou final, escreva understanding COMPLETO na raiz com evidence literal do bloco atual. Identifique o ato conversacional desta mensagem nova, compare-o com a última fala do atendente e devolva UM passo (query|final) em JSON. Memória, pergunta pendente e orientações anteriores são contexto, não ordem para repetir assunto.";
+      : "Leia leadBlock primeiro. Antes de qualquer query ou final, escreva understanding COMPLETO na raiz com evidence literal do bloco atual. Identifique o ato conversacional desta mensagem nova, compare-o com a última fala do atendente e devolva UM passo (query|final) em JSON. Memória, pergunta pendente e orientações anteriores são contexto, não ordem para repetir assunto.";
+    // O historico e os fatos alimentam a LLM; sinais derivados pelo engine nao
+    // podem virar um roteador paralelo de assunto, abertura ou condução.
+    const llmSignals = {
+      followupStage: frame.signals.followupStage,
+      contactPhoneKnown: frame.signals.contactPhoneKnown,
+      handoffAvailable: frame.signals.handoffAvailable,
+      adVehicle: frame.signals.adVehicle,
+    };
     const user = JSON.stringify({
       instruction: turnInstruction,
       // As antigas orientações de condução não entram no payload do brain:
@@ -270,8 +275,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       // segundo cérebro. Fatos de canal/estado continuam em signals, memory
       // e conversationContext; a LLM conduz a resposta pelo portal + turno.
       leadBlock: frame.block,
+      currentTurn: {
+        leadBlock: frame.block,
+        lastAgentMessage: frame.conversationContext?.lastAgentMessage ?? null,
+        pendingAgentQuestion: frame.conversationContext?.pendingAgentQuestion ?? null,
+        expectedAnswer: frame.currentTurnFacts?.expectedAnswer ?? { slot: null, lastAgentQuestion: null },
+        instruction: "Responda primeiro ao ato deste bloco. A pergunta pendente e contexto para interpretar respostas curtas, nao comando de condução.",
+      },
       channelTime: getBrazilChannelTime(frame.now),
-      signals: frame.signals,
+      signals: llmSignals,
       workingMemory: frame.workingMemory,
       conversationContext: frame.conversationContext,
       currentTurnFacts: frame.currentTurnFacts,

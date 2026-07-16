@@ -114,6 +114,14 @@ async function main(): Promise<void> {
         extracted: [{ slot: "formaPagamento", kind: "value", value: "consorcio" }],
         offerReference: { status: "unique", candidateVehicleKeys: ["rm:corolla-2016"], matchedBy: ["cor"] },
       },
+      signals: {
+        ...frame("mostra o azul").signals,
+        currentTurnIntent: "search",
+        firstContactNoCommercialTarget: true,
+        disengagementOnly: true,
+        selectedOfferThisTurn: true,
+        acceptedPhotoOffer: true,
+      },
     };
     await brain.proposeNextStep(contextFrame, []);
     const contextBody = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
@@ -121,6 +129,12 @@ async function main(): Promise<void> {
     check("[5c] contexto estruturado da conversa chega ao payload do cerebro", userPayload.includes("conversationContext")
       && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca")
       && userPayload.includes("currentTurnFacts") && userPayload.includes("consorcio"));
+    const payload = JSON.parse(userPayload) as { signals?: Record<string, unknown> };
+    check("[5e] sinais de condução do engine não competem com a LLM", !payload.signals?.currentTurnIntent
+      && !payload.signals?.firstContactNoCommercialTarget
+      && !payload.signals?.disengagementOnly
+      && !payload.signals?.selectedOfferThisTurn
+      && !payload.signals?.acceptedPhotoOffer);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {
