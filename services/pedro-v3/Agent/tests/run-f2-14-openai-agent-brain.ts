@@ -126,15 +126,19 @@ async function main(): Promise<void> {
     await brain.proposeNextStep(contextFrame, []);
     const contextBody = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
     const userPayload = contextBody.messages.find((m) => m.role === "user")?.content ?? "";
-    check("[5c] contexto estruturado da conversa chega ao payload do cerebro", userPayload.includes("conversationContext")
+    check("[5c] envelope unico de contexto chega ao payload do cerebro", userPayload.includes("context") && userPayload.includes("conversationContext")
       && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca")
       && userPayload.includes("currentTurnFacts") && userPayload.includes("consorcio"));
-    const payload = JSON.parse(userPayload) as { signals?: Record<string, unknown> };
-    check("[5e] sinais de condução do engine não competem com a LLM", !payload.signals?.currentTurnIntent
-      && !payload.signals?.firstContactNoCommercialTarget
-      && !payload.signals?.disengagementOnly
-      && !payload.signals?.selectedOfferThisTurn
-      && !payload.signals?.acceptedPhotoOffer);
+    const payload = JSON.parse(userPayload) as { context?: { memory?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
+    check("[5e-envelope] sem instrucao top-level concorrente", payload.instruction === undefined);
+    check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução", payload.leadBlock === undefined
+      && payload.context?.memory?.funnel?.suggestedObjective === undefined
+      && payload.signals === undefined
+      && payload.context?.operational?.currentTurnIntent === undefined
+      && payload.context?.operational?.firstContactNoCommercialTarget === undefined
+      && payload.context?.operational?.disengagementOnly === undefined
+      && payload.context?.operational?.selectedOfferThisTurn === undefined
+      && payload.context?.operational?.acceptedPhotoOffer === undefined);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {
@@ -207,11 +211,26 @@ async function main(): Promise<void> {
     const d = step.kind === "final" ? step.decision.responsePlan.draft : null;
     check("[9] draft válido completo decodifica em responsePlan.draft", step.kind === "final" && !!d && d.parts.length === 3 && d.parts[1].type === "vehicle_ref" && (d.parts[1] as { field?: string }).field === "km");
   }
+  // [9b] compatibilidade de transporte: a LLM pode ainda devolver o mesmo
+  // contrato dentro de responsePlan; a borda aceita, sem criar decisão nova.
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", responsePlan: { guidance: "fotos prontas", draft: { parts: [{ type: "text", content: "Aqui estão as fotos." }] } }, effects: [{ kind: "send_message" }] }));
+    const step = await brain.proposeNextStep(frame("me manda as fotos"), []);
+    const d = step.kind === "final" ? step.decision.responsePlan.draft : null;
+    check("[9b] draft legado aninhado em responsePlan é aceito na borda", step.kind === "final" && !!d && d.parts.length === 1 && step.decision.responsePlan.guidance === "fotos prontas");
+  }
   // [10] QUALQUER part inválida invalida o DRAFT INTEIRO (não descarta parcialmente e envia o resto).
   {
     const { brain } = brainWith(JSON.stringify({ kind: "final", guidance: "x", draft: { parts: [{ type: "text", content: "ok" }, { type: "vehicle_ref", vehicleKey: "rm:2", field: "PLACA_INVALIDA" }] } }));
     const step = await brain.proposeNextStep(frame("x"), []);
     check("[10] part inválida invalida o DRAFT inteiro (rejeição integral)", step.kind === "final" && step.decision.responsePlan.draft === null);
+  }
+  // [10b] erro estrutural devolve feedback preciso ao mesmo cérebro, sem
+  // consertar silenciosamente a autoria nem executar efeito por conta própria.
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", guidance: "fotos", draft: { parts: [{ type: "text", content: "Aqui estão." }, { type: "send_media", vehicleKey: "rm:2" }, { type: "vehicle_ref", vehicleKey: "rm:2" }] } }));
+    const step = await brain.proposeNextStep(frame("me manda as fotos"), []);
+    check("[10b] draft malformado informa tipos/fields inválidos para o retry", step.kind === "final" && step.decision.responsePlan.draft === null && step.decision.reasonSummary.startsWith("draft_invalid:") && step.decision.reasonSummary.includes("send_media"));
   }
   // [11] money_ref ESTRITO: role/source validados; source divergente invalida (sem correção silenciosa).
   {

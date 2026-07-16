@@ -10,7 +10,11 @@ export type TurnDomain = "institutional" | "vehicle_stock" | "vehicle_detail" | 
 
 // Tópicos resolvíveis pela tool tenant_business_info (address/hours/unit). normalizeText remove acentos.
 const INST_ADDRESS_RX = /\benderec|\ba?onde\s+(?:fica|e|esta|estao|fica\s+a\s+loja|voces|a\s+loja)|\blocaliza|\bcomo\s+(?:chego|chegar)|\bfica(?:m)?\s+(?:onde|em|na|no)|\bestacionament/;
-const INST_HOURS_RX = /\bhorario|\bque\s+horas|\bfuncionamento|\baberto|\bfecha(?:m|do)?\b|\batende(?:m|ndo)?\b|\bhoras?\s+(?:de\s+)?(?:atend|funcion|abr|fech)|\babre(?:m)?\s+(?:sabado|domingo|hoje|amanha)/;
+// “Fechado!” é uma confirmação conversacional comum e não uma pergunta sobre
+// horário. “Fechado” só entra no domínio institucional quando há uma forma
+// explícita de estado da loja (“está fechado”, “fica fechado”); “fecha/fecham”
+// continuam cobrindo perguntas sobre o expediente.
+const INST_HOURS_RX = /\bhorario|\bque\s+horas|\bfuncionamento|\baberto|\bfecha(?:m)?\b|\b(?:esta|fica|estamos)\s+fechado\b|\batende(?:m|ndo)?\b|\bhoras?\s+(?:de\s+)?(?:atend|funcion|abr|fech)|\babre(?:m)?\s+(?:sabado|domingo|hoje|amanha)/;
 const INST_UNIT_RX = /\bunidade|\bfilia|\bmatriz|\bqual\s+loja/;
 // Contato: instagram/site/telefone/whats/redes — INSTITUCIONAL, respondido do PROMPT (não é topic da tool).
 const INST_CONTACT_RX = /\binstagram\b|\binsta\b|\bsite\b|\bwhats|\bwpp\b|\btelefone\b|\bfone\b|\bcontato\b|\bface(?:book)?\b|\bredes?\s+sociais\b|\bnumero\s+(?:de\s+)?(?:voces|contato|telefone)/;

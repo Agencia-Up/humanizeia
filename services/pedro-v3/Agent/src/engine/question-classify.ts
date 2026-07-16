@@ -52,8 +52,17 @@ export function countSlotQuestions(text: string): number {
 export function slotQuestions(text: string): SlotName[] {
   const parts = text.split(/(?<=\?)/).map((s) => s.trim()).filter(Boolean);
   const out: SlotName[] = [];
+  // A coleta sensivel pode ser introduzida numa frase declarativa e terminar
+  // com uma pergunta generica ("preciso do CPF... Pode me informar?"). Ela
+  // continua sendo uma pergunta de CPF para a validacao PII, mesmo que a
+  // ultima clausula nao repita a palavra CPF.
+  const normalized = normalizeText(text);
+  if (/\b(?:cpf|data\s+de\s+nascimento|nascimento)\b/.test(normalized)
+    && /\b(?:preciso|informe|informar|envie|enviar|passe|passar|forneca|fornecer|diga|me\s+de)\b/.test(normalized)) {
+    out.push("cpf");
+  }
   for (const p of parts) { if (p.endsWith("?")) { const s = classifyConfiguredQuestion(p); if (s) out.push(s); } }
-  return out;
+  return [...new Set(out)];
 }
 // CTAs de AVANÇO/fechamento do funil — sempre permitidos (não contam como "pergunta de qualificação" no limite,
 // não disparam divergência). O LLM naturalmente oferece "quer ver fotos ou agendar visita?" numa oferta.

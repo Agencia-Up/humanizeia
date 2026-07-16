@@ -78,6 +78,7 @@ import {
 } from "./tool-authority.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
+import { slotQuestions } from "./question-classify.ts";
 import { parseOrdinal } from "./ordinal.ts";
 import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
@@ -660,7 +661,10 @@ function authorFromBrainDraft(args: {
     if (args.disengagementOnly) {
       return { ok: false, feedback: "DESPEDIDA ISOLADA: seu draft veio ausente ou malformado. Devolva FINAL com draft.parts contendo EXATAMENTE UMA part {\"type\":\"text\",\"content\":\"<despedida curta e cordial>\"}. O content não pode ter pergunta, tool, coleta de nome/troca/entrada/parcela/visita nem promessa de transferência." };
     }
-    return { ok: false, feedback: "Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre." };
+    const structuralHint = args.finalDecision.reasonSummary.startsWith("draft_invalid:")
+      ? ` Motivo estrutural detectado na sua saída anterior: ${args.finalDecision.reasonSummary.slice("draft_invalid:".length).trim()}.`
+      : "";
+    return { ok: false, feedback: `Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre.${structuralHint}` };
   }
   // A abertura continua sendo autoria da LLM. RD1-2: em central_active a APRESENTAÇÃO é ADVISORY (o prompt do portal +
   // buildTurnAdvisories orientam a se apresentar); o engine não nega mais a omissão. Guarda legada só no replay.
@@ -783,6 +787,17 @@ function authorFromBrainDraft(args: {
   if (args.requireBrain) {
     const greetingFeedback = invalidBrazilGreeting(composed.text, args.ctx.now);
     if (greetingFeedback) return { ok: false, feedback: greetingFeedback };
+    // Qualidade conversacional global: a mesma LLM continua autora do texto,
+    // mas nao enviamos uma resposta que empilhe atos interrogativos. Isto e
+    // uma validacao/revisao do draft, nao uma escolha de assunto pelo engine.
+    const asked = slotQuestions(composed.text);
+    const questionMarkCount = (composed.text.match(/\?/g) ?? []).length;
+    if (asked.length > 1 || questionMarkCount > 1) {
+      return {
+        ok: false,
+        feedback: `RESPOSTA COM PERGUNTAS EMPILHADAS: o draft tem ${questionMarkCount} interrogacoes e ${asked.length} perguntas de slot (${asked.join(", ") || "nao classificadas"}). Reescreva para responder primeiro ao bloco atual e mantenha somente UMA pergunta util, escolhida por voce conforme o prompt do portal e o contexto factual. Preserve os fatos ja confirmados; nao abra um novo assunto e nao transforme esta validacao em uma lista de perguntas.`,
+      };
+    }
   }
   // LLM-first: memória pode aterrar QUAL veículo recebeu fotos, mas nunca escreve a resposta pelo cérebro.
   // Se a LLM ignorar o label lembrado, o engine devolve o fato e ela reautora. O override textual
@@ -825,6 +840,22 @@ function authorFromBrainDraft(args: {
     && !draft.parts.some((part) => part.type === "vehicle_offer_list" || part.type === "vehicle_ref" || part.type === "money_ref");
   if (identityOnlyResponse) {
     return { ok: false, feedback: `Você classificou o bloco atual como '${identityIntent}', mas sua resposta usa nome/identidade como barreira antes de tratar esse ato. Responda primeiro ao pedido atual e, se faltar informação, escolha uma pergunta relevante para esse ato conforme o portal. Só peça identidade depois se ela for realmente necessária; não escolha a próxima pergunta pelo engine.` };
+  }
+  // Continuidade global: quando a LLM declarou um ato substantivo atual,
+  // uma pergunta institucional herdada nao pode substituir a resposta a
+  // esse ato. A engine nao escolhe o novo assunto; apenas devolve a
+  // incoerencia para a mesma LLM reescrever.
+  // Somente a understanding desta autoria pode ativar esta validação. A
+  // memória aceita é contexto e não deve transformar uma foto/seleção atual
+  // em um bloqueio herdado de busca.
+  const continuityIntent = args.proposedPrimaryIntent ?? null;
+  const institutionalQuestionDisplacedCurrentAct = args.requireBrain
+    && typeof continuityIntent === "string"
+    && new Set(["financing", "trade_in"]).has(continuityIntent)
+    && isServiceOrInstitutionalQuestion(composed.text)
+    && !isServiceOrInstitutionalQuestion(args.leadMessage);
+  if (institutionalQuestionDisplacedCurrentAct) {
+    return { ok: false, feedback: `Sua resposta retomou uma pergunta institucional antiga enquanto o ato atual declarado foi '${continuityIntent}'. Responda primeiro ao bloco atual e preserve a continuidade factual; nao copie a pergunta pendente da memoria nem escolha outro assunto para a proxima pergunta.` };
   }
   const sensitiveFeedback = sensitiveAnswerCompletenessFeedback(args.sensitiveAnswerKinds ?? [], composed.text);
   if (sensitiveFeedback) return { ok: false, feedback: sensitiveFeedback };
@@ -1413,7 +1444,7 @@ export function promisesHumanHandoff(text: string): boolean {
   }
   return false;
 }
-const VISIT_SCHEDULED_PROMISE_RX = /\b(?:vou|irei)\s+agendar\s+(?:a\s+|sua\s+)?visita\b|\bagendo\s+(?:a\s+|sua\s+)?visita\b|\b(?:visita|horario)\b.{0,20}\b(?:esta|ficou|foi)\s+agendad[oa]\b/;
+const VISIT_SCHEDULED_PROMISE_RX = /\b(?:vou|irei)\s+agendar\s+(?:a\s+|sua\s+)?visita\b|\b(?:agendei|marquei)\s+(?:a\s+|sua\s+)?visita\b|\bagendo\s+(?:a\s+|sua\s+)?visita\b|\b(?:visita|horario)\b.{0,20}\b(?:esta|ficou|foi)\s+agendad[oa]\b|\bvisita\s+(?:ja\s+)?(?:agendad[oa]|marcad[oa])\b|\b(?:agendad[oa]|marcad[oa])\s+(?:para|na|no)\b|\b(?:anotei|registrei|reservei|confirmei)\s+(?:a\s+|sua\s+)?visita\b|\bvisita\s+anotad[oa]\b|\b(?:esta|ficou)\s+anotad[oa]\b/;
 function promisesVisitScheduled(text: string): boolean {
   return VISIT_SCHEDULED_PROMISE_RX.test(normalizeText(text));
 }
@@ -2153,6 +2184,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const candidate = reconcileUnderstanding(lockedU, step.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
           const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
           const authorityFeedback = understandingAuthorityFeedback(candidateValidation);
+          // Fatos substantivos do bloco atual nao escolhem o ato, mas tornam
+          // incoerente declarar smalltalk e ignorar a contribuicao do lead. O
+          // mesmo cerebro recebe feedback e decide o ato correto.
+          const hasSubstantiveCurrentFact = frame.currentTurnFacts?.extracted?.some((fact) => fact.slot !== "nome") === true;
+          const staleSmalltalk = llmFirst && candidate.primaryIntent === "smalltalk" && hasSubstantiveCurrentFact;
           // A busca continua sendo uma decisão do cérebro. Mas, quando ele
           // declara o ato `search_stock`, o próprio contrato exige a
           // capability/evidence que autoriza a tool. Aceitar o rótulo sem esse
@@ -2161,7 +2197,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // pede que a LLM complete a decisão que ela mesma declarou.
           const incompleteSearchAct = candidate.primaryIntent === "search_stock" && !isStockSearchTurn(candidateValidation);
           const understandingFeedback = authorityFeedback
-            ?? (incompleteSearchAct
+            ?? (staleSmalltalk
+              ? "O bloco atual contem fato substantivo extraido, portanto sua leitura como smalltalk ignorou a contribuicao do lead. Releia context.currentTurn.leadBlock inteiro, declare o ato que o proprio bloco expressa com evidence literal e trate esse ato; nao copie a pergunta antiga do agente nem escolha uma tool sem capability/evidence propria."
+              : incompleteSearchAct
               ? "Você declarou primaryIntent=search_stock, mas não forneceu requestedCapabilities=[\"stock_search\"] com evidence literal do bloco atual. Reemita o understanding e chame stock_search antes de apresentar disponibilidade, lista ou opções."
               : null);
           if (llmFirst && understandingFeedback) {
@@ -2407,7 +2445,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
               seenDenyFingerprints.add(fp);
             }
-            if (brainSteps + 1 < brainMaxSteps) { observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: effFeedback } }); continue; }
+            if (brainSteps + 1 < brainMaxSteps) {
+              const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco novo do lead e exatamente "${leadMessage.slice(0, 280)}". A ultima fala do agente foi "${(frame.conversationContext.lastAgentMessage ?? "").slice(0, 280)}". A ultima pergunta, se houver, foi "${(frame.currentTurnFacts.expectedAnswer.lastAgentQuestion ?? lastAgentQuestionText(contextState)).slice(0, 220)}". Preserve o ato que voce entendeu neste bloco; esta mensagem e feedback de validacao, nao uma nova ordem comercial.`;
+              const retryFeedback = `${currentTurnAnchor}\n${effFeedback}`;
+              observations.push({ tool: "response", ok: false, error: { code: "RESPONSE_REJECTED", message: retryFeedback } });
+              continue;
+            }
             break;
           }
           finalDecision = step.decision;

@@ -11,7 +11,7 @@ import type { LlmRequestAudit } from "./real-harness.ts";
 function printAudit(a: LlmRequestAudit): void {
   const tail = a.user.transcriptTail.map((x) => `${x.role}:${x.chars}c#${x.sha}`).join(",") || "-";
   console.log(`   brain#${a.seq} payload=${a.bodyChars}c system=${a.systemChars}c user=${a.userChars}c model=${a.model ?? "-"}`);
-  console.log(`   current: ${sanitize(a.user.leadBlock)} | instruction=${sanitize(a.user.instruction).slice(0, 180)}`);
+  console.log(`   current: ${sanitize(a.user.leadBlock)} | single_context_envelope=true`);
   console.log(`   transcript: n=${a.user.transcriptCount} tail=${tail}`);
   console.log(`   memory: keys=${a.user.workingMemoryKeys.join(",") || "-"} pending=${a.user.pendingAgentQuestion ?? "-"}`);
   console.log(`   context: keys=${a.user.contextKeys.join(",") || "-"} lastAgent=${a.user.lastAgentMessage ? `${a.user.lastAgentMessage.chars}c#${a.user.lastAgentMessage.sha}` : "-"}`);

@@ -40,6 +40,8 @@ import { V2StockLoader } from "../src/adapters/read/stock-loader.ts";
 import { V2StockSource } from "../src/adapters/read/stock-source.ts";
 import { V2VehiclePhotoSource } from "../src/adapters/read/photo-source.ts";
 import { V2CrmReadSource } from "../src/adapters/read/crm-read-source.ts";
+import { SupabaseKnowledgeSource } from "../src/adapters/read/supabase-knowledge-source.ts";
+import { CompositeKnowledgeSource } from "../src/domain/knowledge.ts";
 import { PromptBoundConversationAdapter } from "../src/adapters/llm/prompt-bound-conversation.ts";
 import { createReadQueryRunner } from "../src/engine/read-query-runner.ts";
 import { ConversationTurnContextPreparer, StockTenantCatalogSource } from "../src/engine/turn-context-preparer.ts";
@@ -102,7 +104,6 @@ export type LlmRequestAudit = {
   readonly systemSha: string;
   readonly userSha: string;
   readonly user: {
-    readonly instruction: string;
     readonly leadBlock: string;
     readonly transcriptCount: number;
     readonly transcriptTail: { role: string; chars: number; sha: string }[];
@@ -144,18 +145,22 @@ function summarizeBrainRequest(seq: number, request: ModelHttpRequest): LlmReque
     const userText = messages.find((m) => m?.role === "user")?.content;
     if (typeof system !== "string" || typeof userText !== "string") return null;
     const payload = JSON.parse(userText) as Record<string, unknown>;
-    const transcript = Array.isArray(payload.transcript) ? payload.transcript : [];
+    const envelope = payload.context as Record<string, unknown> | undefined;
+    const currentTurn = envelope?.currentTurn as Record<string, unknown> | undefined;
+    const conversation = envelope?.conversation as Record<string, unknown> | undefined;
+    const operational = envelope?.operational as Record<string, unknown> | undefined;
+    const transcript = Array.isArray(conversation?.recentTranscript) ? conversation.recentTranscript : [];
     const transcriptTail = transcript.slice(-4).map((entry) => {
       const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
       const text = typeof record.text === "string" ? record.text : "";
       return { role: typeof record.role === "string" ? record.role : "?", chars: text.length, sha: sha256(text) };
     });
-    const context = payload.conversationContext as Record<string, unknown> | undefined;
-    const facts = payload.currentTurnFacts as Record<string, unknown> | undefined;
-    const memory = payload.workingMemory as Record<string, unknown> | undefined;
+    const conversationContext = conversation?.conversationContext as Record<string, unknown> | undefined;
+    const facts = currentTurn?.currentTurnFacts as Record<string, unknown> | undefined;
+    const memory = envelope?.memory as Record<string, unknown> | undefined;
     const expected = facts?.expectedAnswer as Record<string, unknown> | undefined;
     const offer = facts?.offerReference as Record<string, unknown> | undefined;
-    const lastAgent = context?.lastAgentMessage ?? context?.lastAgentText;
+    const lastAgent = conversationContext?.lastAgentMessage ?? conversationContext?.lastAgentText;
     return {
       seq,
       model: typeof body.model === "string" ? body.model : undefined,
@@ -165,21 +170,20 @@ function summarizeBrainRequest(seq: number, request: ModelHttpRequest): LlmReque
       systemSha: sha256(system),
       userSha: sha256(userText),
       user: {
-        instruction: typeof payload.instruction === "string" ? payload.instruction : "",
-        leadBlock: sanitize(typeof payload.leadBlock === "string" ? payload.leadBlock : ""),
+        leadBlock: sanitize(typeof currentTurn?.leadBlock === "string" ? currentTurn.leadBlock : ""),
         transcriptCount: transcript.length,
         transcriptTail,
-        signalKeys: objectKeys(payload.signals),
+        signalKeys: objectKeys(operational),
         workingMemoryKeys: objectKeys(memory),
-        contextKeys: objectKeys(context),
+        contextKeys: objectKeys(conversationContext),
         currentFactsKeys: objectKeys(facts),
-        advisories: Array.isArray(payload.orientacoesDoTurno) ? payload.orientacoesDoTurno.map((x) => sanitize(String(x)).slice(0, 180)) : [],
-        observationTools: Array.isArray(payload.toolObservationsSoFar)
-          ? payload.toolObservationsSoFar.map((x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).tool === "string" ? String((x as Record<string, unknown>).tool) : "?")
+        advisories: [],
+        observationTools: Array.isArray(envelope?.toolObservationsSoFar)
+          ? envelope.toolObservationsSoFar.map((x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).tool === "string" ? String((x as Record<string, unknown>).tool) : "?")
           : [],
         pendingAgentQuestion: typeof memory?.pendingAgentQuestion === "string"
           ? memory.pendingAgentQuestion
-          : typeof context?.pendingAgentQuestion === "string" ? context.pendingAgentQuestion : null,
+          : typeof conversationContext?.pendingAgentQuestion === "string" ? conversationContext.pendingAgentQuestion : null,
         lastAgentMessage: textDigest(lastAgent),
         expectedAnswer: typeof expected?.slot === "string" ? expected.slot : typeof expected?.kind === "string" ? expected.kind : null,
         extractedFacts: Array.isArray(facts?.extracted)
@@ -352,7 +356,7 @@ export async function buildRealAssemblyFor(ref: TenantAgentRef, clock: { now(): 
     openAiSecret = resolveProviderEnvironmentSecret(process.env, aiProvider.provider)!;
     keySource = `${aiProvider.provider} (env do servico)`;
   } else if (process.env.EVAL_USE_PLATFORM_KEY === "1") {
-    const raw = await serviceGateway.rpc<unknown>("get_platform_ai_key", { p_provider: aiProvider.provider });
+    const raw = await serviceGateway.rpc<string | null>("get_platform_ai_key", { p_provider: aiProvider.provider });
     const key = typeof raw === "string" ? raw.trim() : "";
     if (!key || /\s/.test(key) || key.length > 512) throw new Error("EVAL_PLATFORM_KEY_INVALID");
     openAiSecret = AiRuntimeSecret.fromString(aiProvider.provider, key);
@@ -392,7 +396,8 @@ export async function buildRealAssemblyFor(ref: TenantAgentRef, clock: { now(): 
   const stockSource = new V2StockSource(loader);
   const photoSource = new V2VehiclePhotoSource(loader);
   const crmSource = new V2CrmReadSource(gateway);
-  const runQuery = createReadQueryRunner(ref, { stock: stockSource, vehicleDetails: stockSource, vehiclePhotos: photoSource, crm: crmSource });
+  const knowledgeSource = new CompositeKnowledgeSource(new SupabaseKnowledgeSource(url, serviceRoleKey));
+  const runQuery = createReadQueryRunner(ref, { stock: stockSource, vehicleDetails: stockSource, vehiclePhotos: photoSource, crm: crmSource, knowledge: knowledgeSource });
 
   const llm = new PromptBoundConversationAdapter(runtimeConfig, model);
   const contextPreparer = new ConversationTurnContextPreparer(ref, llm, new StockTenantCatalogSource(stockSource));

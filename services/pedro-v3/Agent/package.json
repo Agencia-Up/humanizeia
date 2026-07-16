@@ -42,6 +42,7 @@
     "test:f248": "tsx tests/run-f2-48-semantic-provenance.ts",
     "smoke:f251": "tsx eval/run-f251-turn-authority-real-smoke.ts",
     "smoke:f256": "tsx eval/run-f256-current-turn-context-real-smoke.ts",
+    "smoke:knowledge:real": "tsx eval/run-real-knowledge-conversation.ts",
     "diag:continuity:real": "tsx eval/run-conversation-continuity-diagnostic.ts",
     "smoke:f252": "tsx eval/run-f252-production-journey-smoke.ts",
     "smoke:f252d": "tsx eval/run-f252-driven-smoke.ts",
@@ -116,6 +117,7 @@
     "test:f259": "tsx tests/run-f2-59-optout-semantics.ts",
     "test:f260": "tsx tests/run-f2-60-followup-quality.ts",
     "test:f261": "tsx tests/run-f2-61-semantic-knowledge.ts",
+    "test:f262": "tsx tests/run-f2-62-conversation-quality-invariants.ts",
     "smoke:pii": "tsx eval/run-pii-smoke.ts"
   },
   "devDependencies": {
