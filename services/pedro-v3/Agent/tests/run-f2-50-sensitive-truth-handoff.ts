@@ -22,6 +22,8 @@ import {
 } from "../src/domain/sensitive-data.ts";
 import { extractLeadSlots, leadStatedMoneyValues, questionSlotFromAgentText } from "../src/engine/lead-extraction.ts";
 import { evaluateHandoffPrecheck } from "../src/engine/handoff-precheck.ts";
+import { leadRequestsHumanExplicitly } from "../src/engine/turn-understanding.ts";
+import { asksToResendInstitutionalInfoViaWhatsApp } from "../src/engine/turn-domain.ts";
 import { requestsHuman, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback, type ValidatedUnderstanding } from "../src/engine/turn-understanding.ts";
 import type { TurnUnderstanding } from "../src/domain/agent-brain.ts";
 import { ingestPilotMessage } from "../src/engine/pilot-ingest.ts";
@@ -215,6 +217,10 @@ check("[H10] pedido humano bloqueia todas as tools comerciais",
 check("[H11] dado sensivel ignorado exige reautoria", sensitiveAnswerCompletenessFeedback(["cpf"], "Voce conhece nossa loja?") != null);
 check("[H12] reconhecimento natural passa", sensitiveAnswerCompletenessFeedback(["birthDate"], "Data recebida, obrigado. Voce quer falar com o vendedor?") === null);
 check("[H13] ref interna nunca pode aparecer", sensitiveAnswerCompletenessFeedback(["cpf"], "CPF_VALIDO_REF_" + REF_CPF) != null);
+check("[H14] pedido natural de uma pessoa reconhece handoff", leadRequestsHumanExplicitly("Por gentileza manda alguem pra mim"));
+check("[H15] pedido natural de vendedor reconhece handoff", leadRequestsHumanExplicitly("Pode mandar um vendedor para mim"));
+check("[H16] resposta nao oferece reenviar endereco pelo mesmo WhatsApp", asksToResendInstitutionalInfoViaWhatsApp("Nossa loja fica na Avenida Charles Schneider, 1700. Quer que eu te envie o endereco pelo WhatsApp?"));
+check("[H17] envio de foto pelo WhatsApp nao e falso positivo do endereco", !asksToResendInstitutionalInfoViaWhatsApp("Quer que eu te envie as fotos pelo WhatsApp?"));
 
 // ── C: precheck estruturado (P0-C) — produção-shape e falhas tipadas ─────────
 const RULES_ON = resolveAutomationRules({ transfer: { enabled: true, seller_response_min: 10 } });

@@ -227,8 +227,10 @@ export function isPhotoRecall(v: ValidatedUnderstanding | null): boolean {
 //    alguém/a equipe" — NÃO casa "quero falar sobre o preço". Não decide intenção nem escreve resposta: só garante que a
 //    guarda de handoff (feedback+retry) rode para o LLM RE-AUTORAR incluindo o efeito. Autoridade = a fala LITERAL do lead.
 const HUMAN_REQUEST_EXPLICIT_RX = /\b(?:vendedor|atendente|consultor|gerente)\b|\bhumano\b|\b(?:me\s+)?(?:transfir|transfer|encaminh|repass)\w*|\bfalar\s+com\s+(?:uma?\s+(?:pessoa|atendente|vendedor|consultor)|algu[eé]m|um\s+humano|a\s+equipe|o\s+time)\b/;
+const HUMAN_REQUEST_NATURAL_RX = /\b(?:pode\s+|por\s+favor\s+|por\s+gentileza\s+)?(?:manda|mandem|chama|chamem|envia|enviem)\s+(?:um[ae]?\s+)?(?:pessoa|alguem|vendedor|atendente|consultor|humano)\b/;
 export function leadRequestsHumanExplicitly(block: string): boolean {
-  return HUMAN_REQUEST_EXPLICIT_RX.test(normalizeText(block));
+  const n = normalizeText(block);
+  return HUMAN_REQUEST_EXPLICIT_RX.test(n) || HUMAN_REQUEST_NATURAL_RX.test(n);
 }
 export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
   if (!v || !v.fromBrain || !v.trusted) return false;
@@ -240,7 +242,7 @@ export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
     .filter((e) => e.capability === "handoff")
     .map((e) => e.quote)
     .join("\n"));
-  return v.understanding.requestedCapabilities.includes("handoff") && HUMAN_ACT_RX.test(handoffEvidence);
+  return v.understanding.requestedCapabilities.includes("handoff") && (HUMAN_ACT_RX.test(handoffEvidence) || HUMAN_REQUEST_NATURAL_RX.test(handoffEvidence));
 }
 
 export function commercialToolAllowedForHumanRequest(v: ValidatedUnderstanding | null, tool: string): boolean {

@@ -8,7 +8,7 @@ import { isVehicleKeyGrounded, normalizeText, canonicalModel } from "./catalog-u
 import { canonicalBrand, detectBrand } from "./commercial-constraints.ts";
 import { leadStatedMoneyValues } from "./lead-extraction.ts";
 import { slotQuestions } from "./question-classify.ts";
-import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone } from "./turn-domain.ts";
+import { isInstitutionalTurn, contactPhoneKnownFromChannel, asksLeadContactPhone, asksToResendInstitutionalInfoViaWhatsApp } from "./turn-domain.ts";
 import { loadPersistedWorkingMemory } from "./working-memory.ts";
 
 // P0 audit Codex: a RESPOSTA é INSTITUCIONAL PURA (nenhum claim de marca/modelo no texto)? Só então as policies de
@@ -364,6 +364,9 @@ export const PolicyEngine = {
     // (número ALTERNATIVO/secundário pedido de propósito) já é tratada em asksLeadContactPhone (não dispara).
     if (!skipStyleChecks && contactPhoneKnownFromChannel(ctx.state.conversationId) && asksLeadContactPhone(composed.text)) {
       return [{ policyId: "POL-PHONE-KNOWN", outcome: "deny", violations: ["nao peca o telefone do lead: no WhatsApp o numero de contato ja e conhecido pelo canal. Use-o como contato e avance o funil (nao pergunte telefone salvo se o prompt pedir um numero alternativo)"] }];
+    }
+    if (contactPhoneKnownFromChannel(ctx.state.conversationId) && asksToResendInstitutionalInfoViaWhatsApp(composed.text)) {
+      return [{ policyId: "POL-SAME-CHANNEL-REDUNDANCY", outcome: "deny", violations: ["a resposta ja mostrou endereco/local/horario nesta conversa do WhatsApp e nao pode oferecer reenviar a mesma informacao pelo WhatsApp; reescreva respondendo ao ato atual ou conduzindo o proximo passo coerente"] }];
     }
     // POL-QUESTION-OBJECTIVE (R10-2 Codex): UMA pergunta por mensagem, SEM exceção. A classificação lê a ÚLTIMA
     // cláusula interrogativa de cada sentença-com-"?" (question-classify) — reconhecer um dado antes de perguntar

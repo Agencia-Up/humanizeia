@@ -51,3 +51,14 @@ export function asksLeadContactPhone(responseText: string): boolean {
   if (ALT_PHONE_RX.test(n)) return false;   // número alternativo pedido de propósito -> não é o bug
   return ASK_OWN_PHONE_RX.test(n);
 }
+
+// Coerência factual do canal: no WhatsApp, não ofereça reenviar pelo WhatsApp
+// um endereço/local/horário que já está sendo mostrado na própria resposta.
+// Isto só invalida o draft para a mesma LLM reescrever; não escolhe assunto nem
+// fabrica uma resposta substituta.
+const INSTITUTIONAL_INFO_MENTION_RX = /\b(?:enderec|localizac|onde\s+fica|loja|unidade|horar|funcionament)\w*/;
+const SEND_VIA_WHATSAPP_RX = /\b(?:envia|enviar|envie|mando|mandar|manda|passo|passar|passe|encaminho|encaminhar)\b[^?.!\n]{0,55}\b(?:whatsapp|whats|wpp)\b/;
+export function asksToResendInstitutionalInfoViaWhatsApp(responseText: string): boolean {
+  const n = normalizeText(responseText);
+  return INSTITUTIONAL_INFO_MENTION_RX.test(n) && SEND_VIA_WHATSAPP_RX.test(n);
+}
