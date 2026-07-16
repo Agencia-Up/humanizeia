@@ -217,6 +217,15 @@ async function sendUazapiTextMessage(baseUrl: string, instKey: string, instanceN
   return false;
 }
 
+// Numero BR canonico p/ UAZAPI: 55 + DDD + numero. Coloca o 55 quando falta
+// (nacional 10/11 digitos) — senao o JID fica invalido e a UAZAPI nao entrega.
+// Idempotente: quem ja tem o 55 (12/13 digitos) fica igual. Espelha a
+// normalizacao ja usada no expSellerNum e na transfer-timeout-checker.
+function toBrWa(raw: any): string {
+  const n = String(raw || '').replace(/\D/g, '');
+  return (n.length === 10 || n.length === 11) ? `55${n}` : n;
+}
+
 function sellerPhoneKey(seller: any): string {
   const digits = String(seller?.whatsapp_number || '').replace(/\D/g, '');
   const local = digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
@@ -623,12 +632,17 @@ async function handleV2Followup(supabase: any, ctx: {
         horario: _hora, resumo: summary,
       });
 
-      const cleanSellerNum = String(seller.whatsapp_number || "").replace(/\D/g, "");
+      const cleanSellerNum = toBrWa(seller.whatsapp_number);
       // Mensagem do vendedor (com template se houver). A MESMA vai pro gerente no completo.
       const _notifInline = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta ${rules.followup.t3_min}min)*\n\n*Cliente:* ${leadName || "Desconhecido"}\n${sdrCategoryLine(_sdrCat)}\n*Contato:* +${phoneNumber}${veiculoInteresse ? `\n🚗 *Veículo:* ${veiculoInteresse}` : ""}\n*Agente IA:* ${agentName}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${summary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
       const _sellerFinal = composeSellerMsg(agentRulesRow, _msgVars, _notifInline);
       if (seller.whatsapp_number) {
-        await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, maybeStripEmojis(agentRulesRow, _sellerFinal));
+        const _okSeller = await sendUazapiTextMessage(baseUrl, instKey, instanceName, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, maybeStripEmojis(agentRulesRow, _sellerFinal));
+        // Antes o retorno era ignorado: se a UAZAPI nao entregava (ex.: numero sem 55),
+        // o lead era atribuido do mesmo jeito e ninguem sabia que o vendedor nao recebeu.
+        if (!_okSeller) {
+          console.warn(`[Cron] Falha ao notificar vendedor ${seller.name} (${cleanSellerNum}) do NOVO LEAD ${lead.id}.`);
+        }
       }
       // Relatorio automatico ao(s) gerente(s) — ate 2.
       const _gerentes = managerPhones(agentRulesRow);
@@ -640,7 +654,8 @@ async function handleV2Followup(supabase: any, ctx: {
           ? _mgrCompleto
           : composeGerenteMsg(agentRulesRow, _msgVars, _mgrInline);
         const _mgrMsg = maybeStripEmojis(agentRulesRow, _mgrBase);
-        for (const gp of _gerentes) {
+        for (const gpRaw of _gerentes) {
+          const gp = toBrWa(gpRaw);
           try { await sendUazapiTextMessage(baseUrl, instKey, instanceName, gp, `${gp}@s.whatsapp.net`, _mgrMsg); } catch (_e) { /* nao bloqueante */ }
         }
       }
@@ -934,7 +949,7 @@ Deno.serve(async (req) => {
           if (nextHasNumber) {
             const baseUrl = instance.api_url?.replace(/\/$/, '');
             const instKey = instance.api_key_encrypted || instance.api_key;
-            const cleanSellerNum = nextSeller.whatsapp_number.replace(/\D/g, '');
+            const cleanSellerNum = toBrWa(nextSeller.whatsapp_number);
             const phoneNumber = lead.remote_jid.split('@')[0];
 
             // Gerar resumo para o proximo vendedor
@@ -1228,7 +1243,7 @@ Deno.serve(async (req) => {
           }).eq('id', seller.id);
 
           if (seller.whatsapp_number) {
-            const cleanSellerNum = seller.whatsapp_number.replace(/\D/g, '');
+            const cleanSellerNum = toBrWa(seller.whatsapp_number);
 
             const notificationMsg = `*NOVO LEAD PARA ATENDIMENTO (Sem resposta 10min)*\n\n*Cliente:* ${lead.lead_name || 'Desconhecido'}\n${leadTransferStatusLine("sem_resposta")}\n*Contato:* +${phoneNumber}${veiculoInteresseSec ? `\n🚗 *Veículo:* ${veiculoInteresseSec}` : ""}\n*Agente IA:* ${agentData?.name || 'Agente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
 
