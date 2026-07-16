@@ -7,6 +7,7 @@ import type {
   SlotName, ObjectiveType, SensitiveValueRef, Redacted, JsonValue, RedactedText,
 } from "./types.ts";
 import type { PlannedObjective, OfferRecord, ConversationTurn } from "./conversation-state.ts";
+import type { KnowledgeChunk } from "./knowledge.ts";
 
 // ── Ações ───────────────────────────────────────────────────────────────────
 export type TurnAction =
@@ -99,12 +100,14 @@ export type QueryInputMap = {
   vehicle_details: { vehicleKey: string };
   vehicle_photos_resolve: { vehicleRef: EntityReference };
   crm_read: { leadId: string };
+  knowledge_search: { query: string; topK?: number };
 };
 export type QueryOutputMap = {
   stock_search: { items: VehicleFact[]; filtersUsed: Record<string, JsonValue> };
   vehicle_details: { vehicle: VehicleFact };
   vehicle_photos_resolve: { vehicleKey: string; ambiguous: boolean; photoIds: string[] };
   crm_read: { leadId: string; name?: string | null };
+  knowledge_search: { chunks: KnowledgeChunk[]; confidence: number };
 };
 export type QueryName = keyof QueryInputMap;
 export type QueryCall = { [N in QueryName]: { tool: N; input: QueryInputMap[N] } }[QueryName];

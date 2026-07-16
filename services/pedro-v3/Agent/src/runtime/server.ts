@@ -27,6 +27,7 @@ import { findSettledAcrossScopes } from "./settled-scope-finder.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
 import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
+import { SupabaseKnowledgeSource } from "../adapters/read/supabase-knowledge-source.ts";
 import {
   PilotHttpApp,
   PilotTurnRuntimeError,
@@ -47,7 +48,7 @@ const PILOT_TURN_LIMITS = {
 
 const MAX_REQUEST_BYTES = 32 * 1024;
 
-const CENTRAL_BRAIN_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] as const;
+const CENTRAL_BRAIN_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "knowledge_search"] as const;
 
 // R13-D/4: modo do cérebro do piloto (default OFF). central_active só vale dentro do escopo do piloto (Douglas),
 // que o próprio runtime já garante (PEDRO_V3_PILOT_TENANT_ID). Rollback imediato = voltar a env p/ off.
@@ -338,6 +339,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       typingEnabled: process.env.PEDRO_V3_TYPING?.trim().toLowerCase() !== "off",
       brainMode,
       agentBrainFactory,
+      knowledgeSource: new SupabaseKnowledgeSource(this.#supabaseUrl, this.#serviceRoleKey),
       // FASE 1 CRM (missão 2026-07-09): OFF por default (fail-closed). Liga SÓ com PEDRO_V3_CRM_WRITE=active
       // E SÓ para o tenant do piloto (Douglas) — o root já é pilot-scoped; o store filtra ownership no banco.
       crmLeadStore: this.#crmLeadStore,

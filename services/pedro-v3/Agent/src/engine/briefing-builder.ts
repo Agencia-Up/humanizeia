@@ -17,6 +17,7 @@
 // ============================================================================
 import type { ConversationState, AdContext } from "../domain/conversation-state.ts";
 import { interestVehicleText, isRealLeadName, sanitizeLeadNameHint, tradeVehicleText } from "./crm-write.ts";
+import type { KnowledgeGap } from "../domain/knowledge.ts";
 
 export type SdrCategory = "inativo" | "pouco_qualificado" | "qualificado";
 
@@ -72,6 +73,7 @@ type BriefingContext = {
   readonly adContext?: AdContext | null;
   readonly adVehicleLabel?: string | null;
   readonly lastPhotoAction?: { label: string; photoIds: readonly string[] } | null;
+  readonly knowledgeGaps?: readonly KnowledgeGap[];
 };
 
 function vehicleLabel(item: { marca?: string | null; modelo?: string | null; ano?: number | null }): string | null {
@@ -166,6 +168,7 @@ export type BriefingArgs = {
   readonly handoffReason?: BriefingHandoffReason | null;
   readonly recentTurnsLimit?: number;                   // default 6
   readonly readyToTransfer?: boolean;
+  readonly knowledgeGaps?: readonly KnowledgeGap[];
 };
 
 // Resumo factual e legível para o vendedor. Não é transcrição e não chama uma
@@ -206,6 +209,7 @@ export function buildAgentSummary(args: BriefingArgs): string[] {
   } else if (args.handoffReason === "qualified_handoff") {
     summary.push("Chegou ao ponto de continuidade com o vendedor.");
   }
+  for (const gap of args.knowledgeGaps ?? []) summary.push(`Ficou uma dúvida para o vendedor: ${gap.query} — ${gap.reason}.`);
   if (summary.length === 0) summary.push("Iniciou o contato, mas ainda não informou o veículo ou a necessidade principal.");
   return summary;
 }
@@ -273,6 +277,10 @@ export function buildSellerBriefing(args: BriefingArgs): string {
       interesseVisita: "se quer visitar", diaHorario: "o dia/horário da visita", conheceLoja: "se conhece a loja",
     };
     lines.push(`⏳ *Pendente:* aguardando ${slotLabel[pending.slot] ?? `resposta (${pending.slot})`}`);
+  }
+  if ((args.knowledgeGaps ?? []).length > 0) {
+    lines.push("⏳ *Pontos para confirmar com o vendedor:*");
+    for (const gap of args.knowledgeGaps ?? []) lines.push(`• ${gap.query} — ${gap.reason}`);
   }
 
   // Resumo do agente: fatos consolidados, sem transcrição crua.

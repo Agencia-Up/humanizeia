@@ -15,6 +15,7 @@
 // ============================================================================
 import type { EffectPlan, HandoffPlan, NotifySellerPlan, SendMessagePlan, TurnDecision } from "../domain/decision.ts";
 import type { AdContext, ConversationState } from "../domain/conversation-state.ts";
+import type { KnowledgeGap } from "../domain/knowledge.ts";
 import { effectIdFor } from "./finalizer.ts";
 import { buildAgentSummary, buildSellerBriefing, classifySdrCategory } from "./briefing-builder.ts";
 import {
@@ -39,6 +40,7 @@ export type HandoffChainArgs = {
   readonly agentName: string;
   readonly leadPhone: string | null;               // dígitos do contato (toAddr)
   readonly leadDisplayName: string | null;         // hint sanitizado (pushName/CRM)
+  readonly knowledgeGaps?: readonly KnowledgeGap[];
   readonly nowLocal: string;                       // horário local formatado (injeção — puro)
 };
 
@@ -96,6 +98,7 @@ export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable:
     leadPhone: args.leadPhone,
     leadDisplayName: args.leadDisplayName,
     handoffReason: reason,
+    knowledgeGaps: args.knowledgeGaps,
     readyToTransfer: reason === "qualified_handoff",
   } as const;
   const briefingBase = buildSellerBriefing(briefingArgs);

@@ -49,6 +49,7 @@ import { loadPersistedWorkingMemory } from "./working-memory.ts";
 import { validateEffectPlans } from "./finalizer.ts";
 import { createHash } from "node:crypto";
 import type { SensitiveVaultPort } from "../adapters/persistence/sensitive-vault.ts";
+import { CompositeKnowledgeSource, type KnowledgeSource } from "../domain/knowledge.ts";
 
 // R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
 // lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
@@ -86,10 +87,12 @@ export type PilotActiveDeps = {
   readonly transferStore?: TransferSagaStore | null;
   readonly handoffEnabled?: boolean;
   readonly sensitiveVault?: SensitiveVaultPort | null;
+  /** Optional tenant RAG source. Core semantic reference is always composed in. */
+  readonly knowledgeSource?: KnowledgeSource | null;
 };
 
 const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
-const CENTRAL_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] as const;
+const CENTRAL_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "knowledge_search"] as const;
 
 // Extrai o texto do ÚLTIMO turno do lead do estado (p/ o shadow reprocessar o mesmo bloco que o canônico viu).
 function lastLeadBlock(state: { recentTurns?: { role?: string; text?: string }[] } | undefined | null): string | null {
@@ -245,11 +248,13 @@ export class PilotActiveRoot {
     const stockSource = new V2StockSource(loader);
     const photoSource = new V2VehiclePhotoSource(loader);
     const crmSource = new V2CrmReadSource(gateway);
+    const knowledgeSource = new CompositeKnowledgeSource(deps.knowledgeSource ?? null);
     const runQuery = createReadQueryRunner(ref, {
       stock: stockSource,
       vehicleDetails: stockSource,
       vehiclePhotos: photoSource,
       crm: crmSource,
+      knowledge: knowledgeSource,
     });
 
     const instanceSource = new V2WhatsAppInstanceSource(deps.db);

@@ -19,6 +19,7 @@
 // ============================================================================
 import type { DecisionMutation, ProposedEffectPlan, QueryCall, QueryOutputMap, ResponseDraft, TurnRelation } from "./decision.ts";
 import type { SlotName, Iso } from "./types.ts";
+import type { KnowledgeGap } from "./knowledge.ts";
 
 export const WORKING_MEMORY_SCHEMA_VERSION = 1 as const;
 
@@ -283,6 +284,7 @@ export type AgentToolObservation =
   | { readonly tool: "vehicle_photos_resolve"; readonly ok: true; readonly data: QueryOutputMap["vehicle_photos_resolve"] }
   | { readonly tool: "crm_read"; readonly ok: true; readonly data: QueryOutputMap["crm_read"] }
   | { readonly tool: "tenant_business_info"; readonly ok: true; readonly data: StoreInfoFact }
+  | { readonly tool: "knowledge_search"; readonly ok: true; readonly data: QueryOutputMap["knowledge_search"] }
   | { readonly tool: string; readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
 
 // Telemetria SANITIZADA (para log/trace): metadados, nunca payload bruto/PII.
@@ -307,6 +309,7 @@ export type AgentBrainDecision = {
   // (state-reducer.applyDecision) é a ÚNICA autoridade de escrita; o Finalizer é a autoridade dos effectIds; a
   // LLM apenas PROPÕE. Aditivo/opcional — decisões que não mexem no estado omitem o campo.
   readonly stateMutations?: readonly DecisionMutation[];
+  readonly knowledgeGaps?: readonly KnowledgeGap[];
 };
 
 // ── Superfície de ferramentas do caminho CENTRAL ──────────────────────────────────────────────────────────────
@@ -341,7 +344,7 @@ export const PRIMARY_INTENTS = [
 export type PrimaryIntent = (typeof PRIMARY_INTENTS)[number];
 // Capacidades que o turno PEDE (o engine só autoriza a que tem evidência no bloco).
 // "handoff" (MISSÃO PII P0-B): o turno PEDE transferência humana — capability semântica, evidência no bloco.
-export const TURN_CAPABILITIES = ["stock_search", "send_photos", "vehicle_details", "institutional_info", "recall", "select", "handoff"] as const;
+export const TURN_CAPABILITIES = ["stock_search", "send_photos", "vehicle_details", "institutional_info", "knowledge_search", "recall", "select", "handoff"] as const;
 export type TurnCapability = (typeof TURN_CAPABILITIES)[number];
 export const TURN_SUBJECT_KINDS = ["explicit_model", "ordinal_from_last_offer", "offer_reference", "selected_vehicle", "vehicle_type", "budget", "none"] as const;
 export type TurnSubjectKind = (typeof TURN_SUBJECT_KINDS)[number];

@@ -17,6 +17,7 @@ import type {
 } from "../../domain/agent-brain.ts";
 import { BUSINESS_INFO_TOPICS, PRIMARY_INTENTS, TURN_CAPABILITIES, TURN_SUBJECT_KINDS, SUBJECT_SOURCES } from "../../domain/agent-brain.ts";
 import type { DecisionMutation, ProposedEffectPlan, ResponseDraft, ResponsePart } from "../../domain/decision.ts";
+import type { KnowledgeGap } from "../../domain/knowledge.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
 import { getBrazilChannelTime } from "../../engine/channel-time.ts";
 export { getBrazilChannelTime } from "../../engine/channel-time.ts";
@@ -98,6 +99,7 @@ ATOS E TOOLS
 - vehicle_details: somente para responder atributo factual de um vehicleKey aterrado.
 - vehicle_photos_resolve: para pedido atual de fotos; depois devolva final com send_media usando exatamente o mesmo vehicleKey e os photoIds retornados. Mais fotos significa o mesmo veiculo, sem repetir photoIds ja enviados.
 - tenant_business_info: somente para confirmar address, hours ou unit quando o fato nao estiver disponivel no contexto/prompt.
+- knowledge_search: consulta semantica somente quando voce precisa entender um conceito automotivo/financeiro ou buscar uma referencia adicionada pelo cliente. E uma fonte de contexto, nao uma politica e nao decide sua intencao. Depois de receber os chunks, use apenas o que for pertinente; se nao houver fonte suficiente, admita a lacuna e decida se deve perguntar ou registrar para o vendedor. Nao use knowledge_search para estoque atual, preco atual, fotos, CRM ou fatos que outra tool fornece.
 - Nao repita a mesma tool com os mesmos argumentos depois de observar seu resultado. Use a observacao e finalize.
 - Nao faca promessa de reserva, entrega, aprovacao, prazo, agendamento ou transferencia sem efeito/configuracao/fato correspondente.
 
@@ -118,15 +120,17 @@ RETORNO DE TOOL
 - Se toolObservationsSoFar contem vehicle_photos_resolve bem-sucedido para o alvo, devolva FINAL no mesmo passo com send_media e os photoIds/vehicleKey observados. Nao retorne query novamente nem fallback.
 - Se toolObservationsSoFar contem stock_search bem-sucedido, devolva FINAL com vehicle_offer_list usando somente os vehicleKeys observados. Nao chame stock_search novamente.
 - Se uma tool falhar, seja honesto no FINAL e continue a conversa; nao invente o resultado.
+- Se knowledge_search retornar chunks, trate-os como referencia contextual com provenance; eles nao substituem fatos atuais, prompt do portal ou ferramentas de estoque. Se vier vazio, nao invente e, quando a lacuna for relevante para o vendedor, preencha knowledgeGaps.
 
 RESPOSTA FINAL E GROUNDING
-Formato: {"kind":"final","reasonCode":"...","confidence":0.0-1.0,"guidance":"resumo curto","draft":{"parts":[...]},"effects":[...],"stateMutations":[...],"memoryMutations":[...]}
+Formato: {"kind":"final","reasonCode":"...","confidence":0.0-1.0,"guidance":"resumo curto","draft":{"parts":[...]},"effects":[...],"stateMutations":[...],"memoryMutations":[...],"knowledgeGaps":[{"query":"...","quote":"trecho literal do bloco atual","reason":"fato que o vendedor precisa confirmar"}]}
 - draft.parts aceitas: text, vehicle_ref, money_ref e vehicle_offer_list.
 - Text nao deve conter marca/modelo/ano/km/cor/cambio/preco de estoque sem fato aterrado. Para carro, use vehicle_ref/money_ref; para lista, use vehicle_offer_list com vehicleKeys realmente retornados por stock_search.
 - Valores informados pelo proprio lead (entrada, parcela, faixa, carro de troca) podem ser acolhidos em text, sem trata-los como estoque.
 - Uma lista so pode usar itens retornados por stock_search neste turno. Nao escreva manualmente a lista, preco, km ou atributos de estoque.
 - Nao diga que uma tool foi executada, que algo foi agendado ou que houve transferencia se isso nao estiver em toolObservations/effects.
 - Use no maximo UMA pergunta util por resposta; nao empilhe perguntas.
+- knowledgeGaps e opcional e somente para uma lacuna factual real que permaneceu apos o contexto e as tools. Cada quote deve ser literal do leadBlock atual. Nao use para registrar intencao, funil ou uma regra comercial; se nao houver lacuna, envie [].
 
 REGRAS FACTUAIS DE SEGURANCA
 - Pedido de humano: primaryIntent=request_human, capability=handoff e evidence literal. Nao exija nome, CPF, nascimento, troca, entrada ou parcela. Nao escolha sellerId.
@@ -252,7 +256,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#temperature = config.temperature ?? 0;
     this.#maxTokens = config.maxCompletionTokens ?? 1200;
     this.#timeoutMs = config.timeoutMs ?? 30_000;
-    this.#allowedTools = new Set(config.allowedTools ?? ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read"]);
+    this.#allowedTools = new Set(config.allowedTools ?? ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read", "knowledge_search"]);
     this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
     this.promptSha256 = createHash("sha256").update(portalPrompt, "utf8").digest("hex");
   }
@@ -417,6 +421,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     }
     if (tool === "crm_read") { const leadId = str(input.leadId); return leadId ? { tool: "crm_read", input: { leadId } } : null; }
     if (tool === "tenant_business_info") { const topic = str(input.topic); return topic && (BUSINESS_INFO_TOPICS as readonly string[]).includes(topic) ? { tool: "tenant_business_info", input: { topic: topic as BusinessInfoTopic } } : null; }
+    if (tool === "knowledge_search") {
+      const query = str(input.query)?.slice(0, 1200);
+      if (!query) return null;
+      const topK = num(input.topK);
+      return { tool: "knowledge_search", input: { query, ...(topK != null ? { topK: Math.max(1, Math.min(8, Math.trunc(topK))) } : {}) } };
+    }
     return null;
   }
 
@@ -426,12 +436,21 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const effects = this.#decodeEffects(Array.isArray(raw.effects) ? raw.effects : []);
     const memoryMutations = this.#decodeMemoryMutations(Array.isArray(raw.memoryMutations) ? raw.memoryMutations : [], frame.turnId);
     const stateMutations = this.#decodeStateMutations(Array.isArray(raw.stateMutations) ? raw.stateMutations : [], frame.turnId);
+    const knowledgeGaps: KnowledgeGap[] = Array.isArray(raw.knowledgeGaps)
+      ? raw.knowledgeGaps.flatMap((item) => {
+          if (!isRecord(item)) return [];
+          const query = str(item.query)?.slice(0, 240);
+          const quote = str(item.quote)?.slice(0, 160);
+          const reason = str(item.reason)?.slice(0, 240);
+          return query && quote && reason ? [{ query, quote, reason }] : [];
+        }).slice(0, 3)
+      : [];
     return {
       reasonCode: str(raw.reasonCode) ?? "brain_reply",
       reasonSummary: (str(raw.reasonSummary) ?? guidance).slice(0, 160),
       confidence: num(raw.confidence) ?? 0.8,
       responsePlan: { guidance: guidance.slice(0, 1200), draft },
-      proposedEffects: effects, memoryMutations, stateMutations,
+      proposedEffects: effects, memoryMutations, stateMutations, knowledgeGaps,
     };
   }
 

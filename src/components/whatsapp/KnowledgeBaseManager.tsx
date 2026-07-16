@@ -547,7 +547,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
               <div className="flex items-center gap-2">
                 <Switch checked={ragRestricted} onCheckedChange={setRagRestricted} id="rag-restricted" />
                 <Label htmlFor="rag-restricted" className="text-xs cursor-pointer">
-                  Modo Restrito — Pedro responde SOMENTE com esta base
+                  Usar como referência contextual (o prompt e os fatos atuais continuam valendo)
                 </Label>
               </div>
             </div>
@@ -572,7 +572,7 @@ export function KnowledgeBaseManager({ agentId, userId }: KnowledgeBaseManagerPr
                 <span className="shrink-0">{selectedKb.icon}</span> 
                 <span className="truncate" title={selectedKb.name}>{selectedKb.name}</span>
                 {selectedKb.rag_restricted && (
-                  <Badge variant="outline" className="shrink-0 text-[10px] bg-violet-500/10 text-violet-400 border-violet-500/30">Restrito</Badge>
+                  <Badge variant="outline" className="shrink-0 text-[10px] bg-violet-500/10 text-violet-400 border-violet-500/30">Referência</Badge>
                 )}
               </h4>
               <div className="flex items-center gap-4 mt-2">

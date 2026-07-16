@@ -349,7 +349,7 @@ export function authorizesPhotoByResolvedTarget(target: TargetResolution, block:
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──
 const TOOL_CAPABILITY: Record<string, TurnCapability> = {
-  stock_search: "stock_search", vehicle_details: "vehicle_details", vehicle_photos_resolve: "send_photos",
+  stock_search: "stock_search", vehicle_details: "vehicle_details", vehicle_photos_resolve: "send_photos", knowledge_search: "knowledge_search",
 };
 export function toolCapabilityAuthorized(v: ValidatedUnderstanding | null, tool: string): boolean {
   if (!v || !v.fromBrain || !v.trusted) return false;
@@ -364,6 +364,7 @@ export function toolCapabilityAuthorized(v: ValidatedUnderstanding | null, tool:
   if (tool === "vehicle_photos_resolve") {
     return v.validEvidence.some((e) => PHOTO_EVIDENCE_RX.test(normalizeText(e.quote)));
   }
+  if (tool === "knowledge_search") return v.understanding.primaryIntent !== "smalltalk" && v.validEvidence.length > 0;
   return false;
 }
 // select_vehicle_focus proposto pela LLM exige capability select + evidência própria (ordinal determinístico à parte).

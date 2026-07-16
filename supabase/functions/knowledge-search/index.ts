@@ -50,16 +50,39 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { query, kb_ids, match_threshold = 0.65, match_count = 5 } = await req.json();
+    const body = await req.json();
+    const { query, kb_ids, tenant_id, agent_id, match_threshold = 0.65, match_count = 5 } = body;
+    let scopedKbIds: string[] = Array.isArray(kb_ids) ? kb_ids.filter((id: unknown): id is string => typeof id === 'string') : [];
 
-    if (!query || !kb_ids?.length) {
+    // Runtime v3 sends tenant+agent and lets the server resolve linked bases.
+    if (typeof tenant_id === 'string' && typeof agent_id === 'string') {
+      const { data: agent, error: agentError } = await supabase
+        .from('wa_ai_agents')
+        .select('id')
+        .eq('id', agent_id)
+        .eq('user_id', tenant_id)
+        .maybeSingle();
+      if (agentError) throw new Error('agent ownership lookup failed');
+      if (!agent) {
+        return new Response(JSON.stringify({ error: 'knowledge scope denied' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { data: links, error: linksError } = await supabase
+        .from('agent_knowledge_bases')
+        .select('kb_id')
+        .eq('agent_id', agent_id);
+      if (linksError) throw new Error('knowledge links lookup failed');
+      scopedKbIds = (links ?? []).map((row: { kb_id?: unknown }) => row.kb_id).filter((id: unknown): id is string => typeof id === 'string');
+    }
+
+    if (typeof query !== 'string' || !query.trim() || scopedKbIds.length === 0) {
       return new Response(JSON.stringify({ error: 'query e kb_ids são obrigatórios' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    console.log(`[knowledge-search] Query: "${query.slice(0, 80)}" | KBs: ${kb_ids.length}`);
 
     // 1. Gerar embedding da query
     const queryEmbedding = await generateEmbedding(query, OPENAI_API_KEY);
@@ -67,9 +90,9 @@ Deno.serve(async (req) => {
     // 2. Busca semântica usando a função do banco
     const { data: results, error } = await supabase.rpc('search_knowledge', {
       query_embedding: queryEmbedding,
-      kb_ids: kb_ids,
-      match_threshold: match_threshold,
-      match_count: match_count,
+      kb_ids: scopedKbIds,
+      match_threshold: Math.max(0, Math.min(Number(match_threshold) || 0.65, 1)),
+      match_count: Math.max(1, Math.min(Number(match_count) || 5, 8)),
     });
 
     if (error) {

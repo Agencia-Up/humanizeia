@@ -7,6 +7,7 @@ import type {
   VehicleDetailSource,
   VehiclePhotoSource,
 } from "../domain/read-ports.ts";
+import type { KnowledgeSource } from "../domain/knowledge.ts";
 import type { QueryRunner } from "./decision-engine.ts";
 
 export type ReadQueryRunnerSources = {
@@ -14,6 +15,7 @@ export type ReadQueryRunnerSources = {
   readonly vehicleDetails: VehicleDetailSource;
   readonly vehiclePhotos: VehiclePhotoSource;
   readonly crm: CrmReadSource;
+  readonly knowledge?: KnowledgeSource;
 };
 
 function validation(message: string): ToolError {
@@ -113,6 +115,14 @@ export function createReadQueryRunner(ref: TenantAgentRef, sources: ReadQueryRun
             source: "read-side:crm",
             data: { leadId: lead.leadId, name: lead.name },
           };
+        }
+        case "knowledge_search": {
+          const query = call.input.query.trim().slice(0, 1200);
+          if (!query) return { ok: false, tool: "knowledge_search", error: validation("query obrigatoria") };
+          const limit = Math.max(1, Math.min(call.input.topK ?? 5, 8));
+          if (!sources.knowledge) return { ok: true, tool: "knowledge_search", source: "read-side:knowledge-empty", data: { chunks: [], confidence: 0 } };
+          const result = await sources.knowledge.search(ref, query, limit);
+          return { ok: true, tool: "knowledge_search", source: "read-side:knowledge", data: { chunks: [...result.chunks], confidence: result.confidence } };
         }
       }
     } catch (error) {

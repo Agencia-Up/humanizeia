@@ -27,7 +27,7 @@ import { extractSensitiveSpans, materializeSensitiveTokens } from "../src/domain
 import type { CentralTurnCapture } from "./central-assertions.ts";
 
 export const CENTRAL_LIMITS = { maxSteps: 4, totalTimeoutMs: 200_000, proposeTimeoutMs: 90_000, queryTimeoutMs: 25_000, composeTimeoutMs: 40_000 } as const;
-export const CENTRAL_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"] as const;
+export const CENTRAL_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "knowledge_search"] as const;
 // Pacing entre turnos (spread do burst) p/ não estourar o rate-limit de TPM da OpenAI numa corrida de 100+ turnos —
 // assim o LLM REAL dirige a maioria dos turnos (okCount alto), em vez de cair no fallback determinístico por 429.
 const INTER_TURN_DELAY_MS = Number(process.env.CENTRAL_EVAL_TURN_DELAY_MS ?? "2500");

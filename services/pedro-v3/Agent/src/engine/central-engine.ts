@@ -98,7 +98,7 @@ export function isCentralShadowMode(env: Record<string, string | undefined> = pr
   return readBrainMode(env) === "central_shadow";
 }
 
-export const DEFAULT_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read"] as const;
+export const DEFAULT_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read", "knowledge_search"] as const;
 
 export type CentralTurnArgs = {
   readonly persistence: Persistence;
@@ -3176,6 +3176,13 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         })
         : null;
       const silentDisengagementHandoff = forcedHandoffReason === "silent_disengagement_handoff";
+      const currentBlockNormalized = normalizeText(leadMessage);
+      const knowledgeGaps = (finalDecision?.knowledgeGaps ?? [])
+        .filter((gap) => {
+          const quote = normalizeText(gap.quote);
+          return quote.length > 0 && currentBlockNormalized.includes(quote);
+        })
+        .slice(0, 3);
       const handoffChain = buildHandoffChain({
         decision: decisionWithCrm,
         turnId,
@@ -3190,6 +3197,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         leadPhone: args.handoff?.leadPhone ?? null,
         leadDisplayName: args.handoff?.leadDisplayName ?? leadNameHintFromInbox(inboxRecords),
         nowLocal: args.handoff?.nowLocal ?? "",
+        knowledgeGaps,
         // CRM pode ja estar sincronizado: ausencia de delta neste turno nao bloqueia
         // um pedido explicito de humano. Se houver crmPlan, ele entra como dependencia.
         plannable: handoffPlannable && crmLeadId != null,

@@ -290,6 +290,7 @@ export function toToolResultMemory(result: QueryResult, turnId: string): ToolRes
     case "vehicle_details": return { tool: "vehicle_details", status: "ok", turnId, factKeys: [result.data.vehicle.vehicleKey] };
     case "vehicle_photos_resolve": return { tool: "vehicle_photos_resolve", status: result.data.photoIds.length > 0 ? "ok" : "not_found", turnId, itemCount: result.data.photoIds.length, factKeys: [result.data.vehicleKey] };
     case "crm_read": return { tool: "crm_read", status: "ok", turnId }; // NUNCA nome/telefone/CPF/payload
+    case "knowledge_search": return { tool: "knowledge_search", status: result.data.chunks.length > 0 ? "ok" : "not_found", turnId, itemCount: result.data.chunks.length };
   }
 }
 
@@ -331,6 +332,7 @@ export function toAgentObservation(result: QueryResult): AgentToolObservation {
     case "vehicle_details": return { tool: "vehicle_details", ok: true, data: result.data };
     case "vehicle_photos_resolve": return { tool: "vehicle_photos_resolve", ok: true, data: result.data };
     case "crm_read": return { tool: "crm_read", ok: true, data: result.data };
+    case "knowledge_search": return { tool: "knowledge_search", ok: true, data: result.data };
   }
 }
 // Telemetria SANITIZADA (log/trace): só metadados — NUNCA nome/PII/payload bruto/segredo.
