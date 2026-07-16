@@ -2476,49 +2476,15 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           } });
           continue;
         }
-        // Missão P0 INC3/G (audit Codex smoke): em TURNO DE RESPOSTA DE TROCA o stock_search é PROIBIDO — o carro citado é a
-        // TROCA do lead, não pedido de estoque. Bloqueia ANTES da autorização de capability e do dedup: senão um understanding
-        // do cérebro com evidence inválida cairia no gate REQUIRED_TURN_UNDERSTANDING (linha abaixo), que empurra
-        // tool:"stock_search" e INFLA a contagem do smoke (o "obs=8"). Empurra feedback de controle (tool:"response", nenhuma
-        // busca EXECUTADA) + cap anti-loop. LLM-first: o cérebro re-decide (registra a troca e avança), sem handler escrever.
-        if (tradeInAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
+        // A semântica comercial vem da LLM. Se ela mesma declarou um ato
+        // conversacional incompatível com uma tool comercial, rejeitamos a
+        // combinação e devolvemos feedback ao mesmo cérebro. O engine não
+        // reclassifica o bloco por regex de troca, pagamento ou parcela.
+        const llmDeclaredNonCommercialAct = llmFirst && lockedU != null
+          && (lockedU.primaryIntent === "conversation_repair" || lockedU.primaryIntent === "financing" || lockedU.primaryIntent === "trade_in" || lockedU.primaryIntent === "smalltalk");
+        if (llmDeclaredNonCommercialAct && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
           duplicateStockCallsBlocked += 1;
-          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: "O cliente está falando do VEÍCULO DE TROCA dele. Modelo, versão, ano e quilometragem declarados pelo lead são fatos do próprio lead, não um pedido de estoque e não exigem consulta de detalhes ou fotos. Não use tool comercial neste ato. Acolha os dados e continue o atendimento conforme o prompt do portal. Só consulte estoque se o lead declarar um novo alvo de COMPRA." } });
-          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
-          continue;
-        }
-        // ── MISSÃO P0 (Financial Question Context): em TURNO DE RESPOSTA FINANCEIRA (o lead responde parcela/entrada/
-        //    pagamento com valor/negação — "até 1200", "tenho não") NENHUMA tool comercial roda: o valor responde a
-        //    pergunta financeira, NÃO é pedido de estoque nem novo orçamento de compra. Bloqueia stock_search/
-        //    vehicle_details/vehicle_photos_resolve ANTES da autorização de capability (senão evidence inválida infla a
-        //    contagem) + feedback tipado -> o cérebro re-decide e CONDUZ o financiamento. LLM-first: o engine só orienta.
-        if (financialAnswerTurn && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
-          duplicateStockCallsBlocked += 1;
-          const finSlot = financialAnswerSlot === "parcelaDesejada" ? "a PARCELA mensal" : financialAnswerSlot === "entrada" ? "a ENTRADA" : "a forma de pagamento";
-          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `O cliente está RESPONDENDO à sua pergunta financeira anterior (${finSlot}). O valor/negação dele responde ESSA pergunta — NÃO é pedido de estoque nem novo orçamento de compra de veículo. NÃO chame stock_search/vehicle_details/vehicle_photos_resolve. Interprete a resposta como ${finSlot} e CONDUZA o financiamento do veículo que ele JÁ escolheu com UMA pergunta curta (o próximo dado que falta: troca/entrada/parcela, ou ofereça passar ao consultor). Só busque estoque se ele pedir EXPLICITAMENTE um carro/modelo/tipo/faixa de preço de compra NOVO.` } });
-          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
-          continue;
-        }
-        // ⭐CONTRATO DE PAGAMENTO (Codex regra 2, defesa-em-profundidade): DECLARAÇÃO DE PAGAMENTO ESPONTÂNEA (consórcio/carta
-        //    contemplada/à vista) SEM alvo de compra no bloco não pode virar busca de estoque por má classificação da LLM.
-        //    Gate por `!sufficientForStockSearch(currentConstraints)`: "tenho carta contemplada de 53 mil" (sem tipo/modelo;
-        //    o 53 mil não semeia precoMax) é bloqueado, mas "tenho consórcio, tem SUV até 50 mil?" (com alvo real) NÃO é —
-        //    a busca legítima passa. Feedback+retry: a LLM conduz o pagamento; o engine não escreve a resposta.
-        if (paymentConductTurn && !tradeInAnswerTurn && !financialAnswerTurn && !sufficientForStockSearch(currentConstraints)
-            && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
-          duplicateStockCallsBlocked += 1;
-          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: "O cliente declarou uma FORMA DE PAGAMENTO (consórcio/carta contemplada/à vista/entrada) — isso NÃO é pedido de estoque e o valor associado NÃO é teto de preço de veículo. NÃO chame stock_search/vehicle_details/vehicle_photos_resolve. Acolha a forma de pagamento e conduza a qualificação (troca/entrada/parcela) do carro em conversa, ou ofereça passar ao consultor. Só busque estoque se ele pedir EXPLICITAMENTE um carro/modelo/tipo/faixa de compra." } });
-          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
-          continue;
-        }
-        // ⭐AUTORIDADE (audit Codex, item 5): INTENT CONTRADITÓRIO — o PRÓPRIO cérebro classificou o ato como conversa
-        // (contestação/correção, financiamento, troca, smalltalk) e MESMO ASSIM pediu stock_search. A intenção declarada
-        // vence a tool: nega + feedback semântico -> a LLM responde a CONVERSA (explica/corrige/conduz), sem re-listar.
-        // Não é regex de frase: usa a classificação da própria LLM como contrato.
-        if (llmFirst && call.tool === "stock_search" && lockedU != null
-            && (lockedU.primaryIntent === "conversation_repair" || lockedU.primaryIntent === "financing" || lockedU.primaryIntent === "trade_in" || lockedU.primaryIntent === "smalltalk")) {
-          duplicateStockCallsBlocked += 1;
-          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `Você classificou este turno como '${lockedU.primaryIntent}' — o cliente NÃO está pedindo uma nova busca de estoque. Responda o ATO da conversa: se ele contestou/corrigiu algo que você disse, reconheça com naturalidade, corrija a informação e conduza; se é financiamento/troca, conduza a qualificação. NÃO chame stock_search (só se ele pedir explicitamente um carro/modelo/tipo/faixa NOVA).` } });
+          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `Você declarou o ato atual como '${lockedU?.primaryIntent}'. Essa tool comercial não é compatível com o ato que você próprio entendeu. Reavalie o bloco atual; se ele realmente pede estoque/detalhes/fotos, reemita um understanding coerente com evidence literal e capability própria. Caso contrário, responda ao ato atual sem tool.` } });
           if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
           continue;
         }

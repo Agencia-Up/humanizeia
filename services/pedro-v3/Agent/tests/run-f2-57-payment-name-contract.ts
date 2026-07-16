@@ -7,7 +7,8 @@
 //          stock_search, understanding presente, texto não pede nome/CPF.
 //   [AZUL] "Mostra o azul" após uma lista: a LLM resolve offer_reference e ENVIA send_media do carro azul aterrado,
 //          ZERO stock_search no turno.
-//   [SPON] "tenho carta contemplada de 53 mil" espontâneo (sem alvo de compra): a LLM tenta stock_search -> BLOQUEADO
+//   [SPON] "tenho carta contemplada de 53 mil" espontâneo (sem alvo de compra): a LLM entende financiamento,
+//          mas tenta stock_search de forma contraditória -> bloqueio pela própria intenção declarada
 //          (defesa em profundidade), reautora conduzindo o pagamento.
 //   [HUM]  "quero falar com um vendedor" com understanding FRACO do cérebro: tool comercial NÃO roda (backstop R7).
 // ============================================================================
@@ -177,19 +178,20 @@ async function main(): Promise<void> {
     check("[AZUL-3] texto não vazio nomeando o carro", azul.outbox.trim().length > 0 && has(azul.outbox, "onix"), azul.outbox);
   }
 
-  // ── [SPON] consórcio espontâneo (sem alvo) -> a LLM tenta stock_search -> BLOQUEADO, reautora conduzindo ──
+  // ── [SPON] consórcio espontâneo (sem alvo) -> a LLM declara financing, tenta tool incompatível -> feedback sem regex ──
   {
     const c = conv();
     let sponAttempt = 0;
     const sponResponder: BrainResponder = (_f, obs) => {
       sponAttempt += 1;
       const so = obs.find((o) => o.tool === "stock_search") as AgentToolObservation | undefined;
-      // 1ª: tenta buscar (misclassifica); depois do bloqueio (obs de erro), reautora conduzindo o pagamento.
-      if (!so && sponAttempt === 1) return qU({ tool: "stock_search", input: { precoMax: 53000 } }, U("search_stock", [ev("stock_search", "53 mil")]));
-      return finU([txt("Perfeito, você tem uma carta de consórcio contemplada! Você já escolheu algum carro ou quer que eu te mostre opções?")], "reply", U("financing", [ev(undefined, "consorcio")]));
+      // 1ª: entende o ato como financiamento, mas propõe uma tool incompatível;
+      // o bloqueio deve vir do primaryIntent da própria LLM, nunca do regex do engine.
+      if (!so && sponAttempt === 1) return qU({ tool: "stock_search", input: { precoMax: 53000 } }, U("financing", [ev("stock_search", "53 mil")]));
+      return finU([txt("Perfeito, você tem uma carta de consórcio contemplada! Você já escolheu algum carro ou quer que eu te mostre opções?")], "reply", U("financing", [ev(undefined, "carta contemplada")]));
     };
     const spon = await c.t("tenho carta contemplada de 53 mil", sponResponder);
-    check("[SPON-1] ⭐stock_search do consórcio espontâneo foi BLOQUEADO (nenhuma busca executada)", spon.stockObs === 0, `stock=${spon.stockObs}`);
+    check("[SPON-1] ⭐stock_search contraditório foi bloqueado pela intenção financing (nenhuma busca executada)", spon.stockObs === 0, `stock=${spon.stockObs}`);
     check("[SPON-2] brain reautora conduzindo (não technical_fallback)", isBrain(spon.src), `src=${spon.src}`);
     check("[SPON-3] formaPagamento=consorcio registrado", slotVal(spon, "formaPagamento") === "consorcio", JSON.stringify(slotVal(spon, "formaPagamento")));
   }
