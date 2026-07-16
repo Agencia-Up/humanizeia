@@ -34,6 +34,7 @@ function frame(block: string): TurnFrame {
     workingMemory: { ...createInitialPersistedWorkingMemory(), funnel: { known: [], declined: [], deferred: [], suggestedObjective: null }, selectedVehicle: null, lastOffer: null },
     recentTranscript: [],
     conversationContext: { lastAgentMessage: null, pendingAgentQuestion: null, selectedVehicle: null, lastVisibleOffer: null, lastResolvedSlotAnswer: null, conversationSummary: null },
+    currentTurnFacts: { expectedAnswer: { slot: null, lastAgentQuestion: null }, extracted: [], offerReference: null },
     signals: { mentionsPhoto: false, mentionsStore: false, mentionsMoreOptions: false, mentionsVehicleType: "suv", isMemoryQuestion: false, relation: "direction_change" },
   };
 }
@@ -108,12 +109,18 @@ async function main(): Promise<void> {
         lastResolvedSlotAnswer: null,
         conversationSummary: "Lead pediu fotos de um sedan.",
       },
+      currentTurnFacts: {
+        expectedAnswer: { slot: "possuiTroca", lastAgentQuestion: "Você tem carro para troca?" },
+        extracted: [{ slot: "formaPagamento", kind: "value", value: "consorcio" }],
+        offerReference: { status: "unique", candidateVehicleKeys: ["rm:corolla-2016"], matchedBy: ["cor"] },
+      },
     };
     await brain.proposeNextStep(contextFrame, []);
     const contextBody = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
     const userPayload = contextBody.messages.find((m) => m.role === "user")?.content ?? "";
     check("[5c] contexto estruturado da conversa chega ao payload do cerebro", userPayload.includes("conversationContext")
-      && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca"));
+      && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca")
+      && userPayload.includes("currentTurnFacts") && userPayload.includes("consorcio"));
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {
@@ -125,6 +132,32 @@ async function main(): Promise<void> {
     const retryBody = JSON.parse(transport.lastRequest!.body) as { model: string };
     check("[5b] caminho normal permanece no mini", firstBody.model === "gpt-4.1-mini");
     check("[5b] retry pós-policy escala para modelo forte", retryBody.model === "gpt-4.1");
+  }
+  // [5d] o modelo pode descrever "Corolla azul" como modelo, mas se ELE MESMO
+  // escolheu a key que o fato único da lista aponta, o adapter só normaliza o
+  // enum para offer_reference; não escolhe intenção, ferramenta ou veículo.
+  {
+    const { brain } = brainWith(JSON.stringify({
+      kind: "query",
+      call: { tool: "vehicle_photos_resolve", input: { vehicleKey: "rm:corolla-2016" } },
+      understanding: {
+        primaryIntent: "request_photos", requestedCapabilities: ["send_photos"],
+        subject: "explicit_model", subjectValue: "Corolla azul", subjectSource: "current_turn",
+        evidence: [{ capability: "send_photos", quote: "Mostra o azul" }], isTopicChange: false, answeredLeadQuestions: [],
+      },
+    }));
+    const referenceFrame: TurnFrame = {
+      ...frame("Mostra o azul"),
+      currentTurnFacts: {
+        expectedAnswer: { slot: null, lastAgentQuestion: "Qual carro da lista voce quer ver as fotos?" },
+        extracted: [],
+        offerReference: { status: "unique", candidateVehicleKeys: ["rm:corolla-2016"], matchedBy: ["cor"] },
+      },
+    };
+    const step = await brain.proposeNextStep(referenceFrame, []);
+    check("[5d] normaliza somente rotulo inconsistente com key ja escolhida pela LLM", step.kind === "query"
+      && step.call.tool === "vehicle_photos_resolve" && step.call.input.vehicleRef.key === "rm:corolla-2016"
+      && step.understanding?.subject === "offer_reference" && step.understanding.subjectSource === "memory");
   }
   // [6] segredo NUNCA no corpo/JSON serializável (só no header via materialize)
   {

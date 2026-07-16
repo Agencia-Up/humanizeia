@@ -130,7 +130,12 @@ export function detectCommercialConstraints(args: {
     const roles = moneyByClause(args.block, true);
     const financiallyLabeled = roles.some((item) => item.value === precoMax && (item.role === "entrada" || item.role === "parcela"));
     const explicitlyBudgeted = roles.some((item) => item.value === precoMax && item.role === "budget");
-    if (financiallyLabeled && !explicitlyBudgeted) precoMax = null;
+    // ⭐Codex regra 2: um valor que acompanha uma FORMA DE PAGAMENTO/crédito ("carta consórcio contemplada de 53 mil",
+    //   "carta de crédito de 60 mil", "à vista 40 mil") NÃO é teto de estoque — é o valor do instrumento de pagamento do
+    //   lead. Só zera quando NÃO há orçamento explícito ("até X"/"SUV de X"); frases mistas com budget explícito preservam.
+    //   Estreito a INSTRUMENTOS inequívocos (consórcio/carta contemplada/crédito contemplado/à vista); não pega "financiar".
+    const paymentInstrument = /\bconsorci|\bcarta\s+(?:contemplad|de\s+credito|credito)|\bcontemplad[ao]\b|\ba\s+vista\b/.test(normalizeText(args.block));
+    if ((financiallyLabeled || paymentInstrument) && !explicitlyBudgeted) precoMax = null;
   }
   if (precoMax != null) c.precoMax = precoMax;
   if (frame.transmission) c.cambio = frame.transmission;
@@ -197,7 +202,9 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
     next.tipo = current.tipo;
     if (!current.modelos || current.modelos.length === 0) delete next.modelos;   // tipo novo = nova categoria, limpa modelo
     if (!current.marca && (!current.modelos || current.modelos.length === 0)) delete next.marca; // tipo amplo = nova direção, limpa marca stale
+    if (current.popular !== true) delete next.popular; // tipo explícito atual vence popularidade herdada
   }
+  if (current.modelos && current.modelos.length > 0 && current.popular !== true) delete next.popular;
   if (current.precoMax != null) next.precoMax = current.precoMax;
   if (current.cambio) next.cambio = current.cambio;
   if (current.hibrido === true) next.hibrido = true;

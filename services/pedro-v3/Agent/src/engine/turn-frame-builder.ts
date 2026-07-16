@@ -6,11 +6,13 @@
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { TurnInterpretation } from "../domain/decision.ts";
-import type { CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
+import type { CurrentTurnFacts, CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
+import type { DecisionMutation } from "../domain/decision.ts";
 import type { Iso } from "../domain/types.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { contactPhoneKnownFromChannel } from "./turn-domain.ts";
 import { buildConversationContext } from "./conversation-context.ts";
+import { buildCurrentTurnFacts } from "./current-turn-facts.ts";
 
 const PHOTO_RX = /\bfotos?\b|\bimagens?\b|\bfotografi/;
 const STORE_RX = /\bloja\b|\bendereco\b|\bfica\s+onde\b|\bonde\s+(fica|e|esta)\b|\bhorario\b|\bque\s+horas\b|\bunidade\b|\bfuncionament/;
@@ -67,6 +69,8 @@ export function buildTurnFrame(args: {
   readonly acceptedPhotoOffer?: boolean;
   readonly selectedOfferThisTurn?: boolean;
   readonly handoffAvailable?: boolean;
+  readonly currentTurnFacts?: CurrentTurnFacts;
+  readonly extractedSlotMutations?: readonly DecisionMutation[];
   // ⭐RD1 (2026-07-13): orientações de condução injetadas ANTES da geração (advisory; ver turn-advisories.ts).
   readonly advisories?: readonly string[];
 }): TurnFrame {
@@ -93,6 +97,7 @@ export function buildTurnFrame(args: {
     workingMemory: args.workingMemory,
     recentTranscript: buildRecentTranscript(args.state),
     conversationContext: buildConversationContext({ state: args.state, workingMemory: args.workingMemory }),
+    currentTurnFacts: args.currentTurnFacts ?? buildCurrentTurnFacts({ state: args.state, extracted: args.extractedSlotMutations ?? [], block: args.block }),
     signals,
     ...(args.advisories && args.advisories.length > 0 ? { advisories: args.advisories } : {}),
   };

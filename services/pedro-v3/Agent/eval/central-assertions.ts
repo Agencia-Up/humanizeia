@@ -22,6 +22,7 @@ export type CentralTurnCapture = {
   wmAfterLastPhotoLabel: string | null;
   possuiTrocaBefore: string; possuiTrocaAfter: string;
   selectedVehicleKeyAfter?: string | null;
+  llmRequestAudits?: import("./real-harness.ts").LlmRequestAudit[];
   pendingAgentQuestion?: string | null;    // ⭐P0-D: slot que ESTA resposta pergunta (WM.pendingAgentQuestion) — sinal do driver adaptativo
 };
 

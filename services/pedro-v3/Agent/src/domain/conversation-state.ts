@@ -167,6 +167,11 @@ export type ConversationState = {
   rejected: RejectedMemory;
   recentTurns: ConversationTurn[];
   followupCycle?: FollowupCycle | null;
+  // ⭐R8 (Codex 2026-07-15): OPT-OUT DURÁVEL. Timestamp do 1º desinteresse EXPLÍCITO do lead ("me tira da lista", "pare de
+  // mandar mensagens", "não me interessa", "não quero comprar" — sinal not_interested). Persiste no state e faz o follow-up
+  // (evaluateFollowup) PARAR de re-armar T1/T2/T3 mesmo quando o handoff NÃO é plannable (leadId null / vendedor ausente).
+  // NÃO é stage=closed. Idempotente: setado uma vez, turnos posteriores NÃO limpam nem reabrem. Aditivo/opcional (retrocompat).
+  optedOutAt?: Iso | null;
   appliedEffectIds: string[];          // idempotência do EffectOutcomeCommit (Codex r3 #2) — fase DELIVERED (estado/ledger)
   // R13 Inc2/B item 2 (Codex): idempotência INDEPENDENTE da fase ACCEPTED (WorkingMemory lastPhotoAction). Separada
   // de appliedEffectIds/outcomeAppliedAt (que governam a fase delivered): um único marcador NÃO pode impedir a fase

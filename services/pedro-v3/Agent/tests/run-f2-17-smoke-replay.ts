@@ -20,9 +20,10 @@ import { PromptTenantBusinessInfoSource, extractTenantBusinessFacts } from "../s
 import { redact } from "../src/domain/effect-intent.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
-import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall } from "../src/domain/agent-brain.ts";
+import type { AgentBrainPort, AgentBrainStep, AgentBrainDecision, AgentToolObservation, CentralQueryCall, TurnFrame } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
+import { deriveFallbackUnderstanding } from "../src/engine/turn-understanding.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -81,6 +82,20 @@ class RelPreparer implements TurnContextPreparer {
   }
 }
 
+// O replay valida os invariantes do motor usando um cerebro scriptado. Em
+// central_active, cada passo precisa carregar o entendimento do bloco atual;
+// este adaptador reproduz o contrato da LLM sem alterar o caso comercial.
+class UnderstandingBrain implements AgentBrainPort {
+  constructor(private readonly inner: ScriptedAgentBrain) {}
+
+  async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const step = await this.inner.proposeNextStep(frame, observations);
+    return step.understanding
+      ? step
+      : { ...step, understanding: deriveFallbackUnderstanding(frame.block, frame.signals, extractor) };
+  }
+}
+
 // builders
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const vref = (v: VehicleFact, field: "marca" | "modelo" | "ano" | "km" | "cambio" | "cor"): ResponsePart => ({ type: "vehicle_ref", vehicleKey: v.vehicleKey, field });
@@ -112,7 +127,7 @@ async function turn(lead: string, relation: TurnRelation, script: AgentBrainStep
   clock.advance(1000);
   const turnId = `${CONV}-t${seq}`;
   const r: CentralTurnResult = await runCentralConversationTurn({
-    persistence, clock, brain, llm: new ComposeSpyLlm(), runQuery, businessInfo, contextPreparer: preparer,
+    persistence, clock, brain: new UnderstandingBrain(brain), llm: new ComposeSpyLlm(), runQuery, businessInfo, contextPreparer: preparer,
     conversationId: CONV, tenantId: TENANT, agentId: AGENT, leadId: null, workerId: "w", turnId, leaseTtlMs: 60_000, portalPromptSha256: SHA,
     limits: { maxSteps: 5, totalTimeoutMs: 8000, proposeTimeoutMs: 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 },
     maxValidationAttempts: 2, brainMaxSteps: 5, allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],

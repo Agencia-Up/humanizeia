@@ -138,14 +138,14 @@ type RunOpts = {
   preparer: FixedPreparer; conv: string; turnId: string; leadText: string; leadId?: string | null;
   tenant?: string; agent?: string; allowedTools?: string[]; brainMaxSteps?: number;
   sdrPolicy?: SdrQualificationPolicy;
-  proposeTimeoutMs?: number; eventSeq: number;
+  proposeTimeoutMs?: number; omitUnderstanding?: boolean; eventSeq: number;
 };
 async function runTurn(o: RunOpts) {
   toolCalls = [];
   await o.persistence.tryInsert({ eventId: `${o.conv}-e${o.eventSeq}`, conversationId: o.conv, raw: redact({ text: o.leadText }) as never, receivedAt: o.clock.now() });
   o.clock.advance(1000);
   return runCentralConversationTurn({
-    persistence: o.persistence, clock: o.clock, brain: new UnderstandingBrain(o.brain), llm: o.llm, runQuery, businessInfo: o.businessInfo,
+    persistence: o.persistence, clock: o.clock, brain: o.omitUnderstanding ? o.brain : new UnderstandingBrain(o.brain), llm: o.llm, runQuery, businessInfo: o.businessInfo,
     contextPreparer: o.preparer, conversationId: o.conv, tenantId: o.tenant ?? TENANT, agentId: o.agent ?? AGENT, leadId: o.leadId ?? null,
     workerId: "w", turnId: o.turnId, leaseTtlMs: 60_000, portalPromptSha256: "sha-fake",
     limits: { maxSteps: 4, totalTimeoutMs: 8000, proposeTimeoutMs: o.proposeTimeoutMs ?? 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 },
@@ -421,7 +421,7 @@ async function main(): Promise<void> {
   {
     const p = freshPersistence(); const brain = new ScriptedAgentBrain(); const prep = new FixedPreparer();
     brain.setResponder(() => q({ tool: "stock_search", input: { tipo: "suv" } })); // sempre query
-    const r = await runTurn({ persistence: p, clock: new FakeClock(NOW), brain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c9", turnId: "c9-t1", leadText: "oi", brainMaxSteps: 3, eventSeq: 1 });
+    const r = await runTurn({ persistence: p, clock: new FakeClock(NOW), brain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c9", turnId: "c9-t1", leadText: "oi", brainMaxSteps: 3, omitUnderstanding: true, eventSeq: 1 });
     check("[9a] loop limite: committed com fallback + brainSteps=3", r.status === "committed" && r.brainSteps === 3 && r.composedText.length > 0, JSON.stringify(r));
   }
   // [9b] TIMEOUT do passo do cérebro -> fallback seguro.

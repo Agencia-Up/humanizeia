@@ -6,8 +6,8 @@
 //
 // UNIT: deriveCurrentTurnIntent / clearStalePhotoIntent / promessa-de-foto (helpers puros exportados).
 // E2E:  E1 "me manda foto do 2" + cérebro falha auth -> executor determinístico envia send_media do item 2 (nunca fallback).
-//       E2 lista->foto(seta memória photo_request)->"você tem SUV?": frame limpa foto + força stock_search + P0-B bloqueia
-//          promessa de foto -> responde SUV, sem foto (reasonCode != foto, sem send_media), policyFeedback registra o deny.
+//       E2 lista->foto(seta memória photo_request)->"você tem SUV?": frame limpa foto; o mesmo cérebro recebe feedback,
+//          redecide stock_search e responde SUV, sem foto (reasonCode != foto, sem send_media).
 //       E3 "você tem SUV?" com cérebro adversário (SÓ promete foto) -> nunca send_vehicle_photos: fallback honesto, sem mídia.
 //       E4 "me manda foto do 2" SEM lista anterior -> pede qual veículo, SEM consultar estoque/detalhe arbitrário.
 // ============================================================================
@@ -24,9 +24,10 @@ import { createInitialPersistedWorkingMemory } from "../src/domain/agent-brain.t
 import { redact } from "../src/domain/effect-intent.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
-import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall, WorkingMemoryV1, DecisionWorkingMemoryMutation, TurnFrame } from "../src/domain/agent-brain.ts";
+import type { AgentBrainPort, AgentBrainStep, AgentBrainDecision, AgentToolObservation, CentralQueryCall, TurnUnderstanding, WorkingMemoryV1, DecisionWorkingMemoryMutation, TurnFrame } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation, EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
+import { deriveFallbackUnderstanding } from "../src/engine/turn-understanding.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -72,6 +73,48 @@ class RelPreparer implements TurnContextPreparer {
   }
 }
 
+function authoredUnderstanding(block: string): TurnUnderstanding {
+  const normalized = block.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (/\bfoto|imagem/.test(normalized)) {
+    const ordinal = /\b2\b/.test(normalized) ? "2" : null;
+    return {
+      primaryIntent: "request_photos",
+      requestedCapabilities: ["send_photos"],
+      subject: ordinal ? "ordinal_from_last_offer" : "none",
+      subjectValue: ordinal,
+      subjectSource: "current_turn",
+      evidence: [{ capability: "send_photos", quote: block }],
+      isTopicChange: false,
+      answeredLeadQuestions: [],
+    };
+  }
+  if (/\bsuv\b|\bpopular\b|\bsedan\b|\bhatch\b|\bpicape\b|\bonix\b/.test(normalized)) {
+    return {
+      primaryIntent: "search_stock",
+      requestedCapabilities: ["stock_search"],
+      subject: /\bsuv\b|\bsedan\b|\bhatch\b|\bpicape\b/.test(normalized) ? "vehicle_type" : "none",
+      subjectValue: /\bsuv\b/.test(normalized) ? "suv" : /\bpopular\b/.test(normalized) ? "popular" : null,
+      subjectSource: "current_turn",
+      evidence: [{ capability: "stock_search", quote: block }],
+      isTopicChange: false,
+      answeredLeadQuestions: [],
+    };
+  }
+  return deriveFallbackUnderstanding(block, { ...buildFrameSignals(block, { relation: "ambiguous" }), mentionsVehicleType: null }, extractor);
+}
+
+// Mantem o fake fiel ao contrato de central_active: a LLM sempre declara o
+// entendimento do bloco atual. O teste continua decidindo apenas os passos;
+// esta funcao representa a declaracao estruturada do fake, nao um fallback da engine.
+class UnderstandingBrain implements AgentBrainPort {
+  constructor(private readonly inner: ScriptedAgentBrain) {}
+
+  async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const step = await this.inner.proposeNextStep(frame, observations);
+    return step.understanding ? step : { ...step, understanding: authoredUnderstanding(frame.block) };
+  }
+}
+
 // builders
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const offer = (vs: VehicleFact[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: vs.map((v) => v.vehicleKey) });
@@ -94,7 +137,7 @@ const photosCall = (v: VehicleFact): CentralQueryCall => ({ tool: "vehicle_photo
 
 type Cap = {
   lead: string; outbox: string; src: string; degraded: boolean; ts: boolean; reasonCode: string; hasMedia: boolean;
-  mediaKey: string | null; exec: QueryCall[]; policyFeedback: string[]; frameIntent: string | null; frameTopic: string | null; wmTopic: string | null;
+  mediaKey: string | null; exec: QueryCall[]; policyFeedback: string[]; brainFeedback: string[]; frameIntent: string | null; frameTopic: string | null; wmTopic: string | null;
 };
 const has = (s: string, n: string): boolean => (s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().includes(n.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase());
 const anyKey = (s: string): string | null => ALL_KEYS.find((k) => s.includes(k)) ?? null;
@@ -114,11 +157,11 @@ async function makeConv(convId: string): Promise<{ turn: (lead: string, relation
     clock.advance(1000);
     const turnId = `${convId}-t${seq}`;
     const r: CentralTurnResult = await runCentralConversationTurn({
-      persistence, clock, brain, llm: new ComposeSpyLlm(), runQuery, businessInfo, contextPreparer: preparer,
+      persistence, clock, brain: new UnderstandingBrain(brain), llm: new ComposeSpyLlm(), runQuery, businessInfo, contextPreparer: preparer,
       conversationId: convId, tenantId: TENANT, agentId: AGENT, leadId: null, workerId: "w", turnId, leaseTtlMs: 60_000, portalPromptSha256: SHA,
       limits: { maxSteps: 8, totalTimeoutMs: 8000, proposeTimeoutMs: 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 },
       maxValidationAttempts: 2, brainMaxSteps: 8, allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],
-      providerCapability: { send_message: "none", send_media: "none" }, singleAuthor: true,
+      providerCapability: { send_message: "none", send_media: "none" }, singleAuthor: true, llmFirst: true,
     });
     const execSnapshot = [...executed];
     while (true) {
@@ -136,12 +179,16 @@ async function makeConv(convId: string): Promise<{ turn: (lead: string, relation
     const outbox = (await persistence.listOutbox(convId)).filter((o) => o.turnId === turnId) as unknown as { kind: string; payload?: { text?: string; vehicleKey?: string } }[];
     const wm = loadPersistedWorkingMemory(after?.workingMemory).memory;
     const firstFrame: TurnFrame | undefined = brain.seenFrames[framesBefore];
+    const brainFeedback = brain.seenObservations.slice(framesBefore).flat()
+      .filter((o) => o.tool === "response" && !o.ok)
+      .map((o) => o.ok === false ? o.error.message : "");
     const mediaRec = outbox.find((o) => o.kind === "send_media");
     return {
       lead, outbox: outbox.find((o) => o.kind === "send_message")?.payload?.text ?? "", src: r.status === "committed" ? r.responseSource : r.status,
       degraded: r.status === "committed" && r.degraded, ts: r.status === "committed" && r.terminalSafe,
       reasonCode: r.status === "committed" ? r.decision.reasonCode : r.status, hasMedia: !!mediaRec, mediaKey: mediaRec?.payload?.vehicleKey ?? null,
       exec: execSnapshot, policyFeedback: r.status === "committed" ? [...r.policyFeedback] : [],
+      brainFeedback,
       frameIntent: firstFrame?.signals.currentTurnIntent ?? null, frameTopic: firstFrame?.workingMemory.activeTopic?.topic ?? null,
       wmTopic: wm.activeTopic?.topic ?? null,
     };
@@ -170,24 +217,25 @@ async function main(): Promise<void> {
     check("[U8] search NÃO mexe em tópico não-foto", clearStalePhotoIntent(wmSearch, "search").activeTopic?.topic === "discover_stock");
   }
 
-  // ── E1: pedido de foto resolvido + cérebro falha auth -> EXECUTOR DETERMINÍSTICO envia send_media do item 2. ──────
+  // ── E1: pedido de foto resolvido + LLM autora send_media do item 2. ───────────────────────────────────────────────
   {
     const { turn } = await makeConv("E1");
     await turn("Quero um carro popular", "ambiguous", [q(stockPopular()), fin([txt("Tenho estas opções populares:"), offer(POPULAR), txt("Quer ver as fotos de alguma?")])]);
-    // cérebro resolve details+photos do 2 (Onix) e depois SÓ produz finais que falham auth (chave crua) -> detPhoto.
-    const c = await turn("Me manda foto do 2", "ambiguous", [q(detailsCall(POP2)), q(photosCall(POP2)), finRawKey(POP2), finRawKey(POP2), finRawKey(POP2), finRawKey(POP2)]);
-    check("[E1] 'foto do 2' resolvido -> executor determinístico ENVIA send_media do item 2 (Onix)", c.hasMedia && c.mediaKey === POP2.vehicleKey && c.src === "deterministic_photo", `hasMedia=${c.hasMedia} key=${c.mediaKey} src=${c.src}`);
+    const c = await turn("Me manda foto do 2", "ambiguous", [
+      q(photosCall(POP2)),
+      fin([txt("Aqui estao as fotos do Chevrolet Onix 2018 que voce pediu.")], [reply, { kind: "send_media", planId: "m", order: 1, vehicleKey: POP2.vehicleKey, photoIds: ["p1", "p2"], onSuccess: [] } as ProposedEffectPlan], "send_vehicle_photos"),
+    ]);
+    check("[E1] 'foto do 2' resolvido -> LLM envia send_media do item 2 (Onix)", c.hasMedia && c.mediaKey === POP2.vehicleKey && (c.src === "brain_final" || c.src === "brain_retry"), `hasMedia=${c.hasMedia} key=${c.mediaKey} src=${c.src}`);
     check("[E1] NÃO cai em technical_fallback nem degradado", c.src !== "technical_fallback" && !c.degraded, `src=${c.src} degraded=${c.degraded}`);
     check("[E1] texto nomeia o carro (não a chave crua)", has(c.outbox, "Chevrolet Onix") && !anyKey(c.outbox), `text="${c.outbox}"`);
   }
 
-  // ── E2: lista -> foto(seta memória photo_request) -> "você tem SUV?": frame limpa foto + força stock + P0-B bloqueia. ─
+  // ── E2: lista -> foto(seta memória photo_request) -> "você tem SUV?": frame limpa foto e não herda o assunto. ─────
   {
     const { turn } = await makeConv("E2");
     await turn("Quero um carro popular", "ambiguous", [q(stockPopular()), fin([txt("Tenho estas opções:"), offer(POPULAR), txt("Quer ver as fotos?")])]);
     // T2: foto do 2, cérebro AUTORA send_media E seta memória activeTopic/currentLeadIntent=photo_request (turnId do frame).
     const photoResp: BrainResponder = (frame, obs) => {
-      if (!obs.some((o) => o.tool === "vehicle_details" && o.ok)) return q(detailsCall(POP2));
       if (!obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) return q(photosCall(POP2));
       const mem: DecisionWorkingMemoryMutation[] = [
         { op: "set_active_topic", topic: "photo_request", origin: "lead_message", turnId: frame.turnId },
@@ -197,12 +245,12 @@ async function main(): Promise<void> {
     };
     const cPhoto = await turn("Me manda foto do 2", "ambiguous", photoResp);
     check("[E2-pre] turno de foto ENVIA mídia e SETA memória photo_request", cPhoto.hasMedia && cPhoto.wmTopic === "photo_request", `media=${cPhoto.hasMedia} wmTopic=${cPhoto.wmTopic}`);
-    // T3: "você tem SUV?" — cérebro tenta foto (2x: antes e depois do stock); engine força stock + P0-B bloqueia.
+    // T3: "você tem SUV?" — a memória de foto não conduz o turno; o mesmo cérebro recebe feedback e declara a busca.
     const suvResp: BrainResponder = (_frame, obs, i) => {
       const stockDone = obs.some((o) => o.tool === "stock_search" && o.ok);
-      const photoRejected = obs.some((o) => o.tool === "response" && !o.ok);
+      const brainRejected = obs.some((o) => o.tool === "response" && !o.ok);
       if (!stockDone) return i === 0 ? finPhotoPromise() : q(stockSuv());
-      return photoRejected ? fin([txt("Tenho esta opção de SUV pra você:"), offer([SUV1]), txt("Quer ver as fotos?")]) : finPhotoPromise();
+      return brainRejected ? fin([txt("Tenho esta opção de SUV pra você:"), offer([SUV1]), txt("Quer ver as fotos?")]) : finPhotoPromise();
     };
     const c = await turn("Você tem SUV?", "ambiguous", suvResp);
     const suvStock = c.exec.find((x) => x.tool === "stock_search");
@@ -210,7 +258,7 @@ async function main(): Promise<void> {
     check("[E2] executa stock_search tipo=suv", (suvStock?.input as { tipo?: string })?.tipo === "suv", JSON.stringify(suvStock?.input ?? null));
     check("[E2] responde SUV (Renegade), SEM texto de foto e SEM send_media", has(c.outbox, "Renegade") && !c.hasMedia && !has(c.outbox, "aqui estao as fotos"), `media=${c.hasMedia} text="${c.outbox}"`);
     check("[E2] reasonCode NÃO é de foto", !/photo|foto/i.test(c.reasonCode), `reasonCode=${c.reasonCode}`);
-    check("[E2] P0-B registrou o deny da promessa de foto no policyFeedback", c.policyFeedback.some((f) => /pediu fotos/i.test(f)), JSON.stringify(c.policyFeedback));
+    check("[E2] engine devolveu feedback ao mesmo cerebro e ele reescreveu sem foto", c.brainFeedback.length > 0, JSON.stringify(c.brainFeedback));
   }
 
   // ── E3: "você tem SUV?" com cérebro adversário que SÓ promete foto -> nunca send_vehicle_photos: fallback honesto. ──
@@ -224,8 +272,8 @@ async function main(): Promise<void> {
   // ── E4: "me manda foto do 2" SEM lista anterior -> pede qual veículo, SEM consultar arbitrário. ───────────────────
   {
     const { turn } = await makeConv("E4");
-    const c = await turn("Me manda foto do 2", "ambiguous", [finEmpty(), finEmpty(), finEmpty(), finEmpty(), finEmpty(), finEmpty()]);
-    check("[E4] sem lista -> pede QUAL veículo (executor determinístico)", c.src === "deterministic_photo" && has(c.outbox, "qual carro") && !c.hasMedia, `src=${c.src} text="${c.outbox}"`);
+    const c = await turn("Me manda foto do 2", "ambiguous", [fin([txt("De qual carro voce quer ver as fotos?")])]);
+    check("[E4] sem lista -> pede QUAL veículo (LLM)", (c.src === "brain_final" || c.src === "brain_retry") && has(c.outbox, "qual carro") && !c.hasMedia, `src=${c.src} text="${c.outbox}"`);
     check("[E4] NÃO consulta estoque/detalhe arbitrário", !c.exec.some((x) => x.tool === "stock_search" || x.tool === "vehicle_details"), JSON.stringify(c.exec.map((x) => x.tool)));
   }
 

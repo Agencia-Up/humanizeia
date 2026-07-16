@@ -156,17 +156,15 @@ async function main(): Promise<void> {
     check("[I-1e] NÃO lista Palio (Fiat) nem Polo (>50k)", !has(r.outbox, "Palio") && !has(r.outbox, "Polo"));
     check("[I-1f] NÃO é recuperação", r.src !== "deterministic_recovery" && r.recoveryReason == null, `src=${r.src}`);
   }
-  // INT-2 (autoridade corrigida): o detector não executa a busca, mas também
-  // não aceita que a LLM ignore um pedido atual inequívoco com filtro completo.
-  // Ele devolve SEARCH_ACT_EXPECTED; a mesma LLM redecide e chama a tool.
+  // INT-2: o detector não executa nem substitui a decisão da LLM. A LLM
+  // declara stock_search no próprio passo e recebe os fatos para redigir.
   {
     const c = conv(); await c.seed();
     const searchU = U("search_stock", { caps: ["stock_search"], subject: "budget", subjectValue: "50000", evidence: [{ capability: "stock_search", quote: "Até 50 mil" }] });
     const responder: BrainResponder = (_f, obs) => {
       const stock = obs.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
       if (stock) return finU([txt("Encontrei estas opções pra você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], [reply], "offer", searchU);
-      if (obs.some((o) => !o.ok && o.tool === "response" && o.error.code === "SEARCH_ACT_EXPECTED")) return qU({ tool: "stock_search", input: { precoMax: 50000 } } as CentralQueryCall, searchU);
-      return finU([txt("Claro! Que tipo de carro você prefere?")], [reply], "ask", U("other"));
+      return qU({ tool: "stock_search", input: { precoMax: 50000 } } as CentralQueryCall, searchU);
     };
     const r = await c.t("Até 50 mil e que seja da volks", responder);
     check("[I-2a] detector não executa; LLM corrigida chama stock_search", r.exec.filter((tool) => tool === "stock_search").length === 1, `exec=${r.exec.join(",")} feedback=${JSON.stringify(r.policyFeedback)}`);

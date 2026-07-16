@@ -70,6 +70,18 @@ informação. Quando a referência for única na última lista por cor, ano, mar
 use subject="offer_reference", subjectSource="memory" e evidence literal do bloco. Isto resolve o alvo da lista; NÃO é
 uma busca nova, NÃO pede nome e NÃO reabre discovery. Se houver mais de um item compatível, explique a ambiguidade e
 faça uma única pergunta curta. Um pedido explícito atual sempre vence lista, foco, pergunta pendente e funil anterior.
+Se o bloco só aponta um atributo de item já listado (por exemplo, "o azul", "o 2016", "o segundo", "o automático"),
+isso é SEMPRE subject="offer_reference" — nunca "explicit_model". Use explicit_model somente quando o bloco contém
+de fato o nome de um modelo. Compare todos os atributos escritos com a última lista e só escolha quando a referência
+for única; se não for, pergunte qual variante, sem busca nova e sem abrir cadastro.
+FATOS DO BLOCO ATUAL: currentTurnFacts é uma leitura factual e sanitizada, extraída antes de você responder. Ela informa
+qual pergunta sua o lead provavelmente respondeu e valores/fatos já reconhecidos neste bloco. Use-a para compreender
+fala fragmentada e conduzir naturalmente; ela NÃO é resposta pronta, ordem de tool nem substitui o prompt do portal.
+NÃO repita um dado que já esteja em currentTurnFacts.extracted. Quando houver formaPagamento=consorcio, trate como
+informação de pagamento do lead, nunca como troca, estoque ou pedido de cadastro.
+Quando currentTurnFacts.offerReference.status="unique", o bloco atual já foi relacionado factualmente a UMA unidade
+da última lista. Preserve a decisão comercial sua, mas para foto/detalhe/seleção use subject="offer_reference" e a
+candidateVehicleKey informada; não trate a cor, o ano ou outro atributo isolado como nome de modelo.
 REGRAS do understanding: se o cliente pede foto AGORA (em qualquer flexão: manda/mande/envia/envie/mostra/quero ver
 fotos), inclua "send_photos" em requestedCapabilities E uma evidence com o trecho literal. Se ele NEGA foto ("não quero
 foto", "foto depois"), NÃO inclua send_photos. Pergunta de MEMÓRIA ("qual carro pedi fotos?") = primaryIntent
@@ -393,9 +405,30 @@ Quando signals.followupStage existir, este e um evento de inatividade e NAO uma 
 - Retorne final com ResponseDraft contendo apenas partes text.
 `;
 
+// Regra curta colocada no fim do system para vencer ruído de prompts longos e
+// deixar explícita a precedência temporal. Não escolhe intent, tool ou efeito;
+// apenas impede que fatos de um turno anterior virem uma ordem de condução.
+const CURRENT_TURN_PRIORITY = `
+
+=== PRECEDÊNCIA TEMPORAL DO TURNO ATUAL ===
+O campo leadBlock é a única mensagem nova que você precisa responder agora. Leia-o inteiro antes de usar qualquer memória.
+conversationContext, workingMemory, currentTurnFacts.expectedAnswer e orientações antigas são CONTEXTO factual, nunca uma
+ordem para repetir uma pergunta ou continuar um assunto. Se o leadBlock fizer um pedido, responder outro assunto, corrigir
+você ou mudar de tópico, esse ato atual vence a pergunta pendente, o funil e o objetivo anterior; marque isTopicChange quando
+for o caso e responda o pedido atual. Se o leadBlock for uma resposta curta/fragmentada, use a última fala do atendente apenas
+para interpretar seu significado. Decida você o ato conversacional: um pedido explícito para ver/listar opções ou verificar
+disponibilidade deve ser tratado como pedido de estoque e, quando precisar de fatos atuais, você deve escolher stock_search;
+uma resposta a uma pergunta pendente não deve ser transformada em estoque. Nunca repita uma pergunta antiga só porque ela
+aparece em pendingAgentQuestion ou no portalNextQuestion.
+`;
+
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
 function str(v: unknown): string | null { return typeof v === "string" && v.trim() !== "" ? v : null; }
 function num(v: unknown): number | null { return typeof v === "number" && Number.isFinite(v) ? v : null; }
+function queryVehicleKey(raw: unknown): string | null {
+  if (!isRecord(raw) || !isRecord(raw.input)) return null;
+  return str(raw.input.vehicleKey) ?? (isRecord(raw.input.vehicleRef) ? str(raw.input.vehicleRef.key) : null);
+}
 
 export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #secret: RuntimeApiSecret;
@@ -421,7 +454,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#secret = secret;
     this.#transport = transport;
     this.#portalPrompt = portalPrompt;
-    this.#system = `${portalPrompt}${BRAIN_PROTOCOL}${config.handoffEnabled === true ? HANDOFF_PROTOCOL : ""}${config.followupEnabled === true ? FOLLOWUP_PROTOCOL : ""}`;
+    this.#system = `${portalPrompt}${BRAIN_PROTOCOL}${config.handoffEnabled === true ? HANDOFF_PROTOCOL : ""}${config.followupEnabled === true ? FOLLOWUP_PROTOCOL : ""}${CURRENT_TURN_PRIORITY}`;
     this.#url = url.toString();
     this.#model = config.model.trim();
     this.#retryModel = config.retryModel?.trim() || this.#model;
@@ -445,18 +478,18 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         ? "A resposta curta atual ACEITOU sua última oferta única de fotos. Preserve o selectedVehicle, declare request_photos/send_photos com evidence do bloco atual e use vehicle_photos_resolve; não pergunte novamente qual carro."
         : frame.signals.selectedOfferThisTurn === true
           ? "O bloco atual SELECIONOU um veículo da última oferta. Acolha e nomeie essa escolha em FINAL, sem tool e sem iniciar cadastro/financiamento/troca. Faça somente UMA pergunta oferecendo as fotos; espere a resposta antes de enviá-las."
-        : "Analise o bloco atual do cliente e devolva UM passo (query|final) em JSON, seguindo o protocolo.";
+        : "Leia leadBlock primeiro. Identifique o ato conversacional desta mensagem nova, compare-o com a última fala do atendente e devolva UM passo (query|final) em JSON. Memória, pergunta pendente e orientações anteriores são contexto, não ordem para repetir assunto.";
     const user = JSON.stringify({
       instruction: turnInstruction,
-      // ⭐RD1 (2026-07-13): ORIENTAÇÕES de condução deste turno (advisory). Guiam estilo/condução — apresentação,
-      // ordem de funil, não repergunte o conhecido, acolha o dado recém-informado, UMA pergunta. NÃO são ordens
-      // rígidas: conduza naturalmente seguindo a personalidade do portal; se conflitarem com um pedido explícito
-      // do cliente, o pedido do cliente vence. Elas NÃO substituem sua leitura do bloco atual.
-      ...(frame.advisories && frame.advisories.length > 0 ? { orientacoesDoTurno: frame.advisories } : {}),
+      // As antigas orientações de condução não entram no payload do brain:
+      // algumas continham a próxima pergunta do funil e podiam virar um
+      // segundo cérebro. Fatos de canal/estado continuam em signals, memory
+      // e conversationContext; a LLM conduz a resposta pelo portal + turno.
       leadBlock: frame.block,
       signals: frame.signals,
       workingMemory: frame.workingMemory,
       conversationContext: frame.conversationContext,
+      currentTurnFacts: frame.currentTurnFacts,
       transcript: frame.recentTranscript,
       toolObservationsSoFar: observations,
     });
@@ -501,7 +534,19 @@ export class OpenAiAgentBrain implements AgentBrainPort {
 
   #decodeStep(raw: unknown, frame: TurnFrame): AgentBrainStep {
     if (!isRecord(raw)) return this.#safeFinal("shape inválido");
-    const understanding = this.#decodeUnderstanding(raw.understanding);   // fonte única: semântica do turno no MESMO ciclo
+    const decodedUnderstanding = this.#decodeUnderstanding(raw.understanding);   // fonte única: semântica do turno no MESMO ciclo
+    // The LLM still chose the intent, tool, and exact vehicle key. This only
+    // repairs an enum label when that key is exactly the unique offer-reference
+    // fact already present in the frame (e.g. it writes "Corolla azul" as a
+    // model while choosing the blue Corolla's key). No inference can occur.
+    const candidateKeys = frame.currentTurnFacts?.offerReference?.status === "unique"
+      ? frame.currentTurnFacts.offerReference.candidateVehicleKeys
+      : [];
+    const proposedKey = queryVehicleKey(raw.call);
+    const understanding = decodedUnderstanding?.subject === "explicit_model"
+      && candidateKeys.length === 1 && proposedKey === candidateKeys[0]
+      ? { ...decodedUnderstanding, subject: "offer_reference" as const, subjectSource: "memory" as const }
+      : decodedUnderstanding;
     if (raw.kind === "query" && isRecord(raw.call)) {
       const call = this.#decodeCall(raw.call);
       if (call && this.#allowedTools.has(call.tool)) return { kind: "query", call, understanding };

@@ -15,10 +15,11 @@ import type { ConversationState } from "../src/domain/conversation-state.ts";
 import { redact } from "../src/domain/effect-intent.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
-import type { AgentBrainStep, AgentBrainDecision, CentralQueryCall, PhotoActionMemory } from "../src/domain/agent-brain.ts";
+import type { AgentBrainPort, AgentBrainStep, AgentBrainDecision, AgentToolObservation, CentralQueryCall, PhotoActionMemory, TurnFrame } from "../src/domain/agent-brain.ts";
 import type { ProposedEffectPlan, QueryCall, QueryResult, ResponsePart, ResponseDraft, TurnRelation } from "../src/domain/decision.ts";
 import type { VehicleFact } from "../src/domain/types.ts";
 import type { TenantBusinessInfoSource, TenantBusinessInfo } from "../src/engine/tenant-business-info.ts";
+import { deriveFallbackUnderstanding } from "../src/engine/turn-understanding.ts";
 
 let ok = 0, fail = 0; const fails: string[] = [];
 function check(name: string, pass: boolean, detail = ""): void {
@@ -67,6 +68,20 @@ class FixedPreparer implements TurnContextPreparer {
 }
 class FakeBusinessInfo implements TenantBusinessInfoSource {
   async getBusinessInfo(): Promise<TenantBusinessInfo> { return { address: null, hours: null, unit: null, source: "tenant_runtime_config" }; }
+}
+
+// Os casos desta suite exercitam grounding/autoria, nao a decodificacao da LLM.
+// O runtime central exige que todo passo carregue um entendimento do turno atual;
+// este adaptador preserva esse contrato no cerebro deterministico do teste.
+class UnderstandingBrain implements AgentBrainPort {
+  constructor(private readonly inner: ScriptedAgentBrain) {}
+
+  async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const step = await this.inner.proposeNextStep(frame, observations);
+    return step.understanding
+      ? step
+      : { ...step, understanding: deriveFallbackUnderstanding(frame.block, frame.signals, extractor) };
+  }
 }
 
 const label = (v: VehicleFact): string => `${v.marca} ${v.modelo} ${v.ano}`;
@@ -119,7 +134,7 @@ async function runTurn(opts: { state: ConversationState; leadText: string; scrip
   brain.setTurnScript(opts.script);
   const llm = new ComposeSpyLlm();
   const result = await runCentralConversationTurn({
-    persistence, clock, brain, llm, runQuery, businessInfo: new FakeBusinessInfo(),
+    persistence, clock, brain: new UnderstandingBrain(brain), llm, runQuery, businessInfo: new FakeBusinessInfo(),
     contextPreparer: new FixedPreparer(opts.relation ?? "asks_vehicle_detail"),
     conversationId: CONV, tenantId: TENANT, agentId: AGENT, leadId: null,
     workerId: "w", turnId: `${CONV}-t${seq}`, leaseTtlMs: 60_000, portalPromptSha256: SHA,

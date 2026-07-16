@@ -243,13 +243,23 @@ class RBusinessInfo implements TenantBusinessInfoSource {
 const rPlainText: ComposeOverride = (d) => ({ parts: [{ type: "text", content: d.responsePlan.guidance }] });
 function rLlm(): FakeLlm { const l = new FakeLlm(); l.setTurnScript([], rPlainText); return l; }
 function rFinalReply(guidance: string): AgentBrainStep {
+  const understanding: TurnUnderstanding = {
+    primaryIntent: "other",
+    requestedCapabilities: [],
+    subject: "selected_vehicle",
+    subjectValue: null,
+    subjectSource: "memory",
+    evidence: [{ quote: "foto" }],
+    isTopicChange: false,
+    answeredLeadQuestions: [],
+  };
   const decision: AgentBrainDecision = {
     reasonCode: "reply", reasonSummary: "resposta", confidence: 0.9,
     responsePlan: { guidance, draft: { parts: [{ type: "text", content: guidance }] } },
     proposedEffects: [{ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan],
     memoryMutations: [], stateMutations: [],
   };
-  return { kind: "final", decision };
+  return { kind: "final", understanding, decision };
 }
 const rSendMedia = (vehicleKey: string, photoIds: string[]): ProposedEffectPlan => ({
   kind: "send_media", planId: "media", order: 1, vehicleKey, photoIds,

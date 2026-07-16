@@ -91,8 +91,113 @@ export type LlmCallRecord = {
   readonly promptExact?: boolean; readonly error?: string;
 };
 
+// Diagnóstico estrutural da continuidade. Guarda somente medidas, chaves e hashes
+// do payload; o relatório não despeja o prompt nem o histórico cru.
+export type LlmRequestAudit = {
+  readonly seq: number;
+  readonly model?: string;
+  readonly bodyChars: number;
+  readonly systemChars: number;
+  readonly userChars: number;
+  readonly systemSha: string;
+  readonly userSha: string;
+  readonly user: {
+    readonly instruction: string;
+    readonly leadBlock: string;
+    readonly transcriptCount: number;
+    readonly transcriptTail: { role: string; chars: number; sha: string }[];
+    readonly signalKeys: string[];
+    readonly workingMemoryKeys: string[];
+    readonly contextKeys: string[];
+    readonly currentFactsKeys: string[];
+    readonly advisories: string[];
+    readonly observationTools: string[];
+    readonly pendingAgentQuestion: string | null;
+    readonly lastAgentMessage: { chars: number; sha: string } | null;
+    readonly expectedAnswer: string | null;
+    readonly extractedFacts: string[];
+    readonly offerReference: string | null;
+  };
+};
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+}
+
+function objectKeys(value: unknown): string[] {
+  return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value as Record<string, unknown>).sort() : [];
+}
+
+function textDigest(value: unknown): { chars: number; sha: string } | null {
+  return typeof value === "string" ? { chars: value.length, sha: sha256(value) } : null;
+}
+
+function summarizeBrainRequest(seq: number, request: ModelHttpRequest): LlmRequestAudit | null {
+  if (typeof request.body !== "string") return null;
+  try {
+    const body = JSON.parse(request.body) as {
+      model?: unknown;
+      messages?: { role?: unknown; content?: unknown }[];
+    };
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const system = messages.find((m) => m?.role === "system")?.content;
+    const userText = messages.find((m) => m?.role === "user")?.content;
+    if (typeof system !== "string" || typeof userText !== "string") return null;
+    const payload = JSON.parse(userText) as Record<string, unknown>;
+    const transcript = Array.isArray(payload.transcript) ? payload.transcript : [];
+    const transcriptTail = transcript.slice(-4).map((entry) => {
+      const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+      const text = typeof record.text === "string" ? record.text : "";
+      return { role: typeof record.role === "string" ? record.role : "?", chars: text.length, sha: sha256(text) };
+    });
+    const context = payload.conversationContext as Record<string, unknown> | undefined;
+    const facts = payload.currentTurnFacts as Record<string, unknown> | undefined;
+    const memory = payload.workingMemory as Record<string, unknown> | undefined;
+    const expected = facts?.expectedAnswer as Record<string, unknown> | undefined;
+    const offer = facts?.offerReference as Record<string, unknown> | undefined;
+    const lastAgent = context?.lastAgentMessage ?? context?.lastAgentText;
+    return {
+      seq,
+      model: typeof body.model === "string" ? body.model : undefined,
+      bodyChars: request.body.length,
+      systemChars: system.length,
+      userChars: userText.length,
+      systemSha: sha256(system),
+      userSha: sha256(userText),
+      user: {
+        instruction: typeof payload.instruction === "string" ? payload.instruction : "",
+        leadBlock: sanitize(typeof payload.leadBlock === "string" ? payload.leadBlock : ""),
+        transcriptCount: transcript.length,
+        transcriptTail,
+        signalKeys: objectKeys(payload.signals),
+        workingMemoryKeys: objectKeys(memory),
+        contextKeys: objectKeys(context),
+        currentFactsKeys: objectKeys(facts),
+        advisories: Array.isArray(payload.orientacoesDoTurno) ? payload.orientacoesDoTurno.map((x) => sanitize(String(x)).slice(0, 180)) : [],
+        observationTools: Array.isArray(payload.toolObservationsSoFar)
+          ? payload.toolObservationsSoFar.map((x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).tool === "string" ? String((x as Record<string, unknown>).tool) : "?")
+          : [],
+        pendingAgentQuestion: typeof memory?.pendingAgentQuestion === "string"
+          ? memory.pendingAgentQuestion
+          : typeof context?.pendingAgentQuestion === "string" ? context.pendingAgentQuestion : null,
+        lastAgentMessage: textDigest(lastAgent),
+        expectedAnswer: typeof expected?.slot === "string" ? expected.slot : typeof expected?.kind === "string" ? expected.kind : null,
+        extractedFacts: Array.isArray(facts?.extracted)
+          ? facts.extracted.map((x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).slot === "string"
+            ? String((x as Record<string, unknown>).slot)
+            : "?")
+          : [],
+        offerReference: typeof offer?.status === "string" ? `${offer.status}:${Array.isArray(offer.candidateVehicleKeys) ? offer.candidateVehicleKeys.length : 0}` : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export class CountingModelHttpTransport implements ModelHttpTransport {
   readonly calls: LlmCallRecord[] = [];
+  readonly requestAudits: LlmRequestAudit[] = [];
   #seq = 0;
   fullPrompt = ""; // prompt REAL do portal (comparacao integral); nunca logado
   constructor(private readonly inner: ModelHttpTransport) {}
@@ -107,6 +212,8 @@ export class CountingModelHttpTransport implements ModelHttpTransport {
     const started = Date.now();
     const host = safeHost(url);
     const promptExact = this.#checkPromptExact(request);
+    const audit = summarizeBrainRequest(seq, request);
+    if (audit) this.requestAudits.push(audit);
     try {
       const res = await this.inner.postJson(url, request);
       this.calls.push({ seq, host, status: res.status, ms: Date.now() - started, promptExact, ...extractUsage(res.bodyText) });

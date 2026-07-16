@@ -220,6 +220,7 @@ export type TurnFrame = {
   readonly workingMemory: WorkingMemoryV1;   // persistido + view canônica derivada
   readonly recentTranscript: readonly FrameTranscriptTurn[];
   readonly conversationContext: ConversationContext;
+  readonly currentTurnFacts: CurrentTurnFacts;
   readonly signals: FrameSignals;
   // ⭐RODADA 1 (2026-07-13, autoria-LLM): ORIENTAÇÕES de condução deste turno, injetadas ANTES da 1ª geração.
   // São advisory — guiam o estilo/condução (apresentação, ordem de funil, não repergunte o conhecido, acolha o
@@ -250,6 +251,33 @@ export type ConversationContext = {
   readonly lastVisibleOffer: { readonly sourceTurnId: string; readonly items: readonly ConversationContextOfferItem[] } | null;
   readonly lastResolvedSlotAnswer: { readonly slot: string; readonly turnId: string } | null;
   readonly conversationSummary: string | null;
+};
+
+// Facts extracted from the CURRENT inbound block before the LLM is asked to
+// author a reply. They are read-only context: they improve understanding of
+// fragmented answers without choosing an intent, tool, effect, or reply.
+export type CurrentTurnFact = {
+  readonly slot: string;
+  readonly kind: "value" | "declined" | "sensitive_ref";
+  readonly value?: string | number | boolean | { readonly min?: number; readonly max?: number } | {
+    readonly marca?: string;
+    readonly modelo?: string;
+    readonly ano?: number;
+    readonly km?: number;
+    readonly estado?: string;
+  };
+};
+
+export type CurrentTurnFacts = {
+  readonly expectedAnswer: { readonly slot: string | null; readonly lastAgentQuestion: string | null };
+  readonly extracted: readonly CurrentTurnFact[];
+  // A factual match between terms literally written in this block and the
+  // last rendered offer. It is not an intent classification or an action.
+  readonly offerReference: {
+    readonly status: "unique" | "ambiguous";
+    readonly candidateVehicleKeys: readonly string[];
+    readonly matchedBy: readonly ("marca" | "modelo" | "ano" | "cor")[];
+  } | null;
 };
 
 export type StoreInfoFact = { readonly topic: "address" | "hours" | "unit"; readonly value: string; readonly source: string };

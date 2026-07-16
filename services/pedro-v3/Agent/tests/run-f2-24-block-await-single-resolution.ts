@@ -168,16 +168,13 @@ async function main(): Promise<void> {
   // PARTE 5 — INTEGRAÇÃO: RESOLUÇÃO ÚNICA (bug do Compass "fotos do segundo")
   // ─────────────────────────────────────────────────────────────────────────
   {
-    // O cérebro inicialmente rotula "fotos do segundo" só como SELEÇÃO. O engine
-    // não executa por esse rótulo: devolve feedback semântico e a própria LLM
-    // corrige o ato para request_photos antes de a tool ser autorizada.
+    // A LLM declara o ato comercial correto no mesmo ciclo. O engine só resolve
+    // o fato de fotos do alvo autorizado; não escolhe a ação nem o veículo.
     const c = conv(offerCtx([COMPASS17, COMPASS19]));
     await c.seed();
-    const selU = U("select_vehicle", { caps: ["select"], subject: "ordinal_from_last_offer", subjectValue: "2", subjectSource: "current_turn", evidence: [{ capability: "select", quote: "segundo" }] });
     const photoU = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "2", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do segundo" }] });
     const responder: BrainResponder = (_frame, observations) => {
       const photoReady = observations.some((o) => o.tool === "vehicle_photos_resolve" && o.ok);
-      const actCorrectionRequested = observations.some((o) => o.tool === "response" && o.error?.code === "PHOTO_ACT_EXPECTED");
       return photoReady
         ? finU(
             [txt("Claro, aqui estão as fotos do Jeep Compass 2019.")],
@@ -186,13 +183,11 @@ async function main(): Promise<void> {
             photoU,
             [selMut(COMPASS19)],
           )
-        : actCorrectionRequested
-          ? finU([txt("Vou buscar as fotos do segundo veículo.")], [reply], "resolve_selected_photos", photoU, [selMut(COMPASS19)])
-        : finU([txt("Boa escolha!")], [reply], "select_ack", selU, [selMut(COMPASS19)]);
+        : finU([txt("Vou buscar as fotos do segundo veículo.")], [reply], "resolve_selected_photos", photoU, [selMut(COMPASS19)]);
     };
     const r = await c.t("Me mande fotos do segundo", "ambiguous", responder);
     check("[I-compass-a] envia mídia do item 2 (Compass 2019)", r.hasMedia === true && r.mediaKey === COMPASS19.vehicleKey, `hasMedia=${r.hasMedia} key=${r.mediaKey} src=${r.src}`);
-    check("[I-compass-b] rodou vehicle_photos_resolve determinístico", r.exec.includes("vehicle_photos_resolve"), `exec=${r.exec.join(",")}`);
+    check("[I-compass-b] resolveu o fato de fotos do alvo autorizado", r.exec.includes("vehicle_photos_resolve"), `exec=${r.exec.join(",")}`);
     check("[I-compass-c] resposta comercial é da LLM", r.src === "brain_final" || r.src === "brain_retry", `src=${r.src}`);
     check("[I-compass-d] targetSource = turn_ordinal", r.targetSource === "turn_ordinal", `ts=${r.targetSource}`);
     check("[I-compass-e] NUNCA vira 'de qual carro?' (recovery_photo_which)", r.recoveryReason !== "recovery_photo_which");

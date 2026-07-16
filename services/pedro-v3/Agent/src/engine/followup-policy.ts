@@ -14,6 +14,7 @@ export type FollowupDue = {
 export type FollowupEvaluationReason =
   | "due"
   | "rules_disabled"
+  | "lead_opted_out"
   | "state_terminal"
   | "handoff_in_flight"
   | "no_anchor"
@@ -50,6 +51,10 @@ export function evaluateFollowup(args: {
   now: string;
 }): FollowupEvaluation {
   if (!args.rules.enabled) return { due: null, reason: "rules_disabled" };
+  // ⭐R8 (Codex 2026-07-15): OPT-OUT DURÁVEL vence tudo. Verificado ANTES de procurar anchor e INDEPENDENTE de stage,
+  // handoff, leadId ou de a transferência ser plannable. Um lead que disse "me tira da lista"/"pare de mandar" NUNCA
+  // recebe T1/T2/T3, mesmo que o handoff não tenha sido planejado (leadId null / vendedor ausente — condição real em prod).
+  if (args.state.optedOutAt != null) return { due: null, reason: "lead_opted_out" };
   if (args.state.stage === "handoff" || args.state.stage === "closed") return { due: null, reason: "state_terminal" };
   // A saga de transferência já assumiu a conversa. Mesmo que o callback de
   // entrega do aviso ao vendedor demore, o follow-up não pode voltar a abordar

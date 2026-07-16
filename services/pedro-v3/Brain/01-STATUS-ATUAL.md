@@ -1,5 +1,44 @@
 # 01 - Status Atual do Pedro v3
 
+## 2026-07-15 - Claude: CONTRATO SEMÂNTICO DO TURNO (pagamento/consórcio, backstop humano, agendamento) — SOBRE o WIP Codex
+
+- Leva **NÃO COMMITADA**, em cima do WIP de `current-turn-facts`. Fecha o prompt do Codex "Fechar o contrato semântico do turno".
+- Auditoria multi-agente (11 regras): enforced R1/R4/R5/R11; partial R2/R3/R6/R7/R8; gap R9/R10.
+- **INCIDENTE consórcio→nome CORRIGIDO+PROVADO:** a guarda "não peça nome em pagamento" estava desligada no central_active
+  (advisory desde RD1-2). Reativada como **deny+retry ATIVO** gated em `paymentConductTurn` (novo sinal, `isPaymentTurn` sem
+  exigir pergunta financeira pendente). + strip de precoMax p/ "carta contemplada de 53 mil" + "carta contemplada/de crédito"
+  vira consórcio em parsePayment/PAYMENT_TURN_RX + bloqueio de tool no consórcio espontâneo (gated `!sufficientForStockSearch`).
+- **R7:** gate de tool comercial no pedido humano agora honra o backstop `leadRequestsHumanExplicitly` (fecha assimetria).
+- **R6:** advisory de agendamento suprimido quando o bloco declara alvo comercial novo (mudança de assunto vence a visita).
+- **Testes/smoke (regras 9/10):** NOVO `run-f2-57-payment-name-contract.ts` (test:f257, 13 OK) roda o ciclo `central_active`
+  COMPLETO com fake que DECLARA understanding (PAY nome-deny+retry / AZUL send_media offer_reference / SPON tool-block /
+  HUM backstop). Smoke real `smoke:f256` REESCRITO p/ `runCentralConversation` (ciclo completo): **PASS ×2** (gpt-4.1-mini),
+  consórcio → financing, ZERO stock_search, NÃO pede nome, formaPagamento=consorcio.
+- **Gates:** tsc EXIT 0 · test:all EXIT 0 · git diff --check limpo · smoke real ×2 lido turno a turno.
+- **R8 FEITO (fatia autorizada pelo Codex):** OPT-OUT durável — `ConversationState.optedOutAt` (aditivo, não é stage=closed);
+  set idempotente no central_active quando desinteresse EXPLÍCITO (`disengagedActionable && not_interested`, só o detector
+  existente); `evaluateFollowup` retorna motivo terminal `lead_opted_out` ANTES da âncora, independente de stage/handoff/
+  leadId/plannable. NOVO `run-f2-58-optout-followup.ts` (test:f258, 19 OK: matriz completa + engine real); `test:f249` 66 OK
+  (sem regressão). "me tira da lista"/"pare de mandar"/"não me interessa" marcam; "não"/"obrigado"/"vou pensar" NÃO.
+- **DEFERIDO p/ Codex:** R3 (usar WM.pendingAgentQuestion como última pergunta entregue), R6-fix2 (dia-da-semana pelado no
+  parseOrdinal), melhoria do detector de desinteresse ("parar de mandar" infinitivo).
+- Handoff completo: `Brain/2026-07-15-claude-payment-name-contract.md`.
+
+## 2026-07-15 - WIP Codex: contexto factual do bloco atual e autoridade de tools
+
+- Leva **NAO COMMITADA**. O objetivo e melhorar a compreensao de mensagens
+  fragmentadas, respostas curtas, consorcio e referencias como "o azul" sem
+  devolver controle comercial para regex, policy ou engine.
+- A LLM agora recebe `currentTurnFacts` (extracao factual do bloco atual,
+  ultima pergunta efetivamente entregue e referencia aterrada da oferta). O
+  motor exige `understanding` em central_active e, se a LLM declara busca,
+  exige que ela mesma declare capability/evidence e chame `stock_search`.
+  Nenhuma busca e inferida pelo motor.
+- Testes parciais e smoke real central passaram; `test:all` ainda esta parado
+  na migracao da F2.20, que tinha expectativa antiga de executor comercial
+  deterministico para fotos. Nao publicar antes de fechar a cadeia completa.
+- Handoff completo: `Brain/2026-07-15-codex-handoff-contexto-atual-e-plano.md`.
+
 ## 2026-07-11 - F2.48 rodada 2 (auditoria Codex): proveniência campo-a-campo + decisão stale + denies de conversa
 
 - 4 achados do Codex CORRIGIDOS+testados: objeto composto exige TODOS os campos (Ferrari Roma morto); booleano

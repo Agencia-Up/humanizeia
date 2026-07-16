@@ -17,11 +17,12 @@ import { ScriptedAgentBrain } from "../src/adapters/llm/fake-agent-brain.ts";
 import { FakeLlm, type ComposeOverride } from "../src/adapters/llm/fake-llm.ts";
 import { buildTenantCatalog, normalizeText } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
+import { deriveFallbackUnderstanding } from "../src/engine/turn-understanding.ts";
 import { slotQuestions } from "../src/engine/question-classify.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
-import type { AgentBrainDecision, AgentBrainStep, CentralQueryCall } from "../src/domain/agent-brain.ts";
+import type { AgentBrainDecision, AgentBrainPort, AgentBrainStep, AgentToolObservation, CentralQueryCall, TurnFrame } from "../src/domain/agent-brain.ts";
 import type { DecisionMutation, ProposedEffectPlan, QueryCall, QueryResult, TurnRelation } from "../src/domain/decision.ts";
 import type { EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import type { Persistence } from "../src/domain/ports.ts";
@@ -68,6 +69,18 @@ function finalStep(over: { guidance: string; effects?: ProposedEffectPlan[]; sta
   };
   return { kind: "final", decision };
 }
+// This suite scripts the decisions a well-formed LLM would make. The runtime
+// now requires an understanding for every central step, so derive the same
+// current-block contract a real model must emit instead of bypassing it.
+class UnderstandingBrain implements AgentBrainPort {
+  constructor(private readonly inner: ScriptedAgentBrain) {}
+  async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
+    const step = await this.inner.proposeNextStep(frame, observations);
+    return step.understanding
+      ? step
+      : { ...step, understanding: deriveFallbackUnderstanding(frame.block, frame.signals, extractor) };
+  }
+}
 const plainText: ComposeOverride = (d) => ({ parts: [{ type: "text", content: d.responsePlan.guidance }] });
 const offerList: ComposeOverride = (_d, facts) => {
   const s = facts.find((f) => f.ok && f.tool === "stock_search");
@@ -102,7 +115,7 @@ async function main(): Promise<void> {
     clock.advance(1000);
     turnSeq++;
     const r = await runCentralConversationTurn({
-      persistence: p, clock, brain, llm: llmWith(compose), runQuery, businessInfo, contextPreparer: prep,
+      persistence: p, clock, brain: new UnderstandingBrain(brain), llm: llmWith(compose), runQuery, businessInfo, contextPreparer: prep,
       conversationId: "g1", tenantId: TENANT, agentId: AGENT, leadId: null, workerId: "w", turnId: `g1-t${turnSeq}`,
       leaseTtlMs: 60_000, portalPromptSha256: "sha", limits: CENTRAL_LIMITS, maxValidationAttempts: 2, brainMaxSteps: 4,
       allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],

@@ -50,6 +50,7 @@ export async function authorFollowupMessageDetailed(args: {
       workingMemory: memory,
       recentTranscript: (args.state.recentTurns ?? []).slice(-12).map((turn) => ({ role: turn.role, text: turn.text })),
       conversationContext: buildConversationContext({ state: args.state, workingMemory: memory }),
+      currentTurnFacts: { expectedAnswer: { slot: null, lastAgentQuestion: null }, extracted: [], offerReference: null },
       signals: {
         mentionsPhoto: false,
         mentionsStore: false,

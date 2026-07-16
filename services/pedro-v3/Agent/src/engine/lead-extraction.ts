@@ -207,6 +207,11 @@ export function questionSlotFromAgentText(agentText: string, opts: { readonly le
   return null;
 }
 export function inferredQuestionSlot(state: ConversationState): keyof ConversationState["slots"] | null {
+  // The last question actually delivered to the lead is the conversational
+  // truth. A stale planned objective cannot reinterpret a newer question or
+  // attach a short answer to an old funnel step.
+  const latestQuestion = questionSlotFromAgentText(lastAgentText(state));
+  if (latestQuestion != null) return latestQuestion;
   if (state.currentObjective?.status === "pending" && state.currentObjective.slot) return state.currentObjective.slot;
   return questionSlotFromAgentText(lastAgentText(state), { legacyFallback: true });
 }
@@ -397,7 +402,8 @@ function parsePayment(text: string): "a_vista" | "financiamento" | "consorcio" |
   const norm = normalizeText(text);
   if (/\ba vista\b|\bdinheiro\b|\bpix\b/.test(norm)) return "a_vista";
   if (/\bfinanc|\bparcel/.test(norm)) return "financiamento";
-  if (/\bconsorcio\b/.test(norm)) return "consorcio";
+  // ⭐Codex regra 2: "carta contemplada"/"carta de crédito"/"crédito contemplado" = CARTA DE CONSÓRCIO — forma de pagamento.
+  if (/\bconsorcio\b|\bcarta\s+(?:contemplad|de\s+credito|credito)|\bcredito\s+contemplad|\bcontemplad[ao]\b/.test(norm)) return "consorcio";
   if (/\btroca\b/.test(norm)) return "troca";
   return null;
 }
@@ -776,7 +782,7 @@ export function extractLeadSlots(args: {
   if (budgetVal != null) add({ op: "set_slot", slot: "faixaPreco", value: { max: budgetVal }, confidence: 0.92, sourceTurnId: turnId }, "faixaPreco");
 
   const payment = parsePayment(leadMessage);
-  if (payment && (expected === "formaPagamento" || /\ba vista\b|\bfinanc|\bparcel|\bconsorcio\b|\bpagamento\b/.test(norm))) {
+  if (payment && (expected === "formaPagamento" || /\ba vista\b|\bfinanc|\bparcel|\bconsorcio\b|\bpagamento\b|\bcontemplad|\bcarta\s+de\s+credito/.test(norm))) {
     add({ op: "set_slot", slot: "formaPagamento", value: payment, confidence: 0.95, sourceTurnId: turnId }, "formaPagamento");
   }
 

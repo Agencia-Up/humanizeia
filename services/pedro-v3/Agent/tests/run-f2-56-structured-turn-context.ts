@@ -6,6 +6,8 @@ import { createInitialPersistedWorkingMemory, type TurnUnderstanding } from "../
 import { createInitialState, type ConversationState } from "../src/domain/conversation-state.ts";
 import type { ClaimExtractor } from "../src/domain/decision.ts";
 import { buildConversationContext } from "../src/engine/conversation-context.ts";
+import { buildCurrentTurnFacts } from "../src/engine/current-turn-facts.ts";
+import { extractLeadSlots, inferredQuestionSlot } from "../src/engine/lead-extraction.ts";
 import { buildTurnFrame } from "../src/engine/turn-frame-builder.ts";
 import { authorizesPhotoByResolvedTarget, resolveTurnTarget } from "../src/engine/turn-understanding.ts";
 import { buildWorkingMemory } from "../src/engine/working-memory.ts";
@@ -89,6 +91,47 @@ function main(): void {
   });
   check("[C] TurnFrame entrega o mesmo contexto estruturado ao cerebro", frame.conversationContext.lastVisibleOffer?.items[1]?.vehicleKey === "rm:corolla-2016"
     && frame.conversationContext.pendingAgentQuestion?.slot === "possuiTroca");
+
+  const blueFacts = buildCurrentTurnFacts({ state, extracted: [], block: "Me mostra o azul" });
+  check("[C1] referencia unica da lista e fato do bloco, nao decisao de tool", blueFacts.offerReference?.status === "unique"
+    && blueFacts.offerReference.candidateVehicleKeys[0] === "rm:corolla-2016"
+    && blueFacts.offerReference.matchedBy.includes("cor"), JSON.stringify(blueFacts));
+
+  const tradeQuestionState: ConversationState = {
+    ...state,
+    recentTurns: [{ role: "agent", text: "Você tem carro para troca?", at: NOW }],
+  };
+  const paymentFacts = buildCurrentTurnFacts({
+    state: tradeQuestionState,
+    extracted: extractLeadSlots({
+      leadMessage: "Não, carta consórcio contemplada de 53 mil",
+      state: tradeQuestionState,
+      interpretation: { relation: "answers_pending" },
+      claimExtractor: noClaims,
+      turnId: "payment-turn",
+    }),
+  });
+  check("[C2] fato de pagamento fragmentado chega ao cerebro sem virar troca", paymentFacts.expectedAnswer.slot === "possuiTroca"
+    && paymentFacts.extracted.some((fact) => fact.slot === "formaPagamento" && fact.value === "consorcio")
+    && !paymentFacts.extracted.some((fact) => fact.slot === "possuiTroca"), JSON.stringify(paymentFacts));
+
+  const latestQuestionState: ConversationState = {
+    ...state,
+    currentObjective: {
+      id: "old-trade-objective",
+      type: "perguntou_troca",
+      slot: "possuiTroca",
+      expectedAnswerKinds: ["boolean"],
+      status: "pending",
+      askedAt: NOW,
+      askedInTurnId: "old-turn",
+      deliveredByEffectId: "old-trade-effect",
+      deliveryLevel: "delivered",
+      attempts: 0,
+    },
+    recentTurns: [{ role: "agent", text: "Qual parcela mensal caberia para você?", at: NOW }],
+  };
+  check("[C3] pergunta realmente entregue vence objetivo pendente antigo", inferredQuestionSlot(latestQuestionState) === "parcelaDesejada");
 
   const blue = resolveTurnTarget({ understanding: understanding("azul"), leadMessage: "Me mostra o azul", state, claimExtractor: noClaims, knownModels });
   check("[D] referencia unica por cor resolve o item visivel sem nova busca", blue.kind === "resolved"

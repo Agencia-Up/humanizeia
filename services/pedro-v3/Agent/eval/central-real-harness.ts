@@ -229,6 +229,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
     const outbox = (await persistence.listOutbox(convId)).filter((o) => o.turnId === turnId) as unknown as { kind: string; status: string; payload?: { vehicleKey?: string; photoIds?: string[] } }[];
     const brainCalls = stack.brainTransport.calls.slice(brainBefore);
     const composeCalls = stack.composeTransport.calls.slice(composeBefore);
+    const brainRequestAudits = stack.brainTransport.requestAudits.filter((a) => a.seq > brainBefore && a.seq <= stack.brainTransport.count);
     const allCalls = [...brainCalls, ...composeCalls];
 
     captures.push({
@@ -259,6 +260,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       possuiTrocaBefore, possuiTrocaAfter: possuiTrocaStr(after),
       selectedVehicleKeyAfter: after?.vehicleContext.selected?.key ?? null,
       pendingAgentQuestion: wmAfter.pendingAgentQuestion?.slot ?? null,
+      llmRequestAudits: brainRequestAudits,
     });
     base.ms += 30_000;
     if (INTER_TURN_DELAY_MS > 0) await realSleep(INTER_TURN_DELAY_MS);
