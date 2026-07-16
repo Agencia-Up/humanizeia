@@ -1366,33 +1366,16 @@ export function CrmAvancadoTab({
   // rola o scroll do PRÓPRIO droppable (cada coluna tem overflow-y) + a janela; o
   // scroll horizontal do board é um ancestral, então o card não alcançava as colunas
   // do fim. Aqui rolamos o board quando o ponteiro chega perto da borda esq/dir.
+  // REMOVIDO (16/07): auto-scroll horizontal na mao (rAF empurrando scrollLeft +
+  // listener de mousemove/touchmove). Era A CAUSA do "lead nao cola na coluna da
+  // direita": o @hello-pangea/dnd mede as colunas e acompanha o scroll QUE ELE
+  // controla; mexer no scrollLeft por fora dessincroniza as posicoes — a tela rola,
+  // mas a dnd continua achando que a coluna esta no lugar antigo, entao o drop nao
+  // acha alvo. Existia porque a coluna tinha scroll proprio (overflow-y) e a dnd
+  // elegia a COLUNA como container, nunca o board. Tirando o scroll da coluna, o
+  // container mais proximo vira o BOARD e a dnd rola sozinha, sincronizada.
+  // NAO reintroduzir scroll manual durante o arraste.
   const boardScrollRef = useRef<HTMLDivElement>(null);
-  const autoScrollDirRef = useRef(0);            // -1 esquerda, 0 nada, 1 direita
-  const autoScrollRafRef = useRef<number | null>(null);
-  const boardAutoScrollStep = useCallback(() => {
-    const el = boardScrollRef.current;
-    if (el && autoScrollDirRef.current !== 0) el.scrollLeft += autoScrollDirRef.current * 22;
-    autoScrollRafRef.current = requestAnimationFrame(boardAutoScrollStep);
-  }, []);
-  const onLeadDragPointerMove = useCallback((e: MouseEvent | TouchEvent) => {
-    const el = boardScrollRef.current;
-    if (!el) return;
-    const x = 'touches' in e ? (e.touches[0]?.clientX ?? 0) : (e as MouseEvent).clientX;
-    const rect = el.getBoundingClientRect();
-    const EDGE = 100;
-    autoScrollDirRef.current = x > rect.right - EDGE ? 1 : x < rect.left + EDGE ? -1 : 0;
-  }, []);
-  const startBoardAutoScroll = useCallback(() => {
-    window.addEventListener('mousemove', onLeadDragPointerMove);
-    window.addEventListener('touchmove', onLeadDragPointerMove, { passive: true });
-    if (autoScrollRafRef.current == null) autoScrollRafRef.current = requestAnimationFrame(boardAutoScrollStep);
-  }, [onLeadDragPointerMove, boardAutoScrollStep]);
-  const stopBoardAutoScroll = useCallback(() => {
-    window.removeEventListener('mousemove', onLeadDragPointerMove);
-    window.removeEventListener('touchmove', onLeadDragPointerMove);
-    autoScrollDirRef.current = 0;
-    if (autoScrollRafRef.current != null) { cancelAnimationFrame(autoScrollRafRef.current); autoScrollRafRef.current = null; }
-  }, [onLeadDragPointerMove]);
   const [funnelOpen, setFunnelOpen]       = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
@@ -3680,8 +3663,13 @@ export function CrmAvancadoTab({
     const { draggableId, destination, source, type } = result;
     if (!destination) return;
 
-    // SO lead. Coluna nao arrasta mais (reordena por botao) — qualquer outro type
-    // e ignorado de proposito, pra nenhum drop estranho mexer no status do lead.
+    // Coluna: reordena (mesma funcao dos botoes ←/→).
+    if (type === 'COLUMN') {
+      await moveColumnTo(source.index, destination.index);
+      return;
+    }
+    // Lead: so com type explicito. Qualquer outro type e ignorado de proposito,
+    // pra nenhum drop estranho mexer no status do lead.
     if (type !== 'LEAD') return;
     if (destination.droppableId === source.droppableId) return;
     await moveLeadToColumn(draggableId, destination.droppableId);
@@ -5349,19 +5337,17 @@ export function CrmAvancadoTab({
           onDragStart={(start) => {
             isLeadDraggingRef.current = start.type !== 'COLUMN';
             setDragSourceCol(start.type === 'LEAD' ? start.source.droppableId : null);
-            if (isLeadDraggingRef.current) startBoardAutoScroll();
           }}
-          onDragEnd={(result) => { stopBoardAutoScroll(); setDragSourceCol(null); handleDragEnd(result); }}
+          onDragEnd={(result) => { setDragSourceCol(null); handleDragEnd(result); }}
         >
           <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 overflow-x-auto px-2 pb-2 sm:-mx-4 sm:px-4">
-            {/* O board NAO e droppable. Historico: (1) coluna usava drag NATIVO do
-                HTML5 brigando com o dnd do lead; (2) troquei por Droppable type=COLUMN
-                — melhorou, mas um droppable horizontal ENVOLVENDO os droppables de
-                lead, ainda por cima com scroll horizontal, deixava o drop do lead
-                instavel nas colunas da direita. Agora o DragDropContext cuida SO do
-                lead e reordenar coluna e por botao (deterministico). Uma engine, um
-                gesto. NAO reintroduzir drag de coluna aqui. */}
-            <div className="flex gap-3 min-w-max">
+            {/* Coluna volta a ser arrastavel pelo dnd (type=COLUMN). Ela nunca foi a
+                causa do lead "nao colar": era o auto-scroll manual dessincronizando as
+                posicoes (ver comentario do boardScrollRef). Com o scroll nas maos da
+                dnd, as duas interacoes convivem — cada uma com seu type. */}
+            <Droppable droppableId="board" type="COLUMN" direction="horizontal">
+              {(boardProvided) => (
+            <div className="flex gap-3 min-w-max" ref={boardProvided.innerRef} {...boardProvided.droppableProps}>
               {pipelineColumns.map((col, colIndex) => {
                 const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo', pipelineColumns) === col.id);
                 // Destaque da etapa de venda (Pedro: id 'fechado'; Marcos: etapa "Venda concluída").
@@ -5372,19 +5358,25 @@ export function CrmAvancadoTab({
                 const hex = col.color || null;
                 const useHex = !!hex && !isWin;
                 return (
+                  <Draggable key={col.id} draggableId={`col:${col.id}`} index={colIndex}>
+                    {(colProvided, colSnapshot) => (
                   <div
-                    key={col.id}
-                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
-                    style={useHex ? { borderColor: `${hex}4d` } : undefined}
+                    ref={colProvided.innerRef}
+                    {...colProvided.draggableProps}
+                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''} ${colSnapshot.isDragging ? 'shadow-2xl ring-2 ring-blue-400/50 rotate-1' : ''}`}
+                    style={{ ...colProvided.draggableProps.style, ...(useHex ? { borderColor: `${hex}4d` } : {}) }}
                   >
-                    {/* Header da coluna: SEM arraste. Reordenar e so pelos botoes ←/→
-                        (deterministico e acessivel no celular). Nada de grip aqui —
-                        grip sem drag so engana o usuario. */}
+                    {/* Header INTEIRO e a pegada da coluna: alvo grande, "clicou em cima
+                        e puxou" — publico leigo nao acha grip pequeno. Os botoes ←/→
+                        continuam como apoio (celular / quem nao quer arrastar). */}
                     <div
-                      className={`px-2.5 py-2 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between gap-1 select-none`}
+                      {...colProvided.dragHandleProps}
+                      className={`px-2.5 py-2 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between gap-1 select-none cursor-grab active:cursor-grabbing touch-none`}
                       style={useHex ? { backgroundColor: `${hex}1a` } : undefined}
+                      title="Arraste para trocar a coluna de lugar"
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
+                        <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/50" />
                         <span className="text-sm shrink-0">{col.emoji}</span>
                         <span className={`text-xs font-semibold truncate ${isWin ? 'text-emerald-200' : 'text-foreground'}`}>{col.title}</span>
                         {isWin && (
@@ -5393,10 +5385,14 @@ export function CrmAvancadoTab({
                           </span>
                         )}
                       </div>
+                      {/* Botoes dentro da pegada: onMouseDown/onTouchStart param a
+                          propagacao, senao clicar na seta comecava a arrastar a coluna. */}
                       <div className="flex items-center gap-0.5 shrink-0">
                         <button
                           disabled={colIndex === 0}
-                          onClick={() => moveColumnTo(colIndex, colIndex - 1)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onTouchStart={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); moveColumnTo(colIndex, colIndex - 1); }}
                           className="rounded p-1 text-muted-foreground/70 hover:bg-background/40 hover:text-foreground disabled:opacity-25 disabled:pointer-events-none"
                           title="Mover coluna para a esquerda"
                           aria-label="Mover coluna para a esquerda"
@@ -5405,7 +5401,9 @@ export function CrmAvancadoTab({
                         </button>
                         <button
                           disabled={colIndex === pipelineColumns.length - 1}
-                          onClick={() => moveColumnTo(colIndex, colIndex + 1)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onTouchStart={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); moveColumnTo(colIndex, colIndex + 1); }}
                           className="rounded p-1 text-muted-foreground/70 hover:bg-background/40 hover:text-foreground disabled:opacity-25 disabled:pointer-events-none"
                           title="Mover coluna para a direita"
                           aria-label="Mover coluna para a direita"
@@ -5425,7 +5423,14 @@ export function CrmAvancadoTab({
                         <div
                           ref={provided.innerRef}
                           {...provided.droppableProps}
-                          className={`p-2 space-y-2 max-h-[60vh] overflow-y-auto min-h-[220px] rounded-b-xl border-2 border-dashed transition-colors ${
+                          // SEM overflow-y/max-h de proposito: com scroll proprio, o
+                          // @hello-pangea/dnd elegia A COLUNA como container de scroll e
+                          // NUNCA rolava o board — por isso existia um rAF empurrando
+                          // scrollLeft na mao, que dessincronizava as posicoes e fazia o
+                          // lead "nao colar" nas colunas da direita. Sem scroll proprio, o
+                          // container mais proximo passa a ser o BOARD e a dnd rola ele
+                          // sozinha, sincronizada. A coluna cresce e a pagina rola.
+                          className={`p-2 space-y-2 min-h-[220px] rounded-b-xl border-2 border-dashed transition-colors ${
                             snapshot.isDraggingOver
                               // destino: destaque FORTE — nao tem como errar onde vai cair
                               ? 'border-blue-400 bg-blue-500/20 ring-2 ring-blue-400/40'
@@ -5620,9 +5625,14 @@ export function CrmAvancadoTab({
                       )}
                     </Droppable>
                   </div>
+                    )}
+                  </Draggable>
                 );
               })}
+              {boardProvided.placeholder}
             </div>
+              )}
+            </Droppable>
           </div>
         </DragDropContext>
       )}
