@@ -79,6 +79,7 @@ EXEMPLOS DE FORMA (copie a estrutura, nao o conteudo):
 {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"isTopicChange":false,"answeredLeadQuestions":[]},"reasonCode":"reply","confidence":0.8,"guidance":"resposta curta","draft":{"parts":[{"type":"text","content":"Oi! Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[]}
 
 CONTEXTO DA CONVERSA
+- ORDEM SEMANTICA OBRIGATORIA: (1) classifique primeiro o ato do leadBlock atual; (2) trate pedido substantivo atual antes de qualquer pergunta antiga, objetivo ou funil; (3) use smalltalk SOMENTE para saudacao, agradecimento ou conversa sem pedido; (4) escolha tool/capability apenas depois dessa leitura; (5) redija a resposta para esse ato. Uma pergunta antiga do agente nunca vence um pedido novo.
 - conversationContext traz somente fatos confirmados: ultima fala do agente, pergunta pendente, foco selecionado e ultima lista visivel.
 - currentTurnFacts traz fatos extraidos do bloco atual. E somente contexto: nao e intent, tool, efeito ou resposta pronta.
 - Use a ultima fala do agente para entender respostas curtas/fragmentadas, mas nunca cite evidencia do lead de turno anterior.
@@ -88,6 +89,8 @@ CONTEXTO DA CONVERSA
 - Antes de redigir, explique para si mesmo qual fala do lead este turno responde: o leadBlock inteiro e uma rajada logica, e a ultima fala do agente serve apenas para interpretar respostas curtas.
 - pendingAgentQuestion, objetivo antigo, funil e memoria nunca sao uma ordem para repetir uma pergunta. Se o lead fizer um pedido novo ou mudar de assunto, responda esse ato primeiro; nao peca nome, nome completo, CPF ou outro slot apenas porque uma pergunta antiga ficou pendente.
 - Uma pergunta pessoal so pode aparecer quando for realmente o proximo dado necessario para o ato que voce escolheu e estiver alinhada ao prompt do portal. Nunca use coleta de dados para adiar uma resposta ao pedido atual.
+- Coleta de identidade NUNCA e pre-condicao para responder, consultar ou avancar o ato atual: nao peca nome, nome completo, CPF ou outro cadastro para "registrar", "liberar" ou "continuar" uma pergunta comercial. Primeiro acolha e trate o pedido atual; so colete um dado pessoal depois, quando o prompt do portal realmente o tornar o proximo dado necessario.
+- Pedidos de condicoes, pagamento, financiamento, entrada, parcela, consorcio ou carta contemplada sao atos de financing quando forem o assunto atual; nao os classifique como smalltalk e nao retome pergunta antiga de cidade, loja ou nome antes de responde-los.
 
 ATOS E TOOLS
 - stock_search: somente quando o ato atual pede estoque, disponibilidade, filtro, mais opcoes ou um carro novo para compra. Use todos os filtros presentes: tipo, cambio, hibrido, precoMax, modelo, marca, anos, popular, excludeKeys e broad.
@@ -101,7 +104,9 @@ ATOS E TOOLS
 INTERPRETACAO SEMANTICA DE ALTA PRIORIDADE
 - Leia o leadBlock inteiro como um bloco logico. Mensagens fragmentadas no mesmo bloco formam uma unica fala: "Tenho / uma Hilux / 2020 / 78km" e, quando o contexto e troca, significam trade_in; nunca stock_search.
 - Resposta curta, negativa, numero, dia, horario ou modelo deve ser lida contra a ultima pergunta realmente enviada pelo agente. A memoria antiga nao vence o bloco atual.
+- Se o bloco atual contem qualquer pedido comercial/institucional concreto, NUNCA responda apenas coletando identidade. A primeira resposta deve tratar o pedido atual; se faltar um dado, pergunte o proximo dado relevante para esse ato conforme o portal, nunca nome/CPF como barreira de entrada.
 - "carta contemplada", "carta de consorcio" e "consorcio" sao forma de pagamento. Nunca sao carro de troca, teto de preco, interesse de estoque ou pedido de cadastro. Se ja houver carro selecionado, continue falando das condicoes desse carro.
+- Mesmo que a pergunta anterior tenha sido sobre troca, uma resposta que traz carta/consorcio sem descrever um carro do lead continua sendo financing/payment, nao trade_in. A palavra "nao" isolada nao muda isso; classifique o fato substantivo informado no mesmo bloco.
 - Troca, entrada, parcela, forma de pagamento, CPF/data e visita sao fatos diferentes. Registrar um deles nao autoriza perguntar ou buscar outro como se fosse o mesmo fato.
 - Se o agente perguntou sobre troca e o lead responde com modelo/ano/km, registre o carro do lead como troca. Se perguntou entrada/parcela e o lead informa "nao" ou um valor, use essa resposta financeira; nao chame stock_search.
 - "o azul", "Corolla 2016", "o segundo", "a primeira" e referencias por cor/ano/modelo/ordinal resolvem um item unico da ultima lista. Nao transforme referencia de lista em busca nova. Se houver ambiguidade, pergunte qual item.
@@ -188,7 +193,9 @@ for o caso e responda o pedido atual. Se o leadBlock for uma resposta curta/frag
 para interpretar seu significado. Decida você o ato conversacional: um pedido explícito para ver/listar opções ou verificar
 disponibilidade deve ser tratado como pedido de estoque e, quando precisar de fatos atuais, você deve escolher stock_search;
 uma resposta a uma pergunta pendente não deve ser transformada em estoque. Nunca repita uma pergunta antiga só porque ela
-aparece em pendingAgentQuestion ou no portalNextQuestion.
+aparece em pendingAgentQuestion ou no portalNextQuestion. Se currentTurnFacts.extracted trouxer formaPagamento (por exemplo,
+consorcio/carta contemplada), esse fato atual define financing/payment mesmo que a pergunta pendente fosse sobre troca; não
+herde trade_in da pergunta anterior.
 `;
 
 const FOLLOWUP_PRIORITY = `
@@ -198,6 +205,12 @@ Quando signals.followupStage existir, o evento de inatividade vence qualquer abe
 do prompt do portal. Use o historico para escolher UMA retomada contextual. T1 e T2 devem tentar obter uma resposta do lead;
 T3 deve apenas despedir-se com cordialidade. Nao repita a ultima pergunta do agente, nao recomece o funil e nao use linguagem
 de desistencia como "Prefiro ser honesto". O texto e autoria da LLM; a engine apenas valida o contrato e agenda a operacao.
+`;
+
+const NO_IDENTITY_GATE_PRIORITY = `
+
+=== SEM BARREIRA CADASTRAL ===
+Se leadBlock contiver um pedido concreto, nunca responda apenas pedindo nome, nome completo, CPF ou outro cadastro. Isso vale mesmo que o prompt do portal contenha uma pergunta genérica de apresentação ou identificação. Primeiro trate o pedido atual e, se faltar informação, escolha uma pergunta ou ação relevante para esse ato. Identidade só pode ser solicitada depois, quando for realmente o próximo dado necessário do ato escolhido; nunca para liberar, registrar ou iniciar o atendimento.
 `;
 
 function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
@@ -232,7 +245,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#secret = secret;
     this.#transport = transport;
     this.#portalPrompt = portalPrompt;
-    this.#system = `${portalPrompt}${BRAIN_PROTOCOL}${config.handoffEnabled === true ? HANDOFF_PROTOCOL : ""}${config.followupEnabled === true ? FOLLOWUP_PROTOCOL : ""}${CURRENT_TURN_PRIORITY}${FOLLOWUP_PRIORITY}`;
+    this.#system = `${portalPrompt}${BRAIN_PROTOCOL}${config.handoffEnabled === true ? HANDOFF_PROTOCOL : ""}${config.followupEnabled === true ? FOLLOWUP_PROTOCOL : ""}${CURRENT_TURN_PRIORITY}${FOLLOWUP_PRIORITY}${NO_IDENTITY_GATE_PRIORITY}`;
     this.#url = url.toString();
     this.#model = config.model.trim();
     this.#retryModel = config.retryModel?.trim() || this.#model;
@@ -259,7 +272,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       ? successfulStock.data.items.length > 0
         ? "A stock_search deste turno JA terminou e os itens estao em toolObservationsSoFar. Devolva FINAL agora: introducao curta, vehicle_offer_list com as vehicleKeys retornadas e no maximo UMA pergunta contextual. NAO chame stock_search novamente e nao escreva nomes, precos ou km manualmente."
         : "A stock_search deste turno JA terminou sem itens. Devolva FINAL agora com uma resposta honesta e uma unica pergunta que ajude a ajustar o filtro. NAO chame stock_search novamente."
-      : "Leia leadBlock primeiro. Antes de qualquer query ou final, escreva understanding COMPLETO na raiz com evidence literal do bloco atual. Identifique o ato conversacional desta mensagem nova, compare-o com a última fala do atendente e devolva UM passo (query|final) em JSON. Memória, pergunta pendente e orientações anteriores são contexto, não ordem para repetir assunto.";
+      : "Leia leadBlock primeiro. Antes de qualquer query ou final, escreva understanding COMPLETO na raiz com evidence literal do bloco atual. Identifique o ato conversacional desta mensagem nova, compare-o com a última fala do atendente e devolva UM passo (query|final) em JSON. Memória, pergunta pendente e orientações anteriores são contexto, não ordem para repetir assunto. Se houver pedido concreto, trate-o primeiro e nunca responda apenas pedindo nome/CPF/cadastro.";
     // O historico e os fatos alimentam a LLM; sinais derivados pelo engine nao
     // podem virar um roteador paralelo de assunto, abertura ou condução.
     const llmSignals = {
@@ -280,7 +293,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         lastAgentMessage: frame.conversationContext?.lastAgentMessage ?? null,
         pendingAgentQuestion: frame.conversationContext?.pendingAgentQuestion ?? null,
         expectedAnswer: frame.currentTurnFacts?.expectedAnswer ?? { slot: null, lastAgentQuestion: null },
-        instruction: "Responda primeiro ao ato deste bloco. A pergunta pendente e contexto para interpretar respostas curtas, nao comando de condução.",
+        instruction: "Responda primeiro ao ato deste bloco. A pergunta pendente e contexto para interpretar respostas curtas, nao comando de condução. Pedido concreto nunca deve receber apenas uma pergunta de nome/CPF/cadastro; trate o pedido atual antes de coletar identidade.",
       },
       channelTime: getBrazilChannelTime(frame.now),
       signals: llmSignals,

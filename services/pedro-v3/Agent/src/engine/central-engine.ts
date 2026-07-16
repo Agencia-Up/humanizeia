@@ -641,13 +641,13 @@ function authorFromBrainDraft(args: {
   readonly advancedThisTurn?: boolean;               // LLM-first: o lead deu um slot novo neste turno (ex.: o nome) -> reperguntar o não-respondido é condução
   readonly disengagementOnly?: boolean;              // agradecimento/despedida sem novo pedido acionável -> não reabre o funil
   readonly financialAnswerSlot?: "formaPagamento" | "entrada" | "parcelaDesejada" | null;
-  readonly paymentConductTurn?: boolean;   // ⭐Codex regra 2: bloco de PAGAMENTO/consórcio (mesmo sem pergunta financeira pendente) -> não pedir nome/CPF por condução
   // HF-1 (2026-07-11): transferência EXECUTÁVEL neste turno (flag ON + vendedor ativo disponível + CRM
   // vinculado + transfer.enabled do portal). Promessa de consultor exige ISTO **e** o effect handoff proposto.
   readonly handoffPlannable?: boolean;
   readonly humanRequested?: boolean;
   readonly sensitiveAnswerKinds?: readonly ("cpf" | "birthDate")[];
   readonly photoRecallLabel?: string | null;            // memória factual: a LLM precisa nomear o veículo lembrado
+  readonly proposedPrimaryIntent?: string | null;       // candidato da LLM usado só por validadores de segurança, nunca autoriza tool/efeito
 }): SingleAuthorResult {
   const draft = args.finalDecision.responsePlan.draft;
   // ⭐RD1-2 (2026-07-13, autoria-LLM exclusiva): em central_active (requireBrain/llmFirst) as guardas de ESTILO/QUALIDADE
@@ -811,6 +811,21 @@ function authorFromBrainDraft(args: {
   if (!photoAuthorized && !photoRecall && textPromisesPhoto(composed.text)) {
     return { ok: false, feedback: PHOTO_NOT_REQUESTED_FEEDBACK };
   }
+  // PII/UX safety: identidade não pode virar barreira de entrada para um ato
+  // que a própria LLM classificou como substantivo. Esta é uma validação
+  // genérica da autoria, não um roteador de assunto: o mesmo cérebro recebe
+  // feedback e escolhe como tratar o ato atual sem pedir cadastro primeiro.
+  const identityGateIntents = new Set(["search_stock", "request_photos", "recall_photos", "select_vehicle", "vehicle_detail", "institutional", "financing", "visit", "trade_in"]);
+  const identityIntent = args.proposedPrimaryIntent ?? args.ctx.acceptedPrimaryIntent ?? null;
+  const identityOnlyResponse = args.requireBrain
+    && typeof identityIntent === "string"
+    && identityGateIntents.has(identityIntent)
+    && asksLeadName(composed.text)
+    && !proposedEffects.some((effect) => effect.kind === "send_media" || effect.kind === "handoff" || effect.kind === "notify_seller")
+    && !draft.parts.some((part) => part.type === "vehicle_offer_list" || part.type === "vehicle_ref" || part.type === "money_ref");
+  if (identityOnlyResponse) {
+    return { ok: false, feedback: `Você classificou o bloco atual como '${identityIntent}', mas sua resposta usa nome/identidade como barreira antes de tratar esse ato. Responda primeiro ao pedido atual e, se faltar informação, escolha uma pergunta relevante para esse ato conforme o portal. Só peça identidade depois se ela for realmente necessária; não escolha a próxima pergunta pelo engine.` };
+  }
   const sensitiveFeedback = sensitiveAnswerCompletenessFeedback(args.sensitiveAnswerKinds ?? [], composed.text);
   if (sensitiveFeedback) return { ok: false, feedback: sensitiveFeedback };
   const humanFeedback = humanRequestDecisionFeedback({
@@ -926,20 +941,6 @@ function authorFromBrainDraft(args: {
       if (!qualificationDone) {
         return { ok: false, feedback: "O cliente pediu as CONDIÇÕES DE PAGAMENTO. NÃO peça o nome — pagamento não é cadastro. Avance a qualificação financeira perguntando UMA coisa por vez (não empilhe): comece pela TROCA (tem carro para dar na troca?), senão ENTRADA, senão PARCELA mensal — só UMA pergunta." };
       }
-    }
-  }
-  // ⭐CONTRATO DE PAGAMENTO (Codex regra 2, ATIVO em central_active): incidente real — o lead respondeu "Não, carta
-  //   consórcio contemplada de 53 mil" à pergunta de troca e a LLM PEDIU O NOME (pagamento virou cadastro). A guarda
-  //   legada acima está desligada no central_active (advisory); esta versão é HARD (feedback+retry) e NARROW: só dispara
-  //   num turno de PAGAMENTO/consórcio (paymentConductTurn), com o nome AINDA não conhecido e a qualificação incompleta.
-  //   Não religa as demais guardas de estilo. O engine NÃO escreve a resposta: o branch conductTurn molda o retry e a
-  //   MESMA LLM reautora conduzindo a qualificação financeira (sem pedir nome/CPF).
-  if (args.requireBrain && args.paymentConductTurn === true && asksLeadName(composed.text)
-      && args.ctx.state.slots.nome.status !== "known") {
-    const sl = args.ctx.state.slots;
-    const qualificationDone = sl.possuiTroca.status === "known" && sl.entrada.status === "known" && sl.parcelaDesejada.status === "known";
-    if (!qualificationDone) {
-      return { ok: false, feedback: "Este é um turno de PAGAMENTO/condições (o cliente falou de consórcio/carta/entrada/parcela/forma de pagamento). NÃO peça o nome nem CPF — pagamento NÃO é cadastro. Acolha a forma de pagamento que ele informou e CONDUZA a qualificação financeira com UMA pergunta sobre o próximo dado que falta (troca, senão entrada, senão parcela). O canal já identifica o contato; o nome vem só bem mais adiante." };
     }
   }
   // ⭐T8 (audit Codex, LLM-first): turno de PAGAMENTO com veículo JÁ ESCOLHIDO (selecionado OU há oferta na última lista) ->
@@ -1756,14 +1757,6 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         && isAnswerToFinancialQuestion(leadMessage, pendingQuestionSlot, prepared.interpretation, prepared.claimExtractor)) || financialValueInProgress)
         && currentTurnIntent !== "photo_request" && currentTurnIntent !== "photo_memory" && currentTurnIntent !== "institutional" && !isVehicleDetailTurn;
       const financialAnswerSlot = financialValueInProgress && !pendingFinancialQuestion ? "parcelaDesejada" : pendingQuestionSlot;
-      // ⭐CONTRATO DE PAGAMENTO (Codex regra 2): o bloco é uma DECLARAÇÃO DE PAGAMENTO (consórcio/carta contemplada/à vista/
-      //    entrada/parcela/forma) — isPaymentTurn casa "consorci"/"financ"/"parcel"/"entrada"/... — MESMO sem pergunta
-      //    financeira pendente (cobre "Não, carta consórcio contemplada de 53 mil" respondendo TROCA e o consórcio
-      //    espontâneo). NÃO decide intenção nem escreve texto: só sinaliza CONDUÇÃO de pagamento p/ (1) não pedir nome/CPF
-      //    por condução (deny+retry na autoria) e (2) não deixar tool comercial rodar por má classificação. !explicitBuyIntent
-      //    preserva "na verdade quero um Onix até 80 mil" como busca. Gate por intenção do turno (foto/institucional pivotam).
-      const paymentConductTurn = llmFirst && !explicitBuyIntent && isPaymentTurn(leadMessage)
-        && currentTurnIntent !== "photo_request" && currentTurnIntent !== "photo_memory" && currentTurnIntent !== "institutional";
       // ── Missão P0 INC1/B: RETOMADA de busca prometida/pendente ("cadê?/e aí?/achou?/me mostra"). Só vira busca quando há
       //    FILTRO ATIVO suficiente (activeSearchConstraints) -> força a busca com esse filtro, sem reperguntar modelo/tipo. ──
       const resumeSearchTurn = llmFirst && !tradeInAnswerTurn && wantsResumeSearch(leadMessage) && sufficientForStockSearch(contextState.activeSearchConstraints ?? {});
@@ -2290,7 +2283,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-            const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()?.trusted) ? brainVU()!.understanding.primaryIntent : undefined }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, paymentConductTurn, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2315,7 +2308,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // money_ref" presente em TODO feedback de validação e rotulava qualquer deny como monetário (hint errado).
             const moneyDeny = /valor monet[aá]rio livre|pre[çc]o n[aã]o.aterrado|money_ref:/i.test(authored.feedback);
             const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
-            const conductTurn = llmFirst && (isPaymentTurn(leadMessage) || tradeInAnswerTurn || financialAnswerTurn || sensitiveAnswerTurn);
+      const conductTurn = llmFirst && (lockedU?.primaryIntent === "financing" || lockedU?.primaryIntent === "trade_in" || sensitiveAnswerTurn);
             const openingGuidanceTurn = llmFirst && isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget || specificAdEntry);
             const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
             // ⭐MISSÃO FINAL: o backstop determinístico (fala LITERAL do lead pedindo humano) também mantém o retry NO ATO de
@@ -2803,7 +2796,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               observations.push({ tool: "response", ok: false, error: { code: "FINAL_TOOL_FORBIDDEN", message: "As tools deste turno ja foram resolvidas. Nao consulte novamente; escreva agora a resposta final com os fatos disponiveis." } });
               continue;
             }
-            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()?.trusted) ? brainVU()!.understanding.primaryIntent : undefined }, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, paymentConductTurn, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = finalStep.decision;
               authoredDecision = authored.decision;

@@ -2,8 +2,8 @@
 // F2.57 — CONTRATO DE PAGAMENTO + REFERÊNCIA + PEDIDO HUMANO pelo ENGINE REAL (central_active, singleAuthor+llmFirst),
 // com cérebro scriptado que DECLARA understanding em TODO passo (NÃO usa o wrapper que "lava" o fallback regex).
 // Prova, no ciclo completo LLM -> validação -> feedback -> reautoria (não só proposeNextStep):
-//   [PAY]  incidente real "Não, carta consórcio contemplada de 53 mil" respondendo TROCA: a 1ª autoria PEDE O NOME ->
-//          o engine NEGA (paymentConductTurn) -> a MESMA LLM reautora SEM pedir nome; final acolhe pagamento, ZERO
+//   [PAY]  incidente real "Não, carta consórcio contemplada de 53 mil" respondendo TROCA: uma resposta que usa nome como
+//          barreira é rejeitada por validação genérica de identidade; a mesma LLM reautora, ZERO
 //          stock_search, understanding presente, texto não pede nome/CPF.
 //   [AZUL] "Mostra o azul" após uma lista: a LLM resolve offer_reference e ENVIA send_media do carro azul aterrado,
 //          ZERO stock_search no turno.
@@ -130,21 +130,22 @@ const slotVal = (c: Cap, k: keyof ConversationState["slots"]): unknown => (c.slo
 async function main(): Promise<void> {
   console.log("== F2.57 — contrato de pagamento/referência/humano (engine real, cérebro declara understanding) ==");
 
-  // ── [PAY] incidente: consórcio respondendo troca -> a LLM tenta pedir o NOME -> engine nega -> reautora sem nome ──
+  // ── [PAY] incidente: consórcio respondendo troca -> validação genérica rejeita barreira cadastral ──
   {
     const c = conv();
     // T1: abertura -> o agente pergunta sobre TROCA (fica pendente possuiTroca)
     await c.t("Quero saber as condições", () => finU([txt("Perfeito! Para eu montar as condições, você tem algum carro para dar de troca?")], "reply", U("financing", [ev(undefined, "condicoes")])));
-    // T2: consórcio (respondendo troca). 1ª autoria PEDE O NOME (deve ser negada); reautora sem nome.
+    // T2: consórcio (respondendo troca). A primeira autoria pede nome; a
+    // validação de identidade devolve feedback genérico ao mesmo cérebro.
     let payAttempt = 0;
     const payResponder: BrainResponder = () => {
       payAttempt += 1;
       const u = U("financing", [ev(undefined, "consorcio")]);
-      if (payAttempt === 1) return finU([txt("Entendi! E qual é o seu nome para eu registrar seu atendimento?")], "ask_name", u);   // ⛔ pede nome em pagamento
+      if (payAttempt === 1) return finU([txt("Entendi! E qual é o seu nome para eu registrar seu atendimento?")], "ask_name", u);   // ⛔ barreira cadastral genérica
       return finU([txt("Que ótimo, você tem uma carta de consórcio contemplada! Você pretende dar algum valor de entrada além dela ou prefere usar só a carta?")], "reply", u);   // ✅ acolhe, sem nome
     };
     const pay = await c.t("Não, carta consórcio contemplada de 53 mil", payResponder, "answers_pending");
-    check("[PAY-1] ⭐engine NEGOU o pedido de nome em pagamento -> houve RETRY (cérebro chamado >1x)", payAttempt >= 2, `attempts=${payAttempt}`);
+    check("[PAY-1] ⭐validação genérica de identidade devolve feedback ao mesmo cérebro", payAttempt >= 2, `attempts=${payAttempt}`);
     check("[PAY-2] ⭐texto final NÃO pede o nome (pagamento não é cadastro)", !asksName(pay.outbox), pay.outbox);
     check("[PAY-3] consórcio NÃO virou busca (ZERO stock_search) e brain autorou", pay.stockObs === 0 && isBrain(pay.src), `stock=${pay.stockObs} src=${pay.src}`);
     check("[PAY-4] formaPagamento=consorcio; NÃO gravou possuiTroca como interesse de compra", slotVal(pay, "formaPagamento") === "consorcio", JSON.stringify(slotVal(pay, "formaPagamento")));
