@@ -31,7 +31,7 @@ import {
   validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
   toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, leadRequestsHumanExplicitly, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
-  understandingAuthorityFeedback, hasActiveVisitContext, hasSchedulingTemporalValue, scheduleHasDay, scheduleHasTime,
+  understandingAuthorityFeedback, hasActiveVisitContext,
   type ValidatedUnderstanding, type TargetResolution, type TargetResolutionSource, type KnownVehicleModel, type TurnValidationContext,
 } from "./turn-understanding.ts";
 import { shouldSupersedeStaleBlock, DEFAULT_DEBOUNCE_CONFIG } from "./debounce-policy.ts";
@@ -66,10 +66,9 @@ import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts"
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, lastAgentQuestionText, questionSlotFromAgentText, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
 import { filterBrainSlotMutations, type DroppedSlotMutation } from "./slot-provenance.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
-import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, deriveSdrQualification, type SdrQualificationPolicy } from "./sdr-conductor.ts";
+import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
 import { buildCurrentTurnFacts } from "./current-turn-facts.ts";
-import { buildTurnAdvisories, deriveTurnAdvisoryContext } from "./turn-advisories.ts";
 import {
   assertToolExecutionAuthority,
   capabilityForTool,
@@ -1918,74 +1917,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
         && args.crmWriteEnabled === true && leadId != null;
       let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
-      // ⭐RD1 (2026-07-13, autoria-LLM + auditoria Codex): ORIENTAÇÕES de condução do turno injetadas ANTES da 1ª
-      // geração — substituem os antigos denies de QUALIDADE. SÓ no central_active (llmFirst). Advisory ORIENTA;
-      // NUNCA decide ato/tool/slot/veículo e NUNCA nega depois uma resposta factual válida.
-      // ⭐PRECEDÊNCIA DO BLOCO ATUAL (Codex #1): um ato explícito prioritário no bloco atual SUPRIME apresentação/
-      // anúncio/descoberta (pedido atual > funil > memória). Detectores lexicais AQUI são SÓ p/ SUPRIMIR advisory
-      // incompatível — NUNCA autorizam tool/effect/slot/intent. ⭐PORTAL É A AUTORIDADE DO FUNIL (Codex #2): a
-      // próxima pergunta vem de deriveSdrQualification(policy do tenant), nunca de ordem hardcoded.
-      const commercialTargetStated = !!currentConstraintsRaw && (currentConstraintsRaw.tipo != null || (currentConstraintsRaw.modelos?.length ?? 0) > 0 || currentConstraintsRaw.marca != null || currentConstraintsRaw.precoMax != null);
-      const institutionalTurnAdv = isServiceOrInstitutionalQuestion(leadMessage);
-      // ⭐Codex ajuste #2 (RD1-2): a PRECEDÊNCIA DO BLOCO ATUAL é derivada por função PURA (deriveTurnAdvisoryContext),
-      // testável com MENSAGENS REAIS. O engine passa seus detectores CANÔNICOS como override (zero divergência com o resto
-      // do fluxo); a função deriva human/visita/seleção/posse/tipo do texto. SÓ calcula SUPRESSÃO — nunca autoriza nada.
-      const advCtx = deriveTurnAdvisoryContext({
-        leadBlock: leadMessage, commercialTargetStated, financialAnswerTurn, tradeInAnswerTurn, sensitiveAnswerTurn,
-        disengagement: disengagedActionable, explicitBuyIntent,
-        institutionalTurnOverride: institutionalTurnAdv, paymentTurnOverride: isPaymentTurn(leadMessage), photoTurnOverride: leadRequestsPhoto(leadMessage),
-      });
-      const hasExplicitPriorityAct = advCtx.suppressDiscovery;
-      const suppressFunnelQuestion = advCtx.suppressFunnelQuestion;
-      // ⭐P1 (falso-verde da resposta visível): CONTEXTO de AGENDAMENTO para o advisory orientar a LLM a acolher o dia/horário
-      // dado e perguntar SÓ a dimensão faltante (nunca reperguntar a já respondida). dayKnown/timeKnown = memória (diaHorario)
-      // + bloco atual. SÓ ativa em turno de agendamento (visita em curso OU pedido de visita no bloco). Orienta, não escreve.
-      const schedVisitRequested = /\b(agendar|agendamento|marcar\s+(?:uma\s+)?visita|visita|visitar|test ?drive)\b/.test(normalizeText(leadMessage));
-      const schedDiaHorarioExisting = contextState.slots.diaHorario.status === "known" && typeof contextState.slots.diaHorario.value === "string" ? contextState.slots.diaHorario.value : "";
-      const schedDayNow = scheduleHasDay(leadMessage), schedTimeNow = scheduleHasTime(leadMessage);
-      const schedVisitActive = hasActiveVisitContext({
-        interesseVisita: contextState.slots.interesseVisita.status === "known" && contextState.slots.interesseVisita.value === true,
-        pendingSchedulingSlot: persisted0.pendingAgentQuestion?.slot ?? null, recentTurns: contextState.recentTurns ?? [],
-      });
-      const schedActive = (schedVisitActive || schedVisitRequested) && (schedDayNow || schedTimeNow || schedVisitRequested || persisted0.pendingAgentQuestion?.slot === "diaHorario");
-      // ⭐R6 (audit Codex): NÃO injete o advisory de agendamento quando o bloco atual DECLARA um alvo comercial novo
-      //   ("Na verdade quero um Onix") ou intenção de compra — a "mudança explícita de assunto vence a visita pendente".
-      //   Sem isto o advisory ("acolha e pergunte SÓ o horário") empurraria a LLM CONTRA a mensagem atual (2º-cérebro-por-
-      //   advisory). commercialTargetStated/explicitBuyIntent vêm do bloco ATUAL; num "Às 15h" ambos são false (advisory fica).
-      const schedulingAdvisory = (llmFirst && schedActive && !commercialTargetStated && !explicitBuyIntent)
-        ? { active: true, dayJustGiven: schedDayNow, timeJustGiven: schedTimeNow, dayKnown: schedDayNow || scheduleHasDay(schedDiaHorarioExisting), timeKnown: schedTimeNow || scheduleHasTime(schedDiaHorarioExisting) }
-        : undefined;
-      // ⭐Codex ajuste #1 (RD1-2): o PORTAL é a ÚNICA autoridade da pergunta do funil. Se o tenant NÃO configurou a
-      // pergunta do próximo slot, o advisory NÃO inventa uma (nada de DEFAULT_QUESTIONS interno) — apenas orienta a LLM
-      // a "continuar a qualificação conforme o prompt do portal". Por isso: só a pergunta configurada, senão null.
-      let portalNextQuestionAdv: string | null = null;
-      if (llmFirst && sdrPolicy) {
-        const qview = deriveSdrQualification(contextState, sdrPolicy);
-        if (qview.nextSlot) portalNextQuestionAdv = sdrPolicy.questions[qview.nextSlot] ?? null;
-      }
-      const identifiedNameThisTurn = safeExtractedSlots.flatMap((mutation) => (
-        mutation.op === "set_slot" && mutation.slot === "nome" && typeof mutation.value === "string"
-          ? [mutation.value]
-          : []
-      )).at(-1) ?? null;
-      const turnAdvisories = llmFirst ? buildTurnAdvisories({
-        isFirstContact: isOpeningTurn && firstContactNoCommercialTarget === true,
-        adVehicleLabel: specificAdEntry ? (adVehicleHint ?? null) : null,
-        needsDiscovery: (isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget === true)) || noCommercialContextYet,
-        suppressDiscovery: hasExplicitPriorityAct,
-        suppressFunnelQuestion,
-        portalNextQuestion: portalNextQuestionAdv,
-        knownName: contextState.slots.nome.status === "known" && typeof contextState.slots.nome.value === "string" ? contextState.slots.nome.value : null,
-        identifiedNameThisTurn,
-        contactPhoneKnown: frame.signals.contactPhoneKnown === true,
-        paymentTurnWithChosenCar: isPaymentTurn(leadMessage) && (contextState.vehicleContext.selected?.key != null || (contextState.lastRenderedOfferContext?.items?.length ?? 0) > 0),
-        justAnsweredFinancialSlot: financialAnswerTurn && (financialAnswerSlot === "entrada" || financialAnswerSlot === "parcelaDesejada") ? financialAnswerSlot : null,
-        disengagementOnly: disengagedActionable,
-        institutionalHookNeeded: institutionalTurnAdv && hasCommercialConversationContext(contextState),
-        knownFunnelSlots: (Object.keys(contextState.slots) as (keyof typeof contextState.slots)[]).filter((s) => contextState.slots[s].status === "known"),
-        ...(schedulingAdvisory ? { scheduling: schedulingAdvisory } : {}),
-      }) : [];
-      if (turnAdvisories.length > 0) frame = { ...frame, advisories: turnAdvisories };
+      // O turno do lead já é entregue integralmente ao cérebro. O engine não
+      // constrói advisories, próxima pergunta, ordem de funil ou instrução de
+      // agendamento para competir com a LLM. Fatos de anúncio, memória,
+      // currentTurnFacts e capabilities continuam no frame; a validação ocorre
+      // depois da proposta do cérebro.
 
       // ── LOOP do cérebro: query (autorizada por chamada) | final. Observações FACTUAIS voltam ao MESMO cérebro. ──
       const observations: AgentToolObservation[] = [];
@@ -3371,11 +3307,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // injetadas antes da geração; quantos denies HARD (fato/efeito/PII/pedido-explícito) dispararam retry + a categoria
           // do 1º; o primaryIntent ACEITO; e se o BLOCO ATUAL venceu a memória (precedência do ato explícito). Zero deny de estilo.
           finalAuthor: (responseSource === "brain_final" || responseSource === "brain_retry") ? "llm_brain" : (responseSource === "technical_fallback" ? "engine_fallback" : "engine_deterministic"),
-          advisoriesProvided: turnAdvisories.length,
+          advisoriesProvided: 0,
           hardDeniesApplied: policyFeedbackLog.length,
           hardDenyCategory: policyFeedbackLog[0] ? classifyDenyCategory(policyFeedbackLog[0]) : null,
           acceptedPrimaryIntent: reconciledUnderstanding.primaryIntent,
-          currentTurnOverridesMemory: hasExplicitPriorityAct === true,
+          currentTurnOverridesMemory: null,
           // T6: semântica do turno (fonte única) + resolução de alvo.
           primaryIntent: reconciledUnderstanding.primaryIntent, subject: finalVU.understanding.subject,
           subjectSource: finalVU.understanding.subjectSource, understandingTrusted: finalVU.trusted,
