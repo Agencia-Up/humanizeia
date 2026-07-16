@@ -946,8 +946,21 @@ const STATUS_DISPLAY_MAP: Record<string, string> = {
   qualificado: 'novo',
   encerrado: 'perdido',
 };
-function normalizeStatus(status: string): string {
-  return STATUS_DISPLAY_MAP[status] || status;
+/**
+ * Resolve em QUAL COLUNA o lead aparece.
+ *
+ * O mapa acima traduz status LEGADO (valor antigo do banco) pra coluna atual. Mas
+ * ele só pode agir quando o status NÃO é o id de uma coluna que existe de verdade:
+ * o Kanban é configurável, então uma coluna customizada chamada 'qualificado'
+ * (ou qualquer id que colida com o mapa) era traduzida pra 'novo' e o lead
+ * aparecia na coluna errada — parecia que o drag "não persistia" ou que o lead
+ * "voltava", quando na verdade o banco estava certo e o RENDER é que jogava ele
+ * de volta. Id de coluna real (incluindo UUID do Marcos) volta sempre igual.
+ */
+function normalizeStatus(status: string, columns?: readonly { id: string }[]): string {
+  const s = status || 'novo';
+  if (columns?.some(c => c.id === s)) return s; // coluna real: nunca traduzir
+  return STATUS_DISPLAY_MAP[s] || s;            // só alias legado
 }
 
 const MARCOS_STAGE_STYLE_BY_NAME: Record<string, { emoji: string; border: string; bg: string; dot: string }> = {
@@ -1328,22 +1341,14 @@ export function CrmAvancadoTab({
   const [fuMediaUrl, setFuMediaUrl]       = useState('');
   const [fuUploading, setFuUploading]     = useState(false);
   const fuFileRef = useRef<HTMLInputElement>(null);
-  const draggedColumnIdRef = useRef<string | null>(null);
   const isLeadDraggingRef = useRef(false);
-  const pendingLeadStageRef = useRef<Map<string, { status: string; expiresAt: number }>>(new Map());
-  const applyPendingLeadStages = useCallback((items: CrmLead[]) => {
-    const now = Date.now();
-    pendingLeadStageRef.current.forEach((entry, leadId) => {
-      if (entry.expiresAt <= now) pendingLeadStageRef.current.delete(leadId);
-    });
-    if (pendingLeadStageRef.current.size === 0) return items;
-    return items.map(lead => {
-      const pending = pendingLeadStageRef.current.get(lead.id);
-      return pending
-        ? { ...lead, status_crm: pending.status, ...(isMarcosCrm ? { stage_id: pending.status } : {}) }
-        : lead;
-    });
-  }, [isMarcosCrm]);
+  // NOTA (16/07): existia aqui um pendingLeadStageRef/applyPendingLeadStages que
+  // segurava por ~12s a etapa recem-arrastada pra ela "nao voltar". Era curativo do
+  // sintoma e NAO resolvia: a causa real era o normalizeStatus traduzindo id de
+  // coluna real (ver normalizeStatus) no FILTRO DE RENDER — o curativo nem passava
+  // por ali. Pior: o timer de um arraste apagava o pending de um arraste seguinte,
+  // criando corrida. Com a raiz corrigida + escrita confirmada no banco, virou
+  // ruido e foi removido. NAO reintroduzir.
   // Auto-scroll horizontal do board enquanto arrasta o lead. O @hello-pangea/dnd só
   // rola o scroll do PRÓPRIO droppable (cada coluna tem overflow-y) + a janela; o
   // scroll horizontal do board é um ancestral, então o card não alcançava as colunas
@@ -1634,7 +1639,7 @@ export function CrmAvancadoTab({
           };
         });
 
-        setLeads(applyPendingLeadStages(mappedLeads));
+        setLeads(mappedLeads);
         setFeedbacks([]);
         const connectedInstances = (instRes.data || []).filter((i: any) => i.status === 'connected' || i.is_active);
         setInstances(connectedInstances);
@@ -1812,7 +1817,7 @@ export function CrmAvancadoTab({
         };
       });
 
-      setLeads(applyPendingLeadStages(leadsData));
+      setLeads(leadsData);
       setLeadMetrics({
         total: totalCountRes.count ?? 0,
         today: todayCountRes.count ?? 0,
@@ -3505,23 +3510,9 @@ export function CrmAvancadoTab({
     if (error) throw error;
   };
 
-  const handleColumnReorder = async (draggedId: string, targetId: string) => {
-    if (draggedId === targetId) return;
-    const from = pipelineColumns.findIndex(column => column.id === draggedId);
-    const to = pipelineColumns.findIndex(column => column.id === targetId);
-    if (from < 0 || to < 0 || from === to) return;
-
-    const previousOrder = columnOrder;
-    const nextOrder = reorderItems(pipelineColumns, from, to).map(column => column.id);
-    setColumnOrder(nextOrder);
-    try {
-      await saveColumnOrder(nextOrder);
-      toast({ title: '✅ Ordem das colunas salva!' });
-    } catch (err: any) {
-      setColumnOrder(previousOrder);
-      toast({ title: 'Erro ao salvar ordem', description: descricaoErro(err), variant: 'destructive' });
-    }
-  };
+  // handleColumnReorder (por id, do drag NATIVO) removido em 16/07: o reorder agora
+  // passa pelo @hello-pangea/dnd (branch type==='COLUMN' do handleDragEnd), que faz
+  // o mesmo por índice e chama o MESMO saveColumnOrder. Uma engine só de drag.
 
   // Detecta se o status/etapa de destino é "Venda concluída" (Pedro: id 'fechado';
   // Marcos: etapa cujo nome começa com "venda conclu").
@@ -3608,39 +3599,61 @@ export function CrmAvancadoTab({
       return;
     }
 
+    // Só lead daqui pra baixo. Sem type explicito nao move nada (evita drop de
+    // outra fonte cair aqui e mexer no status do lead sem querer).
+    if (type !== 'LEAD') return;
     if (destination.droppableId === source.droppableId) return;
+
     const newStatus = destination.droppableId;
-    pendingLeadStageRef.current.set(draggableId, { status: newStatus, expiresAt: Date.now() + 15000 });
-    // Atualiza localmente de imediato (optimistic)
+    // O destino TEM que ser uma coluna que existe. Sem isso, um droppableId
+    // invalido gravaria um status fantasma e o lead sumiria do board.
+    if (!pipelineColumns.some(c => c.id === newStatus)) {
+      toast({ title: 'Coluna inválida', description: 'Não consegui identificar a coluna de destino. Atualize a página e tente de novo.', variant: 'destructive' });
+      return;
+    }
+
+    // Guarda o estado ANTERIOR pra desfazer exatamente nele se o banco recusar
+    // (nao depender de fetchData: ele pode trazer dado velho e mascarar o erro).
+    const previousLeads = leads;
+    const destTitle = pipelineColumns.find(c => c.id === newStatus)?.title || newStatus;
+
+    // Otimista: no Marcos a coluna vem de stage_id, mas o render le status_crm —
+    // por isso os DOIS precisam andar juntos, senao o card volta no proximo fetch.
     setLeads(prev => prev.map(l => l.id === draggableId ? {
       ...l,
       status_crm: newStatus,
       ...(isMarcosCrm ? { stage_id: newStatus } : {}),
     } : l));
+
     try {
       if (isMarcosCrm) {
-        const { error } = await (supabase as any)
+        const { data, error } = await (supabase as any)
           .from('crm_leads')
           .update({ stage_id: newStatus })
-          .eq('id', draggableId);
+          .eq('id', draggableId)
+          .select('id, stage_id')
+          .single();
         if (error) throw error;
-        toast({ title: `✅ Lead movido para ${manualStages.find(c => c.id === newStatus)?.title || newStatus}` });
-        window.setTimeout(() => pendingLeadStageRef.current.delete(draggableId), 12000);
-        if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
-        return;
+        // Confirma que gravou MESMO: sem isso um update que casa 0 linhas (RLS,
+        // id errado) passava como sucesso e o lead voltava no proximo refresh.
+        if (!data || data.stage_id !== newStatus) throw new Error('A etapa do lead não foi gravada corretamente.');
+      } else {
+        const { data, error } = await (supabase as any)
+          .from('ai_crm_leads')
+          .update({ status_crm: newStatus })
+          .eq('id', draggableId)
+          .select('id, status_crm')
+          .single();
+        if (error) throw error;
+        if (!data || data.status_crm !== newStatus) throw new Error('O status do lead não foi gravado corretamente.');
       }
-      const { error } = await (supabase as any)
-        .from('ai_crm_leads')
-        .update({ status_crm: newStatus })
-        .eq('id', draggableId);
-      if (error) throw error;
-      toast({ title: `✅ Lead movido para ${(isMarcosCrm ? manualStages : (pedroStages.length ? pedroStages : PIPELINE_COLUMNS)).find(c => c.id === newStatus)?.title || newStatus}` });
-      window.setTimeout(() => pendingLeadStageRef.current.delete(draggableId), 12000);
+      toast({ title: `✅ Lead movido para ${destTitle}` });
+      // Venda abre o popup, mas NAO prende o lead: o card ja esta na coluna e
+      // continua livre pra ser movido de novo depois.
       if (isWinStatus(newStatus)) openVendaDialogFor(draggableId);
     } catch (err: any) {
-      pendingLeadStageRef.current.delete(draggableId);
+      setLeads(previousLeads); // desfaz exatamente o que estava antes
       toast({ title: 'Erro ao mover lead', description: descricaoErro(err), variant: 'destructive' });
-      await fetchData(true); // Revert on failure
     }
   };
 
@@ -5310,9 +5323,14 @@ export function CrmAvancadoTab({
           onDragEnd={(result) => { stopBoardAutoScroll(); handleDragEnd(result); }}
         >
           <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 overflow-x-auto px-2 pb-2 sm:-mx-4 sm:px-4">
-            <div className="flex gap-3 min-w-max">
-              {pipelineColumns.map(col => {
-                const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo') === col.id);
+            {/* Reordenar coluna também é @hello-pangea/dnd (type COLUMN). Antes o
+                header usava drag NATIVO do HTML5 no mesmo board do lead: as duas
+                engines disputavam o mesmo gesto e o drop do lead saía errado. */}
+            <Droppable droppableId="board" type="COLUMN" direction="horizontal">
+              {(boardProvided) => (
+            <div className="flex gap-3 min-w-max" ref={boardProvided.innerRef} {...boardProvided.droppableProps}>
+              {pipelineColumns.map((col, colIndex) => {
+                const colLeads = filteredLeads.filter(l => normalizeStatus(l.status_crm || 'novo', pipelineColumns) === col.id);
                 // Destaque da etapa de venda (Pedro: id 'fechado'; Marcos: etapa "Venda concluída").
                 const isWin = col.id === 'fechado' || normalizeStageName(col.title || '').startsWith('venda conclu');
                 // Cor configurada (hex) tem prioridade sobre o estilo fixo por nome.
@@ -5321,37 +5339,18 @@ export function CrmAvancadoTab({
                 const hex = col.color || null;
                 const useHex = !!hex && !isWin;
                 return (
+                  <Draggable key={col.id} draggableId={`col:${col.id}`} index={colIndex}>
+                    {(colProvided, colSnapshot) => (
                   <div
-                    key={col.id}
-                    onDragOver={event => {
-                      if (!draggedColumnIdRef.current) return;
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = 'move';
-                    }}
-                    onDrop={(event) => {
-                      if (!draggedColumnIdRef.current) return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      const draggedId = draggedColumnIdRef.current;
-                      draggedColumnIdRef.current = null;
-                      if (draggedId) handleColumnReorder(draggedId, col.id);
-                    }}
-                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''}`}
-                    style={useHex ? { borderColor: `${hex}4d` } : undefined}
+                    ref={colProvided.innerRef}
+                    {...colProvided.draggableProps}
+                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''} ${colSnapshot.isDragging ? 'opacity-90 shadow-2xl' : ''}`}
+                    style={{ ...colProvided.draggableProps.style, ...(useHex ? { borderColor: `${hex}4d` } : {}) }}
                   >
-                    {/* Column header */}
+                    {/* Column header = drag handle da COLUNA (só ele arrasta a coluna;
+                        o corpo fica livre pro drag do LEAD). */}
                     <div
-                      draggable
-                      onDragStart={event => {
-                        event.stopPropagation();
-                        draggedColumnIdRef.current = col.id;
-                        event.dataTransfer.effectAllowed = 'move';
-                        event.dataTransfer.setData('text/plain', col.id);
-                      }}
-                      onDragEnd={(event) => {
-                        event.stopPropagation();
-                        draggedColumnIdRef.current = null;
-                      }}
+                      {...colProvided.dragHandleProps}
                       className={`px-3 py-2.5 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between cursor-grab active:cursor-grabbing select-none`}
                       style={useHex ? { backgroundColor: `${hex}1a` } : undefined}
                       title="Arraste para reorganizar esta coluna"
@@ -5371,8 +5370,9 @@ export function CrmAvancadoTab({
                         {colLeads.length}
                       </span>
                     </div>
-                    {/* Column body — droppable */}
-                    <Droppable droppableId={col.id}>
+                    {/* Column body — droppable de LEAD (type explicito: o handleDragEnd
+                        só move lead quando type === 'LEAD'). */}
+                    <Droppable droppableId={String(col.id)} type="LEAD">
                       {(provided, snapshot) => (
                         <div
                           ref={provided.innerRef}
@@ -5544,9 +5544,14 @@ export function CrmAvancadoTab({
                       )}
                     </Droppable>
                   </div>
+                    )}
+                  </Draggable>
                 );
               })}
+              {boardProvided.placeholder}
             </div>
+              )}
+            </Droppable>
           </div>
         </DragDropContext>
       )}
@@ -5560,7 +5565,7 @@ export function CrmAvancadoTab({
           {view === 'leads' && filterStatus === 'all' && (
             <div className="flex gap-1 flex-wrap mb-2">
               {statusOptions.map(opt => {
-                const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo') === opt.value).length;
+                const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo', pipelineColumns) === opt.value).length;
                 if (!count) return null;
                 return (
                   <button key={opt.value} onClick={() => setFilterStatus(opt.value)}
