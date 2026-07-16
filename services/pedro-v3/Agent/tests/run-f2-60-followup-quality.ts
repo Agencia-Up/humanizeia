@@ -76,6 +76,28 @@ const t3Brain = new QueueBrain([
 const t3 = await authorFollowupMessageDetailed({ brain: t3Brain, state: t2State, stage: 3, turnId: "fu60-t3", now: NOW, portalPromptSha256: "sha" });
 check("T3 rejeita despedida fria e usa porta aberta sem pergunta", t3.text === "Tudo bem, vou encerrar por aqui para nao te incomodar. Quando quiser retomar, e so me chamar." && t3.attempts === 2);
 
+const t3TransferBrain = new QueueBrain([
+  final("Entendo que voce deve estar ocupado. Nao vou tomar mais seu tempo. Seu contato ja esta com um dos nossos analistas, que dara continuidade. Obrigado pelo contato."),
+]);
+const t3Transfer = await authorFollowupMessageDetailed({
+  brain: t3TransferBrain, state: state(), stage: 3, turnId: "fu60-t3-transfer", now: NOW,
+  portalPromptSha256: "sha", handoffAvailable: true,
+});
+check("T3 com transferencia disponivel informa continuidade com analista", t3Transfer.attempts === 1
+  && t3Transfer.text?.includes("analista") === true
+  && t3TransferBrain.frames[0]?.conversationContext.followup?.handoffAvailable === true);
+
+const t3NoTransferBrain = new QueueBrain([
+  final("Seu contato ja esta com um dos nossos analistas."),
+  final("Entendo que voce deve estar ocupado. Quando quiser retomar, e so me chamar."),
+]);
+const t3NoTransfer = await authorFollowupMessageDetailed({
+  brain: t3NoTransferBrain, state: state(), stage: 3, turnId: "fu60-t3-no-transfer", now: NOW,
+  portalPromptSha256: "sha", handoffAvailable: false,
+});
+check("T3 sem transferencia nao promete analista", t3NoTransfer.attempts === 2
+  && t3NoTransfer.text === "Entendo que voce deve estar ocupado. Quando quiser retomar, e so me chamar.");
+
 check("horario Brasil de madrugada UTC e noite local", getBrazilChannelTime("2026-07-16T02:00:00.000Z").period === "noite");
 check("meia-noite no Brasil continua noite", getBrazilChannelTime("2026-07-16T03:15:00.000Z").period === "noite");
 check("horario Brasil de manha", getBrazilChannelTime("2026-07-15T14:00:00.000Z").period === "manha");

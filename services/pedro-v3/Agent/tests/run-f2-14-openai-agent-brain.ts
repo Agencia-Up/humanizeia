@@ -118,6 +118,7 @@ async function main(): Promise<void> {
         ...frame("mostra o azul").signals,
         currentTurnIntent: "search",
         firstContactNoCommercialTarget: true,
+        specificAdEntry: true,
         disengagementOnly: true,
         selectedOfferThisTurn: true,
         acceptedPhotoOffer: true,
@@ -129,7 +130,7 @@ async function main(): Promise<void> {
     check("[5c] envelope unico de contexto chega ao payload do cerebro", userPayload.includes("context") && userPayload.includes("conversationContext")
       && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca")
       && userPayload.includes("currentTurnFacts") && userPayload.includes("consorcio"));
-    const payload = JSON.parse(userPayload) as { context?: { memory?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
+    const payload = JSON.parse(userPayload) as { context?: { currentTurn?: { openingContext?: Record<string, unknown> }; memory?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
     check("[5e-envelope] sem instrucao top-level concorrente", payload.instruction === undefined);
     check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução", payload.leadBlock === undefined
       && payload.context?.memory?.funnel?.suggestedObjective === undefined
@@ -139,6 +140,9 @@ async function main(): Promise<void> {
       && payload.context?.operational?.disengagementOnly === undefined
       && payload.context?.operational?.selectedOfferThisTurn === undefined
       && payload.context?.operational?.acceptedPhotoOffer === undefined);
+    check("[5e-opening] contexto factual da abertura chega sem virar instrucao paralela",
+      payload.context?.currentTurn?.openingContext?.specificAdEntry === true
+      && payload.context?.currentTurn?.openingContext?.firstContactNoCommercialTarget === true);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {

@@ -252,6 +252,7 @@ export type ConversationContext = {
     readonly lastLeadMessage: string | null;
     readonly lastAgentMessage: string | null;
     readonly hasVisibleOffer: boolean;
+    readonly handoffAvailable?: boolean;
   };
 };
 

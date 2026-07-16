@@ -41,6 +41,16 @@ function claimsUnseenOutboundMaterial(text: string, state: ConversationState): b
   return !hasVisibleOffer && !hasConcreteAgentMaterial;
 }
 
+// A T3 may mention an analyst only when the surrounding pilot is about to
+// materialize the handoff chain. This validates an operational claim; it does
+// not choose whether the lead should be transferred.
+function claimsHandoffContinuity(text: string): boolean {
+  const normalized = normalizeFollowupText(text);
+  const mentionsTeam = /\b(?:analistas?|vendedores?|consultores?|equipe)\b/.test(normalized);
+  const claimsAction = /\b(?:seu contato|contato)\b.{0,70}\b(?:ja\s+est[aá]|esta\s+com|ficara?\s+com|sera?\s+encaminhad|vai\s+(?:falar|receber)|entrara?\s+em\s+contato|dar[aá]\s+continuidade|encaminhad|transferid)/.test(normalized);
+  return mentionsTeam && claimsAction;
+}
+
 function repeatsLastAgentQuestion(text: string, previous: string | null): boolean {
   if (!previous) return false;
   const normalizedText = normalizeFollowupText(text);
@@ -75,7 +85,7 @@ export async function authorFollowupMessage(args: {
 export type FollowupAuthorResult = {
   readonly text: string | null;
   readonly attempts: number;
-  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "question_contract" | "unsupported_claim";
+  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "question_contract" | "unsupported_claim" | "unsupported_handoff_claim";
 };
 
 export async function authorFollowupMessageDetailed(args: {
@@ -85,6 +95,7 @@ export async function authorFollowupMessageDetailed(args: {
   turnId: string;
   now: string;
   portalPromptSha256: string;
+  handoffAvailable?: boolean;
   maxAttempts?: number;
 }): Promise<FollowupAuthorResult> {
   const { memory } = buildWorkingMemory(args.state, args.state.workingMemory);
@@ -110,6 +121,7 @@ export async function authorFollowupMessageDetailed(args: {
           lastLeadMessage: previousLead,
           lastAgentMessage: previousAgent,
           hasVisibleOffer: (args.state.lastRenderedOfferContext?.items.length ?? 0) > 0,
+          handoffAvailable: args.handoffAvailable === true,
         },
       },
       currentTurnFacts: { expectedAnswer: { slot: null, lastAgentQuestion: null }, extracted: [], offerReference: null },
@@ -122,6 +134,7 @@ export async function authorFollowupMessageDetailed(args: {
         relation: "unrelated",
         currentTurnIntent: "other",
         followupStage: args.stage,
+        handoffAvailable: args.handoffAvailable === true,
       },
     };
     let step;
@@ -153,11 +166,14 @@ export async function authorFollowupMessageDetailed(args: {
     const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
     const invalidStyle = violatesFollowupStyle(text);
     const unsupportedClaim = claimsUnseenOutboundMaterial(text, args.state);
+    const unsupportedHandoffClaim = args.stage === 3 && claimsHandoffContinuity(text) && args.handoffAvailable !== true;
     const questions = questionCount(text);
-    if (!text || invalidStyle || repeatedQuestion || unsupportedClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
-      lastReason = !text ? "text_missing" : unsupportedClaim ? "unsupported_claim" : "question_contract";
+    if (!text || invalidStyle || repeatedQuestion || unsupportedClaim || unsupportedHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+      lastReason = !text ? "text_missing" : unsupportedHandoffClaim ? "unsupported_handoff_claim" : unsupportedClaim ? "unsupported_claim" : "question_contract";
       feedback = args.stage === 3
-        ? " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
+        ? unsupportedHandoffClaim
+          ? " FEEDBACK: o contexto deste T3 nao confirma uma transferencia executavel. Despeca-se sem dizer que o contato esta com analista/vendedor/equipe; deixe a porta aberta de forma cordial."
+          : " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
         : unsupportedClaim
           ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
         : repeatedQuestion

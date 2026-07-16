@@ -504,7 +504,14 @@ export class PilotActiveRoot {
       const turnId = `followup:${input.due.anchorEffectId}:${input.due.stage}`;
       const authored = await authorFollowupMessageDetailed({
         brain: this.agentBrain!, state: snapshot.state, stage: input.due.stage,
-        turnId, now, portalPromptSha256: this.promptSha256, maxAttempts: 3,
+        turnId, now, portalPromptSha256: this.promptSha256,
+        handoffAvailable: input.due.stage === 3
+          && input.rules.followup.t3Transfers
+          && input.rules.transfer.enabled
+          && this.handoffEnabled
+          && this.transferStore != null
+          && this.leadId != null,
+        maxAttempts: 3,
       });
       const text = authored.text;
       if (!text) {

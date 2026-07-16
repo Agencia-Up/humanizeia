@@ -93,6 +93,7 @@ CONTEXTO DA CONVERSA
 - context.conversation.pendingAgentQuestion e context.currentTurn.currentTurnFacts.expectedAnswer servem somente para interpretar uma resposta curta. Se o bloco atual trouxer um pedido substantivo, ele vence esse contexto.
 - ORDEM SEMANTICA OBRIGATORIA: (1) classifique primeiro o ato de context.currentTurn.leadBlock; (2) trate pedido substantivo atual antes de qualquer pergunta antiga, objetivo ou funil; (3) use smalltalk SOMENTE para saudacao, agradecimento ou conversa sem pedido/fato substantivo; (4) escolha tool/capability apenas depois dessa leitura; (5) redija a resposta para esse ato. Uma pergunta antiga do agente nunca vence um pedido novo.
 - Se context.currentTurn.currentTurnFacts.extracted contiver fato substantivo do bloco, nao declare smalltalk apenas porque a memoria mostra uma pergunta pendente. Releia o bloco inteiro, declare o ato que ele proprio expressa e responda a ele; os fatos extraidos sao evidencia auxiliar, nao uma intencao escolhida pela engine.
+- Se context.currentTurn.openingContext.specificAdEntry=true, este e o primeiro contato por anuncio especifico: comece a primeira resposta se identificando conforme o prompt do portal e, na mesma resposta, reconheca/conduza o veiculo do anuncio. A identidade vem antes do carro; nao pule a apresentacao por ja haver uma lista ou saudacao automatica do WhatsApp. Se firstContactNoCommercialTarget=true, tambem se identifique antes da descoberta.
 - Se o contexto tiver conversation.followup, trate-o como evento sistemico de reativacao: leia o historico factual antes de escrever. Nunca diga que enviou informacoes, veiculos, fotos ou endereco se isso nao aparece nas falas anteriores do agente ou em lastVisibleOffer. Se nao houver material concreto enviado, reabra com uma mensagem simples e verdadeira.
 - context.conversation.conversationContext traz somente fatos confirmados: ultima fala do agente, pergunta pendente, foco selecionado e ultima lista visivel.
 - Para continuidade explicita, leia tambem context.conversation.lastAgentMessage e context.conversation.lastAgentQuestion quando existirem; eles sao referencia da conversa, nao uma ordem para repetir a pergunta.
@@ -194,11 +195,9 @@ Quando context.operational.followupStage existir, este e um evento de inatividad
 - Nao chame tools, nao invente fatos e nao proponha efeitos comerciais. Use apenas historico, slots e ofertas ja confirmados.
 - Nao cumprimente, nao se reapresente e nao repita a pergunta anterior do atendente. O objetivo e reabrir uma resposta do lead,
   nao reiniciar a conversa.
-- T1: faca a primeira retomada contextual, curta e facil de responder. Se houve lista/oferta, pergunte se o lead conseguiu ver
-  os veiculos/opcoes enviados; se houve um carro ou assunto especifico, retome esse assunto. Use no maximo UMA pergunta.
-- T2: faca uma segunda tentativa diferente de T1 e da ultima pergunta do atendente. Ofereca um unico proximo passo de baixa
-  friccao relacionado ao historico (por exemplo, continuar avaliando o carro, tirar uma duvida ou ver condicoes). Use no maximo UMA pergunta.
-- T3: encerre com uma despedida amigavel, curta e sem pressao, SEM pergunta. Diga que pode chamar quando quiser retomar.
+- T1: faca uma primeira retomada humana, curta e facil de responder. Prefira um check-in simples (por exemplo, "Ainda esta por ai?") ou uma referencia sutil ao ultimo assunto. Nao reescreva a proposta, nao re-lista veiculos e nao repita a ultima pergunta do atendente.
+- T2: faca uma segunda tentativa diferente de T1 e da ultima pergunta do atendente. Seja sutil, com uma unica pergunta ou convite de baixa friccao ligado ao historico, sem repetir valores, lista, proposta ou CTA ja enviados.
+- T3: encerre com uma despedida amigavel, intuitiva e sem pergunta. Se context.conversation.followup.handoffAvailable=true, informe com naturalidade que o contato sera/devera ficar com um dos analistas para dar continuidade, sem dizer que a transferencia ja foi concluida antes do efeito. Se essa capacidade for false, apenas deixe a porta aberta para o lead chamar quando quiser.
   NUNCA use "Prefiro ser honesto", "talvez nao seja o melhor cenario" ou qualquer despedida fria/derrotista.
 - Nunca escreva "Bom dia", "Boa tarde", "Boa noite", "Ola", uma apresentacao ou um menu em T1/T2/T3.
 - Retorne final com ResponseDraft contendo apenas partes text.
@@ -270,7 +269,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       deferred: frame.workingMemory.funnel?.deferred ?? [],
     };
     const context = {
-      currentTurn: { leadBlock: frame.block, currentTurnFacts: frame.currentTurnFacts },
+      currentTurn: {
+        leadBlock: frame.block,
+        currentTurnFacts: frame.currentTurnFacts,
+        openingContext: {
+          ...(frame.signals.adGenericEntry ? { adGenericEntry: true } : {}),
+          ...(frame.signals.firstContactNoCommercialTarget ? { firstContactNoCommercialTarget: true } : {}),
+          ...(frame.signals.specificAdEntry ? { specificAdEntry: true } : {}),
+        },
+      },
       conversation: {
         recentTranscript: frame.recentTranscript,
         conversationContext: frame.conversationContext,
