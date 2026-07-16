@@ -44,6 +44,17 @@ function latestLeadAt(state: ConversationState): number {
     .reduce((latest, turn) => Math.max(latest, Date.parse(turn.at) || 0), 0);
 }
 
+export function isFollowupSuspended(state: ConversationState): boolean {
+  if (state.stage !== "handoff" && state.stage !== "closed") return false;
+  // Estados antigos sem o marcador continuam terminais por compatibilidade.
+  if (!state.followupSuspendedAt) return true;
+  const suspendedAt = Date.parse(state.followupSuspendedAt);
+  if (!Number.isFinite(suspendedAt)) return true;
+  // Uma fala nova do lead depois da transferência reativa a conversa. O novo
+  // ciclo só poderá nascer depois da resposta a essa fala.
+  return latestLeadAt(state) <= suspendedAt;
+}
+
 export function evaluateFollowup(args: {
   state: ConversationState;
   outbox: readonly OutboxRecord[];
@@ -55,7 +66,7 @@ export function evaluateFollowup(args: {
   // handoff, leadId ou de a transferência ser plannable. Um lead que disse "me tira da lista"/"pare de mandar" NUNCA
   // recebe T1/T2/T3, mesmo que o handoff não tenha sido planejado (leadId null / vendedor ausente — condição real em prod).
   if (args.state.optedOutAt != null) return { due: null, reason: "lead_opted_out" };
-  if (args.state.stage === "handoff" || args.state.stage === "closed") return { due: null, reason: "state_terminal" };
+  if (isFollowupSuspended(args.state)) return { due: null, reason: "state_terminal" };
   // A saga de transferência já assumiu a conversa. Mesmo que o callback de
   // entrega do aviso ao vendedor demore, o follow-up não pode voltar a abordar
   // o lead enquanto existe handoff/notify em andamento ou concluído.

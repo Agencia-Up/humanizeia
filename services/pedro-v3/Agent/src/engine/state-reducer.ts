@@ -401,6 +401,7 @@ export function applyEffectOutcome(
       }
       case "mark_handoff_completed": {
         next.stage = "handoff";
+        next.followupSuspendedAt ??= receipt.at;
         break;
       }
       case "mark_followup_sent": {

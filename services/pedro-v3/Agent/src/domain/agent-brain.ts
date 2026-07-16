@@ -247,6 +247,12 @@ export type ConversationContext = {
   readonly lastVisibleOffer: { readonly sourceTurnId: string; readonly items: readonly ConversationContextOfferItem[] } | null;
   readonly lastResolvedSlotAnswer: { readonly slot: string; readonly turnId: string } | null;
   readonly conversationSummary: string | null;
+  readonly followup?: {
+    readonly stage: 1 | 2 | 3;
+    readonly lastLeadMessage: string | null;
+    readonly lastAgentMessage: string | null;
+    readonly hasVisibleOffer: boolean;
+  };
 };
 
 // Facts extracted from the CURRENT inbound block before the LLM is asked to
@@ -335,6 +341,7 @@ export const PRIMARY_INTENTS = [
   // ⭐MISSÃO PII (P0-B): pedido EXPLÍCITO de humano/vendedor/atendente é um ATO AUTÔNOMO — vence o funil e
   // NÃO exige CPF/nascimento/qualificação. Evidence obrigatória no bloco atual. A LLM agradece, anuncia a
   // transição e propõe {kind:"handoff", reason:"explicit_human_request"} no MESMO final (saga resolve vendedor).
+  "disengagement",
   "request_human",
   // Resposta do lead com CPF/data de nascimento ja tokenizados no ingest.
   // O cerebro acolhe o dado sem repetir o valor; memoria de visita ou

@@ -3,7 +3,7 @@ import type { OutboxRecord } from "../src/domain/effect-intent.ts";
 import type { SendMessagePlan, TurnDecision } from "../src/domain/decision.ts";
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import { resolveAutomationRules } from "../src/engine/automation-rules.ts";
-import { evaluateFollowup, evaluateFollowupDue } from "../src/engine/followup-policy.ts";
+import { evaluateFollowup, evaluateFollowupDue, isFollowupSuspended } from "../src/engine/followup-policy.ts";
 import { authorFollowupMessage, authorFollowupMessageDetailed } from "../src/engine/followup-author.ts";
 import { readFileSync } from "node:fs";
 import { sanitizeOutgoingText } from "../src/engine/central-engine.ts";
@@ -79,6 +79,18 @@ check("[P9b] handoff pendente cancela follow-up imediatamente", evaluateFollowup
   rules: rules.followup,
   now: NOW,
 }).reason === "handoff_in_flight");
+const suspended = state();
+suspended.stage = "handoff";
+suspended.followupSuspendedAt = NOW;
+check("[P9c] handoff concluído mantém follow-up suspenso", isFollowupSuspended(suspended)
+  && evaluateFollowup({ state: suspended, outbox: [anchor], rules: rules.followup, now: NOW }).reason === "state_terminal");
+const reactivated = state();
+reactivated.stage = "handoff";
+reactivated.followupSuspendedAt = NOW;
+reactivated.recentTurns.push({ role: "lead", text: "Voltei", at: "2026-07-11T12:16:00.000Z" });
+const reactivatedAnchor = record({ effectId: "reactivated:message", turnId: "reactivated", idempotencyKey: "reactivated:message", createdAt: "2026-07-11T12:17:00.000Z" });
+check("[P9d] nova fala do lead reativa o ciclo de follow-up", !isFollowupSuspended(reactivated)
+  && evaluateFollowupDue({ state: reactivated, outbox: [reactivatedAnchor], rules: rules.followup, now: "2026-07-11T12:22:00.000Z" })?.stage === 1);
 
 const b1 = new QueueBrain([final("Ainda procura um carro?")]);
 check("[L1] LLM autora T1", await authorFollowupMessage({ brain: b1, state: state(), stage: 1, turnId: "fu1", now: NOW, portalPromptSha256: "sha" }) === "Ainda procura um carro?");
@@ -194,6 +206,7 @@ check("[S6d] accepted do notify satisfaz outcome operacional", requiredReceiptFo
 const handoffState = state();
 const notifyReduced = applyEffectOutcome(handoffState, notifyPlan, notifyResult);
 check("[S6e] accepted do notify conclui stage handoff", notifyReduced.ok && notifyReduced.next.stage === "handoff");
+check("[S6e2] accepted do notify grava suspensão durável do follow-up", notifyReduced.ok && notifyReduced.next.followupSuspendedAt === NOW);
 check("[S6a] PII abre somente na mensagem direta do vendedor", sentTexts[0]?.includes("CPF: 11144477735") === true && sentTexts[0]?.includes("Data de nascimento: 01/10/1997") === true);
 check("[S6b] gerente nunca recebe CPF/data", sentTexts[1] != null && !sentTexts[1].includes("11144477735") && !sentTexts[1].includes("01/10/1997"));
 check("[S6c] outbox guarda somente refs opacas", !JSON.stringify(notifyRecord.payload).includes("11144477735") && !JSON.stringify(notifyRecord.payload).includes("01/10/1997"));

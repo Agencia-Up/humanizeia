@@ -51,10 +51,14 @@ console.log("== F2.60 Follow-up contextual, anti-repeticao e horario Brasil ==")
 
 const t1Brain = new QueueBrain([
   final("Boa tarde! Sou o Carvalho, consultor aqui da loja. Posso ajudar com alguma informacao sobre nossos carros?"),
-  final("Voce conseguiu ver os veiculos que te mandei?"),
+  final("Conseguiu ver as informacoes que te enviei sobre a loja?"),
+  final("Ainda esta por ai?"),
 ]);
 const t1 = await authorFollowupMessageDetailed({ brain: t1Brain, state: state(), stage: 1, turnId: "fu60-t1", now: NOW, portalPromptSha256: "sha" });
-check("T1 rejeita saudacao/apresentacao e reautora contexto", t1.text === "Voce conseguiu ver os veiculos que te mandei?" && t1.attempts === 2);
+check("T1 rejeita saudacao e afirmacao de material nao enviado", t1.text === "Ainda esta por ai?" && t1.attempts === 3);
+check("T1 entrega contexto factual de follow-up para a LLM", t1Brain.frames[0]?.conversationContext.followup?.stage === 1
+  && t1Brain.frames[0]?.conversationContext.followup?.lastAgentMessage === "Voce conhece a nossa loja?"
+  && t1Brain.frames[0]?.conversationContext.followup?.hasVisibleOffer === false);
 
 const t2State = state();
 t2State.recentTurns.push({ role: "agent", text: "Voce conseguiu ver os veiculos que te mandei?", at: NOW });

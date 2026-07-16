@@ -20,6 +20,27 @@ function lastAgentMessage(state: ConversationState): string | null {
   return null;
 }
 
+function lastLeadMessage(state: ConversationState): string | null {
+  for (let i = (state.recentTurns ?? []).length - 1; i >= 0; i -= 1) {
+    if (state.recentTurns[i]?.role === "lead") return state.recentTurns[i]!.text;
+  }
+  return null;
+}
+
+// Follow-up pode mencionar algo enviado somente quando existe material
+// factual correspondente no histórico/na oferta visível. Isto valida uma
+// afirmação da LLM; não escolhe assunto, CTA ou próximo slot.
+function claimsUnseenOutboundMaterial(text: string, state: ConversationState): boolean {
+  const normalized = normalizeFollowupText(text);
+  const claims = /\b(?:te|lhe)\s+(?:enviei|mandei|passei|mostrei|encaminhei)\b|\b(?:que|q)\s+(?:te|lhe)\s+(?:enviei|mandei|passei|mostrei)\b/.test(normalized);
+  if (!claims) return false;
+  const hasVisibleOffer = (state.lastRenderedOfferContext?.items.length ?? 0) > 0;
+  const hasConcreteAgentMaterial = (state.recentTurns ?? [])
+    .filter((turn) => turn.role === "agent")
+    .some((turn) => /\b(?:r\$|km|modelo|ano|carro|veiculo|foto|endereco|avenida|rua|opcao|informac)/.test(normalizeFollowupText(turn.text)));
+  return !hasVisibleOffer && !hasConcreteAgentMaterial;
+}
+
 function repeatsLastAgentQuestion(text: string, previous: string | null): boolean {
   if (!previous) return false;
   const normalizedText = normalizeFollowupText(text);
@@ -54,7 +75,7 @@ export async function authorFollowupMessage(args: {
 export type FollowupAuthorResult = {
   readonly text: string | null;
   readonly attempts: number;
-  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "question_contract";
+  readonly reason: "authored" | "brain_error" | "query_not_allowed" | "text_missing" | "question_contract" | "unsupported_claim";
 };
 
 export async function authorFollowupMessageDetailed(args: {
@@ -71,7 +92,10 @@ export async function authorFollowupMessageDetailed(args: {
   let lastReason: FollowupAuthorResult["reason"] = "text_missing";
   const maxAttempts = args.maxAttempts ?? 3;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Redija a mensagem conforme o protocolo de follow-up.${feedback}`;
+    const previousAgent = lastAgentMessage(args.state);
+    const previousLead = lastLeadMessage(args.state);
+    const block = `[EVENTO SISTEMICO FOLLOW-UP T${args.stage}] O cliente esta inativo. Reabra a conversa com autoria propria, usando apenas o historico factual deste frame. Nao afirme que algo foi enviado se nao aparece nas falas anteriores ou na oferta visivel.${feedback}`;
+    const conversationContext = buildConversationContext({ state: args.state, workingMemory: memory });
     const frame: TurnFrame = {
       turnId: args.turnId,
       now: args.now,
@@ -79,7 +103,15 @@ export async function authorFollowupMessageDetailed(args: {
       portalPromptSha256: args.portalPromptSha256,
       workingMemory: memory,
       recentTranscript: (args.state.recentTurns ?? []).slice(-12).map((turn) => ({ role: turn.role, text: turn.text })),
-      conversationContext: buildConversationContext({ state: args.state, workingMemory: memory }),
+      conversationContext: {
+        ...conversationContext,
+        followup: {
+          stage: args.stage,
+          lastLeadMessage: previousLead,
+          lastAgentMessage: previousAgent,
+          hasVisibleOffer: (args.state.lastRenderedOfferContext?.items.length ?? 0) > 0,
+        },
+      },
       currentTurnFacts: { expectedAnswer: { slot: null, lastAgentQuestion: null }, extracted: [], offerReference: null },
       signals: {
         mentionsPhoto: false,
@@ -120,11 +152,14 @@ export async function authorFollowupMessageDetailed(args: {
     catch { text = ""; }
     const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
     const invalidStyle = violatesFollowupStyle(text);
+    const unsupportedClaim = claimsUnseenOutboundMaterial(text, args.state);
     const questions = questionCount(text);
-    if (!text || invalidStyle || repeatedQuestion || (args.stage === 3 ? questions !== 0 : questions > 1)) {
-      lastReason = !text ? "text_missing" : "question_contract";
+    if (!text || invalidStyle || repeatedQuestion || unsupportedClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+      lastReason = !text ? "text_missing" : unsupportedClaim ? "unsupported_claim" : "question_contract";
       feedback = args.stage === 3
         ? " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
+        : unsupportedClaim
+          ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
         : repeatedQuestion
           ? " FEEDBACK: voce repetiu a ultima pergunta do atendente. Retome o assunto com uma pergunta diferente, simples e facil de responder."
           : invalidStyle

@@ -78,7 +78,6 @@ import {
 } from "./tool-authority.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
-import { slotQuestions } from "./question-classify.ts";
 import { parseOrdinal } from "./ordinal.ts";
 import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
@@ -787,17 +786,6 @@ function authorFromBrainDraft(args: {
   if (args.requireBrain) {
     const greetingFeedback = invalidBrazilGreeting(composed.text, args.ctx.now);
     if (greetingFeedback) return { ok: false, feedback: greetingFeedback };
-    // Qualidade conversacional global: a mesma LLM continua autora do texto,
-    // mas nao enviamos uma resposta que empilhe atos interrogativos. Isto e
-    // uma validacao/revisao do draft, nao uma escolha de assunto pelo engine.
-    const asked = slotQuestions(composed.text);
-    const questionMarkCount = (composed.text.match(/\?/g) ?? []).length;
-    if (asked.length > 1 || questionMarkCount > 1) {
-      return {
-        ok: false,
-        feedback: `RESPOSTA COM PERGUNTAS EMPILHADAS: o draft tem ${questionMarkCount} interrogacoes e ${asked.length} perguntas de slot (${asked.join(", ") || "nao classificadas"}). Reescreva para responder primeiro ao bloco atual e mantenha somente UMA pergunta util, escolhida por voce conforme o prompt do portal e o contexto factual. Preserve os fatos ja confirmados; nao abra um novo assunto e nao transforme esta validacao em uma lista de perguntas.`,
-      };
-    }
   }
   // LLM-first: memória pode aterrar QUAL veículo recebeu fotos, mas nunca escreve a resposta pelo cérebro.
   // Se a LLM ignorar o label lembrado, o engine devolve o fato e ela reautora. O override textual
@@ -866,6 +854,14 @@ function authorFromBrainDraft(args: {
     composedText: composed.text,
   });
   if (humanFeedback) return { ok: false, feedback: humanFeedback };
+  // A LLM-declared disengagement is an operationally relevant decision. The
+  // engine does not infer it from a phrase; it only requires the LLM to carry
+  // the executable handoff act when that capability is actually available.
+  const disengagementIntent = args.requireBrain && args.proposedPrimaryIntent === "disengagement";
+  const disengagementHandoffProposed = proposedEffects.some((effect) => effect.kind === "handoff" || effect.kind === "notify_seller");
+  if (disengagementIntent && args.handoffPlannable === true && !disengagementHandoffProposed) {
+    return { ok: false, feedback: "Voce declarou que o bloco atual encerra o atendimento por desinteresse. Como a transferencia esta disponivel, inclua no mesmo final o efeito handoff com reason=qualified_handoff. A engine canonicaliza o motivo operacional e suspende o follow-up; nao reabra o funil nem colete dados." };
+  }
   // ⭐Codex P0 (rodada 2): PROMESSA/OFERTA de transferência a consultor/vendedor SEM efeito real materializado
   // (handoff/notify_seller inexistentes nesta fase) é mentira operacional — mesmo padrão do textPromisesPhoto.
   // A LLM reescreve conduzindo ELA MESMA. Quando a Fase 3 materializar o handoff, a promessa passa a exigir o
@@ -2184,11 +2180,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const candidate = reconcileUnderstanding(lockedU, step.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
           const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
           const authorityFeedback = understandingAuthorityFeedback(candidateValidation);
-          // Fatos substantivos do bloco atual nao escolhem o ato, mas tornam
-          // incoerente declarar smalltalk e ignorar a contribuicao do lead. O
-          // mesmo cerebro recebe feedback e decide o ato correto.
-          const hasSubstantiveCurrentFact = frame.currentTurnFacts?.extracted?.some((fact) => fact.slot !== "nome") === true;
-          const staleSmalltalk = llmFirst && candidate.primaryIntent === "smalltalk" && hasSubstantiveCurrentFact;
           // A busca continua sendo uma decisão do cérebro. Mas, quando ele
           // declara o ato `search_stock`, o próprio contrato exige a
           // capability/evidence que autoriza a tool. Aceitar o rótulo sem esse
@@ -2197,9 +2188,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // pede que a LLM complete a decisão que ela mesma declarou.
           const incompleteSearchAct = candidate.primaryIntent === "search_stock" && !isStockSearchTurn(candidateValidation);
           const understandingFeedback = authorityFeedback
-            ?? (staleSmalltalk
-              ? "O bloco atual contem fato substantivo extraido, portanto sua leitura como smalltalk ignorou a contribuicao do lead. Releia context.currentTurn.leadBlock inteiro, declare o ato que o proprio bloco expressa com evidence literal e trate esse ato; nao copie a pergunta antiga do agente nem escolha uma tool sem capability/evidence propria."
-              : incompleteSearchAct
+            ?? (incompleteSearchAct
               ? "Você declarou primaryIntent=search_stock, mas não forneceu requestedCapabilities=[\"stock_search\"] com evidence literal do bloco atual. Reemita o understanding e chame stock_search antes de apresentar disponibilidade, lista ou opções."
               : null);
           if (llmFirst && understandingFeedback) {
@@ -3203,6 +3192,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // mantém a precedência e seu motivo próprio; após handoff concluído não
       // abrimos uma nova cadeia.
       const explicitHumanRequest = requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage);
+      const llmDeclaredDisengagement = llmFirst
+        && brainVU()?.trusted === true
+        && brainVU()?.understanding.primaryIntent === "disengagement";
       const forcedHandoffReason = llmFirst
         ? forcedSilentDisengagementReason({
           // Encaminhamento silencioso e uma acao operacional irreversivel: so
@@ -3213,7 +3205,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // Silent operational handoff is limited to the dedicated explicit
           // opt-out contract. A generic engagement detector must not close or
           // transfer a conversation merely because it sounds negative.
-          disengaged: detectExplicitOptOut(leadMessage),
+          disengaged: detectExplicitOptOut(leadMessage) || llmDeclaredDisengagement,
           explicitHumanRequest,
           stage: contextState.stage,
         })
@@ -3246,6 +3238,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         plannable: handoffPlannable && crmLeadId != null,
         forcedReason: forcedHandoffReason ?? undefined,
       });
+      if (handoffChain.planned && reduced.next.followupSuspendedAt == null) reduced.next.followupSuspendedAt = cutoff;
       const decisionForOutbox = { ...decisionWithCrm, effectPlan: handoffChain.effectPlan };
       const handoffGraphViolations = validateEffectPlans(decisionForOutbox.effectPlan);
       if (handoffGraphViolations.length > 0) {

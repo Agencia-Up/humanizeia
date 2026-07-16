@@ -41,7 +41,7 @@ import { createPilotWhatsAppDispatcher } from "../adapters/effects/pilot-whatsap
 import { V2WhatsAppInstanceCredentialProvider, V2WhatsAppInstanceSource } from "../adapters/effects/v2-whatsapp-instance-source.ts";
 import { buildSdrQualificationPolicy, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { authorFollowupMessageDetailed } from "./followup-author.ts";
-import type { FollowupDue } from "./followup-policy.ts";
+import { isFollowupSuspended, type FollowupDue } from "./followup-policy.ts";
 import type { AutomationRules } from "./automation-rules.ts";
 import { buildHandoffChain } from "./handoff-plan.ts";
 import { materializeEffectPlans } from "./effect-materializer.ts";
@@ -497,7 +497,7 @@ export class PilotActiveRoot {
     let commitFailureReason: string | undefined;
     await input.persistence.withLease(input.conversationId, input.workerId, 60_000, async (lease) => {
       const snapshot = await input.persistence.load(input.conversationId);
-      if (!snapshot || snapshot.state.stage === "handoff" || snapshot.state.stage === "closed") return;
+      if (!snapshot || isFollowupSuspended(snapshot.state)) return;
       const current = snapshot.state.followupCycle;
       if (current?.anchorEffectId === input.due.anchorEffectId && (current.sentStages.includes(input.due.stage) || current.plannedStage != null)) return;
 
@@ -527,6 +527,7 @@ export class PilotActiveRoot {
         }],
       };
 
+      let handoffPlanned = false;
       if (input.due.stage === 3 && input.rules.followup.t3Transfers && input.rules.transfer.enabled && this.handoffEnabled && this.transferStore && this.leadId) {
         const memory = loadPersistedWorkingMemory(snapshot.state.workingMemory).memory;
         let leadDisplayName = snapshot.state.slots.nome.status === "known" ? snapshot.state.slots.nome.value : null;
@@ -546,7 +547,10 @@ export class PilotActiveRoot {
           nowLocal: new Date(now).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
           plannable: true, forcedReason: "followup_timeout_handoff",
         });
-        if (chain.planned) decision = { ...decision, effectPlan: chain.effectPlan };
+        if (chain.planned) {
+          decision = { ...decision, effectPlan: chain.effectPlan };
+          handoffPlanned = true;
+        }
       }
       const graph = validateEffectPlans(decision.effectPlan);
       if (graph.length > 0) return;
@@ -562,6 +566,7 @@ export class PilotActiveRoot {
         }),
         plannedStage: input.due.stage,
       };
+      if (handoffPlanned && next.followupSuspendedAt == null) next.followupSuspendedAt = now;
       next.version = snapshot.version + 1;
       next.updatedAt = now;
       const uow = input.persistence.begin({ lease });
