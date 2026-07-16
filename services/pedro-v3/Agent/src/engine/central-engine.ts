@@ -87,6 +87,7 @@ import {
 } from "./working-memory.ts";
 import type { TenantBusinessInfoSource } from "./tenant-business-info.ts";
 import { resolveTenantBusinessInfo, businessInfoToolResultMemory } from "./tenant-business-info.ts";
+import { invalidBrazilGreeting } from "./channel-time.ts";
 
 // ── Flag de modo ─────────────────────────────────────────────────────────────────────────────────────────────
 export type BrainMode = "off" | "central_shadow" | "central_active";
@@ -779,6 +780,10 @@ function authorFromBrainDraft(args: {
   } catch (err) {
     if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
+  }
+  if (args.requireBrain) {
+    const greetingFeedback = invalidBrazilGreeting(composed.text, args.ctx.now);
+    if (greetingFeedback) return { ok: false, feedback: greetingFeedback };
   }
   // LLM-first: memória pode aterrar QUAL veículo recebeu fotos, mas nunca escreve a resposta pelo cérebro.
   // Se a LLM ignorar o label lembrado, o engine devolve o fato e ela reautora. O override textual

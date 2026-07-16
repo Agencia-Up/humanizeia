@@ -80,15 +80,15 @@ check("[P9b] handoff pendente cancela follow-up imediatamente", evaluateFollowup
   now: NOW,
 }).reason === "handoff_in_flight");
 
-const b1 = new QueueBrain([final("Oi, ainda procura um carro?")]);
-check("[L1] LLM autora T1", await authorFollowupMessage({ brain: b1, state: state(), stage: 1, turnId: "fu1", now: NOW, portalPromptSha256: "sha" }) === "Oi, ainda procura um carro?");
+const b1 = new QueueBrain([final("Ainda procura um carro?")]);
+check("[L1] LLM autora T1", await authorFollowupMessage({ brain: b1, state: state(), stage: 1, turnId: "fu1", now: NOW, portalPromptSha256: "sha" }) === "Ainda procura um carro?");
 check("[L2] frame tem stage", b1.frames[0]?.signals.followupStage === 1);
 const b2 = new QueueBrain([{ kind: "query", call: { tool: "stock_search", input: {} } }, final("Posso ajudar com mais alguma informacao?")]);
 check("[L3] tool e negada/reautora", (await authorFollowupMessage({ brain: b2, state: state(), stage: 2, turnId: "fu2", now: NOW, portalPromptSha256: "sha" }))?.startsWith("Posso") === true && b2.frames.length === 2);
 check("[L4] T3 sem pergunta", await authorFollowupMessage({ brain: new QueueBrain([final("Se precisar, sigo por aqui. Ate mais!")]), state: state(), stage: 3, turnId: "fu3", now: NOW, portalPromptSha256: "sha" }) != null);
 check("[L5] T3 pergunta reautorada", await authorFollowupMessage({ brain: new QueueBrain([final("Quer continuar?"), final("Ate mais!")]), state: state(), stage: 3, turnId: "fu4", now: NOW, portalPromptSha256: "sha" }) === "Ate mais!");
-const extraEffectBrain = new QueueBrain([final("Oi, ainda quer ver as opcoes?", [{ kind: "handoff" }])]);
-check("[L6] texto da LLM sobrevive e efeito extra e ignorado", await authorFollowupMessage({ brain: extraEffectBrain, state: state(), stage: 1, turnId: "fu5", now: NOW, portalPromptSha256: "sha" }) === "Oi, ainda quer ver as opcoes?" && extraEffectBrain.frames.length === 1);
+const extraEffectBrain = new QueueBrain([final("Ainda quer ver as opcoes?", [{ kind: "handoff" }])]);
+check("[L6] texto da LLM sobrevive e efeito extra e ignorado", await authorFollowupMessage({ brain: extraEffectBrain, state: state(), stage: 1, turnId: "fu5", now: NOW, portalPromptSha256: "sha" }) === "Ainda quer ver as opcoes?" && extraEffectBrain.frames.length === 1);
 const errorThenText: AgentBrainPort = {
   proposeNextStep: (() => {
     let calls = 0;

@@ -9,6 +9,36 @@ function questionCount(text: string): number {
   return (text.match(/\?/g) ?? []).length;
 }
 
+function normalizeFollowupText(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function lastAgentMessage(state: ConversationState): string | null {
+  for (let i = (state.recentTurns ?? []).length - 1; i >= 0; i -= 1) {
+    if (state.recentTurns[i]?.role === "agent") return state.recentTurns[i]!.text;
+  }
+  return null;
+}
+
+function repeatsLastAgentQuestion(text: string, previous: string | null): boolean {
+  if (!previous) return false;
+  const normalizedText = normalizeFollowupText(text);
+  const questions = previous.match(/[^?]{12,}\?/g) ?? [];
+  return questions.some((question) => {
+    const core = normalizeFollowupText(question).replace(/\?$/, "").trim();
+    return core.length >= 18 && normalizedText.includes(core);
+  });
+}
+
+function violatesFollowupStyle(text: string): boolean {
+  const normalized = normalizeFollowupText(text);
+  const startsWithGreeting = /^(?:bom dia|boa tarde|boa noite|ola|oi)\b/.test(normalized);
+  const repeatsPresentation = /\b(?:sou o|sou a|aqui e o|aqui e a|meu nome e)\b/.test(normalized)
+    || /\bconsultor(?:a)?\b/.test(normalized);
+  const coldFarewell = /\bprefiro ser honesto\b|\btalvez nao seja o melhor cenario\b/.test(normalized);
+  return startsWithGreeting || repeatsPresentation || coldFarewell;
+}
+
 export async function authorFollowupMessage(args: {
   brain: AgentBrainPort;
   state: ConversationState;
@@ -88,12 +118,18 @@ export async function authorFollowupMessageDetailed(args: {
     let text: string;
     try { text = ResponseRenderer.render({ parts: textParts }, [], args.state).trim(); }
     catch { text = ""; }
+    const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
+    const invalidStyle = violatesFollowupStyle(text);
     const questions = questionCount(text);
-    if (!text || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+    if (!text || invalidStyle || repeatedQuestion || (args.stage === 3 ? questions !== 0 : questions > 1)) {
       lastReason = !text ? "text_missing" : "question_contract";
       feedback = args.stage === 3
-        ? " FEEDBACK: T3 deve ser uma despedida curta sem pergunta."
-        : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";
+        ? " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
+        : repeatedQuestion
+          ? " FEEDBACK: voce repetiu a ultima pergunta do atendente. Retome o assunto com uma pergunta diferente, simples e facil de responder."
+          : invalidStyle
+            ? " FEEDBACK: follow-up nao pode ter saudacao, reapresentacao, 'Prefiro ser honesto' ou linguagem de desistencia. Retome o historico com naturalidade."
+            : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";
       continue;
     }
     return { text, attempts: attempt + 1, reason: "authored" };

@@ -515,7 +515,10 @@ export class PilotActiveRoot {
         decisionMutations: [], responsePlan: { guidance: "llm_authored_followup" }, policyChecks: [],
         effectPlan: [{
           kind: "send_message", planId: messagePlanId, effectId: messageEffectId, order: 1, dependsOn: [],
-          onSuccess: [{ op: "mark_followup_sent", effectId: messageEffectId, anchorEffectId: input.due.anchorEffectId, stage: input.due.stage, sentAt: now }],
+          onSuccess: [
+            { op: "mark_followup_sent", effectId: messageEffectId, anchorEffectId: input.due.anchorEffectId, stage: input.due.stage, sentAt: now },
+            { op: "append_assistant_turn", effectId: messageEffectId, turn: { role: "agent", text, at: now } },
+          ],
         }],
       };
 

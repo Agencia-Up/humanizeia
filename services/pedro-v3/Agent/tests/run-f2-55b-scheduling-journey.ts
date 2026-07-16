@@ -153,7 +153,7 @@ async function main(): Promise<void> {
   const c = conv();
 
   // T1 abertura — portal-first (LLM se apresenta + faz UMA pergunta de qualificação; sem nome/telefone prematuros)
-  const t1 = await c.t("Boa tarde", () => finU([txt("Boa tarde! Sou o Aloan da Icom. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk", [ev(undefined, "boa tarde")])));
+  const t1 = await c.t("Boa tarde", () => finU([txt("Bom dia! Sou o Aloan da Icom. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk", [ev(undefined, "boa tarde")])));
   check("[T1] abertura entregue por brain (não terminalSafe)", isBrain(t1.src) && !t1.terminalSafe, `src=${t1.src}`);
   check("[T1b] abertura não pede nome/telefone prematuros", !has(t1.outbox, "seu nome") && !has(t1.outbox, "telefone"), t1.outbox);
 

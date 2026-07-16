@@ -274,7 +274,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     // ⭐RD1-2: a APRESENTAÇÃO na abertura é ADVISORY (isFirstContact). A LLM advertida se apresenta de 1ª; o engine ENTREGA (brain_final).
-    const opening: BrainResponder = () => finU([txt("Boa tarde! Eu sou o Aloan, consultor da Icom. Você procura algum modelo, tipo de carro ou faixa de preço?")], "opening_with_identity", U("smalltalk"));
+    const opening: BrainResponder = () => finU([txt("Bom dia! Eu sou o Aloan, consultor da Icom. Você procura algum modelo, tipo de carro ou faixa de preço?")], "opening_with_identity", U("smalltalk"));
     const t1 = await c.t("Boa tarde", opening);
     check("[G-1] abertura com identidade é ENTREGUE (brain_final), sem fallback", t1.src === "brain_final" && has(t1.outbox, "sou o Aloan") && has(t1.outbox, "Icom"), `src=${t1.src} out=${t1.outbox}`);
     check("[G-2] abertura nao usa recovery deterministico", !String(t1.src).startsWith("deterministic"), `src=${t1.src}`);

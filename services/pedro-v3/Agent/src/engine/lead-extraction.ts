@@ -819,6 +819,11 @@ export function extractLeadSlots(args: {
   let deniedTradeVehicle = false;
   const tradeCandidate = tradeVehicle(preBuyText || leadMessage, claimExtractor);
   const tradeVehicleDescribed = tradeCandidate != null && tradeCandidate.modelo != null && (tradeCandidate.ano != null || tradeCandidate.km != null);
+  // Carta/consorcio pode parecer um "modelo" para o extrator de claims, mas
+  // sem ano/km de um carro real continua sendo apenas pagamento. Nao deixe a
+  // pergunta pendente de troca transformar "tenho uma carta contemplada de 53
+  // mil" em possuiTroca/veiculoTroca.
+  const paymentOnlyDeclaration = payment != null && !tradeVehicleDescribed && !explicitTrade;
   // ⭐SEM: PERGUNTA do lead ("vocês não aceitam troca?") nunca é RESPOSTA de troca — mas o guard vale POR CLÁUSULA:
   // num bloco misto ("Não tenho carro pra troca / tem SUV até 100k?") a negação está em statement e SEGUE válida
   // (caso P0-1f da F2.44); só anula quando a PRÓPRIA cláusula da negação é interrogativa.
@@ -843,7 +848,8 @@ export function extractLeadSlots(args: {
     && (expected === "possuiTroca" || expected === "veiculoTroca")
     && tradeCandidate?.modelo != null
     && /\b(?:tenho|possuo|meu|minha)\b/.test(normalizeText(preBuyText || leadMessage));
-  const positiveTradeAnswer = !questionLike && (explicitTrade || offersTradeByPossession || tradeVehicleDescribed || ownedTradeVehicleAnswer || pendingTradeBooleanAnswer);
+  const positiveTradeAnswer = !questionLike && !paymentOnlyDeclaration
+    && (explicitTrade || offersTradeByPossession || tradeVehicleDescribed || ownedTradeVehicleAnswer || pendingTradeBooleanAnswer);
   if (noTradeAnswer || positiveTradeAnswer) {
     const value = (explicitNoTrade || trocaNeg) ? false
       : (explicitTrade || trocaPos || offersTradeByPossession || ownedTradeVehicleAnswer || (expected === "possuiTroca" && tradeVehicleDescribed)) ? true
@@ -861,9 +867,10 @@ export function extractLeadSlots(args: {
   // Missão P0 (audit Codex): só captura o veículo de troca quando há sinal REAL de POSSE/troca no trecho de troca
   // (tenho/possuo/"para troca") OU o agente pediu explicitamente os DADOS do carro de troca (expected=veiculoTroca).
   // Extrai do preBuyText (parte de troca) — nunca do alvo de compra. "tem Renegade?"/"quero um Renegade" (COMPRA) NÃO viram troca.
-  const tradeContextActive = !asksVehicleAvailability && (expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade || offersTradeByPossession || tradeVehicleDescribed);
+  const tradeContextActive = !asksVehicleAvailability && !paymentOnlyDeclaration
+    && (expected === "veiculoTroca" || expected === "possuiTroca" || state.slots.possuiTroca.value === true || explicitTrade || offersTradeByPossession || tradeVehicleDescribed);
   const possessionSignal = /\b(tenho|possuo|meu|minha)\b/.test(normalizeText(preBuyText)) || tradePhrase || (expected === "possuiTroca" && tradeVehicleDescribed);
-  const captureTrade = !deniedTradeVehicle && (expected === "veiculoTroca" || (tradeContextActive && possessionSignal));
+  const captureTrade = !deniedTradeVehicle && !paymentOnlyDeclaration && (expected === "veiculoTroca" || (tradeContextActive && possessionSignal));
   if (captureTrade) {
     const vehicle = tradeCandidate ?? tradeVehicle(preBuyText || leadMessage, claimExtractor);
     if (vehicle) add({ op: "set_slot", slot: "veiculoTroca", value: vehicle, confidence: 0.86, sourceTurnId: turnId }, "veiculoTroca");

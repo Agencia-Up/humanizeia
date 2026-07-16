@@ -25,31 +25,32 @@ function containsAll(...parts: readonly string[]): boolean {
 }
 
 function main(): void {
-  console.log("== F2.45: contrato de estilo SDR ==");
+  console.log("== F2.45: contrato tecnico do protocolo ==");
 
   check("[SDR-1] prompt do portal segue como autoridade de personalidade/funil",
-    containsAll("o prompt do portal manda na personalidade", "substituem esse prompt"));
+    containsAll("O prompt do portal e a fonte principal", "personalidade", "conducao comercial"));
 
-  check("[SDR-2] lista de estoque deve ter contexto + vehicle_offer_list + CTA",
-    containsAll("Toda resposta de estoque precisa ter 3 camadas", "contexto curto", "vehicle_offer_list", "UM CTA curto"));
+  check("[SDR-2] protocolo separa contrato tecnico de conducao comercial",
+    containsAll("Este protocolo define somente o contrato tecnico", "A LLM decide o ato conversacional", "A engine apenas fornece fatos"));
 
-  check("[SDR-3] proibe CTA generico de menu fixo",
-    containsAll("Nao use CTA generico de menu", "Varie conforme a conversa"));
+  check("[SDR-3] grounding de lista permanece ativo",
+    containsAll("vehicle_offer_list", "vehicleKeys realmente retornados por stock_search"));
 
-  check("[SDR-4] lista nova nao deve pedir cadastro cedo",
-    containsAll("NUNCA peca nome, sobrenome, telefone, troca ou entrada", "apresentando uma lista nova"));
+  check("[SDR-4] protocolo nao volta a conduzir o funil por fora do portal",
+    !source.includes("Toda resposta de estoque precisa ter 3 camadas") && !source.includes("workingMemory.funnel (known/declined)"));
 
-  check("[SDR-5] poucos itens devem soar como vendedor consultivo",
-    containsAll("Quando a lista tem poucos itens", "Achei duas opcoes que fazem sentido"));
+  check("[SDR-5] limite tecnico de perguntas permanece",
+    source.includes("Use no maximo UMA pergunta util por resposta"));
 
-  check("[SDR-6] sem item novo nao relista nem use vehicle_offer_list",
-    containsAll("Quando nao houver item novo", "nao use vehicle_offer_list", "nao re-liste"));
+  check("[SDR-6] tool segue o ato e nao palavra-chave",
+    containsAll("stock_search: somente quando o ato atual pede estoque", "Nao use stock_search para resposta de troca"));
 
-  check("[SDR-7] exemplo de lista nao voltou ao menu antigo",
-    !source.includes("Quer ver as fotos de algum deles?"));
+  check("[SDR-7] protocolo nao carrega CTA comercial fixo legado",
+    !source.includes("Nao use CTA generico de menu") && !source.includes("Varie conforme a conversa"));
 
-  check("[SDR-8] exemplo novo conduz por escolha do lead",
-    source.includes("Alguma delas te chamou mais atenção?"));
+  check("[SDR-8] follow-up fica em contrato proprio",
+    source.includes("FOLLOW-UP SISTEMICO") && source.includes("Nao cumprimente"));
+
 
   if (fail > 0) {
     console.error(`\nF2.45 falhou: ${fail}`);

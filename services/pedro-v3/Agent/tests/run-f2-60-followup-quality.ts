@@ -1,0 +1,95 @@
+import type { AgentBrainPort, AgentBrainStep, TurnFrame } from "../src/domain/agent-brain.ts";
+import type { ConversationState } from "../src/domain/conversation-state.ts";
+import type { SendMessagePlan } from "../src/domain/decision.ts";
+import { createInitialState } from "../src/domain/conversation-state.ts";
+import { applyEffectOutcome } from "../src/engine/state-reducer.ts";
+import { authorFollowupMessageDetailed } from "../src/engine/followup-author.ts";
+import { getBrazilChannelTime } from "../src/adapters/llm/openai-agent-brain.ts";
+import { invalidBrazilGreeting } from "../src/engine/channel-time.ts";
+
+let ok = 0;
+let bad = 0;
+function check(name: string, pass: boolean, extra?: string): void {
+  if (pass) { ok += 1; console.log(`  OK  ${name}`); }
+  else { bad += 1; console.error(`  RED ${name}${extra ? ` — ${extra}` : ""}`); }
+}
+
+function final(text: string): AgentBrainStep {
+  return {
+    kind: "final",
+    decision: {
+      reasonCode: "followup",
+      reasonSummary: "followup",
+      confidence: 1,
+      responsePlan: { guidance: "", draft: { parts: [{ type: "text", content: text }] } },
+      proposedEffects: [], memoryMutations: [], stateMutations: [],
+    },
+  };
+}
+
+class QueueBrain implements AgentBrainPort {
+  readonly frames: TurnFrame[] = [];
+  constructor(private readonly steps: AgentBrainStep[]) {}
+  async proposeNextStep(frame: TurnFrame): Promise<AgentBrainStep> {
+    this.frames.push(frame);
+    return this.steps.shift() ?? final("Se quiser retomar, e so me chamar.");
+  }
+}
+
+const TENANT = "11111111-1111-4111-8111-111111111111";
+const AGENT = "22222222-2222-4222-8222-222222222222";
+const LEAD = "33333333-3333-4333-8333-333333333333";
+const NOW = "2026-07-16T00:30:00.000Z";
+
+function state(): ConversationState {
+  const s = createInitialState({ conversationId: "wa:f260", tenantId: TENANT, agentId: AGENT, leadId: LEAD, now: NOW });
+  s.recentTurns = [{ role: "agent", text: "Voce conhece a nossa loja?", at: "2026-07-15T12:00:00.000Z" }];
+  return s;
+}
+
+console.log("== F2.60 Follow-up contextual, anti-repeticao e horario Brasil ==");
+
+const t1Brain = new QueueBrain([
+  final("Boa tarde! Sou o Carvalho, consultor aqui da loja. Posso ajudar com alguma informacao sobre nossos carros?"),
+  final("Voce conseguiu ver os veiculos que te mandei?"),
+]);
+const t1 = await authorFollowupMessageDetailed({ brain: t1Brain, state: state(), stage: 1, turnId: "fu60-t1", now: NOW, portalPromptSha256: "sha" });
+check("T1 rejeita saudacao/apresentacao e reautora contexto", t1.text === "Voce conseguiu ver os veiculos que te mandei?" && t1.attempts === 2);
+
+const t2State = state();
+t2State.recentTurns.push({ role: "agent", text: "Voce conseguiu ver os veiculos que te mandei?", at: NOW });
+const t2Brain = new QueueBrain([
+  final("Voce conseguiu ver os veiculos que te mandei?"),
+  final("Se ainda estiver avaliando, posso te ajudar com os detalhes desse carro. Quer continuar por aqui?"),
+]);
+const t2 = await authorFollowupMessageDetailed({ brain: t2Brain, state: t2State, stage: 2, turnId: "fu60-t2", now: NOW, portalPromptSha256: "sha" });
+check("T2 rejeita repeticao da pergunta anterior", t2.text === "Se ainda estiver avaliando, posso te ajudar com os detalhes desse carro. Quer continuar por aqui?" && t2.attempts === 2);
+
+const t3Brain = new QueueBrain([
+  final("Prefiro ser honesto com voce — talvez nao seja o melhor cenario."),
+  final("Tudo bem, vou encerrar por aqui para nao te incomodar. Quando quiser retomar, e so me chamar."),
+]);
+const t3 = await authorFollowupMessageDetailed({ brain: t3Brain, state: t2State, stage: 3, turnId: "fu60-t3", now: NOW, portalPromptSha256: "sha" });
+check("T3 rejeita despedida fria e usa porta aberta sem pergunta", t3.text === "Tudo bem, vou encerrar por aqui para nao te incomodar. Quando quiser retomar, e so me chamar." && t3.attempts === 2);
+
+check("horario Brasil de madrugada UTC e noite local", getBrazilChannelTime("2026-07-16T02:00:00.000Z").period === "noite");
+check("meia-noite no Brasil continua noite", getBrazilChannelTime("2026-07-16T03:15:00.000Z").period === "noite");
+check("horario Brasil de manha", getBrazilChannelTime("2026-07-15T14:00:00.000Z").period === "manha");
+check("horario Brasil de tarde", getBrazilChannelTime("2026-07-15T17:00:00.000Z").period === "tarde");
+check("saudacao contraditoria volta para retry factual", invalidBrazilGreeting("Boa tarde!", "2026-07-16T03:15:00.000Z")?.includes("boa noite") === true);
+
+const persisted = state();
+persisted.followupCycle = { anchorEffectId: "anchor", anchorAt: "2026-07-15T12:00:00.000Z", sentStages: [], plannedStage: 1, lastSentAt: null };
+const effect: SendMessagePlan = {
+  kind: "send_message", planId: "followup-message", effectId: "followup:anchor:1:followup-message", order: 1, onSuccess: [
+    { op: "mark_followup_sent", effectId: "followup:anchor:1:followup-message", anchorEffectId: "anchor", stage: 1, sentAt: NOW },
+    { op: "append_assistant_turn", effectId: "followup:anchor:1:followup-message", turn: { role: "agent", text: t1.text!, at: NOW } },
+  ],
+};
+const committed = applyEffectOutcome(persisted, effect, {
+  status: "succeeded", effectId: effect.effectId, receipt: { effectId: effect.effectId, level: "accepted", at: NOW },
+});
+check("follow-up enviado entra no historico para orientar T2", committed.ok && committed.next.recentTurns.at(-1)?.text === t1.text);
+
+console.log(`\n== F2.60: ${ok} OK | ${bad} FALHA ==`);
+if (bad > 0) process.exit(1);

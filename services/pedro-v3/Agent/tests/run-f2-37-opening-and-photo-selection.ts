@@ -221,7 +221,7 @@ async function main(): Promise<void> {
   {
     const c = conv();
     // ⭐RD1-2: descoberta-antes-do-nome é ADVISORY (needsDiscovery). A LLM advertida faz descoberta de 1ª; o engine ENTREGA (brain_final).
-    const discoveryOpening: BrainResponder = () => finU([txt("Boa tarde! Sou o Aloan da Icom. Você procura um modelo específico, um tipo de carro (SUV, sedan, hatch) ou uma faixa de preço?")], "reply", U("smalltalk"));
+    const discoveryOpening: BrainResponder = () => finU([txt("Bom dia! Sou o Aloan da Icom. Você procura um modelo específico, um tipo de carro (SUV, sedan, hatch) ou uma faixa de preço?")], "reply", U("smalltalk"));
     const t1 = await c.t("Boa tarde", { responder: discoveryOpening });
     check("[PA-1] 1º contato sem anúncio -> signals.firstContactNoCommercialTarget=true", sig(c, 0).firstContactNoCommercialTarget === true, JSON.stringify(sig(c, 0)));
     check("[PA-1b] abertura de descoberta entregue (brain_final), sem pedir nome", t1.src === "brain_final" && (has(t1.outbox, "tipo de carro") || has(t1.outbox, "faixa de preço") || has(t1.outbox, "modelo")) && !has(t1.outbox, "seu nome"), `src=${t1.src} outbox="${t1.outbox}"`);
@@ -283,7 +283,7 @@ async function main(): Promise<void> {
   // 5) regressão: turno NÃO-abertura ("Douglas" respondendo o nome) não engata o guardrail de abertura
   {
     const c = conv();
-    await c.t("Boa tarde", { responder: () => finU([txt("Boa tarde! Sou o Aloan da Icom. Que tipo de carro você procura?")], "reply", U("smalltalk")) });
+    await c.t("Boa tarde", { responder: () => finU([txt("Bom dia! Sou o Aloan da Icom. Que tipo de carro você procura?")], "reply", U("smalltalk")) });
     const t2 = await c.t("Douglas", { responder: () => finU([txt("Prazer, Douglas! Me conta: procura algum modelo, tipo de carro ou faixa de preço?")], "reply", U("other")) });
     check("[PA-5] 2º turno ('Douglas') NÃO é abertura (firstContactNoCommercialTarget=false)", !sig(c, 1).firstContactNoCommercialTarget, JSON.stringify(sig(c, 1)));
     check("[PA-5b] a resposta ao nome é preservada (o cérebro conduz, sem virar discovery forçada)", has(t2.outbox, "Douglas"), `outbox="${t2.outbox}"`);

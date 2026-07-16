@@ -180,14 +180,14 @@ async function main(): Promise<void> {
     const c = conv();
     // ⭐RD1-2: estilo (não pedir nome na abertura) é ADVISORY — a LLM advertida acerta de 1ª. O teste prova que uma abertura
     // BOA (descoberta, sem nome) é ENTREGUE como brain_final (o engine não nega/fallbacka estilo). Adversarial de estilo => smokes.
-    const t1 = await c.t("Boa noite", { responder: () => finU([txt("Boa noite! Sou o Aloan da Icom. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk")) });
+    const t1 = await c.t("Boa noite", { responder: () => finU([txt("Bom dia! Sou o Aloan da Icom. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk")) });
     check("[T3] abertura entregue (brain_final), sem pedir nome", t1.src === "brain_final" && !has(t1.outbox, "seu nome"), `src=${t1.src} outbox="${t1.outbox}"`);
   }
 
   // ── 4) "Sim, conheço" (qualificação, sem intenção comercial) -> não pede nome nem sobrenome ──
   {
     const c = conv();
-    await c.t("Boa noite", { responder: () => finU([txt("Boa noite! Sou o Aloan. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk")) });
+    await c.t("Boa noite", { responder: () => finU([txt("Bom dia! Sou o Aloan. Você procura um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("smalltalk")) });
     const t2 = await c.t("Sim, conheço", { responder: () => finU([txt("Que bom que já conhece! Você procura um modelo específico ou um tipo de carro?")], "reply", U("other")) });
     check("[T4] 'Sim, conheço' -> abertura boa entregue (brain_final), sem pedir nome", t2.src === "brain_final" && !has(t2.outbox, "seu nome"), `src=${t2.src} outbox="${t2.outbox}"`);
     const t3 = await c.t("Douglas", { responder: () => finU([txt("Prazer, Douglas! O que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other")) });
