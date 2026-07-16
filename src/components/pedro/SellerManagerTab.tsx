@@ -365,6 +365,12 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
       const deduped = new Map<string, SellerMember>();
       const memberIdsByKey = new Map<string, string[]>();
       for (const s of (sellersRes.data || [])) {
+        const removedOperationally = s.active_in_system === false
+          && s.is_active === false
+          && s.show_in_live === false
+          && Object.keys(s.visible_features || {}).length === 0;
+        if (removedOperationally) continue;
+
         const key = s.whatsapp_number || s.id;
         memberIdsByKey.set(key, [...(memberIdsByKey.get(key) || []), s.id]);
         const existing = deduped.get(key);
@@ -417,6 +423,9 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
         name: newName.trim(),
         whatsapp_number: cleanPhone,
         email: newEmail.trim() || null,
+        is_active: true,
+        active_in_system: true,
+        show_in_live: true,
       };
       // Fix 28/05/2026: usar .select() pra confirmar que o INSERT retornou row
       // (RLS silencioso = INSERT "passa" sem inserir, retorna [] sem erro).
@@ -540,81 +549,22 @@ export function SellerManagerTab({ userId }: SellerManagerTabProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Deseja excluir este vendedor da equipe? Os leads atribuídos a ele ficarão "sem vendedor". Esta ação não pode ser desfeita.')) return;
+    const target = sellers.find(s => s.id === id);
+    if (!target) return;
+    if (!confirm('Deseja remover este vendedor da equipe? Ele perde acesso ao painel, sai da fila e os leads do Pedro entram no repasse programado quando houver. O histórico será mantido.')) return;
     try {
-      const target = sellers.find(s => s.id === id);
+      const { data, error } = await invokeWithReauth('delete-responsavel', {
+        body: { whatsapp: target.whatsapp_number },
+      });
+      if (error) throw new Error((await readFnError(error)) || error.message || 'Falha ao remover vendedor');
+      if (data && (data as any).success === false) throw new Error((data as any).error || 'Falha ao remover vendedor');
 
-      // 1. Resolver TODOS os ids deste vendedor. Um mesmo vendedor pode ter 1 row
-      //    por agente (mesmo whatsapp_number), e leads de cada canal apontam pra
-      //    rows diferentes — precisamos desvincular/excluir todas.
-      let memberIds: string[] = [id];
-      if (target?.whatsapp_number) {
-        const { data: rows } = await (supabase as any)
-          .from('ai_team_members')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('whatsapp_number', target.whatsapp_number);
-        if (Array.isArray(rows) && rows.length) memberIds = rows.map((r: any) => r.id);
-      }
-
-      // 2. BLINDAGEM (fix 29/05/2026): desvincular os leads ANTES de excluir o
-      //    vendedor. Sem isso o lead vira ORFAO e o painel renderiza um "Vendedor
-      //    fantasma" (id que nao existe mais em ai_team_members). O painel le
-      //    assigned_to || custom_fields.seller_member_id, entao zeramos os DOIS,
-      //    em crm_leads (Marcos) E ai_crm_leads (Pedro). Se qualquer desvinculo
-      //    falhar, ABORTAMOS a exclusao — melhor manter o vendedor do que criar
-      //    um fantasma.
-      // 2a. crm_leads.assigned_to (TEXT = ai_team_members.id)
-      const detachCrm = await (supabase as any)
-        .from('crm_leads').update({ assigned_to: null })
-        .eq('user_id', userId).in('assigned_to', memberIds);
-      if (detachCrm.error) throw new Error('Falha ao desvincular leads (crm_leads.assigned_to): ' + detachCrm.error.message);
-
-      // 2b. crm_leads.custom_fields->>seller_member_id (fallback do painel) — limpa
-      //     a chave por row, preservando o resto do JSON.
-      for (const mid of memberIds) {
-        const cfRes = await (supabase as any)
-          .from('crm_leads').select('id, custom_fields')
-          .eq('user_id', userId).eq('custom_fields->>seller_member_id', mid);
-        if (cfRes.error) throw new Error('Falha ao buscar leads por custom_fields: ' + cfRes.error.message);
-        for (const row of (cfRes.data || [])) {
-          const cf = { ...(row.custom_fields || {}) };
-          delete cf.seller_member_id;
-          const upd = await (supabase as any).from('crm_leads').update({ custom_fields: cf }).eq('id', row.id);
-          if (upd.error) throw new Error(`Falha ao limpar custom_fields do lead ${row.id}: ${upd.error.message}`);
-        }
-      }
-
-      // 2c. ai_crm_leads.assigned_to_id (UUID = ai_team_members.id) — canal Pedro.
-      const detachAi = await (supabase as any)
-        .from('ai_crm_leads').update({ assigned_to_id: null }).in('assigned_to_id', memberIds);
-      if (detachAi.error) throw new Error('Falha ao desvincular leads do Pedro (ai_crm_leads): ' + detachAi.error.message);
-
-      // 3. Excluir TODAS as rows do vendedor (todas com o mesmo whatsapp_number).
-      //    Fix 28/05/2026: .select() confirma que o DELETE removeu rows — RLS
-      //    silenciosa retorna error=null + data=[] (zero afetados).
-      let delQ = (supabase as any).from('ai_team_members').delete();
-      delQ = target?.whatsapp_number
-        ? delQ.eq('user_id', userId).eq('whatsapp_number', target.whatsapp_number)
-        : delQ.eq('id', id);
-      const { data, error } = await delQ.select('id');
-      if (error) {
-        console.error('[SellerManager] handleDelete erro:', { error, id, memberIds });
-        const detalhe = [error.message, error.details, error.hint, error.code ? `code=${error.code}` : null]
-          .filter(Boolean).join(' | ');
-        throw new Error(detalhe || 'Erro desconhecido ao excluir vendedor');
-      }
-      if (!Array.isArray(data) || data.length === 0) {
-        console.error('[SellerManager] handleDelete silently dropped (RLS?). id:', id);
-        toast({
-          title: 'Não foi possível excluir',
-          description: 'O registro não foi removido — pode ser permissão (RLS) ou o vendedor pertence a outro master.',
-          variant: 'destructive',
-        });
-        return;
-      }
-      setSellers(prev => prev.filter(s => target?.whatsapp_number ? s.whatsapp_number !== target.whatsapp_number : s.id !== id));
-      toast({ title: '✅ Vendedor removido', description: 'Leads atribuídos a ele agora estão sem vendedor.' });
+      setSellers(prev => prev.filter(s => target.whatsapp_number ? s.whatsapp_number !== target.whatsapp_number : s.id !== id));
+      toast({
+        title: '✅ Vendedor removido',
+        description: 'Acesso desativado, histórico mantido e repasse do Pedro criado quando havia leads.',
+      });
+      fetchData();
     } catch (err: any) {
       toast({ title: 'Erro ao excluir vendedor', description: err.message, variant: 'destructive' });
     }

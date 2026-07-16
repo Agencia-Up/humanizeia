@@ -9,6 +9,7 @@ export interface SellerInfo {
   user_id: string;   // master's user_id
   agent_id: string | null;
   is_active: boolean;
+  active_in_system?: boolean | null;
   visible_features: VisibleFeatures | null;
 }
 
@@ -146,14 +147,27 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
       //    (o vendedor pode pertencer a múltiplos agentes, cada um com suas visible_features)
       const { data: memberData } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, visible_features')
+        .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, active_in_system, visible_features')
         .eq('auth_user_id', authUserId)
+        .neq('active_in_system', false)
         .order('is_active', { ascending: false })
         .order('created_at', { ascending: false });
 
       if (cancelled) return;
 
       const allRecords = Array.isArray(memberData) ? memberData as SellerInfo[] : [];
+      if (allRecords.length === 0) {
+        setResult({
+          isSeller: false,
+          seller: null,
+          masterUserId: null,
+          memberIds: [],
+          visibleFeatures: DEFAULT_SELLER_FEATURES,
+          loading: false,
+        });
+        return;
+      }
+
       // Usa o registro ativo mais recente como dados base (nome, email, etc.)
       const seller = allRecords.length > 0 ? allRecords[0] : null;
 

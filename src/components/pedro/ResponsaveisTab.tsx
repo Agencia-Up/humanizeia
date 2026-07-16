@@ -13,6 +13,25 @@ import {
 import { DEFAULT_SELLER_FEATURES, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { onlyDigits, normalizePhoneBR } from '@/lib/phoneBR';
 
+async function readFnError(error: any): Promise<string> {
+  try {
+    const ctxResp = error?.context;
+    const respObj = ctxResp && typeof ctxResp.text === 'function' ? ctxResp : ctxResp?.response;
+    if (respObj && typeof respObj.text === 'function') {
+      const body = await respObj.text();
+      try {
+        const parsed = JSON.parse(body);
+        return parsed.error || parsed.message || body;
+      } catch {
+        return body;
+      }
+    }
+  } catch {
+    // Mantem a mensagem original se o body da Edge nao puder ser lido.
+  }
+  return '';
+}
+
 // ── Responsáveis & entregas ──────────────────────────────────────────────────
 // Lugar ÚNICO de pessoas + acessos da conta (mora em Configurações). Adicionar
 // alguém = escolher o tipo (vendedor/gerente/tráfego), mandar convite por e-mail
@@ -204,7 +223,13 @@ export function ResponsaveisTab({ userId }: Props) {
         (supabase as any).from('conta_responsaveis')
           .select('nome, whatsapp, recebe_atendimento, recebe_trafego, recebe_alertas').eq('user_id', userId),
       ]);
-      const members = membersRes.data || [];
+      const members = (membersRes.data || []).filter((m: any) => {
+        const removedOperationally = m.active_in_system === false
+          && m.is_active === false
+          && m.show_in_live === false
+          && Object.keys(m.visible_features || {}).length === 0;
+        return !removedOperationally;
+      });
       const agents = agentsRes.data || [];
       const resp = respRes.data || [];
       const agentName = new Map<string, string>(agents.map((a: any) => [a.id, a.name || 'Agente']));
@@ -459,11 +484,11 @@ export function ResponsaveisTab({ userId }: Props) {
     setDelBusy(true);
     try {
       const { data, error } = await invokeWithReauth('delete-responsavel', { body: { whatsapp: delAlvo.whatsapp } });
-      if (error) throw new Error((error as any)?.message || 'Falha ao excluir');
+      if (error) throw new Error((await readFnError(error)) || (error as any)?.message || 'Falha ao excluir');
       if (data && (data as any).success === false) throw new Error((data as any).error || 'Falha ao excluir');
       setDelAlvo(null);
       await load();
-      toast({ title: 'Responsável excluído', description: 'Os leads dele ficaram sem vendedor (o histórico foi mantido).' });
+      toast({ title: 'Responsável excluído', description: 'Acesso desativado, histórico mantido e repasse do Pedro criado quando havia leads.' });
     } catch (e: any) {
       toast({ title: 'Não deu pra excluir', description: e?.message, variant: 'destructive' });
     } finally { setDelBusy(false); }

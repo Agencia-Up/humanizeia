@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithReauth } from '@/lib/invokeWithReauth';
 import { useToast } from '@/hooks/use-toast';
 import { Users, UserPlus, Phone, Loader2, Trash2, PhoneForwarded, Pencil, Check, X, Crown, Save, Mail, Send, RefreshCw, Plus } from 'lucide-react';
 import { Label } from '@/components/ui/label';
@@ -14,6 +15,25 @@ interface AgentCrmEquipeTabProps {
 
 // Telefone só com dígitos (chave de comparação do vendedor).
 const normPhone = (p: string) => (p || '').replace(/\D/g, '');
+
+async function readFnError(error: any): Promise<string> {
+  try {
+    const ctxResp = error?.context;
+    const respObj = ctxResp && typeof ctxResp.text === 'function' ? ctxResp : ctxResp?.response;
+    if (respObj && typeof respObj.text === 'function') {
+      const body = await respObj.text();
+      try {
+        const parsed = JSON.parse(body);
+        return parsed.error || parsed.message || body;
+      } catch {
+        return body;
+      }
+    }
+  } catch {
+    // Mantem a mensagem original.
+  }
+  return '';
+}
 
 export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
   const { toast } = useToast();
@@ -84,6 +104,11 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
       for (const m of (allMembers as any[]) || []) {
         const k = normPhone(m.whatsapp_number);
         if (!k) continue;
+        const removedOperationally = m.active_in_system === false
+          && m.is_active === false
+          && m.show_in_live === false
+          && Object.keys(m.visible_features || {}).length === 0;
+        if (removedOperationally) continue;
         if (!byPhone.has(k)) {
           byPhone.set(k, {
             ...m,
@@ -137,6 +162,8 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
           whatsapp_number: cleanPhone,
           email: newSellerEmail.trim() || null,
           is_active: aid === agentId,
+          active_in_system: true,
+          show_in_live: true,
         });
         // erro individual (ex.: já existe nesse agente) é ignorado de propósito
       }
@@ -227,15 +254,19 @@ export function AgentCrmEquipeTab({ agentId, userId }: AgentCrmEquipeTabProps) {
 
   // MATRIZ: excluir remove o vendedor de TODOS os agentes (some da conta inteira).
   const handleDeleteSeller = async (member: any) => {
-    if (!confirm('Excluir este vendedor de TODOS os agentes da conta?')) return;
+    if (!confirm('Remover este vendedor de TODOS os agentes da conta? Ele perde o acesso, sai da fila e o histórico será mantido.')) return;
     try {
-      await (supabase as any).from('ai_team_members').delete()
-        .eq('user_id', userId).eq('whatsapp_number', member.whatsapp_number);
+      const { data, error } = await invokeWithReauth('delete-responsavel', {
+        body: { whatsapp: member.whatsapp_number },
+      });
+      if (error) throw new Error((await readFnError(error)) || error.message || 'Falha ao remover vendedor');
+      if (data && (data as any).success === false) throw new Error((data as any).error || 'Falha ao remover vendedor');
+
       const k = normPhone(member.whatsapp_number);
       setTeamMembers(prev => prev.filter(m => normPhone(m.whatsapp_number) !== k));
-      toast({ title: 'Vendedor removido de todos os agentes' });
+      toast({ title: 'Vendedor removido de todos os agentes', description: 'Acesso desativado e histórico preservado.' });
     } catch (err: any) {
-      toast({ title: 'Erro', variant: 'destructive' });
+      toast({ title: 'Erro', description: err?.message || 'Nao foi possivel remover vendedor.', variant: 'destructive' });
     }
   };
 

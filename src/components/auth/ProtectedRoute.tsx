@@ -18,7 +18,7 @@ const QUIZ_EXEMPT_PATHS = ['/niche-quiz', '/briefing', '/onboarding', '/auth'];
 // O status real fica no banco: master paga; vendedor herda a conta do master.
 // Em falha de rede/RPC, esta rota permanece fail-open para nao travar cliente
 // indevidamente por instabilidade temporaria.
-type ProfileState = 'ok' | 'no_org' | 'no_quiz' | 'no_payment' | 'seller_payment_blocked';
+type ProfileState = 'ok' | 'no_org' | 'no_quiz' | 'no_payment' | 'seller_payment_blocked' | 'seller_access_revoked';
 
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Survives React Fast Refresh (HMR) re-renders because it lives in module scope.
@@ -106,7 +106,18 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
           }
           next = 'no_org';
         } else if (isSeller) {
-          next = 'ok';
+          const { data: activeMemberships, error: membershipErr } = await (supabase as any)
+            .from('ai_team_members')
+            .select('id')
+            .eq('auth_user_id', user.id)
+            .neq('active_in_system', false)
+            .limit(1);
+          if (ac.signal.aborted) return;
+          if (!membershipErr && (!Array.isArray(activeMemberships) || activeMemberships.length === 0)) {
+            next = 'seller_access_revoked';
+          } else {
+            next = 'ok';
+          }
         } else {
           const hasOrg = !!data.organization_id;
           // Quiz de nicho REMOVIDO (02/07/2026): segmentamos so loja de veiculo,
@@ -184,6 +195,22 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
           <p className="text-sm text-muted-foreground">
             O acesso desta equipe esta temporariamente bloqueado por pendencia de pagamento.
             Fale com o gestor da conta para regularizar o plano.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (profileState === 'seller_access_revoked') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 text-center shadow-lg">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+            !
+          </div>
+          <h1 className="text-lg font-semibold">Acesso removido</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Seu acesso a esta conta foi desativado pelo gestor. Fale com a conta master para reativar.
           </p>
         </div>
       </div>
