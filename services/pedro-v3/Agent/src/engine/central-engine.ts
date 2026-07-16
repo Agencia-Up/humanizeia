@@ -765,7 +765,7 @@ function authorFromBrainDraft(args: {
   if (realFacts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0)
       && !draft.parts.some((p) => p.type === "vehicle_offer_list")
       && !proposedEffects.some((e) => e.kind === "send_media")) {
-    return { ok: false, feedback: "Você buscou o estoque e HÁ itens disponíveis. Inclua uma vehicle_offer_list com pelo menos um dos vehicleKeys retornados (você continua autor da introdução e do CTA). NÃO pergunte 'quer que eu mostre a lista?' — MOSTRE a lista agora." };
+    return { ok: false, feedback: "Turno de LISTAGEM factual: você buscou o estoque e HÁ itens disponíveis. Inclua uma vehicle_offer_list com pelo menos um dos vehicleKeys retornados. A LLM continua autora da introdução e do próximo passo; não escreva a lista ou atributos de estoque manualmente e não chame stock_search novamente." };
   }
   // B3 (audit): postQuery é AUTORIDADE. Se negar (ex.: oferta acima do teto, veículo fora dos fatos), o draft ORIGINAL
   // NÃO pode ser enviado — feedback ao MESMO cérebro; nenhum efeito comercial original sobrevive (o retry re-autora).
@@ -1909,7 +1909,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         : undefined;
       const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
         && args.crmWriteEnabled === true && leadId != null;
-      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
+      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: llmFirst ? false : disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
       // O turno do lead já é entregue integralmente ao cérebro. O engine não
       // constrói advisories, próxima pergunta, ordem de funil ou instrução de
       // agendamento para competir com a LLM. Fatos de anúncio, memória,
@@ -2250,7 +2250,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const missingTool = requiredToolBeforeFinal(
             frame,
             observations,
-            llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct(),
+            // A ferramenta comercial só é exigida quando a própria LLM
+            // declarou o ato atual como busca de estoque. Extratores do turno
+            // continuam sendo fatos/enriquecimento, nunca autoridade paralela.
+            llmFirst && brainSearchAct(),
             moreOptionsNeedsScope,
             frame.signals.mentionsMoreOptions === true && brainSearchAct(),
           );
@@ -2273,7 +2276,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // à descoberta). Invariante: o engine NUNCA exige uma tool que o contexto do turno proíbe/reinterpreta
             // (mesmo princípio do "proíbe-e-exige" do stock_search acima).
             const detailTarget = resolveTargetWithAd();
-            const needDetail = (tradeInAnswerTurn || financialAnswerTurn) ? null : requireVehicleDetailBeforeFinal(frame, observations, detailTarget);
+            // Grounding de atributo valida o ato escolhido pela LLM; texto com
+            // palavras de atributo não pode reclassificar troca/financiamento.
+            const llmChoseVehicleDetail = llmFirst
+              ? lockedU?.primaryIntent === "vehicle_detail" && brainVU()?.trusted === true
+              : !tradeInAnswerTurn && !financialAnswerTurn;
+            const needDetail = llmChoseVehicleDetail ? requireVehicleDetailBeforeFinal(frame, observations, detailTarget) : null;
             // P0-2 (exceção sistêmica TIPADA): necessidade de grounding do engine AUTORIZA vehicle_details do key selecionado
             // (separada da intenção da LLM). Registra o key p/ o gate de tool liberar a consulta de aterramento.
             if (needDetail) { const detailKey = detailTarget.kind === "resolved" ? detailTarget.vehicleKey : frame.workingMemory.selectedVehicle?.vehicleKey; if (detailKey) systemDetailKeys.add(detailKey); }
@@ -2283,7 +2291,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && !tradeInAnswerTurn && !financialAnswerTurn && !sensitiveAnswerTurn && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2302,14 +2310,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // ⭐F2.43: inclui a perna de "MAIS OPÇÕES" — a busca executada pelo executor determinístico de mais-opções
             // também precisa do feedback de LISTAGEM (sem ele, o draft sem offer_list caía no fingerprint -> recovery_offer,
             // o engine listando no lugar da LLM). Ato conversacional declarado continua vencendo (repairTurn tem precedência).
-            const listTurn = llmFirst && (contextualSearchTurn || brainSearchAct() || (frame.signals.mentionsMoreOptions === true && !conversationalActDeclared())) && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
-            // ⭐F2.43 (audit Codex): moneyDeny SÓ quando a VIOLAÇÃO é monetária de fato ("valor monetário livre" /
-            // "preço não-aterrado" / erro de money_ref) — o regex antigo casava a INSTRUÇÃO padrão "via vehicle_ref/
-            // money_ref" presente em TODO feedback de validação e rotulava qualquer deny como monetário (hint errado).
-            const moneyDeny = /valor monet[aá]rio livre|pre[çc]o n[aã]o.aterrado|money_ref:/i.test(authored.feedback);
+            // Uma stock_search observada com itens já é fato de grounding. A
+            // validação só exige que a LLM não esconda esse fato; não decide o
+            // assunto nem o CTA.
+            const listTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
       const conductTurn = llmFirst && (lockedU?.primaryIntent === "financing" || lockedU?.primaryIntent === "trade_in" || sensitiveAnswerTurn);
-            const openingGuidanceTurn = llmFirst && isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget || specificAdEntry);
             const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
             // ⭐MISSÃO FINAL: o backstop determinístico (fala LITERAL do lead pedindo humano) também mantém o retry NO ATO de
             //   atendimento humano — evita que um deny do handoff caia em descoberta quando o entendimento veio fraco.
@@ -2324,11 +2330,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             if (sensitiveAnswerTurn) {
               effFeedback = `ATO ATUAL = sensitive_data. O cliente acabou de fornecer um dado sensivel validado e armazenado por referencia NESTE bloco. Motivo da rejeicao anterior: ${authored.feedback} Reemita understanding com primaryIntent="sensitive_data", zero capabilities e evidence copiada do bloco atual. Confirme o recebimento SEM repetir valor/token/ref; depois conduza com no maximo UMA pergunta util. Nao use tool comercial, nao volte a perguntar o mesmo dado e nao herde visit/financing da memoria como ato atual.`;
-              keepRetrying = true;
-            } else if (disengagedActionable) {
-              // A despedida vence qualquer objetivo financeiro/de troca ainda pendente. Preserva o deny real e dá um
-              // único norte sem escrever a resposta: a LLM encerra, sem pergunta e sem reabrir o funil.
-              effFeedback = `DESPEDIDA ISOLADA. Motivo da rejeição anterior: ${authored.feedback} Reescreva em UMA parte text curta e cordial, SEM pergunta, SEM tool e SEM continuar nome/troca/entrada/parcela/visita. O cliente não fez pedido novo neste bloco.`;
               keepRetrying = true;
             } else if (corruptionDeny) {
               // Encoding corruption is transient; retry with the same intent and
@@ -2350,7 +2351,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               effFeedback = `ATO ATUAL = vehicle_detail. Você JÁ tem os detalhes disponíveis deste carro nas observações. NÃO chame vehicle_details de novo e NÃO abra stock_search. Responda diretamente ao que o cliente perguntou: use apenas os atributos que vieram no fato; se o item específico (opcionais, banco, acessório) não veio, diga com transparência que ele não está confirmado no estoque agora e ofereça UMA ação natural (por exemplo, verificar com a equipe ou enviar fotos). Motivo exato: ${authored.feedback}`;
               keepRetrying = true;
             } else if (repairTurn) {
-              effFeedback = "Turno de CONTESTAÇÃO/correção (conversation_repair): o cliente questionou algo que VOCÊ disse. Responda com UMA parte text simples: reconheça com naturalidade e humildade ('você tem razão...'), corrija a informação e conduza com UMA pergunta curta sobre os carros JÁ mostrados (fotos/detalhes/condições). NÃO use vehicle_offer_list (a lista já foi mostrada — re-listar é robótico), NÃO escreva R$/km, NÃO chame tools.";
+              effFeedback = `Mantenha o ato que voce declarou (conversation_repair) e corrija somente a violacao: ${authored.feedback} Use os fatos atuais e o prompt do portal para decidir como reconhecer a correcao e conduzir a conversa. Nao use tool sem necessidade e use no maximo UMA pergunta.`;
               keepRetrying = true;
             } else if (listTurn) {
               // ⭐Missão P0 (exige-e-proíbe, teto de preço): o feedback de LISTAGEM só entrega keys que a POL-STOCK-003
@@ -2363,24 +2364,16 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
                 if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
               }
               if (listKeys.length > 0) {
-                effFeedback = `Turno de LISTAGEM: devolva um draft com EXATAMENTE 3 partes — [{"type":"text","content":"Encontrei estas opções:"},{"type":"vehicle_offer_list","vehicleKeys":${JSON.stringify(listKeys)}},{"type":"text","content":"Quer ver as fotos de algum deles?"}]. Use ESSES vehicleKeys. NUNCA escreva nomes de carro, "R$", preços ou km em "text" (o sistema formata a lista pela vehicle_offer_list). NÃO chame stock_search de novo.`;
+                effFeedback = `LISTAGEM factual: a stock_search já retornou itens aterrados. Inclua no draft uma vehicle_offer_list usando somente estas vehicleKeys: ${JSON.stringify(listKeys)}. A LLM continua autora do texto de apresentação e do próximo passo; não escreva nomes, preços, km ou outros atributos de estoque em text e não chame stock_search novamente.`;
               } else {
-                effFeedback = "A busca encontrou itens, mas TODOS acima do teto de preço que o cliente informou. Responda com UMA parte text HONESTA: diga que nessa faixa não encontrou opções agora e CONDUZA com UMA pergunta curta (ele topa ampliar um pouco a faixa, ver outro tipo/modelo, ou prefere que um consultor ajude?). NÃO use vehicle_offer_list, NÃO escreva R$/km, NÃO chame tools.";
+                effFeedback = `A stock_search retornou itens, mas eles não atendem ao teto de preço informado pelo lead. Responda com honestidade usando apenas os fatos disponíveis; a LLM escolhe a formulação e o próximo passo conforme o portal. Não use vehicle_offer_list desses itens, não invente valores e não chame tools novamente.`;
               }
-              keepRetrying = true;
-            } else if (openingGuidanceTurn) {
-              // A abertura continua pertencendo a LLM, mas nao pode esconder
-              // um resultado de estoque que a propria tool acabou de trazer.
-              // Quando ha itens, o ramo de LISTAGEM acima fornece as chaves
-              // aterradas e o formato seguro; sem itens, esta orientacao geral
-              // preserva o ato de abertura. Assim o engine nao exige uma lista
-              // e simultaneamente impede a LLM de saber quais keys pode usar.
-              effFeedback = `Mantenha o ATO ATUAL (${lockedU?.primaryIntent ?? "abertura"}) e corrija somente a violacao: ${authored.feedback} Nao volte para descoberta de outro assunto, nao use tool comercial e responda com no maximo UMA pergunta.`;
               keepRetrying = true;
             } else if (conductTurn) {
               // CONDUÇÃO (pagamento / avaliação de troca): o ÚNICO desfecho válido é ACOLHER + conduzir com UMA pergunta de
               // avanço. QUALQUER deny aqui (valor em texto livre, atributo de carro sem aterrar, ou volta à descoberta) recebe
-              // o MESMO norte e retry bounded — a LLM redige, o engine só orienta (LLM-first). Sem restringir a moneyDeny:
+              // o mesmo feedback de validação e retry bounded — a LLM redige,
+              // o engine só valida e devolve a falha (LLM-first).
               // quando o deny NÃO é exatamente monetário, antes caía direto no break->recovery_ask_need (technical_fallback).
               // ⭐Audit Codex (F2.43 T9/T10): o valor que o CLIENTE informou é ECOÁVEL (aterrado por proveniência) —
               // o feedback NUNCA manda "remover todo valor"; só valores NOVOS/calculados (saldo, total, taxa,
@@ -2388,29 +2381,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               // malformado — rejeição integral do decode), a orientação CONVERGE: UMA parte text simples com o valor
               // do LEAD escrito no texto — NUNCA re-empurra a LLM para o money_ref que ela acabou de errar (era o
               // loop do T9: money_ref malformado -> deny genérico -> money_ref malformado de novo -> fallback).
-              const moneyHint = moneyDeny ? " Você escreveu um valor que o cliente NÃO informou (ex.: saldo/total/simulação calculada) — REMOVA apenas ESSE valor calculado; os valores que o CLIENTE disse (entrada/parcela/faixa) você PODE repetir ao acolher." : "";
-              const formatHint = /parts estruturadas/.test(authored.feedback) ? " Seu 'draft' veio ausente/malformado — devolva draft.parts com UMA part {\"type\":\"text\",\"content\":\"...\"} SIMPLES; o valor que o CLIENTE informou pode ir ESCRITO no texto (ex.: 'R$ 8.000 de entrada anotado!'); NÃO use money_ref aqui." : "";
-              const knownFlow = [
-                ctx.state.slots.possuiTroca.status === "known" ? "troca" : null,
-                ctx.state.slots.entrada.status === "known" ? "entrada" : null,
-                ctx.state.slots.parcelaDesejada.status === "known" ? "parcela" : null,
-                ctx.state.slots.nome.status === "known" ? "nome" : null,
-              ].filter((x): x is string => x != null);
-              const missingFlow = [
-                ctx.state.slots.possuiTroca.status !== "known" ? "troca" : null,
-                ctx.state.slots.entrada.status !== "known" ? "entrada" : null,
-                ctx.state.slots.parcelaDesejada.status !== "known" ? "parcela" : null,
-                ctx.state.slots.nome.status !== "known" ? "nome" : null,
-              ].filter((x): x is string => x != null);
-              // O estado apenas oferece o próximo dado faltante mais próximo; a LLM continua
-              // autora do texto, tom e condução. Ser explícito aqui evita que modelos menores
-              // interpretem a lista de lacunas como convite para perguntar troca E parcela na
-              // mesma frase, produzindo o loop de negações que derrubava a conversa.
-              const preferredNext = missingFlow[0] ?? null;
-              const nextInstruction = preferredNext == null
-                ? "Não há dado financeiro obrigatório pendente: acolha e avance naturalmente, sem criar uma nova coleta."
-                : `Nesta reescrita, pergunte SOMENTE sobre ${preferredNext}; não mencione nem ofereça pergunta sobre os outros dados faltantes.`;
-              effFeedback = `Turno de CONDUÇÃO (pagamento/troca). Sua resposta foi rejeitada por este motivo EXATO: ${authored.feedback}${moneyHint}${formatHint} Dados já conhecidos (NÃO pergunte novamente): ${knownFlow.join(", ") || "nenhum"}. Dados ainda faltantes: ${missingFlow.join(", ") || "nenhum"}. ${nextInstruction} NÃO afirme valores calculados e NÃO volte para descoberta. Reescreva em UMA parte text: acolha o que o lead disse e faça no máximo UMA pergunta sobre um dado realmente faltante.`;
+              // The engine does not choose a missing funnel slot. The LLM
+              // receives the validation failure and decides the next natural
+              // move from the portal prompt and current facts.
+              effFeedback = `Mantenha o ato que voce declarou (${lockedU?.primaryIntent ?? "ato atual"}) e corrija somente a violacao: ${authored.feedback} Use os fatos atuais e o prompt do portal para decidir a resposta e o proximo passo; nao invente dados, nao reabra outro assunto e use no maximo UMA pergunta.`;
               keepRetrying = true;
             } else if (emptyStockTurn) {
               effFeedback = "A busca deste turno voltou VAZIA (com os carros já mostrados excluídos, não há NOVAS opções nesse filtro). Responda com UMA parte text HONESTA: diga que no momento não tem outras opções além das que já mostrou e CONDUZA com UMA pergunta curta (fotos/detalhes/condições de algum dos mostrados, ou se ele quer ampliar o filtro — outro tipo/faixa). NÃO use vehicle_offer_list, NÃO re-liste os mesmos, NÃO escreva R$/km.";
@@ -2796,7 +2770,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               observations.push({ tool: "response", ok: false, error: { code: "FINAL_TOOL_FORBIDDEN", message: "As tools deste turno ja foram resolvidas. Nao consulte novamente; escreva agora a resposta final com os fatos disponiveis." } });
               continue;
             }
-            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: disengagedActionable, financialAnswerSlot: financialAnswerTurn ? (financialAnswerSlot as "formaPagamento" | "entrada" | "parcelaDesejada" | null) : null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = finalStep.decision;
               authoredDecision = authored.decision;
@@ -3193,7 +3167,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // principalmente, um "nao" que responde a uma pergunta anterior nao
           // podem encerrar a conversa por inferencia. Esses casos continuam
           // pertencendo a LLM e ao ciclo normal de follow-up.
-          disengaged: disengagedActionable && leadEngagement === "not_interested",
+          // Silent operational handoff is limited to the dedicated explicit
+          // opt-out contract. A generic engagement detector must not close or
+          // transfer a conversation merely because it sounds negative.
+          disengaged: detectExplicitOptOut(leadMessage),
           explicitHumanRequest,
           stage: contextState.stage,
         })
@@ -3234,20 +3211,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         topic, status: (obs.ok ? "ok" : (obs.error.code === "NOT_CONFIGURED" ? "not_configured" : "failure")) as "ok" | "not_configured" | "failure",
       }));
       const finalVU = authoritativeVU();   // T6: semântica autoritativa do turno (do cérebro OU fallback validado)
-      // Missão P0 (audit Codex): em TURNO DE RESPOSTA DE TROCA o entendimento é RESPOSTA DE TROCA — reconcilia primaryIntent
-      // para "trade_in" (mesmo que o cérebro tenha rotulado search_stock). O understanding reflete a conversa (briefing/CRM),
-      // não a intenção crua do LLM. Guardrail não basta — o entendimento precisa estar certo. Só afeta a semântica, não o efeito.
-      // Missão P0 (Financial Question Context): resposta financeira (parcela/entrada/pagamento) reconcilia primaryIntent
-      // para "financing" — o entendimento reflete que é qualificação de financiamento, NÃO busca de estoque.
-      const reconciledUnderstanding: TurnUnderstanding = sensitiveAnswerTurn
-        ? { ...finalVU.understanding, primaryIntent: "sensitive_data" }
-        : visitAnswerTurn
-        ? { ...finalVU.understanding, primaryIntent: "visit" }
-        : tradeInAnswerTurn
-        ? { ...finalVU.understanding, primaryIntent: "trade_in" }
-        : financialAnswerTurn
-        ? { ...finalVU.understanding, primaryIntent: "financing" }
-        : finalVU.understanding;
+      // The persisted semantic contract belongs to the validated LLM output.
+      // Slot/fact extractors may enrich state, but cannot rewrite its intent.
+      const authoritativeUnderstanding: TurnUnderstanding = finalVU.understanding;
       // T6: se houve send_media e o executor não registrou a fonte do alvo (foto AUTORADA pelo cérebro), registra aqui.
       if (targetResolutionSource == null && proposedEffects.some((e) => e.kind === "send_media")) {
         const tr = resolveTargetWithAd(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
@@ -3269,10 +3235,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           advisoriesProvided: 0,
           hardDeniesApplied: policyFeedbackLog.length,
           hardDenyCategory: policyFeedbackLog[0] ? classifyDenyCategory(policyFeedbackLog[0]) : null,
-          acceptedPrimaryIntent: reconciledUnderstanding.primaryIntent,
+          acceptedPrimaryIntent: authoritativeUnderstanding.primaryIntent,
           currentTurnOverridesMemory: null,
           // T6: semântica do turno (fonte única) + resolução de alvo.
-          primaryIntent: reconciledUnderstanding.primaryIntent, subject: finalVU.understanding.subject,
+          primaryIntent: authoritativeUnderstanding.primaryIntent, subject: finalVU.understanding.subject,
           subjectSource: finalVU.understanding.subjectSource, understandingTrusted: finalVU.trusted,
           understandingFromBrain: lockedU != null,
           evidence: finalVU.understanding.evidence.slice(0, 4).map((e) => ({ capability: e.capability ?? null, quote: e.quote.slice(0, 48) })),
@@ -3365,7 +3331,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         status: "committed", turnId, claimedEventIds, decision, composedText: outComposed.text, terminalSafe,
         facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, toolAuthorities, brainSteps, responseSource,
         degraded, institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
-        understanding: reconciledUnderstanding, understandingFromBrain: lockedU != null, targetResolutionSource,
+        understanding: authoritativeUnderstanding, understandingFromBrain: lockedU != null, targetResolutionSource,
         resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
         previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null, recoveryReason,
       };

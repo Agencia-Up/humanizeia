@@ -350,16 +350,16 @@ async function main(): Promise<void> {
     check("[IN-5] cérebro em loop infinito de busca -> turno COMMITA (cap sai do loop) + stockObs<=1", t1.committed && t1.stockObs <= 1, `committed=${t1.committed} stockObs=${t1.stockObs}`);
     check("[IN-5b] a busca real executou só 1x (dedup, sem 7x)", t1.stockCalls === 1, `calls=${t1.stockCalls}`);
   }
-  // IN-6) primaryIntent RECONCILIADO: em resposta de troca, mesmo o cérebro rotulando search_stock, o understanding do turno
-  //       é trade_in (não basta bloquear o dano; a compreensão precisa refletir a conversa). + 0 stock_search + troca correta.
+  // IN-6) a engine não reconcilia o assunto por heurística: depois do feedback,
+  //       a própria LLM reemite trade_in. + 0 stock_search + troca correta.
   {
     const c = conv();
     await c.t("Boa noite", { responder: askTrade });   // agente pergunta troca
     const tryStockThenFin: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Anotado, Renegade 2019 na troca! Vamos às condições?")], "reply", searchSuvU)   // cérebro INSISTE em search_stock (o bug do smoke)
+      ? finU([txt("Anotado, Renegade 2019 na troca! Vamos às condições?")], "reply", U("trade_in"))   // a LLM corrige o próprio entendimento
       : qU({ tool: "stock_search", input: { modelo: "Renegade" } }, searchSuvU);
     const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tryStockThenFin });
-    check("[IN-6] primaryIntent reconciliado = trade_in (NÃO search_stock, mesmo o cérebro rotulando assim)", t2.primaryIntent === "trade_in", `primaryIntent=${t2.primaryIntent}`);
+    check("[IN-6] primaryIntent vem da LLM reautora = trade_in (NÃO da engine)", t2.primaryIntent === "trade_in", `primaryIntent=${t2.primaryIntent}`);
     check("[IN-6b] 0 stock_search executado E 0 stock_search observado (busca na troca é bloqueada)", t2.stockCalls === 0 && t2.stockObs === 0, `calls=${t2.stockCalls} obs=${t2.stockObs}`);
     check("[IN-6c] veiculoTroca=Renegade/2019/86000 capturado", has(String(t2.slots?.veiculoTroca.value?.modelo ?? ""), "Renegade") && t2.slots?.veiculoTroca.value?.ano === 2019 && t2.slots?.veiculoTroca.value?.km === 86000, `veic=${JSON.stringify(t2.slots?.veiculoTroca.value)}`);
     check("[IN-6d] interesse de compra NÃO contaminado com renegade", !has(String(t2.slots?.interesse.value ?? ""), "renegade"), `interesse=${JSON.stringify(t2.slots?.interesse.value)}`);
@@ -372,7 +372,7 @@ async function main(): Promise<void> {
     const c = conv();
     await c.t("Boa noite", { responder: () => finU([txt("Para as condições, você tem valor de entrada ou quer financiar o total?")], "reply", U("financing")) });
     const tryStock: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Anotado, Renegade 2019 na troca! Vamos às condições?")], "reply", U("other"))
+      ? finU([txt("Anotado, Renegade 2019 na troca! Vamos às condições?")], "reply", U("trade_in"))
       : qU({ tool: "stock_search", input: { modelo: "Renegade" } }, searchSuvU);
     const t2 = await c.t("Tenho um Renegade 2019 86km", { responder: tryStock });
     check("[IN-7] posse com km SEM pergunta de troca -> veiculoTroca+possuiTroca capturados", has(String(t2.slots?.veiculoTroca.value?.modelo ?? ""), "Renegade") && t2.slots?.veiculoTroca.value?.km === 86000 && t2.slots?.possuiTroca.value === true, `veic=${JSON.stringify(t2.slots?.veiculoTroca.value)} possui=${JSON.stringify(t2.slots?.possuiTroca.value)}`);
