@@ -119,14 +119,29 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
   });
 
   useEffect(() => {
+    // SEM authUserId ainda != "nao e vendedor".
+    // Este hook recebe `user?.id` do useAuth, que nos primeiros renders ainda nao
+    // resolveu — entao aqui o certo e dizer "NAO SEI AINDA" (loading), nao
+    // "ja sei: nao e vendedor". Antes isto marcava loading:false + isSeller:false,
+    // e todo consumidor (card de plano, integracoes, menu...) lia
+    // "nao esta carregando e nao e vendedor" => RENDERIZAVA. Quando o usuario
+    // chegava e virava vendedor, sumia: era o "aparece e some" que o dono via em
+    // TODAS as telas. Manter loading=true enquanto nao ha id faz o hook FALHAR
+    // FECHADO (na duvida, nao mostra dado de conta master).
     if (!authUserId) {
-      setResult({ isSeller: false, seller: null, masterUserId: null, memberIds: [], visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
+      setResult(prev => (prev.loading ? prev : {
+        isSeller: false, seller: null, masterUserId: null, memberIds: [],
+        visibleFeatures: DEFAULT_SELLER_FEATURES, loading: true,
+      }));
       return;
     }
 
     let cancelled = false;
 
     async function check() {
+      // Recheck (troca de usuario): volta a carregar antes de consultar, senao
+      // a resposta ANTERIOR fica valendo durante a nova consulta.
+      setResult(prev => (prev.loading ? prev : { ...prev, loading: true }));
       // 1. Primeiro verifica profiles.role (confiável, sem RLS issues)
       const { data: profile } = await supabase
         .from('profiles')
