@@ -112,6 +112,13 @@ export default function AgentHub() {
   const renewalDays = daysUntil(subscription?.renewal_date);
   const safeTokensAvailable = Math.max(0, tokensAvailable || 0);
   const saldo = useSaldoOpenAI(!sellerLoading && !isSeller && !!subscription);
+  // Plano/consumo/renovacao sao dados de COBRANCA da conta master: quem esta
+  // conectado nela (vendedor) nao ve. Mesmo criterio ja usado no TokenWidget,
+  // TokenWidgetCompact, TokenAlertBanner e MeuPlano — este card era o unico que
+  // faltava, e vazava o nome do plano e os dias de renovacao pro vendedor (o
+  // saldo ja nao era buscado, mas o resto aparecia). sellerLoading no gate evita
+  // o card "piscar" antes de sumir.
+  const showPlanCard = !sellerLoading && !isSeller;
   const hasSaldo = !!saldo?.tem_saldo;
   const conversasRestantes = hasSaldo ? Math.max(0, Number(saldo.conversas_restantes ?? 0)) : 0;
   const conversasTotal = hasSaldo ? Math.max(0, Number(saldo.conversas_total ?? 0)) : 0;
@@ -176,7 +183,9 @@ export default function AgentHub() {
   return (
     <MainLayout>
       <section className="logos-home mx-auto flex w-full max-w-[1360px] flex-col gap-10">
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px] xl:items-start">
+        {/* Sem o card do plano (vendedor), o grid vira coluna unica — senao sobrava
+            um buraco de 430px na direita. */}
+        <div className={`grid gap-6 xl:items-start ${showPlanCard ? 'xl:grid-cols-[minmax(0,1fr)_430px]' : ''}`}>
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -190,6 +199,7 @@ export default function AgentHub() {
             </p>
           </motion.div>
 
+          {showPlanCard && (
           <motion.aside
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -220,6 +230,7 @@ export default function AgentHub() {
               </div>
             </div>
           </motion.aside>
+          )}
         </div>
 
         <section className="space-y-5">
