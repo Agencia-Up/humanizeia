@@ -147,6 +147,7 @@ async function main(): Promise<void> {
       signals: {
         ...frame("mostra o azul").signals,
         currentTurnIntent: "search",
+        adVehicle: "Toyota Corolla 2016",
         firstContactNoCommercialTarget: true,
         specificAdEntry: true,
         disengagementOnly: true,
@@ -164,7 +165,7 @@ async function main(): Promise<void> {
     check("[5c-n8n] historico viaja como papeis reais e bloco atual e o ultimo user", contextBody.messages.some((m) => m.role === "assistant" && m.content.includes("Qual carro"))
       && contextBody.messages.some((m) => m.role === "user" && m.content === "Quero ver os carros")
       && currentUser?.role === "user" && currentUser.content === "mostra o azul");
-    const payload = JSON.parse(contextMessage) as { runtimeContext?: { currentTurn?: { openingContext?: Record<string, unknown> }; memoryFacts?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown>; conversation?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
+    const payload = JSON.parse(contextMessage) as { runtimeContext?: { currentTurn?: { openingContext?: Record<string, unknown>; sourceContext?: Record<string, unknown> }; memoryFacts?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown>; conversation?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
     check("[5e-envelope] sem instrucao top-level concorrente", payload.instruction === undefined);
     check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução", payload.leadBlock === undefined
       && payload.runtimeContext?.memoryFacts?.funnel?.suggestedObjective === undefined
@@ -181,7 +182,10 @@ async function main(): Promise<void> {
     check("[5e-opening] contexto factual do anuncio chega sem diagnostico comercial derivado",
       payload.runtimeContext?.currentTurn?.openingContext?.specificAdEntry === true
       && payload.runtimeContext?.currentTurn?.openingContext?.firstAssistantTurn === false
-      && payload.runtimeContext?.currentTurn?.openingContext?.firstContactNoCommercialTarget === undefined);
+      && payload.runtimeContext?.currentTurn?.openingContext?.firstContactNoCommercialTarget === undefined
+      && payload.runtimeContext?.currentTurn?.sourceContext?.kind === "paid_ad"
+      && payload.runtimeContext?.currentTurn?.sourceContext?.advertisedVehicle === "Toyota Corolla 2016"
+      && payload.runtimeContext?.operational?.adVehicle === undefined);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {

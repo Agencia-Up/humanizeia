@@ -33,7 +33,12 @@ export function resolveAdVehicleFromMarket(text: string): { marca: string; model
 // "Quer saber mais sobre a Ranger XLT TD 3.2 2016?"), depois title/body.
 export function adText(ad: AdContext | null | undefined): string {
   if (!ad) return "";
-  return [ad.greeting, ad.title, ad.body].map((s) => (typeof s === "string" ? s.trim() : "")).filter(Boolean).join(". ");
+  // `summary` remains explanatory context only. It must never become a second
+  // path for resolving a vehicle after the visual extractor rejected one.
+  return [ad.vehicleQuery, ad.greeting, ad.title, ad.body]
+    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .filter(Boolean)
+    .join(". ");
 }
 
 // Extrai o VEÍCULO do anúncio como CommercialConstraints ATERRADAS no catálogo (marca/modelo/tipo/preço/câmbio/popular).
@@ -176,9 +181,31 @@ export function sanitizeAdContext(raw: unknown, capturedAtTurn: number): AdConte
   const title = str(r.title, 400);
   const body = str(r.body, 1000);
   const greeting = str(r.greeting, 400);
+  const vehicleQuery = str(r.vehicleQuery, 300);
+  const vehicleType = str(r.vehicleType, 64);
+  const summary = str(r.summary, 800);
+  const confidenceRaw = Number(r.confidence);
+  const confidence = Number.isFinite(confidenceRaw) ? Math.max(0, Math.min(1, confidenceRaw)) : 0;
+  const semanticSource = r.semanticSource === "text" || r.semanticSource === "image" || r.semanticSource === "mixed"
+    ? r.semanticSource
+    : null;
   const imageUrls = Array.isArray(r.imageUrls)
     ? r.imageUrls.filter((u): u is string => typeof u === "string" && u.length > 0).slice(0, 3).map((u) => u.slice(0, 512))
     : [];
-  if (!adId && !title && !body && !greeting && !sourceUrl) return null;
-  return { adId, source, sourceUrl, title, body, greeting, imageUrls, capturedAtTurn };
+  if (!adId && !title && !body && !greeting && !sourceUrl && !vehicleQuery) return null;
+  return {
+    adId,
+    source,
+    sourceUrl,
+    title,
+    body,
+    greeting,
+    imageUrls,
+    vehicleQuery,
+    vehicleType,
+    summary,
+    confidence,
+    semanticSource,
+    capturedAtTurn,
+  };
 }

@@ -43,6 +43,25 @@ const PHOTOS: Record<string, string[]> = { "rm:cmp19": ["c1", "c2", "c3", "c4", 
 const adCompass19: AdContext = { adId: "1", source: "FB_Ads", sourceUrl: null, title: "Icom", body: "Veículos revisados", greeting: "Olá! Quer saber mais sobre o Jeep Compass 2019?", imageUrls: [], capturedAtTurn: 0 };
 const adCompass15: AdContext = { adId: "2", source: "FB_Ads", sourceUrl: null, title: "Icom", body: "", greeting: "Olá! Quer saber mais sobre o Jeep Compass 2015?", imageUrls: [], capturedAtTurn: 0 };
 const adGeneric: AdContext = { adId: "3", source: "instagram", sourceUrl: null, title: "Icom", body: "", greeting: "Oi! Como podemos ajudar? Venha conhecer nosso estoque!", imageUrls: [], capturedAtTurn: 0 };
+const adGenericWithVisualCompass: AdContext = {
+  ...adGeneric,
+  adId: "4",
+  imageUrls: ["https://example.test/ad-compass.jpg"],
+  vehicleQuery: "Jeep Compass 2019",
+  vehicleType: "suv",
+  summary: "A arte do anúncio mostra um Jeep Compass 2019.",
+  confidence: 0.92,
+  semanticSource: "image",
+};
+const adGenericWithRejectedVisualSummary: AdContext = {
+  ...adGeneric,
+  adId: "5",
+  imageUrls: ["https://example.test/ad-ambiguous.jpg"],
+  vehicleQuery: null,
+  summary: "Rejected visual summary mentions Jeep Renegade without identifying one unique vehicle.",
+  confidence: 0.3,
+  semanticSource: null,
+};
 
 const executed: QueryCall[] = [];
 const runQuery = async (call: QueryCall): Promise<QueryResult> => {
@@ -236,6 +255,10 @@ async function main(): Promise<void> {
   check("[U-2] resolveAdFocusedVehicle(genérico sem modelo) -> null", resolveAdFocusedVehicle(adGeneric, extractor) === null);
   check("[U-3] asksAdAlternatives('tem outro Compass?') -> true; ('esse ainda tem?') -> false", asksAdAlternatives("tem outro Compass?") === true && asksAdAlternatives("esse ainda tem?") === false);
   check("[U-4] asksAdAlternatives('tem mais barato?') -> true", asksAdAlternatives("tem mais barato?") === true);
+  check("[U-5] copy genérica + leitura visual resolve o veículo específico", (() => {
+    const f = resolveAdFocusedVehicle(adGenericWithVisualCompass, extractor);
+    return has(String(f?.modelo ?? ""), "compass") && f?.ano === 2019;
+  })());
 
   // ── AD-1: anúncio Compass 2019 + "Olá" -> busca modelo+ANO 2019, lista SÓ o 2019 (não 2017) ──
   {
@@ -245,6 +268,20 @@ async function main(): Promise<void> {
     check("[AD-1b] a resposta fala do Compass 2019 e NÃO lista o 2017", has(t1.outbox, "2019") && !has(t1.outbox, "2017"), `outbox="${t1.outbox}"`);
     check("[AD-1c] não pede telefone/nome", !has(t1.outbox, "telefone") && !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
     check("[AD-1d] polimento: 1 resultado do foco -> texto SINGULAR nomeando 'do anúncio' (não 'estas opções')", has(t1.outbox, "do anuncio") && !has(t1.outbox, "estas opcoes"), `outbox="${t1.outbox}"`);
+  }
+
+  check("[U-6] rejected visual summary cannot select a vehicle",
+    resolveAdFocusedVehicle(adGenericWithRejectedVisualSummary, extractor) === null);
+
+  // Copy genérica não apaga o carro que existe apenas na arte. A leitura
+  // semântica alimenta a mesma LLM e todo o fluxo específico já existente.
+  {
+    const c = conv();
+    const t1 = await c.t("Olá! Posso ter mais informações sobre isso?", { ad: adGenericWithVisualCompass });
+    check("[AD-V1] anúncio só-imagem abre no veículo reconhecido", has(String(t1.stockInput?.modelo ?? ""), "compass") && (t1.stockInput?.anos as number[] | undefined)?.includes(2019) === true, `input=${JSON.stringify(t1.stockInput)}`);
+    check("[AD-V2] resposta trata o veículo da arte, sem perguntar qual carro", has(t1.outbox, "Compass") && !has(t1.outbox, "qual carro"), `outbox="${t1.outbox}"`);
+    const t2 = await c.t("Na verdade quero um Onix");
+    check("[AD-V3] mudança explícita do lead vence normalmente o anúncio visual", has(String(t2.stockInput?.modelo ?? ""), "onix") && !has(String(t2.stockInput?.modelo ?? ""), "compass"), `input=${JSON.stringify(t2.stockInput)}`);
   }
 
   // P0: o feedback factual de listagem deve vencer a orientacao generica de

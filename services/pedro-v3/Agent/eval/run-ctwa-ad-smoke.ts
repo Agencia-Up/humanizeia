@@ -73,10 +73,15 @@ const adCompass: AdContext = {
   adId: "120253981641730460",
   source: "FB_Ads",
   sourceUrl: "https://fb.me/c9tWuhhGL",
-  title: "Fale com nossos consultores",
-  body: "Veiculos revisados",
-  greeting: "Ola! Quer saber mais sobre o Jeep Compass 2019?",
+  title: "Anuncio do Facebook",
+  body: "Fale com nossos consultores",
+  greeting: "Ola! Posso ter mais informacoes sobre isso?",
   imageUrls: ["https://scontent.fbcdn.net/full.jpg", "https://scontent.fbcdn.net/s540.jpg"],
+  vehicleQuery: "Jeep Compass 2019",
+  vehicleType: "suv",
+  summary: "A arte do anuncio identifica um Jeep Compass 2019.",
+  confidence: 0.98,
+  semanticSource: "image",
   capturedAtTurn: 0,
 };
 
@@ -235,6 +240,30 @@ const scenarios: readonly Scenario[] = [
     },
   },
   {
+    id: "ad-visual-entry",
+    title: "Anuncio identificado pela arte: apresenta, consulta o carro e aceita mudanca explicita",
+    ad: adCompass,
+    maxCalls: 14,
+    steps: [["Ola! Tenho interesse e queria mais informacoes, por favor."], ["Na verdade prefiro um Onix"]],
+    assert(turns) {
+      const v = baseViolations(turns);
+      const t1 = turns[0];
+      if (t1 && (!has(t1.response, "carvalho") || !has(t1.response, "icom"))) v.push("T1: abertura nao se apresentou como Carvalho da Icom Motors");
+      if (t1 && !has(t1.response, "compass")) v.push("T1: abertura nao tratou o Compass identificado na arte");
+      const t1Stock = t1?.toolsExecuted.find((tool) => tool.tool === "stock_search");
+      if (!t1Stock || !has(JSON.stringify(t1Stock.input), "compass") || !/2019/.test(JSON.stringify(t1Stock.input))) {
+        v.push(`T1: nao confirmou o Compass 2019 do anuncio no estoque (input=${JSON.stringify(t1Stock?.input ?? null)})`);
+      }
+      const t2 = turns[1];
+      const t2Stock = t2?.toolsExecuted.find((tool) => tool.tool === "stock_search");
+      if (!t2Stock || !has(JSON.stringify(t2Stock.input), "onix")) v.push("T2: mudanca explicita nao buscou Onix");
+      if (t2 && (!has(t2.response, "onix") || (has(t2.response, "compass") && !has(t2.response, "onix")))) {
+        v.push("T2: anuncio antigo venceu a mudanca explicita para Onix");
+      }
+      return v;
+    },
+  },
+  {
     // Missao P0 (Conversa A): anuncio ESPECIFICO Compass 2019 = FOCO no veiculo exato. T1 fala do 2019 (nao lista 2017);
     // T2 fotos do 2019 (<=5); T3 "tem outro compass?" -> ai sim lista outros; T4 "quero Onix" -> anuncio nao prende.
     id: "ad-exact-focus",
@@ -246,6 +275,7 @@ const scenarios: readonly Scenario[] = [
       const v = baseViolations(turns);
       const t1 = turns[0];
       if (t1 && !has(t1.response, "compass")) v.push("T1: abertura do anuncio especifico nao falou do Compass do anuncio");
+      if (t1 && (!has(t1.response, "carvalho") || !has(t1.response, "icom"))) v.push("T1: abertura nao se apresentou como Carvalho da Icom Motors");
       if (t1 && nameAskRx.test(t1.response)) v.push("T1: abertura pediu o NOME antes de conduzir o veiculo do anuncio");
       const t1Stock = t1?.toolsExecuted.find((x) => x.tool === "stock_search");
       if (t1Stock && !/\banos?\b|"anos"|2019/i.test(JSON.stringify(t1Stock.input))) v.push(`T1: busca do anuncio NAO focou o ano exato (esperado anos=[2019]) input=${JSON.stringify(t1Stock.input)}`);
@@ -416,11 +446,30 @@ async function main(): Promise<void> {
     portalPromptSha256: assembly.promptSha,
     workingMemory: { ...createInitialPersistedWorkingMemory(), funnel: { known: [], declined: [], deferred: [], suggestedObjective: null }, selectedVehicle: null, lastOffer: null },
     recentTranscript: [],
+    conversationContext: {
+      lastAgentMessage: null,
+      pendingAgentQuestion: null,
+      selectedVehicle: null,
+      lastVisibleOffer: null,
+      lastResolvedSlotAnswer: null,
+      conversationSummary: null,
+    },
+    currentTurnFacts: {
+      expectedAnswer: { slot: null, lastAgentQuestion: null },
+      extracted: [],
+      offerReference: null,
+    },
     signals: { mentionsPhoto: false, mentionsStore: false, mentionsMoreOptions: false, mentionsVehicleType: null, isMemoryQuestion: false, relation: "ambiguous" },
   };
-  try { await stack.brain.proposeNextStep(probeFrame, []); } catch { /* transport count is the probe */ }
+  let probeError = "";
+  try {
+    await stack.brain.proposeNextStep(probeFrame, []);
+  } catch (error) {
+    probeError = sanitize(String((error as Error)?.message ?? error)).slice(0, 160);
+  }
   if (stack.brainTransport.okCount === 0) {
-    console.error("BLOQUEIO EXTERNO: sem chave/quota OpenAI (probe 2xx=0). Nao executando smoke CTWA.");
+    const probeStatuses = stack.brainTransport.calls.map((call) => call.status || call.error || "unknown").join(",");
+    console.error(`BLOQUEIO EXTERNO: probe OpenAI sem 2xx (status=${probeStatuses || "sem chamada"}; erro=${probeError || "nenhum"}). Nao executando smoke CTWA.`);
     process.exit(3);
   }
 

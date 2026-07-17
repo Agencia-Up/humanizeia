@@ -131,8 +131,8 @@ export type ActiveSearchConstraints = {
 
 // F2.32 (CTWA/Facebook Ads): CONTEXTO de anúncio Click-to-WhatsApp. É CONTEXTO da conversa, NÃO resposta do lead. Vem
 // sanitizado do externalAdReply do Meta (bridge). Persiste no state; herda em rajada (mensagens seguintes sem referral).
-// O ENGINE resolve o veículo do anúncio a partir do TEXTO (title/body/greeting) aterrado no catálogo — nunca inventa; o
-// turno atual e correções do lead SEMPRE vencem o anúncio. imageUrls guardadas p/ uma futura Layer de visão (não usada ainda).
+// O ENGINE resolve o veículo do anúncio a partir do texto e dos fatos semânticos extraídos da imagem. O resultado visual
+// é somente contexto factual para a LLM; o turno atual e correções do lead SEMPRE vencem o anúncio.
 export type AdContext = {
   adId: string | null;          // externalAdReply.sourceID (ad_id do Meta — sinal determinístico p/ futura Layer 0)
   source: string | null;        // conversionSource (FB_Ads) OU host (facebook/instagram/fb.me)
@@ -140,7 +140,12 @@ export type AdContext = {
   title: string | null;         // externalAdReply.title
   body: string | null;          // externalAdReply.body
   greeting: string | null;      // externalAdReply.greetingMessageBody (saudação — costuma ser genérica)
-  imageUrls: string[];          // [originalImageURL, thumbnailURL] — p/ futura visão (Layer 2)
+  imageUrls: string[];          // [originalImageURL, thumbnailURL]
+  vehicleQuery?: string | null; // leitura semântica da arte, sem autoridade de intent/tool/resposta
+  vehicleType?: string | null;
+  summary?: string | null;
+  confidence?: number;
+  semanticSource?: "text" | "image" | "mixed" | null;
   capturedAtTurn: number;       // turnNumber quando capturado (herança/expiração em rajada)
 };
 

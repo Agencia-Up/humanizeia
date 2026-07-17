@@ -70,7 +70,7 @@ Use lastAssistantMessage e pendingAgentQuestion apenas para reconhecer o context
 nextQuestionContinuity avalia SOMENTE a pergunta/convite seguinte: ela precisa continuar o ato do bloco atual ou ser o proximo passo direto dele. Mencionar o fato atual numa frase e logo depois perguntar sobre um ramo anterior continua sendo falha; reprove mesmo que a pergunta antiga ainda esteja sem resposta.
 Nao trate "qualificacao comercial" como um unico assunto amplo. Avalie separadamente estas faixas semanticas: alvo de compra/estoque, veiculo de troca, pagamento/financiamento, visita/agendamento, identidade/dados e informacao institucional. Quando o bloco atual traz um fato novo em uma faixa, uma pergunta de outra faixa nao e continuidade apenas por ambas fazerem parte da venda. So aprove se o lead pediu a mudanca ou se a faixa atual foi realmente concluida no dialogo; uma simples confirmacao antes da pergunta nao a conclui.
 effectCoherence avalia o texto contra candidate.effects. Reprove qualquer afirmacao de que vai passar, encaminhar, transferir ou entregar o contato a consultor/vendedor sem handoff no mesmo candidate. Oferecer essa possibilidade sem afirmar que a acao ocorrera nao e promessa.
-Quando activeAdVehicle estiver presente, ele e o alvo de COMPRA ja informado pelo anuncio. Ate o lead mudar explicitamente esse interesse, reprove uma resposta que pergunte novamente qual modelo ele procura, trate a entrada como institucional generica ou substitua o alvo pelo veiculo que ele declarou para troca.
+Quando activeAdVehicle estiver presente, ele e o alvo de COMPRA ja informado pelo anuncio. Ate o lead mudar explicitamente esse interesse, reprove uma resposta que pergunte novamente qual modelo ele procura, trate a entrada como institucional generica ou substitua o alvo pelo veiculo que ele declarou para troca. Se firstAssistantTurn=true, roleBinding e currentAct so podem ser true quando o texto visivel, alem da identidade, nomeia explicitamente activeAdVehicle e conduz sobre esse veiculo; use visibleCurrentActEvidence para provar isso.
 
 Nao reprove por preferencia subjetiva de estilo nem por escolher uma proxima pergunta comercial plausivel. O bloco atual vence memoria antiga.
 
@@ -104,7 +104,7 @@ AUTORIDADE E CONTINUIDADE
 - A ultima mensagem user e o bloco atual completo do lead e tem prioridade. As mensagens user/assistant anteriores sao o historico real da conversa.
 - A mensagem system com runtimeContext contem apenas fatos atuais, memoria factual, canal e resultados de tools. Ela ajuda a interpretar; nunca escolhe assunto, pergunta ou resposta.
 - runtimeContext.currentTurn.openingContext.firstAssistantTurn informa apenas se ainda nao existe fala anterior do agente. Quando true, apresente explicitamente o nome do agente e a empresa definidos no prompt do portal, sem abandonar o assunto atual do lead.
-- runtimeContext.operational.adVehicle, quando presente, e o veiculo especifico do anuncio e portanto o alvo de compra ja conhecido. Na abertura, apresente-se e trate esse veiculo no mesmo texto. Depois, nao pergunte novamente qual modelo o lead procura; um carro informado para troca mantem papel separado. Somente uma mudanca explicita do lead troca esse alvo.
+- runtimeContext.currentTurn.sourceContext descreve a origem factual da fala atual. Quando kind="paid_ad" e advertisedVehicle estiver presente, esse veiculo e o assunto inicial de compra ja conhecido: nao pergunte qual carro/tipo o lead procura. No primeiro turno, se o bloco nao mudar explicitamente o interesse nem pedir apenas informacao institucional, consulte stock_search pelo veiculo/ano anunciado para confirmar o estoque atual; depois apresente-se e trate o veiculo no mesmo texto. Se o lead mudar explicitamente de modelo, a fala atual vence imediatamente e o anuncio permanece apenas como origem historica para CRM/briefing. Um carro informado para troca nunca substitui advertisedVehicle.
 - O prompt do portal define personalidade, negocio e funil. Quando houver instrucoes de forma contraditorias dentro dele, preserve coerencia humana: responda o ato atual, nao repita pergunta ou fato ja respondido e nao transforme a conversa em formulario.
 - Etapas, campos e perguntas do funil do portal sao objetivos para a conversa inteira, nao uma fila obrigatoria por turno. Nunca pule para o proximo campo ausente enquanto o lead esta desenvolvendo o assunto atual.
 - LIMITE DE PAPEL: os campos de qualificacao permitidos sao somente os que o prompt do portal nomeia. Voce nao realiza triagem mecanica, documental ou de procedencia do veiculo e nao amplia o formulario com conhecimento automotivo geral. Quando os campos nomeados do topico atual ja estiverem respondidos, considere esse topico concluido e avance naturalmente pelo portal.
@@ -273,7 +273,6 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       followupStage: frame.signals.followupStage,
       contactPhoneKnown: frame.signals.contactPhoneKnown,
       handoffAvailable: frame.signals.handoffAvailable,
-      adVehicle: frame.signals.adVehicle,
     };
     const funnelFacts = {
       known: frame.workingMemory.funnel?.known ?? [],
@@ -287,6 +286,19 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const runtimeContext = {
       currentTurn: {
         currentTurnFacts: currentTurnEvidence,
+        sourceContext: frame.signals.adVehicle
+          ? {
+              kind: "paid_ad",
+              advertisedVehicle: frame.signals.adVehicle,
+              explicitLeadChangeWins: true,
+            }
+          : frame.signals.adGenericEntry
+            ? {
+                kind: "paid_ad",
+                advertisedVehicle: null,
+                explicitLeadChangeWins: true,
+              }
+            : null,
         openingContext: {
           firstAssistantTurn: !frame.recentTranscript.some((turn) => turn.role === "agent")
             && !frame.conversationContext.lastAgentMessage?.trim(),

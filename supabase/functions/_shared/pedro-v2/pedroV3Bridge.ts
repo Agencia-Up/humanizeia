@@ -16,6 +16,13 @@ export type PedroV3AdReferral = {
   body: string | null;
   greeting: string | null;
   imageUrls: string[];
+  // Semantic facts extracted from the ad creative. They are context for the
+  // v3 LLM, never a pre-authored intent, tool call or commercial reply.
+  vehicleQuery: string | null;
+  vehicleType: string | null;
+  summary: string | null;
+  confidence: number;
+  semanticSource: "text" | "image" | "mixed" | null;
 };
 
 export type PedroV3MediaContext = {
@@ -212,21 +219,75 @@ export function extractAdReferral(payload: any): PedroV3AdReferral | null {
     || payload?.contextInfo
     || {};
   const adReply = contextInfo?.externalAdReply || message?.externalAdReply || payload?.externalAdReply || payload?.data?.externalAdReply || null;
-  if (!adReply || typeof adReply !== "object") return null;
+  const conversionSource = firstStr(
+    contextInfo?.conversionSource,
+    contextInfo?.entryPointConversionSource,
+    contextInfo?.sourceType,
+  );
+  const conversionData = firstStr(contextInfo?.conversionData, contextInfo?.ctwaPayload);
+  const hasConversionReferral = conversionData != null
+    || /\b(?:ctwa|ad|ads|facebook|instagram)\b/i.test(conversionSource ?? "");
+  if ((!adReply || typeof adReply !== "object") && !hasConversionReferral) return null;
+  const ad = adReply && typeof adReply === "object" ? adReply : {};
   const clamp = (s: string | null, max: number): string | null => (s ? s.slice(0, max) : null);
-  const greeting = clamp(firstStr(adReply.greetingMessageBody, adReply.greetingMessage, adReply.greeting), 400);
-  const title = clamp(firstStr(adReply.title), 400);
-  const body = clamp(firstStr(adReply.body, adReply.description), 1000);
-  const sourceUrl = clamp(firstStr(adReply.sourceUrl, adReply.source_url, adReply.sourceURL), 512);
-  const adId = clamp(firstStr(adReply.sourceId, adReply.source_id, adReply.ad_id, adReply.sourceID), 128);
-  const source = clamp(firstStr(adReply.sourceApp, contextInfo?.conversionSource, adReply.sourceType), 64);
+  const greeting = clamp(firstStr(ad.greetingMessageBody, ad.greetingMessage, ad.greeting), 400);
+  const title = clamp(firstStr(ad.title), 400);
+  const body = clamp(firstStr(ad.body, ad.description), 1000);
+  const sourceUrl = clamp(firstStr(ad.sourceUrl, ad.source_url, ad.sourceURL), 512);
+  const adId = clamp(firstStr(ad.sourceId, ad.source_id, ad.ad_id, ad.sourceID, contextInfo?.sourceId), 128);
+  const source = clamp(firstStr(ad.sourceApp, conversionSource, ad.sourceType, hasConversionReferral ? "ctwa_ad" : null), 64);
   const imageUrls = [
-    firstStr(adReply.originalImageURL, adReply.originalImageUrl),
-    firstStr(adReply.thumbnailUrl, adReply.thumbnailURL),
-    firstStr(adReply.mediaUrl, adReply.mediaURL),
+    firstStr(ad.originalImageURL, ad.originalImageUrl),
+    firstStr(ad.thumbnailUrl, ad.thumbnailURL),
+    firstStr(ad.mediaUrl, ad.mediaURL),
   ].filter((u): u is string => typeof u === "string").map((u) => u.slice(0, 512)).slice(0, 3);
-  if (!adId && !title && !body && !greeting && !sourceUrl) return null;
-  return { adId, source, sourceUrl, title, body, greeting, imageUrls };
+  if (!adId && !title && !body && !greeting && !sourceUrl && !hasConversionReferral) return null;
+  return {
+    adId,
+    source,
+    sourceUrl,
+    title,
+    body,
+    greeting,
+    imageUrls,
+    vehicleQuery: null,
+    vehicleType: null,
+    summary: null,
+    confidence: 0,
+    semanticSource: null,
+  };
+}
+
+export function enrichAdReferralWithSemanticContext(
+  referral: PedroV3AdReferral,
+  resolved: {
+    readonly vehicle_query?: unknown;
+    readonly vehicle_type?: unknown;
+    readonly summary?: unknown;
+    readonly confidence?: unknown;
+    readonly diagnostics?: unknown;
+  } | null | undefined,
+): PedroV3AdReferral {
+  if (!resolved) return referral;
+  const vehicleQuery = firstStr(resolved.vehicle_query);
+  const vehicleType = firstStr(resolved.vehicle_type);
+  const summary = firstStr(resolved.summary);
+  const confidenceRaw = Number(resolved.confidence);
+  const confidence = Number.isFinite(confidenceRaw) ? Math.max(0, Math.min(1, confidenceRaw)) : 0;
+  const diagnostics = resolved.diagnostics && typeof resolved.diagnostics === "object"
+    ? resolved.diagnostics as Record<string, unknown>
+    : null;
+  const usedImage = diagnostics?.used_image_inference === true;
+  const usedText = diagnostics?.used_explicit_ad_text === true;
+  const semanticSource = usedImage && usedText ? "mixed" : usedImage ? "image" : vehicleQuery ? "text" : null;
+  return {
+    ...referral,
+    vehicleQuery: vehicleQuery?.slice(0, 300) ?? null,
+    vehicleType: vehicleType?.slice(0, 64) ?? null,
+    summary: summary?.slice(0, 800) ?? null,
+    confidence,
+    semanticSource,
+  };
 }
 
 export async function buildPedroV3BridgeTurn(input: {

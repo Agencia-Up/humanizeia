@@ -10,13 +10,14 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
-import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext } from "../_shared/pedro-v2/pedroV3Bridge.ts";
+import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, enrichAdReferralWithSemanticContext, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext, type PedroV3AdReferral } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
 import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
 import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260524.ts";
+import { resolvePedroV3AdSemantic } from "../_shared/pedro-v2/pedroV3AdSemantic.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
 const PEDRO_V2_BUILD = "2026-07-15-private-audience-boundary";
@@ -84,6 +85,26 @@ async function resolvePedroV3InboundMediaContext(input: {
   } catch (error) {
     console.warn("[pedro-v3-media] context_unavailable", String((error as any)?.message || error).slice(0, 160));
     return null;
+  }
+}
+
+async function resolvePedroV3AdSemanticContext(input: {
+  referral: PedroV3AdReferral;
+  userId: string | null | undefined;
+  supabase: any;
+}): Promise<PedroV3AdReferral> {
+  try {
+    const allowPlatform = await isAccountGrandfathered(input.supabase, input.userId);
+    const resolvedKey = await resolveAiKey(input.supabase, input.userId, "openai", { allowPlatformFallback: allowPlatform });
+    const resolved = await resolvePedroV3AdSemantic(input.referral, resolvedKey.key || "", {
+      model: Deno.env.get("PEDRO_V3_AD_VISION_MODEL") || "gpt-4.1-mini",
+    });
+    return enrichAdReferralWithSemanticContext(input.referral, resolved);
+  } catch (error) {
+    // Ad understanding enriches context but never blocks ingestion. The main
+    // LLM still receives the textual referral and can continue transparently.
+    console.warn("[pedro-v3-ad] semantic_context_unavailable", String((error as any)?.message || error).slice(0, 160));
+    return input.referral;
   }
 }
 
@@ -732,37 +753,47 @@ Deno.serve(async (req) => {
         console.error(`[pedro-v3-bridge] v3_exclusive_scope_unsupported reason=${bridgeTurn.reason}; fallback=blocked`);
         return;
       }
-        const bridgeResult = await callPedroV3Bridge({
-          serviceUrl,
-          secret: bridgeSecret,
-          turn: bridgeTurn.turn,
-        });
-        if (bridgeResult.kind === "pre_ingest_failure") {
+      const enrichedTurn = bridgeTurn.turn.adReferral
+        ? {
+            ...bridgeTurn.turn,
+            adReferral: await resolvePedroV3AdSemanticContext({
+              referral: bridgeTurn.turn.adReferral,
+              userId: (agent as any)?.user_id,
+              supabase,
+            }),
+          }
+        : bridgeTurn.turn;
+      const bridgeResult = await callPedroV3Bridge({
+        serviceUrl,
+        secret: bridgeSecret,
+        turn: enrichedTurn,
+      });
+      if (bridgeResult.kind === "pre_ingest_failure") {
           // INC1 (P0 STICKY ROUTING): uma conversa JÁ ASSUMIDA pelo v3 (routing/state presente) NUNCA cai pro v2 no meio.
           // O fallback pro v2 só ocorre ANTES do v3 assumir a conversa (sem routing) — senão o v2 responde por cima do v3
           // (saudação "Oi! Aqui é o Aloan" no meio). Duplicado/no_op/accepted/superseded já não entram aqui (não são
           // pre_ingest_failure). Observabilidade: reason + conversationId + hasV3Routing.
-          const hasV3Routing = await conversationHasV3Routing(supabase, bridgeTurn.turn.tenantId, bridgeTurn.turn.conversationId);
-          const hasV3State = await conversationHasV3State(supabase, bridgeTurn.turn.tenantId, bridgeTurn.turn.conversationId);
-          const decision = shouldFallbackToPedroV2({
-            classification: bridgeResult.kind,
-            hasV3Routing,
-            hasV3State,
-            exclusiveOwnership: true,
-          });
-          if (!decision.fallback) {
-            console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false`);
-            return;
-          }
-          console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false; fallback=v2`);
-          await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+        const hasV3Routing = await conversationHasV3Routing(supabase, enrichedTurn.tenantId, enrichedTurn.conversationId);
+        const hasV3State = await conversationHasV3State(supabase, enrichedTurn.tenantId, enrichedTurn.conversationId);
+        const decision = shouldFallbackToPedroV2({
+          classification: bridgeResult.kind,
+          hasV3Routing,
+          hasV3State,
+          exclusiveOwnership: true,
+        });
+        if (!decision.fallback) {
+          console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false`);
           return;
         }
-        console.log(`[pedro-v3-bridge] result=${bridgeResult.kind} status=${bridgeResult.httpStatus ?? "none"}`);
-      })().catch((error) => {
-        // Unexpected bridge exceptions are uncertain: never risk a double reply.
-        console.error("[pedro-v3-bridge] unexpected_uncertain", String((error as any)?.message || error).slice(0, 300));
-      }));
+        console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false; fallback=v2`);
+        await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+        return;
+      }
+      console.log(`[pedro-v3-bridge] result=${bridgeResult.kind} status=${bridgeResult.httpStatus ?? "none"}`);
+    })().catch((error) => {
+      // Unexpected bridge exceptions are uncertain: never risk a double reply.
+      console.error("[pedro-v3-bridge] unexpected_uncertain", String((error as any)?.message || error).slice(0, 300));
+    }));
     return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3", build: PEDRO_V2_BUILD });
   }
   if (!_dryRun && typeof _waitUntil === "function") {

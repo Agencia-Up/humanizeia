@@ -189,7 +189,21 @@ async function main(): Promise<void> {
   {
     const store = new FakeCrmStore([{ id: LEAD_ID, tenantId: TENANT, agentId: AGENT, fields: {} }]);
     const c = conv(store);
-    const ad: AdContext = { adId: "1", source: "facebook", sourceUrl: "https://fb.me/x", title: "Icom", body: "Veículos revisados", greeting: "Olá! Quer saber mais sobre o Jeep Compass 2019?", imageUrls: [], capturedAtTurn: 0 };
+    const ad: AdContext = {
+      adId: "1",
+      source: "facebook",
+      sourceUrl: "https://fb.me/x",
+      title: "Fale com nossos consultores",
+      body: "Veículos revisados",
+      greeting: "Oi! Como podemos ajudar?",
+      imageUrls: ["https://example.test/compass.jpg"],
+      vehicleQuery: "Jeep Compass 2019",
+      vehicleType: "suv",
+      summary: "A arte do anúncio mostra um Jeep Compass 2019.",
+      confidence: 0.92,
+      semanticSource: "image",
+      capturedAtTurn: 0,
+    };
     const t1 = await c.t("Oi, tenho interesse", searchB({ modelo: "Compass" }), ad);
     const lead = store.rows[0].fields;
     check("[2a] CRM: origem=trafico_pago + vehicle_interest do ANÚNCIO (Compass)", lead.origem === "trafico_pago" && has(lead.vehicle_interest ?? "", "compass"), `origem=${lead.origem} interest=${lead.vehicle_interest}`);
