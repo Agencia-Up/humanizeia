@@ -120,6 +120,17 @@ function combineLevels(results: readonly WhatsAppSendOk[]): WhatsAppReceiptLevel
   return results.every((item) => item.level === "delivered") ? "delivered" : "accepted";
 }
 
+// A LLM autora os parágrafos; o transporte apenas materializa a quebra visual
+// em balões. Listas estruturadas permanecem intactas para não separar itens,
+// valores e o contexto da oferta.
+export function splitWhatsAppTextBubbles(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed || /\n\s*\d+[.)]\s/u.test(trimmed)) return [trimmed];
+  const paragraphs = trimmed.split(/\n\s*\n+/u).map((part) => part.trim()).filter(Boolean);
+  if (paragraphs.length < 2) return [trimmed];
+  return [paragraphs[0], paragraphs.slice(1).join("\n\n")];
+}
+
 export class WhatsAppEffectDispatcher implements EffectDispatcher {
   constructor(private readonly opts: WhatsAppDispatcherOptions) {}
 
@@ -141,22 +152,31 @@ export class WhatsAppEffectDispatcher implements EffectDispatcher {
     const text = stringField(payload, "text");
     if (!text) return failed(record, "VALIDATION", "missing_text", false);
 
-    let result: WhatsAppSendResult;
-    try {
-      result = await this.opts.sender.sendText({
-        to: this.opts.to,
-        text,
-        idempotencyKey: record.idempotencyKey,
-        showTyping: this.opts.typingEnabled === true,
-      });
-    } catch (error) {
-      const label = safeErrLabel(error);
-      console.error(JSON.stringify({ event: "pedro_v3_send_text_exception", effectId: record.effectId, label }));
-      return uncertain(record, `sender_text_exception:${label}`);
+    const bubbles = splitWhatsAppTextBubbles(text);
+    const successes: WhatsAppSendOk[] = [];
+    for (let index = 0; index < bubbles.length; index += 1) {
+      let result: WhatsAppSendResult;
+      try {
+        result = await this.opts.sender.sendText({
+          to: this.opts.to,
+          text: bubbles[index],
+          idempotencyKey: bubbles.length === 1 ? record.idempotencyKey : `${record.idempotencyKey}:bubble:${index + 1}`,
+          showTyping: this.opts.typingEnabled === true,
+        });
+      } catch (error) {
+        const label = safeErrLabel(error);
+        console.error(JSON.stringify({ event: "pedro_v3_send_text_exception", effectId: record.effectId, label }));
+        return uncertain(record, `sender_text_exception:${label}`);
+      }
+      if (!result.ok) return failed(record, result.code, result.message, result.retryable);
+      successes.push(result);
     }
-
-    if (!result.ok) return failed(record, result.code, result.message, result.retryable);
-    return succeeded(record, result.level, this.opts.clock.now(), result.providerMessageId);
+    return succeeded(
+      record,
+      combineLevels(successes),
+      this.opts.clock.now(),
+      successes.map((item) => item.providerMessageId).filter(Boolean).join(",") || undefined,
+    );
   }
 
   private async dispatchMedia(record: OutboxRecord): Promise<EffectResult> {

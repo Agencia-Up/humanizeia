@@ -1,7 +1,8 @@
 // ============================================================================
-// offer-context.ts — F2.7.12 (P0). Captura DETERMINISTICA da ultima lista renderizada
-// (vehicle_offer_list) -> LastRenderedOfferContext, para resolver referencia ORDINAL
-// ("foto do 3") de forma estruturada (sem parse de texto, sem depender do delivered).
+// offer-context.ts — F2.7.12 (P0). Captura DETERMINISTICA dos veiculos que a
+// propria resposta renderizada mostrou, seja como lista (vehicle_offer_list)
+// ou como foco singular aterrado (vehicle_ref/money_ref). Isso permite resolver
+// referencias posteriores ("foto do 3", "fotos dele") sem parse de texto.
 // PURO. Gravado pelo engine apos compor; o LLM nao participa.
 // ============================================================================
 import type { LastRenderedOfferContext, RenderedOfferItem } from "../domain/conversation-state.ts";
@@ -10,13 +11,18 @@ import type { QueryResult } from "../domain/decision.ts";
 import type { TurnOutput } from "./decision-engine.ts";
 import { DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS } from "./vehicle-offer-render.ts";
 
-function stockItemsFromFacts(facts: QueryResult[]): VehicleFact[] {
+function vehicleItemsFromFacts(facts: QueryResult[]): VehicleFact[] {
   const out: VehicleFact[] = [];
-  for (const f of facts) if (f.ok && f.tool === "stock_search") out.push(...f.data.items);
+  for (const f of facts) {
+    if (!f.ok) continue;
+    if (f.tool === "stock_search") out.push(...f.data.items);
+    if (f.tool === "vehicle_details") out.push(f.data.vehicle);
+  }
   return out;
 }
 
-// Devolve a lista estruturada SE este turno renderizou uma oferta; senao null (preserva a anterior).
+// Devolve contexto estruturado somente quando o draft realmente mostrou um
+// veiculo aterrado. Resultado de tool sozinho nunca escolhe/persiste um foco.
 export function computeRenderedOfferContext(
   turnOutput: TurnOutput,
   turnId: Id,
@@ -27,14 +33,32 @@ export function computeRenderedOfferContext(
   if (turnOutput.renderedOfferContext && turnOutput.renderedOfferContext.length > 0) {
     return { sourceTurnId: turnId, createdAt: now, items: [...turnOutput.renderedOfferContext] };
   }
-  // 2) caminho do LLM: parte vehicle_offer_list (chaves na ORDEM renderizada) + detalhes nos fatos
+  // 2) caminho do LLM: vehicle_offer_list (ordem renderizada) ou um unico
+  // veiculo efetivamente citado por vehicle_ref/money_ref.
   const parts = turnOutput.composed?.draft?.parts ?? [];
   const part = parts.find((p) => (p as { type?: string }).type === "vehicle_offer_list") as { vehicleKeys?: string[] } | undefined;
   // A memoria operacional precisa espelhar o que o renderer realmente mostrou no WhatsApp.
   // Se a LLM propuser 16 chaves mas a lista renderizada mostra 5, so essas 5 viram "apresentadas".
-  const keys = Array.isArray(part?.vehicleKeys) ? part!.vehicleKeys.slice(0, DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS) : [];
+  let keys = Array.isArray(part?.vehicleKeys) ? part!.vehicleKeys.slice(0, DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS) : [];
+  if (keys.length === 0) {
+    const referenced = new Set<string>();
+    for (const candidate of parts) {
+      if (candidate.type === "vehicle_ref") referenced.add(candidate.vehicleKey);
+      if (candidate.type === "money_ref"
+        && candidate.role === "vehicle_price"
+        && candidate.source.kind === "vehicle_fact") {
+        referenced.add(candidate.source.vehicleKey);
+      }
+    }
+    // Mais de um veiculo sem vehicle_offer_list nao produz uma ordem/foco
+    // implicito. A LLM precisa escolher um foco singular ou uma lista tipada.
+    if (referenced.size === 1) keys = [...referenced];
+  }
   if (keys.length === 0) return null;
-  const stock = stockItemsFromFacts(turnOutput.facts);
+  const stock = vehicleItemsFromFacts(turnOutput.facts);
+  // Referencias lembradas podem nomear um carro, mas nao criam um novo foco
+  // factual. Para foco singular, exige-se um fato real deste turno.
+  if (!part && !keys.some((key) => stock.some((item) => item.vehicleKey === key))) return null;
   const items: RenderedOfferItem[] = keys.map((key, i) => {
     const v = stock.find((s) => s.vehicleKey === key);
     // Reapresentar uma lista para desambiguar foto/seleção não deve apagar a

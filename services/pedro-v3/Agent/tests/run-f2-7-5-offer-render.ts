@@ -142,6 +142,20 @@ async function main(): Promise<void> {
     check("6b refs adjacentes NAO grudam ('voce: Onix 2014 Ele')", !GLUE.test(text) && text.includes("voce: Onix") && text.includes("2014 Ele"), text);
   }
 
+  // 6c) fronteira visual escolhida pela LLM vira paragrafo, sem texto
+  // comercial escrito pela infraestrutura.
+  {
+    const draft: ResponseDraft = { parts: [
+      { type: "text", content: "Sou o Carvalho. Tudo bem?" },
+      { type: "message_break" },
+      { type: "text", content: "Vi que voce se interessou no" },
+      { type: "vehicle_ref", vehicleKey: ONIX.vehicleKey, field: "modelo" },
+      { type: "vehicle_ref", vehicleKey: ONIX.vehicleKey, field: "ano" },
+    ] };
+    const text = ResponseRenderer.render(draft, stockFacts([ONIX]), baseState());
+    check("6c message_break materializa exatamente uma linha em branco", text === "Sou o Carvalho. Tudo bem?\n\nVi que voce se interessou no Onix 2014", JSON.stringify(text));
+  }
+
   // 7) "so tem um?" usa os resultados (offer_list) e nao inventa
   {
     const draft: ResponseDraft = { parts: [{ type: "text", content: "Alem desse, tenho estas opcoes:" }, { type: "vehicle_offer_list", vehicleKeys: STOCK.map((v) => v.vehicleKey) }] };

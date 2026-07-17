@@ -14,7 +14,7 @@ import { loadPersistedWorkingMemory } from "./working-memory.ts";
 // P0 audit Codex: a RESPOSTA é INSTITUCIONAL PURA (nenhum claim de marca/modelo no texto)? Só então as policies de
 // FUNIL se abstêm. Se o texto cita veículo (mesmo lembrado), NÃO é institucional-pura -> funil valida normalmente.
 function isInstitutionalOnlyResponse(composed: RenderedResponse, ctx: TurnContext): boolean {
-  if (composed.draft.parts.some((p) => p.type !== "text")) return false;   // parts estruturados de veículo -> não é pura
+  if (composed.draft.parts.some((p) => p.type !== "text" && p.type !== "message_break")) return false;   // parts estruturados de veículo -> não é pura
   return ctx.claimExtractor.extractClaims(composed.text).every((c) => c.kind !== "brand" && c.kind !== "model" && c.kind !== "brand_model");
 }
 

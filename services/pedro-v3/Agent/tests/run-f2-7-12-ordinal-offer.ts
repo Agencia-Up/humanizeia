@@ -139,6 +139,35 @@ async function main(): Promise<void> {
       && replayed.items[1].modelo === "HB20 S"
       && replayed.items[1].ano === 2017,
     JSON.stringify(replayed?.items[1]));
+
+    // Um veiculo singular escolhido e realmente citado pela LLM tambem vira
+    // contexto factual. A busca sozinha nao escolhe o foco.
+    const singular: any = {
+      ...turnOutput,
+      composed: {
+        draft: {
+          parts: [
+            { type: "text", content: "Vi que voce se interessou no " },
+            { type: "vehicle_ref", vehicleKey: HB20_2015, field: "modelo" },
+            { type: "text", content: ", na cor " },
+            { type: "vehicle_ref", vehicleKey: HB20_2015, field: "cor" },
+          ],
+        },
+        text: "Vi que voce se interessou no HB20, na cor prata.",
+      },
+    };
+    const focused = computeRenderedOfferContext(singular, "tFocus", NOW, ctx);
+    check("7c foco singular aterrado persiste o veiculo que a LLM mostrou", !!focused
+      && focused.items.length === 1
+      && focused.items[0].vehicleKey === HB20_2015
+      && focused.items[0].modelo === "HB20",
+    JSON.stringify(focused?.items));
+
+    const toolOnly: any = {
+      ...turnOutput,
+      composed: { draft: { parts: [{ type: "text", content: "Como posso ajudar?" }] }, text: "Como posso ajudar?" },
+    };
+    check("7d resultado de stock_search sem referencia visivel nao escolhe foco", computeRenderedOfferContext(toolOnly, "tTool", NOW, ctx) == null);
   }
 
   // 8) E2E: render de vehicle_offer_list grava lastRenderedOfferContext; depois "foto do 3" -> HB20 2021 (nao C3)

@@ -104,7 +104,9 @@ AUTORIDADE E CONTINUIDADE
 - A ultima mensagem user e o bloco atual completo do lead e tem prioridade. As mensagens user/assistant anteriores sao o historico real da conversa.
 - A mensagem system com runtimeContext contem apenas fatos atuais, memoria factual, canal e resultados de tools. Ela ajuda a interpretar; nunca escolhe assunto, pergunta ou resposta.
 - runtimeContext.currentTurn.openingContext.firstAssistantTurn informa apenas se ainda nao existe fala anterior do agente. Quando true, apresente explicitamente o nome do agente e a empresa definidos no prompt do portal, sem abandonar o assunto atual do lead.
-- runtimeContext.currentTurn.sourceContext descreve a origem factual da fala atual. Quando kind="paid_ad" e advertisedVehicle estiver presente, esse veiculo e o assunto inicial de compra ja conhecido: nao pergunte qual carro/tipo o lead procura. No primeiro turno, se o bloco nao mudar explicitamente o interesse nem pedir apenas informacao institucional, consulte stock_search pelo veiculo/ano anunciado para confirmar o estoque atual; depois apresente-se e trate o veiculo no mesmo texto. Se o lead mudar explicitamente de modelo, a fala atual vence imediatamente e o anuncio permanece apenas como origem historica para CRM/briefing. Um carro informado para troca nunca substitui advertisedVehicle.
+- runtimeContext.currentTurn.sourceContext descreve a origem factual da fala atual. Quando kind="paid_ad" e advertisedVehicle estiver presente, esse veiculo e o assunto inicial de compra ja conhecido: nao pergunte qual carro/tipo o lead procura. ATENCAO: advertisedVehicle prova somente qual foi o interesse; nunca prova disponibilidade, cor, km, cambio ou preco. No primeiro turno, se o bloco nao mudar explicitamente o interesse nem pedir apenas informacao institucional, sua PRIMEIRA saida deve ser query stock_search pelo veiculo/ano anunciado. Nao finalize nem afirme disponibilidade antes da observacao. Depois use o resultado como FOCO SINGULAR: nomeie o modelo anunciado e apresente somente o exemplar exato, com vehicle_ref/money_ref da mesma vehicleKey quando citar atributos. Nao use vehicle_offer_list e nao mostre alternativas nessa abertura; alternativas so aparecem quando o lead pedir outro veiculo, outras opcoes ou algo semelhante. Se nao houver correspondencia exata, seja transparente e nao substitua silenciosamente o anuncio por uma lista ampla.
+- Quando o prompt do portal definir uma frase fixa de primeiro contato, reproduza essa frase com fidelidade, alterando somente a saudacao pelo periodo informado em runtimeContext.channel. Na entrada por anuncio especifico, o primeiro text termina na pergunta fixa do portal; em seguida use EXATAMENTE uma part {"type":"message_break"}; somente depois comece "Vi que voce se interessou..." e componha os atributos com refs aterradas. message_break representa um novo balao curto no WhatsApp. Nao misture lista de estoque nessa abertura.
+- Se o lead mudar explicitamente de modelo, a fala atual vence imediatamente e o anuncio permanece apenas como origem historica para CRM/briefing. Um carro informado para troca nunca substitui advertisedVehicle.
 - O prompt do portal define personalidade, negocio e funil. Quando houver instrucoes de forma contraditorias dentro dele, preserve coerencia humana: responda o ato atual, nao repita pergunta ou fato ja respondido e nao transforme a conversa em formulario.
 - Etapas, campos e perguntas do funil do portal sao objetivos para a conversa inteira, nao uma fila obrigatoria por turno. Nunca pule para o proximo campo ausente enquanto o lead esta desenvolvendo o assunto atual.
 - LIMITE DE PAPEL: os campos de qualificacao permitidos sao somente os que o prompt do portal nomeia. Voce nao realiza triagem mecanica, documental ou de procedencia do veiculo e nao amplia o formulario com conhecimento automotivo geral. Quando os campos nomeados do topico atual ja estiverem respondidos, considere esse topico concluido e avance naturalmente pelo portal.
@@ -146,17 +148,19 @@ Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{..
 Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"resumo","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Cada item de draft.parts e OBRIGATORIAMENTE um objeto em um destes formatos exatos:
   {"type":"text","content":"texto escrito por voce"}
+  {"type":"message_break"}
   {"type":"vehicle_ref","vehicleKey":"key aterrada","field":"marca|modelo|ano|km|cambio|cor"}
   {"type":"money_ref","role":"vehicle_price","source":{"kind":"vehicle_fact","vehicleKey":"key aterrada"}}
   {"type":"money_ref","role":"down_payment","source":{"kind":"slot_value","slotName":"entrada"}}
   {"type":"money_ref","role":"installment","source":{"kind":"slot_value","slotName":"parcelaDesejada"}}
   {"type":"money_ref","role":"budget","source":{"kind":"slot_value","slotName":"faixaPreco"}}
   {"type":"vehicle_offer_list","vehicleKeys":["key retornada por stock_search"]}
-- Nunca use string solta dentro de parts, nunca invente outro type e nunca coloque send_media/image/media em parts.
+- Nunca use string solta dentro de parts, nunca invente outro type e nunca coloque send_media/image/media em parts. Use message_break somente quando o prompt pedir baloes separados; nunca no meio de vehicle_offer_list.
 - Para uma resposta conversacional sem fatos de estoque, use somente {"type":"text","content":"..."}.
 - Exemplo completo de final conversacional valido (copie a FORMA, nao o texto):
   {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"isTopicChange":false,"answeredLeadQuestions":[]},"reasonCode":"reply","confidence":0.9,"guidance":"responder naturalmente","draft":{"parts":[{"type":"text","content":"Claro. Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Lista usa somente keys retornadas por stock_search; atributos/precos usam fatos aterrados.
+- Uma stock_search pode sustentar dois formatos escolhidos por voce conforme a conversa: vehicle_offer_list quando o lead pediu alternativas/lista, ou vehicle_ref/money_ref de UMA mesma key quando o assunto e um veiculo especifico. Resultado de busca nao obriga lista.
 - send_media e handoff ficam em effects. Nunca exponha vehicleKey, refs internas, CPF/data ou segredos no texto.
 - Mutacoes registram somente fatos realmente informados no bloco atual ou selecao aterrada. Nao invente nem contamine papeis semanticos.
 - Saudacao, quando necessaria, usa runtimeContext.channel no fuso America/Sao_Paulo. Follow-up nao usa saudacao.
@@ -806,14 +810,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       const type = str(item.type);
       if (type === "send_media" || type === "image" || type === "media") return `${type} nao e part de draft; coloque o efeito em effects[] e mantenha apenas text no draft`;
       if (type === "vehicle_ref" && (!str(item.vehicleKey) || !str(item.field))) return "vehicle_ref exige vehicleKey e field valido (marca, modelo, ano, km, cambio ou cor)";
-      if (type && !["text", "vehicle_ref", "money_ref", "vehicle_offer_list"].includes(type)) return `tipo de part nao permitido: ${type}`;
+      if (type && !["text", "message_break", "vehicle_ref", "money_ref", "vehicle_offer_list"].includes(type)) return `tipo de part nao permitido: ${type}`;
     }
-    return "draft.parts invalida; use somente text, vehicle_ref, money_ref ou vehicle_offer_list";
+    return "draft.parts invalida; use somente text, message_break, vehicle_ref, money_ref ou vehicle_offer_list";
   }
 
   #decodePart(p: unknown): ResponsePart | null {
     if (!isRecord(p)) return null;
     if (p.type === "text") { const c = typeof p.content === "string" ? p.content : null; return c && c.trim() !== "" ? { type: "text", content: c.slice(0, 1200) } : null; }
+    if (p.type === "message_break") return { type: "message_break" };
     if (p.type === "vehicle_ref") {
       const key = str(p.vehicleKey); const field = str(p.field);
       if (!key || !field) return null;

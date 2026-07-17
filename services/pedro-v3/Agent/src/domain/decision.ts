@@ -259,6 +259,9 @@ export type MoneySourceRef =
 // ── ResponseDraft / ResponsePart (Fase 1.5: "preco" removido de vehicle_ref) ──
 export type ResponsePart =
   | { type: "text"; content: string }
+  // Fronteira visual escolhida pela própria LLM. O renderer materializa como
+  // parágrafo e o transporte pode enviá-lo como um novo balão do WhatsApp.
+  | { type: "message_break" }
   // F-4 (Codex): vehicle_ref suporta ATRIBUTOS (ano/km/câmbio/cor) — o valor vem do VehicleFact EXATO no
   // renderer (fail-closed se ausente). Preço continua SÓ por money_ref. Atributo em texto livre é proibido.
   | { type: "vehicle_ref"; vehicleKey: string; field: "marca" | "modelo" | "ano" | "km" | "cambio" | "cor" }

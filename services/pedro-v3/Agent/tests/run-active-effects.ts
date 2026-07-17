@@ -1,4 +1,4 @@
-import { WhatsAppEffectDispatcher, type WhatsAppMediaInput, type WhatsAppSendPort, type WhatsAppSendResult, type WhatsAppTextInput } from "../src/adapters/effects/whatsapp-dispatcher.ts";
+import { WhatsAppEffectDispatcher, splitWhatsAppTextBubbles, type WhatsAppMediaInput, type WhatsAppSendPort, type WhatsAppSendResult, type WhatsAppTextInput } from "../src/adapters/effects/whatsapp-dispatcher.ts";
 import { UazapiWhatsAppSender, normalizeUazapiDestination, type UazapiHttpRequest, type UazapiHttpResponse, type UazapiHttpTransport } from "../src/adapters/effects/uazapi-whatsapp-sender.ts";
 import { createPilotWhatsAppDispatcher, type WhatsAppInstanceConfig, type WhatsAppInstanceSource } from "../src/adapters/effects/pilot-whatsapp-runtime.ts";
 import { V2WhatsAppInstanceCredentialProvider, V2WhatsAppInstanceSource } from "../src/adapters/effects/v2-whatsapp-instance-source.ts";
@@ -246,6 +246,20 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   const result = await dispatcher.dispatch(baseRecord());
   check("text", "accepted text succeeds", result.status === "succeeded" && result.receipt.level === "accepted", JSON.stringify(result));
   check("text", "text uses effectId as idempotency key", sender.texts[0]?.idempotencyKey === "turn-1:msg", JSON.stringify(sender.texts));
+}
+
+// 2b) Parágrafos autorados pela LLM viram dois balões; listas ficam inteiras.
+{
+  const intro = "Boa tarde! Sou o Carvalho, consultor aqui de IA da Icom Motors 😊 Você é aqui de Taubaté mesmo já conhece a nossa loja?";
+  const vehicle = "Vi que você se interessou no HB20X. Tenho ele disponível.";
+  const { dispatcher, sender } = makeDispatcher();
+  const result = await dispatcher.dispatch(baseRecord({ payload: redact({ text: `${intro}\n\n${vehicle}` }) }));
+  check("text", "dois parágrafos conversacionais viram dois balões", result.status === "succeeded" && sender.texts.length === 2
+    && sender.texts[0]?.text === intro && sender.texts[1]?.text === vehicle, JSON.stringify(sender.texts));
+  check("text", "balões usam idempotência estável por parte", sender.texts[0]?.idempotencyKey === "turn-1:msg:bubble:1"
+    && sender.texts[1]?.idempotencyKey === "turn-1:msg:bubble:2", JSON.stringify(sender.texts));
+  const list = "Encontrei estas opções:\n\n1. HB20X 2019 - R$ 76.990\n\n2. Onix 2020 - R$ 79.990";
+  check("text", "lista numerada nunca é quebrada em balões", splitWhatsAppTextBubbles(list).length === 1);
 }
 
 // 3) F2.7.4: send_message com SO append_assistant_turn = accepted-safe -> grava a MEMORIA do agente no

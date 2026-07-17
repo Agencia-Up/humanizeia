@@ -121,6 +121,10 @@ async function main(): Promise<void> {
     check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
     check("[5a] contrato nao exige autoauditoria paralela no JSON", !sys.includes("conversationCheck") && !sys.includes("AUTOAVALIACAO CONVERSACIONAL"));
     check("[5a] campos comerciais continuam sob autoridade fechada do portal", sys.includes("somente os que o prompt do portal nomeia") && sys.includes("nao realiza triagem mecanica"));
+    check("[5a-ad] protocolo trata anuncio exato como foco singular, nao lista implicita",
+      sys.includes("use o resultado como FOCO SINGULAR")
+      && sys.includes("Nao use vehicle_offer_list e nao mostre alternativas nessa abertura")
+      && sys.includes('use EXATAMENTE uma part {"type":"message_break"}'));
 
     const contextFrame: TurnFrame = {
       ...frame("mostra o azul"),
@@ -257,6 +261,13 @@ async function main(): Promise<void> {
     const step = await brain.proposeNextStep(frame("quantos km"), []);
     const d = step.kind === "final" ? step.decision.responsePlan.draft : null;
     check("[9] draft válido completo decodifica em responsePlan.draft", step.kind === "final" && !!d && d.parts.length === 3 && d.parts[1].type === "vehicle_ref" && (d.parts[1] as { field?: string }).field === "km");
+  }
+  // [9a] a LLM escolhe explicitamente a fronteira entre balões.
+  {
+    const { brain } = brainWith(JSON.stringify({ kind: "final", reasonCode: "opening", confidence: 0.9, guidance: "dois baloes", draft: { parts: [{ type: "text", content: "Sou o Carvalho. Tudo bem?" }, { type: "message_break" }, { type: "text", content: "Vi que voce se interessou no carro." }] }, effects: [{ kind: "send_message" }] }));
+    const step = await brain.proposeNextStep(frame("oi"), []);
+    const d = step.kind === "final" ? step.decision.responsePlan.draft : null;
+    check("[9a] message_break tipado e preservado no draft", !!d && d.parts.length === 3 && d.parts[1].type === "message_break");
   }
   // [9b] compatibilidade de transporte: a LLM pode ainda devolver o mesmo
   // contrato dentro de responsePlan; a borda aceita, sem criar decisão nova.

@@ -10,7 +10,7 @@ import type { ConversationState } from "../domain/conversation-state.ts";
 import type { VehicleFact, RememberedVehicleIdentity } from "../domain/types.ts";
 import { renderVehicleOfferList, formatBRL } from "./vehicle-offer-render.ts";
 
-type Segment = { kind: "text" | "inline" | "block"; text: string };
+type Segment = { kind: "text" | "inline" | "block" | "break"; text: string };
 
 function indexVehicles(facts: QueryResult[]): Map<string, VehicleFact> {
   const vehicles = new Map<string, VehicleFact>();
@@ -90,6 +90,11 @@ function joinSegments(segments: Segment[]): string {
   let out = "";
   let prevKind: Segment["kind"] | null = null;
   for (const seg of segments) {
+    if (seg.kind === "break") {
+      if (out !== "") out = out.replace(/\s+$/u, "") + "\n\n";
+      prevKind = "break";
+      continue;
+    }
     if (seg.text === "") continue;
     if (out === "") { out = seg.text; prevKind = seg.kind; continue; }
     if (seg.kind === "block" || prevKind === "block") {
@@ -113,6 +118,8 @@ export const ResponseRenderer = {
     for (const part of draft.parts) {
       if (part.type === "text") {
         segments.push({ kind: "text", text: part.content });
+      } else if (part.type === "message_break") {
+        segments.push({ kind: "break", text: "" });
       } else if (part.type === "vehicle_ref") {
         segments.push({ kind: "inline", text: renderVehicleRef(part, vehicles, identityMap) });
       } else if (part.type === "money_ref") {

@@ -663,7 +663,7 @@ function authorFromBrainDraft(args: {
     const structuralHint = args.finalDecision.reasonSummary.startsWith("draft_invalid:")
       ? ` Motivo estrutural detectado na sua saída anterior: ${args.finalDecision.reasonSummary.slice("draft_invalid:".length).trim()}.`
       : "";
-    return { ok: false, feedback: `Devolva 'draft' com parts estruturadas (text/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre.${structuralHint}` };
+    return { ok: false, feedback: `Devolva 'draft' com parts estruturadas (text/message_break/vehicle_ref/money_ref/vehicle_offer_list). Não escreva km/cor/câmbio/ano/preço em texto livre.${structuralHint}` };
   }
   // A abertura continua sendo autoria da LLM. RD1-2: em central_active a APRESENTAÇÃO é ADVISORY (o prompt do portal +
   // buildTurnAdvisories orientam a se apresentar); o engine não nega mais a omissão. Guarda legada só no replay.
@@ -762,14 +762,24 @@ function authorFromBrainDraft(args: {
   const renderFacts: QueryResult[] = rememberedOfferItems.length > 0
     ? [...realFacts, { ok: true, tool: "stock_search", data: { items: rememberedOfferItems, filtersUsed: {} }, source: "rendered_offer_memory" }]
     : realFacts;
-  // P0-3 (audit): busca com RESULTADOS deve RESPONDER, não pedir autorização. Se o turno tem itens de stock_search e o
-  // draft NÃO traz vehicle_offer_list (nem send_media de um carro específico) -> deny + feedback ao MESMO cérebro. A LLM
-  // segue autora da introdução/CTA; o engine só exige que a pergunta atual (disponibilidade) seja respondida com a lista.
+  // P0-3 (audit): busca com RESULTADOS deve RESPONDER usando algum fato
+  // aterrado. A forma continua sendo escolha da LLM: vehicle_offer_list para
+  // alternativas, ou vehicle_ref/money_ref de uma mesma key para um veículo
+  // em foco. A engine não transforma toda consulta em listagem.
+  const freshStockKeys = new Set(realFacts.flatMap((fact) =>
+    fact.ok && fact.tool === "stock_search" ? fact.data.items.map((item) => item.vehicleKey) : []));
+  const draftGroundsFreshStock = draft.parts.some((part) => {
+    if (part.type === "vehicle_offer_list") return part.vehicleKeys.some((key) => freshStockKeys.has(key));
+    if (part.type === "vehicle_ref") return freshStockKeys.has(part.vehicleKey);
+    return part.type === "money_ref"
+      && part.source.kind === "vehicle_fact"
+      && freshStockKeys.has(part.source.vehicleKey);
+  });
   if (rememberedOfferItems.length === 0
-      && realFacts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0)
-      && !draft.parts.some((p) => p.type === "vehicle_offer_list")
+      && freshStockKeys.size > 0
+      && !draftGroundsFreshStock
       && !proposedEffects.some((e) => e.kind === "send_media")) {
-    return { ok: false, feedback: "Turno de LISTAGEM factual: você buscou o estoque e HÁ itens disponíveis. Inclua uma vehicle_offer_list com pelo menos um dos vehicleKeys retornados. A LLM continua autora da introdução e do próximo passo; não escreva a lista ou atributos de estoque manualmente e não chame stock_search novamente." };
+    return { ok: false, feedback: "A stock_search encontrou veículo(s), mas o draft não usa nenhum fato retornado. Escolha a forma coerente com a conversa: vehicle_offer_list somente para apresentar alternativas, ou vehicle_ref/money_ref de UMA mesma vehicleKey para tratar um veículo em foco. Não escreva atributos de estoque em texto livre e não chame stock_search novamente." };
   }
   // B3 (audit): postQuery é AUTORIDADE. Se negar (ex.: oferta acima do teto, veículo fora dos fatos), o draft ORIGINAL
   // NÃO pode ser enviado — feedback ao MESMO cérebro; nenhum efeito comercial original sobrevive (o retry re-autora).
@@ -2411,7 +2421,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
                 if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
               }
               if (listKeys.length > 0) {
-                effFeedback = `LISTAGEM factual: a stock_search já retornou itens aterrados. Inclua no draft uma vehicle_offer_list usando somente estas vehicleKeys: ${JSON.stringify(listKeys)}. A LLM continua autora do texto de apresentação e do próximo passo; não escreva nomes, preços, km ou outros atributos de estoque em text e não chame stock_search novamente.`;
+                effFeedback = `ESTOQUE factual: a stock_search já retornou estas vehicleKeys aterradas: ${JSON.stringify(listKeys)}. Escolha a forma pelo ato atual: use vehicle_offer_list somente se estiver apresentando alternativas; se o assunto for um veículo específico, use vehicle_ref/money_ref de UMA mesma key para descrevê-lo sem disparar lista. Não escreva atributos de estoque em text e não chame stock_search novamente.`;
               } else {
                 effFeedback = `A stock_search retornou itens, mas eles não atendem ao teto de preço informado pelo lead. Responda com honestidade usando apenas os fatos disponíveis; a LLM escolhe a formulação e o próximo passo conforme o portal. Não use vehicle_offer_list desses itens, não invente valores e não chame tools novamente.`;
               }
@@ -2785,7 +2795,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             "Responda ao bloco ATUAL e preserve a mudanca de assunto mais recente. Memoria antiga e pergunta pendente sao apenas contexto.",
             (contextState.lastRenderedOfferContext?.items.length ?? 0) > 0
               ? "Ja existe uma lista visivel. Nao a repita: explique como o criterio atual afeta as opcoes enviadas ou mostre somente itens realmente novos."
-              : "Se houver itens de estoque, apresente somente os itens pertinentes via vehicle_offer_list. Se a busca estiver vazia ou falhou, seja honesto e conduza naturalmente sem inventar disponibilidade.",
+              : "Se houver itens de estoque, escolha a forma pelo ato atual: vehicle_offer_list somente quando o lead pediu alternativas; vehicle_ref/money_ref de uma mesma key quando ha um veiculo em foco. Se a busca estiver vazia ou falhou, seja honesto e conduza naturalmente sem inventar disponibilidade.",
             "Se houver fotos resolvidas e o cliente as pediu, proponha send_media do alvo aterrado. Se o alvo for ambiguo, pergunte qual sem escolher por conta propria.",
             "Para fatos institucionais, use apenas a observacao correspondente. Para despedida, identificacao, selecao, pagamento, troca, visita ou pedido humano, acolha o ato atual e avance sem reabrir descoberta.",
             persisted0.lastPhotoAction?.label && isPhotoMemoryQuestionBlock(leadMessage)

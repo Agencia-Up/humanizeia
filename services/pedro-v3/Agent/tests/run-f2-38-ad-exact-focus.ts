@@ -133,10 +133,19 @@ const authored: BrainResponder = (frame, obs) => {
       const adLabel = String((frame.signals as { adVehicle?: string | null }).adVehicle ?? "veiculo do anuncio");
       return finU([txt(`Nao encontrei ${adLabel} no estoque agora.`)], "stock_empty", currentSearchU);
     }
-    const intro = stock.data.items.length === 1 && (frame.signals as { specificAdEntry?: boolean }).specificAdEntry
-      ? `Encontrei o ${stock.data.items[0]!.marca} ${stock.data.items[0]!.modelo} ${stock.data.items[0]!.ano} do anuncio:`
-      : "Encontrei estas opcoes:";
-    return finU([txt(intro), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", currentSearchU);
+    if ((frame.signals as { specificAdEntry?: boolean }).specificAdEntry) {
+      const vehicle = stock.data.items[0]!;
+      return finU([
+        txt("Bom dia! Sou o Carvalho, consultor aqui de IA da Icom Motors. Voce e aqui de Taubate mesmo ja conhece a nossa loja?\n\nVi que voce se interessou no "),
+        { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "marca" },
+        { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "modelo" },
+        { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "ano" },
+        txt(". Tenho ele disponivel com "),
+        { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "km" },
+        txt(" km rodados. Quer ver as fotos dele?"),
+      ], "focused_ad_vehicle", currentSearchU);
+    }
+    return finU([txt("Encontrei estas opcoes:"), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart], "offer_stock", currentSearchU);
   }
   if (block.includes("foto")) {
     return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp19" } } }, photoU);
@@ -170,18 +179,22 @@ const brainChoosesAlternative: BrainResponder = (frame, obs) => {
 // o carro certo, mas o primeiro draft usa texto livre em vez da estrutura
 // segura. O engine deve devolver as keys aterradas ao MESMO cerebro e a LLM
 // deve reescrever; a abertura generica nunca pode esconder esse feedback.
-const malformedOpeningThenList: BrainResponder = (_f, obs) => {
+const malformedOpeningThenFocusedVehicle: BrainResponder = (_f, obs) => {
   const currentU: TurnUnderstanding = {
     ...searchCompassU,
     evidence: [{ capability: "stock_search", quote: "desse carro" }],
   };
   const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-  const listFeedback = [...obs].reverse().find((o) => o.tool === "response" && !o.ok && o.error.message.includes("Turno de LISTAGEM"));
-  if (listFeedback && stock) {
+  const groundingFeedback = [...obs].reverse().find((o) => o.tool === "response" && !o.ok
+    && (o.error.message.includes("stock_search encontrou") || o.error.message.includes("ESTOQUE factual")));
+  if (groundingFeedback && stock) {
+    const vehicle = stock.data.items[0]!;
     return finU([
-      txt("Encontrei o veiculo exato do anuncio:"),
-      { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart,
-      txt("Quer ver as fotos dele ou saber mais detalhes?"),
+      txt("Bom dia! Sou o Carvalho da Icom Motors.\n\nVi que voce se interessou no "),
+      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "marca" },
+      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "modelo" },
+      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "ano" },
+      txt(". Quer ver as fotos dele?"),
     ], "ad_exact_offer", currentU);
   }
   if (stock) return finU([txt("Tenho um Jeep Compass 2019 por R$ 96.990 para voce. Quer fotos?")], "malformed_free_text_offer", currentU);
@@ -199,7 +212,16 @@ const proactivePhotoThenList: BrainResponder = (_f, obs) => {
     ],
   };
   const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-  if (stock) return finU([txt("Encontrei o veiculo do anuncio:"), { type: "vehicle_offer_list", vehicleKeys: stock.data.items.map((v) => v.vehicleKey) } as ResponsePart, txt("Quer ver as fotos dele?")], "ad_offer", u);
+  if (stock) {
+    const vehicle = stock.data.items[0]!;
+    return finU([
+      txt("Bom dia! Sou o Carvalho da Icom Motors.\n\nVi que voce se interessou no "),
+      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "marca" },
+      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "modelo" },
+      { type: "vehicle_ref", vehicleKey: vehicle.vehicleKey, field: "ano" },
+      txt(". Quer ver as fotos dele?"),
+    ], "ad_offer", u);
+  }
   const photoDenied = obs.some((o) => o.tool === "response" && !o.ok && o.error.message.includes("nao pediu nem aceitou fotos"));
   if (photoDenied) return qU({ tool: "stock_search", input: { modelo: "Compass", marca: "Jeep", anos: [2019] } }, u);
   return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp19" } } }, u);
@@ -260,14 +282,15 @@ async function main(): Promise<void> {
     return has(String(f?.modelo ?? ""), "compass") && f?.ano === 2019;
   })());
 
-  // ── AD-1: anúncio Compass 2019 + "Olá" -> busca modelo+ANO 2019, lista SÓ o 2019 (não 2017) ──
+  // ── AD-1: anúncio Compass 2019 + "Olá" -> busca modelo+ANO 2019, apresenta SÓ o 2019 (não lista alternativas) ──
   {
     const c = conv();
     const t1 = await c.t("Olá", { ad: adCompass19 });
     check("[AD-1] T1 busca com anos=[2019] (foco EXATO do anúncio)", Array.isArray(t1.stockInput?.anos) && (t1.stockInput!.anos as number[]).includes(2019), `input=${JSON.stringify(t1.stockInput)}`);
     check("[AD-1b] a resposta fala do Compass 2019 e NÃO lista o 2017", has(t1.outbox, "2019") && !has(t1.outbox, "2017"), `outbox="${t1.outbox}"`);
     check("[AD-1c] não pede telefone/nome", !has(t1.outbox, "telefone") && !has(t1.outbox, "seu nome"), `outbox="${t1.outbox}"`);
-    check("[AD-1d] polimento: 1 resultado do foco -> texto SINGULAR nomeando 'do anúncio' (não 'estas opções')", has(t1.outbox, "do anuncio") && !has(t1.outbox, "estas opcoes"), `outbox="${t1.outbox}"`);
+    check("[AD-1d] polimento: 1 resultado do foco -> texto SINGULAR sobre o interesse (não 'estas opções')", has(t1.outbox, "se interessou") && !has(t1.outbox, "estas opcoes"), `outbox="${t1.outbox}"`);
+    check("[AD-1e] abertura focada não dispara lista numerada", !/\n\s*1[.)]\s/.test(t1.outbox), `outbox="${t1.outbox}"`);
   }
 
   check("[U-6] rejected visual summary cannot select a vehicle",
@@ -288,16 +311,16 @@ async function main(): Promise<void> {
   // abertura. A LLM continua sendo a autora e converge em brain_retry.
   {
     const c = conv();
-    const t1 = await c.t("Boa tarde, queria saber mais desse carro", { ad: adCompass19, responder: malformedOpeningThenList });
-    check("[AD-1e] draft livre invalido na abertura -> LLM reautora com a key real", t1.src === "brain_retry" && has(t1.outbox, "Compass") && has(t1.outbox, "2019"), `src=${t1.src} outbox="${t1.outbox}"`);
-    check("[AD-1f] abertura corrigida nao cai em fallback nem oferece outro ano", !has(t1.outbox, "2017") && !has(t1.outbox, "nao consegui"), `outbox="${t1.outbox}"`);
+    const t1 = await c.t("Boa tarde, queria saber mais desse carro", { ad: adCompass19, responder: malformedOpeningThenFocusedVehicle });
+    check("[AD-1f] draft livre invalido na abertura -> LLM reautora com a key real", t1.src === "brain_retry" && has(t1.outbox, "Compass") && has(t1.outbox, "2019"), `src=${t1.src} outbox="${t1.outbox}"`);
+    check("[AD-1g] abertura corrigida nao cai em fallback, nao lista e nao oferece outro ano", !has(t1.outbox, "2017") && !has(t1.outbox, "nao consegui") && !/\n\s*1[.)]\s/.test(t1.outbox), `outbox="${t1.outbox}"`);
   }
 
   {
     const c = conv();
     const t1 = await c.t("Boa tarde, queria saber mais desse carro", { ad: adCompass19, responder: proactivePhotoThenList });
-    check("[AD-1g] oferecer foto nao autoriza prefetch: zero vehicle_photos_resolve sem pedido", t1.photoResolveCalls === 0, `photoCalls=${t1.photoResolveCalls}`);
-    check("[AD-1h] a LLM segue livre para oferecer fotos depois de apresentar o carro", has(t1.outbox, "Compass") && has(t1.outbox, "fotos"), `outbox="${t1.outbox}"`);
+    check("[AD-1h] oferecer foto nao autoriza prefetch: zero vehicle_photos_resolve sem pedido", t1.photoResolveCalls === 0, `photoCalls=${t1.photoResolveCalls}`);
+    check("[AD-1i] a LLM segue livre para oferecer fotos depois de apresentar o carro", has(t1.outbox, "Compass") && has(t1.outbox, "fotos"), `outbox="${t1.outbox}"`);
   }
 
   // ── AD-2: anúncio Compass 2019 + "me manda fotos dele" -> send_media do 2019, <=5 fotos ──
