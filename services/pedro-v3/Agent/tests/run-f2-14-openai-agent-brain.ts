@@ -203,35 +203,36 @@ async function main(): Promise<void> {
     };
     await brain.proposeNextStep(contextFrame, []);
     const contextBody = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
-    const contextMessage = contextBody.messages.find((m, index) => index > 0 && m.role === "system" && m.content.includes("runtimeContext"))?.content ?? "{}";
+    const contextMessage = contextBody.messages.find((m, index) => index > 0 && m.role === "system" && m.content.includes('"context"'))?.content ?? "{}";
     const currentUser = contextBody.messages.at(-1);
-    check("[5c] contexto factual separado chega ao cerebro", contextMessage.includes("runtimeContext")
+    check("[5c] envelope factual unico chega ao cerebro", contextMessage.includes('"context"')
       && contextMessage.includes("Corolla") && contextMessage.includes("Azul")
       && contextMessage.includes("currentTurnFacts") && contextMessage.includes("consorcio"));
     check("[5c-n8n] historico viaja como papeis reais e bloco atual e o ultimo user", contextBody.messages.some((m) => m.role === "assistant" && m.content.includes("Qual carro"))
       && contextBody.messages.some((m) => m.role === "user" && m.content === "Quero ver os carros")
       && currentUser?.role === "user" && currentUser.content === "mostra o azul");
-    const payload = JSON.parse(contextMessage) as { runtimeContext?: { currentTurn?: { openingContext?: Record<string, unknown>; sourceContext?: Record<string, unknown> }; memoryFacts?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown>; conversation?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
-    check("[5e-envelope] sem instrucao top-level concorrente", payload.instruction === undefined);
+    const payload = JSON.parse(contextMessage) as { context?: { schemaVersion?: number; currentTurn?: { leadBlock?: unknown; openingContext?: Record<string, unknown>; sourceContext?: Record<string, unknown>; currentTurnFacts?: Record<string, unknown> }; memory?: { funnel?: Record<string, unknown>; openLoops?: unknown; suggestedObjective?: unknown }; assistant?: Record<string, unknown>; history?: Record<string, unknown>; conversation?: Record<string, unknown>; capabilities?: Record<string, unknown>; tools?: unknown }; runtimeContext?: unknown; signals?: unknown; leadBlock?: unknown; instruction?: unknown };
+    check("[5e-envelope] schema unico sem instrucao top-level concorrente", payload.context?.schemaVersion === 1 && payload.instruction === undefined && payload.runtimeContext === undefined);
+    check("[5e-context] bloco atual esta dentro do envelope", payload.context?.currentTurn?.leadBlock === "mostra o azul");
     check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução", payload.leadBlock === undefined
-      && payload.runtimeContext?.memoryFacts?.funnel?.suggestedObjective === undefined
+      && payload.context?.memory?.funnel?.suggestedObjective === undefined
       && payload.signals === undefined
-      && payload.runtimeContext?.operational?.currentTurnIntent === undefined
-      && payload.runtimeContext?.operational?.firstContactNoCommercialTarget === undefined
-      && payload.runtimeContext?.operational?.disengagementOnly === undefined
-      && payload.runtimeContext?.operational?.selectedOfferThisTurn === undefined
-      && payload.runtimeContext?.operational?.acceptedPhotoOffer === undefined
-      && payload.runtimeContext?.conversation?.recentTranscript === undefined
-      && payload.runtimeContext?.conversation?.pendingAgentQuestion === undefined
+      && payload.context?.capabilities?.currentTurnIntent === undefined
+      && payload.context?.capabilities?.firstContactNoCommercialTarget === undefined
+      && payload.context?.capabilities?.disengagementOnly === undefined
+      && payload.context?.capabilities?.selectedOfferThisTurn === undefined
+      && payload.context?.capabilities?.acceptedPhotoOffer === undefined
+      && Array.isArray(payload.context?.history?.recent)
+      && payload.context?.conversation !== undefined
       && !contextMessage.includes("expectedAnswer")
-      && payload.runtimeContext?.conversation?.lastAssistantMessage === "Qual carro da lista voce quer ver as fotos?");
+      && payload.context?.assistant?.lastMessage === "Qual carro da lista voce quer ver as fotos?");
     check("[5e-opening] contexto factual do anuncio chega sem diagnostico comercial derivado",
-      payload.runtimeContext?.currentTurn?.openingContext?.specificAdEntry === true
-      && payload.runtimeContext?.currentTurn?.openingContext?.firstAssistantTurn === false
-      && payload.runtimeContext?.currentTurn?.openingContext?.firstContactNoCommercialTarget === undefined
-      && payload.runtimeContext?.currentTurn?.sourceContext?.kind === "paid_ad"
-      && payload.runtimeContext?.currentTurn?.sourceContext?.advertisedVehicle === "Toyota Corolla 2016"
-      && payload.runtimeContext?.operational?.adVehicle === undefined);
+      payload.context?.currentTurn?.openingContext?.specificAdEntry === true
+      && payload.context?.currentTurn?.openingContext?.firstAssistantTurn === false
+      && payload.context?.currentTurn?.openingContext?.firstContactNoCommercialTarget === undefined
+      && payload.context?.currentTurn?.sourceContext?.kind === "paid_ad"
+      && payload.context?.currentTurn?.sourceContext?.advertisedVehicle === "Toyota Corolla 2016"
+      && payload.context?.capabilities?.adVehicle === undefined);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {

@@ -160,6 +160,7 @@ export class PilotActiveRootError extends Error {
   constructor(public readonly code:
     | "PILOT_ACTIVE_SCOPE_DENIED"
     | "MODEL_NOT_CONFIGURED"
+    | "LLM_BRAIN_REQUIRED"
     | "TENANT_CONFIG_INVALID"
     | "AGENT_WITHOUT_INSTANCE"
     | "INSTANCE_NOT_FOUND"
@@ -269,6 +270,7 @@ export class PilotActiveRoot {
     // R13-D/4: cérebro central real (OpenAI) só é materializado quando o modo pede; fatos de negócio do prompt.
     const brainMode: PilotBrainMode = deps.brainMode ?? "off";
     const agentBrain = brainMode !== "off" ? (deps.agentBrainFactory?.(runtimeConfig) ?? null) : null;
+    if (brainMode === "central_active" && !agentBrain) throw new PilotActiveRootError("LLM_BRAIN_REQUIRED");
     const businessInfo = new PromptTenantBusinessInfoSource(runtimeConfig);
     const promptSha256 = createHash("sha256").update(runtimeConfig.promptText, "utf8").digest("hex");
 

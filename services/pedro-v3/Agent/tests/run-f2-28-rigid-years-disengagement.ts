@@ -78,12 +78,17 @@ function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): 
 // search_stock. Declara o ATO mas resiste a chamar a tool: o executor determinístico garante a execução. Turnos
 // NÃO-comerciais (desengajamento) passam responder próprio com U("other").
 const resist: BrainResponder = (f, observations) => {
+  const engagement = detectDisengagement(f.block ?? "");
+  const hasNewCommercialRequest = /\b(quero|procuro|busco|tem)\b/i.test(f.block ?? "");
+  if ((engagement === "not_interested" || engagement === "low_intent") && !hasNewCommercialRequest) {
+    return finU([txt("Tudo bem, obrigado pelo retorno. Se precisar, pode me chamar." )], "disengagement", U("disengagement"));
+  }
   const understanding = {
     ...U("search_stock"), requestedCapabilities: ["stock_search"] as TurnUnderstanding["requestedCapabilities"],
     evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
   };
   const searches = observations.filter((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } }[];
-  if (searches.length === 0) return finU([txt("Certo!")], "reply", understanding);
+  if (searches.length === 0) return { kind: "query", call: { tool: "stock_search", input: {} }, understanding };
   const explicit = detectCommercialConstraints({ block: f.block ?? "", signals: buildFrameSignals(f.block ?? "", { relation: "ambiguous" } as TurnInterpretation), claimExtractor: extractor });
   let items = [...new Map(searches.flatMap((s) => s.data.items).map((v) => [v.vehicleKey, v])).values()];
   if (explicit.anos?.length) items = items.filter((v) => v.ano != null && explicit.anos!.includes(v.ano));

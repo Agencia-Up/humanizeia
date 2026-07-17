@@ -103,7 +103,7 @@ const resist: BrainResponder = (f, obs) => {
       txt("Qual delas chamou sua atencao?"),
     ], "list_stock_results", understanding);
   }
-  return final([txt("Certo!")], "reply", understanding);
+  return query({ tool: "stock_search", input: {} }, understanding);
 };
 
 const detailU: TurnUnderstanding = { ...U("vehicle_detail", {

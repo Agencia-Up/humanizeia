@@ -54,7 +54,8 @@ const CENTRAL_BRAIN_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle
 // que o próprio runtime já garante (PEDRO_V3_PILOT_TENANT_ID). Rollback imediato = voltar a env p/ off.
 function resolveBrainMode(): PilotBrainMode {
   const value = process.env.PEDRO_V3_BRAIN_MODE?.trim();
-  return value === "central_active" || value === "central_shadow" ? value : "off";
+  // LLM-first is the default. `off` remains an explicit rollback only.
+  return value === "off" || value === "central_active" || value === "central_shadow" ? value : "central_active";
 }
 
 class RuntimeConfigError extends Error {

@@ -31,7 +31,7 @@ function main(): void {
     containsAll("O prompt do portal define personalidade, negocio e funil", "historico real da conversa"));
 
   check("[SDR-2] protocolo separa contrato tecnico de conducao comercial",
-    containsAll("runtimeContext contem apenas fatos atuais", "nunca escolhe assunto, pergunta ou resposta", "Nao contem proxima pergunta", "comercial paralelo"));
+    containsAll("A mensagem system com contexto contem apenas fatos atuais", "nunca escolhe assunto, pergunta ou resposta", "Nao contem proxima pergunta", "comercial paralelo"));
 
   check("[SDR-3] grounding de lista permanece ativo",
     containsAll("vehicle_offer_list", "Lista usa somente keys retornadas por stock_search"));

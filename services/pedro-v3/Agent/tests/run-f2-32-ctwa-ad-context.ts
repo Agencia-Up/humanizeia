@@ -138,7 +138,9 @@ const adAwareSearch: BrainResponder = (frame, observations) => {
 const resist: BrainResponder = adAwareSearch;
 // Turnos em que o lead especifica uma busca: a LLM declara o ato e recebe os
 // fatos da tool para redigir. A engine nao infere nem executa busca por texto.
-const resistSearch: BrainResponder = (frame, observations) => stockAuthoredResponse(frame, observations, true);
+const resistSearch: BrainResponder = (frame, observations) => observations.some((observation) => observation.tool === "stock_search" && observation.ok)
+  ? stockAuthoredResponse(frame, observations, true)
+  : qU({ tool: "stock_search", input: {} }, currentSearchUnderstanding(frame));
 
 type Cap = { outbox: string; committed: boolean; hasMedia: boolean; exec: string[]; stockInput: Record<string, unknown> | null; reasonCode: string | null; adVehicleSeen: string | null; hasHandoff: boolean };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, responder: BrainResponder, ad?: AdContext): Promise<Cap> {

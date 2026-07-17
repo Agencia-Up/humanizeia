@@ -2254,7 +2254,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           lockedU = candidate;
         }
         if (step.kind === "final") {
-          if (singleAuthor) {
+          if (singleAuthor && !llmFirst) {
             // audit institucional: garante UMA observação TERMINAL por tópico pedido no bloco ANTES de qualquer
             // requisito (evita o loop do requiredToolBeforeFinal.mentionsStore + do próprio cérebro). Resolve
             // DETERMINISTICAMENTE (cache -> nunca repete a mesma chamada; NOT_CONFIGURED terminal -> sem loop/fallback).
@@ -2758,7 +2758,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // Resolução factual única por ordinal: a engine consulta photoIds do item exato uma
         // única vez. Ela não escreve "aqui estão" nem escolhe o próximo passo; a autoria final
         // pertence à LLM, alimentada pelo mesmo resolveTarget usado por seleção e memória.
-        if (!authoredComposed) {
+        if (!authoredComposed && !llmFirst) {
           const photoTarget = resolveTargetWithAd();   // P0-A: inclui a referência EXATA do anúncio p/ foto pronominal
           const wantsPhotoNow = currentPhotoActAuthorized(photoTarget);
           if (wantsPhotoNow && photoTarget.kind === "resolved" && !facts.some((f) => f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === photoTarget.vehicleKey)) {
@@ -2837,11 +2837,22 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               break;
             }
             if (finalStep.understanding) {
-              const candidate = reconcileUnderstanding(lockedU, finalStep.understanding, leadMessage, {
+              let candidate = reconcileUnderstanding(lockedU, finalStep.understanding, leadMessage, {
                 acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState),
                 allowCurrentEvidenceCorrection: observations.some((observation) => observation.tool === "response" && !observation.ok),
               });
-              const validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
+              let validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
+              // A short, non-action continuation (e.g. "cadê?" after a visible offer) may
+              // carry only the current block as evidence. Normalize that provenance in the
+              // final stage as we do in the proposal stage; this does not authorize a tool,
+              // effect, slot mutation, or commercial intent.
+              if (llmFirst && !validation.trusted
+                  && leadMessage.trim().length <= 30
+                  && (candidate.requestedCapabilities?.length ?? 0) === 0
+                  && !(finalStep.kind === "final" ? (finalStep.decision.stateMutations ?? []) : []).some((mutation) => mutation.op === "set_slot")) {
+                candidate = { ...candidate, evidence: [{ capability: null, quote: leadMessage.trim().slice(0, 60) }] } as unknown as TurnUnderstanding;
+                validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
+              }
               const authorityFeedback = understandingAuthorityFeedback(validation);
               const staleFinalUnderstanding = !validation.trusted
                 && ((candidate.evidence?.length ?? 0) > 0 || (candidate.requestedCapabilities?.length ?? 0) > 0);
@@ -2856,6 +2867,21 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             }
             if (finalStep.kind !== "final") {
               observations.push({ tool: "response", ok: false, error: { code: "FINAL_TOOL_FORBIDDEN", message: "As tools deste turno ja foram resolvidas. Nao consulte novamente; escreva agora a resposta final com os fatos disponiveis." } });
+              continue;
+            }
+            // A autoria final nao pode contornar o contrato de tool. Se a LLM
+            // declarou um ato que exige fatos atuais, a mesma LLM precisa
+            // chamar a tool; a passagem de autoria sem novas tools nao pode
+            // transformar uma promessa sem consulta em resposta aceita.
+            const finalMissingTool = requiredToolBeforeFinal(
+              frame,
+              observations,
+              llmFirst && brainSearchAct(),
+              moreOptionsNeedsScope,
+              frame.signals.mentionsMoreOptions === true && brainSearchAct(),
+            );
+            if (finalMissingTool) {
+              observations.push({ tool: "response", ok: false, error: { code: "FINAL_REQUIRED_TOOL_MISSING", message: finalMissingTool } });
               continue;
             }
             const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
@@ -3326,7 +3352,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // por tentativa auditam a recuperação. tools p/ o v3_query_log do central_active.
         makeEvent({ conversationId, turnId, type: "decision_final", suffix: "decision", payload: {
           action: decision.action, reasonCode: decision.reasonCode, effectIds: outbox.map((r) => r.effectId),
-          brainMode: singleAuthor ? "central_active" : "central_shadow", brainSteps, responseSource, degraded, brainRetries, finalAuthorshipAttempts,
+          brainMode: singleAuthor ? "central_active" : "central_shadow", contextEnvelopeVersion: 1, brainSteps, responseSource, degraded, brainRetries, finalAuthorshipAttempts,
           brainReason: finalDecision.reasonSummary.slice(0, 160),
           // ⭐RD1-2 (observabilidade da autoria-LLM exclusiva): quem AUTOROU o final; quantas ORIENTAÇÕES (advisory) foram
           // injetadas antes da geração; quantos denies HARD (fato/efeito/PII/pedido-explícito) dispararam retry + a categoria

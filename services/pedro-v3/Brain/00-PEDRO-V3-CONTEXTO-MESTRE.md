@@ -694,3 +694,13 @@ Ainda sem criar o runtime do v3:
 
 O primeiro codigo deve nascer dos contratos aprovados, nao o contrario.
 
+## 25. Contrato permanente LLM-first — 2026-07-17
+
+O contrato operacional aprovado para a próxima refatoração está em
+`Brain/2026-07-17-llm-first-contrato-unico-e-plano-de-acao.md`.
+
+Sua regra central é imutável: a LLM interpreta o bloco, decide responder ou chamar
+tool, recebe os resultados, redige a resposta e só então a engine valida e despacha.
+Handlers comerciais, regex de intenção, condutores de funil e reescritores de texto
+não podem voltar ao caminho ativo sob nomes novos. A engine permanece limitada a
+contexto, grounding, segurança, schema, execução autorizada e fallback técnico.

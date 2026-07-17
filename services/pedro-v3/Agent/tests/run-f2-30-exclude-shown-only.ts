@@ -79,7 +79,7 @@ const resist: BrainResponder = (f, observations) => {
     evidence: [{ capability: "stock_search" as const, quote: (f.block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }],
   };
   const stock = [...observations].reverse().find((o) => o.tool === "stock_search" && o.ok) as { ok: true; tool: "stock_search"; data: { items: VehicleFact[] } } | undefined;
-  if (!stock) return finU([txt("Certo!")], "reply", understanding);
+  if (!stock) return { kind: "query", call: { tool: "stock_search", input: {} }, understanding };
   return stock.data.items.length > 0
     ? finU([txt("Encontrei estas opções para você:"), offer(stock.data.items.map((v) => v.vehicleKey)), txt("Qual delas chamou sua atenção?")], "offer_stock", understanding)
     : finU([txt("Não encontrei outras opções com esses critérios agora. Quer ajustar a faixa ou o tipo?")], "empty_more_options", understanding);

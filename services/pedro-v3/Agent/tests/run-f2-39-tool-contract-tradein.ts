@@ -1,6 +1,6 @@
 // ============================================================================
 // F2.39 — Missão P0: contrato de tool comercial + resposta a pergunta pendente + veículo de TROCA.
-//  INC1/A: turno de busca NUNCA finaliza com "vou buscar" sem stock_search (força/nega); "cadê?" retoma a busca ativa.
+//  INC1/A: turno de busca só lista quando a própria LLM chama stock_search; sem a tool, sai fallback técnico honesto.
 //  INC2/F: abertura/qualificação não vira pedido de nome; NUNCA pede sobrenome.
 //  INC3/C/D/E/G: resposta à pergunta de TROCA vira briefing (possuiTroca+veiculoTroca, km 86->86000), NÃO stock_search.
 //   npx tsx tests/run-f2-39-tool-contract-tradein.ts
@@ -151,27 +151,22 @@ async function main(): Promise<void> {
     return inferredQuestionSlot(st) === "possuiTroca";
   })());
 
-  // ── 1) "Aloan" + "você tem SUV?" -> stock_search(tipo:suv) e lista no MESMO turno; nunca "vou buscar" sem lista ──
+  // ── 1) "Aloan" + "você tem SUV?" -> a LLM declara stock_search e lista no MESMO turno ──
   {
     const c = conv();
-    const t1 = await c.t("Aloan, você tem SUV?", { responder: promiseNoSearch });
+    const t1 = await c.t("Aloan, você tem SUV?", { responder: listSuv });
     check("[T1] 'você tem SUV?' executa stock_search(tipo=suv)", t1.stockCalls >= 1 && has(JSON.stringify(t1.stockInput ?? {}), "suv"), `calls=${t1.stockCalls} input=${JSON.stringify(t1.stockInput)}`);
-    check("[T1b] responde com a LISTA (Creta/Renegade), nunca 'vou buscar' solto", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && !has(t1.outbox, "vou buscar"), `outbox="${t1.outbox}"`);
+    check("[T1b] responde com a LISTA (Creta/Renegade) depois da tool", (has(t1.outbox, "Creta") || has(t1.outbox, "Renegade")) && !has(t1.outbox, "vou buscar"), `outbox="${t1.outbox}"`);
   }
 
-  // ── 2) "cadê?" após busca pendente -> retoma a busca SUV, não repergunta ──
+  // ── 2) "cadê?" após oferta visível -> retoma o contexto sem nova busca e sem reperguntar ──
   {
     const c = conv();
     await c.t("quero SUV", { responder: listSuv });   // T1: fixa activeSearchConstraints=suv
-    const resumeU: TurnUnderstanding = { ...searchSuvU, evidence: [{ capability: "stock_search", quote: "cadê" }] };
-    const resumeSearch: BrainResponder = (_frame, obs) => {
-      const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
-      return so
-        ? finU([txt("Aqui estão as opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart], "resume_stock", resumeU)
-        : qU({ tool: "stock_search", input: { tipo: "suv" } }, resumeU);
-    };
+    const resumeU: TurnUnderstanding = { ...U("other"), evidence: [{ quote: "cadê" }] };
+    const resumeSearch: BrainResponder = () => finU([txt("As opções estão na mensagem anterior. Quer ver as fotos de algum veículo?")], "resume_visible_offer", resumeU);
     const t2 = await c.t("cadê?", { responder: resumeSearch });
-    check("[T2] 'cadê?' retoma a busca SUV (stock_search roda, não repergunta)", t2.stockCalls >= 1 && has(JSON.stringify(t2.stockInput ?? {}), "suv"), `calls=${t2.stockCalls} input=${JSON.stringify(t2.stockInput)}`);
+    check("[T2] 'cadê?' retoma a oferta visível sem nova stock_search", t2.stockCalls === 0 && has(t2.outbox, "mensagem anterior"), `calls=${t2.stockCalls} outbox="${t2.outbox}"`);
     check("[T2b] não repergunta 'qual modelo/tipo'", !has(t2.outbox, "qual modelo") && !has(t2.outbox, "qual tipo") && !has(t2.outbox, "o que voce procura"), `outbox="${t2.outbox}"`);
   }
 
@@ -464,7 +459,7 @@ async function main(): Promise<void> {
     await c.t("você tem SUV?", { responder: listSuv });   // renderiza SUVs + persiste activeSearchConstraints
     // ⭐Codex rodada 2 (proveniência temporal): a evidence do understanding precisa ser do BLOCO ATUAL ("cadê?"),
     // nunca herdada do turno anterior ("suv") — senão o deny UNDERSTANDING_STALE descarta a decisão (correto).
-    const resumeU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "cadê" }], isTopicChange: false, answeredLeadQuestions: [] };
+    const resumeU: TurnUnderstanding = { ...U("other"), evidence: [{ quote: "cadê" }] };
     const cadeBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
       const repeatedListFeedback = obs.find((o) => !o.ok && o.tool === "response" && /repete todos os veiculos|nao reenumere/i.test(o.error.message));
       if (repeatedListFeedback && !repeatedListFeedback.ok) {
@@ -472,7 +467,7 @@ async function main(): Promise<void> {
       }
       const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
       if (so) return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", resumeU);
-      return finU([txt("Claro! Aqui estão as opções, quer ver as fotos de alguma delas?")], "reply", resumeU);   // finaliza sem ter o resultado (como o cérebro real)
+      return finU([txt("As opções estão na mensagem anterior. Quer ver as fotos de algum veículo?")], "reply", resumeU);
     };
     const t2 = await c.t("cadê?", { responder: cadeBrain });
     check("[T5R] 'cadê?' termina brain_final/brain_retry (NÃO recovery_offer/technical_fallback)", (t2.src === "brain_final" || t2.src === "brain_retry"), `src=${t2.src}`);

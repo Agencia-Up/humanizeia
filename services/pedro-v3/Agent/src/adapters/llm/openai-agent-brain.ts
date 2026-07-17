@@ -102,11 +102,11 @@ Voce e o atendente definido no prompt do portal. Leia a conversa como dialogo hu
 
 AUTORIDADE E CONTINUIDADE
 - A ultima mensagem user e o bloco atual completo do lead e tem prioridade. As mensagens user/assistant anteriores sao o historico real da conversa.
-- A mensagem system com runtimeContext contem apenas fatos atuais, memoria factual, canal e resultados de tools. Ela ajuda a interpretar; nunca escolhe assunto, pergunta ou resposta.
-- runtimeContext.currentTurn.openingContext.firstAssistantTurn informa apenas se ainda nao existe fala anterior do agente. Quando true, apresente explicitamente o nome do agente e a empresa definidos no prompt do portal, sem abandonar o assunto atual do lead.
-- runtimeContext.currentTurn.sourceContext descreve a origem factual da fala atual. Quando kind="paid_ad" e advertisedVehicle estiver presente, esse veiculo e o assunto inicial de compra ja conhecido: nao pergunte qual carro/tipo o lead procura. ATENCAO: advertisedVehicle prova somente qual foi o interesse; nunca prova disponibilidade, cor, km, cambio ou preco. No primeiro turno, se o bloco nao mudar explicitamente o interesse nem pedir apenas informacao institucional, sua PRIMEIRA saida deve ser query stock_search pelo veiculo/ano anunciado. Nao finalize nem afirme disponibilidade antes da observacao. Depois use o resultado como FOCO SINGULAR: nomeie o modelo anunciado e apresente somente o exemplar exato, com vehicle_ref/money_ref da mesma vehicleKey quando citar atributos. Nao use vehicle_offer_list e nao mostre alternativas nessa abertura; alternativas so aparecem quando o lead pedir outro veiculo, outras opcoes ou algo semelhante. Se nao houver correspondencia exata, seja transparente e nao substitua silenciosamente o anuncio por uma lista ampla.
+- A mensagem system com contexto contem apenas fatos atuais, memoria factual, canal e resultados de tools. Ela ajuda a interpretar; nunca escolhe assunto, pergunta ou resposta.
+- context.currentTurn.openingContext.firstAssistantTurn informa apenas se ainda nao existe fala anterior do agente. Quando true, apresente explicitamente o nome do agente e a empresa definidos no prompt do portal, sem abandonar o assunto atual do lead.
+- context.currentTurn.sourceContext descreve a origem factual da fala atual. Quando kind="paid_ad" e advertisedVehicle estiver presente, esse veiculo e o assunto inicial de compra ja conhecido: nao pergunte qual carro/tipo o lead procura. ATENCAO: advertisedVehicle prova somente qual foi o interesse; nunca prova disponibilidade, cor, km, cambio ou preco. No primeiro turno, se o bloco nao mudar explicitamente o interesse nem pedir apenas informacao institucional, sua PRIMEIRA saida deve ser query stock_search pelo veiculo/ano anunciado. Nao finalize nem afirme disponibilidade antes da observacao. Depois use o resultado como FOCO SINGULAR: nomeie o modelo anunciado e apresente somente o exemplar exato, com vehicle_ref/money_ref da mesma vehicleKey quando citar atributos. Nao use vehicle_offer_list e nao mostre alternativas nessa abertura; alternativas so aparecem quando o lead pedir outro veiculo, outras opcoes ou algo semelhante. Se nao houver correspondencia exata, seja transparente e nao substitua silenciosamente o anuncio por uma lista ampla.
 - Quando sourceContext.adCreativeUrls estiver presente, a imagem e uma referencia publica da arte do anuncio para sua leitura multimodal. Use-a apenas para reconhecer texto/modelo claramente legivel; nunca adivinhe um modelo pela carroceria. A imagem nao autoriza tool nem prova disponibilidade, preco, km, cor ou cambio. Se o veiculo nao estiver comprovado, trate o anuncio como generico e conduza a descoberta naturalmente.
-- Quando o prompt do portal definir uma frase fixa de primeiro contato, reproduza essa frase com fidelidade, alterando somente a saudacao pelo periodo informado em runtimeContext.channel. Na entrada por anuncio especifico, o primeiro text termina na pergunta fixa do portal; em seguida use EXATAMENTE uma part {"type":"message_break"}; somente depois comece "Vi que voce se interessou..." e componha os atributos com refs aterradas. message_break representa um novo balao curto no WhatsApp. Nao misture lista de estoque nessa abertura.
+- Quando o prompt do portal definir uma frase fixa de primeiro contato, reproduza essa frase com fidelidade, alterando somente a saudacao pelo periodo informado em context.channel. Na entrada por anuncio especifico, o primeiro text termina na pergunta fixa do portal; em seguida use EXATAMENTE uma part {"type":"message_break"}; somente depois comece "Vi que voce se interessou..." e componha os atributos com refs aterradas. message_break representa um novo balao curto no WhatsApp. Nao misture lista de estoque nessa abertura.
 - Se o lead mudar explicitamente de modelo, a fala atual vence imediatamente e o anuncio permanece apenas como origem historica para CRM/briefing. Um carro informado para troca nunca substitui advertisedVehicle.
 - O prompt do portal define personalidade, negocio e funil. Quando houver instrucoes de forma contraditorias dentro dele, preserve coerencia humana: responda o ato atual, nao repita pergunta ou fato ja respondido e nao transforme a conversa em formulario.
 - Etapas, campos e perguntas do funil do portal sao objetivos para a conversa inteira, nao uma fila obrigatoria por turno. Nunca pule para o proximo campo ausente enquanto o lead esta desenvolvendo o assunto atual.
@@ -126,7 +126,7 @@ QUALIDADE CONVERSACIONAL GLOBAL
 - Use o nome do lead com moderacao, somente quando soar socialmente util; nunca como prefixo automatico de toda mensagem.
 - Nao faca pergunta com duas alternativas que aceite um "sim" ambiguo. Se o historico ja criou ambiguidade, repare com uma unica pergunta clara.
 - Nao ofereca um menu de assuntos ou de possiveis perguntas. Escolha o unico proximo passo mais natural para a fala atual; se nenhum for necessario, finalize sem pergunta.
-- O proximo passo deve nascer da conversa e do prompt do portal, nao da ordem de slots em runtimeContext.
+- O proximo passo deve nascer da conversa e do prompt do portal, nao da ordem de slots em context.
 - Nao repita uma lista que ja esta visivel no historico. Se o lead apenas acrescentar ou confirmar um criterio, responda como esse criterio afeta a lista; consulte novamente somente se precisar de fatos novos e mostre apenas resultado novo ou realmente filtrado.
 - Antes de finalizar, faca uma verificacao silenciosa: "minha resposta trata a ultima fala?", "mantem o papel correto de cada fato?", "repete algo ja respondido?", "salta para um campo apenas porque esta faltando?". Corrija o texto se qualquer resposta for sim para as duas ultimas perguntas.
 
@@ -165,7 +165,7 @@ Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0
 - send_media e handoff ficam em effects. Nunca exponha vehicleKey, refs internas, CPF/data ou segredos no texto.
 - Quando vehicle_photos_resolve retornar ok e voce decidir enviar as fotos pedidas, inclua {"kind":"send_media"} em effects no mesmo final. O adaptador vincula esse efeito ao unico vehicleKey/photoIds aterrado pela tool neste turno; nao copie IDs para o texto, nao invente IDs e nao chame a tool novamente.
 - Mutacoes registram somente fatos realmente informados no bloco atual ou selecao aterrada. Nao invente nem contamine papeis semanticos.
-- Saudacao, quando necessaria, usa runtimeContext.channel no fuso America/Sao_Paulo. Follow-up nao usa saudacao.
+- Saudacao, quando necessaria, usa context.channel no fuso America/Sao_Paulo. Follow-up nao usa saudacao.
 `;
 
 const HANDOFF_PROTOCOL = `
@@ -191,7 +191,7 @@ transferencia a CPF ou a mais dados, e NUNCA finja que a transferencia esta em a
 const FOLLOWUP_PROTOCOL = `
 
 === FOLLOW-UP SISTEMICO (LLM-FIRST) ===
-Quando context.operational.followupStage existir, este e um evento de inatividade e NAO uma nova mensagem do cliente.
+Quando context.capabilities.followupStage existir, este e um evento de inatividade e NAO uma nova mensagem do cliente.
 - Nao chame tools, nao invente fatos e nao proponha efeitos comerciais. Use apenas historico, slots e ofertas ja confirmados.
 - Nao cumprimente, nao se reapresente e nao repita a pergunta anterior do atendente. O objetivo e reabrir uma resposta do lead,
   nao reiniciar a conversa.
@@ -324,8 +324,17 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const adCreativeUrls = firstAssistantTurn && !frame.signals.adVehicle
       ? (frame.signals.adImageUrls ?? []).filter(trustedAdCreativeUrl).slice(0, 1)
       : [];
-    const runtimeContext = {
+    // Envelope canonico: uma unica vista read-only para a LLM. O historico bruto
+    // continua sendo enviado como mensagens user/assistant abaixo, mas fatos,
+    // memoria, anuncio, canal e observacoes nao sao mais apresentados em varios
+    // objetos com autoridade ambigua.
+    const recentHistory = frame.recentTranscript
+      .filter((turn) => turn.text.trim().length > 0)
+      .slice(-12);
+    const context = {
+      schemaVersion: 1,
       currentTurn: {
+        leadBlock: frame.block,
         currentTurnFacts: currentTurnEvidence,
         sourceContext: frame.signals.adVehicle
           ? {
@@ -358,18 +367,29 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         conversationSummary: frame.conversationContext.conversationSummary,
         followup: frame.conversationContext.followup,
       },
-      memoryFacts: {
+      history: {
+        recent: recentHistory,
+        relevant: [],
+      },
+      assistant: {
+        lastMessage: frame.conversationContext.lastAgentMessage,
+        lastQuestion: frame.currentTurnFacts.expectedAnswer.lastAgentQuestion,
+      },
+      memory: {
         funnel: funnelFacts,
+        confirmedFacts: frame.currentTurnFacts.extracted,
+        openLoops: frame.workingMemory.unansweredLeadQuestions,
         lastPhotoAction: frame.workingMemory.lastPhotoAction,
         commitments: frame.workingMemory.commitments,
+        summary: frame.conversationContext.conversationSummary,
+        selectedVehicle: frame.conversationContext.selectedVehicle,
+        visibleOffers: frame.conversationContext.lastVisibleOffer,
       },
       channel: getBrazilChannelTime(frame.now),
-      operational: llmSignals,
-      toolObservationsSoFar: observations,
+      capabilities: llmSignals,
+      tools: observations,
     };
-    const historyMessages = frame.recentTranscript
-      .filter((turn) => turn.text.trim().length > 0)
-      .slice(-12)
+    const historyMessages = recentHistory
       .map((turn) => ({ role: turn.role === "lead" ? "user" : "assistant", content: turn.text }));
     const rewriteFeedback = observations
       .flatMap((observation) => !observation.ok && observation.tool === "response" ? [observation.error.message.trim()] : [])
@@ -377,7 +397,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       .slice(-3);
     const messages = [
       { role: "system", content: this.#system },
-      { role: "system", content: JSON.stringify({ runtimeContext }) },
+      { role: "system", content: JSON.stringify({ context }) },
       ...historyMessages,
       { role: "user", content: adCreativeUrls.length > 0
         ? [

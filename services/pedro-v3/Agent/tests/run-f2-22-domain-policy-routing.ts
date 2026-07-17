@@ -65,7 +65,19 @@ const slotSummary = (state: unknown): Record<string, string> => { const out: Rec
 
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: UnderstandingBrain, preparer: RelPreparer, businessInfo: TenantBusinessInfoSource, convId: string, seq: number, lead: string, relation: TurnRelation, script: AgentBrainStep[] | BrainResponder): Promise<Cap> {
   executed.length = 0; preparer.relation = relation;
-  if (typeof script === "function") brain.setResponder(script); else brain.setTurnScript(script);
+  const asksInstitutional = /loja|onde\s+fica|endere[cç]|hor[aá]|atendimento/i.test(lead);
+  const businessTopic = /hor[aá]|atendimento/i.test(lead) ? "hours" : "address";
+  if (typeof script === "function") {
+    const original = script;
+    brain.setResponder((frame, observations, stepIndex) => {
+      if (asksInstitutional && !observations.some((observation) => observation.tool === "tenant_business_info")) {
+        return q({ tool: "tenant_business_info", input: { topic: businessTopic as "address" | "hours" } });
+      }
+      return original(frame, observations, stepIndex);
+    });
+  } else {
+    brain.setTurnScript(asksInstitutional && script[0]?.kind !== "query" ? [q({ tool: "tenant_business_info", input: { topic: businessTopic as "address" | "hours" } }), ...script] : script);
+  }
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
   clock.advance(1000);
   const turnId = `${convId}-t${seq}`;
@@ -128,7 +140,7 @@ async function main(): Promise<void> {
   {
     const c = conv(makeBI(ADDR, HOURS), visitSeed); await c.seed();
     const aFin = fin([txt(`Claro! A loja fica na ${ADDR}. Posso te ajudar em mais alguma coisa?`)]);
-    const cap = await c.t("aonde fica a loja?", "ambiguous", [aFin, aFin]);
+    const cap = await c.t("aonde fica a loja?", "ambiguous", [q({ tool: "tenant_business_info", input: { topic: "address" } }), aFin]);
     check("[A] institucional PURO -> endereço, sem fallback, sem vehicle_details/stock", cap.committed && !cap.degraded && has(cap.outbox, "Charles Schnneider") && !cap.exec.includes("vehicle_details") && !cap.exec.includes("stock_search"), `src=${cap.src} exec=${JSON.stringify(cap.exec)}`);
     check("[A] sem feedback de veículo/funil", !cap.policyFeedback.some((f) => /vehicle_details|slot|km|cor/i.test(f)), JSON.stringify(cap.policyFeedback));
   }
@@ -136,7 +148,7 @@ async function main(): Promise<void> {
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
     const a2 = fin([txt(`Claro! A loja fica na ${ADDR}, pertinho de onde você viu o Onix. Posso ajudar?`)]);
-    const cap = await c.t("aonde fica a loja?", "ambiguous", [a2, a2]);
+    const cap = await c.t("aonde fica a loja?", "ambiguous", [q({ tool: "tenant_business_info", input: { topic: "address" } }), a2]);
     check("[A2] institucional NOMEANDO o carro lembrado passa (memória aterra o nome)", cap.committed && !cap.degraded && has(cap.outbox, "Charles Schnneider") && has(cap.outbox, "Onix"), `src=${cap.src} text="${cap.outbox}"`);
   }
   // B) MISTO: institucional + ATRIBUTO de veículo. "ele é automático" (Onix é Manual) SEM vehicle_details -> BLOQUEADO;

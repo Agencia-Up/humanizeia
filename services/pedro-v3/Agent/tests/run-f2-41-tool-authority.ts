@@ -182,8 +182,9 @@ async function main(): Promise<void> {
     check("[C-2] a resposta da LLM é despachada (conversa, não robô)", (t1.src === "brain_final" || t1.src === "brain_retry") && has(t1.outbox, "vizinho"), `src=${t1.src} outbox="${t1.outbox}" pf=${JSON.stringify(t1.pf)}`);
   }
 
-  // ── D) AUTORIDADE POSITIVA: a LLM DECLARA search_stock (capability+evidence) e NÃO chama a tool -> o engine GARANTE
-  //    a execução (nunca promessa falsa) — a força continua, agora sob a autoridade da LLM. ──
+  // ── D) CONTRATO LLM-FIRST: declarar search_stock sem chamar a tool NÃO autoriza
+  //    a engine a completar a chamada. O turno deve degradar tecnicamente, sem
+  //    tool fantasma e sem autoridade inventada.
   {
     const c = conv();
     const lazy: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
@@ -192,8 +193,9 @@ async function main(): Promise<void> {
       return finU([txt("Certo!")], "reply", searchU("tem corolla"));   // declara busca mas não chama a tool
     };
     const t1 = await c.t("tem corolla?", lazy);
-    check("[D-1] LLM declarou busca sem executar -> engine garante a execução (stock_search rodou)", t1.stockCalls >= 1, `calls=${t1.stockCalls}`);
-    check("[D-2] complemento factual herda autoridade da LLM, não da engine", t1.authorities.length === 1 && t1.authorities[0]?.principal === "llm" && t1.authorities[0]?.source === "llm_intent_completion", JSON.stringify(t1.authorities));
+    check("[D-1] LLM declarou busca sem executar -> engine não completa a tool", t1.stockCalls === 0, `calls=${t1.stockCalls}`);
+    check("[D-2] sem chamada, não existe autoridade fantasma de complemento", t1.authorities.length === 0 && t1.stockObs === 0, JSON.stringify(t1.authorities));
+    check("[D-3] falha de contrato vira fallback técnico observável", t1.terminalSafe === true, `terminalSafe=${t1.terminalSafe} src=${t1.src}`);
   }
 
   // ── E) ADVERSARIAL (hardening do audit): "outras opções" DENTRO de uma CONTESTAÇÃO — o regex de 'mais opções' casa,
