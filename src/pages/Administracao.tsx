@@ -13,11 +13,13 @@ import {
   ShieldCheck, RefreshCcw, AlertTriangle, ChevronDown, ChevronRight,
   Activity, Users, BadgeCheck, Home, HeartPulse, ClipboardList,
   UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap, Wallet, BellRing, MessagesSquare,
+  BookOpen,
 } from 'lucide-react';
 import AdminMargemTab from '@/components/admin/AdminMargemTab';
 import AdminAuditoriaTab from '@/components/admin/AdminAuditoriaTab';
 import AdminDailyAuditTab from '@/components/admin/AdminDailyAuditTab';
 import AdminFeedbackConfigTab from '@/components/admin/AdminFeedbackConfigTab';
+import AdminSupportKbTab from '@/components/admin/AdminSupportKbTab';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
 // Organizado em ABAS pra facilitar a leitura de quem nao e tecnico. Cada aba = 1 bloco.
@@ -45,6 +47,7 @@ const TABS = [
   { key: 'feedbacks', label: 'Feedbacks', icon: MessagesSquare },
   { key: 'consumo', label: 'Consumo de IA', icon: Activity },
   { key: 'margem', label: 'Margem (IA)', icon: Wallet },
+  { key: 'base_suporte', label: 'Base de Conhecimento', icon: BookOpen },
 ] as const;
 type TabKey = typeof TABS[number]['key'];
 
@@ -99,6 +102,7 @@ export default function Administracao() {
       {tab === 'feedbacks' && <AdminFeedbackConfigTab />}
       {tab === 'consumo' && <AdminAuditoriaTab />}
       {tab === 'margem' && <AdminMargemTab />}
+      {tab === 'base_suporte' && <AdminSupportKbTab />}
     </div>
   );
 }
