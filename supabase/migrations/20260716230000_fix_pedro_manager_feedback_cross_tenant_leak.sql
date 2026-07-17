@@ -1,0 +1,36 @@
+-- Corrige vazamento CROSS-TENANT em pedro_manager_feedback.
+--
+-- A policy `manager_read_team_feedback` (criada em 20260508000002_pedro_profiles_role.sql)
+-- tinha o predicado:
+--
+--     get_user_role() IN ('owner','manager')
+--     AND EXISTS (
+--       SELECT 1 FROM profiles p
+--        WHERE p.id = pedro_manager_feedback.user_id
+--           OR p.manager_id = auth.uid()
+--     )
+--
+-- O bug está no EXISTS: ele NÃO amarra a linha de `profiles` ao usuário logado.
+-- Basta UMA linha casar `p.id = user_id` — e ela sempre existe, porque é o próprio
+-- dono do feedback — para o EXISTS virar TRUE. `auth.uid()` só aparece no lado
+-- direito de um OR que nem precisa ser avaliado. Ou seja: o único filtro que
+-- sobrava de pé era o papel do usuário. Efeito: QUALQUER owner/manager lia o
+-- feedback de TODOS os tenants (o `p.id = user_id` deveria ter sido `p.id = auth.uid()`).
+--
+-- Medido em prod (16/07/2026, por impersonação):
+--   ANTES  → dono da Mônaco enxergava 159 linhas / 3 tenants (100% da tabela).
+--   DEPOIS → dono da Mônaco enxerga  20 linhas / 1 tenant  / 0 de terceiros.
+--            vendedor (João Santos)  79 linhas, todas dele / 0 de outro vendedor.
+--
+-- O DROP é seguro porque a policy era 100% REDUNDANTE — conferido antes de aplicar:
+--   1. `owner_read_feedback` (user_id = auth.uid()) já cobre o dono da conta;
+--   2. `seller_manage_feedback` já cobre o vendedor pelo member_id;
+--   3. a role 'manager' NÃO EXISTE na base (só 'seller'=25 e 'owner'=14), então
+--      o ramo `p.manager_id = auth.uid()` nunca teve caso de uso real.
+--
+-- Versionado depois de aplicado em prod: sem isto no Git, um rebuild do banco
+-- recriaria a policy do 20260508000002 e o vazamento voltaria calado.
+-- (Mesma lição do toBrWa/TENANT_DEFAULT: o que só vive fora do Git morre no
+-- próximo deploy — ou, pior, ressuscita.)
+
+DROP POLICY IF EXISTS manager_read_team_feedback ON public.pedro_manager_feedback;

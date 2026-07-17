@@ -48,6 +48,7 @@ import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal'
 import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
 import { FeedbacksArea } from '@/components/pedro/FeedbacksArea';
+import FeedbacksHistoryTab from '@/components/feedback/FeedbacksHistoryTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
 import { CampanhaAnalytics } from '@/components/pedro/CampanhaAnalytics';
@@ -6737,6 +6738,9 @@ const MASTER_TABS = [
   { id: 'crm',          label: 'CRM Avançado', icon: NotebookPen,   emoji: '🗒️' },
   { id: 'meta-forms',   label: 'Formulários Meta', icon: FileSpreadsheet, emoji: '📋' },
   { id: 'inbox-ia',     label: 'Conversas IA', icon: Inbox,         emoji: '📨' },
+  // 'feedbacks-vendedor' != 'feedbacks' (esse é a sub-aba "Relatórios" da IA,
+  // dentro do CRM). Ids distintos de propósito pra não colidir na URL ?tab=.
+  { id: 'feedbacks-vendedor', label: 'Feedbacks', icon: MessageSquare, emoji: '💬' },
   { id: 'agente',       label: 'Agente IA',    icon: Bot,           emoji: '🤖' },
   { id: 'vendedores',   label: 'Vendedores',   icon: Users,         emoji: '👥' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -6747,6 +6751,7 @@ const ALL_SELLER_TABS = [
   // "Painel ao Vivo" saiu do Pedro — virou item do sistema na sidebar (/dashboard-tv).
   { id: 'crm',         label: 'Meus Leads',   icon: NotebookPen,   emoji: '🗒️', featureKey: 'tab_crm' },
   { id: 'inbox-ia',    label: 'Conversas IA', icon: Inbox,         emoji: '📨', featureKey: 'tab_inbox_ia' },
+  { id: 'feedbacks-vendedor', label: 'Feedbacks', icon: MessageSquare, emoji: '💬', featureKey: 'tab_feedbacks' },
   { id: 'agente',      label: 'Agente IA',    icon: Bot,           emoji: '🤖', featureKey: 'tab_agente_ia' },
   { id: 'vendedores',  label: 'Vendedores',   icon: Users,         emoji: '👥', featureKey: 'tab_vendedores' },
 ].filter(t => t.id !== 'performance' || FEATURES.agentPerformanceTab);
@@ -6883,6 +6888,19 @@ export default function PedroSDR() {
                 />
               )}
             </TabsContent>
+
+            {/* Feedbacks — histórico do que o vendedor mandou pro gerente.
+                Mesma aba pro master (vê a equipe) e pro vendedor (vê só o dele);
+                quem separa isso é a RLS, não o front. */}
+            {(!isSeller || visibleFeatures.tab_feedbacks) && (
+              <TabsContent value="feedbacks-vendedor" className="mt-0">
+                <FeedbacksHistoryTab
+                  ownerUserId={inboxOwnerId}
+                  isSeller={isSeller}
+                  memberIds={memberIds}
+                />
+              </TabsContent>
+            )}
 
             {/* Vendedores */}
             {(!isSeller || visibleFeatures.tab_vendedores) && (

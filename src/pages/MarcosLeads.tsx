@@ -3,7 +3,7 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { BarChart3, Loader2, Users, Inbox, Send, Zap, Kanban, ClipboardList, Contact } from 'lucide-react';
+import { BarChart3, Loader2, Users, Inbox, Send, Zap, Kanban, ClipboardList, Contact, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useSellerProfile, type VisibleFeatures } from '@/hooks/useSellerProfile';
 import { FEATURES } from '@/config/features';
@@ -16,6 +16,7 @@ const WhatsAppAutomations = lazy(() => import('./WhatsAppAutomations'));
 const CrmFormularios    = lazy(() => import('./CrmFormularios'));
 const WhatsAppContacts  = lazy(() => import('./WhatsAppContacts'));
 const MarcosPerformance = lazy(() => import('./MarcosPerformance'));
+const FeedbacksHistoryTab = lazy(() => import('@/components/feedback/FeedbacksHistoryTab'));
 
 const TabLoader = () => (
   <div className="flex items-center justify-center py-20">
@@ -31,6 +32,9 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
   { id: 'formularios', label: 'Formulários',      icon: ClipboardList,emoji: '📋', featureKey: 'marcos_formularios' },
   { id: 'contacts',    label: 'Contatos',         icon: Contact,      emoji: '👥', featureKey: 'marcos_contatos' },
   { id: 'broadcast',   label: 'Disparo em Massa', icon: Send,         emoji: '📤', featureKey: 'marcos_disparo' },
+  // Mesma aba do Pedro (mesmo componente, mesma tabela). Mostra as duas origens
+  // com filtro, então o vendedor tem UM lugar só pra comprovar o que enviou.
+  { id: 'feedbacks',   label: 'Feedbacks',        icon: MessageSquare,emoji: '💬', featureKey: 'tab_feedbacks' },
   // Aba "Conversas" (inbox) REMOVIDA do Marcos — agora vive na aba lateral WhatsApp > Conversas (unificada).
   // Instâncias (números de robô) saíram daqui — agora vivem só na área de
   // Integração (menu "Instâncias", /whatsapp/instances). Refactor isolamento.
@@ -47,7 +51,9 @@ const ALL_TABS: { id: string; label: string; icon: any; emoji: string; featureKe
 
 export default function MarcosLeads() {
   const { user } = useAuth();
-  const { isSeller, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, visibleFeatures, masterUserId, memberIds, loading: sellerLoading } = useSellerProfile(user?.id);
+  // Dono dos dados: master usa o próprio id; vendedor usa o id do master.
+  const ownerUserId = masterUserId || user?.id;
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
 
@@ -168,6 +174,13 @@ export default function MarcosLeads() {
               </TabsContent>
               <TabsContent value="broadcast" className="mt-0 h-full">
                 <WhatsAppBroadcast embedded />
+              </TabsContent>
+              <TabsContent value="feedbacks" className="mt-0 h-full">
+                <FeedbacksHistoryTab
+                  ownerUserId={ownerUserId}
+                  isSeller={isSeller}
+                  memberIds={memberIds}
+                />
               </TabsContent>
               <TabsContent value="automations" className="mt-0 h-full">
                 <WhatsAppAutomations embedded />

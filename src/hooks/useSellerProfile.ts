@@ -24,6 +24,7 @@ export interface VisibleFeatures {
   tab_agente_ia: boolean;
   tab_crm_ao_vivo: boolean;
   tab_vendedores: boolean;
+  tab_feedbacks: boolean;  // Histórico dos feedbacks enviados ao gerente (Pedro E Marcos)
   // Marcos — sub-itens CRM & WhatsApp
   marcos_crm: boolean;
   marcos_formularios: boolean;
@@ -67,6 +68,10 @@ export const DEFAULT_SELLER_FEATURES: VisibleFeatures = {
   tab_performance: false, // métricas (default off — master libera)
   tab_agente_ia: false,   // config do agente IA (só master)
   tab_vendedores: false,  // gestão de equipe (só master)
+  // Feedbacks: ON por default de propósito. A aba existe pro vendedor CONSULTAR
+  // e COMPROVAR o que ele mesmo mandou — e a RLS já garante que ele só vê o dele.
+  // Deixar off por default esvaziaria a razão de ela existir.
+  tab_feedbacks: true,    // Feedbacks enviados ao gerente (histórico do próprio vendedor)
   // ── Abas do agente Marcos (CRM & WhatsApp) ──────────────────────────
   marcos_crm: true,        // CRM Kanban
   marcos_contatos: true,   // Base de contatos
