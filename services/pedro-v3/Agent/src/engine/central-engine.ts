@@ -66,7 +66,7 @@ import { focusInvalidationMutations, isNewSearchTurn } from "./vehicle-focus.ts"
 import { extractLeadSlots, resolveSelectedVehicle, inferredQuestionSlot, lastAgentQuestionText, questionSlotFromAgentText, statesTradeVehiclePossession, isAnswerToFinancialQuestion, isFinancialValueDuringSelectedFinancing } from "./lead-extraction.ts";
 import { filterBrainSlotMutations, type DroppedSlotMutation } from "./slot-provenance.ts";
 import { safeCommitSlots } from "./conversation-engine.ts";
-import { reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
+import { isSdrHandoffReadyForIntent, reconcileObjectiveWithQuestion, stripAllObjectiveMutations, type SdrQualificationPolicy } from "./sdr-conductor.ts";
 import { buildTurnFrame, buildFrameSignals } from "./turn-frame-builder.ts";
 import { buildCurrentTurnFacts } from "./current-turn-facts.ts";
 import {
@@ -644,6 +644,13 @@ function authorFromBrainDraft(args: {
   // HF-1 (2026-07-11): transferência EXECUTÁVEL neste turno (flag ON + vendedor ativo disponível + CRM
   // vinculado + transfer.enabled do portal). Promessa de consultor exige ISTO **e** o effect handoff proposto.
   readonly handoffPlannable?: boolean;
+  /**
+   * Read-only readiness fact calculated from the portal qualification view.
+   * The brain still chooses whether to hand off; this flag only prevents an
+   * executable `qualified_handoff` effect when the configured qualification
+   * is factually incomplete.
+   */
+  readonly qualifiedHandoffReadyFor?: (primaryIntent: string | null) => boolean;
   readonly humanRequested?: boolean;
   readonly sensitiveAnswerKinds?: readonly ("cpf" | "birthDate")[];
   readonly photoRecallLabel?: string | null;            // memória factual: a LLM precisa nomear o veículo lembrado
@@ -724,6 +731,14 @@ function authorFromBrainDraft(args: {
     ? photoSafeEffects.map((effect) => effect.kind === "handoff" ? { ...effect, reason: "explicit_human_request" } : effect)
     : photoSafeEffects;
   const proposedEffects = ensureSendMessage(brainEffects);
+  const proposedQualifiedHandoff = proposedEffects.some((effect) => effect.kind === "handoff" && effect.reason === "qualified_handoff");
+  const qualifiedHandoffReady = args.qualifiedHandoffReadyFor?.(args.proposedPrimaryIntent ?? null) === true;
+  if (args.requireBrain && proposedQualifiedHandoff && args.humanRequested !== true && !qualifiedHandoffReady) {
+    return {
+      ok: false,
+      feedback: "Você propôs uma transferência qualificada, mas a qualificação configurada no portal ainda não está completa. Não transfira por apenas reconhecer interesse ou troca: continue você atendendo o ato atual e faça a próxima pergunta natural do atendimento. Só use reason=qualified_handoff quando os dados exigidos pelo funil já estiverem conhecidos.",
+    };
+  }
   // P0-2 (audit Codex): filtra select_vehicle_focus proposto pela LLM SEM capability select + evidência (descarta; o foco
   // não muda). Ordinal determinístico válido (target=turn_ordinal do mesmo key) AINDA seleciona. Só em llmFirst (requireBrain).
   const rawStateMutations = args.finalDecision.stateMutations ?? [];
@@ -1961,7 +1976,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         : undefined;
       const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
         && args.crmWriteEnabled === true && leadId != null;
-      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: llmFirst ? false : disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
+      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adImageUrls: effectiveAdContext?.imageUrls ?? [], adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: llmFirst ? false : disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
       // O turno do lead já é entregue integralmente ao cérebro. O engine não
       // constrói advisories, próxima pergunta, ordem de funil ou instrução de
       // agendamento para competir com a LLM. Fatos de anúncio, memória,
@@ -2097,6 +2112,12 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // (pré-check do root, evita promessa falsa) + regras do portal permitem + CRM vinculável (o handoff exige a
       // linha do lead). Governa o deny de promessa E a montagem da cadeia no chokepoint.
       const handoffPlannable = handoffCapabilityAvailable;
+      // Read-only portal fact: qualified_handoff is executable only after the
+      // configured qualification view is complete. The LLM remains the sole
+      // author of the decision and reply; this is only an effect-safety gate.
+      const qualifiedHandoffReadyFor = args.sdrPolicy == null
+        ? undefined
+        : (primaryIntent: string | null): boolean => isSdrHandoffReadyForIntent(contextState, args.sdrPolicy!, primaryIntent);
       const photoVU = (): ValidatedUnderstanding | null => (llmFirst ? brainVU() : authoritativeVU());
       const brainAuthorizesResolvedPhotoAct = (target: TargetResolution): boolean => {
         const v = photoVU();
@@ -2346,7 +2367,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2837,7 +2858,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               observations.push({ tool: "response", ok: false, error: { code: "FINAL_TOOL_FORBIDDEN", message: "As tools deste turno ja foram resolvidas. Nao consulte novamente; escreva agora a resposta final com os fatos disponiveis." } });
               continue;
             }
-            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+            const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = finalStep.decision;
               authoredDecision = authored.decision;

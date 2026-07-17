@@ -152,6 +152,31 @@ export function deriveSdrQualification(
   return { knownSlots, missingSlots, nextSlot, readyForHandoff: missingSlots.length === 0 };
 }
 
+/**
+ * Effect-safety view for a handoff authored by the brain.
+ *
+ * The portal's generic qualification list contains administrative/discovery
+ * slots (notably the name) that are useful for CRM but are not prerequisites
+ * for every operational act. A completed visit, for example, is executable
+ * once the visit intent and its day/time are known; it must not be held back
+ * waiting for an unrelated name slot. Trade and other acts still use the
+ * configured qualification view until their own required data is complete.
+ */
+export function isSdrHandoffReadyForIntent(
+  state: ConversationState,
+  policy: SdrQualificationPolicy,
+  primaryIntent: string | null | undefined,
+): boolean {
+  const view = deriveSdrQualification(state, policy);
+  if (view.readyForHandoff) return true;
+  if (primaryIntent !== "visit") return false;
+  return state.slots.interesseVisita.status === "known"
+    && state.slots.interesseVisita.value === true
+    && state.slots.diaHorario.status === "known"
+    && typeof state.slots.diaHorario.value === "string"
+    && state.slots.diaHorario.value.trim().length > 0;
+}
+
 // ── R12-B: DEFERIMENTO DE SLOT (fonte única de "qual a próxima pergunta do funil, deferindo/avançando") ──────
 // Problema: o lead ignora uma pergunta do funil (ex.: nome) e traz intenção comercial; o funil quer REPERGUNTAR
 // o mesmo slot -> fixação. Regra: adiar o slot pendente e, no encontro seguinte, AVANÇAR para outro slot.

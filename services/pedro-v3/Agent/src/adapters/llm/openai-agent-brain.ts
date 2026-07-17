@@ -105,6 +105,7 @@ AUTORIDADE E CONTINUIDADE
 - A mensagem system com runtimeContext contem apenas fatos atuais, memoria factual, canal e resultados de tools. Ela ajuda a interpretar; nunca escolhe assunto, pergunta ou resposta.
 - runtimeContext.currentTurn.openingContext.firstAssistantTurn informa apenas se ainda nao existe fala anterior do agente. Quando true, apresente explicitamente o nome do agente e a empresa definidos no prompt do portal, sem abandonar o assunto atual do lead.
 - runtimeContext.currentTurn.sourceContext descreve a origem factual da fala atual. Quando kind="paid_ad" e advertisedVehicle estiver presente, esse veiculo e o assunto inicial de compra ja conhecido: nao pergunte qual carro/tipo o lead procura. ATENCAO: advertisedVehicle prova somente qual foi o interesse; nunca prova disponibilidade, cor, km, cambio ou preco. No primeiro turno, se o bloco nao mudar explicitamente o interesse nem pedir apenas informacao institucional, sua PRIMEIRA saida deve ser query stock_search pelo veiculo/ano anunciado. Nao finalize nem afirme disponibilidade antes da observacao. Depois use o resultado como FOCO SINGULAR: nomeie o modelo anunciado e apresente somente o exemplar exato, com vehicle_ref/money_ref da mesma vehicleKey quando citar atributos. Nao use vehicle_offer_list e nao mostre alternativas nessa abertura; alternativas so aparecem quando o lead pedir outro veiculo, outras opcoes ou algo semelhante. Se nao houver correspondencia exata, seja transparente e nao substitua silenciosamente o anuncio por uma lista ampla.
+- Quando sourceContext.adCreativeUrls estiver presente, a imagem e uma referencia publica da arte do anuncio para sua leitura multimodal. Use-a apenas para reconhecer texto/modelo claramente legivel; nunca adivinhe um modelo pela carroceria. A imagem nao autoriza tool nem prova disponibilidade, preco, km, cor ou cambio. Se o veiculo nao estiver comprovado, trate o anuncio como generico e conduza a descoberta naturalmente.
 - Quando o prompt do portal definir uma frase fixa de primeiro contato, reproduza essa frase com fidelidade, alterando somente a saudacao pelo periodo informado em runtimeContext.channel. Na entrada por anuncio especifico, o primeiro text termina na pergunta fixa do portal; em seguida use EXATAMENTE uma part {"type":"message_break"}; somente depois comece "Vi que voce se interessou..." e componha os atributos com refs aterradas. message_break representa um novo balao curto no WhatsApp. Nao misture lista de estoque nessa abertura.
 - Se o lead mudar explicitamente de modelo, a fala atual vence imediatamente e o anuncio permanece apenas como origem historica para CRM/briefing. Um carro informado para troca nunca substitui advertisedVehicle.
 - O prompt do portal define personalidade, negocio e funil. Quando houver instrucoes de forma contraditorias dentro dele, preserve coerencia humana: responda o ato atual, nao repita pergunta ou fato ja respondido e nao transforme a conversa em formulario.
@@ -215,6 +216,36 @@ function num(v: unknown): number | null { return typeof v === "number" && Number
 function normalizedComparable(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").replace(/\s+/g, " ").trim();
 }
+function normalizedOpening(value: string): string {
+  return normalizedComparable(value).replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function fixedOpeningTemplate(prompt: string): string | null {
+  const match = prompt.match(/use exatamente esta apresenta(?:c[aã]o|cao)[^:\r\n]*:\s*[\r\n]*["“]([^\r\n"”]+)["”]/iu);
+  return match?.[1]?.trim() || null;
+}
+function fixedOpeningFeedback(prompt: string, candidateText: string, now: string): string | null {
+  const template = fixedOpeningTemplate(prompt);
+  if (!template) return null;
+  const period = getBrazilChannelTime(now).period;
+  if (!period) return null;
+  const greeting = period === "manha" ? "Bom dia" : period === "tarde" ? "Boa tarde" : "Boa noite";
+  const expected = template.replace(/\[per[ií]odo\]/iu, greeting);
+  if (normalizedOpening(candidateText).includes(normalizedOpening(expected))) return null;
+  return `A primeira fala precisa reproduzir a apresentação fixa do prompt do portal, alterando somente o período para "${greeting}". Reescreva o primeiro balão com essa apresentação exata e preserve o assunto atual; não acrescente outra pergunta nesse balão.`;
+}
+function trustedAdCreativeUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    const host = url.hostname.toLowerCase();
+    return host === "facebook.com" || host.endsWith(".facebook.com")
+      || host === "fbcdn.net" || host.endsWith(".fbcdn.net")
+      || host === "cdninstagram.com" || host.endsWith(".cdninstagram.com")
+      || host === "fbsbx.com" || host.endsWith(".fbsbx.com");
+  } catch {
+    return false;
+  }
+}
 function identityTokens(value: string): string[] {
   const ignored = new Set(["voce", "atendente", "definido", "prompt", "portal", "consultor", "consultora", "vendas", "empresa", "loja", "uma", "como", "seu", "sua", "papel"]);
   return normalizedComparable(value).split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !ignored.has(token));
@@ -288,6 +319,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       extracted: frame.currentTurnFacts.extracted,
       offerReference: frame.currentTurnFacts.offerReference,
     };
+    const firstAssistantTurn = !frame.recentTranscript.some((turn) => turn.role === "agent")
+      && !frame.conversationContext.lastAgentMessage?.trim();
+    const adCreativeUrls = firstAssistantTurn && !frame.signals.adVehicle
+      ? (frame.signals.adImageUrls ?? []).filter(trustedAdCreativeUrl).slice(0, 1)
+      : [];
     const runtimeContext = {
       currentTurn: {
         currentTurnFacts: currentTurnEvidence,
@@ -301,12 +337,14 @@ export class OpenAiAgentBrain implements AgentBrainPort {
             ? {
                 kind: "paid_ad",
                 advertisedVehicle: null,
+                ...(adCreativeUrls.length > 0 ? { adCreativeUrls } : {}),
                 explicitLeadChangeWins: true,
               }
-            : null,
+            : adCreativeUrls.length > 0
+              ? { kind: "paid_ad", advertisedVehicle: null, adCreativeUrls, explicitLeadChangeWins: true }
+              : null,
         openingContext: {
-          firstAssistantTurn: !frame.recentTranscript.some((turn) => turn.role === "agent")
-            && !frame.conversationContext.lastAgentMessage?.trim(),
+          firstAssistantTurn,
           ...(frame.signals.adGenericEntry ? { adGenericEntry: true } : {}),
           ...(frame.signals.specificAdEntry ? { specificAdEntry: true } : {}),
         },
@@ -341,7 +379,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       { role: "system", content: this.#system },
       { role: "system", content: JSON.stringify({ runtimeContext }) },
       ...historyMessages,
-      { role: "user", content: frame.block },
+      { role: "user", content: adCreativeUrls.length > 0
+        ? [
+            { type: "text", text: frame.block },
+            { type: "image_url", image_url: { url: adCreativeUrls[0], detail: "low" } },
+          ]
+        : frame.block },
       ...(rewriteFeedback.length > 0 ? [{ role: "system", content: `REESCRITA OBRIGATORIA DA RESPOSTA AO USER IMEDIATAMENTE ANTERIOR:\n- ${rewriteFeedback.join("\n- ")}\nMantenha o ato atual. Nao repita a forma reprovada. Devolva novamente o JSON completo corrigido.` }] : []),
     ];
     let bodyText: string;
@@ -416,6 +459,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
 
   #critiqueConversationShape(frame: TurnFrame, draft: ResponseDraft): { pass: boolean; feedback: string; mayRemoveRepeatedOffer?: boolean; requiresReplan?: boolean } {
     const candidateText = textDraftContent(draft);
+    const firstAssistantTurn = !frame.recentTranscript.some((turn) => turn.role === "agent")
+      && !frame.conversationContext.lastAgentMessage?.trim();
+    if (firstAssistantTurn) {
+      const openingFeedback = fixedOpeningFeedback(this.#portalPrompt, candidateText, frame.now);
+      if (openingFeedback) return { pass: false, feedback: openingFeedback };
+    }
     const visibleItems = frame.conversationContext.lastVisibleOffer?.items ?? [];
     const visibleKeys = visibleItems.map((item) => item.vehicleKey);
     const candidateOfferKeys = draft.parts.flatMap((part) => part.type === "vehicle_offer_list" ? part.vehicleKeys : []);
