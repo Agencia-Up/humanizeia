@@ -5145,7 +5145,7 @@ export function CrmAvancadoTab({
   };
 
   return (
-    <div className="mobile-crm-shell space-y-3 p-2 sm:space-y-4 sm:p-4 lg:p-6">
+    <div className={`mobile-crm-shell space-y-3 p-2 sm:space-y-4 sm:p-4 lg:p-6 ${view === 'pipeline' ? 'flex h-full min-h-0 flex-col' : ''}`}>
       {/* ── Métricas ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         {[
@@ -5608,7 +5608,7 @@ export function CrmAvancadoTab({
           }}
           onDragEnd={(result) => { setDragSourceCol(null); handleDragEnd(result); }}
         >
-          <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 overflow-x-auto px-2 pb-2 sm:-mx-4 sm:px-4">
+          <div ref={boardScrollRef} className="mobile-kanban-scroll -mx-2 flex-1 min-h-0 overflow-auto px-2 pb-2 sm:-mx-4 sm:px-4">
             {/* Coluna volta a ser arrastavel pelo dnd (type=COLUMN). Ela nunca foi a
                 causa do lead "nao colar": era o auto-scroll manual dessincronizando as
                 posicoes (ver comentario do boardScrollRef). Com o scroll nas maos da
@@ -6864,7 +6864,7 @@ export default function PedroSDR() {
             )}
 
             {/* CRM / Meus Leads */}
-            <TabsContent value="crm" className="mt-0">
+            <TabsContent value="crm" className="mt-0 h-full">
               <CrmAvancadoTab
                 userId={user?.id}
                 isSellerProp={isSeller}
