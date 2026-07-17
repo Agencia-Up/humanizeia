@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeWithReauth } from '@/lib/invokeWithReauth';
 import { ensureMarcosPipelineStages, resolveFirstMarcosStageId as ensureFirstMarcosStageId } from '@/lib/marcosCrmStages';
@@ -739,6 +740,76 @@ const FEEDBACK_REASONS: { category: string; emoji: string; options: string[] }[]
   },
 ];
 
+type FeedbackOutcome = 'lost' | 'negotiation' | 'sold_later';
+
+const FEEDBACK_OUTCOMES: {
+  value: FeedbackOutcome;
+  label: string;
+  short: string;
+  desc: string;
+  icon: string;
+  className: string;
+}[] = [
+  {
+    value: 'lost',
+    label: 'Lead perdido',
+    short: 'Perdido',
+    desc: 'Nao comprou agora e precisa justificar a perda.',
+    icon: 'X',
+    className: 'border-rose-500/35 bg-rose-500/10 text-rose-200',
+  },
+  {
+    value: 'negotiation',
+    label: 'Em negociacao',
+    short: 'Negociacao',
+    desc: 'Ainda pode comprar; registre o proximo passo.',
+    icon: '->',
+    className: 'border-amber-500/35 bg-amber-500/10 text-amber-200',
+  },
+  {
+    value: 'sold_later',
+    label: 'Comprou depois',
+    short: 'Venda futura',
+    desc: 'Fechou depois do primeiro atendimento.',
+    icon: 'OK',
+    className: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-200',
+  },
+];
+
+const NEGOTIATION_STATUS_OPTIONS = [
+  { value: 'ainda_negociando', label: 'Ainda negociando', desc: 'Cliente ainda conversa e pode fechar.' },
+  { value: 'aguardando_financiamento', label: 'Aguardando financiamento', desc: 'Depende de aprovacao, entrada ou parcela.' },
+  { value: 'aguardando_troca', label: 'Aguardando avaliacao da troca', desc: 'Depende da avaliacao do usado.' },
+  { value: 'aguardando_visita', label: 'Aguardando visita/test drive', desc: 'Cliente precisa ir ate a loja.' },
+  { value: 'aguardando_decisao', label: 'Aguardando decisao do cliente', desc: 'Cliente esta comparando ou pensando.' },
+];
+
+const CLOSE_FORECAST_OPTIONS = [
+  { value: 'hoje', label: 'Hoje' },
+  { value: 'esta_semana', label: 'Esta semana' },
+  { value: 'proximos_15_dias', label: 'Proximos 15 dias' },
+  { value: 'sem_previsao', label: 'Sem previsao clara' },
+];
+
+const NEXT_STEP_OPTIONS = [
+  { value: 'retomar_contato', label: 'Retomar contato' },
+  { value: 'simular_financiamento', label: 'Simular financiamento' },
+  { value: 'avaliar_troca', label: 'Avaliar carro na troca' },
+  { value: 'agendar_visita', label: 'Agendar visita/test drive' },
+  { value: 'enviar_opcoes', label: 'Enviar novas opcoes' },
+  { value: 'aguardar_cliente', label: 'Aguardar retorno do cliente' },
+];
+
+const TEMPERATURE_OPTIONS = [
+  { value: 'frio', label: 'Frio', className: 'text-sky-300 bg-sky-500/10 border-sky-500/30' },
+  { value: 'morno', label: 'Morno', className: 'text-amber-300 bg-amber-500/10 border-amber-500/30' },
+  { value: 'quente', label: 'Quente', className: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30' },
+];
+
+function optionLabel(options: { value: string; label: string }[], value: string): string {
+  return options.find(o => o.value === value)?.label ?? value;
+}
+
 const STATUS_CRM_OPTIONS = [
   { value: 'novo',               label: 'Novo',              color: 'text-blue-400'    },
   { value: 'inativo',            label: 'Lead Inativo',      color: 'text-gray-400'    },
@@ -1342,6 +1413,14 @@ export function CrmAvancadoTab({
   const [fbReason, setFbReason]           = useState('');
   const [fbReasonOpen, setFbReasonOpen]   = useState<string | null>(null);
   const [fbObservations, setFbObservations] = useState('');
+  const [fbOutcome, setFbOutcome]         = useState<FeedbackOutcome>('lost');
+  const [fbNegotiationStatus, setFbNegotiationStatus] = useState('ainda_negociando');
+  const [fbCloseForecast, setFbCloseForecast] = useState('esta_semana');
+  const [fbNextStep, setFbNextStep]       = useState('retomar_contato');
+  const [fbTemperature, setFbTemperature] = useState<'frio' | 'morno' | 'quente'>('morno');
+  const [fbSoldDate, setFbSoldDate]       = useState('');
+  const [fbSoldVehicle, setFbSoldVehicle] = useState('');
+  const [fbSoldValue, setFbSoldValue]     = useState('');
   // Lead feedback history popup
   const [fbHistoryOpen, setFbHistoryOpen] = useState(false);
   const [leadFeedbacks, setLeadFeedbacks] = useState<Feedback[]>([]);
@@ -2250,20 +2329,53 @@ export function CrmAvancadoTab({
       return;
     }
     // Fase 6.4: removida validação de "Outros" — cidade nova é cadastrada via modal
-    if (!fbReason) {
+    if (fbOutcome === 'lost' && !fbReason) {
       toast({ title: 'Selecione o motivo da não-compra', variant: 'destructive' });
+      return;
+    }
+    if (fbOutcome === 'sold_later' && (!fbSoldDate || !fbSoldVehicle.trim())) {
+      toast({ title: 'Informe data e veiculo da venda', variant: 'destructive' });
       return;
     }
     setFbLoading(true);
     try {
       const finalCity = fbCity; // Fase 6.4: nome direto do DynamicSelect
+      const outcomeLabel = FEEDBACK_OUTCOMES.find(o => o.value === fbOutcome)?.label ?? fbOutcome;
+      const negotiationStatusLabel = optionLabel(NEGOTIATION_STATUS_OPTIONS, fbNegotiationStatus);
+      const closeForecastLabel = optionLabel(CLOSE_FORECAST_OPTIONS, fbCloseForecast);
+      const nextStepLabel = optionLabel(NEXT_STEP_OPTIONS, fbNextStep);
+      const temperatureLabel = optionLabel(TEMPERATURE_OPTIONS, fbTemperature);
+      const structuredReason =
+        fbOutcome === 'lost'
+          ? fbReason
+          : fbOutcome === 'negotiation'
+            ? `Em negociacao - ${negotiationStatusLabel}`
+            : `Comprou depois - ${fbSoldVehicle.trim()}`;
       // Monta content legível para compatibilidade
       const contentLines = [
+        `Tipo: ${outcomeLabel}`,
         `Cidade: ${finalCity}`,
-        `Motivo: ${fbReason}`,
+        `Motivo: ${structuredReason}`,
       ];
-      if (fbObservations.trim()) contentLines.push(`Obs: ${fbObservations.trim()}`);
-      const content = contentLines.join(' | ');
+      const detailLines: string[] = [];
+      if (fbOutcome === 'negotiation') {
+        detailLines.push(
+          `Situacao: ${negotiationStatusLabel}`,
+          `Previsao: ${closeForecastLabel}`,
+          `Proximo passo: ${nextStepLabel}`,
+          `Temperatura: ${temperatureLabel}`,
+        );
+      }
+      if (fbOutcome === 'sold_later') {
+        detailLines.push(
+          `Data da venda: ${fbSoldDate}`,
+          `Veiculo vendido: ${fbSoldVehicle.trim()}`,
+          fbSoldValue.trim() ? `Valor: R$ ${fbSoldValue.trim()}` : '',
+        );
+      }
+      if (fbObservations.trim()) detailLines.push(`Observacoes: ${fbObservations.trim()}`);
+      const content = [...contentLines, ...detailLines.filter(Boolean)].join('\n');
+      const managerNotes = detailLines.filter(Boolean).join('\n');
 
       const res = await supabase.functions.invoke('pedro-process-feedback', {
         body: {
@@ -2275,14 +2387,17 @@ export function CrmAvancadoTab({
           content,
           priority:     fbPriority,
           city:         finalCity,
-          reason:       fbReason,
-          observations: fbObservations.trim() || null,
+          reason:       structuredReason,
+          observations: managerNotes || null,
         },
       });
       if (res.error) throw res.error;
       // Reset form
       setFbCity(''); setFbCityCustom(''); setFbReason('');
       setFbObservations(''); setFbPriority('normal'); setFbReasonOpen(null);
+      setFbOutcome('lost'); setFbNegotiationStatus('ainda_negociando');
+      setFbCloseForecast('esta_semana'); setFbNextStep('retomar_contato');
+      setFbTemperature('morno'); setFbSoldDate(''); setFbSoldVehicle(''); setFbSoldValue('');
       toast({ title: '✅ Feedback enviado ao gerente!' });
     } catch (err: any) {
       toast({ title: 'Erro', description: descricaoErro(err), variant: 'destructive' });
@@ -4367,12 +4482,17 @@ export function CrmAvancadoTab({
         {/* ── Feedback Estruturado para Gerente ────────────────────────
             Renderiza pra Pedro E Marcos. handleSendFeedback + loadLeadFeedbackHistory
             já tratam o XOR lead_id/crm_lead_id internamente. */}
-        <Card className="bg-card border-border/50">
-          <CardHeader className="pb-3">
+        <Card className="overflow-hidden border-blue-500/20 bg-gradient-to-br from-slate-950/95 via-card to-slate-900/95 shadow-[0_18px_60px_rgba(15,23,42,0.35)]">
+          <CardHeader className="border-b border-border/40 bg-white/[0.025] pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente
-              </CardTitle>
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <BellRing className="h-4 w-4 text-orange-400" /> Feedback para Gerente 2.0
+                </CardTitle>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Registre perda, negociacao em andamento ou venda futura com contexto claro.
+                </p>
+              </div>
               <Button
                 variant="ghost" size="sm"
                 className="h-7 px-2 text-[10px] text-muted-foreground hover:text-orange-400"
@@ -4382,7 +4502,35 @@ export function CrmAvancadoTab({
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 pt-4">
+
+            <div className="grid gap-2 md:grid-cols-3">
+              {FEEDBACK_OUTCOMES.map(outcome => {
+                const active = fbOutcome === outcome.value;
+                return (
+                  <button
+                    key={outcome.value}
+                    type="button"
+                    onClick={() => {
+                      setFbOutcome(outcome.value);
+                      if (outcome.value !== 'lost') setFbReason('');
+                    }}
+                    className={`rounded-xl border p-3 text-left transition-all ${
+                      active
+                        ? `${outcome.className} shadow-lg shadow-black/20`
+                        : 'border-border/60 bg-background/45 text-muted-foreground hover:border-blue-500/35 hover:bg-muted/35'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide">{outcome.short}</span>
+                      <span className="rounded-md bg-black/20 px-1.5 py-0.5 text-[10px] font-bold">{outcome.icon}</span>
+                    </div>
+                    <p className="mt-1 text-sm font-semibold text-foreground">{outcome.label}</p>
+                    <p className="mt-1 text-[11px] leading-snug opacity-80">{outcome.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
 
             {/* Pergunta 1: Cidade — Fase 6.4 dinâmico (cadastrar nova pelo modal) */}
             <div className="space-y-2">
@@ -4406,6 +4554,7 @@ export function CrmAvancadoTab({
             </div>
 
             {/* Pergunta 2: Motivo (agrupado por categorias) */}
+            {fbOutcome === 'lost' && (
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">2. Por qual motivo o cliente nao comprou?</p>
               <div className="space-y-1">
@@ -4451,6 +4600,91 @@ export function CrmAvancadoTab({
                 </div>
               )}
             </div>
+            )}
+
+            {fbOutcome === 'negotiation' && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3 space-y-3">
+                <div>
+                  <p className="text-xs font-semibold text-amber-200">Negociacao em andamento</p>
+                  <p className="text-[11px] text-muted-foreground">Use quando o lead ainda pode comprar e o gerente precisa acompanhar.</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">Situacao atual</Label>
+                    <Select value={fbNegotiationStatus} onValueChange={setFbNegotiationStatus}>
+                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {NEGOTIATION_STATUS_OPTIONS.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">Previsao de fechamento</Label>
+                    <Select value={fbCloseForecast} onValueChange={setFbCloseForecast}>
+                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {CLOSE_FORECAST_OPTIONS.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">Proximo passo</Label>
+                    <Select value={fbNextStep} onValueChange={setFbNextStep}>
+                      <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {NEXT_STEP_OPTIONS.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">Temperatura</Label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {TEMPERATURE_OPTIONS.map(opt => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setFbTemperature(opt.value as 'frio' | 'morno' | 'quente')}
+                          className={`rounded-lg border px-2 py-2 text-[11px] font-semibold transition ${
+                            fbTemperature === opt.value ? opt.className : 'border-border/60 bg-background/40 text-muted-foreground'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {fbOutcome === 'sold_later' && (
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3 space-y-3">
+                <div>
+                  <p className="text-xs font-semibold text-emerald-200">Venda futura confirmada</p>
+                  <p className="text-[11px] text-muted-foreground">Use quando o lead comprou depois do primeiro atendimento.</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">Data da venda</Label>
+                    <Input type="date" value={fbSoldDate} onChange={e => setFbSoldDate(e.target.value)} className="h-9 text-xs" />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-1">
+                    <Label className="text-[11px] text-muted-foreground">Veiculo vendido</Label>
+                    <Input value={fbSoldVehicle} onChange={e => setFbSoldVehicle(e.target.value)} placeholder="Ex: Onix 2022" className="h-9 text-xs" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-[11px] text-muted-foreground">Valor (opcional)</Label>
+                    <Input value={fbSoldValue} onChange={e => setFbSoldValue(e.target.value)} placeholder="Ex: 89900" className="h-9 text-xs" />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Observacoes adicionais (opcional) */}
             <div className="space-y-2">
@@ -4464,6 +4698,31 @@ export function CrmAvancadoTab({
             </div>
 
             {/* Qualificação + Enviar */}
+            <div className="rounded-xl border border-blue-500/15 bg-blue-500/[0.035] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-blue-100">Resumo para o gerente</p>
+                <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-200">
+                  {FEEDBACK_OUTCOMES.find(o => o.value === fbOutcome)?.short}
+                </span>
+              </div>
+              <div className="mt-2 grid gap-2 text-[11px] text-muted-foreground md:grid-cols-2">
+                <span>Cidade: <strong className="text-foreground">{fbCity || 'pendente'}</strong></span>
+                {fbOutcome === 'lost' && <span>Motivo: <strong className="text-foreground">{fbReason || 'pendente'}</strong></span>}
+                {fbOutcome === 'negotiation' && (
+                  <>
+                    <span>Situacao: <strong className="text-foreground">{optionLabel(NEGOTIATION_STATUS_OPTIONS, fbNegotiationStatus)}</strong></span>
+                    <span>Acao: <strong className="text-foreground">{optionLabel(NEXT_STEP_OPTIONS, fbNextStep)}</strong></span>
+                  </>
+                )}
+                {fbOutcome === 'sold_later' && (
+                  <>
+                    <span>Veiculo: <strong className="text-foreground">{fbSoldVehicle || 'pendente'}</strong></span>
+                    <span>Data: <strong className="text-foreground">{fbSoldDate || 'pendente'}</strong></span>
+                  </>
+                )}
+              </div>
+            </div>
+
             <div className="space-y-1.5 pt-1">
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-medium text-muted-foreground">
@@ -4491,7 +4750,7 @@ export function CrmAvancadoTab({
                 </Select>
                 <Button
                   onClick={handleSendFeedback}
-                  disabled={fbLoading || !fbCity || !fbReason}
+                  disabled={fbLoading || !fbCity || (fbOutcome === 'lost' && !fbReason) || (fbOutcome === 'sold_later' && (!fbSoldDate || !fbSoldVehicle.trim()))}
                   size="sm" className="h-9 text-xs flex-1"
                 >
                   {fbLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
@@ -4526,10 +4785,14 @@ export function CrmAvancadoTab({
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${pCfg.bg} ${pCfg.color}`}>{pCfg.label}</span>
                         <span className="text-[10px] text-muted-foreground">{fb.member?.name ?? 'Vendedor'} · {fmtDate(fb.created_at)}</span>
                       </div>
-                      {fb.city && <p className="text-xs"><span className="text-muted-foreground">Cidade:</span> {fb.city}</p>}
-                      {fb.reason && <p className="text-xs"><span className="text-muted-foreground">Motivo:</span> {fb.reason}</p>}
-                      {fb.observations && <p className="text-xs"><span className="text-muted-foreground">Obs:</span> {fb.observations}</p>}
-                      {!fb.city && !fb.reason && <p className="text-xs text-foreground">{fb.content}</p>}
+                      {fb.content && (
+                        <p className="whitespace-pre-line rounded-md bg-muted/30 px-2 py-1.5 text-xs text-foreground">
+                          {fb.content}
+                        </p>
+                      )}
+                      {fb.observations && (
+                        <p className="whitespace-pre-line text-xs text-muted-foreground">{fb.observations}</p>
+                      )}
                     </div>
                   );
                 })}
