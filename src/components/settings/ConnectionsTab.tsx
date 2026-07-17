@@ -459,7 +459,7 @@ export function ConnectionsTab() {
   const handleConnect = async (platformId: string) => {
     switch (platformId) {
       case 'meta':
-        navigate('/integrations/meta');
+        navigate('/integrations/meta?autoconnect=1');
         return;
       case 'instagram_publisher':
         navigate('/integrations/instagram');
@@ -764,7 +764,7 @@ export function ConnectionsTab() {
                     <Button
                       size="sm"
                       className="w-full text-xs gradient-primary text-primary-foreground"
-                      onClick={() => setSelectedPlatform(platform.id)}
+                      onClick={() => platform.id === 'meta' ? handleConnect('meta') : setSelectedPlatform(platform.id)}
                       disabled={status === 'connecting'}
                     >
                       {status === 'connecting' ? (

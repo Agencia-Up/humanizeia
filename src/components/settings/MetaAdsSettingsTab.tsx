@@ -1,14 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  CheckCircle, XCircle, Loader2, LogOut, ExternalLink, Eye, EyeOff,
-  KeyRound, Hash, Globe, Building2, Radio, FileImage
+  CheckCircle, XCircle, Loader2, LogOut, ExternalLink,
+  Globe, Building2, Radio, FileImage
 } from 'lucide-react';
 import { useMetaConnection, MetaPixel, MetaPage, MetaBusiness } from '@/hooks/useMetaConnection';
 import { AccountSelector } from '@/components/onboarding/AccountSelector';
@@ -28,14 +26,12 @@ export function MetaAdsSettingsTab() {
     consumeOAuthSession,
     selectAccount,
     disconnect,
-    connectWithToken,
   } = useMetaConnection();
 
-  const [accessToken, setAccessToken] = useState('');
-  const [accountId, setAccountId] = useState('');
-  const [showToken, setShowToken] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAnother, setShowAddAnother] = useState(false);
+  // Trava pra o auto-disparo do OAuth acontecer no máximo uma vez por montagem.
+  const autoStartedRef = useRef(false);
 
   // Handle OAuth callback
   useEffect(() => {
@@ -67,16 +63,6 @@ export function MetaAdsSettingsTab() {
     }
   }, [searchParams]);
 
-  const handleConnectWithToken = async () => {
-    if (!accessToken.trim()) return;
-    const result = await connectWithToken(accessToken.trim(), accountId.trim() || undefined);
-    if (result.success && !result.needsSelection) {
-      setAccessToken('');
-      setAccountId('');
-      setShowAddAnother(false);
-    }
-  };
-
   const handleSelectFromList = (account: any) => {
     setSelectedAccountId(account.id);
     selectAccount(account);
@@ -84,6 +70,33 @@ export function MetaAdsSettingsTab() {
   };
 
   const hasDetectedAssets = availableAccounts.length > 0 || pixels.length > 0 || pages.length > 0 || businesses.length > 0;
+
+  // Auto-inicia o login do Facebook quando o usuário chega aqui pelo botão
+  // "Conectar" das Integrações (que navega com ?autoconnect=1). Assim ele cai
+  // DIRETO no Facebook, sem tela intermediária de token manual — que é como
+  // 100% dos clientes conectam. Guardas pra nunca entrar em loop:
+  //  - só age 1x por montagem (autoStartedRef);
+  //  - espera a conexão carregar (isLoading) pra não redirecionar quem já está
+  //    conectado (ex.: quem abriu esta tela pra ver "Detalhes");
+  //  - NÃO dispara no meio de um retorno do OAuth (meta_oauth_session/meta_error/
+  //    code+meta_callback) — senão nunca consumiria o retorno / nunca veria o erro;
+  //  - remove o ?autoconnect da URL pra o "voltar" do navegador não re-disparar.
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    if (searchParams.get('autoconnect') !== '1') return;
+    if (isLoading) return;
+    const emRetornoOAuth =
+      !!searchParams.get('meta_oauth_session') ||
+      !!searchParams.get('meta_error') ||
+      (!!searchParams.get('code') && !!searchParams.get('meta_callback'));
+    if (emRetornoOAuth) return;
+    if (connectedAccount || hasDetectedAssets || isConnecting) return;
+
+    autoStartedRef.current = true;
+    searchParams.delete('autoconnect');
+    setSearchParams(searchParams, { replace: true });
+    startOAuth();
+  }, [isLoading, connectedAccount, hasDetectedAssets, isConnecting, searchParams, setSearchParams, startOAuth]);
 
   return (
     <div className="space-y-6">
@@ -175,139 +188,12 @@ export function MetaAdsSettingsTab() {
                 ) : (
                   <span className="mr-2 text-lg">f</span>
                 )}
-                Conectar Meta
+                Conectar com Facebook
               </Button>
-
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <div className="h-px flex-1 bg-border" />
-                <span>ou conecte manualmente</span>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-
-              {/* Caminho manual — só Token + Conta. O App ID/Secret são configurados
-                  UMA vez na seção de configuração do app (admin) e já são usados pelo
-                  botão "Conectar Meta" acima. Não precisa colar o App ID de novo aqui. */}
-              <div className="space-y-4">
-                <p className="text-xs text-muted-foreground">
-                  O App ID e o App Secret você configura <strong>uma vez só</strong> na configuração do app (admin) — já valem pro botão <strong>"Conectar Meta"</strong> acima. Aqui, no caminho manual, basta colar um Access Token (e, se quiser, a conta).
-                </p>
-
-                <div className="space-y-2">
-                  <Label htmlFor="meta-token" className="flex items-center gap-2">
-                    <KeyRound className="h-4 w-4" />
-                    Token de Usuário (Access Token)
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      id="meta-token"
-                      type={showToken ? 'text' : 'password'}
-                      placeholder="Cole seu Access Token aqui..."
-                      value={accessToken}
-                      onChange={(e) => setAccessToken(e.target.value)}
-                      disabled={isConnecting}
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowToken(!showToken)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="meta-account-id" className="flex items-center gap-2">
-                    <Hash className="h-4 w-4" />
-                    Ad Account ID
-                    <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
-                  </Label>
-                  <Input
-                    id="meta-account-id"
-                    placeholder="Ex: 123456789 ou act_123456789"
-                    value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
-                    disabled={isConnecting}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Se não informar, detectaremos automaticamente todas as contas, pixels e páginas.
-                  </p>
-                </div>
-
-                <Button
-                  className="gradient-primary w-full"
-                  onClick={handleConnectWithToken}
-                  disabled={isConnecting || !accessToken.trim()}
-                  size="lg"
-                >
-                  {isConnecting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  Conectar e Detectar Contas
-                </Button>
-              </div>
             </div>
           )}
         </CardContent>
       </Card>
-
-      {/* Guide - only show when not connected and no assets detected */}
-      {!connectedAccount && !hasDetectedAssets && (
-        <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-          <CardHeader>
-            <CardTitle className="text-lg">📋 Como conectar</CardTitle>
-            <CardDescription>
-              Siga os passos abaixo para conectar sua conta Meta Ads.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-0">
-            <div className="flex gap-4 pb-6 relative">
-              <div className="flex flex-col items-center">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">1</div>
-                <div className="w-px flex-1 bg-border/50 mt-2" />
-              </div>
-              <div className="pt-1 pb-2">
-                <p className="font-medium text-sm">Crie ou acesse seu App no Meta for Developers</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Vá em <strong>Configurações → Básico</strong> e copie o <strong>ID do Aplicativo</strong>.
-                </p>
-                <Button variant="link" className="p-0 h-auto mt-1 text-xs" asChild>
-                  <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
-                    Abrir Meta for Developers <ExternalLink className="h-3 w-3" />
-                  </a>
-                </Button>
-              </div>
-            </div>
-            <div className="flex gap-4 pb-6 relative">
-              <div className="flex flex-col items-center">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">2</div>
-                <div className="w-px flex-1 bg-border/50 mt-2" />
-              </div>
-              <div className="pt-1 pb-2">
-                <p className="font-medium text-sm">Gere o Token de Usuário</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  No <strong>Graph API Explorer</strong>, selecione seu app e marque as permissões: <code className="bg-muted px-1 rounded text-xs">ads_read</code>, <code className="bg-muted px-1 rounded text-xs">ads_management</code>, <code className="bg-muted px-1 rounded text-xs">read_insights</code>, <code className="bg-muted px-1 rounded text-xs">business_management</code>
-                </p>
-                <Button variant="link" className="p-0 h-auto mt-1 text-xs" asChild>
-                  <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1">
-                    Abrir Graph API Explorer <ExternalLink className="h-3 w-3" />
-                  </a>
-                </Button>
-              </div>
-            </div>
-            <div className="flex gap-4 relative">
-              <div className="flex flex-col items-center">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">3</div>
-              </div>
-              <div className="pt-1">
-                <p className="font-medium text-sm">Cole o App ID e o Token acima</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Nós detectamos automaticamente suas contas de anúncios, pixels e páginas.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
