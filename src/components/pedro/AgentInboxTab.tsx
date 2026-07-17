@@ -919,7 +919,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
     setTransferringLead(true);
     try {
-      if (!selectedLead.ai_paused) {
+      const isMarcosLead = selectedLead.origem === 'marcos';
+
+      if (!isMarcosLead && !selectedLead.ai_paused) {
         const { error: pauseErr } = await (supabase as any)
           .from('ai_crm_leads')
           .update({ ai_paused: true })
@@ -930,15 +932,25 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       }
 
       const { data, error } = await supabase.functions.invoke('manual-transfer', {
-        body: {
-          leadId: selectedLead.id,
-          memberId: seller.id,
-          notes: transferNotes.trim() || 'Transferencia manual via Conversas IA',
-          remoteJid: selectedLead.remote_jid || null,
-          agentId: selectedLead.agent_id || null,
-          leadName: selectedLead.lead_name || null,
-          ownerUserId: userId || null,
-        },
+        body: isMarcosLead
+          ? {
+              crmLeadId: selectedLead.id,
+              leadSource: 'marcos',
+              memberId: seller.id,
+              notes: transferNotes.trim() || 'Transferencia manual via Conversas IA',
+              remoteJid: selectedLead.remote_jid || null,
+              leadName: selectedLead.lead_name || null,
+              ownerUserId: userId || null,
+            }
+          : {
+              leadId: selectedLead.id,
+              memberId: seller.id,
+              notes: transferNotes.trim() || 'Transferencia manual via Conversas IA',
+              remoteJid: selectedLead.remote_jid || null,
+              agentId: selectedLead.agent_id || null,
+              leadName: selectedLead.lead_name || null,
+              ownerUserId: userId || null,
+            },
       });
 
       if (error) {
@@ -956,8 +968,20 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       }
 
       const flags = data as any;
-      setLeads(prev => prev.map(l => (l.id === selectedLead.id ? { ...l, status: 'transferido', ai_paused: true } : l)));
-      setSelectedLead(prev => (prev ? { ...prev, status: 'transferido', ai_paused: true } : prev));
+      setLeads(prev => prev.map(l => (
+        l.id === selectedLead.id
+          ? isMarcosLead
+            ? { ...l, assigned_to_id: seller.id }
+            : { ...l, status: 'transferido', ai_paused: true }
+          : l
+      )));
+      setSelectedLead(prev => (
+        prev
+          ? isMarcosLead
+            ? { ...prev, assigned_to_id: seller.id }
+            : { ...prev, status: 'transferido', ai_paused: true }
+          : prev
+      ));
       setTransferOpen(false);
       await Promise.all([fetchLeads(), fetchMessages(true)]);
 

@@ -11,6 +11,8 @@ const corsHeaders = {
 };
 
 const LEAD_SELECT = "*, agent:wa_ai_agents!ai_crm_leads_agent_id_fkey(*)";
+const MARCOS_LEAD_SELECT =
+  "id, user_id, name, phone, summary, origem, vehicle_interest, client_city, payment_method, custom_fields, assigned_to, created_at";
 
 /** Send a WhatsApp text message via UazAPI (3 fallback attempts) */
 async function sendWAMessage(instance: any, phone: string, text: string) {
@@ -156,6 +158,106 @@ function extractUuid(value: any) {
   return match?.[0] || null;
 }
 
+function normalizeText(value: any) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function chooseUniqueCandidate(candidates: any[] | null | undefined, leadName?: string | null) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+
+  const expectedName = normalizeText(leadName);
+  if (expectedName) {
+    const byName = rows.filter((row) => normalizeText(row?.name) === expectedName);
+    if (byName.length === 1) return byName[0];
+  }
+
+  return { ambiguous: true, count: rows.length, ids: rows.map((row) => row?.id).filter(Boolean) };
+}
+
+async function resolveMarcosLead(
+  supabase: any,
+  params: {
+    crmLeadId?: string | null;
+    ownerUserId?: string | null;
+    remoteJid?: string | null;
+    leadName?: string | null;
+  },
+) {
+  const canonicalId = extractUuid(params.crmLeadId) || params.crmLeadId;
+  let lead: any = null;
+  let leadErr: any = null;
+
+  if (canonicalId) {
+    const byId = await supabase
+      .from("crm_leads")
+      .select(MARCOS_LEAD_SELECT)
+      .eq("id", canonicalId)
+      .maybeSingle();
+    lead = byId.data;
+    leadErr = byId.error;
+  }
+
+  const ownerUserId = params.ownerUserId || lead?.user_id || null;
+  const phoneTail = digitsOnly(params.remoteJid || "").slice(-8);
+
+  if (!lead && ownerUserId && phoneTail.length >= 8) {
+    const fallback = await supabase
+      .from("crm_leads")
+      .select(MARCOS_LEAD_SELECT)
+      .eq("user_id", ownerUserId)
+      .ilike("phone", `%${phoneTail}%`)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    leadErr = fallback.error;
+    const picked = chooseUniqueCandidate(fallback.data, params.leadName);
+    if (picked?.ambiguous) {
+      return { lead: null, error: null, ambiguous: picked };
+    }
+    if (picked) {
+      console.warn("[manual-transfer/marcos] crmLeadId nao encontrado; usando fallback por telefone", {
+        crmLeadId: params.crmLeadId,
+        phoneTail,
+        leadId: picked.id,
+      });
+      lead = picked;
+    }
+  }
+
+  if (!lead && ownerUserId && params.leadName) {
+    const fallback = await supabase
+      .from("crm_leads")
+      .select(MARCOS_LEAD_SELECT)
+      .eq("user_id", ownerUserId)
+      .ilike("name", `%${String(params.leadName).trim()}%`)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    leadErr = fallback.error;
+    const picked = chooseUniqueCandidate(fallback.data, params.leadName);
+    if (picked?.ambiguous) {
+      return { lead: null, error: null, ambiguous: picked };
+    }
+    if (picked) {
+      console.warn("[manual-transfer/marcos] crmLeadId nao encontrado; usando fallback por nome", {
+        crmLeadId: params.crmLeadId,
+        leadName: params.leadName,
+        leadId: picked.id,
+      });
+      lead = picked;
+    }
+  }
+
+  return { lead, error: leadErr, ambiguous: null };
+}
+
 /** Upsert lead as wa_contact in Marcos + link to Pedro Leads list */
 async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member: any) {
   try {
@@ -239,24 +341,42 @@ async function syncLeadToMarcos(supabase: any, userId: string, lead: any, member
 async function handleMarcosTransfer(
   supabase: any,
   body: {
-    crmLeadId: string;
+    crmLeadId?: string | null;
     memberId: string;
     notes?: string;
     operatorName?: string;
+    ownerUserId?: string | null;
+    remoteJid?: string | null;
+    leadName?: string | null;
   },
 ): Promise<Response> {
-  const { crmLeadId, memberId, notes, operatorName } = body;
+  const { crmLeadId, memberId, notes, operatorName, ownerUserId, remoteJid, leadName } = body;
 
   // 1. Buscar lead Marcos
-  const { data: lead, error: leadErr } = await supabase
-    .from("crm_leads")
-    .select("id, user_id, name, phone, summary, origem, vehicle_interest, client_city, payment_method, custom_fields, assigned_to")
-    .eq("id", crmLeadId)
-    .maybeSingle();
+  const { lead, error: leadErr, ambiguous } = await resolveMarcosLead(supabase, {
+    crmLeadId,
+    ownerUserId,
+    remoteJid,
+    leadName,
+  });
+
+  if (ambiguous) {
+    console.error("[manual-transfer/marcos] lead ambiguo", { crmLeadId, remoteJid, leadName, ambiguous });
+    return new Response(JSON.stringify({
+      error: "Encontrei mais de um lead Marcos parecido. Atualize a pagina e abra o lead correto antes de transferir.",
+      details: { crmLeadId, candidateCount: ambiguous.count, candidateIds: ambiguous.ids },
+    }), {
+      status: 409,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   if (leadErr || !lead) {
-    console.error("[manual-transfer/marcos] lead nao encontrado", { crmLeadId, leadErr });
-    return new Response(JSON.stringify({ error: "Lead Marcos nao encontrado" }), {
+    console.error("[manual-transfer/marcos] lead nao encontrado", { crmLeadId, ownerUserId, remoteJid, leadName, leadErr });
+    return new Response(JSON.stringify({
+      error: "Lead Marcos nao encontrado. Atualize a pagina e tente novamente.",
+      details: { crmLeadId, remoteJid, leadName },
+    }), {
       status: 404,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -287,6 +407,18 @@ async function handleMarcosTransfer(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  if (member.user_id !== lead.user_id) {
+    console.error("[manual-transfer/marcos] vendedor de outra conta", {
+      crmLeadId: lead.id,
+      leadOwner: lead.user_id,
+      memberId,
+      memberOwner: member.user_id,
+    });
+    return new Response(JSON.stringify({ error: "Vendedor nao pertence a mesma conta deste lead." }), {
+      status: 403,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // FASE 3 BUG-14 — dedup ANTES de enviar mensagens. Marcos não usa
   //   ai_lead_transfers, então a janela é validada pelos custom_fields
@@ -301,7 +433,8 @@ async function handleMarcosTransfer(
       console.warn(`[manual-transfer/marcos] Dedup: lead ${crmLeadId} já atribuído ao mesmo vendedor há ${Math.round(elapsedMs / 1000)}s. Retornando sucesso sem reenviar.`);
       return new Response(JSON.stringify({
         success: true,
-        crmLeadId,
+        crmLeadId: lead.id,
+        requestedCrmLeadId: crmLeadId,
         memberId,
         source: "marcos",
         deduplicated: true,
@@ -443,7 +576,7 @@ ${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ?
       assigned_to: memberId,
       custom_fields: nextCustomFields,
     })
-    .eq("id", crmLeadId);
+    .eq("id", lead.id);
 
   if (updateErr) {
     console.error("[manual-transfer/marcos] erro ao atualizar crm_leads.assigned_to", updateErr);
@@ -464,7 +597,8 @@ ${operatorName ? `\n🖱️ *Transferido por:* ${operatorName}\n` : ""}${notes ?
 
   return new Response(JSON.stringify({
     success: true,
-    crmLeadId,
+    crmLeadId: lead.id,
+    requestedCrmLeadId: crmLeadId,
     memberId,
     source: "marcos",
     gerente_notificado: !!gerentePhone,
@@ -509,13 +643,35 @@ Deno.serve(async (req) => {
     // em ai_team_members, mesmo quando o profile antigo nao esta completo.
     const effectiveUserId = await resolveEffectiveUserId(supabase, userId);
 
-    const { leadId, crmLeadId, memberId, notes, remoteJid, agentId, leadName, ownerUserId: bodyOwnerUserId } = await req.json();
+    const {
+      leadId,
+      crmLeadId,
+      memberId,
+      notes,
+      remoteJid,
+      agentId,
+      leadName,
+      ownerUserId: bodyOwnerUserId,
+      leadSource,
+      source,
+      origem,
+    } = await req.json();
 
     // FASE 2 — branch Marcos. Lead vive em crm_leads (não ai_crm_leads).
     // Quando o frontend Marcos chama esta edge function, passa crmLeadId em
     // vez de leadId. Mesma função, fluxo separado pra não bagunçar Pedro.
-    if (crmLeadId && memberId) {
-      return await handleMarcosTransfer(supabase, { crmLeadId, memberId, notes, operatorName });
+    const requestedSource = String(leadSource || source || origem || "").toLowerCase();
+    const isMarcosRequest = Boolean(crmLeadId) || requestedSource === "marcos" || requestedSource === "crm_leads";
+    if (isMarcosRequest && memberId) {
+      return await handleMarcosTransfer(supabase, {
+        crmLeadId: crmLeadId || leadId,
+        memberId,
+        notes,
+        operatorName,
+        ownerUserId: bodyOwnerUserId || effectiveUserId,
+        remoteJid,
+        leadName,
+      });
     }
 
     if (!leadId || !memberId) {

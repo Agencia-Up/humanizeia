@@ -2548,8 +2548,12 @@ export function CrmAvancadoTab({
           const { data, error } = await supabase.functions.invoke('manual-transfer', {
             body: {
               crmLeadId: leadId,
+              leadSource: 'marcos',
               memberId: newMemberId,
               notes: 'Transferência manual via Marcos CRM',
+              remoteJid: lead?.remote_jid || null,
+              leadName: lead?.lead_name || null,
+              ownerUserId: userId || null,
             }
           });
           if (error) {
