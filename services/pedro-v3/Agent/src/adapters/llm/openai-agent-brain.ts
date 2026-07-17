@@ -162,6 +162,7 @@ Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0
 - Lista usa somente keys retornadas por stock_search; atributos/precos usam fatos aterrados.
 - Uma stock_search pode sustentar dois formatos escolhidos por voce conforme a conversa: vehicle_offer_list quando o lead pediu alternativas/lista, ou vehicle_ref/money_ref de UMA mesma key quando o assunto e um veiculo especifico. Resultado de busca nao obriga lista.
 - send_media e handoff ficam em effects. Nunca exponha vehicleKey, refs internas, CPF/data ou segredos no texto.
+- Quando vehicle_photos_resolve retornar ok e voce decidir enviar as fotos pedidas, inclua {"kind":"send_media"} em effects no mesmo final. O adaptador vincula esse efeito ao unico vehicleKey/photoIds aterrado pela tool neste turno; nao copie IDs para o texto, nao invente IDs e nao chame a tool novamente.
 - Mutacoes registram somente fatos realmente informados no bloco atual ou selecao aterrada. Nao invente nem contamine papeis semanticos.
 - Saudacao, quando necessaria, usa runtimeContext.channel no fuso America/Sao_Paulo. Follow-up nao usa saudacao.
 `;
@@ -369,7 +370,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       const raw = parsed?.choices?.[0]?.message?.content;
       content = typeof raw === "string" ? JSON.parse(raw) : null;
     } catch { return this.#safeFinal("brain JSON inválido"); }
-    let step = this.#decodeStep(content, frame);
+    let step = this.#decodeStep(content, frame, observations);
     const formRewriteCount = observations.filter((observation) => !observation.ok
       && observation.tool === "response" && observation.error.code === "CONVERSATION_FORM").length;
     if (step.kind === "final" && step.decision.responsePlan.draft != null
@@ -674,7 +675,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     return { kind: "final", decision };
   }
 
-  #decodeStep(raw: unknown, frame: TurnFrame): AgentBrainStep {
+  #decodeStep(raw: unknown, frame: TurnFrame, observations: readonly AgentToolObservation[]): AgentBrainStep {
     if (!isRecord(raw)) return this.#safeFinal("shape inválido");
     const decodedUnderstanding = this.#decodeUnderstanding(raw.understanding);   // fonte única: semântica do turno no MESMO ciclo
     // The LLM still chose the intent, tool, and exact vehicle key. This only
@@ -695,7 +696,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       // ferramenta desconhecida/proibida -> NÃO reinterpreta o objeto de query como final: devolve fallback seguro.
       return this.#safeFinal("query inválida ou tool fora do allowlist");
     }
-    return { kind: "final", decision: this.#decodeFinal(raw, frame), understanding };
+    return { kind: "final", decision: this.#decodeFinal(raw, frame, observations), understanding };
   }
 
   // FONTE ÚNICA (P0): decodifica o TurnUnderstanding emitido pelo cérebro. Fail-soft: shape inválido -> undefined
@@ -758,7 +759,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     return null;
   }
 
-  #decodeFinal(raw: Record<string, unknown>, frame: TurnFrame): AgentBrainDecision {
+  #decodeFinal(raw: Record<string, unknown>, frame: TurnFrame, observations: readonly AgentToolObservation[]): AgentBrainDecision {
     // Compatibilidade de transporte durante a migração do contrato antigo para o
     // formato final plano. Isto não decide intenção, assunto ou tool: apenas lê
     // a mesma autoria da LLM quando um modelo ainda embrulha a resposta em
@@ -768,7 +769,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const draft = this.#decodeDraft(rawDraft);   // autoria única: o texto vem daqui (o engine renderiza aterrado)
     const draftHint = draft ? null : this.#describeDraftShape(rawDraft);
     const guidance = str(raw.guidance) ?? str(legacyPlan?.guidance) ?? str(raw.reasonSummary) ?? "Responda o cliente de forma útil, sem inventar informação.";
-    const effects = this.#decodeEffects(Array.isArray(raw.effects) ? raw.effects : []);
+    const effects = this.#decodeEffects(Array.isArray(raw.effects) ? raw.effects : [], observations);
     const memoryMutations = this.#decodeMemoryMutations(Array.isArray(raw.memoryMutations) ? raw.memoryMutations : [], frame.turnId);
     const stateMutations = this.#decodeStateMutations(Array.isArray(raw.stateMutations) ? raw.stateMutations : [], frame.turnId);
     const knowledgeGaps: KnowledgeGap[] = Array.isArray(raw.knowledgeGaps)
@@ -854,17 +855,30 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     return null;
   }
 
-  #decodeEffects(raw: unknown[]): ProposedEffectPlan[] {
+  #decodeEffects(raw: unknown[], observations: readonly AgentToolObservation[]): ProposedEffectPlan[] {
     const out: ProposedEffectPlan[] = [];
     let order = 0;
     let mediaSeen = false;
+    const resolvedPhotos = observations.filter(
+      (observation): observation is Extract<AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> =>
+        observation.tool === "vehicle_photos_resolve" && observation.ok,
+    );
     for (const e of raw) {
       if (!isRecord(e)) continue;
       if (e.kind === "send_message" && !out.some((x) => x.kind === "send_message")) {
         out.push({ kind: "send_message", planId: "reply", order: order++, onSuccess: [] } as ProposedEffectPlan);
       } else if (e.kind === "send_media" && !mediaSeen) {
-        const vehicleKey = str(e.vehicleKey);
-        const photoIds = Array.isArray(e.photoIds) ? e.photoIds.filter((p): p is string => typeof p === "string" && p.trim() !== "") : [];
+        const requestedVehicleKey = str(e.vehicleKey);
+        const grounded = requestedVehicleKey
+          ? resolvedPhotos.find((observation) => observation.data.vehicleKey === requestedVehicleKey)
+          : (resolvedPhotos.length === 1 ? resolvedPhotos[0] : undefined);
+        const vehicleKey = grounded?.data.vehicleKey ?? requestedVehicleKey;
+        const proposedPhotoIds = Array.isArray(e.photoIds) ? e.photoIds.filter((p): p is string => typeof p === "string" && p.trim() !== "") : [];
+        // O efeito continua sendo uma decisão explícita da LLM. O adaptador só
+        // materializa os argumentos opacos com o resultado factual da tool,
+        // como um node de integração faria num agente N8N. Quando existe fato
+        // aterrado, ele também vence IDs inventados ou incompletos do JSON.
+        const photoIds = grounded ? [...grounded.data.photoIds] : proposedPhotoIds;
         if (vehicleKey && photoIds.length > 0) {
           mediaSeen = true;
           out.push({ kind: "send_media", planId: "media", order: order++, vehicleKey, photoIds, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey, photoIds }] } as ProposedEffectPlan);

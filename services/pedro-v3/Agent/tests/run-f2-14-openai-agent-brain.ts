@@ -84,6 +84,46 @@ async function main(): Promise<void> {
     const media = step.kind === "final" && step.decision.proposedEffects.find((e) => e.kind === "send_media");
     check("[2] decode final + send_media aterrado", step.kind === "final" && !!media && (media as { vehicleKey?: string }).vehicleKey === "rm:1" && step.decision.responsePlan.guidance.includes("fotos"));
   }
+  // [2a] A LLM decide o efeito; o adapter materializa argumentos opacos a
+  // partir do unico resultado factual de fotos, como um node N8N faria.
+  {
+    const observations: AgentToolObservation[] = [{
+      tool: "vehicle_photos_resolve",
+      ok: true,
+      data: { vehicleKey: "rm:2", ambiguous: false, photoIds: ["p3", "p4"] },
+    }];
+    const { brain } = brainWith(JSON.stringify({
+      kind: "final",
+      reasonCode: "photo",
+      guidance: "Enviar as fotos pedidas",
+      effects: [{ kind: "send_message" }, { kind: "send_media" }],
+    }));
+    const step = await brain.proposeNextStep(frame("manda foto do segundo"), observations);
+    const media = step.kind === "final" && step.decision.proposedEffects.find((effect) => effect.kind === "send_media");
+    check("[2a] send_media minimo usa vehicleKey/photoIds da tool deste turno",
+      !!media
+      && media.kind === "send_media"
+      && media.vehicleKey === "rm:2"
+      && JSON.stringify(media.photoIds) === JSON.stringify(["p3", "p4"]));
+  }
+  // [2b] Resultado de tool sozinho nunca cria envio: a decisao continua sendo
+  // exclusivamente da LLM por meio do effect send_media.
+  {
+    const observations: AgentToolObservation[] = [{
+      tool: "vehicle_photos_resolve",
+      ok: true,
+      data: { vehicleKey: "rm:2", ambiguous: false, photoIds: ["p3", "p4"] },
+    }];
+    const { brain } = brainWith(JSON.stringify({
+      kind: "final",
+      reasonCode: "reply",
+      guidance: "Responder sem enviar midia",
+      effects: [{ kind: "send_message" }],
+    }));
+    const step = await brain.proposeNextStep(frame("vamos falar de outra coisa"), observations);
+    check("[2b] adapter nao sintetiza send_media sem decisao explicita da LLM",
+      step.kind === "final" && !step.decision.proposedEffects.some((effect) => effect.kind === "send_media"));
+  }
   // [3] tool proibida/desconhecida -> final seguro (não trava)
   {
     const { brain } = brainWith(JSON.stringify({ kind: "query", call: { tool: "delete_everything", input: {} } }));
@@ -121,6 +161,8 @@ async function main(): Promise<void> {
     check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
     check("[5a] contrato nao exige autoauditoria paralela no JSON", !sys.includes("conversationCheck") && !sys.includes("AUTOAVALIACAO CONVERSACIONAL"));
     check("[5a] campos comerciais continuam sob autoridade fechada do portal", sys.includes("somente os que o prompt do portal nomeia") && sys.includes("nao realiza triagem mecanica"));
+    check("[5a-photo] protocolo explica send_media minimo aterrado pela tool",
+      sys.includes('inclua {"kind":"send_media"} em effects') && sys.includes("unico vehicleKey/photoIds aterrado"));
     check("[5a-ad] protocolo trata anuncio exato como foco singular, nao lista implicita",
       sys.includes("use o resultado como FOCO SINGULAR")
       && sys.includes("Nao use vehicle_offer_list e nao mostre alternativas nessa abertura")

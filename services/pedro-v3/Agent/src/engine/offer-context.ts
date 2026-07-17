@@ -33,31 +33,42 @@ export function computeRenderedOfferContext(
   if (turnOutput.renderedOfferContext && turnOutput.renderedOfferContext.length > 0) {
     return { sourceTurnId: turnId, createdAt: now, items: [...turnOutput.renderedOfferContext] };
   }
-  // 2) caminho do LLM: vehicle_offer_list (ordem renderizada) ou um unico
-  // veiculo efetivamente citado por vehicle_ref/money_ref.
+  // 2) caminho do LLM: vehicle_offer_list (ordem renderizada) ou veiculos
+  // efetivamente citados por vehicle_ref/money_ref, na ordem em que aparecem.
+  //
+  // A LLM pode responder naturalmente "tenho Ka e Fox" sem escolher o formato
+  // visual de lista. Isso ainda mostrou dois veiculos reais ao lead e precisa
+  // preservar as chaves para o proximo turno ("foto do Ka", "do segundo").
+  // Capturar essa ordem nao decide a conversa nem interpreta texto comercial:
+  // apenas espelha refs tipadas que o renderer ja validou contra fatos atuais.
   const parts = turnOutput.composed?.draft?.parts ?? [];
   const part = parts.find((p) => (p as { type?: string }).type === "vehicle_offer_list") as { vehicleKeys?: string[] } | undefined;
   // A memoria operacional precisa espelhar o que o renderer realmente mostrou no WhatsApp.
   // Se a LLM propuser 16 chaves mas a lista renderizada mostra 5, so essas 5 viram "apresentadas".
   let keys = Array.isArray(part?.vehicleKeys) ? part!.vehicleKeys.slice(0, DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS) : [];
+  const stock = vehicleItemsFromFacts(turnOutput.facts);
   if (keys.length === 0) {
-    const referenced = new Set<string>();
+    const referenced: string[] = [];
+    const seen = new Set<string>();
+    const pushCurrentFact = (key: string): void => {
+      if (seen.has(key) || !stock.some((item) => item.vehicleKey === key)) return;
+      seen.add(key);
+      referenced.push(key);
+    };
     for (const candidate of parts) {
-      if (candidate.type === "vehicle_ref") referenced.add(candidate.vehicleKey);
+      if (candidate.type === "vehicle_ref") pushCurrentFact(candidate.vehicleKey);
       if (candidate.type === "money_ref"
         && candidate.role === "vehicle_price"
         && candidate.source.kind === "vehicle_fact") {
-        referenced.add(candidate.source.vehicleKey);
+        pushCurrentFact(candidate.source.vehicleKey);
       }
     }
-    // Mais de um veiculo sem vehicle_offer_list nao produz uma ordem/foco
-    // implicito. A LLM precisa escolher um foco singular ou uma lista tipada.
-    if (referenced.size === 1) keys = [...referenced];
+    keys = referenced.slice(0, DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS);
   }
   if (keys.length === 0) return null;
-  const stock = vehicleItemsFromFacts(turnOutput.facts);
   // Referencias lembradas podem nomear um carro, mas nao criam um novo foco
-  // factual. Para foco singular, exige-se um fato real deste turno.
+  // factual. Sem vehicle_offer_list, cada chave capturada acima exige fato real
+  // deste turno.
   if (!part && !keys.some((key) => stock.some((item) => item.vehicleKey === key))) return null;
   const items: RenderedOfferItem[] = keys.map((key, i) => {
     const v = stock.find((s) => s.vehicleKey === key);

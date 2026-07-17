@@ -277,6 +277,37 @@ async function main(): Promise<void> {
     check("[E4] NÃO consulta estoque/detalhe arbitrário", !c.exec.some((x) => x.tool === "stock_search" || x.tool === "vehicle_details"), JSON.stringify(c.exec.map((x) => x.tool)));
   }
 
+  // E5: se a LLM mostra DOIS veiculos por refs avulsas, o texto fica natural,
+  // mas o estado ainda precisa preservar ordem/chaves para o turno seguinte.
+  // Nao obrigamos a LLM a usar lista: a infraestrutura apenas espelha as refs
+  // tipadas e aterradas que o renderer realmente materializou.
+  {
+    const { turn } = await makeConv("E5");
+    const malformedThenStructured: BrainResponder = (_frame, obs) => {
+      const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok);
+      if (!stock) return q(stockPopular());
+      return fin([
+        txt("Dentro do seu valor, tenho "),
+        { type: "vehicle_ref", vehicleKey: POP1.vehicleKey, field: "modelo" },
+        txt(" por "),
+        { type: "money_ref", role: "vehicle_price", source: { kind: "vehicle_fact", vehicleKey: POP1.vehicleKey } },
+        txt(" e "),
+        { type: "vehicle_ref", vehicleKey: POP2.vehicleKey, field: "modelo" },
+        txt(" por "),
+        { type: "money_ref", role: "vehicle_price", source: { kind: "vehicle_fact", vehicleKey: POP2.vehicleKey } },
+        txt("."),
+      ]);
+    };
+    const offerTurn = await turn("Quero um carro popular ate 70 mil", "ambiguous", malformedThenStructured);
+    check("[E5] multiplos veiculos aterrados preservam resposta natural", offerTurn.src !== "technical_fallback" && has(offerTurn.outbox, "Mobi") && has(offerTurn.outbox, "Onix"), JSON.stringify({ feedback: offerTurn.brainFeedback, text: offerTurn.outbox }));
+
+    const photoTurn = await turn("Pode mandar a foto do Onix", "ambiguous", [
+      q(photosCall(POP2)),
+      fin([txt("Aqui estao as fotos do Chevrolet Onix 2018.")], [reply, { kind: "send_media", planId: "m", order: 1, vehicleKey: POP2.vehicleKey, photoIds: ["p1", "p2"], onSuccess: [] } as ProposedEffectPlan], "send_vehicle_photos"),
+    ]);
+    check("[E5] pedido posterior por modelo envia a foto do carro correto", photoTurn.hasMedia && photoTurn.mediaKey === POP2.vehicleKey && photoTurn.src !== "technical_fallback", JSON.stringify({ media: photoTurn.hasMedia, key: photoTurn.mediaKey, src: photoTurn.src, feedback: photoTurn.brainFeedback }));
+  }
+
   console.log(`\n== F2.20: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }
 }
