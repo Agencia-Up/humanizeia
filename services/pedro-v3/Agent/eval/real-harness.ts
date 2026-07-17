@@ -142,25 +142,40 @@ function summarizeBrainRequest(seq: number, request: ModelHttpRequest): LlmReque
     };
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const system = messages.find((m) => m?.role === "system")?.content;
-    const userText = messages.find((m) => m?.role === "user")?.content;
+    const currentUserMessage = [...messages].reverse().find((m) => m?.role === "user");
+    const userText = currentUserMessage?.content;
     if (typeof system !== "string" || typeof userText !== "string") return null;
-    const payload = JSON.parse(userText) as Record<string, unknown>;
-    const envelope = payload.context as Record<string, unknown> | undefined;
+    const runtimeSystem = messages.find((m, index) => index > 0 && m?.role === "system"
+      && typeof m.content === "string" && m.content.includes("runtimeContext"));
+    const legacyPayload = runtimeSystem == null ? JSON.parse(userText) as Record<string, unknown> : null;
+    const runtimePayload = runtimeSystem && typeof runtimeSystem.content === "string"
+      ? JSON.parse(runtimeSystem.content) as Record<string, unknown>
+      : null;
+    const envelope = (runtimePayload?.runtimeContext ?? legacyPayload?.context) as Record<string, unknown> | undefined;
     const currentTurn = envelope?.currentTurn as Record<string, unknown> | undefined;
     const conversation = envelope?.conversation as Record<string, unknown> | undefined;
     const operational = envelope?.operational as Record<string, unknown> | undefined;
-    const transcript = Array.isArray(conversation?.recentTranscript) ? conversation.recentTranscript : [];
+    const currentUserIndex = messages.lastIndexOf(currentUserMessage!);
+    const roleTranscript = runtimeSystem == null ? [] : messages
+      .slice(messages.indexOf(runtimeSystem) + 1, currentUserIndex)
+      .filter((entry) => entry.role === "user" || entry.role === "assistant")
+      .map((entry) => ({ role: entry.role === "user" ? "lead" : "agent", text: typeof entry.content === "string" ? entry.content : "" }));
+    const transcript = roleTranscript.length > 0
+      ? roleTranscript
+      : Array.isArray(conversation?.recentTranscript) ? conversation.recentTranscript : [];
     const transcriptTail = transcript.slice(-4).map((entry) => {
       const record = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
       const text = typeof record.text === "string" ? record.text : "";
       return { role: typeof record.role === "string" ? record.role : "?", chars: text.length, sha: sha256(text) };
     });
-    const conversationContext = conversation?.conversationContext as Record<string, unknown> | undefined;
+    const conversationContext = (conversation?.conversationContext ?? conversation) as Record<string, unknown> | undefined;
     const facts = currentTurn?.currentTurnFacts as Record<string, unknown> | undefined;
-    const memory = envelope?.memory as Record<string, unknown> | undefined;
+    const memory = (envelope?.memoryFacts ?? envelope?.memory) as Record<string, unknown> | undefined;
     const expected = facts?.expectedAnswer as Record<string, unknown> | undefined;
     const offer = facts?.offerReference as Record<string, unknown> | undefined;
-    const lastAgent = conversationContext?.lastAgentMessage ?? conversationContext?.lastAgentText;
+    const lastAgentFromRoles = [...transcript].reverse().find((entry) => entry && typeof entry === "object"
+      && ["agent", "assistant"].includes(String((entry as Record<string, unknown>).role))) as Record<string, unknown> | undefined;
+    const lastAgent = conversationContext?.lastAgentMessage ?? conversationContext?.lastAgentText ?? lastAgentFromRoles?.text;
     return {
       seq,
       model: typeof body.model === "string" ? body.model : undefined,
@@ -170,7 +185,7 @@ function summarizeBrainRequest(seq: number, request: ModelHttpRequest): LlmReque
       systemSha: sha256(system),
       userSha: sha256(userText),
       user: {
-        leadBlock: sanitize(typeof currentTurn?.leadBlock === "string" ? currentTurn.leadBlock : ""),
+        leadBlock: sanitize(runtimeSystem == null && typeof currentTurn?.leadBlock === "string" ? currentTurn.leadBlock : userText),
         transcriptCount: transcript.length,
         transcriptTail,
         signalKeys: objectKeys(operational),
@@ -181,9 +196,9 @@ function summarizeBrainRequest(seq: number, request: ModelHttpRequest): LlmReque
         observationTools: Array.isArray(envelope?.toolObservationsSoFar)
           ? envelope.toolObservationsSoFar.map((x) => x && typeof x === "object" && typeof (x as Record<string, unknown>).tool === "string" ? String((x as Record<string, unknown>).tool) : "?")
           : [],
-        pendingAgentQuestion: typeof memory?.pendingAgentQuestion === "string"
-          ? memory.pendingAgentQuestion
-          : typeof conversationContext?.pendingAgentQuestion === "string" ? conversationContext.pendingAgentQuestion : null,
+        pendingAgentQuestion: typeof (conversationContext?.pendingAgentQuestion as Record<string, unknown> | undefined)?.slot === "string"
+          ? String((conversationContext?.pendingAgentQuestion as Record<string, unknown>).slot)
+          : typeof memory?.pendingAgentQuestion === "string" ? memory.pendingAgentQuestion : null,
         lastAgentMessage: textDigest(lastAgent),
         expectedAnswer: typeof expected?.slot === "string" ? expected.slot : typeof expected?.kind === "string" ? expected.kind : null,
         extractedFacts: Array.isArray(facts?.extracted)

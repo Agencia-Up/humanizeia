@@ -66,7 +66,7 @@ export function resolveAiProviderRuntime(env: NodeJS.ProcessEnv): AiProviderRunt
     });
   }
   if (raw !== "openai") throw new AiProviderConfigError("AI_PROVIDER_INVALID");
-  const model = modelValue(env.PEDRO_V3_OPENAI_MODEL, "gpt-4.1-mini");
+  const model = modelValue(env.PEDRO_V3_OPENAI_MODEL, "gpt-4.1");
   return Object.freeze({
     provider: "openai",
     endpointUrl: "https://api.openai.com/v1/chat/completions",

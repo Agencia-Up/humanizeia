@@ -40,21 +40,26 @@ export type CentralStack = {
   readonly composeTransport: CountingModelHttpTransport;
 };
 
-export function buildCentralStack(assembly: RealAssembly): CentralStack {
+export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?: string): CentralStack {
+  const promptText = portalPromptOverride?.trim() || assembly.runtimeConfig.promptText;
+  const runtimeConfig = promptText === assembly.runtimeConfig.promptText
+    ? assembly.runtimeConfig
+    : { ...assembly.runtimeConfig, promptText };
   // BRAIN (planner) temp 0.2 — decisões consistentes (buscar-antes-de-listar, resolver-antes-de-enviar-foto).
   const brainTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
-  brainTransport.fullPrompt = assembly.runtimeConfig.promptText;
-  const brain = new OpenAiAgentBrain(assembly.openAiSecret, brainTransport, assembly.runtimeConfig.promptText, {
+  brainTransport.fullPrompt = promptText;
+  const brain = new OpenAiAgentBrain(assembly.openAiSecret, brainTransport, promptText, {
     endpointUrl: assembly.aiProvider.endpointUrl,
     allowedHosts: [...assembly.aiProvider.allowedHosts],
     tokenParameter: assembly.aiProvider.tokenParameter,
     model: assembly.aiProvider.model,
     retryModel: assembly.aiProvider.retryModel,
     temperature: 0.1, maxCompletionTokens: 1200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+    semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
   const composeTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
-  composeTransport.fullPrompt = assembly.runtimeConfig.promptText;
+  composeTransport.fullPrompt = promptText;
   const composeModel = createOpenAiModelFactory({
     openAiSecret: assembly.openAiSecret, modelTransport: composeTransport,
     modelOptions: {
@@ -67,8 +72,8 @@ export function buildCentralStack(assembly: RealAssembly): CentralStack {
       maxResponseBytes: 2 * 1024 * 1024,
       maxCompletionTokens: 1_200,
     },
-  })(assembly.runtimeConfig);
-  const composeLlm = new PromptBoundConversationAdapter(assembly.runtimeConfig, composeModel);
+  })(runtimeConfig);
+  const composeLlm = new PromptBoundConversationAdapter(runtimeConfig, composeModel);
   return { brain, brainTransport, composeLlm, composeTransport };
 }
 

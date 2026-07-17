@@ -38,6 +38,30 @@ function splitSemanticClauses(text: string): string[] {
   return text.split(/[.!?;\n]+|\b(?:mas|porem|porém)\b/iu).map((s) => s.trim()).filter(Boolean);
 }
 
+// Fato dito pelo proprio lead pode ser repetido pela LLM sem virar uma alegacao
+// de estoque. A excecao e estrita por valor: todos os atributos veiculares que
+// aparecem na resposta precisam aparecer tambem no bloco atual. Assim, "meu
+// Sonic e automatico" permite "seu Sonic automatico", mas nao libera cor,
+// versao, km ou qualquer outro atributo inventado.
+function responseVehicleAttributesAreGroundedInLead(leadMessage: string, responseText: string): boolean {
+  const lead = normalizeText(leadMessage);
+  const response = normalizeText(responseText);
+  const lexical = [
+    "automatico", "automatica", "manual", "flex", "completo", "completa",
+    "blindado", "blindada", "novo", "nova", "seminovo", "seminova",
+    "branco", "branca", "preto", "preta", "prata", "cinza", "vermelho",
+    "vermelha", "azul", "verde", "amarelo", "amarela", "marrom", "bege",
+    "dourado", "dourada", "laranja", "vinho", "grafite",
+  ];
+  const claimedWords = lexical.filter((value) => new RegExp(`\\b${value}\\b`).test(response));
+  if (claimedWords.some((value) => !new RegExp(`\\b${value}\\b`).test(lead))) return false;
+  const claimedYears = response.match(/\b(?:19|20)\d{2}\b/g) ?? [];
+  if (claimedYears.some((value) => !new RegExp(`\\b${value}\\b`).test(lead))) return false;
+  const claimedKm = [...response.matchAll(/\b(\d{1,7})\s*(?:mil\s*)?(?:km|quilometr)/g)].map((match) => match[0]);
+  if (claimedKm.some((value) => !lead.includes(value))) return false;
+  return claimedWords.length > 0 || claimedYears.length > 0 || claimedKm.length > 0;
+}
+
 function isLeadVehicleClaimEchoedOnlyAsAbsence(
   claim: { kind: string; normalized: string },
   responseText: string,
@@ -429,13 +453,20 @@ export const PolicyEngine = {
         || /\b(automatic|manual)[^?]{0,20}\b(sim|mesmo|isso)\b/.test(t);
       const claimsVehicleAttribute = possessiveRef && attributeClaim;   // claim-scoped: vale sempre (inclui msg mista)
       if (claimsVehicleAttribute) {
-        const selectedKey = ctx.state.vehicleContext.selected?.key ?? null;
-        const grounded = getValidVehicleKeys(facts);
-        if (!selectedKey) {
-          return [{ policyId: "POL-GROUND-DETAIL", outcome: "deny", violations: [`afirma atributo de veículo sem veículo SELECIONADO (pedir esclarecimento): "${composed.text.slice(0, 50)}"`] }];
-        }
-        if (!grounded.has(selectedKey)) {
-          return [{ policyId: "POL-GROUND-DETAIL", outcome: "deny", violations: [`atributo do veículo selecionado ${selectedKey} sem fato aterrado no turno (consultar vehicle_details antes)`] }];
+        const echoesCurrentTradeInFact = ctx.acceptedPrimaryIntent === "trade_in"
+          && !ctx.leadMessage.includes("?")
+          && responseVehicleAttributesAreGroundedInLead(ctx.leadMessage, composed.text);
+        if (echoesCurrentTradeInFact) {
+          // Proveniencia literal do lead: nao e alegacao sobre item do estoque.
+        } else {
+          const selectedKey = ctx.state.vehicleContext.selected?.key ?? null;
+          const grounded = getValidVehicleKeys(facts);
+          if (!selectedKey) {
+            return [{ policyId: "POL-GROUND-DETAIL", outcome: "deny", violations: [`afirma atributo de veículo sem veículo SELECIONADO (pedir esclarecimento): "${composed.text.slice(0, 50)}"`] }];
+          }
+          if (!grounded.has(selectedKey)) {
+            return [{ policyId: "POL-GROUND-DETAIL", outcome: "deny", violations: [`atributo do veículo selecionado ${selectedKey} sem fato aterrado no turno (consultar vehicle_details antes)`] }];
+          }
         }
       }
     }

@@ -118,6 +118,7 @@
     "test:f260": "tsx tests/run-f2-60-followup-quality.ts",
     "test:f261": "tsx tests/run-f2-61-semantic-knowledge.ts",
     "test:f262": "tsx tests/run-f2-62-conversation-quality-invariants.ts",
+    "smoke:f262:natural": "tsx eval/run-f262-natural-conversation-smoke.ts",
     "smoke:pii": "tsx eval/run-pii-smoke.ts"
   },
   "devDependencies": {

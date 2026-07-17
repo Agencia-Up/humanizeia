@@ -456,10 +456,9 @@ async function main(): Promise<void> {
     check("[T3b] a LLM acolhe pelo nome e avança a descoberta (engine não escreveu)", has(t2.outbox, "Douglas") && (has(t2.outbox, "procura") || has(t2.outbox, "tipo de carro")), `outbox="${t2.outbox}"`);
   }
 
-  // ══ AUDIT CODEX (Fase 1, LLM-first): "cadê?" NÃO pode terminar em recovery_offer — a LLM lista, o engine só dá o FATO ══
-  // T5R) após uma busca SUV, "cadê?" com activeSearchConstraints: o cérebro finaliza SEM ter o resultado (como o real). O
-  //      engine EXECUTA a busca e devolve o resultado + feedback "liste com vehicle_offer_list"; a LLM REDIGE a lista →
-  //      brain_final/brain_retry (NÃO deterministic_recovery/recovery_offer), sem loop de stock_search, sem repergunta.
+  // ══ AUDIT CODEX (LLM-first): "cadê?" NÃO pode terminar em fallback nem repetir uma lista já visível ══
+  // T5R) após uma lista SUV, o engine pode atualizar os fatos uma vez, mas a LLM deve apontar para a oferta já visível
+  //      em vez de reenviar os mesmos itens. O feedback continua voltando para a própria LLM.
   {
     const c = conv();
     await c.t("você tem SUV?", { responder: listSuv });   // renderiza SUVs + persiste activeSearchConstraints
@@ -467,13 +466,17 @@ async function main(): Promise<void> {
     // nunca herdada do turno anterior ("suv") — senão o deny UNDERSTANDING_STALE descarta a decisão (correto).
     const resumeU: TurnUnderstanding = { primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: "cadê" }], isTopicChange: false, answeredLeadQuestions: [] };
     const cadeBrain: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
+      const repeatedListFeedback = obs.find((o) => !o.ok && o.tool === "response" && /repete todos os veiculos|nao reenumere/i.test(o.error.message));
+      if (repeatedListFeedback && !repeatedListFeedback.ok) {
+        return finU([txt("As opções de SUV estão na mensagem anterior. Quer ver as fotos de algum deles?")], "reply", resumeU);
+      }
       const so = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
       if (so) return finU([txt("Encontrei estas opções:"), { type: "vehicle_offer_list", vehicleKeys: so.data.items.map((i) => i.vehicleKey) } as ResponsePart, txt("Quer ver as fotos de algum deles?")], "reply", resumeU);
       return finU([txt("Claro! Aqui estão as opções, quer ver as fotos de alguma delas?")], "reply", resumeU);   // finaliza sem ter o resultado (como o cérebro real)
     };
     const t2 = await c.t("cadê?", { responder: cadeBrain });
     check("[T5R] 'cadê?' termina brain_final/brain_retry (NÃO recovery_offer/technical_fallback)", (t2.src === "brain_final" || t2.src === "brain_retry"), `src=${t2.src}`);
-    check("[T5R-b] a LLM listou os SUVs (Creta/Renegade) + 1 stock_search, sem repergunta 'qual modelo/tipo'", (has(t2.outbox, "Creta") || has(t2.outbox, "Renegade")) && t2.stockObs <= 1 && !has(t2.outbox, "qual modelo") && !has(t2.outbox, "qual tipo"), `outbox="${t2.outbox}" stockObs=${t2.stockObs}`);
+    check("[T5R-b] a LLM aponta para a lista visível sem repetir Creta/Renegade", has(t2.outbox, "mensagem anterior") && !has(t2.outbox, "Creta") && !has(t2.outbox, "Renegade") && t2.stockObs <= 1, `outbox="${t2.outbox}" stockObs=${t2.stockObs}`);
   }
 
   // ══ AUDIT CODEX (T8 LLM-first): pagamento de veículo ESCOLHIDO conduz financiamento; engine NEGA discovery, LLM redige ══

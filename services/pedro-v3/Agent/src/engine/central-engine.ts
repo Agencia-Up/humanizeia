@@ -765,7 +765,8 @@ function authorFromBrainDraft(args: {
   // P0-3 (audit): busca com RESULTADOS deve RESPONDER, não pedir autorização. Se o turno tem itens de stock_search e o
   // draft NÃO traz vehicle_offer_list (nem send_media de um carro específico) -> deny + feedback ao MESMO cérebro. A LLM
   // segue autora da introdução/CTA; o engine só exige que a pergunta atual (disponibilidade) seja respondida com a lista.
-  if (realFacts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0)
+  if (rememberedOfferItems.length === 0
+      && realFacts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0)
       && !draft.parts.some((p) => p.type === "vehicle_offer_list")
       && !proposedEffects.some((e) => e.kind === "send_media")) {
     return { ok: false, feedback: "Turno de LISTAGEM factual: você buscou o estoque e HÁ itens disponíveis. Inclua uma vehicle_offer_list com pelo menos um dos vehicleKeys retornados. A LLM continua autora da introdução e do próximo passo; não escreva a lista ou atributos de estoque manualmente e não chame stock_search novamente." };
@@ -786,6 +787,20 @@ function authorFromBrainDraft(args: {
   if (args.requireBrain) {
     const greetingFeedback = invalidBrazilGreeting(composed.text, args.ctx.now);
     if (greetingFeedback) return { ok: false, feedback: greetingFeedback };
+  }
+  // Continuidade factual da oferta: a memÃ³ria estruturada pode renderizar
+  // novamente itens antigos para referÃªncias legÃ­timas, mas nÃ£o autoriza a
+  // LLM a reenviar a lista inteira quando nenhuma busca nova ocorreu. O engine
+  // apenas reconhece as identidades jÃ¡ visÃ­veis e devolve feedback; nÃ£o escreve
+  // a resposta nem escolhe o prÃ³ximo assunto.
+  if (args.requireBrain && rememberedOfferItems.length >= 2) {
+    const renderedComparable = normalizeText(composed.text);
+    const rememberedLabels = [...new Set(rememberedOfferItems
+      .map((vehicle) => normalizeText([vehicle.marca, vehicle.modelo].filter(Boolean).join(" ")))
+      .filter((label) => label.length >= 3))];
+    if (rememberedLabels.length >= 2 && rememberedLabels.every((label) => renderedComparable.includes(label))) {
+      return { ok: false, feedback: "A resposta renderizada repete todos os veiculos da ultima lista visivel. Mesmo que uma consulta tenha ocorrido, o conjunto mostrado nao mudou. Nao reenumere os mesmos carros; responda apenas como o criterio atual afeta as opcoes ja enviadas e mostre lista somente quando houver resultado visivelmente diferente." };
+    }
   }
   // LLM-first: memória pode aterrar QUAL veículo recebeu fotos, mas nunca escreve a resposta pelo cérebro.
   // Se a LLM ignorar o label lembrado, o engine devolve o fato e ela reautora. O override textual
@@ -2340,7 +2355,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // Uma stock_search observada com itens já é fato de grounding. A
             // validação só exige que a LLM não esconda esse fato; não decide o
             // assunto nem o CTA.
-            const listTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
+            const listTurn = llmFirst
+              && (contextState.lastRenderedOfferContext?.items.length ?? 0) === 0
+              && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
             const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
       const conductTurn = llmFirst && (lockedU?.primaryIntent === "financing" || lockedU?.primaryIntent === "trade_in" || sensitiveAnswerTurn);
             const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
@@ -2763,7 +2780,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             "AUTORIA FINAL OBRIGATORIA: somente voce escreve a resposta visivel ao cliente.",
             "Nao chame nenhuma nova tool nesta passagem; use os fatos e resultados que ja estao nas observacoes.",
             "Responda ao bloco ATUAL e preserve a mudanca de assunto mais recente. Memoria antiga e pergunta pendente sao apenas contexto.",
-            "Se houver itens de estoque, apresente somente os itens pertinentes via vehicle_offer_list. Se a busca estiver vazia ou falhou, seja honesto e conduza naturalmente sem inventar disponibilidade.",
+            (contextState.lastRenderedOfferContext?.items.length ?? 0) > 0
+              ? "Ja existe uma lista visivel. Nao a repita: explique como o criterio atual afeta as opcoes enviadas ou mostre somente itens realmente novos."
+              : "Se houver itens de estoque, apresente somente os itens pertinentes via vehicle_offer_list. Se a busca estiver vazia ou falhou, seja honesto e conduza naturalmente sem inventar disponibilidade.",
             "Se houver fotos resolvidas e o cliente as pediu, proponha send_media do alvo aterrado. Se o alvo for ambiguo, pergunte qual sem escolher por conta propria.",
             "Para fatos institucionais, use apenas a observacao correspondente. Para despedida, identificacao, selecao, pagamento, troca, visita ou pedido humano, acolha o ato atual e avance sem reabrir descoberta.",
             persisted0.lastPhotoAction?.label && isPhotoMemoryQuestionBlock(leadMessage)

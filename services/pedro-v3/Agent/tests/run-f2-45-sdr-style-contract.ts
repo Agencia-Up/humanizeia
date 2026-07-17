@@ -28,22 +28,22 @@ function main(): void {
   console.log("== F2.45: contrato tecnico do protocolo ==");
 
   check("[SDR-1] prompt do portal segue como autoridade de personalidade/funil",
-    containsAll("O prompt do portal e a fonte principal", "personalidade", "conducao comercial"));
+    containsAll("O prompt do portal define personalidade, negocio e funil", "historico real da conversa"));
 
   check("[SDR-2] protocolo separa contrato tecnico de conducao comercial",
-    containsAll("Este protocolo define somente o contrato tecnico", "A LLM decide o ato conversacional", "A engine apenas fornece fatos"));
+    containsAll("runtimeContext contem apenas fatos atuais", "nunca escolhe assunto, pergunta ou resposta", "Nao contem proxima pergunta", "comercial paralelo"));
 
   check("[SDR-3] grounding de lista permanece ativo",
-    containsAll("vehicle_offer_list", "vehicleKeys realmente retornados por stock_search"));
+    containsAll("vehicle_offer_list", "Lista usa somente keys retornadas por stock_search"));
 
   check("[SDR-4] protocolo nao volta a conduzir o funil por fora do portal",
     !source.includes("Toda resposta de estoque precisa ter 3 camadas") && !source.includes("workingMemory.funnel (known/declined)"));
 
   check("[SDR-5] limite tecnico de perguntas permanece",
-    source.includes("Use no maximo UMA pergunta util por resposta"));
+    source.includes("no maximo UMA pergunta curta e inequívoca"));
 
   check("[SDR-6] tool segue o ato e nao palavra-chave",
-    containsAll("stock_search: somente quando o ato atual pede estoque", "Nao use stock_search para resposta de troca"));
+    containsAll("stock_search busca estoque atual", "Nao use para carro de troca"));
 
   check("[SDR-7] protocolo nao carrega CTA comercial fixo legado",
     !source.includes("Nao use CTA generico de menu") && !source.includes("Varie conforme a conversa"));

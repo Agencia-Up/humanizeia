@@ -98,6 +98,10 @@ async function main(): Promise<void> {
 
     const contextFrame: TurnFrame = {
       ...frame("mostra o azul"),
+      recentTranscript: [
+        { role: "lead", text: "Quero ver os carros" },
+        { role: "agent", text: "Qual carro da lista voce quer ver as fotos?" },
+      ],
       conversationContext: {
         lastAgentMessage: "Qual carro da lista voce quer ver as fotos?",
         pendingAgentQuestion: { slot: "possuiTroca", sinceTurnId: "old-turn" },
@@ -126,23 +130,29 @@ async function main(): Promise<void> {
     };
     await brain.proposeNextStep(contextFrame, []);
     const contextBody = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
-    const userPayload = contextBody.messages.find((m) => m.role === "user")?.content ?? "";
-    check("[5c] envelope unico de contexto chega ao payload do cerebro", userPayload.includes("context") && userPayload.includes("conversationContext")
-      && userPayload.includes("Corolla") && userPayload.includes("Azul") && userPayload.includes("possuiTroca")
-      && userPayload.includes("currentTurnFacts") && userPayload.includes("consorcio"));
-    const payload = JSON.parse(userPayload) as { context?: { currentTurn?: { openingContext?: Record<string, unknown> }; memory?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
+    const contextMessage = contextBody.messages.find((m, index) => index > 0 && m.role === "system" && m.content.includes("runtimeContext"))?.content ?? "{}";
+    const currentUser = contextBody.messages.at(-1);
+    check("[5c] contexto factual separado chega ao cerebro", contextMessage.includes("runtimeContext")
+      && contextMessage.includes("Corolla") && contextMessage.includes("Azul") && contextMessage.includes("possuiTroca")
+      && contextMessage.includes("currentTurnFacts") && contextMessage.includes("consorcio"));
+    check("[5c-n8n] historico viaja como papeis reais e bloco atual e o ultimo user", contextBody.messages.some((m) => m.role === "assistant" && m.content.includes("Qual carro"))
+      && contextBody.messages.some((m) => m.role === "user" && m.content === "Quero ver os carros")
+      && currentUser?.role === "user" && currentUser.content === "mostra o azul");
+    const payload = JSON.parse(contextMessage) as { runtimeContext?: { currentTurn?: { openingContext?: Record<string, unknown> }; memoryFacts?: { funnel?: Record<string, unknown> }; operational?: Record<string, unknown>; conversation?: Record<string, unknown> }; signals?: Record<string, unknown>; leadBlock?: unknown; instruction?: unknown };
     check("[5e-envelope] sem instrucao top-level concorrente", payload.instruction === undefined);
     check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução", payload.leadBlock === undefined
-      && payload.context?.memory?.funnel?.suggestedObjective === undefined
+      && payload.runtimeContext?.memoryFacts?.funnel?.suggestedObjective === undefined
       && payload.signals === undefined
-      && payload.context?.operational?.currentTurnIntent === undefined
-      && payload.context?.operational?.firstContactNoCommercialTarget === undefined
-      && payload.context?.operational?.disengagementOnly === undefined
-      && payload.context?.operational?.selectedOfferThisTurn === undefined
-      && payload.context?.operational?.acceptedPhotoOffer === undefined);
-    check("[5e-opening] contexto factual da abertura chega sem virar instrucao paralela",
-      payload.context?.currentTurn?.openingContext?.specificAdEntry === true
-      && payload.context?.currentTurn?.openingContext?.firstContactNoCommercialTarget === true);
+      && payload.runtimeContext?.operational?.currentTurnIntent === undefined
+      && payload.runtimeContext?.operational?.firstContactNoCommercialTarget === undefined
+      && payload.runtimeContext?.operational?.disengagementOnly === undefined
+      && payload.runtimeContext?.operational?.selectedOfferThisTurn === undefined
+      && payload.runtimeContext?.operational?.acceptedPhotoOffer === undefined
+      && payload.runtimeContext?.conversation?.recentTranscript === undefined);
+    check("[5e-opening] contexto factual do anuncio chega sem diagnostico comercial derivado",
+      payload.runtimeContext?.currentTurn?.openingContext?.specificAdEntry === true
+      && payload.runtimeContext?.currentTurn?.openingContext?.firstAssistantTurn === false
+      && payload.runtimeContext?.currentTurn?.openingContext?.firstContactNoCommercialTarget === undefined);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {
@@ -263,6 +273,93 @@ async function main(): Promise<void> {
     const s2 = await brain.proposeNextStep(frame("quantos km"), obs);
     const d2 = s2.kind === "final" ? s2.decision.responsePlan.draft : null;
     check("[12] query -> observação -> final corrigido com draft", s1.kind === "query" && s1.call.tool === "vehicle_details" && s2.kind === "final" && !!d2 && d2.parts.some((p) => p.type === "vehicle_ref" && p.field === "km"));
+  }
+
+  // [13] O avaliador semantico nao escreve nem escolhe assunto: devolve
+  // feedback e a mesma LLM reautora uma unica vez pelo caminho de retry.
+  {
+    const understanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding, guidance: "ruim", draft: { parts: [{ type: "text", content: "Veronica, qual e seu nome?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: false, feedback: "A pergunta repete um dado ja informado; trate o carro de troca." }),
+      JSON.stringify({ kind: "final", understanding, guidance: "corrigida", draft: { parts: [{ type: "text", content: "Sou a Aloan da Loja Piloto. Qual a quilometragem do seu carro?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+    ];
+    let i = 0;
+    const calls: ModelHttpRequest[] = [];
+    const transport: ModelHttpTransport = { async postJson(_url: string, req: ModelHttpRequest): Promise<ModelHttpResponse> {
+      calls.push(req);
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1-mini",
+    });
+    const step = await brain.proposeNextStep(frame("Meu nome e Veronica. Tenho um carro para troca"), []);
+    const draft = step.kind === "final" ? step.decision.responsePlan.draft : null;
+    const textPart = draft?.parts.find((part) => part.type === "text");
+    const models = calls.map((call) => JSON.parse(call.body) as { model?: string }).map((body) => body.model);
+    check("[13] critic semantico reprova e a mesma LLM reautora uma vez",
+      calls.length === 3 && models[1] === "gpt-4.1-mini" && textPart?.type === "text" && textPart.content.includes("quilometragem"));
+  }
+
+  // [14] O critic nao pode aprovar uma apresentacao inexistente: no primeiro
+  // turno, a evidencia precisa estar literalmente no draft e conter a identidade
+  // factual configurada. O adapter apenas valida essa prova; a LLM reescreve.
+  {
+    const understanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding, guidance: "sem apresentacao", draft: { parts: [{ type: "text", content: "Bom dia, Veronica! Qual a quilometragem do seu Sonic?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: true, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, openingIdentity: true }, portalIdentityEvidence: "PROMPT-INTEGRAL-MARKER-42", openingIdentityEvidence: "Bom dia, Veronica!", feedback: "" }),
+      JSON.stringify({ kind: "final", understanding, guidance: "com apresentacao", draft: { parts: [{ type: "text", content: "Bom dia! Sou o Carvalho, consultor da Icom Motors. Qual a quilometragem do seu Sonic?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+    ];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(_url: string, _req: ModelHttpRequest): Promise<ModelHttpResponse> {
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const step = await brain.proposeNextStep(frame("Meu nome e Veronica. Tenho um Sonic para troca"), []);
+    const draft = step.kind === "final" ? step.decision.responsePlan.draft : null;
+    const textPart = draft?.parts.find((part) => part.type === "text");
+    check("[14] critic exige evidencia literal da identidade definida no portal no primeiro turno",
+      i === 3 && textPart?.type === "text" && textPart.content.includes("Carvalho") && textPart.content.includes("Icom Motors"));
+  }
+
+  // [15] Uma oferta identica a ultima lista visivel nao e reenviada. A LLM
+  // revisora pode remover apenas essa part repetida; nenhuma part factual nova
+  // pode ser criada pela infraestrutura.
+  {
+    const understanding = { primaryIntent: "search_stock", requestedCapabilities: [], subject: "budget", subjectValue: "100 mil", subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding, guidance: "relistar", draft: { parts: [{ type: "vehicle_offer_list", vehicleKeys: ["rm:1", "rm:2"] }, { type: "text", content: "Essas sao as opcoes ate 100 mil." }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ draft: { parts: [{ type: "text", content: "As opcoes que enviei ja estao dentro do limite de R$ 100 mil. Quer detalhes de algum modelo?" }] } }),
+      JSON.stringify({ pass: true, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "" }),
+    ];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(_url: string, _req: ModelHttpRequest): Promise<ModelHttpResponse> {
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const repeatedOfferFrame: TurnFrame = {
+      ...frame("Ate 100 mil"),
+      recentTranscript: [{ role: "agent", text: "1. Carro A\n2. Carro B" }, { role: "lead", text: "Ate 100 mil" }],
+      conversationContext: {
+        ...frame("x").conversationContext,
+        lastVisibleOffer: {
+          sourceTurnId: "previous",
+          items: [
+            { ordinal: 1, vehicleKey: "rm:1", marca: "A", modelo: "Um", ano: 2020, cor: null, preco: 80000, cambio: null, tipo: "suv" },
+            { ordinal: 2, vehicleKey: "rm:2", marca: "B", modelo: "Dois", ano: 2021, cor: null, preco: 90000, cambio: null, tipo: "suv" },
+          ],
+        },
+      },
+    };
+    const step = await brain.proposeNextStep(repeatedOfferFrame, []);
+    const draft = step.kind === "final" ? step.decision.responsePlan.draft : null;
+    check("[15] revisor LLM remove lista identica sem criar nova part factual",
+      i === 3 && draft?.parts.length === 1 && draft.parts[0]?.type === "text" && draft.parts[0].content.includes("100 mil"));
   }
 
   console.log(`\n== F2.14: ${ok} OK | ${fail} FALHA ==`);

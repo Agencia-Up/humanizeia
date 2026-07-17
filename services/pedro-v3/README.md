@@ -18,7 +18,7 @@ Variaveis obrigatorias:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `PEDRO_V3_AI_PROVIDER=openai` ou `deepseek` (default: `openai`)
-- OpenAI: `PEDRO_V3_OPENAI_MODEL=gpt-4.1-mini`
+- OpenAI: `PEDRO_V3_OPENAI_MODEL=gpt-4.1` (default recomendado para o cerebro conversacional; `gpt-4.1-mini` somente por override explicito)
 - DeepSeek: `PEDRO_V3_DEEPSEEK_MODEL=deepseek-chat`
 - `PEDRO_V3_ALLOWED_UAZAPI_HOSTS` com os hosts HTTPS permitidos, separados por virgula
 

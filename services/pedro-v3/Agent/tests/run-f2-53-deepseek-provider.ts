@@ -28,6 +28,13 @@ function frame(): TurnFrame {
   return {
     turnId: "t-deepseek", now: "2026-07-12T12:00:00.000Z", block: "Boa tarde", portalPromptSha256: "sha",
     signals: {}, workingMemory: { version: 1, selectedVehicle: null, recentTurns: [], toolResults: [] }, recentTranscript: [],
+    conversationContext: {
+      lastAgentMessage: null, pendingAgentQuestion: null, selectedVehicle: null,
+      lastVisibleOffer: null, lastResolvedSlotAnswer: null, conversationSummary: null,
+    },
+    currentTurnFacts: {
+      expectedAnswer: { slot: null, lastAgentQuestion: null }, extracted: [], offerReference: null,
+    },
   } as unknown as TurnFrame;
 }
 

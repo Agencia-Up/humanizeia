@@ -38,6 +38,9 @@ export function buildConversationContext(args: {
 
   return {
     lastAgentMessage: lastAgentMessage(args.state),
+    knownLeadName: args.state.slots.nome.status === "known" && typeof args.state.slots.nome.value === "string"
+      ? args.state.slots.nome.value
+      : null,
     pendingAgentQuestion: pending ? { slot: pending.slot, sinceTurnId: pending.sinceTurnId } : null,
     selectedVehicle: selected ? { vehicleKey: selected.vehicleKey, label: selected.label } : null,
     lastVisibleOffer: offer && offer.items.length > 0

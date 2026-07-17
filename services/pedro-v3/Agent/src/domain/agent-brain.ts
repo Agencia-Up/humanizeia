@@ -242,6 +242,7 @@ export type ConversationContextOfferItem = {
 
 export type ConversationContext = {
   readonly lastAgentMessage: string | null;
+  readonly knownLeadName?: string | null;
   readonly pendingAgentQuestion: { readonly slot: string; readonly sinceTurnId: string } | null;
   readonly selectedVehicle: { readonly vehicleKey: string; readonly label: string } | null;
   readonly lastVisibleOffer: { readonly sourceTurnId: string; readonly items: readonly ConversationContextOfferItem[] } | null;
