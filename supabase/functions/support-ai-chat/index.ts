@@ -48,6 +48,8 @@ const SYSTEM_PROMPT = `Você é o Assistente de Suporte da Logos IA. Você ajuda
 REGRAS INEGOCIÁVEIS:
 - Responda SOMENTE sobre uso da plataforma Logos IA. Qualquer outro assunto: diga que só ajuda com a Logos.
 - Use APENAS o que estiver na BASE DE CONHECIMENTO abaixo. Se a base não cobrir a pergunta, diga que não encontrou material sobre isso e oriente a acionar o suporte humano. NUNCA invente funcionalidade, caminho de menu, botão ou passo.
+- Você chegou aqui porque NÃO existe um passo a passo pronto que responda com segurança. Então NÃO monte um passo a passo por conta própria (poderia estar errado). Seja breve: diga que ainda não tem um tutorial cadastrado pra essa dúvida específica e sugira reformular a pergunta ou falar com o suporte humano. Se a base abaixo tiver algo PARCIALMENTE relacionado, aponte o título, mas não invente os passos.
+- ANTES de responder, confira se o material abaixo REALMENTE trata do que a pessoa perguntou. Se ela perguntou de uma ferramenta/assunto que o material não cobre (ex.: perguntou de TikTok ou LinkedIn e o material fala de Meta Ads), NÃO empurre o material como se fosse a resposta — diga que ainda não tem tutorial daquele assunto específico.
 - NUNCA invente link de vídeo. Só cite vídeo que estiver na seção VÍDEOS abaixo, com o título e a URL exatamente como vieram.
 - Nunca exponha SQL, tokens, chaves, nomes de tabela, detalhes internos, nem dado de outro cliente.
 - Você não executa ações: você orienta. Nunca diga que fez algo.
@@ -170,6 +172,68 @@ Deno.serve(async (req) => {
       ...artigos.map((a) => ({ tipo: "artigo", id: a.id, slug: a.slug, titulo: a.title, rank: a.rank, modo: a.match_mode })),
       ...videos.map((v) => ({ tipo: "video", id: v.id, titulo: v.title, url: v.video_url })),
     ];
+
+    // Linhas de vídeo (fixas — vêm do banco, a IA não inventa link).
+    const videoLinhas = videos.length
+      ? "\n\nTutorial recomendado:\n" + videos.map((v) => `▶ ${v.title} — ${v.video_url}`).join("\n")
+      : "";
+
+    // ══════════════════════════════════════════════════════════════════════
+    // RESPOSTA CANÔNICA (o pedido do dono: "sempre o mesmo passo a passo")
+    //
+    // Se um artigo CASA com confiança, devolvemos o conteúdo dele LITERAL —
+    // a IA NÃO reescreve o passo a passo. Isso elimina o risco de a IA
+    // "gerar de novo" e errar: o texto é exatamente o que foi auditado e
+    // salvo, igual toda vez. A IA (gpt-4o-mini) só entra no fallback abaixo,
+    // quando NÃO há artigo — e lá ela é proibida de inventar passo.
+    //
+    // "Confiança" = casou no modo E (TODAS as palavras da pergunta batem).
+    // Medido: o modo OU (fallback) NÃO serve pra resposta literal — ele casa
+    // por palavra genérica ("conectar") e traz o artigo errado com rank alto
+    // (ex.: "conecto o linkedin" → artigo do Meta Ads, rank 0.44). Rank não
+    // separa certo de errado. Então: só o modo E vira resposta canônica; o OU
+    // cai na IA abaixo, que consegue perceber "isto não responde a pergunta"
+    // e admitir em vez de entregar passo errado como se fosse oficial.
+    // ══════════════════════════════════════════════════════════════════════
+    const top = artigos[0];
+    const confiavel = top && top.match_mode === "and";
+
+    if (top && confiavel) {
+      // Texto 100% determinístico: conteúdo salvo + vídeo + fecho fixos.
+      const reply = `${String(top.content).trim()}${videoLinhas}\n\nIsso resolveu sua dúvida?`;
+
+      const { data: saved } = await admin
+        .from("support_chat_messages")
+        .insert({
+          session_id: sessionId, user_id: user.id, tenant_id: tenantId,
+          role: "assistant", content: reply,
+          sources,                       // registra de qual artigo/vídeo veio
+          tokens_used: 0,                // sem IA = sem token
+        })
+        .select("id")
+        .single();
+
+      await admin.from("support_chat_sessions").update({ updated_at: new Date().toISOString() }).eq("id", sessionId);
+
+      // Loga como atendimento de suporte SEM custo de IA (modelo sentinela).
+      await logAiCall(admin, {
+        userId: tenantId, disparoTipo: "chat_suporte",
+        provedor: "base_conhecimento", modelo: "canonico",
+        inputTokens: 0, outputTokens: 0, status: "ok",
+        eventoOrigem: sessionId, meta: { artigo: top.slug, modo: top.match_mode, path: currentPath || null },
+      });
+
+      return json({
+        session_id: sessionId,
+        message_id: saved?.id ?? null,
+        reply,
+        sources,
+        videos: videos.map((v) => ({ id: v.id, titulo: v.title, url: v.video_url, thumb: v.thumbnail_url, plataforma: v.platform })),
+        canonico: true,        // front pode marcar "resposta oficial"
+        sem_base: false,
+      });
+    }
+    // ── Sem artigo confiável: cai no fallback de IA (nunca inventa passo) ──
 
     const baseTxt = artigos.length
       ? artigos.map((a, i) =>
