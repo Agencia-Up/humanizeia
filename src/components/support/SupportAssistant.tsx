@@ -35,8 +35,11 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { descricaoErro } from '@/lib/erroAmigavel';
 
-/** Rotas onde, no celular, o rodapé pertence à caixa de mensagem do lead. */
-const ROTAS_CHAT = ['/pedro', '/marcos', '/conversas', '/whatsapp/inbox'];
+/** Telas de CONVERSA inteiras (caixa de mensagem no rodapé) — o botão nunca aparece. */
+const ROTAS_CHAT = ['/conversas', '/whatsapp/inbox'];
+/** Agentes com abas: o botão só fica na aba PRINCIPAL (CRM); some nas outras abas. */
+const AGENTES_COM_ABAS = ['/pedro', '/marcos'];
+const ABA_PRINCIPAL = 'crm';
 
 const SUGESTOES = [
   'Como conectar meu WhatsApp?',
@@ -67,7 +70,14 @@ export default function SupportAssistant() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
 
-  const naRotaDeChat = ROTAS_CHAT.includes(location.pathname);
+  // Regra (pedido do dono): o botão de Ajuda fica SÓ na "tela principal" — os
+  // painéis e a aba principal (CRM) de cada agente. Some nas telas de conversa
+  // (onde cobria a caixa de mensagem) e nas sub-abas dos agentes (?tab= != crm).
+  const abaAtual = new URLSearchParams(location.search).get('tab');
+  const emTelaDeConversa = ROTAS_CHAT.includes(location.pathname);
+  const emSubAbaDeAgente =
+    AGENTES_COM_ABAS.includes(location.pathname) && !!abaAtual && abaAtual !== ABA_PRINCIPAL;
+  const esconderBotao = emTelaDeConversa || emSubAbaDeAgente;
 
   useEffect(() => {
     if (aberto) fimRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -179,7 +189,7 @@ export default function SupportAssistant() {
                     bg-primary px-4 py-3 text-primary-foreground shadow-lg transition
                     hover:scale-105 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2
                     focus-visible:ring-ring active:scale-95
-                    ${naRotaDeChat ? 'hidden md:flex' : 'flex'}
+                    ${esconderBotao ? 'hidden' : 'flex'}
                     ${aberto ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
       >
         <LifeBuoy className="h-5 w-5" />
