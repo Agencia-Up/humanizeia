@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
 import { ProductTour } from '@/components/onboarding/ProductTour';
+import SupportAssistant from '@/components/support/SupportAssistant';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft } from 'lucide-react';
@@ -126,6 +127,10 @@ export function MainLayout({ children }: MainLayoutProps) {
         </SidebarInset>
       </div>
       <ProductTour />
+      {/* Suporte: fica FORA do SidebarInset (é fixed, não deve entrar no fluxo
+          nem no scroll do conteúdo). Não aparece em /connect-accounts,
+          /meu-plano e /briefing/:nicho — essas 3 rotas não usam MainLayout. */}
+      <SupportAssistant />
     </SidebarProvider>
   );
 }
