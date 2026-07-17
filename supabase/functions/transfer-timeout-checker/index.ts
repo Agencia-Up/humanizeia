@@ -1,5 +1,7 @@
 import { logTransferFailure, resolveTransferFailures } from '../_shared/pedro-v2/logTransferFailure.ts';
 import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+import { pickNextTimeoutSeller } from "../_shared/transfer/timeoutRouting.ts";
+import { sellerPhoneKey } from "../_shared/transfer/phoneKey.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -279,38 +281,6 @@ function isWithinRepassWindow(dt: Date): boolean {
 }
 
 // ── Função auxiliar: round-robin ──────────────────────────────────────────────
-function sellerPhoneKey(seller: any): string {
-  const digits = String(seller?.whatsapp_number || '').replace(/\D/g, '');
-  const local = digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
-  if (local.length === 11 && local[2] === '9') return `${local.slice(0, 2)}${local.slice(3)}`;
-  return local.slice(-10);
-}
-
-function pickNextSeller(sellers: any[], recentTransfers: any[], excludeId?: string, excludePhoneKey?: string): any | null {
-  const seenPhones = new Set<string>();
-  const active = sellers.filter((s: any) => {
-    const phoneKey = sellerPhoneKey(s);
-    if (!s.is_active || s.id === excludeId || (excludePhoneKey && phoneKey === excludePhoneKey)) return false;
-    if (phoneKey && seenPhones.has(phoneKey)) return false;
-    if (phoneKey) seenPhones.add(phoneKey);
-    return true;
-  });
-  if (!active.length) return null;
-
-  const lastMap = new Map<string, number>();
-  for (const t of recentTransfers) {
-    if (t.to_member_id && !lastMap.has(t.to_member_id))
-      lastMap.set(t.to_member_id, new Date(t.created_at).getTime());
-  }
-
-  const neverReceived = active.filter((s: any) => !lastMap.has(s.id));
-  if (neverReceived.length) return neverReceived[0];
-
-  return [...active].sort((a: any, b: any) =>
-    (lastMap.get(a.id) || 0) - (lastMap.get(b.id) || 0)
-  )[0] || null;
-}
-
 // ─── Main handler ────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -494,35 +464,48 @@ Deno.serve(async (req) => {
           waInstance = inst;
         }
 
-        // 3. Avisa o vendedor que perdeu o lead
-        if (waInstance && expiredSeller.whatsapp_number) {
-          let expiredNum = expiredSeller.whatsapp_number.replace(/\D/g, '');
-          if (expiredNum.length === 10 || expiredNum.length === 11) expiredNum = `55${expiredNum}`;
-
-          const baseUrl = (waInstance.api_url || '').replace(/\/$/, '');
-          const instKey = waInstance.api_key_encrypted || '';
-
-          const missedMsg = `⚠️ *LEAD REPASSADO*\n\nO lead *${lead.lead_name || ''}* não teve sua confirmação dentro de 15 minutos e foi passado para o próximo da fila.\n\n🚫 *Por favor, não entre em contato com este lead.*`;
-
-          try {
-            await fetch(`${baseUrl}/send/text`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'token': instKey },
-              body: JSON.stringify({ number: expiredNum, text: missedMsg }),
-            });
-            console.log(`[Timeout] Aviso enviado para ${expiredSeller.name}`);
-          } catch (sendErr) {
-            console.error(`[Timeout] Erro ao enviar aviso para ${expiredSeller.name}:`, sendErr);
-          }
+        // 3. Preflight obrigatório: sem próximo vendedor, não envie ao
+        // vendedor anterior uma mensagem que afirme que o lead já foi repassado.
+        let preflightRoster = (await supabase
+          .from('ai_team_members')
+          .select('id,name,whatsapp_number,is_active,agent_id')
+          .eq('user_id', transfer.user_id)
+          .eq('is_active', true)
+          .eq('agent_id', lead.agent_id)).data || [];
+        if (preflightRoster.length === 0) {
+          preflightRoster = (await supabase
+            .from('ai_team_members')
+            .select('id,name,whatsapp_number,is_active,agent_id')
+            .eq('user_id', transfer.user_id)
+            .eq('is_active', true)).data || [];
+        }
+        if (!pickNextTimeoutSeller(preflightRoster, [], expiredSeller.id, sellerPhoneKey(expiredSeller))) {
+          await supabase.from('ai_lead_transfers').update({
+            transfer_status: 'pending',
+            confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          }).eq('id', transfer.id).eq('transfer_status', 'expired');
+          continue;
         }
 
         // 4. Round-robin — escolhe próximo vendedor (filtra por agent_id do lead)
-        const { data: allSellers } = await supabase
+        let { data: allSellers } = await supabase
           .from('ai_team_members')
           .select('*')
           .eq('user_id', transfer.user_id)
           .eq('is_active', true)
           .eq('agent_id', lead.agent_id);
+
+        // Algumas contas cadastram vendedores no tenant (agent_id NULL). O
+        // timeout precisa usar o mesmo fallback tenant-wide da saga v3, ou
+        // expira o transfer e deixa o lead sem próximo destinatário.
+        if (!allSellers || allSellers.length === 0) {
+          const tenantRoster = await supabase
+            .from('ai_team_members')
+            .select('*')
+            .eq('user_id', transfer.user_id)
+            .eq('is_active', true);
+          allSellers = tenantRoster.data;
+        }
 
         const { data: recentTransfers } = await supabase
           .from('ai_lead_transfers')
@@ -531,11 +514,11 @@ Deno.serve(async (req) => {
           .order('created_at', { ascending: false })
           .limit(100);
 
-        const nextSeller = pickNextSeller(
+        const nextSeller = pickNextTimeoutSeller(
           allSellers || [],
           recentTransfers || [],
           expiredSeller.id,
-          sellerPhoneKey(expiredSeller)
+          sellerPhoneKey(expiredSeller),
         );
 
         if (!nextSeller) {
@@ -554,12 +537,19 @@ Deno.serve(async (req) => {
             source: 'transfer-timeout-checker',
             reason_detail: `Lead expirou com ${expiredSeller.name || 'o vendedor anterior'} e nao ha outro vendedor ativo na fila para escalar.`,
           });
+          // Mantém o lead com uma pendência rearmada para a próxima execução.
+          // Não há destinatário, portanto nunca devemos deixar a mensagem
+          // “passado para o próximo” ser a única evidência operacional.
+          await supabase.from('ai_lead_transfers').update({
+            transfer_status: 'pending',
+            confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          }).eq('id', transfer.id).eq('transfer_status', 'expired');
           continue;
         }
 
         // 5. Cria novo transfer para o próximo vendedor
         const newTimeout = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-        await supabase.from('ai_lead_transfers').insert({
+        const { error: nextTransferErr } = await supabase.from('ai_lead_transfers').insert({
           user_id: transfer.user_id,
           lead_id: lead.id,
           from_member_id: expiredSeller.id,
@@ -570,6 +560,15 @@ Deno.serve(async (req) => {
           is_confirmed: false,
           confirmation_timeout_at: newTimeout,
         });
+
+        if (nextTransferErr) {
+          console.error(`[Timeout] Falha ao criar transfer para ${nextSeller.name}:`, nextTransferErr);
+          await supabase.from('ai_lead_transfers').update({
+            transfer_status: 'pending',
+            confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          }).eq('id', transfer.id).eq('transfer_status', 'expired');
+          continue;
+        }
 
         // Atualiza lead com novo responsável
         await supabase.from('ai_crm_leads')
@@ -585,6 +584,7 @@ Deno.serve(async (req) => {
         });
 
         // 6. Envia mensagem para o próximo vendedor
+        let nextSellerNotified = false;
         if (waInstance && nextSeller.whatsapp_number) {
           let nextNum = nextSeller.whatsapp_number.replace(/\D/g, '');
           if (nextNum.length === 10 || nextNum.length === 11) nextNum = `55${nextNum}`;
@@ -604,6 +604,7 @@ Deno.serve(async (req) => {
               const body = await sendRes.text().catch(() => '');
               throw new Error(`UAZAPI ${sendRes.status}: ${body}`);
             }
+            nextSellerNotified = true;
             console.log(`[Timeout] Lead repassado para ${nextSeller.name}`);
           } catch (sendErr) {
             console.error(`[Timeout] Erro ao enviar para ${nextSeller.name}:`, sendErr);
@@ -612,6 +613,13 @@ Deno.serve(async (req) => {
               .eq('lead_id', lead.id)
               .eq('to_member_id', nextSeller.id)
               .eq('transfer_status', 'pending');
+            // O próximo vendedor não recebeu o aviso; não deixe o lead órfão
+            // por causa de uma falha de transporte. Rearma a pendência anterior
+            // e permite nova tentativa no próximo ciclo.
+            await supabase.from('ai_lead_transfers').update({
+              transfer_status: 'pending',
+              confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            }).eq('id', transfer.id).eq('transfer_status', 'expired');
             await logTransferFailure({
               user_id: transfer.user_id,
               reason_code: 'notificacao_falhou',
@@ -626,6 +634,29 @@ Deno.serve(async (req) => {
               reason_detail: `Envio para o proximo vendedor (${nextSeller.name || nextSeller.id}) falhou apos criar o repasse; transfer pendente foi expirado para evitar confirmacao fantasma.`,
             });
             continue;
+          }
+        }
+
+        // Só avisa o vendedor anterior depois que o novo repasse foi
+        // persistido e efetivamente notificado. Assim, uma falha de insert,
+        // telefone ou transporte nunca produz “LEAD REPASSADO” sem destino.
+        if (nextSellerNotified && waInstance && expiredSeller.whatsapp_number) {
+          let expiredNum = expiredSeller.whatsapp_number.replace(/\D/g, '');
+          if (expiredNum.length === 10 || expiredNum.length === 11) expiredNum = `55${expiredNum}`;
+
+          const baseUrl = (waInstance.api_url || '').replace(/\/$/, '');
+          const instKey = waInstance.api_key_encrypted || '';
+          const missedMsg = `⚠️ *LEAD REPASSADO*\n\nO lead *${lead.lead_name || ''}* não teve sua confirmação dentro de 15 minutos e foi passado para o próximo da fila.\n\n🚫 *Por favor, não entre em contato com este lead.*`;
+
+          try {
+            await fetch(`${baseUrl}/send/text`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'token': instKey },
+              body: JSON.stringify({ number: expiredNum, text: missedMsg }),
+            });
+            console.log(`[Timeout] Aviso enviado para ${expiredSeller.name}`);
+          } catch (sendErr) {
+            console.error(`[Timeout] Erro ao enviar aviso para ${expiredSeller.name}:`, sendErr);
           }
         }
 

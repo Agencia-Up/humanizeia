@@ -20,7 +20,7 @@ import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260
 import { resolvePedroV3AdSemantic } from "../_shared/pedro-v2/pedroV3AdSemantic.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
-const PEDRO_V2_BUILD = "2026-07-17-v3-only-routing-v223";
+const PEDRO_V2_BUILD = "2026-07-17-transfer-routing-v224";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -742,6 +742,21 @@ Deno.serve(async (req) => {
     }));
     return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_post_transfer_hold", action: _postTransferPlan.action, build: PEDRO_V2_BUILD });
   }
+
+  // In v3-only, seller identity is intentionally outside the conversational
+  // bridge, but its confirmation must still reach the shared transfer saga.
+  // Reuse only the seller-ack branch of the legacy orchestrator; never run its
+  // commercial lead flow and never let the v3-only guard discard the "Ok".
+  if (!_dryRun && _pilotSellerInbound) {
+    const sellerAckTurn = async () => processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+    if (typeof _waitUntil === "function") {
+      _waitUntil(sellerAckTurn());
+      return jsonResponse({ ok: true, accepted: true, routed: "seller_ack_confirmation", build: PEDRO_V2_BUILD });
+    }
+    await sellerAckTurn();
+    return jsonResponse({ ok: true, accepted: true, routed: "seller_ack_confirmation", build: PEDRO_V2_BUILD });
+  }
+
   if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
     const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
     const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
