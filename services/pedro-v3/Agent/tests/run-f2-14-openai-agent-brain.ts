@@ -43,6 +43,30 @@ function brainWith(content: string, status = 200): { brain: OpenAiAgentBrain; tr
   const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1-mini" });
   return { brain, transport };
 }
+const criticPass = (args: {
+  readonly leadEvidence: string;
+  readonly visibleEvidence: string;
+  readonly portalIdentityEvidence?: string | null;
+  readonly openingIdentityEvidence?: string | null;
+  readonly effectClaimEvidence?: string | null;
+}): string => JSON.stringify({
+  pass: true,
+  currentLeadAct: "ato atual corretamente identificado",
+  candidateVisibleAct: "responde visivelmente ao ato atual",
+  nextQuestionAct: null,
+  currentLeadLane: "other",
+  priorAssistantLane: null,
+  nextQuestionLane: "other",
+  nextQuestionIsQualificationField: false,
+  portalQuestionSupportEvidence: null,
+  currentLeadEvidence: args.leadEvidence,
+  visibleCurrentActEvidence: args.visibleEvidence,
+  effectClaimEvidence: args.effectClaimEvidence ?? null,
+  checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: true, effectCoherence: true, openingIdentity: true },
+  portalIdentityEvidence: args.portalIdentityEvidence ?? null,
+  openingIdentityEvidence: args.openingIdentityEvidence ?? null,
+  feedback: "",
+});
 
 async function main(): Promise<void> {
   console.log("== F2.14 OpenAiAgentBrain (offline, fake transport) ==");
@@ -95,6 +119,8 @@ async function main(): Promise<void> {
     const expectedSha = crypto.createHash("sha256").update(PORTAL_PROMPT, "utf8").digest("hex");
     check("[5] prompt do portal presente INTEGRALMENTE no system", sys.includes(PORTAL_PROMPT) && sys.includes("PROMPT-INTEGRAL-MARKER-42"));
     check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
+    check("[5a] contrato nao exige autoauditoria paralela no JSON", !sys.includes("conversationCheck") && !sys.includes("AUTOAVALIACAO CONVERSACIONAL"));
+    check("[5a] campos comerciais continuam sob autoridade fechada do portal", sys.includes("somente os que o prompt do portal nomeia") && sys.includes("nao realiza triagem mecanica"));
 
     const contextFrame: TurnFrame = {
       ...frame("mostra o azul"),
@@ -133,7 +159,7 @@ async function main(): Promise<void> {
     const contextMessage = contextBody.messages.find((m, index) => index > 0 && m.role === "system" && m.content.includes("runtimeContext"))?.content ?? "{}";
     const currentUser = contextBody.messages.at(-1);
     check("[5c] contexto factual separado chega ao cerebro", contextMessage.includes("runtimeContext")
-      && contextMessage.includes("Corolla") && contextMessage.includes("Azul") && contextMessage.includes("possuiTroca")
+      && contextMessage.includes("Corolla") && contextMessage.includes("Azul")
       && contextMessage.includes("currentTurnFacts") && contextMessage.includes("consorcio"));
     check("[5c-n8n] historico viaja como papeis reais e bloco atual e o ultimo user", contextBody.messages.some((m) => m.role === "assistant" && m.content.includes("Qual carro"))
       && contextBody.messages.some((m) => m.role === "user" && m.content === "Quero ver os carros")
@@ -148,7 +174,10 @@ async function main(): Promise<void> {
       && payload.runtimeContext?.operational?.disengagementOnly === undefined
       && payload.runtimeContext?.operational?.selectedOfferThisTurn === undefined
       && payload.runtimeContext?.operational?.acceptedPhotoOffer === undefined
-      && payload.runtimeContext?.conversation?.recentTranscript === undefined);
+      && payload.runtimeContext?.conversation?.recentTranscript === undefined
+      && payload.runtimeContext?.conversation?.pendingAgentQuestion === undefined
+      && !contextMessage.includes("expectedAnswer")
+      && payload.runtimeContext?.conversation?.lastAssistantMessage === "Qual carro da lista voce quer ver as fotos?");
     check("[5e-opening] contexto factual do anuncio chega sem diagnostico comercial derivado",
       payload.runtimeContext?.currentTurn?.openingContext?.specificAdEntry === true
       && payload.runtimeContext?.currentTurn?.openingContext?.firstAssistantTurn === false
@@ -283,6 +312,7 @@ async function main(): Promise<void> {
       JSON.stringify({ kind: "final", understanding, guidance: "ruim", draft: { parts: [{ type: "text", content: "Veronica, qual e seu nome?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
       JSON.stringify({ pass: false, feedback: "A pergunta repete um dado ja informado; trate o carro de troca." }),
       JSON.stringify({ kind: "final", understanding, guidance: "corrigida", draft: { parts: [{ type: "text", content: "Sou a Aloan da Loja Piloto. Qual a quilometragem do seu carro?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "Tenho um carro para troca", visibleEvidence: "Qual a quilometragem do seu carro?", portalIdentityEvidence: PORTAL_PROMPT, openingIdentityEvidence: "Sou a Aloan da Loja Piloto." }),
     ];
     let i = 0;
     const calls: ModelHttpRequest[] = [];
@@ -298,7 +328,8 @@ async function main(): Promise<void> {
     const textPart = draft?.parts.find((part) => part.type === "text");
     const models = calls.map((call) => JSON.parse(call.body) as { model?: string }).map((body) => body.model);
     check("[13] critic semantico reprova e a mesma LLM reautora uma vez",
-      calls.length === 3 && models[1] === "gpt-4.1-mini" && textPart?.type === "text" && textPart.content.includes("quilometragem"));
+      calls.length === 4 && models[1] === "gpt-4.1-mini" && textPart?.type === "text" && textPart.content.includes("quilometragem"),
+      `calls=${calls.length} models=${models.join(",")} text=${textPart?.type === "text" ? textPart.content : "<none>"}`);
   }
 
   // [14] O critic nao pode aprovar uma apresentacao inexistente: no primeiro
@@ -308,8 +339,9 @@ async function main(): Promise<void> {
     const understanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [] };
     const seq = [
       JSON.stringify({ kind: "final", understanding, guidance: "sem apresentacao", draft: { parts: [{ type: "text", content: "Bom dia, Veronica! Qual a quilometragem do seu Sonic?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
-      JSON.stringify({ pass: true, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, openingIdentity: true }, portalIdentityEvidence: "PROMPT-INTEGRAL-MARKER-42", openingIdentityEvidence: "Bom dia, Veronica!", feedback: "" }),
-      JSON.stringify({ kind: "final", understanding, guidance: "com apresentacao", draft: { parts: [{ type: "text", content: "Bom dia! Sou o Carvalho, consultor da Icom Motors. Qual a quilometragem do seu Sonic?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: true, currentLeadAct: "troca", candidateVisibleAct: "pergunta quilometragem", nextQuestionAct: "troca", currentLeadLane: "trade_vehicle", priorAssistantLane: null, nextQuestionLane: "trade_vehicle", nextQuestionIsQualificationField: false, portalQuestionSupportEvidence: null, currentLeadEvidence: "Tenho um Sonic para troca", visibleCurrentActEvidence: "Qual a quilometragem do seu Sonic?", effectClaimEvidence: null, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: true, effectCoherence: true, openingIdentity: true }, portalIdentityEvidence: "PROMPT-INTEGRAL-MARKER-42", openingIdentityEvidence: "Bom dia, Veronica!", feedback: "" }),
+      JSON.stringify({ kind: "final", understanding, guidance: "com apresentacao", draft: { parts: [{ type: "text", content: "Bom dia! Sou a Aloan, atendente da Loja Piloto. Qual a quilometragem do seu Sonic?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "Tenho um Sonic para troca", visibleEvidence: "Qual a quilometragem do seu Sonic?", portalIdentityEvidence: PORTAL_PROMPT, openingIdentityEvidence: "Sou a Aloan, atendente da Loja Piloto." }),
     ];
     let i = 0;
     const transport: ModelHttpTransport = { async postJson(_url: string, _req: ModelHttpRequest): Promise<ModelHttpResponse> {
@@ -322,7 +354,8 @@ async function main(): Promise<void> {
     const draft = step.kind === "final" ? step.decision.responsePlan.draft : null;
     const textPart = draft?.parts.find((part) => part.type === "text");
     check("[14] critic exige evidencia literal da identidade definida no portal no primeiro turno",
-      i === 3 && textPart?.type === "text" && textPart.content.includes("Carvalho") && textPart.content.includes("Icom Motors"));
+      i === 4 && textPart?.type === "text" && textPart.content.includes("Aloan") && textPart.content.includes("Loja Piloto"),
+      `calls=${i} text=${textPart?.type === "text" ? textPart.content : "<none>"}`);
   }
 
   // [15] Uma oferta identica a ultima lista visivel nao e reenviada. A LLM
@@ -333,7 +366,7 @@ async function main(): Promise<void> {
     const seq = [
       JSON.stringify({ kind: "final", understanding, guidance: "relistar", draft: { parts: [{ type: "vehicle_offer_list", vehicleKeys: ["rm:1", "rm:2"] }, { type: "text", content: "Essas sao as opcoes ate 100 mil." }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
       JSON.stringify({ draft: { parts: [{ type: "text", content: "As opcoes que enviei ja estao dentro do limite de R$ 100 mil. Quer detalhes de algum modelo?" }] } }),
-      JSON.stringify({ pass: true, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "" }),
+      criticPass({ leadEvidence: "Ate 100 mil", visibleEvidence: "As opcoes que enviei ja estao dentro do limite de R$ 100 mil." }),
     ];
     let i = 0;
     const transport: ModelHttpTransport = { async postJson(_url: string, _req: ModelHttpRequest): Promise<ModelHttpResponse> {
@@ -360,6 +393,226 @@ async function main(): Promise<void> {
     const draft = step.kind === "final" ? step.decision.responsePlan.draft : null;
     check("[15] revisor LLM remove lista identica sem criar nova part factual",
       i === 3 && draft?.parts.length === 1 && draft.parts[0]?.type === "text" && draft.parts[0].content.includes("100 mil"));
+  }
+
+  // [15b] Defeito puramente formal usa uma revisao estreita do draft. A
+  // intencao e os efeitos da autora principal permanecem intocados.
+  {
+    const understanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ quote: "HRV para troca" }], isTopicChange: true, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding, guidance: "avancar pagamento", draft: { parts: [{ type: "text", content: "Entendi sua HR-V. Pretende financiar ou pagar a vista?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ draft: { parts: [{ type: "text", content: "Entendi sua HR-V. Como pretende fazer o pagamento?" }] } }),
+    ];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(): Promise<ModelHttpResponse> {
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1", retryModel: "gpt-4.1" });
+    const step = await brain.proposeNextStep(frame("HRV para troca"), []);
+    const textPart = step.kind === "final" ? step.decision.responsePlan.draft?.parts.find((part) => part.type === "text") : null;
+    check("[15b] revisao formal preserva a autoridade comercial da autora", i === 2 && step.kind === "final"
+      && step.understanding?.primaryIntent === "trade_in" && step.decision.proposedEffects.some((effect) => effect.kind === "send_message")
+      && textPart?.type === "text" && /como pretende/i.test(textPart.content) && !/ ou /i.test(textPart.content), `calls=${i}`);
+  }
+
+  // [16] O auditor recebe a fronteira local completa: fala atual, ultima fala
+  // do agente e fatos extraidos. Ele nao escolhe o proximo assunto; quando
+  // reprova currentAct, a mesma LLM replaneja a decisao inteira.
+  {
+    const tradeUnderstanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "memory", evidence: [], isTopicChange: false, answeredLeadQuestions: [] };
+    const financingUnderstanding = { primaryIntent: "financing", requestedCapabilities: [], subject: "budget", subjectValue: "20 mil", subjectSource: "current_turn", evidence: [{ quote: "20 mil de entrada" }], isTopicChange: true, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding: tradeUnderstanding, guidance: "volta ao ramo antigo", draft: { parts: [{ type: "text", content: "Seu carro esta quitado?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: false, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: false, effectCoherence: true, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "O texto acolheu a entrada, mas a pergunta voltou ao ramo anterior." }),
+      JSON.stringify({ kind: "final", understanding: financingUnderstanding, guidance: "segue o ato atual", draft: { parts: [{ type: "text", content: "Entendi os 20 mil de entrada. Qual valor de parcela cabe no seu orcamento?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "Tenho 20 mil de entrada", visibleEvidence: "Entendi os 20 mil de entrada" }),
+    ];
+    let i = 0;
+    const calls: ModelHttpRequest[] = [];
+    const transport: ModelHttpTransport = { async postJson(_url: string, req: ModelHttpRequest): Promise<ModelHttpResponse> {
+      calls.push(req);
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const currentFrame: TurnFrame = {
+      ...frame("Tenho 20 mil de entrada"),
+      recentTranscript: [{ role: "agent", text: "Sua HR-V EXL e automatica?" }],
+      conversationContext: {
+        ...frame("x").conversationContext,
+        lastAgentMessage: "Sua HR-V EXL e automatica?",
+        pendingAgentQuestion: { slot: "veiculoTroca", sinceTurnId: "t-anterior" },
+      },
+      currentTurnFacts: {
+        expectedAnswer: { slot: "veiculoTroca", lastAgentQuestion: "Sua HR-V EXL e automatica?" },
+        extracted: [{ slot: "entrada", kind: "value", value: 20000 }],
+        offerReference: null,
+      },
+      signals: { ...frame("x").signals, adVehicle: "Toyota Corolla 2024" },
+    };
+    const step = await brain.proposeNextStep(currentFrame, []);
+    const textPart = step.kind === "final" ? step.decision.responsePlan.draft?.parts.find((part) => part.type === "text") : null;
+    const criticBody = JSON.parse(calls[1]!.body) as { messages: { role: string; content: string }[] };
+    const criticPayload = JSON.parse(criticBody.messages.find((message) => message.role === "user")!.content) as { lastAssistantMessage?: string; currentLeadBlock?: string; currentTurnFacts?: { extracted?: unknown[] }; activeAdVehicle?: string };
+    const criticSystem = criticBody.messages.find((message) => message.role === "system")?.content ?? "";
+    check("[16] critic recebe fronteira local e a LLM replaneja sem voltar ao ramo antigo",
+      calls.length === 4
+      && criticPayload.lastAssistantMessage?.includes("automatica") === true
+      && criticPayload.currentLeadBlock === "Tenho 20 mil de entrada"
+      && criticPayload.currentTurnFacts?.extracted?.length === 1
+      && criticPayload.activeAdVehicle === "Toyota Corolla 2024"
+      && criticSystem.includes("TEXTO VISIVEL")
+      && criticSystem.includes("activeAdVehicle")
+      && textPart?.type === "text"
+      && textPart.content.includes("20 mil de entrada"));
+  }
+
+  // [17] Repetir literalmente a ultima pergunta exige novo planejamento da
+  // mesma LLM; nao e tratado como simples retoque textual da infraestrutura.
+  {
+    const badUnderstanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "memory", evidence: [], isTopicChange: false, answeredLeadQuestions: [] };
+    const goodUnderstanding = { primaryIntent: "financing", requestedCapabilities: [], subject: "budget", subjectValue: "20 mil", subjectSource: "current_turn", evidence: [{ quote: "20 mil de entrada" }], isTopicChange: true, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding: badUnderstanding, guidance: "repete", draft: { parts: [{ type: "text", content: "Sua HR-V EXL e automatica?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ kind: "final", understanding: goodUnderstanding, guidance: "corrige", draft: { parts: [{ type: "text", content: "Certo, anotei os 20 mil de entrada. Qual parcela voce pretende pagar?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "Tenho 20 mil de entrada", visibleEvidence: "anotei os 20 mil de entrada" }),
+    ];
+    let i = 0;
+    const calls: ModelHttpRequest[] = [];
+    const transport: ModelHttpTransport = { async postJson(_url: string, req: ModelHttpRequest): Promise<ModelHttpResponse> {
+      calls.push(req);
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const repeatFrame: TurnFrame = {
+      ...frame("Tenho 20 mil de entrada"),
+      recentTranscript: [],
+      conversationContext: { ...frame("x").conversationContext, lastAgentMessage: "Sua HR-V EXL e automatica?" },
+      currentTurnFacts: { expectedAnswer: { slot: "veiculoTroca", lastAgentQuestion: "Sua HR-V EXL e automatica?" }, extracted: [{ slot: "entrada", kind: "value", value: 20000 }], offerReference: null },
+    };
+    const step = await brain.proposeNextStep(repeatFrame, []);
+    const textPart = step.kind === "final" ? step.decision.responsePlan.draft?.parts.find((part) => part.type === "text") : null;
+    check("[17] pergunta repetida volta ao planejamento da mesma LLM",
+      calls.length === 3 && textPart?.type === "text" && textPart.content.includes("20 mil de entrada"),
+      `calls=${calls.length} text=${textPart?.type === "text" ? textPart.content : "<none>"}`);
+  }
+
+  // [18] O auditor separa promessa operacional de estilo: dizer que o contato
+  // sera passado a um vendedor exige o efeito correspondente, e a mesma LLM
+  // remove ou materializa a promessa no novo planejamento.
+  {
+    const understanding = { primaryIntent: "financing", requestedCapabilities: [], subject: "budget", subjectValue: "2500", subjectSource: "current_turn", evidence: [{ quote: "2500" }], isTopicChange: false, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding, guidance: "promessa sem efeito", draft: { parts: [{ type: "text", content: "Vou passar essas condicoes para o consultor calcular." }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: false, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: true, effectCoherence: false, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "O texto promete encaminhamento sem handoff." }),
+      JSON.stringify({ kind: "final", understanding, guidance: "sem promessa", draft: { parts: [{ type: "text", content: "Certo, considerei a parcela de ate 2.500 na sua condicao de financiamento." }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "2500", visibleEvidence: "parcela de ate 2.500" }),
+    ];
+    let i = 0;
+    const calls: ModelHttpRequest[] = [];
+    const transport: ModelHttpTransport = { async postJson(_url: string, req: ModelHttpRequest): Promise<ModelHttpResponse> {
+      calls.push(req);
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const effectFrame: TurnFrame = {
+      ...frame("Ate 2500 de parcela"),
+      recentTranscript: [{ role: "agent", text: "Qual parcela cabe no seu orcamento?" }],
+      conversationContext: { ...frame("x").conversationContext, lastAgentMessage: "Qual parcela cabe no seu orcamento?" },
+      currentTurnFacts: { expectedAnswer: { slot: "parcelaDesejada", lastAgentQuestion: "Qual parcela cabe no seu orcamento?" }, extracted: [{ slot: "parcelaDesejada", kind: "value", value: 2500 }], offerReference: null },
+    };
+    const step = await brain.proposeNextStep(effectFrame, []);
+    const textPart = step.kind === "final" ? step.decision.responsePlan.draft?.parts.find((part) => part.type === "text") : null;
+    check("[18] promessa sem efeito volta para a LLM e nao chega ao lead",
+      calls.length === 4 && textPart?.type === "text" && !/consultor|vendedor/i.test(textPart.content));
+  }
+
+  // [19] Se a mesma LLM esgota as reescritas sem produzir um final coerente,
+  // o adapter encerra a tentativa. O central transforma a falha em fallback
+  // tecnico unico; nao reinicia silenciosamente outro ciclo caro.
+  {
+    const understanding = { primaryIntent: "financing", requestedCapabilities: [], subject: "budget", subjectValue: "2500", subjectSource: "current_turn", evidence: [{ quote: "2500" }], isTopicChange: false, answeredLeadQuestions: [] };
+    const badFinal = JSON.stringify({ kind: "final", understanding, guidance: "promessa sem efeito", draft: { parts: [{ type: "text", content: "Vou passar para o consultor." }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] });
+    const rejection = JSON.stringify({ pass: false, currentLeadAct: "parcela", candidateVisibleAct: "promete encaminhar", nextQuestionAct: null, currentLeadEvidence: "2500", visibleCurrentActEvidence: null, effectClaimEvidence: "Vou passar para o consultor.", checks: { currentAct: false, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: true, effectCoherence: false, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "Promessa sem handoff." });
+    const seq = [badFinal, rejection, badFinal, rejection, badFinal, rejection];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(): Promise<ModelHttpResponse> {
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const exhaustedFrame: TurnFrame = {
+      ...frame("Ate 2500 de parcela"),
+      recentTranscript: [{ role: "agent", text: "Qual parcela cabe no seu orcamento?" }],
+      conversationContext: { ...frame("x").conversationContext, lastAgentMessage: "Qual parcela cabe no seu orcamento?" },
+    };
+    let exhausted = false;
+    try { await brain.proposeNextStep(exhaustedFrame, []); }
+    catch (error) { exhausted = (error as Error).message === "SEMANTIC_CRITIC_EXHAUSTED"; }
+    check("[19] esgotamento semantico termina o ciclo sem liberar draft reprovado", exhausted && i === 4, `calls=${i}`);
+  }
+
+  // [20] Mesmo que o critic marque os checks como true, a propria classificacao
+  // semantica dele nao pode contradizer a aprovacao: fala nova em pagamento e
+  // pergunta seguinte voltando ao ramo anterior de troca exigem replanejamento.
+  {
+    const badUnderstanding = { primaryIntent: "financing", requestedCapabilities: [], subject: "budget", subjectValue: "20 mil", subjectSource: "current_turn", evidence: [{ quote: "20 mil de entrada" }], isTopicChange: true, answeredLeadQuestions: [] };
+    const goodUnderstanding = { ...badUnderstanding };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding: badUnderstanding, guidance: "volta ao ramo antigo", draft: { parts: [{ type: "text", content: "Entrada de 20 mil registrada. Sua HR-V esta revisada?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: true, currentLeadAct: "informa entrada", candidateVisibleAct: "aceita entrada e pergunta sobre troca", nextQuestionAct: "revisao do carro de troca", currentLeadLane: "payment_financing", priorAssistantLane: "trade_vehicle", nextQuestionLane: "trade_vehicle", nextQuestionIsQualificationField: true, portalQuestionSupportEvidence: null, currentLeadEvidence: "20 mil de entrada", visibleCurrentActEvidence: "Entrada de 20 mil registrada.", effectClaimEvidence: null, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: true, effectCoherence: true, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "" }),
+      JSON.stringify({ kind: "final", understanding: goodUnderstanding, guidance: "continua pagamento", draft: { parts: [{ type: "text", content: "Certo, considerei os 20 mil de entrada. Qual parcela cabe no seu orcamento?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "20 mil de entrada", visibleEvidence: "considerei os 20 mil de entrada" }),
+    ];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(): Promise<ModelHttpResponse> {
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const laneFrame: TurnFrame = {
+      ...frame("Tenho 20 mil de entrada"),
+      recentTranscript: [{ role: "agent", text: "Qual a cor da sua HR-V?" }],
+      conversationContext: { ...frame("x").conversationContext, lastAgentMessage: "Qual a cor da sua HR-V?" },
+      currentTurnFacts: { expectedAnswer: { slot: "veiculoTroca", lastAgentQuestion: "Qual a cor da sua HR-V?" }, extracted: [{ slot: "entrada", kind: "value", value: 20000 }], offerReference: null },
+    };
+    const step = await brain.proposeNextStep(laneFrame, []);
+    const textPart = step.kind === "final" ? step.decision.responsePlan.draft?.parts.find((part) => part.type === "text") : null;
+    check("[20] lanes do critic impedem retorno ao ramo anterior", i === 4 && textPart?.type === "text" && /parcela/i.test(textPart.content), `calls=${i}`);
+  }
+
+  // [21] O portal define o funil. Se o critic identificar que a proxima
+  // pergunta inventa um campo de qualificacao sem trecho de suporte no prompt,
+  // o adapter exige nova autoria sem conhecer o nome desse campo.
+  {
+    const understanding = { primaryIntent: "trade_in", requestedCapabilities: [], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ quote: "HRV 2023 30 mil km para troca" }], isTopicChange: true, answeredLeadQuestions: [] };
+    const seq = [
+      JSON.stringify({ kind: "final", understanding, guidance: "campo inventado", draft: { parts: [{ type: "text", content: "Entendi sua HR-V 2023 com 30 mil km. Ela esta com as revisoes em dia?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      JSON.stringify({ pass: true, currentLeadAct: "informa troca", candidateVisibleAct: "acolhe troca e pergunta revisoes", nextQuestionAct: "revisoes", currentLeadLane: "trade_vehicle", priorAssistantLane: null, nextQuestionLane: "trade_vehicle", nextQuestionIsQualificationField: true, portalQuestionSupportEvidence: null, currentLeadEvidence: "HRV 2023 30 mil km para troca", visibleCurrentActEvidence: "Entendi sua HR-V 2023 com 30 mil km.", effectClaimEvidence: null, checks: { currentAct: true, roleBinding: true, noRepetition: true, nameModeration: true, unambiguousQuestion: true, nextQuestionContinuity: true, effectCoherence: true, openingIdentity: true }, portalIdentityEvidence: null, openingIdentityEvidence: null, feedback: "" }),
+      JSON.stringify({ kind: "final", understanding, guidance: "segue o portal", draft: { parts: [{ type: "text", content: "Entendi sua HR-V 2023 com 30 mil km para troca. Qual forma de pagamento voce pretende usar?" }] }, effects: [{ kind: "send_message" }], stateMutations: [], memoryMutations: [] }),
+      criticPass({ leadEvidence: "HRV 2023 30 mil km para troca", visibleEvidence: "Entendi sua HR-V 2023 com 30 mil km para troca." }),
+    ];
+    let i = 0;
+    const transport: ModelHttpTransport = { async postJson(): Promise<ModelHttpResponse> {
+      return { status: 200, contentType: "application/json", bodyText: JSON.stringify({ choices: [{ message: { content: seq[Math.min(i++, seq.length - 1)] } }] }) };
+    } };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, {
+      model: "gpt-4.1", retryModel: "gpt-4.1", semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    });
+    const step = await brain.proposeNextStep({
+      ...frame("Tenho uma HRV 2023 30 mil km para troca"),
+      recentTranscript: [{ role: "agent", text: "Voce tem carro para troca?" }],
+      conversationContext: { ...frame("x").conversationContext, lastAgentMessage: "Voce tem carro para troca?" },
+    }, []);
+    const textPart = step.kind === "final" ? step.decision.responsePlan.draft?.parts.find((part) => part.type === "text") : null;
+    check("[21] campo de qualificacao sem suporte no portal exige reautoria", i === 4 && textPart?.type === "text" && !/revis/i.test(textPart.content), `calls=${i}`);
   }
 
   console.log(`\n== F2.14: ${ok} OK | ${fail} FALHA ==`);

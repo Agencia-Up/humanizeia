@@ -541,7 +541,13 @@ export function targetAcceptsKey(target: TargetResolution, key: string): boolean
 // ── P1 (trava do assunto): a 1ª compreensão validada é a BASE do turno. Refinamento só ADICIONA fato (subjectValue) —
 //    não troca primaryIntent/subject sem EVIDÊNCIA NOVA (quote não vista na base). Ex.: search_stock -> request_photos
 //    sem nova evidência de foto = mantém search_stock. ──
-export function reconcileUnderstanding(base: TurnUnderstanding | null, next: TurnUnderstanding, block: string, options: { readonly acceptedPhotoOffer?: boolean } = {}): TurnUnderstanding {
+// A response-validation retry may replace the base understanding when the
+// same LLM anchors its correction in the current block. Tool-result loops do
+// not set this flag, so their subject lock remains fail-closed.
+export function reconcileUnderstanding(base: TurnUnderstanding | null, next: TurnUnderstanding, block: string, options: {
+  readonly acceptedPhotoOffer?: boolean;
+  readonly allowCurrentEvidenceCorrection?: boolean;
+} = {}): TurnUnderstanding {
   // `selected_vehicle` is necessarily a conversation reference. Smaller models
   // sometimes label it as `current_turn` because the pronoun ("dele", "desse")
   // is written in the current block. Canonicalizing only this structural label
@@ -551,9 +557,11 @@ export function reconcileUnderstanding(base: TurnUnderstanding | null, next: Tur
     : next;
   if (!base) return canonicalNext;
   const baseQuotes = new Set((base.evidence ?? []).map((e) => normalizeText(e.quote)));
+  const currentEvidence = (canonicalNext.evidence ?? []).filter((e) => quoteInBlock(block, e.quote));
   const newEvidence = (canonicalNext.evidence ?? []).filter((e) => quoteInBlock(block, e.quote) && !baseQuotes.has(normalizeText(e.quote)));
   const changesSubject = canonicalNext.primaryIntent !== base.primaryIntent || canonicalNext.subject !== base.subject;
   if (changesSubject && newEvidence.length === 0) {
+    if (options.allowCurrentEvidenceCorrection === true && currentEvidence.length > 0) return canonicalNext;
     const repairsAcceptedPhoto = options.acceptedPhotoOffer === true
       && canonicalNext.primaryIntent === "request_photos"
       && canonicalNext.requestedCapabilities.includes("send_photos")

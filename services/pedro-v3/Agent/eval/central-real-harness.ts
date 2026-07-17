@@ -55,7 +55,7 @@ export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?:
     model: assembly.aiProvider.model,
     retryModel: assembly.aiProvider.retryModel,
     temperature: 0.1, maxCompletionTokens: 1200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
-    semanticCriticEnabled: true, semanticCriticModel: "gpt-4.1",
+    semanticCriticEnabled: process.env.PEDRO_V3_EVAL_SEMANTIC_CRITIC === "1", semanticCriticModel: "gpt-4.1",
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
   const composeTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));

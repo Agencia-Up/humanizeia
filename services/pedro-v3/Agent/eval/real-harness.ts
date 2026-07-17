@@ -246,8 +246,19 @@ export class CountingModelHttpTransport implements ModelHttpTransport {
   #checkPromptExact(request: ModelHttpRequest): boolean {
     if (!this.fullPrompt || typeof request.body !== "string") return false;
     try {
-      const sys = (JSON.parse(request.body) as { messages?: { role?: string; content?: string }[] })?.messages?.find((m) => m.role === "system")?.content;
-      return typeof sys === "string" && sys.includes(this.fullPrompt); // prompt do portal presente INTEGRALMENTE
+      const messages = (JSON.parse(request.body) as { messages?: { role?: string; content?: string }[] })?.messages ?? [];
+      const containsPrompt = (value: unknown): boolean => {
+        if (typeof value === "string") return value.includes(this.fullPrompt);
+        if (Array.isArray(value)) return value.some(containsPrompt);
+        if (value != null && typeof value === "object") return Object.values(value).some(containsPrompt);
+        return false;
+      };
+      return messages.some((message) => {
+        if (typeof message.content !== "string") return false;
+        if (containsPrompt(message.content)) return true;
+        try { return containsPrompt(JSON.parse(message.content)); }
+        catch { return false; }
+      }); // autoria: system; critica/reescrita: referencia integral no payload user
     } catch { return false; }
   }
 }

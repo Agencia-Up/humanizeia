@@ -446,6 +446,7 @@ async function main(): Promise<void> {
     const repaired = U("request_photos", "Sim", "send_photos");
     check("[U1] aceite de foto permite corrigir intent/capability no retry", reconcileUnderstanding(wrong, repaired, "Sim", { acceptedPhotoOffer: true }).primaryIntent === "request_photos", "");
     check("[U2] sem sinal contextual, trava de assunto continua fail-closed", reconcileUnderstanding(wrong, repaired, "Sim").primaryIntent === "select_vehicle", "");
+    check("[U3] feedback de resposta permite a mesma LLM corrigir o understanding", reconcileUnderstanding(wrong, repaired, "Sim", { allowCurrentEvidenceCorrection: true }).primaryIntent === "request_photos", "");
   }
 
   console.log(`\n== F2.48: ${ok} OK | ${fail} FALHA ==`);

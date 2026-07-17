@@ -308,7 +308,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
           handoffEnabled: this.#handoffEnabled,
           followupEnabled: this.#followupEnabled,
-          semanticCriticEnabled: true,
+          semanticCriticEnabled: false,
           semanticCriticModel: "gpt-4.1",
         })
       : undefined;

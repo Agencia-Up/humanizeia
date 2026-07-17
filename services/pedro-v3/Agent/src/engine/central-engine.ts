@@ -1447,7 +1447,7 @@ function lastAgentAnnouncedHandoff(state: ConversationState): boolean {
 // ⭐Codex P0 (smokes reais): PROMESSA/OFERTA de encaminhar a consultor/vendedor — exige pessoa + verbo de
 // transferência na MESMA sentença (mais precisa que isHandoffLikeText, que serve a outro guard). Pós-normalize.
 const HANDOFF_PERSON_RX = /\b(?:consultor(?:a)?|vendedor(?:a)?|especialista|atendente|equipe)\b/;
-const HANDOFF_PROMISE_VERB_RX = /\b(?:chamar|chamo|chamando|acionar|aciono|encaminh\w*|transferir|transfiro|direcionar|direciono|repassar|repasso)\b|\bpassar\s+(?:seu|o\s+seu|teu|o)\s+(?:contato|numero)\b|\bvai\s+(?:te\s+)?(?:atender|chamar|entrar\s+em\s+contato)\b|\bentrar[a]?\s+em\s+contato\b/;
+const HANDOFF_PROMISE_VERB_RX = /\b(?:chamar|chamo|chamando|acionar|aciono|encaminh\w*|transferir|transfiro|direcionar|direciono|repassar|repasso)\b|\bpassar\s+(?:(?:seu|o\s+seu|teu|o)\s+(?:contato|numero)|(?:essas?|as|os)\s+(?:informacoes|dados|condicoes))\b|\bvai\s+(?:te\s+)?(?:atender|chamar|entrar\s+em\s+contato)\b|\bentrar[a]?\s+em\s+contato\b/;
 export function promisesHumanHandoff(text: string): boolean {
   for (const sentence of text.split(/(?<=[.!?\n])/)) {
     const n = normalizeText(sentence);
@@ -2192,7 +2192,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         }
         // Fonte única: captura+TRAVA o entendimento do turno (a 1ª compreensão válida é a base; refinamento só adiciona fato).
         if (step.understanding) {
-          const candidate = reconcileUnderstanding(lockedU, step.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
+          const candidate = reconcileUnderstanding(lockedU, step.understanding, leadMessage, {
+            acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState),
+            allowCurrentEvidenceCorrection: observations.some((observation) => observation.tool === "response" && !observation.ok),
+          });
           const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
           const authorityFeedback = understandingAuthorityFeedback(candidateValidation);
           // A busca continua sendo uma decisão do cérebro. Mas, quando ele
@@ -2803,7 +2806,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               break;
             }
             if (finalStep.understanding) {
-              const candidate = reconcileUnderstanding(lockedU, finalStep.understanding, leadMessage, { acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState) });
+              const candidate = reconcileUnderstanding(lockedU, finalStep.understanding, leadMessage, {
+                acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState),
+                allowCurrentEvidenceCorrection: observations.some((observation) => observation.tool === "response" && !observation.ok),
+              });
               const validation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
               const authorityFeedback = understandingAuthorityFeedback(validation);
               const staleFinalUnderstanding = !validation.trusted

@@ -44,6 +44,9 @@ export class OpenAiAgentBrainError extends Error {
 
 const DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_HOSTS = ["api.openai.com"];
+const MAX_SEMANTIC_REWRITES = 1;
+const MAX_CONVERSATION_FORM_REWRITES = 2;
+const SEMANTIC_LANES = ["purchase_stock", "trade_vehicle", "payment_financing", "visit_schedule", "identity_data", "institutional", "social", "other"] as const;
 const VEHICLE_TYPES: readonly VehicleType[] = ["suv", "sedan", "hatch", "pickup", "unknown"];
 const TRANSMISSIONS: readonly TransmissionPreference[] = ["automatic", "manual"];
 
@@ -51,26 +54,41 @@ const SEMANTIC_CRITIC_PROTOCOL = `Voce e um auditor semantico de atendimento com
 
 Reprove somente por falha global clara:
 - nao responde ou nao se relaciona com o bloco atual;
+- considera que gravar slot, memoria ou efeito oculto ja equivale a responder; currentAct avalia o TEXTO VISIVEL ao lead, que precisa tratar o que ele acabou de dizer antes de qualquer proxima pergunta;
+- volta para a ultima pergunta do agente ou para o ramo anterior depois que o bloco atual trouxe um fato, pedido, correcao ou mudanca de assunto diferente. Pergunta antiga sem resposta fica apenas pendente: ela nao vence a fala nova e nao deve ser repetida nem substituida por outra pergunta do mesmo ramo;
 - confunde o carro que o lead possui/troca com o carro que procura, ou mistura pagamento, entrada, parcela, visita e dados pessoais;
 - repete pergunta ja respondida, confirmacao desnecessaria ou lista ja visivel sem resultado novo;
 - usa o nome como prefixo mecanico/repetitivo; se o nome apareceu em uma das duas ultimas falas do agente, reprove novo uso salvo necessidade social excepcional;
 - cria pergunta ambigua com alternativas que um "sim" nao resolve; reprove inclusive uma unica frase com "ou" que ofereca dois caminhos/perguntas e aceite resposta "sim" ambigua;
+- pede dois dados na mesma pergunta ligados por "e" ou outra conjuncao, quando uma resposta curta nao deixa claro qual parte foi respondida;
+- inventa campo obrigatorio de qualificacao que nao existe no prompt do portal. Se todos os dados que o portal lista para o topico atual ja foram informados, nao prolongue o formulario com novos campos;
 - abandona o topico local logo depois de o lead fornecer um fato solicitado, pulando para outro ramo do funil sem concluir ou encaminhar naturalmente o assunto em andamento;
 - no primeiro turno do agente, omite a apresentacao exigida pelo prompt do portal; saudacao sozinha nao basta: o texto precisa dizer explicitamente o nome do agente e a empresa definidos no portal;
 - promete acao operacional sem efeito correspondente.
 
+Use lastAssistantMessage e pendingAgentQuestion apenas para reconhecer o contexto anterior. Use currentTurnFacts apenas como fatos extraidos do bloco atual. Nenhum deles escolhe a resposta. Se candidate.understanding, candidate.draft e candidate.effects nao representarem o MESMO ato atual, reprove currentAct. Uma transferencia qualificada pode ser natural conforme o prompt do portal, mas nunca pode servir para pular a resposta ao bloco atual.
+nextQuestionContinuity avalia SOMENTE a pergunta/convite seguinte: ela precisa continuar o ato do bloco atual ou ser o proximo passo direto dele. Mencionar o fato atual numa frase e logo depois perguntar sobre um ramo anterior continua sendo falha; reprove mesmo que a pergunta antiga ainda esteja sem resposta.
+Nao trate "qualificacao comercial" como um unico assunto amplo. Avalie separadamente estas faixas semanticas: alvo de compra/estoque, veiculo de troca, pagamento/financiamento, visita/agendamento, identidade/dados e informacao institucional. Quando o bloco atual traz um fato novo em uma faixa, uma pergunta de outra faixa nao e continuidade apenas por ambas fazerem parte da venda. So aprove se o lead pediu a mudanca ou se a faixa atual foi realmente concluida no dialogo; uma simples confirmacao antes da pergunta nao a conclui.
+effectCoherence avalia o texto contra candidate.effects. Reprove qualquer afirmacao de que vai passar, encaminhar, transferir ou entregar o contato a consultor/vendedor sem handoff no mesmo candidate. Oferecer essa possibilidade sem afirmar que a acao ocorrera nao e promessa.
+Quando activeAdVehicle estiver presente, ele e o alvo de COMPRA ja informado pelo anuncio. Ate o lead mudar explicitamente esse interesse, reprove uma resposta que pergunte novamente qual modelo ele procura, trate a entrada como institucional generica ou substitua o alvo pelo veiculo que ele declarou para troca.
+
 Nao reprove por preferencia subjetiva de estilo nem por escolher uma proxima pergunta comercial plausivel. O bloco atual vence memoria antiga.
 
+Antes dos checks, compare explicitamente o ato atual com a resposta visivel. Um agradecimento generico como "obrigado pelas informacoes", gravar slot/memoria ou mencionar outro dado da conversa NAO prova que a resposta tratou o bloco atual.
+
 Devolva SOMENTE este JSON:
-{"pass":true|false,"checks":{"currentAct":true|false,"roleBinding":true|false,"noRepetition":true|false,"nameModeration":true|false,"unambiguousQuestion":true|false,"openingIdentity":true|false},"portalIdentityEvidence":"trecho EXATO do portalPromptReference que define nome do agente e empresa, ou null","openingIdentityEvidence":"trecho EXATO do candidate.draft que apresenta o mesmo agente e empresa, ou null","feedback":"instrucao curta para a mesma LLM corrigir apenas a falha"}
+{"pass":true|false,"currentLeadAct":"descricao curta do ato do bloco atual","candidateVisibleAct":"descricao curta do que o texto visivel faz","nextQuestionAct":"descricao curta do assunto da proxima pergunta, ou null","currentLeadLane":"purchase_stock|trade_vehicle|payment_financing|visit_schedule|identity_data|institutional|social|other","priorAssistantLane":"uma das mesmas lanes, ou null quando nao houver assunto identificavel","nextQuestionLane":"uma das mesmas lanes, ou null quando nao houver pergunta","nextQuestionIsQualificationField":true|false,"portalQuestionSupportEvidence":"trecho EXATO do portalPromptReference que inclui o campo pedido pela proxima pergunta, ou null quando nao for qualificacao ou o campo nao existir","currentLeadEvidence":"trecho EXATO e nao vazio de currentLeadBlock que sustenta currentLeadAct","visibleCurrentActEvidence":"trecho EXATO e nao vazio de candidate.draft que responde ao ato atual, ou null quando nao existe","effectClaimEvidence":"trecho EXATO de candidate.draft que afirma passar/encaminhar/transferir/entregar a consultor ou vendedor, ou null quando nao existe tal afirmacao","checks":{"currentAct":true|false,"roleBinding":true|false,"noRepetition":true|false,"nameModeration":true|false,"unambiguousQuestion":true|false,"nextQuestionContinuity":true|false,"effectCoherence":true|false,"openingIdentity":true|false},"portalIdentityEvidence":"trecho EXATO do portalPromptReference que define nome do agente e empresa, ou null","openingIdentityEvidence":"trecho EXATO do candidate.draft que apresenta o mesmo agente e empresa, ou null","feedback":"instrucao curta para a mesma LLM corrigir apenas a falha"}
 
 Regras de evidencia:
 - openingIdentityEvidence precisa ser copia literal de um trecho do candidate.draft; nunca descreva, parafraseie ou suponha texto ausente.
 - portalIdentityEvidence precisa ser copia literal do portalPromptReference e conter o nome do agente e a empresa definidos ali.
+- currentLeadEvidence precisa ser copia literal de currentLeadBlock. visibleCurrentActEvidence precisa ser copia literal do texto visivel e demonstrar a resposta ao ato atual; agradecimento generico nao serve.
+- effectClaimEvidence deve copiar toda afirmacao operacional relevante. Se houver effectClaimEvidence sem handoff em candidate.effects, effectCoherence e pass devem ser false.
+- As lanes sao classificacoes semanticas suas, nao palavras-chave. Se currentLeadLane for diferente de priorAssistantLane e nextQuestionLane voltar exatamente para priorAssistantLane, nextQuestionContinuity e pass devem ser false: a pergunta antiga ficou pendente, mas nao vence a fala nova.
+- nextQuestionIsQualificationField e true quando a pergunta coleta dado para funil, cadastro, avaliacao ou negociacao. Nesse caso portalQuestionSupportEvidence precisa copiar o trecho do portal que lista ou autoriza esse campo; sem suporte literal, roleBinding e pass devem ser false. Pergunta social ou esclarecimento do pedido atual nao e campo de qualificacao.
 - se firstAssistantTurn=true, openingIdentity so pode ser true quando openingIdentityEvidence apresenta explicitamente a mesma identidade de portalIdentityEvidence.
 - se firstAssistantTurn=false, openingIdentity deve ser true e as duas evidencias de identidade devem ser null, pois nao se exige reapresentacao.
-- pass so pode ser true quando todos os checks forem true.`;
-
+- pass so pode ser true quando os oito checks forem true.`;
 
 // Contrato enxuto usado no caminho ativo. O prompt do portal continua sendo a
 // fonte de personalidade, negocio e funil; este bloco existe apenas para dar
@@ -86,18 +104,25 @@ AUTORIDADE E CONTINUIDADE
 - A ultima mensagem user e o bloco atual completo do lead e tem prioridade. As mensagens user/assistant anteriores sao o historico real da conversa.
 - A mensagem system com runtimeContext contem apenas fatos atuais, memoria factual, canal e resultados de tools. Ela ajuda a interpretar; nunca escolhe assunto, pergunta ou resposta.
 - runtimeContext.currentTurn.openingContext.firstAssistantTurn informa apenas se ainda nao existe fala anterior do agente. Quando true, apresente explicitamente o nome do agente e a empresa definidos no prompt do portal, sem abandonar o assunto atual do lead.
+- runtimeContext.operational.adVehicle, quando presente, e o veiculo especifico do anuncio e portanto o alvo de compra ja conhecido. Na abertura, apresente-se e trate esse veiculo no mesmo texto. Depois, nao pergunte novamente qual modelo o lead procura; um carro informado para troca mantem papel separado. Somente uma mudanca explicita do lead troca esse alvo.
 - O prompt do portal define personalidade, negocio e funil. Quando houver instrucoes de forma contraditorias dentro dele, preserve coerencia humana: responda o ato atual, nao repita pergunta ou fato ja respondido e nao transforme a conversa em formulario.
 - Etapas, campos e perguntas do funil do portal sao objetivos para a conversa inteira, nao uma fila obrigatoria por turno. Nunca pule para o proximo campo ausente enquanto o lead esta desenvolvendo o assunto atual.
+- LIMITE DE PAPEL: os campos de qualificacao permitidos sao somente os que o prompt do portal nomeia. Voce nao realiza triagem mecanica, documental ou de procedencia do veiculo e nao amplia o formulario com conhecimento automotivo geral. Quando os campos nomeados do topico atual ja estiverem respondidos, considere esse topico concluido e avance naturalmente pelo portal.
 - Relacione respostas curtas a ultima pergunta realmente feita pelo assistant. Mantenha papeis semanticos distintos: veiculo que o lead possui/troca, veiculo que procura, pagamento, entrada, parcela, visita e dados pessoais.
+- Se o lead trouxer espontaneamente um fato, pedido, correcao ou assunto diferente da ultima pergunta do assistant, siga a fala nova e deixe a pergunta antiga pendente. Nao a repita e nao continue o ramo antigo apenas porque ele ficou incompleto.
+- Trate alvo de compra/estoque, veiculo de troca, pagamento/financiamento, visita/agendamento, identidade/dados e informacao institucional como faixas distintas. O understanding.primaryIntent representa a faixa do bloco atual, nao a pergunta anterior. A proxima pergunta permanece nessa faixa ou avanca apenas quando ela estiver realmente concluida; repetir/continuar a faixa antiga depois de uma fala nova e incoerencia.
 - Tolere abreviacoes, erros de escrita e mensagens fragmentadas. Peca esclarecimento apenas quando restarem interpretacoes realmente diferentes.
 
 QUALIDADE CONVERSACIONAL GLOBAL
+- Persistir um fato em slot/memoria nao substitui a resposta visivel: o texto enviado precisa tratar o bloco atual antes de perguntar, transferir ou encerrar.
+- A resposta visivel precisa demonstrar que voce entendeu o fato ou pedido atual. Nao substitua esse reconhecimento por referencias vagas como "esses dados", "essas informacoes" ou "isso" quando elas esconderem justamente o que o lead acabou de informar.
 - Responda primeiro ao que o lead acabou de dizer. Depois, se for util, avance com no maximo UMA pergunta curta e inequívoca.
 - Preserve o topico local ate conclui-lo ou ate o lead mudar de assunto. Uma lacuna do funil nao autoriza trocar de topico; a proxima pergunta deve continuar naturalmente o ato atual.
 - Nao ecoe mecanicamente o que o lead disse, nao confirme a mesma confirmacao e nao repita uma pergunta ja respondida.
 - Se o lead informou um fato claro, aceite-o sem pedir "correto?". Nao combine confirmacao redundante com uma nova pergunta.
 - Use o nome do lead com moderacao, somente quando soar socialmente util; nunca como prefixo automatico de toda mensagem.
 - Nao faca pergunta com duas alternativas que aceite um "sim" ambiguo. Se o historico ja criou ambiguidade, repare com uma unica pergunta clara.
+- Nao ofereca um menu de assuntos ou de possiveis perguntas. Escolha o unico proximo passo mais natural para a fala atual; se nenhum for necessario, finalize sem pergunta.
 - O proximo passo deve nascer da conversa e do prompt do portal, nao da ordem de slots em runtimeContext.
 - Nao repita uma lista que ja esta visivel no historico. Se o lead apenas acrescentar ou confirmar um criterio, responda como esse criterio afeta a lista; consulte novamente somente se precisar de fatos novos e mostre apenas resultado novo ou realmente filtrado.
 - Antes de finalizar, faca uma verificacao silenciosa: "minha resposta trata a ultima fala?", "mantem o papel correto de cada fato?", "repete algo ja respondido?", "salta para um campo apenas porque esta faltando?". Corrija o texto se qualquer resposta for sim para as duas ultimas perguntas.
@@ -151,6 +176,10 @@ Se disser ao cliente que vai encaminhar/chamar vendedor, inclua o effect handoff
 recusar a transferencia (indisponivel de verdade), seja TRANSPARENTE: diga com honestidade que nao consegue
 transferir NESTE momento e ofereca alternativa (seguir por aqui / registrar o pedido) — NUNCA condicione a
 transferencia a CPF ou a mais dados, e NUNCA finja que a transferencia esta em andamento.
+- Quando VOCE decidir que a qualificacao esta completa e escrever que vai encaminhar, o final deve conter a forma
+  estrutural: "understanding":{"primaryIntent":"financing","requestedCapabilities":["handoff"],...},
+  "effects":[{"kind":"send_message"},{"kind":"handoff","reason":"qualified_handoff"}]. A evidence continua sendo
+  um trecho literal do bloco atual que completou a qualificacao. Se nao quiser transferir, nao use linguagem de promessa.
 `;
 
 const FOLLOWUP_PROTOCOL = `
@@ -251,18 +280,23 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       declined: frame.workingMemory.funnel?.declined ?? [],
       deferred: frame.workingMemory.funnel?.deferred ?? [],
     };
+    const currentTurnEvidence = {
+      extracted: frame.currentTurnFacts.extracted,
+      offerReference: frame.currentTurnFacts.offerReference,
+    };
     const runtimeContext = {
       currentTurn: {
-        currentTurnFacts: frame.currentTurnFacts,
+        currentTurnFacts: currentTurnEvidence,
         openingContext: {
-          firstAssistantTurn: !frame.recentTranscript.some((turn) => turn.role === "agent"),
+          firstAssistantTurn: !frame.recentTranscript.some((turn) => turn.role === "agent")
+            && !frame.conversationContext.lastAgentMessage?.trim(),
           ...(frame.signals.adGenericEntry ? { adGenericEntry: true } : {}),
           ...(frame.signals.specificAdEntry ? { specificAdEntry: true } : {}),
         },
       },
       conversation: {
         knownLeadName: frame.conversationContext.knownLeadName ?? null,
-        pendingAgentQuestion: frame.conversationContext.pendingAgentQuestion,
+        lastAssistantMessage: frame.conversationContext.lastAgentMessage,
         lastResolvedSlotAnswer: frame.conversationContext.lastResolvedSlotAnswer,
         selectedVehicle: frame.conversationContext.selectedVehicle,
         lastVisibleOffer: frame.conversationContext.lastVisibleOffer,
@@ -320,27 +354,42 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       content = typeof raw === "string" ? JSON.parse(raw) : null;
     } catch { return this.#safeFinal("brain JSON inválido"); }
     let step = this.#decodeStep(content, frame);
-    if (this.#semanticCriticEnabled && step.kind === "final" && step.decision.responsePlan.draft != null) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const candidateDraft = step.decision.responsePlan.draft;
-        if (candidateDraft == null) break;
-        const localCritique = this.#critiqueConversationShape(frame, candidateDraft);
-        if (localCritique.pass) break;
-        const rewrittenDraft = await this.#rewriteDraftForForm(frame, candidateDraft, localCritique.feedback, localCritique.mayRemoveRepeatedOffer === true);
-        if (rewrittenDraft == null) break;
-        step = {
-          ...step,
-          decision: {
-            ...step.decision,
-            responsePlan: { ...step.decision.responsePlan, draft: rewrittenDraft },
-          },
-        };
+    const formRewriteCount = observations.filter((observation) => !observation.ok
+      && observation.tool === "response" && observation.error.code === "CONVERSATION_FORM").length;
+    if (step.kind === "final" && step.decision.responsePlan.draft != null
+      && formRewriteCount < MAX_CONVERSATION_FORM_REWRITES) {
+      const form = this.#critiqueConversationShape(frame, step.decision.responsePlan.draft);
+      if (!form.pass) {
+        if (form.requiresReplan === true) {
+          return this.proposeNextStep(frame, [...observations, {
+            tool: "response",
+            ok: false,
+            error: { code: "CONVERSATION_FORM", message: `FORMA CONVERSACIONAL: ${form.feedback}` },
+          }]);
+        }
+        const rewritten = await this.#rewriteDraftForForm(frame, step.decision.responsePlan.draft, form.feedback, form.mayRemoveRepeatedOffer === true);
+        if (rewritten != null && this.#critiqueConversationShape(frame, rewritten).pass) {
+          step = {
+            ...step,
+            decision: {
+              ...step.decision,
+              responsePlan: { ...step.decision.responsePlan, draft: rewritten },
+            },
+          };
+        } else {
+          return this.proposeNextStep(frame, [...observations, {
+            tool: "response",
+            ok: false,
+            error: { code: "CONVERSATION_FORM", message: `FORMA CONVERSACIONAL: ${form.feedback}` },
+          }]);
+        }
       }
     }
-    const alreadyInSemanticRewrite = observations.some((observation) => !observation.ok && observation.tool === "response" && observation.error.code === "SEMANTIC_CRITIC");
-    if (!this.#semanticCriticEnabled || alreadyInSemanticRewrite || step.kind !== "final" || step.decision.responsePlan.draft == null) return step;
+    const semanticRewriteCount = observations.filter((observation) => !observation.ok && observation.tool === "response" && observation.error.code === "SEMANTIC_CRITIC").length;
+    if (!this.#semanticCriticEnabled || step.kind !== "final" || step.decision.responsePlan.draft == null) return step;
     const critique = await this.#critique(frame, observations, step);
     if (critique.pass) return step;
+    if (semanticRewriteCount >= MAX_SEMANTIC_REWRITES) throw new Error("SEMANTIC_CRITIC_EXHAUSTED");
     return this.proposeNextStep(frame, [...observations, {
       tool: "response",
       ok: false,
@@ -348,7 +397,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     }]);
   }
 
-  #critiqueConversationShape(frame: TurnFrame, draft: ResponseDraft): { pass: boolean; feedback: string; mayRemoveRepeatedOffer?: boolean } {
+  #critiqueConversationShape(frame: TurnFrame, draft: ResponseDraft): { pass: boolean; feedback: string; mayRemoveRepeatedOffer?: boolean; requiresReplan?: boolean } {
     const candidateText = textDraftContent(draft);
     const visibleItems = frame.conversationContext.lastVisibleOffer?.items ?? [];
     const visibleKeys = visibleItems.map((item) => item.vehicleKey);
@@ -372,14 +421,20 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       return { pass: false, feedback: "Reescreva com no maximo uma pergunta curta." };
     }
     if (candidateQuestions.some((question) => question.includes(" ou "))) {
-      return { pass: false, feedback: "A pergunta ainda contem a palavra 'ou' ligando duas alternativas e permite resposta 'sim' ambigua. Remova uma das alternativas por completo e pergunte somente a outra; nao substitua por outro par de opcoes." };
+      return { pass: false, feedback: "A pergunta contem alternativas e permite uma resposta ambigua. Preserve exatamente o mesmo assunto, mas transforme-a em UMA pergunta aberta, sem listar opcoes e sem usar a palavra 'ou'. Nao escolha outro assunto." };
     }
-    const recentQuestions = frame.recentTranscript
+    const recentAgentMessages = frame.recentTranscript
       .filter((turn) => turn.role === "agent")
       .slice(-3)
-      .flatMap((turn) => questionFragments(turn.text));
+      .map((turn) => turn.text);
+    if (frame.conversationContext.lastAgentMessage?.trim()) recentAgentMessages.push(frame.conversationContext.lastAgentMessage);
+    const recentQuestions = [...new Set(recentAgentMessages.flatMap(questionFragments))];
     if (candidateQuestions.some((question) => recentQuestions.includes(question))) {
-      return { pass: false, feedback: "Nao repita uma pergunta que ja esta visivel no historico; continue a partir da resposta do lead." };
+      return {
+        pass: false,
+        requiresReplan: true,
+        feedback: "Voce repetiu uma pergunta anterior depois de receber um novo bloco do lead. Releia a mensagem atual, reavalie o understanding e responda ao ato novo; deixe a pergunta antiga pendente em vez de repeti-la.",
+      };
     }
     const knownLeadName = frame.conversationContext.knownLeadName?.trim();
     if (knownLeadName) {
@@ -406,7 +461,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       mayRemoveRepeatedOffer,
     };
     try {
-      const tokenLimit = { [this.#tokenParameter]: 420 };
+      const tokenLimit = { [this.#tokenParameter]: 320 };
       const req: ModelHttpRequest = {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -416,7 +471,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           ...tokenLimit,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: "Voce e o mesmo atendente revisando o proprio rascunho antes do envio. Corrija SOMENTE a falha descrita em validationFeedback. Preserve o ato conversacional, o assunto e os fatos. Preserve todas as parts nao-textuais, EXCETO quando mayRemoveRepeatedOffer=true: nesse caso remova somente a vehicle_offer_list repetida e resuma o efeito do novo criterio em texto, sem reenumerar. Nao escolha tool, nao crie efeito, nao acrescente promessa nem informacao. Responda somente JSON no formato {\"draft\":{\"parts\":[...]}}." },
+            { role: "system", content: "Voce revisa somente a forma do rascunho do mesmo atendente. Nao escolha assunto, intencao, tool, efeito ou proximo campo. Preserve o significado, os fatos e todas as parts nao textuais. Corrija apenas validationFeedback. Para pergunta ambigua, transforme a mesma pergunta em UMA pergunta aberta sobre o mesmo assunto, sem menu nem alternativas. Quando mayRemoveRepeatedOffer=true, pode remover somente a vehicle_offer_list repetida. Responda somente JSON no formato {\"draft\":{\"parts\":[...]}}." },
             { role: "user", content: JSON.stringify(payload) },
           ],
         }),
@@ -433,8 +488,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       const rewrittenNonText = rewritten.parts.filter((part) => part.type !== "text");
       if (!mayRemoveRepeatedOffer) return JSON.stringify(originalNonText) === JSON.stringify(rewrittenNonText) ? rewritten : null;
       const originalSerialized = originalNonText.map((part) => JSON.stringify(part));
-      const onlyRemovesExistingParts = rewrittenNonText.every((part) => originalSerialized.includes(JSON.stringify(part)));
-      return onlyRemovesExistingParts ? rewritten : null;
+      return rewrittenNonText.every((part) => originalSerialized.includes(JSON.stringify(part))) ? rewritten : null;
     } catch {
       return null;
     }
@@ -449,10 +503,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     if (candidateDraft == null) return { pass: true, feedback: "" };
     const payload = {
       portalPromptReference: this.#portalPrompt,
-      firstAssistantTurn: !frame.recentTranscript.some((turn) => turn.role === "agent"),
+      firstAssistantTurn: !frame.recentTranscript.some((turn) => turn.role === "agent")
+        && !frame.conversationContext.lastAgentMessage?.trim(),
       knownLeadName: frame.conversationContext.knownLeadName ?? null,
       recentTranscript: frame.recentTranscript.slice(-10),
       currentLeadBlock: frame.block,
+      lastAssistantMessage: frame.conversationContext.lastAgentMessage,
+      pendingAgentQuestion: frame.conversationContext.pendingAgentQuestion,
+      currentTurnFacts: frame.currentTurnFacts,
+      activeAdVehicle: frame.signals.adVehicle ?? null,
       lastVisibleOffer: frame.conversationContext.lastVisibleOffer,
       toolResultsThisTurn: observations.filter((observation) => observation.tool !== "response").map((observation) => ({ tool: observation.tool, ok: observation.ok })),
       candidate: {
@@ -462,7 +521,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       },
     };
     try {
-      const tokenLimit = { [this.#tokenParameter]: 320 };
+      const tokenLimit = { [this.#tokenParameter]: 480 };
       const req: ModelHttpRequest = {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -484,17 +543,56 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       const raw = envelope.choices?.[0]?.message?.content;
       const verdict = typeof raw === "string" ? JSON.parse(raw) as {
         pass?: unknown;
+        currentLeadAct?: unknown;
+        candidateVisibleAct?: unknown;
+        nextQuestionAct?: unknown;
+        currentLeadLane?: unknown;
+        priorAssistantLane?: unknown;
+        nextQuestionLane?: unknown;
+        nextQuestionIsQualificationField?: unknown;
+        portalQuestionSupportEvidence?: unknown;
+        currentLeadEvidence?: unknown;
+        visibleCurrentActEvidence?: unknown;
+        effectClaimEvidence?: unknown;
         checks?: unknown;
         portalIdentityEvidence?: unknown;
         openingIdentityEvidence?: unknown;
         feedback?: unknown;
       } : null;
       if (!verdict) return { pass: true, feedback: "" };
+      const candidateText = candidateDraft.parts
+        .filter((part): part is Extract<ResponsePart, { type: "text" }> => part.type === "text")
+        .map((part) => part.content)
+        .join(" ");
+      const currentLeadEvidence = typeof verdict.currentLeadEvidence === "string" ? verdict.currentLeadEvidence.trim() : "";
+      const visibleCurrentActEvidence = typeof verdict.visibleCurrentActEvidence === "string" ? verdict.visibleCurrentActEvidence.trim() : "";
+      const effectClaimEvidence = typeof verdict.effectClaimEvidence === "string" ? verdict.effectClaimEvidence.trim() : "";
+      const hasLiteralLeadEvidence = currentLeadEvidence.length > 0
+        && normalizedComparable(frame.block).includes(normalizedComparable(currentLeadEvidence));
+      const hasLiteralVisibleEvidence = visibleCurrentActEvidence.length > 0
+        && normalizedComparable(candidateText).includes(normalizedComparable(visibleCurrentActEvidence));
+      const hasSemanticAudit = typeof verdict.currentLeadAct === "string" && verdict.currentLeadAct.trim().length > 0
+        && typeof verdict.candidateVisibleAct === "string" && verdict.candidateVisibleAct.trim().length > 0;
+      const hasLiteralEffectClaim = effectClaimEvidence.length > 0
+        && normalizedComparable(candidateText).includes(normalizedComparable(effectClaimEvidence));
+      const hasHandoffEffect = step.decision.proposedEffects.some((effect) => effect.kind === "handoff");
+      const currentLeadLane = typeof verdict.currentLeadLane === "string" && SEMANTIC_LANES.includes(verdict.currentLeadLane as (typeof SEMANTIC_LANES)[number]) ? verdict.currentLeadLane : null;
+      const priorAssistantLane = verdict.priorAssistantLane == null
+        ? null
+        : typeof verdict.priorAssistantLane === "string" && SEMANTIC_LANES.includes(verdict.priorAssistantLane as (typeof SEMANTIC_LANES)[number]) ? verdict.priorAssistantLane : "invalid";
+      const nextQuestionLane = verdict.nextQuestionLane == null
+        ? null
+        : typeof verdict.nextQuestionLane === "string" && SEMANTIC_LANES.includes(verdict.nextQuestionLane as (typeof SEMANTIC_LANES)[number]) ? verdict.nextQuestionLane : "invalid";
+      const hasValidLaneAudit = currentLeadLane != null && priorAssistantLane !== "invalid" && nextQuestionLane !== "invalid";
+      const returnsToPriorLane = currentLeadLane != null && priorAssistantLane != null && priorAssistantLane !== "invalid"
+        && nextQuestionLane != null && nextQuestionLane !== "invalid"
+        && currentLeadLane !== priorAssistantLane && nextQuestionLane === priorAssistantLane;
+      const hasQualificationAudit = typeof verdict.nextQuestionIsQualificationField === "boolean";
+      const portalQuestionSupportEvidence = typeof verdict.portalQuestionSupportEvidence === "string" ? verdict.portalQuestionSupportEvidence.trim() : "";
+      const hasLiteralPortalQuestionSupport = portalQuestionSupportEvidence.length > 0
+        && normalizedComparable(this.#portalPrompt).includes(normalizedComparable(portalQuestionSupportEvidence));
+      const unsupportedQualificationQuestion = verdict.nextQuestionIsQualificationField === true && !hasLiteralPortalQuestionSupport;
       if (payload.firstAssistantTurn) {
-        const candidateText = candidateDraft.parts
-          .filter((part): part is Extract<ResponsePart, { type: "text" }> => part.type === "text")
-          .map((part) => part.content)
-          .join(" ");
         const evidence = typeof verdict.openingIdentityEvidence === "string" ? verdict.openingIdentityEvidence.trim() : "";
         const portalEvidence = typeof verdict.portalIdentityEvidence === "string" ? verdict.portalIdentityEvidence.trim() : "";
         const candidateComparable = normalizedComparable(candidateText);
@@ -506,18 +604,43 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         const portalTokens = [...new Set(identityTokens(portalEvidence))];
         const candidateTokens = new Set(identityTokens(evidence));
         const sharedIdentityTokens = portalTokens.filter((token) => candidateTokens.has(token));
-        if (!literalEvidence || !literalPortalEvidence || portalTokens.length < 3 || sharedIdentityTokens.length < 3) {
+        if (!literalEvidence || !literalPortalEvidence || portalTokens.length < 2 || sharedIdentityTokens.length < 2) {
           return { pass: false, feedback: "No primeiro turno, apresente-se explicitamente com o nome do agente e a empresa definidos no prompt do portal antes de continuar o assunto atual." };
         }
       }
       const checkRecord = isRecord(verdict.checks) ? verdict.checks : {};
-      const checks = Object.values(checkRecord);
-      const allChecksPass = checks.length === 6 && checks.every((check) => check === true);
-      if (verdict.pass === true && allChecksPass) return { pass: true, feedback: "" };
-      const failedChecks = Object.entries(checkRecord).filter(([, value]) => value !== true).map(([key]) => key).slice(0, 6);
+      const requiredChecks = ["currentAct", "roleBinding", "noRepetition", "nameModeration", "unambiguousQuestion", "nextQuestionContinuity", "effectCoherence", "openingIdentity"] as const;
+      const allChecksPass = requiredChecks.every((check) => checkRecord[check] === true);
+      if (verdict.pass === true && allChecksPass && hasSemanticAudit && hasLiteralLeadEvidence && hasLiteralVisibleEvidence
+        && hasValidLaneAudit && hasQualificationAudit && !returnsToPriorLane && !unsupportedQualificationQuestion
+        && (!hasLiteralEffectClaim || hasHandoffEffect)) return { pass: true, feedback: "" };
+      const failedChecks = requiredChecks.filter((check) => checkRecord[check] !== true);
       const detail = failedChecks.length > 0 ? ` Checks reprovados: ${failedChecks.join(", ")}.` : "";
-      const baseFeedback = typeof verdict.feedback === "string" ? verdict.feedback.trim() : "Reescreva mantendo o ato atual, sem repeticao ou troca de papeis.";
-      const feedback = `${baseFeedback}${detail}`.slice(0, 500);
+      const evidenceFeedback = [
+        !hasSemanticAudit || !hasLiteralLeadEvidence
+          ? "O auditor nao demonstrou o ato atual com evidencia literal do bloco; releia a ultima fala do lead."
+          : null,
+        !hasLiteralVisibleEvidence
+          ? "O texto visivel nao demonstrou que respondeu ao ato atual; trate explicitamente a ultima fala antes de avancar."
+          : null,
+        hasLiteralEffectClaim && !hasHandoffEffect
+          ? "O texto afirma encaminhamento ou transferencia sem efeito handoff. Escolha uma forma coerente: inclua em effects {\"kind\":\"handoff\",\"reason\":\"qualified_handoff\"} ou remova por completo a promessa e continue atendendo."
+          : null,
+        !hasValidLaneAudit
+          ? "Classifique currentLeadLane, priorAssistantLane e nextQuestionLane com os enums exigidos antes de aprovar."
+          : null,
+        returnsToPriorLane
+          ? "A proxima pergunta voltou exatamente ao ramo da pergunta anterior depois que o lead mudou de assunto. Deixe esse ramo pendente e continue o ato atual."
+          : null,
+        !hasQualificationAudit
+          ? "Declare se a proxima pergunta coleta um campo de qualificacao."
+          : null,
+        unsupportedQualificationQuestion
+          ? "A proxima pergunta tenta coletar um campo de qualificacao sem suporte literal no prompt do portal. Remova esse campo inventado e avance apenas com o funil configurado."
+          : null,
+      ].filter((item): item is string => item != null).map((item) => ` ${item}`).join("");
+      const baseFeedback = typeof verdict.feedback === "string" && verdict.feedback.trim().length > 0 ? verdict.feedback.trim() : "Reescreva mantendo o ato atual, sem repeticao ou troca de papeis.";
+      const feedback = `${baseFeedback}${detail}${evidenceFeedback}`.slice(0, 700);
       return { pass: false, feedback };
     } catch {
       // O avaliador nunca transforma indisponibilidade propria em fallback ao lead.
