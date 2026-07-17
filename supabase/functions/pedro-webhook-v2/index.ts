@@ -9,7 +9,7 @@ import {
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
 import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
-import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
+import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes, PEDRO_V3_ONLY } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, enrichAdReferralWithSemanticContext, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext, type PedroV3AdReferral } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
@@ -20,7 +20,7 @@ import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260
 import { resolvePedroV3AdSemantic } from "../_shared/pedro-v2/pedroV3AdSemantic.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
-const PEDRO_V2_BUILD = "2026-07-17-v3-active-scope-ownership-v222";
+const PEDRO_V2_BUILD = "2026-07-17-v3-only-routing-v223";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -583,6 +583,10 @@ Deno.serve(async (req) => {
   // disabled for the account; otherwise the old gate silently prevents v3
   // activation. Shadow/off continue to use the v2 gate below.
   const v3ExclusiveScope = pedroV3Pilot.enabled && pedroV3Pilot.mode === "active";
+  if (PEDRO_V3_ONLY && !v3ExclusiveScope) {
+    console.error(`[pedro-v3-only] blocked_non_v3_scope tenant=${agent.user_id} agent=${agent.id} reason=${pedroV3Pilot.reason}`);
+    return jsonResponse({ ok: false, disabled: true, reason: "pedro_v2_disabled_v3_only", build: PEDRO_V2_BUILD }, 423);
+  }
   const gate = v3ExclusiveScope
     ? { enabled: true, reason: "v3_exclusive_scope" }
     : await isPedroV2EnabledForUser(supabase, waInstance.user_id);
@@ -636,7 +640,7 @@ Deno.serve(async (req) => {
   // "SDR - Geral" (agent_type='sdr_geral') usa o cérebro da SOFIA (qualifica +
   // agenda reunião, sem BNDV). Qualquer outro tipo segue no Pedro v2 (automóveis).
   // Isolado em módulo próprio (_shared/sofia/) -> zero impacto no fluxo do Pedro.
-  if (agent?.agent_type === "sdr_geral") {
+  if (agent?.agent_type === "sdr_geral" && !v3ExclusiveScope) {
     const sofiaResult = await processSofiaTurn(supabase, {
       payload,
       agent,
@@ -658,7 +662,8 @@ Deno.serve(async (req) => {
     if (_fc?.bloco4_qualificacao) (agent as any).funnel_bloco4 = _fc.bloco4_qualificacao;
   } catch (_fcErr) { /* funil estruturado é opcional */ }
 
-  const _dryRun = payload?.dry_run === true || !isPedroV2MutationEnabled();
+  // A v2 mutation flag must never turn an active v3 lead into dry-run.
+  const _dryRun = payload?.dry_run === true || (!v3ExclusiveScope && !isPedroV2MutationEnabled());
   const _turnInput = { payload, agent, wa_instance: waInstance, dry_run: _dryRun };
 
   // SAFETY NET (Maria Rosa): um turno que LANCA nunca pode sumir — registra turn_uncaught_error.
@@ -691,6 +696,10 @@ Deno.serve(async (req) => {
   // fallback is allowed ONLY when the service explicitly proves the failure
   // happened before inbox ingestion. Timeout/network/unknown never invoke both.
   const _waitUntil = (globalThis as any).EdgeRuntime?.waitUntil?.bind((globalThis as any).EdgeRuntime);
+  if (!_dryRun && v3ExclusiveScope && typeof _waitUntil !== "function") {
+    console.error("[pedro-v3-only] active_scope_without_wait_until");
+    return jsonResponse({ ok: false, accepted: false, reason: "v3_runtime_unavailable", build: PEDRO_V2_BUILD }, 503);
+  }
   let _pilotSellerInbound = false;
   let _pilotInternalInbound = false;
   let _postTransferPlan = null;
@@ -787,12 +796,7 @@ Deno.serve(async (req) => {
           hasV3State,
           exclusiveOwnership: true,
         });
-        if (!decision.fallback) {
-          console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false`);
-          return;
-        }
-        console.error(`[pedro-v3-bridge] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false; fallback=v2`);
-        await processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
+        console.error(`[pedro-v3-only] ${decision.reason} conversationId=${bridgeTurn.turn.conversationId} status=${bridgeResult.serviceStatus ?? bridgeResult.httpStatus ?? "none"} hasV3Routing=${hasV3Routing} hasV3State=${hasV3State} ingested=false; fallback=blocked`);
         return;
       }
       console.log(`[pedro-v3-bridge] result=${bridgeResult.kind} status=${bridgeResult.httpStatus ?? "none"}`);
@@ -803,6 +807,10 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3", build: PEDRO_V2_BUILD });
   }
   if (!_dryRun && typeof _waitUntil === "function") {
+    if (PEDRO_V3_ONLY) {
+      console.error("[pedro-v3-only] legacy_dispatch_reached");
+      return jsonResponse({ ok: false, accepted: false, reason: "pedro_v2_dispatch_blocked", build: PEDRO_V2_BUILD }, 503);
+    }
     _waitUntil(processPedroV2Turn(supabase, _turnInput).catch(_logTurnError));
     return jsonResponse({ ok: true, accepted: true, build: PEDRO_V2_BUILD });
   }

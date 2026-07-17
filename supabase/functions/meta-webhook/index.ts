@@ -16,6 +16,7 @@ import { selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
 import {
   isPedroV3ExclusiveScope,
   parsePedroV3ActiveScopes,
+  PEDRO_V3_ONLY,
 } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 
 const META_GRAPH_VERSION = Deno.env.get("META_GRAPH_VERSION") || "v25.0";
@@ -215,6 +216,14 @@ async function handleInbound(supabase: any, value: any) {
     const agent = selectActiveAgent(allAgents || [], waInstance.id);
     if (!agent) {
       console.log("[meta-webhook] nenhum agente ativo p/ user:", waInstance.user_id);
+      continue;
+    }
+
+    // O entrypoint Meta ainda é um adaptador legado do v2. Até existir uma
+    // ponte Meta -> v3 equivalente à ponte Uazapi, bloquear é obrigatório:
+    // nunca responder um lead pelo cérebro antigo.
+    if (PEDRO_V3_ONLY) {
+      console.log("[meta-webhook] pedro_v2_disabled_v3_only");
       continue;
     }
 

@@ -17,6 +17,7 @@ import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_ph
 import {
   isPedroV3ExclusiveScope,
   parsePedroV3ActiveScopes,
+  PEDRO_V3_ONLY,
 } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 
 const corsHeaders = {
@@ -40,6 +41,12 @@ function isGoodbyeOrAck(content: string): boolean {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  if (PEDRO_V3_ONLY) {
+    return new Response(JSON.stringify({ ok: true, skipped: "pedro_v2_disabled_v3_only" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // Guard opcional: se CRON_SECRET estiver setado no ambiente, exige o header.
   const expected = Deno.env.get("CRON_SECRET");

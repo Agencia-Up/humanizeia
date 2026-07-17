@@ -14,6 +14,10 @@ export type PedroV3ActiveScope = {
   agentId: string;
 };
 
+// Migração concluída: esta Edge Function conserva o nome histórico, mas não
+// pode mais entregar turnos comerciais ao Pedro v2.
+export const PEDRO_V3_ONLY = true;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const LEGACY_PEDRO_V3_SCOPE: PedroV3ActiveScope = Object.freeze({

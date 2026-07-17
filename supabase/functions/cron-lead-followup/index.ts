@@ -10,6 +10,7 @@ import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 import {
   isPedroV3ExclusiveScope,
   parsePedroV3ActiveScopes,
+  PEDRO_V3_ONLY,
 } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
@@ -1075,6 +1076,13 @@ Deno.serve(async (req) => {
     for (const lead of leads) {
       // Ignorar se o usuario falou depois do agente
       if (new Date(lead.last_user_reply_at) >= new Date(lead.last_agent_reply_at)) continue;
+
+      // O cron abaixo é legado (v2). O follow-up do v3 deve nascer do estado
+      // e do outbox v3; nunca deixar esta rotina falar com um lead.
+      if (PEDRO_V3_ONLY) {
+        result.skipped.push("pedro_v2_followup_disabled_v3_only");
+        continue;
+      }
 
       if (isPedroV3ExclusiveScope({
         tenantId: lead.user_id,
