@@ -23,6 +23,7 @@
  * alguém reativá-lo, os dois colidem. Registrado pro dono decidir.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -158,7 +159,17 @@ export default function SupportAssistant() {
 
   const novaConversa = () => { setMsgs([]); setSessionId(null); setTexto(''); };
 
-  return (
+  // PORTAL pra document.body: garante que o `fixed` do botão seja SEMPRE em
+  // relação à TELA, nunca a um ancestral. Sintoma que motivou (dono, 17/07, no
+  // CRM do Pedro/Marcos): o botão "Ajuda" ficava no FIM de todo o conteúdo (tinha
+  // que rolar todos os leads pra alcançar) em vez de flutuar preso no canto.
+  // Isso é o clássico "position:fixed neutralizado por um ancestral com transform/
+  // filter/contain" — quando um pai tem qualquer um desses, o fixed passa a se
+  // ancorar NELE, não na viewport, e vira efetivamente absolute (fica no rodapé
+  // do conteúdo alto). Portalar pro body tira o nó de dentro de qualquer subárvore
+  // transformada, então o fixed volta a valer contra a tela. É a correção robusta
+  // pra a classe inteira do problema (não depende de achar QUAL ancestral).
+  return createPortal(
     <>
       {/* Botão flutuante */}
       <button
@@ -316,6 +327,7 @@ export default function SupportAssistant() {
           </div>
         </SheetContent>
       </Sheet>
-    </>
+    </>,
+    document.body,
   );
 }
