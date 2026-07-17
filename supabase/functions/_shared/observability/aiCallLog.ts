@@ -27,6 +27,7 @@ export type AiDisparoTipo =
   | "transcricao_audio"
   | "embedding"
   | "manual_test"
+  | "chat_suporte" // Chat de Suporte da plataforma (Logos paga, não é consumo do cliente)
   | "outro";
 
 export type AiCallStatus = "ok" | "error" | "partial" | "fallback";
