@@ -20,7 +20,7 @@ import { resolvePedroMediaContext } from "../_shared/pedro-v2/mediaContext_20260
 import { resolvePedroV3AdSemantic } from "../_shared/pedro-v2/pedroV3AdSemantic.ts";
 import { isAccountGrandfathered, resolveAiKey } from "../_shared/aiKeys.ts";
 
-const PEDRO_V2_BUILD = "2026-07-15-private-audience-boundary";
+const PEDRO_V2_BUILD = "2026-07-17-v3-active-scope-ownership-v222";
 
 function pickIncomingMessage(payload: any): any {
   if (Array.isArray(payload?.messages) && payload.messages.length > 0) return payload.messages[0];
@@ -553,17 +553,6 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, ignored: "seller_instance_inbox_only", instance: instanceName });
   }
 
-  const gate = await isPedroV2EnabledForUser(supabase, waInstance.user_id);
-  if (!gate.enabled) {
-    return jsonResponse({
-      ok: false,
-      disabled: true,
-      reason: gate.reason,
-      message:
-        "Pedro v2 is disabled for this user. Use PEDRO_V2_ALLOWED_USER_EMAILS/IDS for controlled tests or PEDRO_V2_ENABLED for global rollout.",
-    }, 423);
-  }
-
   const { data: allAgents, error: agentError } = await supabase
     .from("wa_ai_agents")
     .select("*")
@@ -588,6 +577,23 @@ Deno.serve(async (req) => {
     console.log(
       `[pedro-v3-pilot] matched tenant=${agent.user_id} agent=${agent.id} mode=${pedroV3Pilot.mode}`,
     );
+  }
+  // An active v3 scope is already the explicit ownership decision for this
+  // tenant+agent. It must be reachable even when the legacy v2 rollout gate is
+  // disabled for the account; otherwise the old gate silently prevents v3
+  // activation. Shadow/off continue to use the v2 gate below.
+  const v3ExclusiveScope = pedroV3Pilot.enabled && pedroV3Pilot.mode === "active";
+  const gate = v3ExclusiveScope
+    ? { enabled: true, reason: "v3_exclusive_scope" }
+    : await isPedroV2EnabledForUser(supabase, waInstance.user_id);
+  if (!gate.enabled) {
+    return jsonResponse({
+      ok: false,
+      disabled: true,
+      reason: gate.reason,
+      message:
+        "Pedro v2 is disabled for this user. Use PEDRO_V2_ALLOWED_USER_EMAILS/IDS for controlled tests or PEDRO_V2_ENABLED for global rollout.",
+    }, 423);
   }
   // Uazapi delivery callback. It is never a lead message and must never start a
   // v2/v3 conversational turn. Only the exact active pilot may promote receipts.

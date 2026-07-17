@@ -7,6 +7,7 @@ import {
 
 const DOUGLAS = { tenantId: "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0", agentId: "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185" };
 const BRUNO = { tenantId: "f49fd48a-4386-4009-95f3-26a5100b84f7", agentId: "aee7e916-31b1-431c-ba6f-f38178fd4899" };
+const AVANT = { tenantId: "7e23b020-0377-4120-a6a4-502701d62208", agentId: "03421f26-f4e3-48f1-a791-24fc438e9b3d" };
 
 let ok = 0;
 let failed = 0;
@@ -28,10 +29,18 @@ function payload(messageId: string, text: string) {
 }
 
 console.log("Pedro v3 edge active scopes:");
-const scopes = parsePedroV3ActiveScopes(JSON.stringify([DOUGLAS, BRUNO]));
+const scopes = parsePedroV3ActiveScopes(JSON.stringify([DOUGLAS, BRUNO, AVANT]));
 
 const agentDecision = evaluatePedroV3PilotAgent({ id: BRUNO.agentId, user_id: BRUNO.tenantId }, null, "active", scopes);
 check("gate Edge aceita Bruno somente pela allowlist", agentDecision.enabled && agentDecision.mode === "active");
+
+const avantDecision = evaluatePedroV3PilotAgent({ id: AVANT.agentId, user_id: AVANT.tenantId }, null, "active", scopes);
+check("gate Edge aceita Avant/Manu pela allowlist", avantDecision.enabled && avantDecision.mode === "active");
+check("workers v2 bloqueiam Avant/Manu quando o escopo v3 esta active", isPedroV3ExclusiveScope({
+  ...AVANT,
+  mode: "active",
+  activeScopes: scopes,
+}));
 
 const crossDecision = evaluatePedroV3PilotAgent({ id: DOUGLAS.agentId, user_id: BRUNO.tenantId }, null, "active", scopes);
 check("gate Edge rejeita tenant Bruno com agente Douglas", !crossDecision.enabled);
