@@ -28,7 +28,7 @@ import type {
   TurnUnderstanding, SystemWorkingMemoryMutation, LeadIntentKind,
 } from "../domain/agent-brain.ts";
 import {
-  validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn,
+  validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn, isStoreInfoTurn,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
   toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, leadRequestsHumanExplicitly, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
   understandingAuthorityFeedback, hasActiveVisitContext,
@@ -325,7 +325,18 @@ export function sanitizeOutgoingText(text: string): string {
 // Slots monetários do LEAD (fonte única: extractLeadSlots é autoritativo sobre a LLM — F2.40; a validationState
 // projeta ESTES slots do turno para render/validate enxergarem — F2.43/audit Codex).
 const VALIDATION_FINANCIAL_SLOTS = new Set(["entrada", "parcelaDesejada", "faixaPreco"]);
-function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean, moreOptionsSearch: boolean): string | null {
+// ── AD-1 (2026-07-18): o requisito de tool é TIPADO, não uma string solta.
+//
+// DEFEITO CORRIGIDO (livelock de produção): o caller derivava o RÓTULO da observação de falha E o CONTADOR anti-loop de
+// `!frame.signals.mentionsStore` — uma PALAVRA do texto do lead — sem nenhuma relação com QUAL das três pernas abaixo
+// realmente falhou. Consequências medidas:
+//   (a) a perna institucional não incrementava contador NENHUM -> repetia até esgotar brainMaxSteps -> "instabilidade";
+//   (b) pior: a palavra "loja" no bloco DESLIGAVA o cap anti-loop da perna de ESTOQUE e de "mais opções" (contaminação
+//       cruzada) — "Vcs tem na loja uma HRV?" caía exatamente nesse cruzamento.
+// Devolvendo `{ tool, feedback }`, rótulo e contador passam a nascer do REQUISITO QUE FALTOU. PURO.
+type MissingToolRequirement = { readonly tool: "stock_search" | "tenant_business_info"; readonly feedback: string };
+
+function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean, moreOptionsSearch: boolean, storeInfoTurn: boolean): MissingToolRequirement | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
   // T4 (fonte única): uma pergunta de DISPONIBILIDADE/estoque do turno atual (understanding.primaryIntent=search_stock,
@@ -333,16 +344,19 @@ function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, obser
   // assunto anterior sem buscar (e a memória de foto não pode assumir a busca). Gated em llmFirst para não forçar busca
   // no legado (onde o SDR pode acolher+perguntar o nome antes de listar — F2.13 [3c]).
   if (searchTurn && !wasObserved("stock_search")) {
-    return "O cliente deu filtro comercial suficiente NESTE turno (modelo, marca, tipo, faixa de preço, câmbio ou 'popular'). Chame stock_search com TODOS esses filtros (marca/modelo/tipo/precoMax/cambio/popular) ANTES de responder — corrija erros de digitação e NUNCA pergunte 'qual modelo/tipo você procura?' quando ele já informou. Se não houver estoque, seja honesto e ofereça algo parecido na mesma faixa.";
+    return { tool: "stock_search", feedback: "O cliente deu filtro comercial suficiente NESTE turno (modelo, marca, tipo, faixa de preço, câmbio ou 'popular'). Chame stock_search com TODOS esses filtros (marca/modelo/tipo/precoMax/cambio/popular) ANTES de responder — corrija erros de digitação e NUNCA pergunte 'qual modelo/tipo você procura?' quando ele já informou. Se não houver estoque, seja honesto e ofereça algo parecido na mesma faixa." };
   }
   // "mais opções" exige nova busca — MAS só quando há ESCOPO recuperável (F2.29). Sem escopo (nem filtro ativo, nem
   // oferta homogênea derivável) NÃO se força busca genérica: o engine PERGUNTA o escopo (executor determinístico). Forçar
   // uma busca sem filtro devolveria lista genérica (o bug do print: "tem outros?" -> carros baratos aleatórios + moto).
   if (moreOptionsSearch && !wasObserved("stock_search") && !moreOptionsNeedsScope) {
-    return "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final.";
+    return { tool: "stock_search", feedback: "O lead pediu mais opções. Execute stock_search com os filtros atuais e excludeKeys da última oferta antes da resposta final." };
   }
-  if (frame.signals.mentionsStore && !wasObserved("tenant_business_info")) {
-    return "O lead pediu informação da loja. Execute tenant_business_info antes da resposta final.";
+  // ⭐AD-1: `storeInfoTurn` é AUTORIDADE SEMÂNTICA (ato institucional declarado pela LLM com evidência do bloco atual),
+  // não mais o regex `mentionsStore`. "Vcs tem na loja uma HRV?" é ato de ESTOQUE: cai na perna de cima, nunca aqui.
+  // O feedback nomeia os tópicos ATENDÍVEIS — um deny que não diz o que satisfaz é um pedido impossível.
+  if (storeInfoTurn && !wasObserved("tenant_business_info")) {
+    return { tool: "tenant_business_info", feedback: "Você declarou um ato institucional (informação da LOJA). Execute tenant_business_info com o topic correspondente — address, hours ou unit — antes da resposta final. Se o que o cliente quer não é nenhum desses três (por exemplo, disponibilidade de um carro), então o ato NÃO é institucional: reemita o understanding com o ato correto e use a tool desse ato." };
   }
   return null;
 }
@@ -844,9 +858,33 @@ function authorFromBrainDraft(args: {
   }
   // P0-1 (audit Codex): a foto autorizada TEM de ser do ALVO do assunto (key ∈ candidateVehicleKeys verificados por
   // modelo). Foto do carro ERRADO (ex.: pediu Kicks, resolveu Onix) -> REJEITA + feedback; nunca envia o carro errado.
+  // ⭐AD-5 (2026-07-18): o deny AGORA ENTREGA O CONJUNTO ADMISSÍVEL.
+  //
+  // INCIDENTE (18/07 15:51 e 15:53, lead 12 98220-5353 — "Esse 2022 branco você tem foto?"): este deny disparou 4x
+  // IDÊNTICO no mesmo turno, com `resolvedVehicleKey: null` — ou seja, o engine mandava usar "o vehicleKey CORRETO"
+  // sem NUNCA dizer qual era, e sem ele mesmo saber. A LLM não tinha como obedecer: pediu-se uma ação impossível,
+  // o turno queimou as tentativas e o lead recebeu "Tive uma instabilidade". Duas vezes.
+  //
+  // INVARIANTE: todo deny de alvo precisa carregar o que o satisfaz — a chave certa (alvo resolvido), a lista de
+  // candidatos (alvo ambíguo -> a LLM pergunta QUAL) ou a instrução de localizar por stock_search (nada aterrado).
+  // Sem conjunto admissível, um deny é um beco sem saída.
   if (photoAuthorized && sendMediaKeys.some((k) => !targetAcceptsKey(args.target, k))) {
-    const alvo = args.target.kind !== "conflict" && args.target.subjectModel ? `o ${args.target.subjectModel}` : "o carro que o cliente pediu";
-    return { ok: false, feedback: `A foto que você resolveu NÃO é de ${alvo}. Resolva vehicle_photos_resolve do vehicleKey CORRETO do assunto atual (o carro que o cliente citou/selecionou) — nunca envie a foto de outro veículo. Se houver mais de uma variante possível, pergunte QUAL antes de enviar.` };
+    const alvo = args.target.kind !== "conflict" && args.target.subjectModel ? `do ${args.target.subjectModel}` : "do carro que o cliente pediu";
+    const admissiveis = args.target.kind === "resolved"
+      ? [args.target.vehicleKey, ...args.target.candidateVehicleKeys]
+      : (args.target.kind === "ambiguous" ? [...args.target.candidateVehicleKeys] : []);
+    const unicos = [...new Set(admissiveis)].filter(Boolean);
+    const rotulados = unicos
+      .map((k) => { const l = canonicalVehicleLabel(k, args.facts, args.identities, args.ctx.state); return l ? `${k} (${l})` : k; })
+      .join(" | ");
+    const saida = args.target.kind === "resolved"
+      ? `O vehicleKey CORRETO é '${args.target.vehicleKey}'. Chame vehicle_photos_resolve com ELE.`
+      : unicos.length > 1
+        ? `O alvo está AMBÍGUO entre estas opções: ${rotulados}. NÃO escolha por conta própria: pergunte ao cliente QUAL delas ele quer ver, em UMA pergunta curta, e não envie mídia neste turno.`
+        : unicos.length === 1
+          ? `A única chave aterrada deste assunto é '${unicos[0]}'${rotulados !== unicos[0] ? ` (${rotulados})` : ""}. Use ELA.`
+          : `NENHUM veículo foi aterrado nesta conversa ainda, então não existe chave válida para pedir foto. Localize o carro com stock_search (marca/modelo/ano) e só depois use a chave que a busca retornar.`;
+    return { ok: false, feedback: `A foto que você resolveu NÃO é ${alvo}. ${saida} Nunca envie a foto de outro veículo e nunca invente uma chave.` };
   }
   const photoSafeEffects = photoAuthorized ? args.finalDecision.proposedEffects : args.finalDecision.proposedEffects.filter((e) => e.kind !== "send_media");
   // O pedido humano explícito do bloco atual é a autoridade do motivo da
@@ -1304,6 +1342,12 @@ function respondsInstitutionalTopic(normResp: string, topic: BusinessInfoTopic, 
 }
 // Foto pedida e não atendida: precisa send_media OU dizer honestamente que não localizou (oferta interrogativa não conta).
 const PHOTO_HONEST_ABSENCE_RX = /\bnao\s+(?:encontrei|localizei|achei|tenho|consegui|temos)\b[^.?!]{0,28}(?:fotos?|imagens?|midias?)|(?:fotos?|imagens?)[^.?!]{0,28}(?:nao\s+(?:disponiv|encontr|localiz)|indisponiv)/;
+// Promessa operacional de terceiros sem efeito real no mesmo turno. O agente
+// pode dizer que enviou fotos somente quando o plano contém send_media; não
+// pode deslocar a execução para uma equipe futura e deixar o lead no vácuo.
+// Isto é validação factual da autoria da LLM, não escolha de assunto nem texto
+// de recuperação produzido pela engine.
+const PHOTO_EXTERNAL_PROMISE_RX = /\b(?:vou|irei|vamos)\b[^.?!]{0,100}\b(?:pedir|solicitar|confirmar|verificar)\b[^.?!]{0,100}\b(?:equipe|consultor|vendedor|time)\b[^.?!]{0,80}\b(?:enviar|mandar)\b|\b(?:equipe|consultor|vendedor|time)\b[^.?!]{0,70}\b(?:vai|ira)\b[^.?!]{0,40}\b(?:enviar|mandar)\b/;
 const PHOTO_ORDINAL_CLARIFY_RX = /\b(?:qual|quais|numero|n[uú]mero|op[cç][aã]o|item|lista|primeir|segund|terceir|quart|quint)\b/;
 function turnCompletenessFeedback(args: {
   readonly leadMessage: string;
@@ -1328,6 +1372,9 @@ function turnCompletenessFeedback(args: {
       && !args.proposedEffects.some((e) => e.kind === "send_media")
       && !PHOTO_HONEST_ABSENCE_RX.test(normResp)
       && !(!args.photoTargetResolved && PHOTO_ORDINAL_CLARIFY_RX.test(normResp))) {
+    if (PHOTO_EXTERNAL_PROMISE_RX.test(normResp)) {
+      return "O cliente pediu FOTO neste turno, mas a resposta prometeu que uma equipe/consultor enviaria depois. Essa promessa não é um efeito executável: resolva vehicle_photos_resolve do carro certo e inclua send_media com os photoIds no mesmo turno, ou diga honestamente que não encontrou as fotos. NÃO prometa envio futuro.";
+    }
     return "O cliente pediu FOTO neste turno e a resposta não enviou (send_media) nem disse honestamente que não localizou. Resolva vehicle_photos_resolve do carro certo e inclua send_media com os photoIds — ou diga que não encontrou as fotos. NÃO responda só outro assunto ignorando o pedido de foto.";
   }
   if (!args.pendingObjective
@@ -2223,6 +2270,18 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // validada. É o que autoriza o ENGINE a agir (forçar/garantir busca). Capability solta NÃO basta: "quanto custa o
       // Onix?" (vehicle_detail) pode carregar capability de busca sem o ATO ser busca — o engine não força nada nesse caso.
       const brainSearchAct = (): boolean => lockedU?.primaryIntent === "search_stock" && isStockSearchTurn(brainVU());
+      // ⭐AD-1: quem exige tenant_business_info é o ATO institucional declarado pela LLM (com evidência do bloco atual),
+      // não o regex mentionsStore. No legado (!llmFirst) o sinal léxico continua valendo — nada muda lá.
+      //
+      // ⚠️ SATISFAZIBILIDADE (regressão pega pela F2.22 [G] "qual o instagram de vocês?"): o ato institucional SOZINHO
+      // não basta para exigir a tool. tenant_business_info só atende três tópicos (address|hours|unit); "instagram",
+      // "telefone", "whatsapp" são institucionais e NÃO têm tópico atendível. Exigir a tool ali recria exatamente o
+      // pedido impossível que esta missão veio matar — a LLM não teria argumento válido para chamá-la.
+      // Por isso o requisito exige DUAS coisas: AUTORIDADE (a LLM declarou o ato) E SATISFAZIBILIDADE (existe pelo menos
+      // um tópico que a tool sabe responder). Sem tópico atendível, a LLM responde a ausência honestamente, sem tool.
+      const brainStoreInfoAct = (): boolean => (llmFirst
+        ? (isStoreInfoTurn(brainVU()) && institutionalTopicsRequested(leadMessage).length > 0)
+        : frame.signals.mentionsStore === true);
       // ⭐Hardening (audit Codex): a LLM declarou um ATO CONVERSACIONAL (contestação/financiamento/troca/smalltalk) —
       // nenhum caminho determinístico (nem mentionsMoreOptions) pode forçar/exigir busca por cima dele. Ex.: "Você disse
       // que não tinha outras opções, mas Corolla é sedan?" casa o regex de 'mais opções' mas o ato é conversation_repair.
@@ -2359,6 +2418,13 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // poucas repetições o loop sai e a recuperação determinística responde. Persiste ENTRE iterações (por isso fora do for).
       let dupStockLoopCount = 0;
       const DUP_STOCK_LOOP_CAP = 3;
+      // ⭐AD-1: trava ÚNICA do requiredToolBeforeFinal, válida para TODAS as pernas (estoque, mais-opções, institucional).
+      // Antes só a perna de estoque tinha contador; a institucional repetia até esgotar o turno inteiro.
+      let requiredToolLoopCount = 0;
+      const REQUIRED_TOOL_LOOP_CAP = 2;
+      // ⭐AD-2: trava da guarda de proveniência de vehicleKey (chave inventada nunca vira loop infinito).
+      let keyProvenanceLoopCount = 0;
+      const KEY_PROVENANCE_LOOP_CAP = 2;
 const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence fora do bloco atual  // 1 busca real + até 2 nudges "finalize" antes de sair do loop (bound de custo/latência)
       // Missão P0 (audit Codex smoke real T7): MESMO cap para vehicle_details. "gostei do segundo" = SELEÇÃO; o cérebro às
       // vezes tenta vehicle_details sem ter a vehicleKey (a rejeição do gate não é execução) — sem cap loopava 6x → fallback.
@@ -2533,13 +2599,18 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             llmFirst && brainSearchAct(),
             moreOptionsNeedsScope,
             frame.signals.mentionsMoreOptions === true && brainSearchAct(),
+            brainStoreInfoAct(),
           );
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
-            const stockReq = !frame.signals.mentionsStore;
             // A engine exige consistência com o ato que a própria LLM declarou, mas
             // nunca executa estoque por retomada, anúncio, memória ou regex.
-            observations.push({ tool: stockReq ? "response" : "tenant_business_info", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool } });
-            if (stockReq) { duplicateStockCallsBlocked += 1; if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break; }
+            // ⭐AD-1: rótulo e contador vêm do REQUISITO QUE FALTOU (missingTool.tool), nunca de uma palavra do bloco.
+            // A observação sai SEMPRE como tool:"response" — assim o deny jamais se auto-satisfaz em wasObserved()
+            // (que exclui REQUIRED_TOOL_MISSING), e o único jeito de sair do requisito é a LLM chamar a tool de verdade.
+            observations.push({ tool: "response", ok: false, error: { code: "REQUIRED_TOOL_MISSING", message: missingTool.feedback } });
+            if (missingTool.tool === "stock_search") duplicateStockCallsBlocked += 1;
+            // ⭐AD-1: TODA perna tem trava. Antes só a de estoque contava, e a palavra "loja" desligava até essa.
+            if (++requiredToolLoopCount >= REQUIRED_TOOL_LOOP_CAP) break;
             continue;
           }
           if (missingTool) break;
@@ -2792,6 +2863,44 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           }
           observations.push({ tool: call.tool, ok: false, error: { code: "REQUIRED_TURN_UNDERSTANDING", message: capMsg } });
           continue;
+        }
+        // ── ⭐AD-2 (2026-07-18): PROVENIÊNCIA DA vehicleKey. A lacuna central do incidente do anúncio. ──────────────
+        //
+        // INCIDENTE (18/07 15:38, lead 12 98819-0301, anúncio "Ford EcoSport SE 1.5 2020" com confiança 1.0): o
+        // adContext resolveu certo e o engine até gravou as constraints (marca=ford, modelo=EcoSport, ano=2020).
+        // Mas o anúncio chega à LLM como TEXTO, e nada no contrato dizia de onde nasce uma vehicleKey. A LLM fez o
+        // esperado: INVENTOU uma chave a partir do texto e chamou vehicle_details -> not_found -> repetiu 3x
+        // (dup_tool) -> grounding_deny -> deflexão "Vou confirmar os detalhes desse veículo com o consultor".
+        // Nenhum stock_search rodou no turno inteiro.
+        //
+        // INVARIANTE: uma vehicleKey só EXISTE se veio de uma tool desta conversa (stock_search/vehicle_details),
+        // da última oferta renderizada, da seleção ativa ou de uma identidade lembrada. Chave que não está nesse
+        // conjunto NÃO EXECUTA — vira feedback com o CONJUNTO ADMISSÍVEL para a MESMA LLM decidir de novo.
+        //
+        // Isto NÃO é o engine escolhendo assunto nem executando busca: a LLM continua decidindo tudo. O efeito
+        // colateral desejado é que, sem chave aterrada, o único caminho para falar do carro do anúncio passa a ser
+        // stock_search — a LLM chega lá sozinha, porque é a única porta que existe. Exceção preservada:
+        // systemDetailKeys (vehicle_details que o PRÓPRIO engine exigiu para grounding).
+        if (llmFirst && (call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
+          const rawInput = call.input as { vehicleRef?: { key?: unknown }; vehicleKey?: unknown };
+          const requestedKey = typeof rawInput.vehicleRef?.key === "string"
+            ? rawInput.vehicleRef.key
+            : (typeof rawInput.vehicleKey === "string" ? rawInput.vehicleKey : null);
+          const grounded = knownVehicleKeys(facts, identities, contextState);
+          if (requestedKey && !grounded.has(requestedKey) && !systemDetailKeys.has(requestedKey)) {
+            const admissiveis = [...grounded]
+              .map((k) => { const l = canonicalVehicleLabel(k, facts, identities, contextState); return l ? `${k} (${l})` : k; })
+              .slice(0, 8).join(" | ");
+            const saida = grounded.size > 0
+              ? `As chaves válidas AGORA são: ${admissiveis}. Use uma delas, ou rode stock_search se o carro certo não estiver nessa lista.`
+              : `NENHUM veículo foi localizado nesta conversa ainda, então não existe chave válida. Rode stock_search com marca/modelo/ano (o anúncio, quando houver, está em sourceContext) e use a chave que a busca retornar.`;
+            observations.push({ tool: "response", ok: false, error: {
+              code: "VEHICLE_KEY_NOT_GROUNDED",
+              message: `A vehicleKey '${requestedKey}' não veio de nenhuma consulta desta conversa — chaves internas NUNCA podem ser deduzidas do texto do anúncio, do catálogo de nomes ou do histórico. ${saida}`,
+            } });
+            if (++keyProvenanceLoopCount >= KEY_PROVENANCE_LOOP_CAP) break;
+            continue;
+          }
         }
         // Proíbe loop idêntico: mesma tool + mesmos args -> devolve o fato já obtido (nunca reexecuta).
         // The brain owns the tool decision, but a photo query cannot contradict the
@@ -3082,10 +3191,17 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               llmFirst && brainSearchAct(),
               moreOptionsNeedsScope,
               frame.signals.mentionsMoreOptions === true && brainSearchAct(),
+              brainStoreInfoAct(),
             );
             if (finalMissingTool) {
-              observations.push({ tool: "response", ok: false, error: { code: "FINAL_REQUIRED_TOOL_MISSING", message: finalMissingTool } });
-              continue;
+              observations.push({ tool: "response", ok: false, error: { code: "FINAL_REQUIRED_TOOL_MISSING", message: finalMissingTool.feedback } });
+              // ⭐AD-1 (contradição PROÍBE-E-EXIGE): neste estágio a LLM está PROIBIDA de chamar tool (o contexto diz
+              // "não chame nenhuma nova tool nesta passagem" e o guard FINAL_TOOL_FORBIDDEN acima rejeita qualquer
+              // passo de tool). Insistir aqui é pedir uma ação impossível — não existe resposta da LLM que satisfaça o
+              // requisito. Registramos a observação (diagnóstico) e SAÍMOS, deixando o turno cair na recuperação
+              // contextual honesta, que nomeia o que faltou. `continue` aqui só queimava as tentativas até
+              // "Tive uma instabilidade".
+              break;
             }
             const authored = authorFromBrainDraft({ finalDecision: finalStep.decision, leadMessage, facts, identities, ctx: { ...ctx, state: contextState, acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined }, proposedPrimaryIntent: finalStep.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: false, noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {

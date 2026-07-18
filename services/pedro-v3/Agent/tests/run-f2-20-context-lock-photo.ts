@@ -269,6 +269,17 @@ async function main(): Promise<void> {
     check("[E3] resposta não promete foto (recuperação honesta/degradado)", !has(c.outbox, "aqui estao as fotos") && (c.src === "technical_fallback" || c.src === "deterministic_recovery" || c.src === "brain_final" || c.src === "brain_retry"), `src=${c.src} text="${c.outbox}"`);
   }
 
+  // E3b: pedido explícito de foto + promessa de terceirizar o envio sem
+  // send_media. A engine não aceita a promessa nem a transforma em resposta;
+  // devolve a incoerência ao mesmo cérebro para ele enviar a mídia ou admitir
+  // honestamente que não a localizou.
+  {
+    const { turn } = await makeConv("E3b");
+    const c = await turn("Esse carro tem foto?", "ambiguous", () => fin([txt("Vou pedir para a nossa equipe enviar para você.")]));
+    check("[E3b] promessa de equipe sem send_media nunca é aceita", !c.hasMedia && !has(c.outbox, "vou pedir para a nossa equipe"), `src=${c.src} text="${c.outbox}"`);
+    check("[E3b] feedback rejeita promessa de envio futuro", c.brainFeedback.some((f) => /prometeu|efeito execut[aá]vel|envio futuro/i.test(f)), JSON.stringify(c.brainFeedback));
+  }
+
   // ── E4: "me manda foto do 2" SEM lista anterior -> pede qual veículo, SEM consultar arbitrário. ───────────────────
   {
     const { turn } = await makeConv("E4");

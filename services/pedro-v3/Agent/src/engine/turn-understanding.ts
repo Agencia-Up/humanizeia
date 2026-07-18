@@ -382,6 +382,25 @@ export function isStockSearchTurn(v: ValidatedUnderstanding | null): boolean {
   return toolCapabilityAuthorized(v, "stock_search");
 }
 
+// ── AD-1 (2026-07-18): o turno é um PEDIDO INSTITUCIONAL? Autoridade SEMÂNTICA para exigir tenant_business_info.
+//
+// DEFEITO CORRIGIDO: quem exigia a tool institucional era `frame.signals.mentionsStore`, um regex que casa \bloja\b em
+// QUALQUER posição — inclusive no uso locativo puro. "Vcs tem na loja uma HRV?" é pergunta de ESTOQUE; o engine exigia
+// informação da LOJA, a LLM (corretamente) nunca chamava a tool institucional, e o turno queimava os passos até
+// `retry_exhausted` -> "Tive uma instabilidade" (incidente de produção 18/07, lead 12 98819-0301).
+//
+// INVARIANTE: exigência de tool nasce do ATO DECLARADO pela LLM com evidência do bloco atual — nunca de uma palavra
+// isolada. Menção léxica a "loja"/"endereço"/"horário" segue existindo como FATO DE CONTEXTO no frame (a LLM lê e
+// decide), mas não manda no engine. Espelha `isStockSearchTurn`, que já migrou para autoridade semântica.
+//
+// tenant_business_info NÃO está em TOOL_CAPABILITY (é institucional, fora do gate de tools comerciais), então a checagem
+// é explícita aqui em vez de reusar toolCapabilityAuthorized. PURO.
+export function isStoreInfoTurn(v: ValidatedUnderstanding | null): boolean {
+  if (!v || !v.fromBrain || !v.trusted) return false;
+  if (v.understanding.requestedCapabilities.includes("institutional_info") && capabilityHasOwnEvidence(v, "institutional_info")) return true;
+  return v.understanding.primaryIntent === "institutional" && v.validEvidence.length > 0;
+}
+
 // ── P0-1: ALVO do turno VINCULADO ao ASSUNTO e VERIFICADO por modelo. O modelo do assunto vem do CLAIM ESCRITO (tem
 //    precedência); subjectValue que CONFLITA com o claim escrito torna o entendimento INVÁLIDO (kind=conflict, zero mídia);
 //    inferência (typo, sem claim exato) só vira candidato se CONFIRMADA por stock_search/catálogo. vehicle_photos_resolve

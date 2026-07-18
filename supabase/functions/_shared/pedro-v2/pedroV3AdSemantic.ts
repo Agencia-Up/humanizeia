@@ -44,23 +44,71 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function sniffImageMime(bytes: Uint8Array): string | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 8
+      && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+      && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) return "image/png";
+  if (bytes.length >= 12
+      && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+      && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+  return null;
+}
+
+function normalizeImageMime(contentType: string, bytes: Uint8Array): string | null {
+  const declared = contentType.split(";")[0].trim().toLowerCase();
+  if (/^image\/(?:jpeg|png|webp)$/.test(declared)) return declared;
+  // Meta/CDN responses occasionally omit content-type or return
+  // application/octet-stream. The bytes, not the header, are authoritative
+  // for this bounded image ingestion step.
+  return sniffImageMime(bytes);
+}
+
+function safeUrlHost(value: string): string {
+  try { return new URL(value).hostname.slice(0, 120); } catch { return "invalid"; }
+}
+
 async function fetchCreativeDataUrl(referral: PedroV3AdReferral, fetcher: FetchLike): Promise<string | null> {
   const candidates = [...new Set(referral.imageUrls)]
     .filter(isTrustedMetaCreativeUrl)
     .filter((url) => !/(?:pps\.whatsapp\.net|profilepic|\/avatar\b)/i.test(url))
-    .slice(0, 2);
+    .slice(0, 3);
+  const failures: string[] = [];
   for (const url of candidates) {
     try {
-      const response = await fetcher(url, { signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) continue;
-      const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-      if (!/^image\/(?:jpeg|png|webp)$/.test(contentType)) continue;
+      const response = await fetcher(url, {
+        headers: {
+          accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+          // Some Meta CDN edges reject a request with no browser-like UA.
+          // This is transport hygiene only; it does not infer ad content.
+          "user-agent": "PedroV3-AdContext/1.0",
+        },
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!response.ok) {
+        failures.push(`${safeUrlHost(url)}:http_${response.status}`);
+        continue;
+      }
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.length === 0 || bytes.length > 6 * 1024 * 1024) continue;
-      return `data:${contentType};base64,${bytesToBase64(bytes)}`;
-    } catch {
-      // Try the next factual creative URL. Failure never blocks ingestion.
+      if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024) {
+        failures.push(`${safeUrlHost(url)}:size`);
+        continue;
+      }
+      const imageMime = normalizeImageMime(response.headers.get("content-type") ?? "", bytes);
+      if (!imageMime) {
+        failures.push(`${safeUrlHost(url)}:not_image`);
+        continue;
+      }
+      return `data:${imageMime};base64,${bytesToBase64(bytes)}`;
+    } catch (error) {
+      // Try the next factual creative URL. Failure never blocks ingestion, but
+      // it must be observable; a silent null made the previous 50% failure
+      // rate indistinguishable from an ad with no image.
+      failures.push(`${safeUrlHost(url)}:${String((error as Error)?.name ?? "fetch_error").slice(0, 40)}`);
     }
+  }
+  if (candidates.length > 0) {
+    console.warn("[pedro-v3-ad] creative_unavailable", JSON.stringify({ candidates: candidates.length, failures }));
   }
   return null;
 }
@@ -107,7 +155,11 @@ export async function resolvePedroV3AdSemantic(
       }),
       signal: AbortSignal.timeout(30_000),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.warn("[pedro-v3-ad] vision_http_error", JSON.stringify({ status: response.status, body: body.slice(0, 240) }));
+      return null;
+    }
     const envelope = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
     const raw = envelope.choices?.[0]?.message?.content;
     const parsed = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown> : null;
@@ -122,7 +174,8 @@ export async function resolvePedroV3AdSemantic(
       confidence,
       diagnostics: { used_image_inference: candidate != null, model },
     };
-  } catch {
+  } catch (error) {
+    console.warn("[pedro-v3-ad] vision_parse_or_transport_error", String((error as Error)?.message ?? error).slice(0, 240));
     return null;
   }
 }
