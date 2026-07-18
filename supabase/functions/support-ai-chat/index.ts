@@ -211,12 +211,33 @@ Deno.serve(async (req) => {
       // Texto 100% determinístico: conteúdo salvo + vídeo + fecho fixos.
       const reply = `${String(top.content).trim()}${videoLinhas}\n\nIsso resolveu sua dúvida?`;
 
+      // Passo a passo COM PRINT (cards). Vem da coluna `tutorial` do artigo, não
+      // da RPC de busca: mudar o tipo de retorno da RPC exigiria DROP/CREATE e
+      // arriscaria os outros chamadores. Uma leitura a mais, só no caminho
+      // canônico, é mais barato que isso.
+      // É COMPLEMENTO do texto, nunca substituto: se falhar, a resposta em
+      // texto (que já é a oficial) sai igual.
+      let tutorial: any = null;
+      try {
+        const { data: art } = await admin
+          .from("support_knowledge_articles")
+          .select("tutorial")
+          .eq("id", top.id)
+          .maybeSingle();
+        tutorial = art?.tutorial ?? null;
+      } catch { /* sem tutorial estruturado = responde só o texto */ }
+
+      // Grava o tutorial junto das fontes da mensagem. Assim, ao reabrir o
+      // painel, o histórico volta COM os cards — e não só com o texto, que
+      // pareceria que o passo a passo ilustrado sumiu.
+      const sourcesFinal = tutorial ? [...sources, { tipo: "tutorial", ...tutorial }] : sources;
+
       const { data: saved } = await admin
         .from("support_chat_messages")
         .insert({
           session_id: sessionId, user_id: user.id, tenant_id: tenantId,
           role: "assistant", content: reply,
-          sources,                       // registra de qual artigo/vídeo veio
+          sources: sourcesFinal,         // artigo/vídeo + tutorial ilustrado
           tokens_used: 0,                // sem IA = sem token
         })
         .select("id")
@@ -236,8 +257,9 @@ Deno.serve(async (req) => {
         session_id: sessionId,
         message_id: saved?.id ?? null,
         reply,
-        sources,
+        sources: sourcesFinal,
         videos: videos.map((v) => ({ id: v.id, titulo: v.title, url: v.video_url, thumb: v.thumbnail_url, plataforma: v.platform })),
+        tutorial,              // { tutorialId, title, summary, steps[] } ou null
         canonico: true,        // front pode marcar "resposta oficial"
         sem_base: false,
       });
