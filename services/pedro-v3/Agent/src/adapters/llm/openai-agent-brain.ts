@@ -414,6 +414,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #timeoutMs: number;
   readonly #allowedTools: ReadonlySet<string>;
   readonly #responseFormat: Record<string, unknown>;   // ⭐json_schema strict per-instância (só tools do allowlist real)
+  readonly #usesJsonSchema: boolean;
   readonly #tokenParameter: CompletionTokenParameter;
   readonly promptSha256: string;
 
@@ -440,7 +441,13 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#timeoutMs = config.timeoutMs ?? 30_000;
     this.#allowedTools = new Set(config.allowedTools ?? ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read", "knowledge_search"]);
     // ⭐auditoria Codex #3: o schema sai do allowlist REAL desta instância (ex.: central_active não tem crm_read).
-    this.#responseFormat = agentStepResponseFormat([...this.#allowedTools]);
+    // DeepSeek Chat (usado somente nos smokes baratos) ainda não aceita json_schema.
+    // Mantemos strict no OpenAI de produção; no endpoint DeepSeek usamos o modo JSON
+    // compatível e deixamos o engine validar understanding/evidence sem fabricar nada.
+    this.#usesJsonSchema = url.hostname.toLowerCase() !== "api.deepseek.com";
+    this.#responseFormat = this.#usesJsonSchema
+      ? agentStepResponseFormat([...this.#allowedTools])
+      : { type: "json_object" };
     this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
     this.promptSha256 = createHash("sha256").update(portalPrompt, "utf8").digest("hex");
   }
@@ -537,12 +544,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       .flatMap((observation) => !observation.ok && observation.tool === "response" ? [observation.error.message.trim()] : [])
       .filter(Boolean)
       .slice(-3);
-    const messages = [
+    const buildMessages = (includeAdImage: boolean) => [
       { role: "system", content: this.#portalPrompt },
       { role: "system", content: this.#operationalPrompt },
       { role: "system", content: JSON.stringify({ context }) },
       ...historyMessages,
-      { role: "user", content: adCreativeUrls.length > 0
+      { role: "user", content: includeAdImage && adCreativeUrls.length > 0
         ? [
             { type: "text", text: frame.block },
             { type: "image_url", image_url: { url: adCreativeUrls[0], detail: "low" } },
@@ -554,7 +561,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     try {
       const hasPolicyRetry = observations.some((o) => !o.ok && o.tool === "response");
       const tokenLimit = { [this.#tokenParameter]: this.#maxTokens };
-      const req: ModelHttpRequest = {
+      const makeRequest = (messages: ReturnType<typeof buildMessages>): ModelHttpRequest => ({
         method: "POST",
         headers: { "content-type": "application/json" }, // authorization é injetado no materialize (segredo fora do objeto serializável)
         body: JSON.stringify({
@@ -563,8 +570,17 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           messages,
         }),
         signal: AbortSignal.timeout(this.#timeoutMs),
-      };
-      const res = await this.#secret.materialize((apiKey) => this.#transport.postJson(this.#url, { ...req, headers: { ...req.headers, authorization: `Bearer ${apiKey}` } }));
+      });
+      const send = (req: ModelHttpRequest) => this.#secret.materialize((apiKey) => this.#transport.postJson(this.#url, { ...req, headers: { ...req.headers, authorization: `Bearer ${apiKey}` } }));
+      let req = makeRequest(buildMessages(true));
+      let res = await send(req);
+      // A campanha pode carregar URL de mídia expirada, inacessível ou incompatível
+      // com o endpoint. Isso é falha de entrada multimodal, não motivo para perder o
+      // turno: a mesma LLM tenta interpretar o bloco e o contexto sem a imagem.
+      if (res.status >= 400 && res.status < 500 && adCreativeUrls.length > 0) {
+        req = makeRequest(buildMessages(false));
+        res = await send(req);
+      }
       if (res.status < 200 || res.status >= 300) {
         // ⭐Item 7 (diagnóstico): captura um trecho SANITIZADO do corpo do erro (antes descartado) — é o que revela
         // QUAL campo o provedor rejeitou num 4xx (ex.: content multimodal, param inválido). Sem prompt/segredo (o body
@@ -711,7 +727,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           model: this.#retryModel,
           temperature: 0,
           ...tokenLimit,
-          response_format: draftRewriteResponseFormat(),   // F7-4: json_schema strict {draft:{parts}}
+          response_format: this.#usesJsonSchema ? draftRewriteResponseFormat() : { type: "json_object" },
           messages: [
             { role: "system", content: "Voce revisa somente a forma do rascunho do mesmo atendente. Nao escolha assunto, intencao, tool, efeito ou proximo campo. Preserve o significado, os fatos e todas as parts nao textuais. Corrija apenas validationFeedback. Para pergunta ambigua, transforme a mesma pergunta em UMA pergunta aberta sobre o mesmo assunto, sem menu nem alternativas. Quando mayRemoveRepeatedOffer=true, pode remover somente a vehicle_offer_list repetida. Responda somente JSON no formato {\"draft\":{\"parts\":[...]}}." },
             { role: "user", content: JSON.stringify(payload) },
@@ -771,7 +787,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           model: this.#semanticCriticModel,
           temperature: 0,
           ...tokenLimit,
-          response_format: semanticCriticResponseFormat(),   // F7-4: json_schema strict do verdict
+          response_format: this.#usesJsonSchema ? semanticCriticResponseFormat() : { type: "json_object" },
           messages: [
             { role: "system", content: SEMANTIC_CRITIC_PROTOCOL },
             { role: "user", content: JSON.stringify(payload) },
