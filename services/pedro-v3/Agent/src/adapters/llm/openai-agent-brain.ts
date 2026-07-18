@@ -36,6 +36,7 @@ export type OpenAiAgentBrainConfig = {
   readonly semanticCriticEnabled?: boolean;
   readonly semanticCriticModel?: string;
   readonly tokenParameter?: CompletionTokenParameter;
+  readonly imageFetcher?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 };
 
 export class OpenAiAgentBrainError extends Error {
@@ -379,6 +380,40 @@ function trustedAdCreativeUrl(value: string): boolean {
     return false;
   }
 }
+
+const MAX_AD_IMAGE_BYTES = 6 * 1024 * 1024;
+const AD_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function fetchAdImageDataUrl(
+  urls: readonly string[],
+  fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): Promise<string | null> {
+  for (const url of [...new Set(urls)].filter(trustedAdCreativeUrl).slice(0, 3)) {
+    try {
+      const response = await fetcher(url, { redirect: "follow", signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) continue;
+      const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+      if (!AD_IMAGE_MIME_TYPES.has(contentType)) continue;
+      const declaredLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_AD_IMAGE_BYTES) continue;
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.length === 0 || bytes.length > MAX_AD_IMAGE_BYTES) continue;
+      return `data:${contentType};base64,${bytesToBase64(bytes)}`;
+    } catch {
+      // Stale/HTML Meta references are input failures, not a provider failure.
+    }
+  }
+  return null;
+}
 function identityTokens(value: string): string[] {
   const ignored = new Set(["voce", "atendente", "definido", "prompt", "portal", "consultor", "consultora", "vendas", "empresa", "loja", "uma", "como", "seu", "sua", "papel"]);
   return normalizedComparable(value).split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !ignored.has(token));
@@ -416,6 +451,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #responseFormat: Record<string, unknown>;   // ⭐json_schema strict per-instância (só tools do allowlist real)
   readonly #usesJsonSchema: boolean;
   readonly #tokenParameter: CompletionTokenParameter;
+  readonly #imageFetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   readonly promptSha256: string;
 
   constructor(secret: RuntimeApiSecret, transport: ModelHttpTransport, portalPrompt: string, config: OpenAiAgentBrainConfig) {
@@ -449,6 +485,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       ? agentStepResponseFormat([...this.#allowedTools])
       : { type: "json_object" };
     this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
+    this.#imageFetcher = config.imageFetcher ?? fetch;
     this.promptSha256 = createHash("sha256").update(portalPrompt, "utf8").digest("hex");
   }
 
@@ -473,8 +510,13 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const firstAssistantTurn = !frame.recentTranscript.some((turn) => turn.role === "agent")
       && !frame.conversationContext.lastAgentMessage?.trim();
     const adCreativeUrls = firstAssistantTurn && !frame.signals.adVehicle
-      ? (frame.signals.adImageUrls ?? []).filter(trustedAdCreativeUrl).slice(0, 1)
+      ? (frame.signals.adImageUrls ?? []).filter(trustedAdCreativeUrl).slice(0, 3)
       : [];
+    // Meta ad URLs are signed/redirecting references, not stable multimodal input.
+    // Resolve them once at this boundary and pass only validated bytes to the model.
+    const adImageDataUrl = adCreativeUrls.length > 0
+      ? await fetchAdImageDataUrl(adCreativeUrls, this.#imageFetcher)
+      : null;
     // Envelope canonico: uma unica vista read-only para a LLM. O historico bruto
     // continua sendo enviado como mensagens user/assistant abaixo, mas fatos,
     // memoria, anuncio, canal e observacoes nao sao mais apresentados em varios
@@ -497,11 +539,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
             ? {
                 kind: "paid_ad",
                 advertisedVehicle: null,
-                ...(adCreativeUrls.length > 0 ? { adCreativeUrls } : {}),
+                ...(adImageDataUrl != null ? { adCreativeImageAvailable: true } : {}),
                 explicitLeadChangeWins: true,
               }
             : adCreativeUrls.length > 0
-              ? { kind: "paid_ad", advertisedVehicle: null, adCreativeUrls, explicitLeadChangeWins: true }
+              ? { kind: "paid_ad", advertisedVehicle: null, adCreativeImageAvailable: adImageDataUrl != null, explicitLeadChangeWins: true }
               : null,
         openingContext: {
           firstAssistantTurn,
@@ -544,15 +586,15 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       .flatMap((observation) => !observation.ok && observation.tool === "response" ? [observation.error.message.trim()] : [])
       .filter(Boolean)
       .slice(-3);
-    const buildMessages = (includeAdImage: boolean) => [
+    const buildMessages = () => [
       { role: "system", content: this.#portalPrompt },
       { role: "system", content: this.#operationalPrompt },
       { role: "system", content: JSON.stringify({ context }) },
       ...historyMessages,
-      { role: "user", content: includeAdImage && adCreativeUrls.length > 0
+      { role: "user", content: adImageDataUrl != null
         ? [
             { type: "text", text: frame.block },
-            { type: "image_url", image_url: { url: adCreativeUrls[0], detail: "low" } },
+            { type: "image_url", image_url: { url: adImageDataUrl, detail: "low" } },
           ]
         : frame.block },
       ...(rewriteFeedback.length > 0 ? [{ role: "system", content: `REESCRITA OBRIGATORIA DA RESPOSTA AO USER IMEDIATAMENTE ANTERIOR:\n- ${rewriteFeedback.join("\n- ")}\nMantenha o ato atual. Nao repita a forma reprovada. Devolva novamente o JSON completo corrigido.` }] : []),
@@ -572,15 +614,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
       const send = (req: ModelHttpRequest) => this.#secret.materialize((apiKey) => this.#transport.postJson(this.#url, { ...req, headers: { ...req.headers, authorization: `Bearer ${apiKey}` } }));
-      let req = makeRequest(buildMessages(true));
-      let res = await send(req);
+      const req = makeRequest(buildMessages());
+      const res = await send(req);
       // A campanha pode carregar URL de mídia expirada, inacessível ou incompatível
       // com o endpoint. Isso é falha de entrada multimodal, não motivo para perder o
       // turno: a mesma LLM tenta interpretar o bloco e o contexto sem a imagem.
-      if (res.status >= 400 && res.status < 500 && adCreativeUrls.length > 0) {
-        req = makeRequest(buildMessages(false));
-        res = await send(req);
-      }
       if (res.status < 200 || res.status >= 300) {
         // ⭐Item 7 (diagnóstico): captura um trecho SANITIZADO do corpo do erro (antes descartado) — é o que revela
         // QUAL campo o provedor rejeitou num 4xx (ex.: content multimodal, param inválido). Sem prompt/segredo (o body
