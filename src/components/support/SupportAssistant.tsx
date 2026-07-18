@@ -69,6 +69,9 @@ export default function SupportAssistant() {
   const [enviando, setEnviando] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
+  // Marca "o usuário pediu conversa NOVA": impede que o efeito de retomar a
+  // última conversa desfaça o clique em "+ Nova" (ver novaConversa).
+  const conversaNovaRef = useRef(false);
 
   // Regra (pedido do dono): o botão de Ajuda fica SÓ na "tela principal" — os
   // painéis e a aba principal (CRM) de cada agente. Some nas telas de conversa
@@ -117,7 +120,14 @@ export default function SupportAssistant() {
     } catch { /* histórico é conforto, não pode travar o chat */ }
   }, [user?.id]);
 
-  useEffect(() => { if (aberto && !msgs.length) carregarUltima(); }, [aberto, msgs.length, carregarUltima]);
+  // Só retoma a última conversa se o usuário NÃO pediu uma nova.
+  // BUG QUE ISSO CORRIGE: `novaConversa` zera `msgs`, o que mudava `msgs.length`
+  // para 0 e RE-DISPARAVA este efeito, que recarregava a sessão anterior do
+  // banco — o botão limpava e o efeito reenchia no mesmo instante, deixando o
+  // chat preso no tópico antigo.
+  useEffect(() => {
+    if (aberto && !msgs.length && !conversaNovaRef.current) carregarUltima();
+  }, [aberto, msgs.length, carregarUltima]);
 
   const enviar = async (pergunta?: string) => {
     const q = (pergunta ?? texto).trim();
@@ -136,7 +146,9 @@ export default function SupportAssistant() {
       });
       if (error) throw error;
       if (data?.error && !data?.reply) throw new Error(data.error);
-      if (data?.session_id) setSessionId(data.session_id);
+      // Nasceu a sessão nova: a partir daqui "retomar a última" volta a valer
+      // (agora ela retoma ESTA conversa, não a que o usuário acabou de fechar).
+      if (data?.session_id) { setSessionId(data.session_id); conversaNovaRef.current = false; }
       setMsgs(prev => [...prev, {
         id: data?.message_id,
         role: 'assistant',
@@ -167,7 +179,31 @@ export default function SupportAssistant() {
     } catch { /* avaliação não pode quebrar a conversa */ }
   };
 
-  const novaConversa = () => { setMsgs([]); setSessionId(null); setTexto(''); };
+  /**
+   * "+ Nova" — começa uma conversa REALMENTE limpa.
+   *
+   * Limpa o estado local (mensagens, sessão, caixa de texto), impede que o
+   * efeito de retomada traga a conversa antiga de volta, e ENCERRA a sessão
+   * anterior no banco. Esse último passo é o que torna a limpeza definitiva:
+   * `carregarUltima` procura a última sessão com status 'open', então uma
+   * sessão deixada aberta ressuscitaria o tópico velho na próxima abertura do
+   * painel. O "cache" do suporte é essa sessão no banco — o chat não guarda
+   * nada em localStorage/sessionStorage (conferido).
+   */
+  const novaConversa = async () => {
+    const anterior = sessionId;
+    conversaNovaRef.current = true;
+    setMsgs([]);
+    setSessionId(null);
+    setTexto('');
+    if (!anterior) return;
+    try {
+      await supabase
+        .from('support_chat_sessions')
+        .update({ status: 'resolved' })
+        .eq('id', anterior);
+    } catch { /* encerrar é higiene: não pode travar o início da conversa nova */ }
+  };
 
   // PORTAL pra document.body: garante que o `fixed` do botão seja SEMPRE em
   // relação à TELA, nunca a um ancestral. Sintoma que motivou (dono, 17/07, no
