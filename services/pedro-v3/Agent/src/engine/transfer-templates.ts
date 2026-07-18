@@ -28,6 +28,13 @@ import type { ConversationState, FunnelSlots } from "../domain/conversation-stat
 export const HANDOFF_REASON_KINDS = [
   "explicit_human_request",
   "qualified_handoff",
+  // ⭐DEGRAU 2 (2026-07-18): a conversa CHEGOU AO FIM com o lead INTERESSADO, mas o funil do portal ainda não está
+  // completo — logo `qualified_handoff` seria (corretamente) negado pelo gate de qualificação. Caso real: lead viu o
+  // veículo do anúncio, ofereceu o carro na troca e disse "vou até aí, sou de SJC" — pronto para o vendedor, mas sem
+  // dia/horário marcado. Sem este motivo o agente ficava com o lead na mão e a régua de follow-up nunca parava.
+  // NÃO é desinteresse (o lead quer) e NÃO exige qualificação completa; exige apenas que a LLM declare o
+  // encerramento e que a transferência seja executável. A decisão continua sendo 100% da LLM.
+  "handoff_after_closure",
   "followup_timeout_handoff",
   // O lead encerrou/desistiu. A despedida continua sendo autoria da LLM;
   // este motivo existe apenas para a cadeia operacional e o briefing interno.
@@ -45,6 +52,7 @@ export function isHandoffReasonKind(value: unknown): value is HandoffReasonKind 
 export const HANDOFF_REASON_LABEL: Record<HandoffReasonKind, string> = {
   explicit_human_request: "Lead pediu atendimento humano",
   qualified_handoff: "Lead qualificado — próximo passo é o vendedor",
+  handoff_after_closure: "Conversa encerrada com lead interessado — continuidade humana",
   followup_timeout_handoff: "Inatividade do lead (follow-up T3)",
   silent_disengagement_handoff: "Lead encerrou o atendimento sem interesse nas opções",
   returning_lead_renotify: "Lead retornou e voltou a demonstrar interesse",

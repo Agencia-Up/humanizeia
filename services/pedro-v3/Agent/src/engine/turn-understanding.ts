@@ -14,6 +14,7 @@ import { normalizeText, canonicalModel, modelIdentityMatches, modelLikelyTypoMat
 export type KnownVehicleModel = { readonly marca: string | null; readonly modelo: string | null; readonly ano?: number | null };
 import { parseOrdinal } from "./ordinal.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
+import { isVisitAct } from "./visit-semantics.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { FrameSignals, TurnUnderstanding, TurnCapability, TurnUnderstandingEvidence, PrimaryIntent, TurnSubjectKind } from "../domain/agent-brain.ts";
@@ -134,7 +135,10 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   }
   if (u.primaryIntent === "visit") {
     const visitEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
-    const explicitVisit = VISIT_ACT_RX.test(visitEvidence);
+    // ⭐DEGRAU 3: usa a FONTE ÚNICA (visit-semantics). O RX antigo só aceitava visit*/agend*/presencial, então uma
+    // afirmação de deslocamento ("vou até aí, sou de SJC") era rejeitada e a LLM que classificasse CORRETAMENTE
+    // levava deny -> retry -> fallback técnico. Agora vale a invariante: deslocamento + dêixis de destino = visita.
+    const explicitVisit = isVisitAct(visitEvidence);
     // ⭐P0-A (continuação semântica): sem ato explícito de visita, um VALOR TEMPORAL ("pra segunda"/"às 15h") só valida
     //    quando há CONTEXTO legítimo de agendamento em andamento (visitActive). A mensagem atual é a evidência; a memória
     //    fornece só a relação. Sem contexto, "segunda" isolada NÃO inicia agendamento (fica o issue).

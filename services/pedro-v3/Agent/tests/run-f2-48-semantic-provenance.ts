@@ -389,7 +389,11 @@ async function main(): Promise<void> {
     // MISSÃO PII (invariantes 9/10): o deny de promessa-sem-efeito passou a guiar TRANSPARÊNCIA honesta
     // ("transferência NÃO pode ser executada… PROIBIDO condicionar a CPF") — o gatilho do script acompanha
     // o texto novo (comportamento protegido é o MESMO: deny dispara e a LLM reescreve sem promessa falsa).
-    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /(transfer[êe]ncia n[ãa]o pode ser executada|ENCAMINHAR para consultor|prop[oô]s transferência sem o cliente pedir)/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
+    // ⭐DEGRAU 1 (2026-07-18): o gatilho casava a FRASE exata do deny e quebrava a cada melhoria de redação (já foi
+    // reescrito uma vez pela missão PII, e de novo quando o feedback parou de ensinar "só transfere se o cliente pedir").
+    // Agora casa o CONCEITO — qualquer deny cujo texto fale de transferência/encaminhar/consultor —, então o
+    // comportamento protegido (deny dispara e a LLM reescreve SEM promessa falsa) segue coberto sem acoplar à palavra.
+    const tH = await c.t("quero fechar negócio", (f, obs) => obs.some((o) => o.tool === "response" && !o.ok && /(transfer[êe]nci|encaminhar|consultor)/i.test((o as { error?: { message?: string } }).error?.message ?? ""))
       ? finU([txt("Perfeito! Vamos avançar: quer agendar uma visita para ver o carro de perto?")], U("other", "quero fechar negócio"))
       : finU([txt("Perfeito! Vou chamar nosso consultor agora para finalizar com você.")], U("other", "quero fechar negócio")));
     check("[C2-H1] promessa de consultor sem efeito REJEITADA e reescrita conduzindo", tH.sentTexts.length > 0 && !tH.sentTexts.some((x) => has(x, "consultor")) && tH.sentTexts.some((x) => has(x, "visita")), tH.sentTexts.join("|").slice(0, 100));

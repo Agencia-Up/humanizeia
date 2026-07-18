@@ -1043,7 +1043,11 @@ function authorFromBrainDraft(args: {
     }
     if (!handoffProposed || args.handoffPlannable !== true) {
       if (args.humanRequested !== true) {
-        return { ok: false, feedback: "Voce mencionou/propôs transferência sem o cliente pedir humano e sem um handoff executável. Nao fale de indisponibilidade nem de transferência: continue VOCE atendendo e responda ao ato atual do cliente com UMA proxima pergunta natural." };
+        // ⭐DEGRAU 1 (2026-07-18): o texto antigo dizia "sem o cliente pedir humano", ENSINANDO que transferência só é
+        // legítima quando o lead pede — o que é falso (qualified_handoff é decisão da LLM e não depende de pedido).
+        // Nos dois casos que chegam aqui handoffPlannable !== true, então a causa REAL é a transferência não estar
+        // executável neste turno. O feedback agora diz isso, sem desensinar a decisão autônoma.
+        return { ok: false, feedback: "Você ofereceu/mencionou transferência, mas ela NÃO está executável neste turno (sem vendedor/vínculo disponível agora). Transferir também é decisão SUA quando a qualificação está completa — o problema aqui não é faltar pedido do cliente, é a transferência estar indisponível. Não fale de indisponibilidade nem prometa consultor: continue VOCÊ atendendo e responda ao ato atual com UMA próxima pergunta natural." };
       }
       // MISSÃO PII (invariantes 9/10): a indisponibilidade REAL exige TRANSPARÊNCIA — nunca esconder o pedido
       // do cliente nem convertê-lo em coleta de dados. PROIBIDO condicionar a transferência a CPF/qualificação.

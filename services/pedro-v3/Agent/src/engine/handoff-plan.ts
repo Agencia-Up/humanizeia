@@ -56,7 +56,24 @@ export function proposedHandoffReason(decision: TurnDecision): HandoffReasonKind
   if (!isHandoffReasonKind(reason)) return null;
   // returning_lead_renotify é resolução da SAGA (lead com dono) — a decisão não o origina;
   // followup_timeout_handoff nasce do timer (HF-4), não do turno conversacional.
-  return reason === "explicit_human_request" || reason === "qualified_handoff" ? reason : null;
+  // ⭐DEGRAU 2: handoff_after_closure é originável pela DECISÃO (a LLM encerra com lead interessado).
+  return reason === "explicit_human_request" || reason === "qualified_handoff" || reason === "handoff_after_closure"
+    ? reason
+    : null;
+}
+
+// ⭐DEGRAU 2: a decisão da LLM VENCE o motivo forçado quando ela declarou encerramento-com-transferência.
+// Antes, `forcedReason ?? proposedHandoffReason(...)` fazia o forçado sempre ganhar: um handoff_after_closure
+// autorado pela LLM num turno em que ela também declarasse encerramento era RENOMEADO para
+// silent_disengagement_handoff, e o vendedor recebia "encerrou sem interesse" para um lead que QUER comprar.
+// Regra: só um opt-out explícito e inequívoco do lead ("me tire da lista") pode sobrescrever a autoria.
+export function resolveHandoffReason(
+  decision: TurnDecision,
+  forcedReason: HandoffReasonKind | null | undefined,
+): HandoffReasonKind | null {
+  const proposed = proposedHandoffReason(decision);
+  if (proposed === "handoff_after_closure" && forcedReason === "silent_disengagement_handoff") return proposed;
+  return forcedReason ?? proposed;
 }
 
 // Encerrar a conversa por desinteresse também é um evento operacional: o
@@ -77,7 +94,7 @@ export function forcedSilentDisengagementReason(input: {
 // quando `plannable`, reconstrói a cadeia completa com briefing/etiquetas factuais.
 export function buildHandoffChain(args: HandoffChainArgs & { readonly plannable: boolean; readonly forcedReason?: HandoffReasonKind }): HandoffChainResult {
   const withoutHandoff = args.decision.effectPlan.filter((p) => p.kind !== "handoff" && p.kind !== "notify_seller");
-  const reason = args.forcedReason ?? proposedHandoffReason(args.decision);
+  const reason = resolveHandoffReason(args.decision, args.forcedReason);
   if (!reason || !args.plannable) {
     return {
       planned: false,

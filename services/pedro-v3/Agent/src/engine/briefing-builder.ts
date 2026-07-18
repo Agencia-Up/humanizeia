@@ -64,6 +64,7 @@ const CATEGORY_LINE: Record<SdrCategory, string> = {
 export type BriefingHandoffReason =
   | "explicit_human_request"
   | "qualified_handoff"
+  | "handoff_after_closure"   // ⭐DEGRAU 2: conversa encerrada com lead INTERESSADO, sem qualificação completa
   | "followup_timeout_handoff"
   | "silent_disengagement_handoff"
   | "returning_lead_renotify";
@@ -208,6 +209,10 @@ export function buildAgentSummary(args: BriefingArgs): string[] {
     summary.push("Pediu atendimento humano diretamente.");
   } else if (args.handoffReason === "qualified_handoff") {
     summary.push("Chegou ao ponto de continuidade com o vendedor.");
+  } else if (args.handoffReason === "handoff_after_closure") {
+    // ⭐DEGRAU 2: NÃO é desinteresse. O lead quer seguir, a conversa chegou ao fim natural, mas o funil não foi
+    // concluído — o vendedor precisa saber que ainda faltam dados (o restante do briefing lista o que já se sabe).
+    summary.push("Conversa encerrada com o lead ainda interessado; qualificação incompleta, continuidade com o vendedor.");
   }
   for (const gap of args.knowledgeGaps ?? []) summary.push(`Ficou uma dúvida para o vendedor: ${gap.query} — ${gap.reason}.`);
   if (summary.length === 0) summary.push("Iniciou o contato, mas ainda não informou o veículo ou a necessidade principal.");

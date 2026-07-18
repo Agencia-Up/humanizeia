@@ -203,8 +203,16 @@ SAIDA E EFEITOS
 - Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
 - draft.parts aceita apenas text, message_break, vehicle_ref, money_ref e vehicle_offer_list. Atributos e listas precisam de fatos aterrados; mídia e handoff ficam em effects.
-- Pedido explícito de humano pode usar handoff sem exigir nome, CPF ou qualificação adicional. Se não houver efeito executável, não prometa transferência.
 - O texto comercial é sempre escrito por você. A engine não conduz, não lista, não transfere e não reescreve a mensagem.
+
+TRANSFERENCIA (VOCE DECIDE)
+- Você pode propor {"kind":"handoff","reason":"explicit_human_request"|"qualified_handoff"} nos effects. A engine só valida e executa; ela nunca decide transferir por conta própria.
+- explicit_human_request: o cliente pediu humano/vendedor/atendente. Esse pedido VENCE o funil — não exija nome, CPF, nascimento, troca, entrada nem qualificação. Agradeça, anuncie a transição e inclua o effect no MESMO final. O que faltar vai como "não informado" no briefing; nunca invente.
+- qualified_handoff: NÃO depende de o cliente pedir. Use quando o funil do prompt do portal estiver completo e passar para um humano for o próximo passo natural do atendimento.
+- handoff_after_closure: use quando a CONVERSA CHEGOU AO FIM com o cliente AINDA INTERESSADO, mas o funil não está completo — por exemplo, ele confirma que vai à loja, aceita a proposta ou se despede satisfeito, sem ter fechado todos os dados. Não invente qualificação que falta: transfira assim mesmo, o vendedor continua. NÃO use isto para desinteresse ("não quero", "não gostei") nem para dúvida solta no meio do atendimento.
+- Não transfira por interesse suave ("gostei", foto, garantia, curiosidade). Não escolha vendedor, sellerId nem UUID.
+- Se você escrever que vai encaminhar/chamar um consultor, o effect handoff tem que estar no MESMO final. Sem efeito executável, não prometa transferência.
+- Se a transferência for recusada por indisponibilidade real, seja transparente: diga honestamente que não consegue transferir agora e ofereça alternativa. Nunca finja que está em andamento e nunca condicione a transferência a CPF ou mais dados.
 
 FOLLOW-UP
 - followupStage e um evento de inatividade, nao uma fala nova do lead. Nao use tools, nao reinicie o funil e nao cumprimente. T1/T2 devem ser retomadas curtas e ligadas ao historico; T3 e despedida sem pergunta e só menciona consultor quando o handoff estiver disponível.
@@ -258,7 +266,8 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
   // effects = anyOf por KIND.
   const effSend = strictObj(["kind"], { kind: { type: "string", enum: ["send_message"] } });
   const effMedia = strictObj(["kind", "vehicleKey", "photoIds"], { kind: { type: "string", enum: ["send_media"] }, vehicleKey: S_STR, photoIds: { type: "array", items: S_STR } });
-  const effHandoff = strictObj(["kind", "reason"], { kind: { type: "string", enum: ["handoff"] }, reason: { type: "string", enum: ["explicit_human_request", "qualified_handoff"] } });
+  // ⭐DEGRAU 2: handoff_after_closure entra no enum — sem isto a LLM não consegue sequer EMITIR a decisão.
+  const effHandoff = strictObj(["kind", "reason"], { kind: { type: "string", enum: ["handoff"] }, reason: { type: "string", enum: ["explicit_human_request", "qualified_handoff", "handoff_after_closure"] } });
   const effects = { type: "array", items: { anyOf: [effSend, effMedia, effHandoff] } };
   return strictObj(
     ["kind", "understanding", "call", "reasonCode", "confidence", "guidance", "draft", "effects"],
@@ -302,25 +311,13 @@ function semanticCriticResponseFormat(): Record<string, unknown> {
   return { type: "json_schema", json_schema: { name: "semantic_critic_verdict", strict: true, schema } };
 }
 
-const HANDOFF_PROTOCOL = `
-
-=== CAPABILITY DE TRANSFERENCIA (ATIVA) ===
-Voce pode propor o effect {"kind":"handoff","reason":"explicit_human_request"|"qualified_handoff"}.
-- explicit_human_request: SEMPRE que o cliente pedir claramente humano/vendedor/atendente/consultor ("me transfere",
-  "quero falar com o atendente"). Esse pedido VENCE o funil: NAO exija CPF, nascimento, troca, entrada, parcela nem
-  qualificacao completa — agradeca, informe a transicao e INCLUA o effect handoff no MESMO final. Dados que faltarem
-  aparecem como "nao informado" no briefing do vendedor (nunca invente).
-- qualified_handoff: somente quando o funil do prompt esta completo e transferir e o proximo passo natural.
-Nao transfira por "gostei", foto, garantia, curiosidade ou interesse suave. Nao escolha sellerId, UUID ou vendedor.
-Se disser ao cliente que vai encaminhar/chamar vendedor, inclua o effect handoff no MESMO final. Se o sistema
-recusar a transferencia (indisponivel de verdade), seja TRANSPARENTE: diga com honestidade que nao consegue
-transferir NESTE momento e ofereca alternativa (seguir por aqui / registrar o pedido) — NUNCA condicione a
-transferencia a CPF ou a mais dados, e NUNCA finja que a transferencia esta em andamento.
-- Quando VOCE decidir que a qualificacao esta completa e escrever que vai encaminhar, o final deve conter a forma
-  estrutural: "understanding":{"primaryIntent":"financing","requestedCapabilities":["handoff"],...},
-  "effects":[{"kind":"send_message"},{"kind":"handoff","reason":"qualified_handoff"}]. A evidence continua sendo
-  um trecho literal do bloco atual que completou a qualificacao. Se nao quiser transferir, nao use linguagem de promessa.
-`;
+// ⭐DEGRAU 1 (2026-07-18): o antigo HANDOFF_PROTOCOL vivia aqui e NUNCA era concatenado a nenhum prompt — era código
+// morto. Quando o protocolo foi compactado no COMPACT_OPERATIONAL_PROMPT, a seção de transferência foi reduzida
+// SOMENTE ao caso explícito ("cliente pediu humano"), e a metade do qualified_handoff (a LLM DECIDE transferir quando
+// o funil está completo) se perdeu. Efeito medido em produção: 207 turnos / 55 conversas com a transferência sempre
+// disponível (plannable=true) e ZERO propostas de qualified_handoff pela LLM — ela nunca soube que podia.
+// A semântica foi INCORPORADA ao protocolo operacional ÚNICO (seção "TRANSFERENCIA (VOCE DECIDE)"), e o bloco morto
+// foi removido de propósito: mantê-lo aqui recriaria uma segunda autoridade textual, competindo com o prompt do portal.
 
 const FOLLOWUP_PROTOCOL = `
 
@@ -1168,11 +1165,13 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           out.push({ kind: "send_media", planId: "media", order: order++, vehicleKey, photoIds, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey, photoIds }] } as ProposedEffectPlan);
         }
       } else if (e.kind === "handoff" && !out.some((x) => x.kind === "handoff")) {
-        // HF-1: o cérebro propõe só o ATO + o MOTIVO tipado (explicit_human_request | qualified_handoff).
-        // leadId/briefing/vendedor são autoridade do ENGINE/saga (chokepoint buildHandoffChain) — a LLM nunca
-        // fornece UUID. Sem flag/vendedor/vínculo o engine remove a proposta e o deny guia a reescrita.
+        // HF-1: o cérebro propõe só o ATO + o MOTIVO tipado. leadId/briefing/vendedor são autoridade do
+        // ENGINE/saga (chokepoint buildHandoffChain) — a LLM nunca fornece UUID. Sem flag/vendedor/vínculo o
+        // engine remove a proposta e o deny guia a reescrita.
+        // ⭐DEGRAU 2: handoff_after_closure entra na whitelist. Sem isto o efeito seria descartado em SILÊNCIO
+        // aqui, e o sintoma seria idêntico ao incidente (a LLM decide, nada acontece).
         const reason = str(e.reason);
-        if (reason === "explicit_human_request" || reason === "qualified_handoff") {
+        if (reason === "explicit_human_request" || reason === "qualified_handoff" || reason === "handoff_after_closure") {
           out.push({ kind: "handoff", planId: "handoff", order: order++, leadId: "", reason, briefing: "", onSuccess: [] } as ProposedEffectPlan);
         }
       }
