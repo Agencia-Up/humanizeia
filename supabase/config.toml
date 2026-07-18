@@ -286,3 +286,7 @@ verify_jwt = true
 
 [functions.subscription-dunning]
 verify_jwt = false
+
+# Chamada pelo cliente LOGADO (tela de mensalidade em aberto) — exige JWT.
+[functions.subscription-invoice]
+verify_jwt = true

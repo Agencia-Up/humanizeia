@@ -155,7 +155,45 @@ serve(async (req: Request) => {
       clientePago('email', email),
       clientePago('document', docDigits),
     ]);
+
+    // FALHA FECHADO: se nao deu pra CONSULTAR, nao da pra afirmar que a pessoa
+    // ainda nao e cliente — e seguir em frente criaria a cobranca. Recusa.
+    // Bloquear venda nova num soluco de banco e chato e reversivel; recobrar
+    // R$1.497,90 de quem ja pagou, nao.
+    if (porEmail.error || porDoc.error) {
+      console.error('[checkout] guarda anti-recompra indisponivel:', porEmail.error || porDoc.error);
+      return new Response(JSON.stringify({
+        error: 'Nao conseguimos validar seu cadastro agora. Tente novamente em '
+             + 'alguns minutos ou fale com o suporte da Logos.',
+        code: 'verificacao_indisponivel',
+      }), {
+        status: 503,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const jaCliente = porEmail.data || porDoc.data;
+
+    // Diagnostico: permite CONFERIR a trava sem criar cobranca (mesmo padrao do
+    // `probe_subscription` da subscription-dunning). So service_role — senao
+    // virava consulta publica de "esse e-mail e cliente da Logos?".
+    if (body?.dry_run === true) {
+      const bearer = (req.headers.get('Authorization') || '').replace('Bearer ', '');
+      if (bearer !== Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) {
+        return new Response(JSON.stringify({ error: 'Nao autorizado' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        dry_run: true,
+        seria_bloqueado: !!jaCliente?.id,
+        motivo: jaCliente?.id ? 'ja_e_cliente' : 'sem_compra_anterior',
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     if (jaCliente?.id) {
       console.warn(`[checkout] BLOQUEADO recompra: email=${email} ja tem checkout pago=${jaCliente.id}`);
