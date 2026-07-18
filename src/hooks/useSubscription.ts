@@ -139,27 +139,34 @@ export function useSubscription() {
     setLoading(true);
     setError(null);
     try {
-      let { data, error: selErr } = await withTimeout(
-        (supabase as any)
-          .from('user_subscriptions')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle(),
+      // Assinatura EFETIVA de quem está logado. Vendedor é FUNCIONÁRIO: quem
+      // assina é a conta master, e é o plano DELA que vale (menu, integrações,
+      // cota). A RLS (`auth.uid() = user_id`) impede o vendedor de ler a linha
+      // do patrão, por isso vai por RPC SECURITY DEFINER.
+      //
+      // Era aqui o bug: lendo `.eq('user_id', user.id)`, o vendedor nunca
+      // achava nada e o bloco abaixo CRIAVA uma linha pra ele — foi assim que
+      // nasceram 25 "assinaturas" que na verdade eram gente da equipe, e por
+      // isso o vendedor via um plano falso em vez do plano do patrão.
+      const { data: eff, error: rpcErr } = await withTimeout(
+        (supabase as any).rpc('get_my_effective_subscription'),
         8000,
-        'select user_subscriptions',
+        'rpc get_my_effective_subscription',
       );
-
-      // Se não existe subscription, cria uma PENDENTE (travada) — não libera
-      // acesso grátis. Só o webhook da Asaas (após pagamento confirmado) muda
-      // o status pra 'active'. Contas antigas já têm linha, então este fallback
-      // praticamente nunca dispara pra elas — é só uma rede de segurança.
-      if (selErr) {
-        throw selErr;
+      if (rpcErr) {
+        throw rpcErr;
       }
 
-      // Se nao existe assinatura, cria uma PENDENTE (travada). Nunca use upsert:
-      // falha de leitura/RLS poderia sobrescrever plano pago existente como basico.
-      if (!data) {
+      let data = (eff as any)?.subscription ?? null;
+      const souDono = (eff as any)?.is_owner === true;
+
+      // Só o DONO pode ter linha própria, e ela nasce PENDENTE (travada) — não
+      // libera acesso grátis; só o webhook da Asaas, após pagamento confirmado,
+      // muda pra 'active'. Vendedor NUNCA cria linha: se o master não tem
+      // assinatura, o certo é ficar sem, não fabricar uma.
+      // Nunca use upsert: falha de leitura/RLS poderia sobrescrever plano pago
+      // existente como basico.
+      if (!data && souDono) {
         const newSub = {
           user_id: user.id,
           plan_id: 'basico',
@@ -167,7 +174,9 @@ export function useSubscription() {
           tokens_included: 0,
           tokens_used: 0,
           tokens_purchased: 0,
-          renewal_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          // now(), não +30 dias: a conta não pagou nada, então não há período
+          // pago à frente. Mesma semântica do trigger create_default_subscription.
+          renewal_date: new Date().toISOString(),
         };
         const { data: inserted, error: insErr } = await withTimeout(
           (supabase as any)
