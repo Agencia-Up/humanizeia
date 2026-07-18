@@ -4,7 +4,7 @@ Prints deste tutorial. **Ainda nao publicados** — esta pasta so tem este READM
 
 ## Candidatos ja identificados no inventario
 
-Fonte permitida: `public/help/source-screenshots/raw/` (ver o MANIFEST daquela pasta).
+Fonte permitida: `docs/help/source-screenshots-private/raw/` (ver o MANIFEST daquela pasta).
 Nao procurar imagem em outro lugar da maquina.
 
 | arquivo em raw/ | mostra | tem dado sensivel? |

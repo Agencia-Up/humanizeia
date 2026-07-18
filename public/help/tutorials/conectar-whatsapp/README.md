@@ -3,7 +3,7 @@
 **Publicado.** Estas imagens já estão ligadas ao artigo `conectar-whatsapp-qrcode`
 (coluna `tutorial` em `support_knowledge_articles`) e aparecem no chat de suporte.
 
-Todas saíram de `public/help/source-screenshots/raw/` — a única fonte permitida,
+Todas saíram de `docs/help/source-screenshots-private/raw/` — a única fonte permitida,
 listada no MANIFEST daquela pasta. Nenhuma veio de outro lugar da máquina.
 
 ## O que foi publicado
