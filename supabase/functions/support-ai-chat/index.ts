@@ -164,7 +164,16 @@ Deno.serve(async (req) => {
       admin.rpc("search_support_videos", { p_query: message, p_limit: 3 }),
     ]);
     const artigos = (artRes.data ?? []) as any[];
-    const videos = (vidRes.data ?? []) as any[];
+
+    // VÍDEO SÓ NO MODO E — mesma razão já provada pro artigo (ver o bloco
+    // "RESPOSTA CANÔNICA" abaixo): o modo OU casa por palavra genérica e traz
+    // o tema ERRADO. A regra tinha sido aplicada só ao artigo; o vídeo passava
+    // batido. Medido em prod: "Como conectar meu WhatsApp?" e "instância
+    // WhatsApp" casavam "Disparo em Massa" no OU (rank 0.061) e o suporte
+    // sugeria disparo em massa pra quem só quer conectar o número.
+    // Não existe vídeo de conexão no catálogo — então o certo aqui é NÃO
+    // mostrar vídeo nenhum. Melhor nada do que o assunto errado.
+    const videos = ((vidRes.data ?? []) as any[]).filter((v) => v.match_mode === "and");
 
     // Fonte = o que a IA REALMENTE recebeu. Gravado junto da resposta pra dar
     // pra auditar depois de onde ela tirou o que disse.
