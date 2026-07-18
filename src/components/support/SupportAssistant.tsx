@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { descricaoErro } from '@/lib/erroAmigavel';
+import TutorialSteps, { type TutorialData } from './TutorialSteps';
 
 /** Telas de CONVERSA inteiras (caixa de mensagem no rodapé) — o botão nunca aparece. */
 const ROTAS_CHAT = ['/conversas', '/whatsapp/inbox'];
@@ -56,6 +57,8 @@ interface Msg {
   role: 'user' | 'assistant';
   content: string;
   videos?: VideoRec[];
+  /** Passo a passo ilustrado (cards com print). Complemento do texto, nunca substituto. */
+  tutorial?: TutorialData | null;
   semBase?: boolean;
   rating?: 'helpful' | 'not_helpful' | null;
 }
@@ -116,6 +119,11 @@ export default function SupportAssistant() {
             ? m.sources.filter((s: any) => s?.tipo === 'video')
                 .map((s: any) => ({ id: s.id, titulo: s.titulo, url: s.url }))
             : [],
+          // A edge guarda o tutorial junto das fontes, entao o historico volta
+          // COM os cards — e nao so com o texto.
+          tutorial: Array.isArray(m.sources)
+            ? ((m.sources.find((s: any) => s?.tipo === 'tutorial') as TutorialData | undefined) ?? null)
+            : null,
         })));
     } catch { /* histórico é conforto, não pode travar o chat */ }
   }, [user?.id]);
@@ -154,6 +162,7 @@ export default function SupportAssistant() {
         role: 'assistant',
         content: data?.reply ?? '',
         videos: data?.videos ?? [],
+        tutorial: (data?.tutorial as TutorialData | undefined) ?? null,
         semBase: !!data?.sem_base,
         rating: null,
       }]);
@@ -296,6 +305,9 @@ export default function SupportAssistant() {
                     ? 'bg-primary text-primary-foreground'
                     : 'border border-border/60 bg-muted/40'}`}>
                   <p className="whitespace-pre-line">{m.content}</p>
+
+                  {/* Passo a passo ilustrado: cards com print de cada etapa. */}
+                  {m.role === 'assistant' && m.tutorial && <TutorialSteps tutorial={m.tutorial} />}
 
                   {/* Vídeo só aparece se veio do banco — a IA não inventa link. */}
                   {m.role === 'assistant' && !!m.videos?.length && (
