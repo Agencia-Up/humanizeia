@@ -273,6 +273,52 @@ async function main(): Promise<void> {
     check("[P] foto pura com send_media -> completude satisfeita (passa)", cap.committed && cap.hasMedia && !cap.degraded && !cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `media=${cap.hasMedia} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
 
+  // ── Itens 2/3/4 (Codex): central_active tem SÓ 2 desfechos — resposta autorada pela LLM OU nota de outage. A engine
+  //    NÃO escreve mais institucional (o INSTITUCIONAL é a LLM chamando tenant_business_info e redigindo). ──────────────
+  // Q) INSTITUCIONAL + cérebro que NUNCA autora -> technical_fallback (nota de outage), NÃO deterministic_institutional.
+  //    (No caminho feliz — provado no smoke gpt-4.1-mini — a LLM chama a tool e redige "Nossa loja fica na Av...".)
+  {
+    const c = conv(makeBI(ADDR, HOURS)); await c.seed();
+    const cap = await c.t("onde fica a loja?", "ambiguous", () => finEmpty());
+    check("[Q] institucional sem autoria -> technical_fallback (engine não escreve endereço)",
+      cap.committed && cap.src === "technical_fallback" && cap.degraded,
+      `src=${cap.src} degraded=${cap.degraded} text="${cap.outbox}"`);
+    check("[Q] engine NÃO escreveu o endereço (só a LLM redige institucional)",
+      !has(cap.outbox, "Charles Schnneider"), `text="${cap.outbox}"`);
+  }
+  // R) COMERCIAL + cérebro que NUNCA autora -> technical_fallback (engine JAMAIS redige resposta comercial de fallback).
+  {
+    const c = conv(makeBI(ADDR, HOURS)); await c.seed();
+    const cap = await c.t("quero comprar um carro", "ambiguous", () => finEmpty());
+    check("[R] comercial + cérebro sem autoria -> technical_fallback (engine não vira atendente comercial)",
+      cap.committed && cap.src === "technical_fallback" && cap.degraded,
+      `src=${cap.src} degraded=${cap.degraded} text="${cap.outbox}"`);
+  }
+
+  // ── TRAVA ANTI-REGRESSÃO (Codex item 6, parte comportamental): em central_active (llmFirst=true), quando o cérebro
+  //    NÃO autora, NENHUM autor COMERCIAL determinístico legado (foto/desinteresse/mais-opções/recuperação) pode
+  //    escrever ao lead. O único desfecho comercial é technical_fallback; institucional é o único fato permitido.
+  //    Complementa o scan de código-fonte (run-central-no-generic-fallback) com prova de COMPORTAMENTO em runtime.
+  const LEGACY_COMMERCIAL_SOURCES = ["deterministic_photo", "deterministic_recovery", "deterministic_conduct", "deterministic_discovery"];
+  // S) FOTO pedida + cérebro sem autoria -> technical_fallback (nunca deterministic_photo).
+  {
+    const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
+    const cap = await c.t("me manda as fotos dele", "ambiguous", () => finEmpty());
+    check("[S] foto sem autoria -> technical_fallback, nunca deterministic_photo", cap.committed && cap.src === "technical_fallback" && !LEGACY_COMMERCIAL_SOURCES.includes(cap.src), `src=${cap.src}`);
+  }
+  // T) DESINTERESSE + cérebro sem autoria -> technical_fallback (nunca buildDisengagementResponse legado).
+  {
+    const c = conv(makeBI(ADDR, HOURS)); await c.seed();
+    const cap = await c.t("não quero nada, obrigado", "ambiguous", () => finEmpty());
+    check("[T] desinteresse sem autoria -> technical_fallback, nunca autor comercial legado", cap.committed && cap.src === "technical_fallback" && !LEGACY_COMMERCIAL_SOURCES.includes(cap.src), `src=${cap.src}`);
+  }
+  // U) "MAIS OPÇÕES" + cérebro sem autoria -> technical_fallback (nunca buildMoreOptionsScopeQuestion legado).
+  {
+    const c = conv(makeBI(ADDR, HOURS)); await c.seed();
+    const cap = await c.t("tem outros?", "ambiguous", () => finEmpty());
+    check("[U] 'mais opções' sem autoria -> technical_fallback, nunca more_options_scope legado", cap.committed && cap.src === "technical_fallback" && !LEGACY_COMMERCIAL_SOURCES.includes(cap.src), `src=${cap.src}`);
+  }
+
   console.log(`\n== F2.22: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }
 }

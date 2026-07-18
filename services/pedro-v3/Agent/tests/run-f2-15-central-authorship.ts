@@ -74,11 +74,11 @@ class FakeBusinessInfo implements TenantBusinessInfoSource {
 // O runtime central exige que todo passo carregue um entendimento do turno atual;
 // este adaptador preserva esse contrato no cerebro deterministico do teste.
 class UnderstandingBrain implements AgentBrainPort {
-  constructor(private readonly inner: ScriptedAgentBrain) {}
+  constructor(private readonly inner: ScriptedAgentBrain, private readonly preserveMissing = false) {}
 
   async proposeNextStep(frame: TurnFrame, observations: readonly AgentToolObservation[]): Promise<AgentBrainStep> {
     const step = await this.inner.proposeNextStep(frame, observations);
-    return step.understanding
+    return step.understanding || this.preserveMissing
       ? step
       : { ...step, understanding: deriveFallbackUnderstanding(frame.block, frame.signals, extractor) };
   }
@@ -122,7 +122,7 @@ const isRecoverySrc = (r: CentralTurnResult): boolean => srcOf(r) === "technical
 const hasMedia = (r: CentralTurnResult): boolean => r.status === "committed" && r.outbox.some((o) => o.kind === "send_media");
 
 let seq = 0;
-async function runTurn(opts: { state: ConversationState; leadText: string; script: AgentBrainStep[]; relation?: TurnRelation; brainMaxSteps?: number }): Promise<{ result: CentralTurnResult; outboxText: string; toolCalls: QueryCall[]; composeCalls: number; brain: ScriptedAgentBrain }> {
+async function runTurn(opts: { state: ConversationState; leadText: string; script: AgentBrainStep[]; relation?: TurnRelation; brainMaxSteps?: number; preserveMissingUnderstanding?: boolean }): Promise<{ result: CentralTurnResult; outboxText: string; toolCalls: QueryCall[]; composeCalls: number; brain: ScriptedAgentBrain }> {
   toolCalls = [];
   seq += 1;
   const clock = new FakeClock(NOW);
@@ -134,7 +134,7 @@ async function runTurn(opts: { state: ConversationState; leadText: string; scrip
   brain.setTurnScript(opts.script);
   const llm = new ComposeSpyLlm();
   const result = await runCentralConversationTurn({
-    persistence, clock, brain: new UnderstandingBrain(brain), llm, runQuery, businessInfo: new FakeBusinessInfo(),
+    persistence, clock, brain: new UnderstandingBrain(brain, opts.preserveMissingUnderstanding), llm, runQuery, businessInfo: new FakeBusinessInfo(),
     contextPreparer: new FixedPreparer(opts.relation ?? "asks_vehicle_detail"),
     conversationId: CONV, tenantId: TENANT, agentId: AGENT, leadId: null,
     workerId: "w", turnId: `${CONV}-t${seq}`, leaseTtlMs: 60_000, portalPromptSha256: SHA,
@@ -225,6 +225,14 @@ async function main(): Promise<void> {
     finalDraft([txt("Bom dia! Como posso te ajudar hoje?")]),
   ] });
   check("[12] pergunta simples sem necessidade NÃO chama tool", r12.result.status === "committed" && r12.toolCalls.length === 0 && r12.outboxText.includes("Bom dia") && r12.composeCalls === 0, `tools=${r12.toolCalls.length}`);
+
+  // [12b] Uma resposta textual pura continua sendo autoria da LLM mesmo sem
+  // o metadado auxiliar understanding. Sem tool, mídia, handoff ou mutação,
+  // esse metadado não pode transformar uma resposta simples em instabilidade.
+  const r12b = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "oi", relation: "ambiguous", preserveMissingUnderstanding: true, script: [
+    finalDraft([txt("Oi! Como posso ajudar você hoje?")]),
+  ] });
+  check("[12b] resposta textual da LLM sem understanding não cai em instabilidade", r12b.result.status === "committed" && r12b.result.responseSource === "brain_final" && r12b.result.degraded === false && /Como posso ajudar/i.test(r12b.outboxText) && r12b.toolCalls.length === 0, `src=${srcOf(r12b.result)} degraded=${degradedOf(r12b.result)} text=\"${r12b.outboxText}\"`);
 
   // [13] o ÚNICO AgentBrain recebe a prova do prompt do portal (SHA integral no frame).
   const r13 = await runTurn({ state: seedState(ONIX2, { withPhotoMemory: true }), leadText: "oi", relation: "ambiguous", script: [finalDraft([txt("Oi! Tudo bem?")])] });

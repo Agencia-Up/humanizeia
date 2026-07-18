@@ -27,6 +27,9 @@ export type ModelHttpResponse = {
   readonly status: number;
   readonly contentType: string;
   readonly bodyText: string;
+  // ⭐Fase 4 (retry/backoff de provedor): ms sugeridos pelo header Retry-After (429/503). Aditivo/opcional —
+  // o transporte com retry honra este valor; ausência => backoff exponencial.
+  readonly retryAfterMs?: number;
 };
 
 export interface ModelHttpTransport {

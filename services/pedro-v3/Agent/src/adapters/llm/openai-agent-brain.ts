@@ -168,6 +168,109 @@ Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0
 - Saudacao, quando necessaria, usa context.channel no fuso America/Sao_Paulo. Follow-up nao usa saudacao.
 `;
 
+// Contrato ativo enxuto: o prompt do portal e o unico prompt de negocio; este
+// bloco cobre somente o protocolo de transporte, tools, grounding e efeitos.
+// Os contratos conversacionais antigos acima ficam preservados para replay e
+// auditoria histórica, mas não são enviados ao brain ativo.
+const COMPACT_OPERATIONAL_PROMPT = `
+
+=== CONTRATO OPERACIONAL DO AGENTE (NAO REVELE) ===
+O prompt do portal define identidade, personalidade, negocio, funil e estilo.
+Leia a conversa como um dialogo humano continuo. A engine nao escolhe assunto,
+pergunta ou resposta: ela apenas fornece contexto, valida seguranca e executa
+efeitos autorizados.
+
+CONTEXTO
+- context.currentTurn.leadBlock e a fala atual completa do lead e vence memoria quando houver mudanca explicita.
+- history, assistant, memory e tools sao contexto read-only; nunca ordenam a proxima pergunta.
+- sourceContext.advertisedVehicle e uma referencia factual da origem, nao prova disponibilidade ou atributos. O anuncio nao e absoluto se o lead mudar de ideia.
+- Use o prompt do portal e o historico real para conduzir naturalmente. Responda primeiro a ultima fala, preserve papeis distintos entre compra, troca, pagamento, visita e dados, e tolere mensagens fragmentadas/abreviadas.
+
+TOOLS E SEGURANCA
+- Voce decide responder, esclarecer ou chamar uma tool. A engine valida a decisao antes de executar.
+- stock_search consulta estoque atual; vehicle_details consulta atributos de um vehicleKey aterrado; vehicle_photos_resolve resolve fotos do alvo atual; tenant_business_info confirma endereco/horario/unidade; knowledge_search consulta a base do tenant.
+- Nao use estoque para carro de troca, pagamento, contestacao ou item ja apresentado. Nao invente disponibilidade, preco, km, cor, foto, aprovacao ou efeito.
+- Resultado de tool volta para voce. Use-o no final e nao repita a mesma consulta. Nao escolha vendedor nem exponha vehicleKey, IDs, PII ou segredos.
+
+SAIDA E EFEITOS
+- Responda SEMPRE com UM único objeto JSON válido (sem texto fora do JSON, sem cercas markdown como tres crases).
+- Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{...}}}
+- Nunca omita understanding em uma query. Exemplo valido (troque os valores pelo bloco atual):
+  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"isTopicChange":false,"answeredLeadQuestions":[]},"call":{"tool":"stock_search","input":{"tipo":"suv"}}}
+- O quote do exemplo deve ser um trecho literal do bloco atual. Uma query sem understanding e evidence e invalida e deve ser reescrita por voce.
+- Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
+- Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
+- draft.parts aceita apenas text, message_break, vehicle_ref, money_ref e vehicle_offer_list. Atributos e listas precisam de fatos aterrados; mídia e handoff ficam em effects.
+- Pedido explícito de humano pode usar handoff sem exigir nome, CPF ou qualificação adicional. Se não houver efeito executável, não prometa transferência.
+- O texto comercial é sempre escrito por você. A engine não conduz, não lista, não transfere e não reescreve a mensagem.
+
+FOLLOW-UP
+- followupStage e um evento de inatividade, nao uma fala nova do lead. Nao use tools, nao reinicie o funil e nao cumprimente. T1/T2 devem ser retomadas curtas e ligadas ao historico; T3 e despedida sem pergunta e só menciona consultor quando o handoff estiver disponível.
+`;
+
+// ⭐Item 5 (Codex) + auditoria Codex: STRUCTURED OUTPUTS (json_schema strict) PER-OPERAÇÃO. Elimina o HTTP 400
+// "must contain json" (regra do json_object) E força a FORMA: understanding SEMPRE presente (mata
+// UNDERSTANDING_REQUIRED). Cada tool carrega SÓ os seus campos (anyOf discriminado) — nada de superset com dezenas de
+// nulls (que inflava a saída e truncava o anúncio). O `call` é anyOf {null | branch-por-tool} e as branches saem do
+// allowlist REAL da instância (crm_read só entra se permitido) — "tool só do allowlist" agora é verdade no schema.
+// Construído dos MESMOS enums do domínio (sem drift). Mutations/knowledgeGaps ficam fora (o engine os deriva).
+const S_STR = { type: "string" } as const;
+const S_STR_NULL = { type: ["string", "null"] } as const;
+const S_NUM_NULL = { type: ["number", "null"] } as const;
+const S_BOOL_NULL = { type: ["boolean", "null"] } as const;
+function strictObj(required: readonly string[], properties: Record<string, unknown>): Record<string, unknown> {
+  return { type: "object", additionalProperties: false, required: [...required], properties };
+}
+// Input ESPECÍFICO por tool — só os campos que aquela tool usa (o decoder valida os valores).
+function toolInputSchema(tool: string): Record<string, unknown> {
+  switch (tool) {
+    case "stock_search": return strictObj(
+      ["tipo", "cambio", "hibrido", "precoMax", "modelo", "marca", "anos", "popular", "excludeKeys", "broad"],
+      { tipo: S_STR_NULL, cambio: S_STR_NULL, hibrido: S_BOOL_NULL, precoMax: S_NUM_NULL, modelo: S_STR_NULL, marca: S_STR_NULL,
+        anos: { type: ["array", "null"], items: { type: "number" } }, popular: S_BOOL_NULL,
+        excludeKeys: { type: ["array", "null"], items: { type: "string" } }, broad: S_BOOL_NULL });
+    case "vehicle_details": return strictObj(["vehicleKey"], { vehicleKey: S_STR });
+    case "vehicle_photos_resolve": return strictObj(["vehicleKey"], { vehicleKey: S_STR });
+    case "tenant_business_info": return strictObj(["topic"], { topic: { type: "string", enum: [...BUSINESS_INFO_TOPICS] } });
+    case "knowledge_search": return strictObj(["query", "topK"], { query: S_STR, topK: S_NUM_NULL });
+    case "crm_read": return strictObj(["leadId"], { leadId: S_STR });
+    default: return strictObj([], {});
+  }
+}
+function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, unknown> {
+  const evidenceItem = strictObj(["capability", "quote"], { capability: { type: ["string", "null"], enum: [...TURN_CAPABILITIES, null] }, quote: S_STR });
+  const understanding = strictObj(
+    ["primaryIntent", "requestedCapabilities", "subject", "subjectValue", "subjectSource", "evidence", "isTopicChange", "answeredLeadQuestions"],
+    { primaryIntent: { type: "string", enum: [...PRIMARY_INTENTS] },
+      requestedCapabilities: { type: "array", items: { type: "string", enum: [...TURN_CAPABILITIES] } },
+      subject: { type: "string", enum: [...TURN_SUBJECT_KINDS] }, subjectValue: S_STR_NULL,
+      subjectSource: { type: "string", enum: [...SUBJECT_SOURCES] },
+      evidence: { type: "array", items: evidenceItem }, isTopicChange: { type: "boolean" },
+      answeredLeadQuestions: { type: "array", items: S_STR } });
+  // call = anyOf {null | branch por tool do ALLOWLIST REAL}; cada branch carrega só o input daquela tool.
+  const callBranches = allowedTools.map((t) => strictObj(["tool", "input"], { tool: { type: "string", enum: [t] }, input: toolInputSchema(t) }));
+  const call = { anyOf: [{ type: "null" }, ...callBranches] };
+  // draft.parts = anyOf por TIPO de part (cada um só com seus campos).
+  const partText = strictObj(["type", "content"], { type: { type: "string", enum: ["text"] }, content: S_STR });
+  const partBreak = strictObj(["type"], { type: { type: "string", enum: ["message_break"] } });
+  const partVehRef = strictObj(["type", "vehicleKey", "field"], { type: { type: "string", enum: ["vehicle_ref"] }, vehicleKey: S_STR, field: { type: "string", enum: ["marca", "modelo", "ano", "km", "cambio", "cor"] } });
+  const partMoney = strictObj(["type", "role", "source"], { type: { type: "string", enum: ["money_ref"] }, role: { type: "string", enum: ["vehicle_price", "down_payment", "installment", "budget"] },
+    source: strictObj(["kind", "vehicleKey", "slotName"], { kind: { type: "string", enum: ["vehicle_fact", "slot_value"] }, vehicleKey: S_STR_NULL, slotName: S_STR_NULL }) });
+  const partOffer = strictObj(["type", "vehicleKeys"], { type: { type: "string", enum: ["vehicle_offer_list"] }, vehicleKeys: { type: "array", items: S_STR } });
+  const draft = { anyOf: [{ type: "null" }, strictObj(["parts"], { parts: { type: "array", items: { anyOf: [partText, partBreak, partVehRef, partMoney, partOffer] } } })] };
+  // effects = anyOf por KIND.
+  const effSend = strictObj(["kind"], { kind: { type: "string", enum: ["send_message"] } });
+  const effMedia = strictObj(["kind", "vehicleKey", "photoIds"], { kind: { type: "string", enum: ["send_media"] }, vehicleKey: S_STR, photoIds: { type: "array", items: S_STR } });
+  const effHandoff = strictObj(["kind", "reason"], { kind: { type: "string", enum: ["handoff"] }, reason: { type: "string", enum: ["explicit_human_request", "qualified_handoff"] } });
+  const effects = { type: "array", items: { anyOf: [effSend, effMedia, effHandoff] } };
+  return strictObj(
+    ["kind", "understanding", "call", "reasonCode", "confidence", "guidance", "draft", "effects"],
+    { kind: { type: "string", enum: ["query", "final"] }, understanding, call, reasonCode: S_STR_NULL, confidence: S_NUM_NULL, guidance: S_STR_NULL, draft, effects });
+}
+function agentStepResponseFormat(allowedTools: readonly string[]): Record<string, unknown> {
+  return { type: "json_schema", json_schema: { name: "agent_step", strict: true, schema: agentStepJsonSchema(allowedTools) } };
+}
+
 const HANDOFF_PROTOCOL = `
 
 === CAPABILITY DE TRANSFERENCIA (ATIVA) ===
@@ -261,11 +364,16 @@ function queryVehicleKey(raw: unknown): string | null {
   return str(raw.input.vehicleKey) ?? (isRecord(raw.input.vehicleRef) ? str(raw.input.vehicleRef.key) : null);
 }
 
+// ⭐Item 1 (Codex): REMOVIDO capabilityForTool + normalizeToolUnderstanding. O adapter NÃO fabrica mais
+// capability/evidence a partir da chamada da tool. A autorização da tool passa a exigir que a própria LLM declare
+// o understanding (intenção + capability + evidence literal do bloco); incompletude cai no feedback+retry do engine.
+// (A derivação capability↔tool para VALIDAÇÃO segue em engine/tool-authority.ts — legítima, não carimba a decisão.)
+
 export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #secret: RuntimeApiSecret;
   readonly #transport: ModelHttpTransport;
   readonly #portalPrompt: string;
-  readonly #system: string;
+  readonly #operationalPrompt: string;
   readonly #url: string;
   readonly #model: string;
   readonly #retryModel: string;
@@ -275,6 +383,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
   readonly #maxTokens: number;
   readonly #timeoutMs: number;
   readonly #allowedTools: ReadonlySet<string>;
+  readonly #responseFormat: Record<string, unknown>;   // ⭐json_schema strict per-instância (só tools do allowlist real)
   readonly #tokenParameter: CompletionTokenParameter;
   readonly promptSha256: string;
 
@@ -287,7 +396,10 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#secret = secret;
     this.#transport = transport;
     this.#portalPrompt = portalPrompt;
-    this.#system = `${portalPrompt}${N8N_STYLE_BRAIN_PROTOCOL}${config.handoffEnabled === true ? HANDOFF_PROTOCOL : ""}${config.followupEnabled === true ? FOLLOWUP_PROTOCOL : ""}${CONTEXT_AUTHORITY_CLOSURE}`;
+    // Em runtime ativo existem somente dois prompts: o prompt do portal e o
+    // contrato operacional enxuto. Protocolos antigos ficam fora da chamada e
+    // continuam apenas como referência de replay/auditoria.
+    this.#operationalPrompt = COMPACT_OPERATIONAL_PROMPT;
     this.#url = url.toString();
     this.#model = config.model.trim();
     this.#retryModel = config.retryModel?.trim() || this.#model;
@@ -297,6 +409,8 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#maxTokens = config.maxCompletionTokens ?? 1200;
     this.#timeoutMs = config.timeoutMs ?? 30_000;
     this.#allowedTools = new Set(config.allowedTools ?? ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read", "knowledge_search"]);
+    // ⭐auditoria Codex #3: o schema sai do allowlist REAL desta instância (ex.: central_active não tem crm_read).
+    this.#responseFormat = agentStepResponseFormat([...this.#allowedTools]);
     this.#tokenParameter = config.tokenParameter ?? "max_completion_tokens";
     this.promptSha256 = createHash("sha256").update(portalPrompt, "utf8").digest("hex");
   }
@@ -358,32 +472,26 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           ...(frame.signals.specificAdEntry ? { specificAdEntry: true } : {}),
         },
       },
+      // ⭐FASE 5 (contexto único e útil): cada fato tem UM dono, sem duplicação de autoridade ambígua. `conversation`
+      // guarda o estado conversacional persistido (última fala do agente + pergunta pendente, veículo selecionado,
+      // última oferta visível, resumo, followup, nome). `memory` guarda SÓ a memória de trabalho que não está em
+      // conversation (funil, loops abertos, foto, compromissos). O histórico recente vai como mensagens user/assistant
+      // (historyMessages) — NÃO se repete aqui. Os fatos do turno atual ficam em currentTurn.currentTurnFacts.
       conversation: {
         knownLeadName: frame.conversationContext.knownLeadName ?? null,
         lastAssistantMessage: frame.conversationContext.lastAgentMessage,
+        lastAgentQuestion: frame.currentTurnFacts.expectedAnswer.lastAgentQuestion,
         lastResolvedSlotAnswer: frame.conversationContext.lastResolvedSlotAnswer,
         selectedVehicle: frame.conversationContext.selectedVehicle,
         lastVisibleOffer: frame.conversationContext.lastVisibleOffer,
         conversationSummary: frame.conversationContext.conversationSummary,
         followup: frame.conversationContext.followup,
       },
-      history: {
-        recent: recentHistory,
-        relevant: [],
-      },
-      assistant: {
-        lastMessage: frame.conversationContext.lastAgentMessage,
-        lastQuestion: frame.currentTurnFacts.expectedAnswer.lastAgentQuestion,
-      },
       memory: {
         funnel: funnelFacts,
-        confirmedFacts: frame.currentTurnFacts.extracted,
         openLoops: frame.workingMemory.unansweredLeadQuestions,
         lastPhotoAction: frame.workingMemory.lastPhotoAction,
         commitments: frame.workingMemory.commitments,
-        summary: frame.conversationContext.conversationSummary,
-        selectedVehicle: frame.conversationContext.selectedVehicle,
-        visibleOffers: frame.conversationContext.lastVisibleOffer,
       },
       channel: getBrazilChannelTime(frame.now),
       capabilities: llmSignals,
@@ -396,7 +504,8 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       .filter(Boolean)
       .slice(-3);
     const messages = [
-      { role: "system", content: this.#system },
+      { role: "system", content: this.#portalPrompt },
+      { role: "system", content: this.#operationalPrompt },
       { role: "system", content: JSON.stringify({ context }) },
       ...historyMessages,
       { role: "user", content: adCreativeUrls.length > 0
@@ -416,23 +525,36 @@ export class OpenAiAgentBrain implements AgentBrainPort {
         headers: { "content-type": "application/json" }, // authorization é injetado no materialize (segredo fora do objeto serializável)
         body: JSON.stringify({
           model: hasPolicyRetry ? this.#retryModel : this.#model, temperature: this.#temperature, ...tokenLimit,
-          response_format: { type: "json_object" },
+          response_format: this.#responseFormat,
           messages,
         }),
         signal: AbortSignal.timeout(this.#timeoutMs),
       };
       const res = await this.#secret.materialize((apiKey) => this.#transport.postJson(this.#url, { ...req, headers: { ...req.headers, authorization: `Bearer ${apiKey}` } }));
-      if (res.status < 200 || res.status >= 300) return this.#safeFinal(`brain HTTP ${res.status}`);
+      if (res.status < 200 || res.status >= 300) {
+        // ⭐Item 7 (diagnóstico): captura um trecho SANITIZADO do corpo do erro (antes descartado) — é o que revela
+        // QUAL campo o provedor rejeitou num 4xx (ex.: content multimodal, param inválido). Sem prompt/segredo (o body
+        // é a resposta do provedor, não a request); colapsa espaços e corta em 100 chars.
+        const snippet = typeof res.bodyText === "string" ? res.bodyText.replace(/\s+/g, " ").trim().slice(0, 100) : "";
+        return this.#safeFinal(`brain HTTP ${res.status}${snippet ? `: ${snippet}` : ""}`);
+      }
       bodyText = res.bodyText;
     } catch (err) {
       return this.#safeFinal(`brain transport: ${String((err as Error)?.message ?? err).slice(0, 80)}`);
     }
     let content: unknown;
+    let finishReason: string | undefined;
     try {
-      const parsed = JSON.parse(bodyText) as { choices?: { message?: { content?: string } }[] };
-      const raw = parsed?.choices?.[0]?.message?.content;
+      const parsed = JSON.parse(bodyText) as { choices?: { message?: { content?: string; refusal?: string }; finish_reason?: string }[] };
+      const choice = parsed?.choices?.[0];
+      finishReason = choice?.finish_reason;
+      // ⭐Item 7 (diagnóstico): distingue TRUNCAMENTO (finish=length -> maxCompletionTokens curto) de refusal de conteúdo
+      // vs JSON malformado. Antes tudo virava "brain JSON inválido" cego. Com json_schema strict o corte é a causa comum.
+      const refusal = typeof choice?.message?.refusal === "string" ? choice.message.refusal : undefined;
+      if (refusal) return this.#safeFinal(`brain recusou: ${refusal.slice(0, 80)}`);
+      const raw = choice?.message?.content;
       content = typeof raw === "string" ? JSON.parse(raw) : null;
-    } catch { return this.#safeFinal("brain JSON inválido"); }
+    } catch { return this.#safeFinal(`brain JSON inválido${finishReason ? ` (finish=${finishReason})` : ""}`); }
     let step = this.#decodeStep(content, frame, observations);
     const formRewriteCount = observations.filter((observation) => !observation.ok
       && observation.tool === "response" && observation.error.code === "CONVERSATION_FORM").length;
@@ -761,7 +883,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       : decodedUnderstanding;
     if (raw.kind === "query" && isRecord(raw.call)) {
       const call = this.#decodeCall(raw.call);
-      if (call && this.#allowedTools.has(call.tool)) return { kind: "query", call, understanding };
+      if (call && this.#allowedTools.has(call.tool)) {
+        // ⭐Item 1 (Codex): SEM fabricação de understanding. A query carrega SÓ o understanding que a LLM declarou.
+        // Se ela omitiu capability/evidence, o step chega sem envelope e o engine devolve feedback+retry (a tool só é
+        // decisão válida quando a LLM declara a intenção e os dados). O adapter não carimba mais a decisão da LLM.
+        return { kind: "query", call, understanding };
+      }
       // ferramenta desconhecida/proibida -> NÃO reinterpreta o objeto de query como final: devolve fallback seguro.
       return this.#safeFinal("query inválida ou tool fora do allowlist");
     }

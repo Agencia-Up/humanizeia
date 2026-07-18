@@ -7,6 +7,8 @@ export type CentralTurnCapture = {
   turnIndex: number; turnId: string; leadBlock: string; response: string; status: string;
   reasonCode?: string; terminalSafe: boolean; brainSteps: number; llmCallsInTurn: number; promptExactInTurn: boolean;
   responseSource?: string;                 // diagnóstico: brain_final|brain_retry|deterministic_*|technical_fallback
+  degradationKind?: string;                // ⭐FASE 1: causa da degradação (provider_transport|response_rejected|grounding_rejected|tool_denied_no_evidence|retry_exhausted|none)
+  providerFallbackReason?: string | null;  // ⭐FASE 1: motivo sanitizado do provedor quando houve falha real (HTTP/timeout/JSON)
   policyFeedback?: readonly string[];      // diagnóstico: feedbacks de deny devolvidos ao cérebro (revela por que degradou)
   primaryIntent?: string;                  // T6 fonte única: semântica do turno (do cérebro OU fallback validado)
   targetResolutionSource?: string | null;  // T6: como o alvo do turno foi resolvido (turn_photo_fact/turn_ordinal/...)

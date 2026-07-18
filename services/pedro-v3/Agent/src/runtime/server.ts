@@ -24,7 +24,7 @@ import { sanitizeTurnError } from "./sanitize-error.ts";
 import { evaluateFollowup, type FollowupEvaluationReason } from "../engine/followup-policy.ts";
 import { PEDRO_V3_RUNTIME_RELEASE } from "./runtime-release.ts";
 import { findSettledAcrossScopes } from "./settled-scope-finder.ts";
-import { FetchModelHttpTransport, FetchUazapiHttpTransport } from "./fetch-transports.ts";
+import { FetchModelHttpTransport, FetchUazapiHttpTransport, RetryingModelHttpTransport } from "./fetch-transports.ts";
 import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
 import { SupabaseKnowledgeSource } from "../adapters/read/supabase-knowledge-source.ts";
@@ -298,14 +298,19 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     const brainMode = resolveBrainMode();
     // R13-D/4: AgentBrain REAL (OpenAI) só é fabricado quando o modo pede. Planner em temp baixa (0.2). Segredo por
     // tenant (mesmo openAiSecret do compose); prompt integral vai no system do brain (prova por SHA no adapter).
+    // ⭐Fase 4: transporte com retry/backoff (429/5xx/erro de rede, honra Retry-After, teto 2 retries). Compartilhado
+    // pelo brain e pelo compose — o retry-storm nascia justamente do POST cru sem backoff.
+    const modelTransport = new RetryingModelHttpTransport(new FetchModelHttpTransport());
     const agentBrainFactory = brainMode !== "off"
-      ? (config: TenantRuntimeConfig) => new OpenAiAgentBrain(aiSecret, new FetchModelHttpTransport(), config.promptText, {
+      ? (config: TenantRuntimeConfig) => new OpenAiAgentBrain(aiSecret, modelTransport, config.promptText, {
           model: this.#aiProvider.model,
           retryModel: this.#aiProvider.retryModel,
           endpointUrl: this.#aiProvider.endpointUrl,
           allowedHosts: this.#aiProvider.allowedHosts,
           tokenParameter: this.#aiProvider.tokenParameter,
-          temperature: 0.2, maxCompletionTokens: this.#aiProvider.provider === "deepseek" ? 1_600 : 1_200, timeoutMs: 45_000,
+          // ⭐Item 5: json_schema strict + envelope understanding tornam a saída mais verbosa; 1200 truncava (finish=length ->
+          // "JSON inválido"). 2200 dá folga p/ understanding + draft com lista de ofertas sem cortar o JSON no meio.
+          temperature: 0.2, maxCompletionTokens: this.#aiProvider.provider === "deepseek" ? 1_600 : 2_200, timeoutMs: 45_000,
           allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
           handoffEnabled: this.#handoffEnabled,
           followupEnabled: this.#followupEnabled,
@@ -325,7 +330,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       clock: this.#clock,
       modelFactory: createOpenAiModelFactory({
         openAiSecret: aiSecret,
-        modelTransport: new FetchModelHttpTransport(),
+        modelTransport,
         modelOptions: {
           endpointUrl: this.#aiProvider.endpointUrl,
           allowedHosts: this.#aiProvider.allowedHosts,

@@ -54,7 +54,7 @@ export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?:
     tokenParameter: assembly.aiProvider.tokenParameter,
     model: assembly.aiProvider.model,
     retryModel: assembly.aiProvider.retryModel,
-    temperature: 0.1, maxCompletionTokens: 1200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+    temperature: 0.1, maxCompletionTokens: 2200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
     semanticCriticEnabled: process.env.PEDRO_V3_EVAL_SEMANTIC_CRITIC === "1", semanticCriticModel: "gpt-4.1",
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
@@ -244,6 +244,8 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       status: r?.status ?? (error ? "error" : "unknown"),
       reasonCode: r?.status === "committed" ? r.decision.reasonCode : (r?.status === "commit_failed" ? `commit_failed:${r.reason.slice(0, 40)}` : undefined),
       responseSource: r?.status === "committed" ? r.responseSource : undefined,
+      degradationKind: r?.status === "committed" ? r.degradationKind : undefined,
+      providerFallbackReason: r?.status === "committed" ? (r.providerFallbackReason ? sanitize(r.providerFallbackReason).slice(0, 120) : null) : undefined,
       policyFeedback: r?.status === "committed" ? r.policyFeedback.map((f) => sanitize(f).slice(0, 200)) : undefined,
       primaryIntent: r?.status === "committed" ? r.understanding.primaryIntent : undefined,
       targetResolutionSource: r?.status === "committed" ? r.targetResolutionSource : undefined,

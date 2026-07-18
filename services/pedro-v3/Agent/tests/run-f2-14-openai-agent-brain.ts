@@ -154,19 +154,21 @@ async function main(): Promise<void> {
     const { brain, transport } = brainWith(JSON.stringify({ kind: "final", guidance: "ok" }));
     await brain.proposeNextStep(frame("oi"), []);
     const body = JSON.parse(transport.lastRequest!.body) as { messages: { role: string; content: string }[] };
-    const sys = body.messages.find((m) => m.role === "system")?.content ?? "";
+    const sys = body.messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n");
     const crypto = await import("node:crypto");
     const expectedSha = crypto.createHash("sha256").update(PORTAL_PROMPT, "utf8").digest("hex");
     check("[5] prompt do portal presente INTEGRALMENTE no system", sys.includes(PORTAL_PROMPT) && sys.includes("PROMPT-INTEGRAL-MARKER-42"));
     check("[5] promptSha256 correto", brain.promptSha256 === expectedSha);
     check("[5a] contrato nao exige autoauditoria paralela no JSON", !sys.includes("conversationCheck") && !sys.includes("AUTOAVALIACAO CONVERSACIONAL"));
-    check("[5a] campos comerciais continuam sob autoridade fechada do portal", sys.includes("somente os que o prompt do portal nomeia") && sys.includes("nao realiza triagem mecanica"));
+    check("[5a] negocio e funil continuam sob autoridade do portal", sys.includes("O prompt do portal define identidade, personalidade, negocio, funil e estilo") && sys.includes("engine nao escolhe assunto"));
     check("[5a-photo] protocolo explica send_media minimo aterrado pela tool",
-      sys.includes('inclua {"kind":"send_media"} em effects') && sys.includes("unico vehicleKey/photoIds aterrado"));
+      sys.includes("mídia e handoff ficam em effects") && sys.includes("vehicle_photos_resolve"));
     check("[5a-ad] protocolo trata anuncio exato como foco singular, nao lista implicita",
-      sys.includes("use o resultado como FOCO SINGULAR")
-      && sys.includes("Nao use vehicle_offer_list e nao mostre alternativas nessa abertura")
-      && sys.includes('use EXATAMENTE uma part {"type":"message_break"}'));
+      sys.includes("sourceContext.advertisedVehicle")
+      && sys.includes("O anuncio nao e absoluto se o lead mudar de ideia"));
 
     const contextFrame: TurnFrame = {
       ...frame("mostra o azul"),
@@ -214,7 +216,7 @@ async function main(): Promise<void> {
     const payload = JSON.parse(contextMessage) as { context?: { schemaVersion?: number; currentTurn?: { leadBlock?: unknown; openingContext?: Record<string, unknown>; sourceContext?: Record<string, unknown>; currentTurnFacts?: Record<string, unknown> }; memory?: { funnel?: Record<string, unknown>; openLoops?: unknown; suggestedObjective?: unknown }; assistant?: Record<string, unknown>; history?: Record<string, unknown>; conversation?: Record<string, unknown>; capabilities?: Record<string, unknown>; tools?: unknown }; runtimeContext?: unknown; signals?: unknown; leadBlock?: unknown; instruction?: unknown };
     check("[5e-envelope] schema unico sem instrucao top-level concorrente", payload.context?.schemaVersion === 1 && payload.instruction === undefined && payload.runtimeContext === undefined);
     check("[5e-context] bloco atual esta dentro do envelope", payload.context?.currentTurn?.leadBlock === "mostra o azul");
-    check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução", payload.leadBlock === undefined
+    check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução (FASE 5: sem duplicação)", payload.leadBlock === undefined
       && payload.context?.memory?.funnel?.suggestedObjective === undefined
       && payload.signals === undefined
       && payload.context?.capabilities?.currentTurnIntent === undefined
@@ -222,10 +224,13 @@ async function main(): Promise<void> {
       && payload.context?.capabilities?.disengagementOnly === undefined
       && payload.context?.capabilities?.selectedOfferThisTurn === undefined
       && payload.context?.capabilities?.acceptedPhotoOffer === undefined
-      && Array.isArray(payload.context?.history?.recent)
+      // ⭐FASE 5: histórico recente vai SÓ nas mensagens user/assistant (ver [5c-n8n]); não se duplica no JSON.
+      && payload.context?.history === undefined
+      // ⭐FASE 5: a última fala do agente vive só em conversation (não há mais bloco `assistant` espelhando-a).
+      && payload.context?.assistant === undefined
       && payload.context?.conversation !== undefined
       && !contextMessage.includes("expectedAnswer")
-      && payload.context?.assistant?.lastMessage === "Qual carro da lista voce quer ver as fotos?");
+      && payload.context?.conversation?.lastAssistantMessage === "Qual carro da lista voce quer ver as fotos?");
     check("[5e-opening] contexto factual do anuncio chega sem diagnostico comercial derivado",
       payload.context?.currentTurn?.openingContext?.specificAdEntry === true
       && payload.context?.currentTurn?.openingContext?.firstAssistantTurn === false

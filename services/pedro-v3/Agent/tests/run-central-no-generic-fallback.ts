@@ -1,7 +1,12 @@
 // ============================================================================
-// Gate arquitetural da autoria única. Além de proibir o fallback genérico antigo, prova no código que a saída de
-// falha do central_active é somente operacional: nenhum renderer comercial determinístico pode ser promovido a
-// atendente quando a LLM não conclui. Os renderers antigos continuam disponíveis exclusivamente para o legado.
+// Gate arquitetural da autoria única. Prova no código que a saída de falha do central_active NUNCA promove um autor
+// COMERCIAL (o engine não vira atendente quando a LLM não conclui): nada de recuperação comercial, foto, condução,
+// desengajamento, "mais opções" ou oferta relaxada no ramo de falha llm_first. Os renderers comerciais continuam
+// disponíveis exclusivamente para o legado.
+// ⭐FASE 3 (fallback contextual factual): a ÚNICA exceção autorizada é buildInstitutionalResponse — um FATO
+// institucional (endereço/horário/contato) é retrieval de fato do prompt/tool, NÃO condução comercial (não vende,
+// não lista carro, não escolhe assunto). O terminal continua sendo buildBrainUnavailableResponse (degradação
+// operacional honesta) para todo turno que não seja resolvível por fato institucional.
 //   npx tsx tests/run-central-no-generic-fallback.ts
 // ============================================================================
 import { readFileSync } from "node:fs";
@@ -35,17 +40,24 @@ async function main(): Promise<void> {
   // A função buildTechnicalFallback (fala genérica) foi REMOVIDA — não deve mais existir como definição.
   check("buildTechnicalFallback (fala genérica) foi removida", !/function\s+buildtechnicalfallback/.test(norm(engine)), "definição ainda presente");
 
+  // Boundary robusto: o ramo llm_first termina onde COMEÇA o ramo legado, cuja PRIMEIRA chamada é
+  // builddeterministicphotoresponse( (única do legado). Assim o `} else {` interno do fallback factual (FASE 3)
+  // não trunca a janela. A janela cobre TODO o ramo de falha llm_first (institucional factual + terminal operacional).
   const llmFailureStart = code.indexOf("} else if (llmfirst) {");
-  const legacyStart = llmFailureStart >= 0 ? code.indexOf("} else {", llmFailureStart + 1) : -1;
+  const legacyStart = llmFailureStart >= 0 ? code.indexOf("builddeterministicphotoresponse(", llmFailureStart + 1) : -1;
   const centralFailureBranch = llmFailureStart >= 0 && legacyStart > llmFailureStart
     ? code.slice(llmFailureStart, legacyStart)
     : "";
   check("ramo de falha do central_active foi localizado", centralFailureBranch.length > 0);
-  check("central_active usa somente brain_unavailable quando a LLM não autora", centralFailureBranch.includes("buildbrainunavailableresponse"));
+  check("central_active tem o terminal operacional brain_unavailable", centralFailureBranch.includes("buildbrainunavailableresponse"));
+  // ⭐Itens 2/3/4 (Codex): o INSTITUCIONAL é decidido+redigido pela LLM (chama tenant_business_info). A engine NÃO
+  // escreve mais endereço/horário -> buildInstitutionalResponse voltou a ser PROIBIDO no ramo de falha llm_first.
+  // central_active tem só DOIS desfechos: resposta autorada pela LLM OU a nota de outage (buildBrainUnavailableResponse).
   const forbiddenCommercialAuthors = [
-    "buildcontextualrecovery(", "builddeterministicphotoresponse(", "buildinstitutionalresponse(",
-    "builddisengagementresponse(", "buildmoreoptionsscopequestion(", "buildemptysearchconductingrecovery(",
-    "buildrelaxedofferresponse(", "deterministic_recovery", "deterministic_photo", "deterministic_conduct",
+    "buildinstitutionalresponse(",
+    "buildcontextualrecovery(", "builddisengagementresponse(", "buildmoreoptionsscopequestion(",
+    "buildemptysearchconductingrecovery(", "buildrelaxedofferresponse(",
+    "deterministic_institutional", "deterministic_recovery", "deterministic_photo", "deterministic_conduct",
   ];
   for (const author of forbiddenCommercialAuthors) {
     check(`central_active não promove autor comercial: ${author}`, !centralFailureBranch.includes(author));

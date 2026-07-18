@@ -23,7 +23,7 @@ import type {
   DecisionMutation, ProposedDecision, ProposedEffectPlan, QueryCall, QueryResult, TurnAction, TurnDecision, EffectResult, ResponseDraft,
 } from "../domain/decision.ts";
 import type {
-  AgentBrainPort, AgentBrainDecision, AgentToolObservation, CentralQueryCall, PersistedWorkingMemory,
+  AgentBrainPort, AgentBrainDecision, AgentBrainStep, AgentToolObservation, CentralQueryCall, PersistedWorkingMemory,
   PhotoActionDraft, ToolResultMemory, ToolTelemetry, WorkingMemoryV1, BusinessInfoTopic, CurrentTurnIntent, FrameSignals,
   TurnUnderstanding, SystemWorkingMemoryMutation, LeadIntentKind,
 } from "../domain/agent-brain.ts";
@@ -179,6 +179,56 @@ function isDegradedResponse(src: ResponseSource, recoveryReason: string | null):
   return false;
 }
 
+// ⭐FASE 1 (diagnóstico observável): quando o cérebro NÃO autora um final (fallback técnico OU fallback factual da
+// FASE 3), classifica a CAUSA para o relatório do turno. Sanitizado (só rótulo enum). Diferencia o que a missão pediu:
+// falha REAL de provedor × resposta válida rejeitada × tool negada por evidência × grounding × esgotamento de retry.
+export type DegradationKind =
+  | "none"                     // o cérebro autorou (brain_final/brain_retry) OU não é central_active
+  | "provider_transport"       // falha REAL de transporte: HTTP 5xx/429, timeout, erro de rede
+  | "protocol_adherence"       // ⭐Item 7: provedor RESPONDEU (2xx ou 4xx), mas o modelo produziu output que não bate no
+                               //   contrato — JSON malformado, shape inválido, ou request rejeitada (4xx). É o gatilho real
+                               //   das "instabilidades"; a correção é json_schema/tool-calling, NÃO retry de transporte.
+  | "tool_disallowed"          // ⭐Item 7: modelo emitiu query com tool fora do allowlist / shape de call inválido (2xx). Falha SEMÂNTICA do modelo, não transporte.
+  | "tool_denied_no_evidence"  // ação pedida sem understanding/evidência do bloco -> tool não autorizada
+  | "grounding_rejected"       // fato inventado (km/cor/preço/disponibilidade fora do catálogo) barrado
+  | "response_rejected"        // resposta do cérebro rejeitada por completude/política (não-grounding)
+  | "retry_exhausted";         // esgotou tentativas sem causa dominante clara
+// ⭐Item 7 (Codex): NÃO rotular tudo como provider_transport. O reasonSummary do #safeFinal distingue a causa; aqui a
+// mapeamos. HTTP 5xx/429/timeout/rede = transporte REAL; HTTP 4xx / JSON inválido / shape inválido = aderência de
+// protocolo (o provedor respondeu, o output/request não conforma); tool fora do allowlist = falha semântica do modelo.
+function classifyProviderFallback(reason: string | null): "provider_transport" | "protocol_adherence" | "tool_disallowed" {
+  const r = (reason ?? "").toLowerCase();
+  if (r.includes("tool fora do allowlist") || r.includes("query inv")) return "tool_disallowed";
+  if (r.includes("json inv") || r.includes("shape inv")) return "protocol_adherence";
+  const httpMatch = r.match(/http\s+(\d{3})/);
+  if (httpMatch) {
+    const status = Number(httpMatch[1]);
+    if (status === 429 || status >= 500) return "provider_transport";
+    if (status >= 400) return "protocol_adherence";   // 4xx = request rejeitada pelo contrato, não transporte caído
+  }
+  return "provider_transport";   // timeout / erro de rede / transporte cru
+}
+function classifyDegradation(args: {
+  readonly llmFirst: boolean;
+  readonly responseSource: ResponseSource;
+  readonly providerFallbackSeen: boolean;
+  readonly providerFallbackReason: string | null;
+  readonly policyFeedbackLog: readonly string[];
+  readonly observations: readonly AgentToolObservation[];
+}): DegradationKind {
+  if (!args.llmFirst) return "none";
+  // O cérebro autorou (mesmo após um hiccup transitório que o retry/backoff recuperou) -> não é degradação.
+  if (args.responseSource === "brain_final" || args.responseSource === "brain_retry") return "none";
+  // O #safeFinal foi acionado: distingue transporte real × aderência de protocolo × tool inválida (não mascara mais).
+  if (args.providerFallbackSeen) return classifyProviderFallback(args.providerFallbackReason);
+  const obsCodes = args.observations.filter((o) => !o.ok).map((o) => o.error.code);
+  if (obsCodes.includes("UNDERSTANDING_REQUIRED") || obsCodes.includes("REQUIRED_TURN_UNDERSTANDING")) return "tool_denied_no_evidence";
+  const denyCats = args.policyFeedbackLog.map((f) => classifyDenyCategory(f));
+  if (denyCats.includes("grounding")) return "grounding_rejected";
+  if (args.policyFeedbackLog.length > 0) return "response_rejected";
+  return "retry_exhausted";
+}
+
 // T1 (audit Codex smoke): o LLM às vezes emite BYTES DE CONTROLE no texto (ex.: U+001F). Remove C0 (mantém \t \n \r), DEL
 // e o replacement char U+FFFD — nunca vão pro WhatsApp/CRM. NÃO mexe em espaços/quebras (preserva a formatação da lista).
 function stripControlChars(text: string): string {
@@ -263,6 +313,10 @@ export type CentralTurnResult =
       brainSteps: number;
       responseSource: ResponseSource;
       degraded: boolean;   // audit B1: technical_fallback é degradação observável (nunca "sucesso normal")
+      // ⭐FASE 1 (diagnóstico observável): CAUSA da degradação quando o cérebro não autora (sanitizado, enum);
+      // providerFallbackReason = motivo sanitizado do provedor (≤120 chars, sem prompt/PII) quando houve falha real.
+      degradationKind: DegradationKind;
+      providerFallbackReason: string | null;
       institutionalResolved: readonly { readonly topic: string; readonly status: "ok" | "not_configured" | "failure" }[];
       policyFeedback: readonly string[];   // feedbacks de deny devolvidos ao cérebro no turno (observabilidade)
       droppedSelectKeys: readonly string[];   // Hardening 1: seleções descartadas por falta de label canônico
@@ -290,6 +344,23 @@ function payloadJson(value: unknown): JsonValue {
 function textFromInbox(rec: InboxRecord): string {
   const raw = rec.raw as Record<string, unknown>;
   const text = raw.text ?? raw.message ?? raw.body ?? raw.transcription ?? "";
+  if (typeof text === "string" && text.trim() !== "") return text.trim();
+  // ⭐FASE 6 (mídia em TODOS os caminhos de ingestão): a transcrição de áudio / legenda-descrição de imagem vive em
+  // `mediaContext.text` (kind: audio|image|video|document). Se o texto primário está vazio, o bloco DEVE surface esse
+  // conteúdo — senão o cérebro voa cego e degrada em "instabilidade" (o incidente P4 do áudio). Chokepoint ÚNICO:
+  // cobre toda ingestão que passa por aggregateLeadMessage, não só um bridge. Ausência de transcrição -> marcador
+  // HONESTO por tipo de mídia (contexto p/ o cérebro, que autora a resposta natural — NUNCA o engine escreve).
+  const mc = (raw.mediaContext ?? raw.media_context) as Record<string, unknown> | undefined;
+  if (mc && typeof mc === "object") {
+    const mcText = mc.text ?? mc.transcription ?? mc.caption;
+    if (typeof mcText === "string" && mcText.trim() !== "") return mcText.trim();
+    const kind = typeof mc.kind === "string" ? mc.kind : null;
+    if (kind === "audio") return "[o cliente enviou um áudio que não consegui transcrever]";
+    if (kind === "image") return "[o cliente enviou uma imagem, sem texto]";
+    if (kind === "video") return "[o cliente enviou um vídeo]";
+    if (kind === "document") return "[o cliente enviou um documento]";
+    if (mc.has_media_context === true) return "[o cliente enviou uma mídia]";
+  }
   return typeof text === "string" ? text.trim() : "";
 }
 // F2.32 (CTWA): o contexto de anúncio viaja no `raw.adContext` do inbox (o bridge o coloca na 1ª mensagem). Lê o PRIMEIRO
@@ -1061,6 +1132,27 @@ function authorFromBrainDraft(args: {
   // central_active; a LLM conduz sem reperguntar o que já sabe, seguindo as orientações do turno. (Guarda no legado:
   // o replay não precisa dela — o contrato antigo não a exercitava fora de requireBrain.)
   return { ok: true, decision: decision0, composed, proposedEffects };
+}
+
+// A resposta textual pura não precisa carregar metadados de execução para ser
+// enviada: ela não chama tool, não muda estado e não produz efeito comercial.
+// O texto continua vindo integralmente da LLM e passa pelos validadores de
+// grounding/PII/efeitos abaixo. Understanding continua obrigatório para toda
+// ação que possa alterar estado, executar ferramenta ou produzir mídia/handoff.
+function isPassiveLlmFinalWithoutUnderstanding(step: AgentBrainStep): boolean {
+  if (step.kind !== "final" || step.understanding != null) return false;
+  const draft = step.decision.responsePlan.draft;
+  if (draft == null || draft.parts.length === 0) return false;
+  // Parts factuais continuam sujeitos aos validadores de grounding/render e
+  // nunca autorizam uma tool por si sÃ³. O que nÃ£o pode passar sem understanding
+  // sÃ£o effects, mutaÃ§Ãµes ou mÃ­dia/handoff; exigir metadado para uma lista ou
+  // referÃªncia jÃ¡ aterrada recriava o fallback quando a LLM acertava o texto.
+  if (draft.parts.some((part) => !["text", "message_break", "vehicle_ref", "money_ref", "vehicle_offer_list"].includes(part.type))) return false;
+  if ((step.decision.proposedEffects ?? []).some((effect) => effect.kind !== "send_message")) return false;
+  if ((step.decision.stateMutations ?? []).length > 0) return false;
+  if ((step.decision.memoryMutations ?? []).length > 0) return false;
+  if ((step.decision.knowledgeGaps ?? []).length > 0) return false;
+  return true;
 }
 
 // B2 (audit): para pergunta de ATRIBUTO do veículo SELECIONADO, o turno EXIGE um vehicle_details BEM-SUCEDIDO do MESMO
@@ -2017,6 +2109,20 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       let brainRetries = 0;
       let finalAuthorshipAttempts = 0;
       const policyFeedbackLog: string[] = [];
+      // ⭐FASE 1 (diagnóstico observável): distingue a CAUSA de uma degradação de fallback. Falha REAL de provedor
+      // (HTTP/timeout/JSON/shape) chega de dois jeitos: (a) o adapter captura e devolve um final marcado
+      // reasonCode="brain_fallback" (#safeFinal), (b) withTimeout estoura e o loop faz catch{break}. Ambos setam
+      // providerFallbackSeen — o motivo já é sanitizado no adapter (≤120 chars, sem prompt/PII). Isso separa
+      // "provedor caiu" de "resposta válida rejeitada por política/grounding/evidência" no relatório do turno.
+      let providerFallbackSeen = false;
+      let providerFallbackReason: string | null = null;
+      const noteBrainStep = (s: AgentBrainStep): AgentBrainStep => {
+        if (s.kind === "final" && s.decision.reasonCode === "brain_fallback") {
+          providerFallbackSeen = true;
+          providerFallbackReason = s.decision.reasonSummary?.slice(0, 120) ?? "brain_fallback";
+        }
+        return s;
+      };
       // ── FONTE ÚNICA (audit Codex): SÓ o understanding DO CÉREBRO (fromBrain, evidência⊂bloco) autoriza ação comercial
       //    (send_media/tool/foco). A 1ª compreensão válida TRAVA o assunto (reconcileUnderstanding). O fallback é HINT
       //    conservador só p/ recuperação TEXTUAL — nunca autoriza. `knownModels` verifica o modelo do alvo (P0-1).
@@ -2204,13 +2310,22 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       for (; brainSteps < brainMaxSteps; brainSteps++) {
         let step;
         try {
-          step = await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout");
-        } catch { break; } // falha técnica do cérebro -> sai do loop -> fallback seguro (nunca silêncio)
-        // Em central_active, `understanding` é o contrato de decisão do
-        // cérebro para todo turno. Sem ele, o motor não adivinha a intenção
-        // nem aceita uma resposta comercial aparentemente plausível: pede ao
-        // mesmo modelo que complete o seu próprio output estruturado.
-        if (llmFirst && !step.understanding) {
+          step = noteBrainStep(await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: agent brain step exceeded timeout"));
+        } catch (err) {
+          // falha técnica do cérebro (timeout/transporte) -> sai do loop -> fallback seguro (nunca silêncio).
+          // FASE 1: registra a causa de provedor sanitizada p/ o diagnóstico (não vira "resposta rejeitada por política").
+          providerFallbackSeen = true;
+          providerFallbackReason = providerFallbackReason ?? `brain propose timeout/transport: ${String((err as Error)?.message ?? err).slice(0, 80)}`;
+          break;
+        }
+        // Em central_active, `understanding` é obrigatório para qualquer ação
+        // operacional. Uma resposta textual pura, porém, não tem capability,
+        // tool, mídia, handoff ou mutação para autorizar. Nesse caso a LLM já
+        // entregou a autoria comercial e o engine só precisa validar/renderizar
+        // o texto; exigir metadado auxiliar aqui transformava respostas simples
+        // (por exemplo, endereço presente no prompt do portal) em technical_fallback.
+        const passiveFinalWithoutUnderstanding = llmFirst && isPassiveLlmFinalWithoutUnderstanding(step);
+        if (llmFirst && !step.understanding && !passiveFinalWithoutUnderstanding) {
           const feedback = "Seu passo não trouxe understanding. Reemita a decisão com understanding completo, evidence literal do bloco atual e, se precisar de fatos, a tool correspondente. Não invente disponibilidade nem continue um objetivo antigo sem declarar o ato atual.";
           policyFeedbackLog.push(feedback);
           if (authorityRetries < AUTHORITY_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
@@ -2832,8 +2947,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             brainSteps += 1;
             let finalStep;
             try {
-              finalStep = await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: final LLM authorship exceeded timeout");
-            } catch {
+              finalStep = noteBrainStep(await withTimeout(brain.proposeNextStep(frame, observations), limits.proposeTimeoutMs ?? 30_000, "propose: final LLM authorship exceeded timeout"));
+            } catch (err) {
+              providerFallbackSeen = true;
+              providerFallbackReason = providerFallbackReason ?? `brain authorship timeout/transport: ${String((err as Error)?.message ?? err).slice(0, 80)}`;
               break;
             }
             if (finalStep.understanding) {
@@ -2908,8 +3025,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         if (authoredComposed && authoredDecision && authoredProposedEffects) {
           effectiveDecision = authoredDecision; composed = authoredComposed; proposedEffects = authoredProposedEffects;
         } else if (llmFirst) {
-          // No central_active, falha de autoria nao promove o engine a atendente. A ultima
-          // linha e apenas operacional, sem interpretar o pedido ou conduzir o funil.
+          // ⭐Itens 2/3/4 (Codex): em central_active o INSTITUCIONAL é decidido pela LLM — ela chama tenant_business_info,
+          // recebe o fato e REDIGE a resposta (provado no smoke gpt-4.1-mini: brain_final "Nossa loja fica na Av...").
+          // A engine NÃO escreve mais endereço/horário como autor determinístico. Quando a LLM não autora, o
+          // ÚNICO piso é a nota de indisponibilidade técnica — nunca texto comercial NEM institucional escrito pela engine.
+          // central_active tem EXATAMENTE dois desfechos: resposta autorada pela LLM OU nota curta de outage.
           const unavailable = buildBrainUnavailableResponse({ ctx: { ...ctx, state: contextState }, turnId });
           responseSource = "technical_fallback";
           recoveryReason = repeatedDeny ? "brain_unavailable_after_repeated_deny" : "brain_unavailable";
@@ -3345,6 +3465,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         const tr = resolveTargetWithAd(); targetResolutionSource = tr.kind === "resolved" ? tr.source : (tr.kind === "ambiguous" ? "ambiguous" : "none");
       }
 
+      // ⭐FASE 1 (diagnóstico observável): CAUSA sanitizada da degradação (provedor × rejeição × evidência × grounding
+      // × esgotamento). Diferencia "provedor caiu" de "resposta rejeitada" — o cerne do que a missão pediu no relatório.
+      const degradationKind = classifyDegradation({ llmFirst, responseSource, providerFallbackSeen, providerFallbackReason, policyFeedbackLog, observations });
       const events = [
         makeEvent({ conversationId, turnId, type: "turn_claimed", suffix: "claimed", payload: { eventIds: claimedEventIds }, at: cutoff }),
         // Observabilidade (audit + T6 fonte única): responseSource distingue autoria; understanding = semântica do turno;
@@ -3371,6 +3494,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null,
           resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
           targetResolutionSource, recoveryReason,
+          // FASE 1: causa da degradação + motivo sanitizado do provedor (só quando houve falha real de transporte/JSON).
+          degradationKind, providerFallbackReason: providerFallbackSeen ? providerFallbackReason : null,
           toolsExecuted: toolTelemetry.map((t) => t.tool),
           toolAuthorities: toolAuthorities.map((a) => ({
             tool: a.tool,
@@ -3456,7 +3581,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       return {
         status: "committed", turnId, claimedEventIds, decision, composedText: outComposed.text, terminalSafe,
         facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, toolAuthorities, brainSteps, responseSource,
-        degraded, institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
+        degraded, degradationKind, providerFallbackReason: providerFallbackSeen ? providerFallbackReason : null,
+        institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
         understanding: authoritativeUnderstanding, understandingFromBrain: lockedU != null, targetResolutionSource,
         resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
         previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null, recoveryReason,
