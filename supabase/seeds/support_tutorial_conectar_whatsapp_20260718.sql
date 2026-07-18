@@ -18,9 +18,13 @@
 --   "Escanear QR Code" / "Conectado!" .... UazapiConnectDialog.tsx:435-436,458,484-498
 --
 -- As imagens ficam em `public/help/tutorials/conectar-whatsapp/` (servidas pelo
--- próprio app em /help/tutorials/...). Ver o README daquela pasta para os nomes
--- de arquivo esperados. Passo sem print continua aparecendo no chat com aviso
--- discreto — nunca escondemos o passo por falta de imagem.
+-- próprio app em /help/tutorials/...). Essa pasta contém SOMENTE os PNGs finais
+-- sanitizados — nada de nota interna nem print bruto.
+--   • procedência e sanitização de cada imagem:
+--     `docs/help/tutorials-private/conectar-whatsapp.md` (fora de public/)
+--   • prints brutos (com PII): `docs/help/source-screenshots-private/` (fora do repo)
+-- Passo sem print continua aparecendo no chat com aviso discreto — nunca
+-- escondemos o passo por falta de imagem.
 -- ════════════════════════════════════════════════════════════════════════════
 
 UPDATE public.support_knowledge_articles
