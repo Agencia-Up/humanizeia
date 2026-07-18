@@ -162,7 +162,8 @@ async function main(): Promise<void> {
     const body = JSON.parse(sent.request.body) as Record<string, unknown>;
     check("POST vai para chat/completions OpenAI", sent.url === OPENAI_ENDPOINT);
     check("modelo enviado e gpt-4.1-mini", body.model === "gpt-4.1-mini");
-    check("response_format exige JSON object", JSON.stringify(body.response_format) === JSON.stringify({ type: "json_object" }));
+    const rf = body.response_format as { type?: string; json_schema?: { name?: string; strict?: boolean } } | undefined;
+    check("response_format usa json_schema (interpret)", rf?.type === "json_schema" && rf.json_schema?.name === "turn_interpretation" && rf.json_schema?.strict === false);
     check("mensagens system+user sao enviadas", Array.isArray(body.messages) && body.messages.length === 2);
     check("prompt do portal vai no system", JSON.stringify(body.messages).includes("Prompt vivo do portal"));
     const messages = body.messages as Array<{ role: string; content: string }>;

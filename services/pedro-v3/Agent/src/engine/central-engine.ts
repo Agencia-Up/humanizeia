@@ -79,6 +79,7 @@ import {
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
+import { assertReplayWiring, isLegacyReplayEnabled, assertLegacyAuthoringAuthorized } from "./legacy/legacy-replay.ts";
 import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
   applySystemWorkingMemoryMutations, applyEffectOutcomeToWorkingMemory, isValidPhotoActionDraft,
@@ -149,6 +150,11 @@ export type CentralTurnArgs = {
   // reconcileObjectiveWithQuestion) — o funil vira contexto read-only e o CÉREBRO decide a próxima pergunta/condução.
   // Guardrails (grounding/foto/CPF/erro/≤1 pergunta) continuam. central_active liga isto; legado mantém false.
   readonly llmFirst?: boolean;
+  // F7-6 (Fase 7) — OPT-IN EXPLÍCITO do ramo LEGADO de autoria comercial determinística (foto/institucional/
+  // desengajamento/mais-opções/recuperação/recall). Só vale em replay/offline autorizado (ex.: F2.13). Default false.
+  // Produção (central_active/central_shadow, ambos llmFirst=true) NUNCA liga isto -> nenhum deterministic_*. Ver
+  // legacy/legacy-replay.ts para a política e as invariantes (fiação + saída) aplicadas fail-closed no engine.
+  readonly legacyCommercialReplay?: boolean;
   // TRAVA ANTI-PARCIAL (P0 bloco-do-lead): teto de espera do bloco. Se chegou mensagem nova durante o processamento e o
   // bloco ainda é mais jovem que isto, o turno é SUPERSEDED (não despacha; reagrupa). Default = maxWait do debounce.
   readonly blockAwaitMaxMs?: number;
@@ -172,6 +178,53 @@ function classifyDenyCategory(feedback: string): HardDenyCategory {
   if (/buscou o estoque|vehicle_offer_list|hor[áa]rio|endere[çc]o|ignorar um pedido|pedido expl[íi]cito|mostre a lista/.test(f)) return "explicit_request";
   if (/draft|parts estruturadas|malformad|corromp/.test(f)) return "structural";
   return "other";
+}
+
+// ⭐F7-2 (observabilidade anti retry-storm): categoria CURTA por retry/nudge do loop do cérebro, derivada do CODE (e da
+// mensagem quando o code é ambíguo) da observação de CONTROLE empurrada antes de cada continue/break. É SÓ relato —
+// NÃO altera decisão, caps nem grounding. Usada para surfaçar retryReasons/retryReasonCounts no decision_final e no
+// CentralTurnResult (diagnóstico de "por que o turno gastou passos"), sem depender de instrumentar cada call site.
+function classifyRetryReason(code: string, message: string): string {
+  switch (code) {
+    case "UNDERSTANDING_REQUIRED":
+    case "UNDERSTANDING_INCOMPLETE":
+    case "UNDERSTANDING_CONFLICT":
+    case "REQUIRED_TURN_UNDERSTANDING":
+    case "FINAL_UNDERSTANDING_REJECTED":
+      return "understanding_required";
+    case "UNDERSTANDING_STALE":
+      return "understanding_stale";
+    case "DUP_STOCK_SEARCH":
+    case "DUP_TOOL":
+    case "DUP_PHOTO_RESOLVE":
+      return "dup_tool";
+    case "PHOTO_TARGET_MISMATCH":
+      return "photo_target_mismatch";
+    case "TOOL_AUTHORITY_REJECTED":
+      return "tool_authority_rejected";
+    case "FINAL_AUTHORSHIP_REQUIRED":
+      return "final_authorship_required";
+    case "FINAL_TOOL_FORBIDDEN":
+      return "final_tool_forbidden";
+    case "REQUIRED_TOOL_MISSING":
+    case "FINAL_REQUIRED_TOOL_MISSING":
+      return /mais op[çc]/i.test(message) ? "more_options_scope" : "required_tool_missing";
+    case "RESPONSE_REJECTED":
+    case "FINAL_RESPONSE_REJECTED":
+      return classifyDenyCategory(message) === "grounding" ? "grounding_deny" : "response_rejected";
+    case "FORBIDDEN":
+      if (/atendimento humano/i.test(message)) return "human_request_block";
+      if (/\bcpf\b|data de nasc|sens[íi]vel/i.test(message)) return "sensitive_data_block";
+      if (/allowlist/i.test(message)) return "tool_forbidden";
+      if (/ato atual|ato que voc[êe]|n[ãa]o [ée] compat/i.test(message)) return "non_commercial_act";
+      return "policy_denied";
+    case "UPSTREAM":
+      return "tool_upstream";
+    case "VALIDATION":
+      return "tool_validation";
+    default:
+      return code.toLowerCase();
+  }
 }
 function isDegradedResponse(src: ResponseSource, recoveryReason: string | null): boolean {
   void recoveryReason;
@@ -319,6 +372,9 @@ export type CentralTurnResult =
       providerFallbackReason: string | null;
       institutionalResolved: readonly { readonly topic: string; readonly status: "ok" | "not_configured" | "failure" }[];
       policyFeedback: readonly string[];   // feedbacks de deny devolvidos ao cérebro no turno (observabilidade)
+      // ⭐F7-2 (observabilidade anti retry-storm): motivo CURTO de cada retry/nudge do loop do cérebro (ordem de ocorrência)
+      // e a contagem por categoria. Só relato — nunca controla decisão/caps.
+      retryReasons?: readonly string[];
       droppedSelectKeys: readonly string[];   // Hardening 1: seleções descartadas por falta de label canônico
       // T6 (fonte única): semântica do turno + resolução de alvo + recuperação (observabilidade e testes).
       understanding: TurnUnderstanding;
@@ -1280,6 +1336,14 @@ function turnCompletenessFeedback(args: {
   return null;
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+// ║ F7-6 — LEGACY REPLAY-ONLY: AUTORIA COMERCIAL DETERMINÍSTICA (foto / institucional / desengajamento / mais-      ║
+// ║ opções / recuperação / recall). ⚠️ NUNCA roda em produção (central_active/central_shadow, llmFirst=true).       ║
+// ║ Só é alcançada quando `legacyReplayEnabled` (opt-in `legacyCommercialReplay=true` em harness de replay/offline). ║
+// ║ Fonte da política + invariantes fail-closed: src/engine/legacy/legacy-replay.ts. Cada função abaixo produz um    ║
+// ║ responseSource deterministic_*, bloqueado pela invariante de saída em qualquer modo de produção. Relocação      ║
+// ║ física destes corpos p/ o módulo legacy/ é follow-up cosmético (o isolamento comportamental já é definitivo).   ║
+// ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
 // ── P0-C (audit): EXECUTOR DETERMINÍSTICO de foto. Usado no single-author quando o cérebro NÃO autorou resposta
 //    aterrada. Pedido de foto + alvo resolvido (ordinal/modelo da última lista ou selecionado) + vehicle_photos_resolve
 //    OK com photoIds -> materializa send_media (nunca fallback genérico). Sem alvo/lista -> pede qual veículo (não
@@ -1806,6 +1870,11 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // the brain. Legacy/shadow keeps its historical deterministic behavior.
       const singleAuthor = args.singleAuthor ?? false;
       const llmFirst = args.llmFirst ?? false;
+      // F7-6: ramo LEGADO de autoria comercial determinística SÓ roda sob opt-in explícito de replay/offline.
+      // Produção (central_active/central_shadow, ambos llmFirst=true) nunca liga a flag -> legacyReplayEnabled=false.
+      const legacyCommercialReplay = args.legacyCommercialReplay ?? false;
+      assertReplayWiring(llmFirst, legacyCommercialReplay);   // fiação: llmFirst + replay é bug de composição (falha alto)
+      const legacyReplayEnabled = isLegacyReplayEnabled(llmFirst, legacyCommercialReplay);
       const extractedSlots = extractLeadSlots({
         leadMessage,
         state,
@@ -2068,7 +2137,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         : undefined;
       const handoffCapabilityAvailable = args.handoff?.enabled === true && args.handoff.available === true
         && args.crmWriteEnabled === true && leadId != null;
-      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adImageUrls: effectiveAdContext?.imageUrls ?? [], adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: llmFirst ? false : disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable });
+      let frame = buildTurnFrame({ turnId, now: cutoff, block: leadMessage, portalPromptSha256, workingMemory: wmForFrame, interpretation: prepared.interpretation, state: contextState, currentTurnFacts, extractedSlotMutations: extractedSlots, currentTurnIntent, adVehicleHint, adImageUrls: effectiveAdContext?.imageUrls ?? [], adGenericEntry: isOpeningTurn && adGenericEntry, firstContactNoCommercialTarget, specificAdEntry, disengagementOnly: llmFirst ? false : disengagedActionable, acceptedPhotoOffer: acceptsAgentPhotoOffer(leadMessage, contextState), selectedOfferThisTurn: false, handoffAvailable: handoffCapabilityAvailable, catalog: prepared.tenantCatalog });
       // O turno do lead já é entregue integralmente ao cérebro. O engine não
       // constrói advisories, próxima pergunta, ordem de funil ou instrução de
       // agendamento para competir com a LLM. Fatos de anúncio, memória,
@@ -2297,14 +2366,27 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // conduzir sem cair no recovery, mas com teto (não gasta todos os passos num cérebro travado). Persiste entre iterações.
       let listMoneyRetries = 0;
       const LIST_MONEY_RETRY_CAP = 4;
+      // ⭐F7-1 (Codex): dedup de EXECUÇÃO por tool+input p/ TODAS as tools, POR TURNO — o invariante "a mesma tool+input
+      // nunca executa 2x no turno" fica garantido no chokepoint de EXECUÇÃO (não só na checagem de proposta). A 2ª chamada
+      // idêntica devolve o FATO já obtido, sem tocar o adapter. stock_search mantém o fingerprint SEMÂNTICO (relaxamento);
+      // as demais usam tool+input byte-exato. (tenant_business_info já é idempotente por tópico em resolveInstitutional.)
+      const toolExecCache = new Map<string, QueryResult>();
+      let duplicateToolCallsBlocked = 0;
       const runQueryDedup = async (call: QueryCall): Promise<QueryResult> => {
-        if (call.tool !== "stock_search") return runQuery(call);
-        const fp = stockSearchFingerprint(call.input as Record<string, unknown>);
-        const cached = stockSearchCache.get(fp);
-        if (cached) { duplicateStockCallsBlocked += 1; return cached; }
+        if (call.tool === "stock_search") {
+          const fp = stockSearchFingerprint(call.input as Record<string, unknown>);
+          const cached = stockSearchCache.get(fp);
+          if (cached) { duplicateStockCallsBlocked += 1; return cached; }
+          const res = await runQuery(call);
+          stockSearchCache.set(fp, res);
+          stockFingerprintsExecuted.push(fp);
+          return res;
+        }
+        const sig = toolCallSignature(call as CentralQueryCall);
+        const cached = toolExecCache.get(sig);
+        if (cached) { duplicateToolCallsBlocked += 1; return cached; }
         const res = await runQuery(call);
-        stockSearchCache.set(fp, res);
-        stockFingerprintsExecuted.push(fp);
+        toolExecCache.set(sig, res);
         return res;
       };
       for (; brainSteps < brainMaxSteps; brainSteps++) {
@@ -3024,12 +3106,13 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         let composed: RenderedResponse;
         if (authoredComposed && authoredDecision && authoredProposedEffects) {
           effectiveDecision = authoredDecision; composed = authoredComposed; proposedEffects = authoredProposedEffects;
-        } else if (llmFirst) {
-          // ⭐Itens 2/3/4 (Codex): em central_active o INSTITUCIONAL é decidido pela LLM — ela chama tenant_business_info,
-          // recebe o fato e REDIGE a resposta (provado no smoke gpt-4.1-mini: brain_final "Nossa loja fica na Av...").
-          // A engine NÃO escreve mais endereço/horário como autor determinístico. Quando a LLM não autora, o
-          // ÚNICO piso é a nota de indisponibilidade técnica — nunca texto comercial NEM institucional escrito pela engine.
-          // central_active tem EXATAMENTE dois desfechos: resposta autorada pela LLM OU nota curta de outage.
+        } else if (!legacyReplayEnabled) {
+          // ⭐Itens 2/3/4 (Codex) + F7-6: PRODUÇÃO (llmFirst=central_active/central_shadow) E QUALQUER chamador não-llmFirst
+          // SEM opt-in de replay caem AQUI. O INSTITUCIONAL é decidido pela LLM — ela chama tenant_business_info, recebe o
+          // fato e REDIGE a resposta (smoke gpt-4.1-mini: brain_final "Nossa loja fica na Av..."). A engine NÃO escreve
+          // endereço/horário/comercial como autor determinístico. Quando a LLM não autora, o ÚNICO piso é a nota de
+          // indisponibilidade técnica. Dois desfechos possíveis: resposta autorada pela LLM OU nota curta de outage —
+          // NUNCA um responseSource deterministic_* (garantido pela invariante de saída após este bloco).
           const unavailable = buildBrainUnavailableResponse({ ctx: { ...ctx, state: contextState }, turnId });
           responseSource = "technical_fallback";
           recoveryReason = repeatedDeny ? "brain_unavailable_after_repeated_deny" : "brain_unavailable";
@@ -3090,20 +3173,26 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           }
         }
         // O central_active valida a quantidade de perguntas durante a autoria. Nao edita
-        // silenciosamente o texto da LLM depois da decisao. O trim permanece apenas no legado.
-        if (!llmFirst) {
+        // silenciosamente o texto da LLM depois da decisao. O trim permanece apenas no legado (replay autorizado).
+        if (legacyReplayEnabled) {
           const trimmedText = trimToOneQuestion(composed.text);
           if (trimmedText !== composed.text) composed = { ...composed, text: trimmedText };
         }
         // Recall determinístico de foto (invariante 8): pergunta de MEMÓRIA de foto SEMPRE nomeia o veículo lembrado.
         // O label é FATO de memória (grounded por construção) -> responde MESMO se o cérebro não autorou. NÃO é
-        // degradação: marca responseSource=deterministic_recall (resposta aterrada, não fallback técnico).
+        // degradação: marca responseSource=deterministic_recall. F7-6: é fonte deterministic_* -> SÓ no replay legado
+        // autorizado (nunca em produção/llmFirst; garantido também pela invariante de saída abaixo).
         const recalledLabel = persisted0.lastPhotoAction?.label ?? null;
-        if (!llmFirst && recalledLabel && isPhotoMemoryQuestionBlock(leadMessage) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && !mentionsLabel(composed.text, recalledLabel)) {
+        if (legacyReplayEnabled && recalledLabel && isPhotoMemoryQuestionBlock(leadMessage) && !effectiveDecision.effectPlan.some((p) => p.kind === "send_media") && !mentionsLabel(composed.text, recalledLabel)) {
           const recall = `Você pediu as fotos do ${recalledLabel}. Quer que eu te passe mais detalhes dele?`;
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
           responseSource = "deterministic_recall";
         }
+        // F7-6 INVARIANTE DE SAÍDA (fail-closed): um responseSource deterministic_* comercial só pode existir sob replay
+        // legado autorizado. Em central_active/central_shadow (llmFirst) OU em qualquer chamador não-llmFirst sem opt-in,
+        // isto DEVE ser impossível (o ramo determinístico está gateado em legacyReplayEnabled). A checagem é a rede de
+        // segurança contra regressão: se um caminho futuro voltar a escrever deterministic_* fora do replay, estoura aqui.
+        assertLegacyAuthoringAuthorized(responseSource, { llmFirst, legacyCommercialReplay });
         // Em llmFirst não existe abertura comercial escrita pelo engine. A
         // identidade e a descoberta são validadas durante a autoria e reescritas
         // pelo próprio cérebro. Se ele não convergir, a falha permanece técnica e
@@ -3468,6 +3557,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // ⭐FASE 1 (diagnóstico observável): CAUSA sanitizada da degradação (provedor × rejeição × evidência × grounding
       // × esgotamento). Diferencia "provedor caiu" de "resposta rejeitada" — o cerne do que a missão pediu no relatório.
       const degradationKind = classifyDegradation({ llmFirst, responseSource, providerFallbackSeen, providerFallbackReason, policyFeedbackLog, observations });
+      // ⭐F7-2 (observabilidade anti retry-storm): deriva o MOTIVO de cada retry/nudge a partir das observações de CONTROLE
+      // (!ok) empurradas no loop do cérebro — cada uma precede um continue/break. Só relato: não muda decisão/caps. Ordem =
+      // ocorrência; retryReasonCounts agrega por categoria para ver a causa dominante do gasto de passos do turno.
+      const retryReasons = observations.filter((o) => !o.ok).map((o) => classifyRetryReason(o.error.code, o.error.message));
+      const retryReasonCounts: { [k: string]: number } = {};
+      for (const r of retryReasons) retryReasonCounts[r] = (retryReasonCounts[r] ?? 0) + 1;
       const events = [
         makeEvent({ conversationId, turnId, type: "turn_claimed", suffix: "claimed", payload: { eventIds: claimedEventIds }, at: cutoff }),
         // Observabilidade (audit + T6 fonte única): responseSource distingue autoria; understanding = semântica do turno;
@@ -3509,6 +3604,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             ms: a.ms,
           })),
           policyFeedback: policyFeedbackLog.slice(0, 5),
+          // ⭐F7-2 (anti retry-storm): motivo curto dos retries do turno (top ~8, em ordem) + contagem por categoria.
+          retryReasons: retryReasons.slice(0, 8), retryReasonCounts,
           institutionalResolved, droppedSelectKeys,
           // ⭐Missão P0 (fatos frescos vencem snapshot): degradação do catálogo é OBSERVÁVEL, nunca silenciosa.
           catalogEntries: prepared.tenantCatalog.entries.length, catalogDegraded: prepared.catalogDegraded === true,
@@ -3582,7 +3679,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         status: "committed", turnId, claimedEventIds, decision, composedText: outComposed.text, terminalSafe,
         facts, outbox, stateVersion: reduced.next.version, workingMemory: nextWM, toolObservations: observations, toolTelemetry, toolAuthorities, brainSteps, responseSource,
         degraded, degradationKind, providerFallbackReason: providerFallbackSeen ? providerFallbackReason : null,
-        institutionalResolved, policyFeedback: policyFeedbackLog, droppedSelectKeys,
+        institutionalResolved, policyFeedback: policyFeedbackLog, retryReasons, droppedSelectKeys,
         understanding: authoritativeUnderstanding, understandingFromBrain: lockedU != null, targetResolutionSource,
         resolvedVehicleKey: proposedEffects.find((e) => e.kind === "send_media")?.vehicleKey ?? null,
         previousSelectedVehicleKey: contextState.vehicleContext.selected?.key ?? null, recoveryReason,

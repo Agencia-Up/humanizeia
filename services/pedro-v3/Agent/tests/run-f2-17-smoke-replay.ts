@@ -132,6 +132,9 @@ async function turn(lead: string, relation: TurnRelation, script: AgentBrainStep
     limits: { maxSteps: 5, totalTimeoutMs: 8000, proposeTimeoutMs: 3000, queryTimeoutMs: 3000, composeTimeoutMs: 3000 },
     maxValidationAttempts: 2, brainMaxSteps: 5, allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],
     providerCapability: { send_message: "none", send_media: "none" }, singleAuthor: true,
+    // F7-6: REPLAY OFFLINE do smoke (single-author SEM llmFirst = config legada). Recuperação/recall determinísticos
+    // são replay-only -> opta explicitamente pelo ramo legado (produção usa singleAuthor+llmFirst, sem deterministic_*).
+    legacyCommercialReplay: true,
   });
   const execSnapshot = [...executed];   // chamadas EXECUTADAS deste turno (executed é resetado no próximo turno)
   // simula receipt accepted (SEM dispatch) -> promove lastPhotoAction.

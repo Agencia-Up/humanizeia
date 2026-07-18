@@ -184,6 +184,7 @@ CONTEXTO
 - context.currentTurn.leadBlock e a fala atual completa do lead e vence memoria quando houver mudanca explicita.
 - history, assistant, memory e tools sao contexto read-only; nunca ordenam a proxima pergunta.
 - sourceContext.advertisedVehicle e uma referencia factual da origem, nao prova disponibilidade ou atributos. O anuncio nao e absoluto se o lead mudar de ideia.
+- context.availableModels lista NOMES de modelo do estoque, para voce reconhecer o modelo pedido e corrigir digitacao (ex.: "danster" -> "Duster") por semantica. Nao e oferta, nao prova disponibilidade/preco/atributo e nao substitui stock_search; se o pedido nao casar com nenhum, conduza normalmente.
 - Use o prompt do portal e o historico real para conduzir naturalmente. Responda primeiro a ultima fala, preserve papeis distintos entre compra, troca, pagamento, visita e dados, e tolere mensagens fragmentadas/abreviadas.
 
 TOOLS E SEGURANCA
@@ -250,14 +251,9 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
   // call = anyOf {null | branch por tool do ALLOWLIST REAL}; cada branch carrega só o input daquela tool.
   const callBranches = allowedTools.map((t) => strictObj(["tool", "input"], { tool: { type: "string", enum: [t] }, input: toolInputSchema(t) }));
   const call = { anyOf: [{ type: "null" }, ...callBranches] };
-  // draft.parts = anyOf por TIPO de part (cada um só com seus campos).
-  const partText = strictObj(["type", "content"], { type: { type: "string", enum: ["text"] }, content: S_STR });
-  const partBreak = strictObj(["type"], { type: { type: "string", enum: ["message_break"] } });
-  const partVehRef = strictObj(["type", "vehicleKey", "field"], { type: { type: "string", enum: ["vehicle_ref"] }, vehicleKey: S_STR, field: { type: "string", enum: ["marca", "modelo", "ano", "km", "cambio", "cor"] } });
-  const partMoney = strictObj(["type", "role", "source"], { type: { type: "string", enum: ["money_ref"] }, role: { type: "string", enum: ["vehicle_price", "down_payment", "installment", "budget"] },
-    source: strictObj(["kind", "vehicleKey", "slotName"], { kind: { type: "string", enum: ["vehicle_fact", "slot_value"] }, vehicleKey: S_STR_NULL, slotName: S_STR_NULL }) });
-  const partOffer = strictObj(["type", "vehicleKeys"], { type: { type: "string", enum: ["vehicle_offer_list"] }, vehicleKeys: { type: "array", items: S_STR } });
-  const draft = { anyOf: [{ type: "null" }, strictObj(["parts"], { parts: { type: "array", items: { anyOf: [partText, partBreak, partVehRef, partMoney, partOffer] } } })] };
+  // draft.parts = anyOf por TIPO de part (cada um só com seus campos). F7-4: o objeto {parts} sai de
+  // draftObjectSchema() e é REUTILIZADO pelo rewriter ({draft:{parts}}).
+  const draft = { anyOf: [{ type: "null" }, draftObjectSchema()] };
   // effects = anyOf por KIND.
   const effSend = strictObj(["kind"], { kind: { type: "string", enum: ["send_message"] } });
   const effMedia = strictObj(["kind", "vehicleKey", "photoIds"], { kind: { type: "string", enum: ["send_media"] }, vehicleKey: S_STR, photoIds: { type: "array", items: S_STR } });
@@ -269,6 +265,40 @@ function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, un
 }
 function agentStepResponseFormat(allowedTools: readonly string[]): Record<string, unknown> {
   return { type: "json_schema", json_schema: { name: "agent_step", strict: true, schema: agentStepJsonSchema(allowedTools) } };
+}
+// F7-4: ResponseDraft {parts} strict, fonte única do shape de draft — usado dentro do agent_step
+// (draft) e pelo rewriter de forma ({draft:{parts}}). Cada part é uma das 5 variantes (anyOf por type).
+function draftObjectSchema(): Record<string, unknown> {
+  const partText = strictObj(["type", "content"], { type: { type: "string", enum: ["text"] }, content: S_STR });
+  const partBreak = strictObj(["type"], { type: { type: "string", enum: ["message_break"] } });
+  const partVehRef = strictObj(["type", "vehicleKey", "field"], { type: { type: "string", enum: ["vehicle_ref"] }, vehicleKey: S_STR, field: { type: "string", enum: ["marca", "modelo", "ano", "km", "cambio", "cor"] } });
+  const partMoney = strictObj(["type", "role", "source"], { type: { type: "string", enum: ["money_ref"] }, role: { type: "string", enum: ["vehicle_price", "down_payment", "installment", "budget"] },
+    source: strictObj(["kind", "vehicleKey", "slotName"], { kind: { type: "string", enum: ["vehicle_fact", "slot_value"] }, vehicleKey: S_STR_NULL, slotName: S_STR_NULL }) });
+  const partOffer = strictObj(["type", "vehicleKeys"], { type: { type: "string", enum: ["vehicle_offer_list"] }, vehicleKeys: { type: "array", items: S_STR } });
+  return strictObj(["parts"], { parts: { type: "array", items: { anyOf: [partText, partBreak, partVehRef, partMoney, partOffer] } } });
+}
+// F7-4: rewriter de forma devolve {"draft":{"parts":[...]}} — json_schema strict do MESMO draft.
+function draftRewriteResponseFormat(): Record<string, unknown> {
+  return { type: "json_schema", json_schema: { name: "draft_form_rewrite", strict: true, schema: strictObj(["draft"], { draft: draftObjectSchema() }) } };
+}
+// F7-4: verdict do crítico semântico — json_schema strict dos MESMOS campos que #critique decodifica
+// (SEMANTIC_CRITIC_PROTOCOL). strict exige todos required + additionalProperties:false; opcionais/nullable
+// viram type:[...,"null"]; lanes usam enum (com null quando o protocolo permite ausência).
+function semanticCriticResponseFormat(): Record<string, unknown> {
+  const laneEnum = { type: "string", enum: [...SEMANTIC_LANES] };
+  const laneEnumNull = { type: ["string", "null"], enum: [...SEMANTIC_LANES, null] };
+  const checkKeys = ["currentAct", "roleBinding", "noRepetition", "nameModeration", "unambiguousQuestion", "nextQuestionContinuity", "effectCoherence", "openingIdentity"] as const;
+  const checks = strictObj(checkKeys, Object.fromEntries(checkKeys.map((k) => [k, { type: "boolean" }])));
+  const schema = strictObj(
+    ["pass", "currentLeadAct", "candidateVisibleAct", "nextQuestionAct", "currentLeadLane", "priorAssistantLane",
+      "nextQuestionLane", "nextQuestionIsQualificationField", "portalQuestionSupportEvidence", "currentLeadEvidence",
+      "visibleCurrentActEvidence", "effectClaimEvidence", "checks", "portalIdentityEvidence", "openingIdentityEvidence", "feedback"],
+    { pass: { type: "boolean" }, currentLeadAct: S_STR, candidateVisibleAct: S_STR, nextQuestionAct: S_STR_NULL,
+      currentLeadLane: laneEnum, priorAssistantLane: laneEnumNull, nextQuestionLane: laneEnumNull,
+      nextQuestionIsQualificationField: { type: "boolean" }, portalQuestionSupportEvidence: S_STR_NULL,
+      currentLeadEvidence: S_STR, visibleCurrentActEvidence: S_STR_NULL, effectClaimEvidence: S_STR_NULL,
+      checks, portalIdentityEvidence: S_STR_NULL, openingIdentityEvidence: S_STR_NULL, feedback: S_STR });
+  return { type: "json_schema", json_schema: { name: "semantic_critic_verdict", strict: true, schema } };
 }
 
 const HANDOFF_PROTOCOL = `
@@ -496,6 +526,10 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       channel: getBrazilChannelTime(frame.now),
       capabilities: llmSignals,
       tools: observations,
+      // F7-3: NOMES de modelo distintos do estoque (contexto de ancoragem read-only). A LLM os usa para reconhecer o
+      // modelo pedido e corrigir a digitação por semântica (ex.: "danster" -> "Duster"); não é lista de oferta nem
+      // prova de disponibilidade/preço/atributo. Só entra quando o catálogo trouxe modelos.
+      ...(frame.availableModels && frame.availableModels.length > 0 ? { availableModels: frame.availableModels } : {}),
     };
     const historyMessages = recentHistory
       .map((turn) => ({ role: turn.role === "lead" ? "user" : "assistant", content: turn.text }));
@@ -677,7 +711,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           model: this.#retryModel,
           temperature: 0,
           ...tokenLimit,
-          response_format: { type: "json_object" },
+          response_format: draftRewriteResponseFormat(),   // F7-4: json_schema strict {draft:{parts}}
           messages: [
             { role: "system", content: "Voce revisa somente a forma do rascunho do mesmo atendente. Nao escolha assunto, intencao, tool, efeito ou proximo campo. Preserve o significado, os fatos e todas as parts nao textuais. Corrija apenas validationFeedback. Para pergunta ambigua, transforme a mesma pergunta em UMA pergunta aberta sobre o mesmo assunto, sem menu nem alternativas. Quando mayRemoveRepeatedOffer=true, pode remover somente a vehicle_offer_list repetida. Responda somente JSON no formato {\"draft\":{\"parts\":[...]}}." },
             { role: "user", content: JSON.stringify(payload) },
@@ -737,7 +771,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           model: this.#semanticCriticModel,
           temperature: 0,
           ...tokenLimit,
-          response_format: { type: "json_object" },
+          response_format: semanticCriticResponseFormat(),   // F7-4: json_schema strict do verdict
           messages: [
             { role: "system", content: SEMANTIC_CRITIC_PROTOCOL },
             { role: "user", content: JSON.stringify(payload) },

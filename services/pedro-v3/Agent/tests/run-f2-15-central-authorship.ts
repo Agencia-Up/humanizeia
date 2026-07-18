@@ -143,6 +143,9 @@ async function runTurn(opts: { state: ConversationState; leadText: string; scrip
     allowedTools: ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info"],
     providerCapability: { send_message: "none", send_media: "none" },
     singleAuthor: true,
+    // F7-6: este teste exercita o single-author SEM llmFirst (config LEGADA — produção é singleAuthor+llmFirst).
+    // A recuperação contextual determinística + trim são replay-only, então opta explicitamente pelo ramo legado.
+    legacyCommercialReplay: true,
   });
   const outbox = await persistence.listOutbox(CONV);
   const sendMsg = outbox.find((o) => o.kind === "send_message");

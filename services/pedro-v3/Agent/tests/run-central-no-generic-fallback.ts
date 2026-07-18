@@ -40,10 +40,11 @@ async function main(): Promise<void> {
   // A função buildTechnicalFallback (fala genérica) foi REMOVIDA — não deve mais existir como definição.
   check("buildTechnicalFallback (fala genérica) foi removida", !/function\s+buildtechnicalfallback/.test(norm(engine)), "definição ainda presente");
 
-  // Boundary robusto: o ramo llm_first termina onde COMEÇA o ramo legado, cuja PRIMEIRA chamada é
-  // builddeterministicphotoresponse( (única do legado). Assim o `} else {` interno do fallback factual (FASE 3)
-  // não trunca a janela. A janela cobre TODO o ramo de falha llm_first (institucional factual + terminal operacional).
-  const llmFailureStart = code.indexOf("} else if (llmfirst) {");
+  // Boundary robusto: F7-6 fundiu "produção llmFirst" + "não-llmFirst sem opt-in de replay" num único ramo de falha
+  // `} else if (!legacyReplayEnabled) {` cujo ÚNICO desfecho é buildBrainUnavailableResponse (nota de outage). O ramo
+  // legado (deterministic_*) fica no `} else {` seguinte, cuja PRIMEIRA chamada é builddeterministicphotoresponse(.
+  // A janela do ramo de falha vai do `else if (!legacyreplayenabled)` até essa 1ª chamada legada.
+  const llmFailureStart = code.indexOf("} else if (!legacyreplayenabled) {");
   const legacyStart = llmFailureStart >= 0 ? code.indexOf("builddeterministicphotoresponse(", llmFailureStart + 1) : -1;
   const centralFailureBranch = llmFailureStart >= 0 && legacyStart > llmFailureStart
     ? code.slice(llmFailureStart, legacyStart)
@@ -63,10 +64,16 @@ async function main(): Promise<void> {
     check(`central_active não promove autor comercial: ${author}`, !centralFailureBranch.includes(author));
   }
   check("passagem final de autoria da LLM existe", code.includes("final_authorship_required") && code.includes("finalauthorshipattempts"));
+  // F7-6: a edição silenciosa trimToOneQuestion agora é gateada em legacyReplayEnabled (subconjunto ESTRITO de !llmFirst):
+  // nunca roda em produção (llmFirst) NEM em não-llmFirst sem opt-in de replay. Garantia mais forte que antes.
   check(
-    "edição silenciosa trimToOneQuestion fica fora do llmFirst",
-    /if\s*\(!llmfirst\)\s*\{\s*const\s+trimmedtext\s*=\s*trimtoonequestion/.test(code),
+    "edição silenciosa trimToOneQuestion só no replay legado (fora do llmFirst)",
+    /if\s*\(legacyreplayenabled\)\s*\{\s*const\s+trimmedtext\s*=\s*trimtoonequestion/.test(code),
   );
+  // F7-6: a invariante de SAÍDA existe e é chamada — deterministic_* comercial só sob replay autorizado (fail-closed).
+  check("invariante de saída F7-6 chamada (assertLegacyAuthoringAuthorized)", code.includes("assertlegacyauthoringauthorized("));
+  // F7-6: o ramo determinístico legado é gateado por legacyReplayEnabled (opt-in explícito), não mais pelo default.
+  check("ramo legado gateado por legacyReplayEnabled (opt-in explícito)", code.includes("islegacyreplayenabled(") && code.includes("legacyreplayenabled"));
 
   console.log(`\n== SCAN anti-fallback: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n- " + fails.join("\n- ")); process.exit(1); }

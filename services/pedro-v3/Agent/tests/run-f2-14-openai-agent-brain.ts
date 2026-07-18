@@ -172,6 +172,7 @@ async function main(): Promise<void> {
 
     const contextFrame: TurnFrame = {
       ...frame("mostra o azul"),
+      availableModels: ["Corolla", "Compass", "Duster"],
       recentTranscript: [
         { role: "lead", text: "Quero ver os carros" },
         { role: "agent", text: "Qual carro da lista voce quer ver as fotos?" },
@@ -213,7 +214,7 @@ async function main(): Promise<void> {
     check("[5c-n8n] historico viaja como papeis reais e bloco atual e o ultimo user", contextBody.messages.some((m) => m.role === "assistant" && m.content.includes("Qual carro"))
       && contextBody.messages.some((m) => m.role === "user" && m.content === "Quero ver os carros")
       && currentUser?.role === "user" && currentUser.content === "mostra o azul");
-    const payload = JSON.parse(contextMessage) as { context?: { schemaVersion?: number; currentTurn?: { leadBlock?: unknown; openingContext?: Record<string, unknown>; sourceContext?: Record<string, unknown>; currentTurnFacts?: Record<string, unknown> }; memory?: { funnel?: Record<string, unknown>; openLoops?: unknown; suggestedObjective?: unknown }; assistant?: Record<string, unknown>; history?: Record<string, unknown>; conversation?: Record<string, unknown>; capabilities?: Record<string, unknown>; tools?: unknown }; runtimeContext?: unknown; signals?: unknown; leadBlock?: unknown; instruction?: unknown };
+    const payload = JSON.parse(contextMessage) as { context?: { schemaVersion?: number; currentTurn?: { leadBlock?: unknown; openingContext?: Record<string, unknown>; sourceContext?: Record<string, unknown>; currentTurnFacts?: Record<string, unknown> }; memory?: { funnel?: Record<string, unknown>; openLoops?: unknown; suggestedObjective?: unknown }; assistant?: Record<string, unknown>; history?: Record<string, unknown>; conversation?: Record<string, unknown>; capabilities?: Record<string, unknown>; tools?: unknown; availableModels?: unknown }; runtimeContext?: unknown; signals?: unknown; leadBlock?: unknown; instruction?: unknown };
     check("[5e-envelope] schema unico sem instrucao top-level concorrente", payload.context?.schemaVersion === 1 && payload.instruction === undefined && payload.runtimeContext === undefined);
     check("[5e-context] bloco atual esta dentro do envelope", payload.context?.currentTurn?.leadBlock === "mostra o azul");
     check("[5e] contexto nao carrega proxima pergunta derivada nem sinais de condução (FASE 5: sem duplicação)", payload.leadBlock === undefined
@@ -238,6 +239,12 @@ async function main(): Promise<void> {
       && payload.context?.currentTurn?.sourceContext?.kind === "paid_ad"
       && payload.context?.currentTurn?.sourceContext?.advertisedVehicle === "Toyota Corolla 2016"
       && payload.context?.capabilities?.adVehicle === undefined);
+    // F7-3: NOMES de modelo distintos do estoque chegam como lista enxuta (ancoragem p/ typo-correction pela LLM),
+    // sem preço/km/vehicleKey e sem virar oferta/capability.
+    check("[5f] context.availableModels traz só os nomes de modelo distintos do catálogo",
+      Array.isArray(payload.context?.availableModels)
+      && JSON.stringify(payload.context?.availableModels) === JSON.stringify(["Corolla", "Compass", "Duster"])
+      && payload.context?.capabilities?.availableModels === undefined);
   }
   // [5b] retry pós-policy usa modelo mais forte sem encarecer o caminho normal
   {

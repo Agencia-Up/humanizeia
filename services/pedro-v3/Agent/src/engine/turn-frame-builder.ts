@@ -5,7 +5,7 @@
 // que ENRIQUECEM o frame como EVIDÊNCIA auxiliar — NUNCA decidem a ação (Brain/11 §5/§6). PURO.
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
-import type { TurnInterpretation } from "../domain/decision.ts";
+import type { TurnInterpretation, TenantCatalog } from "../domain/decision.ts";
 import type { CurrentTurnFacts, CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
 import type { DecisionMutation } from "../domain/decision.ts";
 import type { Iso } from "../domain/types.ts";
@@ -52,6 +52,28 @@ export function buildRecentTranscript(state: ConversationState, max = 12): Frame
   return turns.slice(-max).map((t) => ({ role: t.role, text: t.text }));
 }
 
+// F7-3: teto de nomes distintos no contexto — enxuto o bastante para ancorar a LLM sem inflar o prompt.
+export const MAX_AVAILABLE_MODELS = 60;
+
+// F7-3: deriva os NOMES de modelo DISTINTOS do catálogo já carregado (nada de preço/km/vehicleKey). PURO/determinístico.
+// Dedup por identidade normalizada (normalizeText — sem acento/caixa), preservando o primeiro rótulo visto. Limitado.
+// NÃO faz correção de typo: só OFERECE os nomes; quem reconhece e corrige a digitação é a LLM, por semântica.
+export function distinctCatalogModels(catalog: TenantCatalog | null | undefined, limit = MAX_AVAILABLE_MODELS): string[] {
+  const entries = catalog?.entries ?? [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of entries) {
+    const model = typeof entry?.model === "string" ? entry.model.trim() : "";
+    if (!model) continue;
+    const key = normalizeText(model);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(model);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export function buildTurnFrame(args: {
   readonly turnId: string;
   readonly now: Iso;
@@ -72,6 +94,7 @@ export function buildTurnFrame(args: {
   readonly handoffAvailable?: boolean;
   readonly currentTurnFacts?: CurrentTurnFacts;
   readonly extractedSlotMutations?: readonly DecisionMutation[];
+  readonly catalog?: TenantCatalog | null;   // F7-3: catálogo já carregado do tenant (fonte dos NOMES de modelo distintos)
 }): TurnFrame {
   const base = buildFrameSignals(args.block, args.interpretation);
   // INC2 (P0): telefone de contato conhecido pelo canal (conversationId "wa:") -> o cérebro NÃO deve pedir telefone.
@@ -89,6 +112,7 @@ export function buildTurnFrame(args: {
     ...(args.selectedOfferThisTurn ? { selectedOfferThisTurn: true } : {}),
     ...(args.handoffAvailable ? { handoffAvailable: true } : {}),
   };
+  const availableModels = distinctCatalogModels(args.catalog);
   return {
     turnId: args.turnId,
     now: args.now,
@@ -99,5 +123,6 @@ export function buildTurnFrame(args: {
     conversationContext: buildConversationContext({ state: args.state, workingMemory: args.workingMemory }),
     currentTurnFacts: args.currentTurnFacts ?? buildCurrentTurnFacts({ state: args.state, extracted: args.extractedSlotMutations ?? [], block: args.block }),
     signals,
+    ...(availableModels.length > 0 ? { availableModels } : {}),
   };
 }

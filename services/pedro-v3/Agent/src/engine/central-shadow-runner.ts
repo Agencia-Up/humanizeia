@@ -113,6 +113,10 @@ export async function runCentralShadowTurn(args: {
     providerCapability: { send_message: "none", send_media: "none" },
     // B6 (audit): shadow espelha EXATAMENTE o caminho ativo (autoria única, sem 2º compose).
     singleAuthor: true,
+    // F7-5 (decisão do dono, Opção a): o shadow observa o MESMO agente que vai para produção — llmFirst=true, igual
+    // ao central_active (pilot-active-root #processCentralActive). Efeitos externos seguem OFF (store isolado, zero
+    // dispatch, providerCapability none), então o shadow NUNCA envia; apenas espelha a autoria/condução da LLM.
+    llmFirst: true,
   });
 
   // 4) PROVA de não-interferência: o estado CANÔNICO não mudou de versão (nenhuma escrita no canônico).

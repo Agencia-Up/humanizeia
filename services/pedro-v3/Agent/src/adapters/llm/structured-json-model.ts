@@ -4,6 +4,7 @@ import type {
   ProposeModelRequest,
   StructuredConversationModel,
 } from "../../domain/conversation-model.ts";
+import { responseFormatForOperation } from "./response-draft-schema.ts";
 
 export type StructuredJsonModelOperation = "interpret" | "propose" | "compose";
 
@@ -176,7 +177,9 @@ export class StructuredJsonConversationModel implements StructuredConversationMo
       operation,
       instructions: operationInstructions(operation),
       input: request,
-      response_format: { type: "json_object" },
+      // F7-4: json_schema por operação (compose=strict:true do ResponseDraft; interpret/propose=strict:false)
+      // no lugar de json_object.
+      response_format: responseFormatForOperation(operation),
     });
 
     try {

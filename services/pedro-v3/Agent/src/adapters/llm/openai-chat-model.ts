@@ -5,6 +5,7 @@ import type {
   StructuredConversationModel,
 } from "../../domain/conversation-model.ts";
 import type { ModelHttpRequest, ModelHttpResponse, ModelHttpTransport } from "./structured-json-model.ts";
+import { responseFormatForOperation } from "./response-draft-schema.ts";
 import type { CompletionTokenParameter } from "../../runtime/ai-provider.ts";
 
 export type OpenAiChatOperation = "interpret" | "propose" | "compose";
@@ -274,7 +275,9 @@ export class OpenAiChatCompletionsModel implements StructuredConversationModel {
       model: this.model,
       temperature: resolveTemperature(this.#temperature, request.binding.temperature),
       [this.#tokenParameter]: this.maxCompletionTokens,
-      response_format: { type: "json_object" },
+      // F7-4: json_schema por operação (compose=strict:true do ResponseDraft; interpret/propose=strict:false)
+      // no lugar de json_object.
+      response_format: responseFormatForOperation(operation),
       messages: [
         { role: "system", content: systemMessageFor(operation, request.binding.systemPrompt) },
         {

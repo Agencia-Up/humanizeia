@@ -224,6 +224,11 @@ export type TurnFrame = {
   readonly conversationContext: ConversationContext;
   readonly currentTurnFacts: CurrentTurnFacts;
   readonly signals: FrameSignals;
+  // F7-3: NOMES de modelo DISTINTOS do estoque do tenant (catálogo já carregado — NÃO é consulta nova). SÓ os nomes
+  // (sem preço/km/vehicleKey), deduplicados e limitados. Contexto de ANCORAGEM: a LLM usa a lista para reconhecer o
+  // modelo pedido e corrigir digitação (ex.: "danster" -> "Duster") por SEMÂNTICA — o engine NÃO faz regex de typo.
+  // Opcional: ausente/vazio quando o catálogo não trouxe modelos (frame antigo/degradado).
+  readonly availableModels?: readonly string[];
 };
 
 // ── Observação factual das tools (P0-3) — SEPARADA da telemetria ────────────────────────────────────────────
