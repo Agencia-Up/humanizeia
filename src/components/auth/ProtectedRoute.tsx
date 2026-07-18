@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Loader2 } from 'lucide-react';
+import { PaywallBlockedScreen } from '@/components/auth/PaywallBlockedScreen';
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -217,9 +218,12 @@ export function ProtectedRoute({ children, skipQuizCheck = false }: ProtectedRou
     );
   }
 
-  // Master sem pagamento regularizado -> envia para o checkout.
+  // Master sem pagamento regularizado -> tela de mensalidade em aberto.
+  // NAO manda direto pro /checkout: o checkout e VENDA NOVA e recobraria a
+  // implantacao de quem ja e cliente. A tela busca a fatura real da mensalidade
+  // e so cai no checkout quem nunca comprou. Ver PaywallBlockedScreen.
   if (profileState === 'no_payment') {
-    return <Navigate to="/checkout?plano=pro&ciclo=mensal" replace />;
+    return <PaywallBlockedScreen />;
   }
 
   // Chegamos aqui com usuario autenticado e sem redirect: marca que ja exibimos o
