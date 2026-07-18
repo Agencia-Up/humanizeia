@@ -1,24 +1,23 @@
 # Tutorial: marcos crm
 
-Prints deste tutorial. **Ainda nao publicados** — esta pasta so tem este README.
+**Publicado.** Ligado ao chat de ajuda pela coluna `tutorial` do artigo correspondente.
 
-## Candidatos ja identificados no inventario
+Fonte: `docs/help/source-screenshots-private/raw/` (unica permitida, ver MANIFEST).
 
-Fonte permitida: `docs/help/source-screenshots-private/raw/` (ver o MANIFEST daquela pasta).
-Nao procurar imagem em outro lugar da maquina.
+| arquivo publicado | recorte de | mostra | sanitizacao |
+|---|---|---|---|
+| `01-kanban-marcos.png` | `041` | Kanban do Marcos | -58px cabecalho, -6px chrome do SO |
 
-| arquivo em raw/ | mostra | tem dado sensivel? |
-|---|---|---|
-| `041-...` | Marcos > CRM: Kanban de 8 colunas | SIM (leads) |
-| `042-...` | Marcos > CRM com 'Adicionar Lead' aberto | SIM (leads) |
-| `043-...` | Marcos > CRM com dropdown Origem aberto | SIM (lead) |
+## Sanitizacao
 
-## Antes de publicar
+O corte de 58px no topo remove a faixa de cabecalho da aplicacao, que e onde
+aparece o e-mail de ACESSO da conta. Nome e telefone que restam nas telas sao
+dados de DEMONSTRACAO (confirmado pelo dono) e podem ficar.
 
-1. Recortar a regiao util (o recorte normalmente ja exclui o cabecalho com nome/e-mail do dono).
-2. Tampar o que sobrar de dado pessoal: nome de lead, telefone, e-mail, QR Code real.
-3. Renomear em ordem: `01-...png`, `02-...png`, ...
-4. Ligar ao artigo correspondente (coluna `tutorial` em `support_knowledge_articles`),
-   com `title`, `description` e `imageUrl` por passo.
+Revisao visual feita em 100% das imagens publicadas: nenhum QR Code, token,
+chave, URL privada ou e-mail de acesso.
 
-O conteudo e GLOBAL: todos os clientes veem. Print com dado de terceiro nao sobe.
+## Se a tela mudar
+
+Recapture, substitua o arquivo com o MESMO nome e ajuste o texto do passo em
+/administracao -> Base de Conhecimento. Substituir, nao acumular versao.

@@ -1,4 +1,4 @@
-# Tutorial: responsaveis
+# Tutorial: marcos adicionar lead
 
 **Publicado.** Ligado ao chat de ajuda pela coluna `tutorial` do artigo correspondente.
 
@@ -6,8 +6,8 @@ Fonte: `docs/help/source-screenshots-private/raw/` (unica permitida, ver MANIFES
 
 | arquivo publicado | recorte de | mostra | sanitizacao |
 |---|---|---|---|
-| `01-responsaveis.png` | `066` | Configuracoes > Responsaveis | -58px cabecalho |
-| `02-adicionar-responsavel.png` | `065` | modal Adicionar responsavel | sem corte |
+| `01-adicionar-lead.png` | `042` | formulario Adicionar Lead | -58px cabecalho |
+| `02-origem-do-lead.png` | `043` | dropdown Origem | -58px cabecalho |
 
 ## Sanitizacao
 

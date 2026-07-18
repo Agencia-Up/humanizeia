@@ -1,4 +1,4 @@
-# Tutorial: responsaveis
+# Tutorial: vendedores
 
 **Publicado.** Ligado ao chat de ajuda pela coluna `tutorial` do artigo correspondente.
 
@@ -6,8 +6,8 @@ Fonte: `docs/help/source-screenshots-private/raw/` (unica permitida, ver MANIFES
 
 | arquivo publicado | recorte de | mostra | sanitizacao |
 |---|---|---|---|
-| `01-responsaveis.png` | `066` | Configuracoes > Responsaveis | -58px cabecalho |
-| `02-adicionar-responsavel.png` | `065` | modal Adicionar responsavel | sem corte |
+| `01-aba-vendedores.png` | `014` | aba Vendedores | -58px cabecalho |
+| `02-cadastrar-vendedor.png` | `025` | card Cadastrar Vendedor | -58px cabecalho |
 
 ## Sanitizacao
 
