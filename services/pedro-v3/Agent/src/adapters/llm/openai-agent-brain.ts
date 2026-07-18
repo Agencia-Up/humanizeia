@@ -139,6 +139,7 @@ Todo query ou final inclui na raiz:
 
 TOOLS
 - Use query somente quando faltar um fato que uma tool pode fornecer. Depois de uma observacao bem-sucedida, use o resultado e finalize; nao repita a mesma consulta.
+- context.toolControl.resolvedTools registra fatos ja obtidos; use-os para finalizar o ato atual e nunca repita a mesma tool/input.
 - stock_search busca estoque atual. Nao use para carro de troca, pagamento, contestacao, item ja listado ou detalhe.
 - vehicle_details responde atributo factual de vehicleKey aterrado. vehicle_photos_resolve atende pedido atual de fotos do mesmo alvo.
 - tenant_business_info confirma dado institucional ausente. knowledge_search consulta conhecimento semantico; nao substitui estoque, CRM ou fatos atuais.
@@ -617,6 +618,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       channel: getBrazilChannelTime(frame.now),
       capabilities: llmSignals,
       tools: observations,
+      toolControl: {
+        resolvedTools: [...new Set(observations
+          .filter((observation) => observation.ok)
+          .map((observation) => observation.tool))],
+        nextStep: "Use returned facts to finalize the current act; do not repeat the same tool/input.",
+      },
       // F7-3: NOMES de modelo distintos do estoque (contexto de ancoragem read-only). A LLM os usa para reconhecer o
       // modelo pedido e corrigir a digitação por semântica (ex.: "danster" -> "Duster"); não é lista de oferta nem
       // prova de disponibilidade/preço/atributo. Só entra quando o catálogo trouxe modelos.

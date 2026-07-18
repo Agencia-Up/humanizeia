@@ -2751,12 +2751,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (keepRetrying): os feedbacks acionáveis de LISTAGEM/MONEY ganham LIST_MONEY_RETRY_CAP tentativas extras (a LLM
             // insiste em listar/conduzir), mas com teto — depois disso conta como deny repetido (não trava o loop inteiro).
             const fp = denyFingerprint(effFeedback);
-            if (keepRetrying) {
-              if (++listMoneyRetries > LIST_MONEY_RETRY_CAP) { repeatedDeny = true; break; }
-            } else {
-              if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
-              seenDenyFingerprints.add(fp);
-            }
+            if (seenDenyFingerprints.has(fp)) { repeatedDeny = true; break; }
+            seenDenyFingerprints.add(fp);
+            if (keepRetrying && ++listMoneyRetries > LIST_MONEY_RETRY_CAP) { repeatedDeny = true; break; }
             if (brainSteps + 1 < brainMaxSteps) {
               const currentTurnAnchor = `REVISAO DO MESMO TURNO: o bloco novo do lead e exatamente "${leadMessage.slice(0, 280)}". A ultima fala do agente foi "${(frame.conversationContext.lastAgentMessage ?? "").slice(0, 280)}". A ultima pergunta, se houver, foi "${(frame.currentTurnFacts.expectedAnswer.lastAgentQuestion ?? lastAgentQuestionText(contextState)).slice(0, 220)}". Preserve o ato que voce entendeu neste bloco; esta mensagem e feedback de validacao, nao uma nova ordem comercial.`;
               const retryFeedback = `${currentTurnAnchor}\n${effFeedback}`;
@@ -2931,6 +2928,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // feedback de controle (tool:"response") mandando FINALIZAR com o resultado que já tem + cap anti-loop.
             duplicateStockCallsBlocked += 1;
             observations.push({ tool: "response", ok: false, error: { code: "DUP_STOCK_SEARCH", message: "Você JÁ buscou esse estoque neste turno e tem o resultado em mãos. Finalize AGORA respondendo ao cliente com esse resultado (liste os carros encontrados) — NÃO chame stock_search de novo." } });
+            if (llmFirst) break;
             if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
             continue;
           }
@@ -2938,15 +2936,18 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // T7: repetição byte-idêntica de vehicle_details NÃO re-observa como detalhe (o smoke conta observações) — usa
             // o fato JÁ obtido; feedback de controle (tool:"response") + cap. (O executor de detalhe já roda 1x quando exigido.)
             observations.push({ tool: "response", ok: false, error: { code: "DUP_TOOL", message: "Você já consultou os detalhes desse veículo neste turno; use o fato que a ferramenta retornou (não repita a mesma chamada)." } });
+            if (llmFirst) break;
             if (++dupDetailLoopCount >= DUP_STOCK_LOOP_CAP) break;
             continue;
           }
           if (call.tool === "vehicle_photos_resolve") {
             observations.push({ tool: "response", ok: false, error: { code: "DUP_PHOTO_RESOLVE", message: "Você JÁ consultou as fotos deste veículo neste turno e tem o resultado. Finalize AGORA usando esse fato; NÃO chame vehicle_photos_resolve novamente." } });
+            if (llmFirst) break;
             if (++dupPhotoLoopCount >= 2) break;
             continue;
           }
           observations.push({ tool: call.tool, ok: false, error: { code: "DUP_TOOL", message: "Você já consultou isso neste turno; use o fato que a ferramenta retornou (não repita a mesma chamada)." } });
+          if (llmFirst) break;
           continue;
         }
         seenToolSigs.add(sig);

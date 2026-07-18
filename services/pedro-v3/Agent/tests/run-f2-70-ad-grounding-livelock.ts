@@ -100,6 +100,7 @@ type Cap = {
   outbox: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; exec: string[];
   reasonCode: string | null; responseSource: string | null; degradationKind: string | null;
   retryReasons: string[]; policyFeedback: string[]; degraded: boolean;
+  brainCalls: number;
   // Chaves REALMENTE passadas ao adapter — a lente que prova que uma chave inventada nunca foi executada.
   execKeys: string[];
 };
@@ -129,6 +130,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     retryReasons: r.status === "committed" ? [...(r.retryReasons ?? [])] : [],
     policyFeedback: r.status === "committed" ? [...r.policyFeedback] : [],
     degraded: r.status === "committed" ? r.degraded : false,
+    brainCalls: brain.seenFrames.length,
     execKeys: executed.map((e) => {
       const i = e.input as { vehicleKey?: unknown; vehicleRef?: { key?: unknown } };
       return typeof i.vehicleKey === "string" ? i.vehicleKey : (typeof i.vehicleRef?.key === "string" ? i.vehicleRef.key : "");
@@ -251,6 +253,7 @@ async function main(): Promise<void> {
     const loops = r.retryReasons.filter((x) => x === "required_tool_missing").length;
     check("[A5] cap de ESTOQUE nao e desligado pela palavra 'loja' (<=3)", loops <= 3, `required_tool_missing x${loops} :: ${r.retryReasons.join("|")}`);
     check("[A5] turno termina (nao trava)", r.committed);
+    check("[A5] deny identico nao reabre retry-storm", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
     // O engine NUNCA pode aceitar a promessa vaga ("Temos várias opções!") sem a busca que a própria LLM declarou.
     check("[A5] promessa sem busca NAO chega ao lead", !has(r.outbox, "Temos várias opções"), r.outbox.slice(0, 80));
   }
@@ -346,6 +349,29 @@ async function main(): Promise<void> {
     const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "direction_change", responder, adEcoSport);
     check("[B3] nova intencao do lead vence o anuncio", has(r.outbox, "Compass") && !has(r.outbox, "EcoSport"), r.outbox.slice(0, 110));
     check("[B3] sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+  }
+
+  // [B4] RESIDUO P0: a LLM insiste na mesma tool/input depois de ja receber o fato.
+  // A primeira repeticao vira feedback de controle; a mesma LLM redige a resposta final com o resultado obtido.
+  {
+    const c = conv();
+    const block = "Quero ver as opcoes de SUV disponiveis";
+    const responder: BrainResponder = (frame, observations) => {
+      const us: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
+      const searched = observations.some((o) => o.tool === "stock_search" && o.ok);
+      const duplicate = observations.some((o) => !o.ok && (o.error.code === "DUP_STOCK_SEARCH" || o.error.code === "DUP_TOOL"));
+      const finalAuthorship = observations.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED");
+      if (!searched) return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
+      // Simula o residuo observado: sem uma passagem final explicita, a LLM propoe a mesma consulta.
+      if (!duplicate && !finalAuthorship) return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
+      return finU([txt("Encontrei estas opcoes de SUV no estoque:"), offer(STOCK.filter((v) => v.tipo === "suv").map((v) => v.vehicleKey)), txt("Quer ver fotos ou detalhes de algum deles?")], "offer_stock", us);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder);
+    check("[B4] turno commitado apos proposta duplicada", r.committed, `${r.responseSource}`);
+    check("[B4] nao caiu em fallback tecnico", r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[B4] stock_search executou uma unica vez", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
+    check("[B4] proposta duplicada consumiu no maximo uma nova autoria", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
+    check("[B4] resposta final usa o estoque obtido", has(r.outbox, "SUV") || has(r.outbox, "EcoSport"), r.outbox.slice(0, 140));
   }
 
   // ══════════════════════════════════════════════════════════════════════════
