@@ -25,35 +25,35 @@
 
 UPDATE public.support_knowledge_articles
 SET tutorial = jsonb_build_object(
-  'tutorialId', 'conectar-whatsapp',
-  'title',      'Como conectar seu WhatsApp',
-  'summary',    'Conecte o número da sua operação lendo um QR Code. Leva menos de 2 minutos e o celular precisa estar com você.',
+  'tutorialId','conectar-whatsapp',
+  'title','Como conectar seu WhatsApp',
+  'summary','Conecte o número da sua operação lendo um QR Code. Leva menos de 2 minutos e o celular precisa estar com você.',
   'steps', jsonb_build_array(
     jsonb_build_object('title','Abra as Integrações',
       'description','No menu do lado esquerdo, clique em "Sistema" para abrir a seção e depois em "Integrações".',
-      'imageUrl','/help/tutorials/conectar-whatsapp/01-menu-integracoes.png'),
+      'imageUrl','/help/tutorials/conectar-whatsapp/01-abrir-integracoes.png'),
     jsonb_build_object('title','Vá para "Instâncias do WhatsApp"',
       'description','Abra essa aba. A aba "Conexões", ao lado, é só para contas de anúncio — não é ali.',
-      'imageUrl','/help/tutorials/conectar-whatsapp/02-aba-instancias.png'),
+      'imageUrl','/help/tutorials/conectar-whatsapp/02-instancias-whatsapp.png'),
     jsonb_build_object('title','Clique em "Conectar Número"',
-      'description','É o botão verde no canto superior direito da tela.',
+      'description','É o botão verde no canto superior direito. Em seguida escolha a opção "WhatsApp (QR Code)".',
       'imageUrl','/help/tutorials/conectar-whatsapp/03-conectar-numero.png'),
-    jsonb_build_object('title','Escolha "WhatsApp (QR Code)"',
-      'description','É a opção mais simples: você conecta lendo o código com o celular.',
-      'imageUrl','/help/tutorials/conectar-whatsapp/04-escolher-qrcode.png'),
     jsonb_build_object('title','Dê um nome para a conexão',
       'description','No campo "Nome da conexão", escreva algo que te ajude a identificar o número (ex: o nome da sua empresa).',
-      'imageUrl','/help/tutorials/conectar-whatsapp/05-nome-da-conexao.png'),
+      'imageUrl','/help/tutorials/conectar-whatsapp/04-nome-conexao.png'),
     jsonb_build_object('title','Clique em "Gerar QR Code"',
       'description','O código aparece na tela em alguns segundos.',
-      'imageUrl','/help/tutorials/conectar-whatsapp/06-gerar-qrcode.png'),
+      'imageUrl','/help/tutorials/conectar-whatsapp/05-gerar-qr-code.png'),
     jsonb_build_object('title','Escaneie com o celular',
       'description','No seu celular: WhatsApp → Aparelhos conectados → Conectar um aparelho. Aponte a câmera para o código na tela.',
-      'imageUrl','/help/tutorials/conectar-whatsapp/07-escanear-qrcode.png'),
-    jsonb_build_object('title','Aguarde aparecer "Conectado!"',
-      'description','Pronto. O número passa a mostrar a etiqueta verde "Conectado" na lista.',
-      'imageUrl','/help/tutorials/conectar-whatsapp/08-conectado.png')
+      'imageUrl','/help/tutorials/conectar-whatsapp/06-escanear-qr-code.png'),
+    jsonb_build_object('title','Aguarde a leitura',
+      'description','A tela mostra "Aguardando leitura do QR Code...". Se demorar, use "Já escaneei" para atualizar.',
+      'imageUrl','/help/tutorials/conectar-whatsapp/07-aguardar-conexao.png'),
+    -- Passo SEM imagem de proposito: nao ha print de "Conectado" em raw/ (as
+    -- capturas foram feitas com 0 instancias). O chat mostra o passo mesmo assim.
+    jsonb_build_object('title','Confirme que aparece "Conectado"',
+      'description','Pronto. O número passa a mostrar a etiqueta verde "Conectado" na lista de instâncias.')
   )
-),
-updated_at = now()
+), updated_at = now()
 WHERE slug = 'conectar-whatsapp-qrcode';
