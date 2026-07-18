@@ -131,6 +131,46 @@ serve(async (req: Request) => {
     }
     const q = quote(planType, ciclo, paidCount);
 
+    // ── 0. TRAVA ANTI-COBRANÇA-DUPLA (rede de segurança do dinheiro) ──────────
+    // Este endpoint é VENDA NOVA: sempre cria `setup (implantação) + mensalidade`.
+    // Se um cliente que JÁ comprou cair aqui (ex.: bloqueado por atraso e mandado
+    // pro /checkout por uma tela antiga), ele pagaria a implantação DE NOVO.
+    // Critério proposital de "já é cliente": checkout `paid` COM assinatura no
+    // Asaas E conta provisionada. Não pega quem está `failed`/`awaiting_payment`
+    // (esses PRECISAM poder tentar de novo). Casa por e-mail OU documento.
+    // (usa .eq() em vez de .or() interpolado: .eq escapa o valor, e um e-mail com
+    //  vírgula quebraria a sintaxe do filtro do PostgREST)
+    const docDigits = String(document).replace(/\D/g, '');
+    const clientePago = (coluna: string, valor: string) => supabase
+      .from('checkout_pending')
+      .select('id')
+      .eq('status', 'paid')
+      .not('asaas_subscription_id', 'is', null)
+      .not('user_id', 'is', null)
+      .eq(coluna, valor)
+      .limit(1)
+      .maybeSingle();
+
+    const [porEmail, porDoc] = await Promise.all([
+      clientePago('email', email),
+      clientePago('document', docDigits),
+    ]);
+    const jaCliente = porEmail.data || porDoc.data;
+
+    if (jaCliente?.id) {
+      console.warn(`[checkout] BLOQUEADO recompra: email=${email} ja tem checkout pago=${jaCliente.id}`);
+      return new Response(JSON.stringify({
+        error: 'Esta conta já possui uma assinatura ativa. Para regularizar uma '
+             + 'mensalidade em aberto, use a fatura enviada por e-mail — a '
+             + 'implantação já foi paga e não é cobrada novamente. Se precisar de '
+             + 'ajuda, fale com o suporte da Logos.',
+        code: 'already_customer',
+      }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // ── 1. Registrar tentativa pendente (lookup do webhook depende disso) ──
     const { data: pending, error: pendingErr } = await supabase
       .from('checkout_pending')
