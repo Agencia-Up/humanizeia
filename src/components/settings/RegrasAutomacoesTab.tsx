@@ -11,6 +11,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import {
+  CAPI_QUALITY_EVENTS, classifyCapiEventStatus, CAPI_EVENT_STATUS_LABEL,
+  customConversionInstruction,
+} from '@/lib/capiEventStatus';
 
 // Reconexão + relatório de atendimento: sem linha => defaults = comportamento legado.
 const DEFAULTS = {
@@ -34,6 +38,7 @@ const JANELAS = [
   { v: 'ultimos_3_dias', l: 'Últimos 3 dias' },
   { v: 'ultimos_7_dias', l: 'Últimos 7 dias' },
   { v: 'semana_atual', l: 'Semana atual (desde segunda)' },
+  { v: 'desde_chegada_lead', l: 'Desde a chegada de cada lead (máx. 30 dias)' },
 ];
 const TONS = [
   { v: 'direto', l: 'Direto' }, { v: 'consultivo', l: 'Consultivo' },
@@ -85,9 +90,15 @@ export function RegrasAutomacoesTab() {
   const [testingBrain, setTestingBrain] = useState(false);
   const [brainTest, setBrainTest] = useState<any>(null); // resultado do último teste
 
-  // ── Saúde do Cérebro (feedback_status_operacional) ──
+  // ── Saúde do Cérebro (feedback_status_operacional) + saúde executiva
+  //    (feedback_operational_health) + CAPI (capi_quality_status) + checklist
+  //    de Custom Conversions (meta_custom_conversion_checks) ──
   const [saude, setSaude] = useState<any>(null);
   const [loadingSaude, setLoadingSaude] = useState(true);
+  const [health, setHealth] = useState<any>(null);
+  const [capi, setCapi] = useState<any>(null);
+  const [ccheck, setCcheck] = useState<Record<string, any>>({});
+  const [savingCheck, setSavingCheck] = useState<string | null>(null);
 
   // ── Relatório do José (Fluxo A — apollo_cron_config, por conta) ──
   // Só mexemos nos campos DO RELATÓRIO (send_daily_report / run_hour / run_minute /
@@ -126,8 +137,24 @@ export function RegrasAutomacoesTab() {
     })();
     (async () => {
       setLoadingSaude(true);
-      const { data } = await (supabase as any).rpc('feedback_status_operacional', { p_tenant: user.id });
-      if (!cancelled) { setSaude(data || null); setLoadingSaude(false); }
+      // As 3 RPCs são somente leitura; feedback_operational_health e
+      // capi_quality_status resolvem a conta pelo próprio auth.uid (sem p_user).
+      const [st, he, cq, ck] = await Promise.all([
+        (supabase as any).rpc('feedback_status_operacional', { p_tenant: user.id }),
+        (supabase as any).rpc('feedback_operational_health'),
+        (supabase as any).rpc('capi_quality_status'),
+        (supabase as any).from('meta_custom_conversion_checks')
+          .select('event_name, marked_configured, checked_at, notes').eq('user_id', user.id),
+      ]);
+      if (!cancelled) {
+        setSaude(st?.data || null);
+        setHealth(he?.data || null);
+        setCapi(cq?.data || null);
+        const map: Record<string, any> = {};
+        for (const r of (Array.isArray(ck?.data) ? ck.data : [])) map[r.event_name] = r;
+        setCcheck(map);
+        setLoadingSaude(false);
+      }
     })();
     (async () => {
       setLoadingAg(true);
@@ -289,9 +316,34 @@ export function RegrasAutomacoesTab() {
   const recarregarSaude = async () => {
     if (!user?.id) return;
     setLoadingSaude(true);
-    const { data } = await (supabase as any).rpc('feedback_status_operacional', { p_tenant: user.id });
-    setSaude(data || null);
+    const [st, he, cq, ck] = await Promise.all([
+      (supabase as any).rpc('feedback_status_operacional', { p_tenant: user.id }),
+      (supabase as any).rpc('feedback_operational_health'),
+      (supabase as any).rpc('capi_quality_status'),
+      (supabase as any).from('meta_custom_conversion_checks')
+        .select('event_name, marked_configured, checked_at, notes').eq('user_id', user.id),
+    ]);
+    setSaude(st?.data || null);
+    setHealth(he?.data || null);
+    setCapi(cq?.data || null);
+    const map: Record<string, any> = {};
+    for (const r of (Array.isArray(ck?.data) ? ck.data : [])) map[r.event_name] = r;
+    setCcheck(map);
     setLoadingSaude(false);
+  };
+
+  // Checklist manual de Custom Conversion: só marca "configurei na Meta".
+  // NÃO cria nada na Meta e NÃO altera o envio CAPI.
+  const marcarConversao = async (eventName: string, val: boolean) => {
+    if (!user?.id) return;
+    setSavingCheck(eventName);
+    const { error } = await (supabase as any).from('meta_custom_conversion_checks').upsert({
+      user_id: user.id, event_name: eventName, marked_configured: val,
+      checked_at: val ? new Date().toISOString() : null,
+    }, { onConflict: 'user_id,event_name' });
+    setSavingCheck(null);
+    if (error) { toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' }); return; }
+    setCcheck((prev) => ({ ...prev, [eventName]: { ...(prev[eventName] || {}), event_name: eventName, marked_configured: val, checked_at: val ? new Date().toISOString() : null } }));
   };
 
   // Adiciona um destinatário (mesmo padrão do ResponsaveisTab: upsert por user_id+whatsapp).
@@ -807,8 +859,8 @@ export function RegrasAutomacoesTab() {
                 <Activity className="h-5 w-5 text-sky-400" />
               </div>
               <div>
-                <CardTitle className="text-base">Saúde do Cérebro</CardTitle>
-                <CardDescription className="text-xs mt-0.5">Última execução, relatórios enviados, falhas e análises pendentes.</CardDescription>
+                <CardTitle className="text-base">Saúde do Cérebro e CAPI</CardTitle>
+                <CardDescription className="text-xs mt-0.5">Relatórios, análises, custo, confiança, alertas e envio de eventos à Meta (somente leitura).</CardDescription>
               </div>
             </div>
             <Button variant="ghost" size="sm" onClick={recarregarSaude} disabled={loadingSaude} className="gap-1.5">
@@ -844,6 +896,131 @@ export function RegrasAutomacoesTab() {
               )}
             </div>
           )}
+
+          {/* ── Saúde executiva (feedback_operational_health, janela 7d) ── */}
+          {!loadingSaude && health?.ok && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Relatórios (7d)</p>
+                <p className={cn('text-sm font-medium', Number(health?.relatorio?.falhas_7d) > 0 ? 'text-amber-400' : '')}>
+                  {Number(health?.relatorio?.enviados_7d ?? 0)} enviado(s) · {Number(health?.relatorio?.falhas_7d ?? 0)} falha(s)
+                </p>
+                {health?.relatorio?.ultima_falha_em && (
+                  <p className="text-[10px] text-amber-400/80 truncate" title={String(health?.relatorio?.ultima_falha_erro || '')}>
+                    Última falha: {new Date(health.relatorio.ultima_falha_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Análises (7d)</p>
+                <p className="text-sm font-medium">
+                  {Number(health?.analises?.concluidas ?? 0)} ok · {Number(health?.analises?.pendentes ?? 0)} pend. · <span className={Number(health?.analises?.falharam) > 0 ? 'text-amber-400' : ''}>{Number(health?.analises?.falharam ?? 0)} falha(s)</span>
+                </p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Custo da análise (7d)</p>
+                <p className="text-sm font-medium">
+                  {Number(health?.custo?.custo_usd_7d ?? 0) > 0 ? `US$ ${Number(health.custo.custo_usd_7d).toFixed(4)}` : '—'}
+                  {Number(health?.custo?.tokens_7d ?? 0) > 0 ? ` · ${Number(health.custo.tokens_7d).toLocaleString('pt-BR')} tokens` : ''}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Confiança das análises (7d)</p>
+                <p className="text-sm font-medium">
+                  {Number(health?.confianca?.alta ?? 0)} alta · {Number(health?.confianca?.media ?? 0)} média · <span className={Number(health?.confianca?.baixa) > 0 ? 'text-amber-400' : ''}>{Number(health?.confianca?.baixa ?? 0)} baixa</span>
+                </p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2 sm:col-span-2 lg:col-span-2">
+                <p className="text-[11px] text-muted-foreground">Alertas de risco</p>
+                <p className="text-sm font-medium">
+                  {Number(health?.alertas?.pendentes ?? 0)} pendente(s) · {Number(health?.alertas?.enviados_7d ?? 0)} enviado(s) 7d
+                  {health?.alertas?.ultimo_envio ? ` · último ${new Date(health.alertas.ultimo_envio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
+                </p>
+                {health?.alertas?.ultima_falha_em && (
+                  <p className="text-[10px] text-amber-400/80 truncate" title={String(health?.alertas?.ultima_falha_erro || '')}>
+                    Última falha: {new Date(health.alertas.ultima_falha_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                  </p>
+                )}
+              </div>
+              {/* CAPI (capi_quality_status — leitura; não altera o envio) */}
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2 sm:col-span-2 lg:col-span-2">
+                <p className="text-[11px] text-muted-foreground">Meta CAPI (eventos de qualidade)</p>
+                {capi?.ok ? (
+                  <>
+                    <p className="text-sm font-medium">
+                      {Number(capi?.sent ?? 0)} enviado(s) · {Number(capi?.pending ?? 0)} pendente(s) · <span className={Number(capi?.failed) > 0 ? 'text-amber-400' : ''}>{Number(capi?.failed ?? 0)} falha(s)</span>
+                      {capi?.last_sent_at ? ` · último ${new Date(capi.last_sent_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
+                    </p>
+                    {capi?.last_failed_at && (
+                      <p className="text-[10px] text-amber-400/80 truncate" title={String(capi?.last_error || '')}>
+                        Última falha: {new Date(capi.last_failed_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}{capi?.last_error ? ` — ${String(capi.last_error).slice(0, 80)}` : ''}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm font-medium">—</p>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Conversões personalizadas na Meta (fluxo ASSISTIDO — checklist manual) ── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 border border-violet-500/30">
+              <Target className="h-5 w-5 text-violet-400" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Conversões personalizadas (Meta)</CardTitle>
+              <CardDescription className="text-xs mt-0.5">
+                Os eventos abaixo já são enviados ao seu Pixel via CAPI, mas a Meta NÃO cria a conversão personalizada sozinha — crie manualmente no Gerenciador de Eventos e marque aqui quando concluir.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {CAPI_QUALITY_EVENTS.map((ev) => {
+            const counts = capi?.por_evento?.[ev];
+            const st = classifyCapiEventStatus(counts);
+            const check = ccheck[ev];
+            return (
+              <div key={ev} className="flex flex-wrap items-center gap-3 rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium">{ev}</p>
+                    <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium border',
+                      st === 'enviado' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                      : st === 'falhando' ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                      : st === 'pendente' ? 'border-sky-500/40 bg-sky-500/10 text-sky-400'
+                      : 'border-border/60 bg-muted/30 text-muted-foreground')}>
+                      {CAPI_EVENT_STATUS_LABEL[st]}
+                    </span>
+                    {Number(counts?.sent ?? 0) > 0 && (
+                      <span className="text-[10px] text-muted-foreground">{Number(counts.sent)} envio(s)</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground truncate">{customConversionInstruction(ev)}</p>
+                  {st === 'falhando' && capi?.last_error && (
+                    <p className="text-[10px] text-amber-400/80 truncate" title={String(capi.last_error)}>Último erro: {String(capi.last_error).slice(0, 90)}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">Configurei na Meta</span>
+                  <Switch
+                    checked={!!check?.marked_configured}
+                    disabled={savingCheck === ev || loadingSaude}
+                    onCheckedChange={(v) => marcarConversao(ev, v)}
+                  />
+                </div>
+              </div>
+            );
+          })}
+          <p className="text-[11px] text-muted-foreground">
+            Passo a passo: Meta Gerenciador de Eventos → Conversões personalizadas → Criar → escolha o Pixel da conta → regra "Evento = nome acima". A marcação é só um checklist seu — nada é criado automaticamente na Meta.
+          </p>
         </CardContent>
       </Card>
 

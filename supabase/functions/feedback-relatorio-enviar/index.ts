@@ -39,8 +39,15 @@ function dataBRTMenosDias(dias: number): string {
 
 // Janela de analise configuravel (conta_automacao_regras.relatorio_janela_tipo)
 // -> quantos dias entram na RPC de dados. 'padrao_atual' preserva o comportamento
-// historico (7 dias). 'desde_chegada_lead' e reservado: tratado como 7 dias ate a
-// implementacao incremental (pendencia tecnica documentada).
+// historico (7 dias).
+//
+// 'desde_chegada_lead' (JANELA REAL): a RPC feedback_relatorio_diario_dados ja
+// agrupa cada lead pela DATA DE CHEGADA (arrived_at/created_at) e junta a
+// analise por lead independente de quando ela aconteceu — entao p_dias=N
+// significa exatamente "leads que CHEGARAM nos ultimos N dias, com a analise
+// completa desde a chegada". Usamos o teto seguro de 30 dias (custo/consulta
+// limitados; nenhum reprocesso de LLM — so leitura/agregacao).
+const DESDE_CHEGADA_MAX_DIAS = 30;
 function janelaParaDias(tipo: string): number {
   switch (tipo) {
     case 'ultimas_24h': return 1;
@@ -51,7 +58,7 @@ function janelaParaDias(tipo: string): number {
       const dow = new Date(Date.now() - 3 * 3600e3).getUTCDay(); // 0=domingo (BRT)
       return Math.max(1, dow === 0 ? 7 : dow); // desde segunda
     }
-    case 'desde_chegada_lead': return 7; // reservado (pendencia)
+    case 'desde_chegada_lead': return DESDE_CHEGADA_MAX_DIAS; // janela real por chegada do lead
     default: return 7; // padrao_atual
   }
 }
@@ -92,7 +99,7 @@ function gargaloGerencial(funil: any): string {
 function captionCurta(
   nepq: { total: number; nota: number | null; alertas: number },
   funil: any,
-  periodo?: { dias: number; freq: string },
+  periodo?: { dias: number; freq: string; janela?: string },
 ): string {
   const total = nepq.total || n(funil?.analisados) || 0;
   const notaTxt = nepq.nota != null ? `${nepq.nota}/100` : '—';
@@ -102,7 +109,9 @@ function captionCurta(
     ? `📊 Relatório diário de Feedback — ${dataBRT()}`
     : `📊 Relatório de Feedback — ${dataBRT()}`;
   const linhas = [titulo, ``];
-  if (periodo && periodo.dias > 1) {
+  if (periodo?.janela === 'desde_chegada_lead') {
+    linhas.push(`Período: desde a chegada de cada lead (máx. ${periodo.dias} dias)`, ``);
+  } else if (periodo && periodo.dias > 1) {
     linhas.push(`Período analisado: ${dataBRTMenosDias(periodo.dias - 1)} a ${dataBRTMenosDias(0)}`, ``);
   }
   linhas.push(
@@ -226,6 +235,19 @@ Deno.serve(async (req) => {
       }
     };
 
+    // Janela de analise configuravel — carregada ANTES do PDF para que caption
+    // e PDF usem a MESMA janela (fallback: 7 dias = comportamento historico).
+    let janelaTipo = 'padrao_atual';
+    let freqRelatorio = 'diario';
+    try {
+      const { data: ar } = await admin.from('conta_automacao_regras')
+        .select('relatorio_janela_tipo, relatorio_atendimento_frequencia')
+        .eq('user_id', tenant).maybeSingle();
+      janelaTipo = String(ar?.relatorio_janela_tipo || 'padrao_atual');
+      freqRelatorio = String(ar?.relatorio_atendimento_frequencia || 'diario');
+    } catch (_e) { /* mantem padrao */ }
+    const janelaDias = janelaParaDias(janelaTipo);
+
     // 3) Gera o PDF DIARIO simplificado (2 paginas: funil + gargalo + vendedores).
     //    O completo (conversa por conversa) e o feedback-relatorio-pdf, usado
     //    sob demanda na area de Feedbacks — nao no disparo diario.
@@ -236,6 +258,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         k: VIEW_KEY, tenant_id: tenant, upload_nome: uploadNome,
         loja: body?.loja,
+        dias: janelaDias, // PDF usa a MESMA janela do relatorio (default 7 preservado)
       }),
     });
     const gen = await genRes.json().catch(() => ({}));
@@ -255,18 +278,6 @@ Deno.serve(async (req) => {
     }
 
     // 5) Envia o documento a cada destinatario, pelo numero da IA.
-    // Janela de analise configuravel (fallback: 7 dias = comportamento historico).
-    let janelaTipo = 'padrao_atual';
-    let freqRelatorio = 'diario';
-    try {
-      const { data: ar } = await admin.from('conta_automacao_regras')
-        .select('relatorio_janela_tipo, relatorio_atendimento_frequencia')
-        .eq('user_id', tenant).maybeSingle();
-      janelaTipo = String(ar?.relatorio_janela_tipo || 'padrao_atual');
-      freqRelatorio = String(ar?.relatorio_atendimento_frequencia || 'diario');
-    } catch (_e) { /* mantem padrao */ }
-    const janelaDias = janelaParaDias(janelaTipo);
-
     let dadosCaption: any = null;
     try {
       const { data } = await admin.rpc('feedback_relatorio_diario_dados', { p_tenant: tenant, p_dias: janelaDias });
@@ -291,7 +302,7 @@ Deno.serve(async (req) => {
         alertas: arr.filter((x: any) => Number(x?.nepq_score) < 45).length,
       };
     } catch (_e) { /* usa fallback do funil */ }
-    const caption = String(body?.caption || captionCurta(nepqResumo, dadosCaption?.funil, { dias: janelaDias, freq: freqRelatorio }));
+    const caption = String(body?.caption || captionCurta(nepqResumo, dadosCaption?.funil, { dias: janelaDias, freq: freqRelatorio, janela: janelaTipo }));
 
     // dry_run (smoke test): prova o payload SEM enviar de verdade. type=document (PDF) + caption curta.
     if (body?.dry_run) {
@@ -339,6 +350,8 @@ Deno.serve(async (req) => {
         destinatarios: dests.map((d) => ({ nome: d.nome, num: d.num })),
         periodo_dias: janelaDias,
         janela_tipo: janelaTipo,
+        // Janela real por chegada do lead: registra o teto explicito (max 30 dias).
+        ...(janelaTipo === 'desde_chegada_lead' ? { periodo_dias_max: DESDE_CHEGADA_MAX_DIAS } : {}),
         ref_date: dadosCaption?.ref_date || null,
         leads_recebidos: n(funilCaption.chegaram),
         leads_analisados: n(funilCaption.analisados),
