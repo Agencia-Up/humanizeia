@@ -208,6 +208,42 @@ export async function buildLeadThread(
     }
   }
 
+  // ── Pedro V3 (compatibilidade) ─────────────────────────────────────────────
+  // O V3 NAO espelha o dialogo da IA em wa_chat_history nem em wa_inbox — as
+  // mensagens enviadas pela IA vivem em v3_effect_outbox (kind=send_message).
+  // Sem este bloco, o contexto_ia fica vazio em conversas do V3 e o analista ve
+  // mensagens do cliente "sem resposta" (a IA respondeu!) — penalizando o
+  // vendedor injustamente. Le SO efeitos despachados (dispatched_at) da conversa
+  // deste lead. Best-effort: erro/ausencia de V3 => segue apenas com as fontes
+  // V2 (comportamento antigo intacto).
+  if (leadSource === 'pedro') {
+    try {
+      const { data: rotas } = await admin
+        .from('v3_conversation_routing')
+        .select('conversation_id')
+        .eq('tenant_id', tenant)
+        .eq('lead_id', String(leadId));
+      const convIds = [...new Set((rotas || []).map((r: any) => r.conversation_id).filter(Boolean))];
+      if (convIds.length) {
+        const { data: fx } = await admin
+          .from('v3_effect_outbox')
+          .select('payload, created_at, dispatched_at')
+          .eq('tenant_id', tenant)
+          .eq('kind', 'send_message')
+          .in('conversation_id', convIds)
+          .order('created_at', { ascending: true })
+          .limit(400);
+        for (const e of (fx || [])) {
+          if (!(e as any).dispatched_at) continue; // nunca saiu -> nao e dialogo real
+          const texto = (e as any)?.payload?.text;
+          if (typeof texto === 'string' && texto.trim()) {
+            contexto.push({ from: 'ia', texto: texto.trim(), timestamp: (e as any).created_at, canal: 'pedro' });
+          }
+        }
+      }
+    } catch (_e) { /* tenant sem V3 / tabela ausente -> fontes V2 apenas */ }
+  }
+
   // Busca as mensagens do atendimento humano (wa_inbox) casando o numero NACIONAL
   // COMPLETO (DDD+numero), nao so os ultimos 8 digitos — evita misturar leads de
   // DDDs diferentes com final igual. Fallback last-8 e controlado e logado.

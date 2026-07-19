@@ -31,6 +31,31 @@ function dataBRT(): string {
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
+// dd/mm de N dias atras (BRT).
+function dataBRTMenosDias(dias: number): string {
+  const d = new Date(Date.now() - 3 * 3600e3 - dias * 24 * 3600e3);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// Janela de analise configuravel (conta_automacao_regras.relatorio_janela_tipo)
+// -> quantos dias entram na RPC de dados. 'padrao_atual' preserva o comportamento
+// historico (7 dias). 'desde_chegada_lead' e reservado: tratado como 7 dias ate a
+// implementacao incremental (pendencia tecnica documentada).
+function janelaParaDias(tipo: string): number {
+  switch (tipo) {
+    case 'ultimas_24h': return 1;
+    case 'ultimos_2_dias': return 2;
+    case 'ultimos_3_dias': return 3;
+    case 'ultimos_7_dias': return 7;
+    case 'semana_atual': {
+      const dow = new Date(Date.now() - 3 * 3600e3).getUTCDay(); // 0=domingo (BRT)
+      return Math.max(1, dow === 0 ? 7 : dow); // desde segunda
+    }
+    case 'desde_chegada_lead': return 7; // reservado (pendencia)
+    default: return 7; // padrao_atual
+  }
+}
+
 // Mensagem padrão que vai junto do PDF todo dia.
 function captionPadrao(): string {
   return [
@@ -64,21 +89,33 @@ function gargaloGerencial(funil: any): string {
 // Caption CURTA (padrao atual): SO o PDF em anexo + um resumo de 3 numeros.
 // NUNCA manda o relatorio completo em texto — o detalhe fica dentro do PDF.
 // Numeros do NEPQ do dia: atendimentos avaliados, nota media e pontos de atencao.
-function captionCurta(nepq: { total: number; nota: number | null; alertas: number }, funil: any): string {
+function captionCurta(
+  nepq: { total: number; nota: number | null; alertas: number },
+  funil: any,
+  periodo?: { dias: number; freq: string },
+): string {
   const total = nepq.total || n(funil?.analisados) || 0;
   const notaTxt = nepq.nota != null ? `${nepq.nota}/100` : '—';
-  return [
-    `📊 Relatório diário de Feedback — ${dataBRT()}`,
-    ``,
+  // Titulo neutro quando a frequencia nao e diaria (semanal/dias especificos).
+  const diario = !periodo || periodo.freq === 'diario';
+  const titulo = diario
+    ? `📊 Relatório diário de Feedback — ${dataBRT()}`
+    : `📊 Relatório de Feedback — ${dataBRT()}`;
+  const linhas = [titulo, ``];
+  if (periodo && periodo.dias > 1) {
+    linhas.push(`Período analisado: ${dataBRTMenosDias(periodo.dias - 1)} a ${dataBRTMenosDias(0)}`, ``);
+  }
+  linhas.push(
     `O PDF com a análise completa está em anexo.`,
     ``,
-    `Resumo rápido:`,
+    `Resumo do período:`,
     `• ${total} atendimento(s) avaliado(s)`,
     `• Nota média: ${notaTxt}`,
     `• ${nepq.alertas} ponto(s) de atenção`,
     ``,
     `Logos IA`,
-  ].join('\n');
+  );
+  return linhas.join('\n');
 }
 
 function captionGerencial(dados: any, obs?: string): string {
@@ -218,9 +255,21 @@ Deno.serve(async (req) => {
     }
 
     // 5) Envia o documento a cada destinatario, pelo numero da IA.
+    // Janela de analise configuravel (fallback: 7 dias = comportamento historico).
+    let janelaTipo = 'padrao_atual';
+    let freqRelatorio = 'diario';
+    try {
+      const { data: ar } = await admin.from('conta_automacao_regras')
+        .select('relatorio_janela_tipo, relatorio_atendimento_frequencia')
+        .eq('user_id', tenant).maybeSingle();
+      janelaTipo = String(ar?.relatorio_janela_tipo || 'padrao_atual');
+      freqRelatorio = String(ar?.relatorio_atendimento_frequencia || 'diario');
+    } catch (_e) { /* mantem padrao */ }
+    const janelaDias = janelaParaDias(janelaTipo);
+
     let dadosCaption: any = null;
     try {
-      const { data } = await admin.rpc('feedback_relatorio_diario_dados', { p_tenant: tenant, p_dias: 7 });
+      const { data } = await admin.rpc('feedback_relatorio_diario_dados', { p_tenant: tenant, p_dias: janelaDias });
       dadosCaption = data;
     } catch (_e) {
       dadosCaption = null;
@@ -242,7 +291,7 @@ Deno.serve(async (req) => {
         alertas: arr.filter((x: any) => Number(x?.nepq_score) < 45).length,
       };
     } catch (_e) { /* usa fallback do funil */ }
-    const caption = String(body?.caption || captionCurta(nepqResumo, dadosCaption?.funil));
+    const caption = String(body?.caption || captionCurta(nepqResumo, dadosCaption?.funil, { dias: janelaDias, freq: freqRelatorio }));
 
     // dry_run (smoke test): prova o payload SEM enviar de verdade. type=document (PDF) + caption curta.
     if (body?.dry_run) {
@@ -288,7 +337,8 @@ Deno.serve(async (req) => {
         paginas: gen.paginas ?? null,
         enviados,
         destinatarios: dests.map((d) => ({ nome: d.nome, num: d.num })),
-        periodo_dias: 7,
+        periodo_dias: janelaDias,
+        janela_tipo: janelaTipo,
         ref_date: dadosCaption?.ref_date || null,
         leads_recebidos: n(funilCaption.chegaram),
         leads_analisados: n(funilCaption.analisados),

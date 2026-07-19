@@ -5,15 +5,43 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus, Target } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus, Target, Brain, Activity, FlaskConical, RotateCcw, RefreshCw, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 // Reconexão + relatório de atendimento: sem linha => defaults = comportamento legado.
 const DEFAULTS = {
   reconexao_enabled: true, reconexao_intervalo_min: 60, reconexao_hora_ini: 7, reconexao_hora_fim: 21,
   relatorio_atendimento_enabled: true, relatorio_atendimento_hora: 8,
+  relatorio_atendimento_frequencia: 'diario' as string,
+  relatorio_atendimento_dias: null as number[] | null,
+  relatorio_atendimento_horarios: null as number[] | null,
+  relatorio_janela_tipo: 'padrao_atual' as string,
+};
+
+// Convenção de dias: 0=domingo..6=sábado (EXTRACT(dow) do Postgres).
+const DIAS_SEMANA = [
+  { v: 1, l: 'Seg' }, { v: 2, l: 'Ter' }, { v: 3, l: 'Qua' }, { v: 4, l: 'Qui' },
+  { v: 5, l: 'Sex' }, { v: 6, l: 'Sáb' }, { v: 0, l: 'Dom' },
+];
+const JANELAS = [
+  { v: 'padrao_atual', l: 'Padrão atual (últimos 7 dias)' },
+  { v: 'ultimas_24h', l: 'Últimas 24h' },
+  { v: 'ultimos_2_dias', l: 'Últimos 2 dias' },
+  { v: 'ultimos_3_dias', l: 'Últimos 3 dias' },
+  { v: 'ultimos_7_dias', l: 'Últimos 7 dias' },
+  { v: 'semana_atual', l: 'Semana atual (desde segunda)' },
+];
+const TONS = [
+  { v: 'direto', l: 'Direto' }, { v: 'consultivo', l: 'Consultivo' },
+  { v: 'educativo', l: 'Educativo' }, { v: 'exigente', l: 'Exigente' },
+];
+const BRAIN_DEFAULT = {
+  enabled: false, name: '', tone: 'direto',
+  specialist_prompt: '', evaluation_criteria: '', never_do: '',
 };
 const INTERVALOS = [
   { v: 30, l: '30 minutos' }, { v: 60, l: '1 hora' }, { v: 120, l: '2 horas' },
@@ -50,6 +78,17 @@ export function RegrasAutomacoesTab() {
   const [fu, setFu] = useState(FU_DEFAULT);
   const [tr, setTr] = useState(TR_DEFAULT);
 
+  // ── Cérebro da análise (feedback_brain_config, por tenant/master) ──
+  const [brain, setBrain] = useState<any>(BRAIN_DEFAULT);
+  const [loadingBrain, setLoadingBrain] = useState(true);
+  const [savingBrain, setSavingBrain] = useState(false);
+  const [testingBrain, setTestingBrain] = useState(false);
+  const [brainTest, setBrainTest] = useState<any>(null); // resultado do último teste
+
+  // ── Saúde do Cérebro (feedback_status_operacional) ──
+  const [saude, setSaude] = useState<any>(null);
+  const [loadingSaude, setLoadingSaude] = useState(true);
+
   // ── Relatório do José (Fluxo A — apollo_cron_config, por conta) ──
   // Só mexemos nos campos DO RELATÓRIO (send_daily_report / run_hour / run_minute /
   // whatsapp_report_number). NÃO tocamos em is_enabled/auto_execute/account_id — isso
@@ -65,7 +104,7 @@ export function RegrasAutomacoesTab() {
       setLoading(true);
       const { data } = await (supabase as any)
         .from('conta_automacao_regras')
-        .select('reconexao_enabled, reconexao_intervalo_min, reconexao_hora_ini, reconexao_hora_fim, relatorio_atendimento_enabled, relatorio_atendimento_hora')
+        .select('reconexao_enabled, reconexao_intervalo_min, reconexao_hora_ini, reconexao_hora_fim, relatorio_atendimento_enabled, relatorio_atendimento_hora, relatorio_atendimento_frequencia, relatorio_atendimento_dias, relatorio_atendimento_horarios, relatorio_janela_tipo')
         .eq('user_id', user.id).maybeSingle();
       if (!cancelled) { setCfg(data ? { ...DEFAULTS, ...data } : DEFAULTS); setLoading(false); }
     })();
@@ -73,9 +112,22 @@ export function RegrasAutomacoesTab() {
       setLoadingResp(true);
       const { data } = await (supabase as any)
         .from('conta_responsaveis')
-        .select('id, nome, whatsapp, recebe_atendimento, ativo')
+        .select('id, nome, whatsapp, recebe_atendimento, recebe_alertas, ativo')
         .eq('user_id', user.id).order('created_at', { ascending: true });
       if (!cancelled) { setResp(Array.isArray(data) ? data : []); setLoadingResp(false); }
+    })();
+    (async () => {
+      setLoadingBrain(true);
+      const { data } = await (supabase as any)
+        .from('feedback_brain_config')
+        .select('enabled, name, tone, specialist_prompt, evaluation_criteria, never_do, version')
+        .eq('tenant_id', user.id).maybeSingle();
+      if (!cancelled) { setBrain(data ? { ...BRAIN_DEFAULT, ...data } : BRAIN_DEFAULT); setLoadingBrain(false); }
+    })();
+    (async () => {
+      setLoadingSaude(true);
+      const { data } = await (supabase as any).rpc('feedback_status_operacional', { p_tenant: user.id });
+      if (!cancelled) { setSaude(data || null); setLoadingSaude(false); }
     })();
     (async () => {
       setLoadingAg(true);
@@ -136,26 +188,110 @@ export function RegrasAutomacoesTab() {
   };
 
   // Salva a config do relatório de atendimento (mesma linha da conta; upserta cfg inteiro
-  // pra não zerar a reconexão). O cron roda de hora em hora e dispara na hora configurada.
+  // pra não zerar a reconexão). O cron roda de hora em hora e cruza frequência+dias+horários.
   const salvarRelatorioAtendimento = async () => {
     if (!user?.id) return;
+    const freq = cfg.relatorio_atendimento_frequencia || 'diario';
+    const dias = Array.isArray(cfg.relatorio_atendimento_dias) ? cfg.relatorio_atendimento_dias : [];
+    if (freq === 'dias_especificos' && dias.length === 0) {
+      toast({ title: 'Escolha os dias', description: 'Selecione ao menos um dia da semana para o relatório.', variant: 'destructive' }); return;
+    }
+    if (freq === 'semanal' && dias.length === 0) {
+      toast({ title: 'Escolha o dia', description: 'Selecione o dia da semana do relatório semanal.', variant: 'destructive' }); return;
+    }
+    // Horários: array novo (ordenado, único). Vazio -> mantém legado (hora única).
+    const horarios = Array.isArray(cfg.relatorio_atendimento_horarios) && cfg.relatorio_atendimento_horarios.length
+      ? [...new Set(cfg.relatorio_atendimento_horarios)].sort((a: number, b: number) => a - b)
+      : null;
+    const payload = {
+      user_id: user.id, ...cfg,
+      relatorio_atendimento_frequencia: freq,
+      relatorio_atendimento_dias: freq === 'diario' ? null : dias,
+      relatorio_atendimento_horarios: horarios,
+      // compat legado: mantém a hora única espelhando o 1º horário do array
+      relatorio_atendimento_hora: horarios ? horarios[0] : cfg.relatorio_atendimento_hora,
+      updated_at: new Date().toISOString(),
+    };
     setSavingRel(true);
     const { error } = await (supabase as any).from('conta_automacao_regras')
-      .upsert({ user_id: user.id, ...cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+      .upsert(payload, { onConflict: 'user_id' });
     setSavingRel(false);
     error ? toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' })
-          : toast({ title: '✅ Relatório atualizado', description: 'Horário e envio do relatório de atendimento salvos.' });
+          : toast({ title: '✅ Relatório atualizado', description: 'Frequência, horários e janela do relatório salvos.' });
   };
 
-  // Liga/desliga um responsável no relatório de atendimento (só mexe em recebe_atendimento).
-  const toggleRecebe = async (id: string, val: boolean) => {
-    setResp((prev) => prev.map((r) => r.id === id ? { ...r, recebe_atendimento: val } : r));
+  // Liga/desliga um responsável no relatório (recebe_atendimento) ou nos alertas
+  // (recebe_alertas) — só mexe no campo pedido.
+  const toggleRecebe = async (id: string, campo: 'recebe_atendimento' | 'recebe_alertas', val: boolean) => {
+    setResp((prev) => prev.map((r) => r.id === id ? { ...r, [campo]: val } : r));
     const { error } = await (supabase as any).from('conta_responsaveis')
-      .update({ recebe_atendimento: val, updated_at: new Date().toISOString() }).eq('id', id);
+      .update({ [campo]: val, updated_at: new Date().toISOString() }).eq('id', id);
     if (error) {
-      setResp((prev) => prev.map((r) => r.id === id ? { ...r, recebe_atendimento: !val } : r));
+      setResp((prev) => prev.map((r) => r.id === id ? { ...r, [campo]: !val } : r));
       toast({ title: 'Erro', description: error.message, variant: 'destructive' });
     }
+  };
+
+  // ── Cérebro: salvar / restaurar padrão / testar prompt ──
+  const salvarBrain = async () => {
+    if (!user?.id) return;
+    setSavingBrain(true);
+    const { error } = await (supabase as any).from('feedback_brain_config').upsert({
+      tenant_id: user.id,
+      enabled: !!brain.enabled,
+      name: String(brain.name || '').slice(0, 120) || null,
+      tone: brain.tone || 'direto',
+      specialist_prompt: String(brain.specialist_prompt || '').slice(0, 8000) || null,
+      evaluation_criteria: String(brain.evaluation_criteria || '').slice(0, 8000) || null,
+      never_do: String(brain.never_do || '').slice(0, 4000) || null,
+    }, { onConflict: 'tenant_id' });
+    setSavingBrain(false);
+    error ? toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' })
+          : toast({ title: '✅ Cérebro salvo', description: brain.enabled ? 'As próximas análises usam o cérebro personalizado.' : 'Cérebro personalizado desligado — análises usam o padrão Logos.' });
+  };
+
+  const restaurarPadraoBrain = async () => {
+    if (!user?.id) return;
+    setSavingBrain(true);
+    const { error } = await (supabase as any).from('feedback_brain_config').upsert({
+      tenant_id: user.id, enabled: false, name: null, tone: 'direto',
+      specialist_prompt: null, evaluation_criteria: null, never_do: null,
+    }, { onConflict: 'tenant_id' });
+    setSavingBrain(false);
+    if (error) { toast({ title: 'Erro', description: error.message, variant: 'destructive' }); return; }
+    setBrain({ ...BRAIN_DEFAULT });
+    setBrainTest(null);
+    toast({ title: '✅ Padrão Logos restaurado', description: 'As análises voltam ao cérebro padrão da plataforma.' });
+  };
+
+  const testarBrain = async () => {
+    setTestingBrain(true);
+    setBrainTest(null);
+    const { data, error } = await (supabase as any).functions.invoke('feedback-brain-test', {
+      body: {
+        dry_run: true,
+        brain: {
+          name: brain.name, tone: brain.tone,
+          specialist_prompt: brain.specialist_prompt,
+          evaluation_criteria: brain.evaluation_criteria,
+          never_do: brain.never_do,
+        },
+      },
+    });
+    setTestingBrain(false);
+    if (error || !data?.ok) {
+      toast({ title: 'Falha no teste', description: String(error?.message || data?.error || 'erro'), variant: 'destructive' });
+      return;
+    }
+    setBrainTest(data);
+  };
+
+  const recarregarSaude = async () => {
+    if (!user?.id) return;
+    setLoadingSaude(true);
+    const { data } = await (supabase as any).rpc('feedback_status_operacional', { p_tenant: user.id });
+    setSaude(data || null);
+    setLoadingSaude(false);
   };
 
   // Adiciona um destinatário (mesmo padrão do ResponsaveisTab: upsert por user_id+whatsapp).
@@ -444,16 +580,79 @@ export function RegrasAutomacoesTab() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
           ) : (
             <>
-              <div className={cfg.relatorio_atendimento_enabled ? '' : 'opacity-50 pointer-events-none'}>
-                <div className="max-w-xs space-y-2">
-                  <Label className="text-xs flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Enviar todo dia às (horário de Brasília)</Label>
-                  <Select value={String(cfg.relatorio_atendimento_hora)} onValueChange={(v) => setCfg((c) => ({ ...c, relatorio_atendimento_hora: Number(v) }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{horas.map((h) => <SelectItem key={h} value={String(h)}>{String(h).padStart(2, '0')}:00</SelectItem>)}</SelectContent>
-                  </Select>
+              <div className={cfg.relatorio_atendimento_enabled ? 'space-y-4' : 'space-y-4 opacity-50 pointer-events-none'}>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Frequência</Label>
+                    <Select value={cfg.relatorio_atendimento_frequencia || 'diario'} onValueChange={(v) => setCfg((c: any) => ({ ...c, relatorio_atendimento_frequencia: v, relatorio_atendimento_dias: v === 'diario' ? null : (Array.isArray(c.relatorio_atendimento_dias) && c.relatorio_atendimento_dias.length ? c.relatorio_atendimento_dias : [1]) }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="diario">Todo dia</SelectItem>
+                        <SelectItem value="semanal">1x por semana</SelectItem>
+                        <SelectItem value="dias_especificos">Dias específicos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Janela de análise do relatório</Label>
+                    <Select value={cfg.relatorio_janela_tipo || 'padrao_atual'} onValueChange={(v) => setCfg((c: any) => ({ ...c, relatorio_janela_tipo: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{JANELAS.map((j) => <SelectItem key={j.v} value={j.v}>{j.l}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
                 </div>
+
+                {(cfg.relatorio_atendimento_frequencia === 'semanal' || cfg.relatorio_atendimento_frequencia === 'dias_especificos') && (
+                  <div className="space-y-2">
+                    <Label className="text-xs">{cfg.relatorio_atendimento_frequencia === 'semanal' ? 'Dia da semana' : 'Dias da semana'}</Label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {DIAS_SEMANA.map((d) => {
+                        const sel = (cfg.relatorio_atendimento_dias || []).includes(d.v);
+                        return (
+                          <button key={d.v} type="button"
+                            onClick={() => setCfg((c: any) => {
+                              const atual: number[] = Array.isArray(c.relatorio_atendimento_dias) ? c.relatorio_atendimento_dias : [];
+                              if (c.relatorio_atendimento_frequencia === 'semanal') return { ...c, relatorio_atendimento_dias: [d.v] };
+                              return { ...c, relatorio_atendimento_dias: sel ? atual.filter((x) => x !== d.v) : [...atual, d.v] };
+                            })}
+                            className={cn('rounded-md border px-2.5 py-1.5 text-xs font-medium transition',
+                              sel ? 'border-primary bg-primary/15 text-primary' : 'border-border/50 bg-background/40 text-muted-foreground hover:border-primary/40')}>
+                            {d.l}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label className="text-xs flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Horário(s) de envio (Brasília) — clique para marcar mais de um</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {horas.map((h) => {
+                      const selecionados: number[] = Array.isArray(cfg.relatorio_atendimento_horarios) && cfg.relatorio_atendimento_horarios.length
+                        ? cfg.relatorio_atendimento_horarios : [cfg.relatorio_atendimento_hora ?? 8];
+                      const sel = selecionados.includes(h);
+                      return (
+                        <button key={h} type="button"
+                          onClick={() => setCfg((c: any) => {
+                            const atual: number[] = Array.isArray(c.relatorio_atendimento_horarios) && c.relatorio_atendimento_horarios.length
+                              ? c.relatorio_atendimento_horarios : [c.relatorio_atendimento_hora ?? 8];
+                            const novo = sel ? atual.filter((x) => x !== h) : [...atual, h];
+                            return { ...c, relatorio_atendimento_horarios: novo.length ? novo : atual };
+                          })}
+                          className={cn('w-12 rounded-md border px-0 py-1.5 text-xs font-medium transition text-center',
+                            sel ? 'border-primary bg-primary/15 text-primary' : 'border-border/50 bg-background/40 text-muted-foreground hover:border-primary/40')}>
+                          {String(h).padStart(2, '0')}h
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Sem configuração o padrão continua: todo dia às 08:00.</p>
+                </div>
+
+                <p className="text-[11px] text-amber-500/90">💡 Prompts muito longos e janelas maiores podem aumentar o consumo de IA.</p>
               </div>
-              {!cfg.relatorio_atendimento_enabled && <p className="text-xs text-amber-500">Desligado: o relatório diário de atendimento não será enviado.</p>}
+              {!cfg.relatorio_atendimento_enabled && <p className="text-xs text-amber-500">Desligado: o relatório de atendimento não será enviado.</p>}
               <div className="flex justify-end">
                 <Button onClick={salvarRelatorioAtendimento} disabled={savingRel} className="gap-2">
                   {savingRel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar horário
@@ -469,12 +668,21 @@ export function RegrasAutomacoesTab() {
                   <div className="space-y-2">
                     {resp.length === 0 && <p className="text-[11px] text-muted-foreground">Nenhum responsável cadastrado ainda. Adicione abaixo.</p>}
                     {resp.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                      <div key={r.id} className="flex flex-col gap-2 rounded-lg border border-border/40 bg-background/40 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{r.nome || 'Sem nome'}</p>
                           <p className="text-[11px] text-muted-foreground">{r.whatsapp}</p>
                         </div>
-                        <Switch checked={!!r.recebe_atendimento} onCheckedChange={(v) => toggleRecebe(r.id, v)} />
+                        <div className="flex items-center gap-4 shrink-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-muted-foreground">Relatório</span>
+                            <Switch checked={!!r.recebe_atendimento} onCheckedChange={(v) => toggleRecebe(r.id, 'recebe_atendimento', v)} />
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-muted-foreground">Alertas</span>
+                            <Switch checked={!!r.recebe_alertas} onCheckedChange={(v) => toggleRecebe(r.id, 'recebe_alertas', v)} />
+                          </div>
+                        </div>
                       </div>
                     ))}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center pt-1">
@@ -489,6 +697,152 @@ export function RegrasAutomacoesTab() {
                 )}
               </div>
             </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Cérebro da análise (camada de inteligência do Feedback) ── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-fuchsia-500/10 border border-fuchsia-500/30">
+                <Brain className="h-5 w-5 text-fuchsia-400" />
+              </div>
+              <div>
+                <CardTitle className="text-base">Cérebro da análise</CardTitle>
+                <CardDescription className="text-xs mt-0.5">
+                  Personalize COMO a IA avalia os atendimentos: quem é o especialista, critérios e tom do feedback. O formato técnico da resposta é protegido pela plataforma.
+                </CardDescription>
+              </div>
+            </div>
+            <Switch checked={!!brain.enabled} onCheckedChange={(v) => setBrain((b: any) => ({ ...b, enabled: v }))} disabled={loadingBrain} />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {loadingBrain ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
+          ) : (
+            <>
+              <div className={brain.enabled ? 'space-y-4' : 'space-y-4 opacity-50 pointer-events-none'}>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Nome do cérebro</Label>
+                    <Input maxLength={120} placeholder="Ex.: Especialista em vendas WhatsApp automotivo"
+                      value={brain.name || ''} onChange={(e) => setBrain((b: any) => ({ ...b, name: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Tom do feedback</Label>
+                    <Select value={brain.tone || 'direto'} onValueChange={(v) => setBrain((b: any) => ({ ...b, tone: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{TONS.map((t) => <SelectItem key={t.v} value={t.v}>{t.l}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Instruções do especialista <span className="text-muted-foreground">({String(brain.specialist_prompt || '').length}/8000)</span></Label>
+                  <Textarea rows={5} maxLength={8000} placeholder="Descreva como o especialista pensa, o que valoriza num atendimento e o contexto do seu negócio…"
+                    value={brain.specialist_prompt || ''} onChange={(e) => setBrain((b: any) => ({ ...b, specialist_prompt: e.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Critérios de avaliação <span className="text-muted-foreground">({String(brain.evaluation_criteria || '').length}/8000)</span></Label>
+                  <Textarea rows={4} maxLength={8000} placeholder="O que torna um atendimento nota 90+? O que derruba a nota? Liste os critérios do seu jeito…"
+                    value={brain.evaluation_criteria || ''} onChange={(e) => setBrain((b: any) => ({ ...b, evaluation_criteria: e.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">O que nunca fazer <span className="text-muted-foreground">({String(brain.never_do || '').length}/4000)</span></Label>
+                  <Textarea rows={3} maxLength={4000} placeholder="Ex.: nunca elogiar resposta que demorou mais de 1h; nunca sugerir desconto sem autorização…"
+                    value={brain.never_do || ''} onChange={(e) => setBrain((b: any) => ({ ...b, never_do: e.target.value }))} />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2 flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-muted-foreground">
+                  O <span className="text-foreground font-medium">contrato técnico é protegido</span>: a plataforma sempre anexa o formato obrigatório da resposta (score, sinais, ações do gestor/vendedor etc.). Seu texto personaliza a inteligência, nunca remove o formato.
+                  {' '}💡 Prompts muito longos e janelas maiores podem aumentar o consumo de IA.
+                </p>
+              </div>
+
+              {brainTest && (
+                <div className={cn('rounded-lg border px-3 py-2 text-xs space-y-1',
+                  brainTest.json_valido ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-red-500/40 bg-red-500/5')}>
+                  <p className="font-medium">
+                    {brainTest.json_valido ? '✅ Teste OK — a IA respondeu no formato esperado.' : '❌ Teste falhou — o formato obrigatório não foi respeitado.'}
+                    <span className="text-muted-foreground font-normal"> Camada usada: {brainTest.camada_usada} · {brainTest.tokens} tokens · ~US$ {Number(brainTest.custo_usd || 0).toFixed(4)}</span>
+                  </p>
+                  {!brainTest.json_valido && brainTest.aviso && <p className="text-red-400">{brainTest.aviso}</p>}
+                  {brainTest.exemplo?.resumo_executivo && (
+                    <p className="text-muted-foreground"><span className="text-foreground">Resumo gerado:</span> {brainTest.exemplo.resumo_executivo}</p>
+                  )}
+                  {brainTest.exemplo?.frase_coaching && (
+                    <p className="text-muted-foreground"><span className="text-foreground">Coaching:</span> {brainTest.exemplo.frase_coaching}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button variant="ghost" onClick={restaurarPadraoBrain} disabled={savingBrain} className="gap-1.5">
+                  <RotateCcw className="h-4 w-4" /> Restaurar padrão Logos
+                </Button>
+                <Button variant="outline" onClick={testarBrain} disabled={testingBrain} className="gap-1.5">
+                  {testingBrain ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />} Testar prompt
+                </Button>
+                <Button onClick={salvarBrain} disabled={savingBrain} className="gap-2">
+                  {savingBrain ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground text-right">O teste roda numa conversa de exemplo — não altera análises reais e não grava nada.</p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Saúde do Cérebro de Feedback ── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/10 border border-sky-500/30">
+                <Activity className="h-5 w-5 text-sky-400" />
+              </div>
+              <div>
+                <CardTitle className="text-base">Saúde do Cérebro</CardTitle>
+                <CardDescription className="text-xs mt-0.5">Última execução, relatórios enviados, falhas e análises pendentes.</CardDescription>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={recarregarSaude} disabled={loadingSaude} className="gap-1.5">
+              {loadingSaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Atualizar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingSaude ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
+          ) : !saude ? (
+            <p className="text-xs text-muted-foreground">Sem dados de saúde ainda — as métricas aparecem depois das primeiras análises.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Última análise</p>
+                <p className="text-sm font-medium">{saude.ultima_analise ? new Date(saude.ultima_analise).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'}</p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Último relatório enviado</p>
+                <p className="text-sm font-medium">{saude?.relatorios?.ultimo_envio ? new Date(saude.relatorios.ultimo_envio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'}</p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Falhas recentes (janela {saude.janela_dias ?? 7}d)</p>
+                <p className={cn('text-sm font-medium', Number(saude?.analises?.falharam) > 0 ? 'text-amber-400' : '')}>{Number(saude?.analises?.falharam ?? 0)} análise(s) · {Number(saude?.relatorios?.falhas ?? 0)} relatório(s)</p>
+              </div>
+              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
+                <p className="text-[11px] text-muted-foreground">Análises pendentes</p>
+                <p className="text-sm font-medium">{Number(saude?.pendentes?.total ?? saude?.pendentes_estimados ?? 0)}</p>
+              </div>
+              {saude.rotina_motivo && (
+                <p className="sm:col-span-2 lg:col-span-4 text-[11px] text-muted-foreground">Status: <span className={cn('font-medium', saude.rotina === 'alerta' ? 'text-amber-400' : 'text-emerald-400')}>{saude.rotina || 'ok'}</span> — {saude.rotina_motivo}</p>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>

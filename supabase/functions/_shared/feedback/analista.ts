@@ -53,7 +53,80 @@ function montarPromptUsuario(t: LeadThread): string {
   ].join('\n');
 }
 
-function instrucaoContrato(framework: any, rubrica?: any): string {
+// ── Cérebro personalizado (camada de INTELIGÊNCIA por tenant) ────────────────
+// Arquitetura protegida: [camada Logos OU personalizada] + [contrato técnico
+// FIXO — instrucaoContrato abaixo] + [conversa]. A config do usuário NUNCA
+// substitui o contrato: ela só troca o "quem é o especialista". Campos são
+// saneados (tamanho capado, controle de caracteres removido) e, vazios, caem
+// no padrão Logos (prompt_especialista da feedback_config).
+const BRAIN_MAX = { name: 120, prompt: 8000, criteria: 8000, neverDo: 4000 } as const;
+
+const TONE_LINHA: Record<string, string> = {
+  direto: 'TOM DO FEEDBACK: direto e objetivo — vá ao ponto, sem rodeios, sem suavizar problema real.',
+  consultivo: 'TOM DO FEEDBACK: consultivo — aponte o problema e proponha o caminho, como um consultor experiente.',
+  educativo: 'TOM DO FEEDBACK: educativo — explique o porquê de cada apontamento para o vendedor aprender.',
+  exigente: 'TOM DO FEEDBACK: exigente — cobre alto padrão; elogio só quando realmente merecido.',
+};
+
+function sanearTextoBrain(v: unknown, max: number): string {
+  if (typeof v !== 'string') return '';
+  // deno-lint-ignore no-control-regex
+  return v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max);
+}
+
+export interface BrainConfig {
+  enabled?: boolean;
+  name?: string | null;
+  specialist_prompt?: string | null;
+  evaluation_criteria?: string | null;
+  tone?: string | null;
+  never_do?: string | null;
+  version?: number | null;
+}
+
+/**
+ * Monta a camada de ESPECIALISTA do system prompt.
+ * - brain desabilitado/vazio -> retorna o padrão Logos (promptEspPadrao) intacto.
+ * - brain habilitado -> monta a camada personalizada saneada.
+ * O CONTRATO TÉCNICO NÃO PASSA POR AQUI — é sempre anexado depois pelo caller.
+ */
+export function montarCamadaEspecialista(promptEspPadrao: string, brain: BrainConfig | null): {
+  camada: string; usado: 'padrao' | 'personalizado'; brainMeta: { name: string; version: number } | null;
+} {
+  if (!brain || !brain.enabled) return { camada: promptEspPadrao, usado: 'padrao', brainMeta: null };
+  const nome = sanearTextoBrain(brain.name, BRAIN_MAX.name);
+  const prompt = sanearTextoBrain(brain.specialist_prompt, BRAIN_MAX.prompt);
+  const criterios = sanearTextoBrain(brain.evaluation_criteria, BRAIN_MAX.criteria);
+  const neverDo = sanearTextoBrain(brain.never_do, BRAIN_MAX.neverDo);
+  const tomLinha = TONE_LINHA[String(brain.tone || '')] || '';
+  // Camada vazia (usuário ligou mas não escreveu nada) -> padrão Logos.
+  if (!prompt && !criterios && !neverDo) return { camada: promptEspPadrao, usado: 'padrao', brainMeta: null };
+  const partes = [
+    nome ? `Você é: ${nome}.` : '',
+    prompt,
+    criterios ? `CRITÉRIOS DE AVALIAÇÃO (definidos pelo gestor desta conta):\n${criterios}` : '',
+    tomLinha,
+    neverDo ? `NUNCA FAÇA (regras do gestor desta conta):\n${neverDo}` : '',
+  ].filter(Boolean);
+  return {
+    camada: partes.join('\n\n'),
+    usado: 'personalizado',
+    brainMeta: { name: nome || 'cerebro personalizado', version: Number(brain.version) || 1 },
+  };
+}
+
+// Chaves de 1º nível que o contrato técnico OBRIGA na resposta da IA. Usada
+// pelo feedback-brain-test para validar que um prompt personalizado não
+// quebrou o formato. Mantenha em sincronia com instrucaoContrato().
+export const CONTRATO_CHAVES_OBRIGATORIAS = [
+  'sinais', 'produto', 'potencial_compra', 'competencias',
+  'tempo_primeira_resposta_min', 'houve_venda', 'vendedor_descartou_lead_bom',
+  'motivos_desqualificacao', 'pontos_fortes', 'oportunidades_perdidas',
+  'frase_coaching', 'resumo_executivo', 'evidencia_principal', 'risco_perda',
+  'acao_gestor', 'acao_vendedor', 'proxima_pergunta_ideal',
+] as const;
+
+export function instrucaoContrato(framework: any, rubrica?: any): string {
   const comps = Object.keys(framework?.competencias || {});
   const compFields = comps.length
     ? comps.map((c) => `"${c}":{"nota":0,"evidencia":""}`).join(',')
@@ -244,6 +317,19 @@ export async function analisarLead(
   const framework = cfg?.framework || {};
   const promptEsp = cfg?.prompt_especialista || '';
 
+  // Cérebro personalizado do tenant (camada de inteligência). Qualquer erro na
+  // leitura -> segue com o padrão Logos (nunca bloqueia a análise).
+  let brainCfg: BrainConfig | null = null;
+  try {
+    const { data: brain } = await admin
+      .from('feedback_brain_config')
+      .select('enabled, name, specialist_prompt, evaluation_criteria, tone, never_do, version')
+      .eq('tenant_id', tenant)
+      .maybeSingle();
+    brainCfg = (brain as BrainConfig) || null;
+  } catch (_e) { brainCfg = null; }
+  const camadaEsp = montarCamadaEspecialista(promptEsp, brainCfg);
+
   // Rubrica NEPQ ativa (linha do tenant sobrescreve a global). null = sem NEPQ
   // (comportamento antigo intacto).
   const { data: rubrica } = await admin
@@ -258,7 +344,9 @@ export async function analisarLead(
   const { data: gate } = await admin.rpc('feedback_cost_gate', { p_tenant: tenant });
   if (!gate?.allowed) return { status: 'pulado', motivo: gate?.reason || 'cap' };
 
-  const system = `${promptEsp}\n\n${instrucaoContrato(framework, rubrica)}`;
+  // Arquitetura protegida: [camada especialista (Logos OU personalizada)] +
+  // [contrato técnico FIXO]. O contrato NUNCA vem da config do usuário.
+  const system = `${camadaEsp.camada}\n\n${instrucaoContrato(framework, rubrica)}`;
   const userText = montarPromptUsuario(thread);
   let out: { text: string; tokens: number; custo: number } | null = null;
   try { out = await llm(system, userText, tenant); } catch { out = null; }
@@ -336,6 +424,12 @@ export async function analisarLead(
     confianca_analise: conf.confianca_analise,
     motivo_confianca: conf.motivo_confianca,
     conversa_vendedor_suficiente: conf.conversa_vendedor_suficiente,
+    // Observabilidade do cérebro: registra QUAL camada de inteligência gerou a
+    // análise (padrão Logos ou cérebro personalizado + versão). Aditivo — os
+    // leitores existentes ignoram chaves extras.
+    _brain: camadaEsp.usado === 'personalizado'
+      ? { usado: 'personalizado', ...camadaEsp.brainMeta }
+      : { usado: 'padrao' },
     _parse_ok: !!parsed,
     _raw: parsed ? null : out.text.slice(0, 1800),
   };
