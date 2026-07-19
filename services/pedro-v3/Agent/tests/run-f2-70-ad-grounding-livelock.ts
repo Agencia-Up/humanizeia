@@ -450,6 +450,268 @@ async function main(): Promise<void> {
     check(`[${nome}] ZERO deny repetido`, r.policyFeedback.length === 0, `policyFeedback=${r.policyFeedback.length}`);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SEÇÃO C (AD-5 / cenários 1 e 2 do Codex) — CADEIA DE MÍDIA
+  // A saída da tool É a entrada do envio. Antes, o dispatcher IGNORAVA o resultado e relia o feed AO VIVO
+  // (photo-source.resolveUrls -> loader.loadAll). Qualquer deriva entre as duas leituras — carro vendido, uma foto
+  // a menos — dava contagem diferente e matava o envio com retryable:false. As fotos sumiam em silêncio.
+  // Aqui provamos: (1) envia o snapshot resolvido, sem segunda leitura; (2) o estoque MUDA no meio e ainda envia.
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log("\n== C (AD-5): cadeia de midia — snapshot resolvido vence releitura de estoque ==");
+
+  {
+    const { WhatsAppEffectDispatcher } = await import("../src/adapters/effects/whatsapp-dispatcher.ts");
+    type SentImage = { url: string; photoId: string };
+
+    // Fonte de fotos que CONTA releituras — é a lente que prova "sem segunda leitura do estoque".
+    let resolveUrlsCalls = 0;
+    let feedPhotos = ["p1", "p2"];   // o feed AO VIVO; mudá-lo simula a deriva real entre turno e envio
+    const photoSource = {
+      async resolvePhotos(_ref: unknown, vehicleKey: string) {
+        return { vehicleKey, ambiguous: false, photoIds: [...feedPhotos], media: feedPhotos.map((id) => ({ id, url: `https://cdn/${vehicleKey}/${id}.jpg` })) };
+      },
+      async resolveUrls(_ref: unknown, vehicleKey: string, ids: readonly string[]) {
+        resolveUrlsCalls += 1;
+        return ids.filter((id) => feedPhotos.includes(id)).map((id) => `https://cdn/${vehicleKey}/${id}.jpg`);
+      },
+    };
+    const sent: SentImage[] = [];
+    const sender = {
+      async sendText() { return { ok: true as const, providerMessageId: "t1", level: "delivered" as const }; },
+      async sendImage(a: { url: string; photoId: string }) { sent.push({ url: a.url, photoId: a.photoId }); return { ok: true as const, providerMessageId: `i-${a.photoId}`, level: "delivered" as const }; },
+    };
+    const mkDispatcher = () => new WhatsAppEffectDispatcher({
+      ref: { tenantId: TENANT, agentId: AGENT }, to: "5512999999999",
+      sender: sender as never, photoSource: photoSource as never, clock: new FakeClock(NOW) as never,
+    } as never);
+
+    const rec = (payload: Record<string, unknown>) => ({
+      effectId: "e-media-1", idempotencyKey: "idem-1", kind: "send_media", payload,
+    }) as never;
+
+    // [C1] cenário 1 do Codex: fotos resolvidas -> envio correto, SEM segunda leitura do estoque.
+    {
+      resolveUrlsCalls = 0; sent.length = 0;
+      const resolved = await photoSource.resolvePhotos(null, "rm:cmp22");
+      const r = await mkDispatcher().dispatch(rec({ vehicleKey: "rm:cmp22", photoIds: resolved.photoIds, media: resolved.media }));
+      check("[C1] envio bem-sucedido", (r as { status: string }).status === "succeeded", JSON.stringify(r).slice(0, 110));
+      check("[C1] ZERO releitura do estoque (resolveUrls nao chamado)", resolveUrlsCalls === 0, `resolveUrls=${resolveUrlsCalls}`);
+      check("[C1] enviou as 2 fotos do snapshot", sent.length === 2, `sent=${sent.length}`);
+      check("[C1] urls sao as do veiculo CERTO", sent.every((s) => s.url.includes("rm:cmp22")), JSON.stringify(sent).slice(0, 120));
+    }
+
+    // [C2] cenário 2 do Codex — O CORAÇÃO DO BUG: o estoque MUDA depois da resolução.
+    // Antes: resolveUrls devolvia 1 url para 2 ids -> contagem diverge -> media_reference_not_resolvable,
+    // retryable:false -> lead nunca recebe foto nenhuma. Agora o snapshot original prevalece.
+    {
+      resolveUrlsCalls = 0; sent.length = 0;
+      const resolved = await photoSource.resolvePhotos(null, "rm:cmp22");   // resolveu com p1+p2
+      feedPhotos = ["p1"];                                                   // ⚠️ deriva: p2 saiu do feed
+      const r = await mkDispatcher().dispatch(rec({ vehicleKey: "rm:cmp22", photoIds: resolved.photoIds, media: resolved.media }));
+      check("[C2] estoque mudou e o envio NAO morreu", (r as { status: string }).status === "succeeded", JSON.stringify(r).slice(0, 140));
+      check("[C2] enviou o SNAPSHOT original (2 fotos), nao o feed novo", sent.length === 2, `sent=${sent.length}`);
+      check("[C2] ZERO releitura do estoque", resolveUrlsCalls === 0, `resolveUrls=${resolveUrlsCalls}`);
+      feedPhotos = ["p1", "p2"];
+    }
+
+    // [C3] NÃO-VACUIDADE: registro ANTIGO (sem snapshot) ainda usa o caminho legado de releitura.
+    // Prova que o teste mede o snapshot de verdade, e não um caminho que passaria de qualquer jeito.
+    {
+      resolveUrlsCalls = 0; sent.length = 0;
+      const r = await mkDispatcher().dispatch(rec({ vehicleKey: "rm:cmp22", photoIds: ["p1", "p2"] }));
+      check("[C3] payload legado (sem media) cai na releitura", resolveUrlsCalls === 1, `resolveUrls=${resolveUrlsCalls}`);
+      check("[C3] e ainda assim envia", (r as { status: string }).status === "succeeded", JSON.stringify(r).slice(0, 110));
+    }
+
+    // [C4] deriva no caminho LEGADO deixa de ser fatal: envia o que resolveu em vez de descartar tudo.
+    {
+      resolveUrlsCalls = 0; sent.length = 0;
+      feedPhotos = ["p1"];
+      const r = await mkDispatcher().dispatch(rec({ vehicleKey: "rm:cmp22", photoIds: ["p1", "p2"] }));
+      check("[C4] legado com deriva NAO falha o envio inteiro", (r as { status: string }).status === "succeeded", JSON.stringify(r).slice(0, 140));
+      check("[C4] envia a foto que sobreviveu", sent.length === 1, `sent=${sent.length}`);
+      feedPhotos = ["p1", "p2"];
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SEÇÃO F — gates 2 e 3 exigidos pelo Codex na auditoria da cadeia de mídia
+  //   Gate 2: todo plano NOVO sempre carrega snapshot (o elo não pode parar de propagar em silêncio)
+  //   Gate 3: validação de URL/host TAMBÉM no dispatcher (o snapshot é persistido; "veio da tool" não basta)
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log("\n== F: gates da auditoria (snapshot sempre presente + URL validada no envio) ==");
+
+  // [F1] GATE 2 — a fonte real preenche o snapshot, e o executor de foto o PROPAGA até o efeito.
+  // Este teste é o que teria pego o bug que quase passou: o campo `media` é opcional, então o `tsc` fica verde
+  // mesmo se algum elo parar de repassá-lo — e a correção viraria inerte sem ninguém perceber.
+  {
+    const { resolvePhotoIntent } = await import("../src/engine/photo-intent.ts");
+    const photoRunQuery = async (call: QueryCall): Promise<QueryResult> => {
+      if (call.tool === "vehicle_photos_resolve") {
+        const key = (call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key ?? "";
+        return { ok: true, tool: "vehicle_photos_resolve", data: {
+          vehicleKey: key, ambiguous: false, photoIds: ["p1", "p2"],
+          media: [{ id: "p1", url: `https://cdn.exemplo/${key}/p1.jpg` }, { id: "p2", url: `https://cdn.exemplo/${key}/p2.jpg` }],
+        }, source: "fake" } as QueryResult;
+      }
+      return runQuery(call);
+    };
+    const st = {
+      photoLedger: { sentByVehicle: {} },
+      lastRenderedOfferContext: { items: [{ vehicleKey: "rm:cmp22", marca: "Jeep", modelo: "Compass", ano: 2022 }] },
+      vehicleContext: { selected: { key: "rm:cmp22", label: "Jeep Compass 2022" } },
+    } as never;
+    const res = await resolvePhotoIntent({ state: st, runQuery: photoRunQuery, claimExtractor: extractor, leadMessage: "manda as fotos do Compass", interpretation: null } as never);
+    const sendRes = res as { kind: string; media?: readonly { id: string; url: string }[] };
+    check("[F1] executor de foto resolve envio", sendRes.kind === "send", `kind=${sendRes.kind}`);
+    check("[F1] e PROPAGA o snapshot resolvido (nao so os ids)", Array.isArray(sendRes.media) && sendRes.media.length === 2, JSON.stringify(sendRes.media ?? null));
+    check("[F1] o snapshot traz url de verdade", (sendRes.media ?? []).every((m) => m.url.startsWith("https://")), JSON.stringify(sendRes.media ?? null));
+  }
+
+  // [F2] GATE 3 — validação de URL na borda do envio. Unidade do invariante, sem depender de lista de domínio.
+  {
+    const { isSafeMediaUrl } = await import("../src/adapters/effects/whatsapp-dispatcher.ts");
+    const seguras = ["https://cdn.bndv.com.br/foto.jpg", "https://scontent.fbcdn.net/a/b.png"];
+    const inseguras = [
+      "http://cdn.bndv.com.br/foto.jpg",              // sem TLS
+      "data:image/png;base64,AAAA",                    // payload embutido
+      "file:///etc/passwd",                            // leitura local
+      "javascript:alert(1)",                           // esquema executável
+      "https://user:senha@cdn.exemplo/foto.jpg",       // credencial embutida vazaria segredo
+      "https://localhost/foto.jpg",                    // SSRF p/ serviço local
+      "https://127.0.0.1/foto.jpg",
+      "https://10.0.0.5/foto.jpg",                     // rede interna
+      "https://169.254.169.254/latest/meta-data",       // metadata de cloud (o clássico do SSRF)
+      "nao-e-url",
+    ];
+    for (const u of seguras) check(`[F2] aceita url segura (${u.slice(8, 30)})`, isSafeMediaUrl(u) === true, u);
+    for (const u of inseguras) check(`[F2] REJEITA (${u.slice(0, 34)})`, isSafeMediaUrl(u) === false, u);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SEÇÃO G — o que o SMOKE REAL (gpt-4.1-mini, 19/07) expôs e o offline não pegava
+  // No smoke, T2 ("Pode me mandar fotos dele?") produziu:
+  //   tools = vehicle_photos_resolve, vehicle_photos_resolve, vehicle_photos_resolve
+  //   + response:VEHICLE_KEY_NOT_GROUNDED + response:DUP_PHOTO_RESOLVE
+  // A foto SAIU, mas porque a LLM insistiu — não porque o contrato estava certo. Duas causas:
+  //   (1) a guarda de proveniência não reconhecia o resultado da PRÓPRIA vehicle_photos_resolve como grounding;
+  //   (2) repetir uma consulta IDEMPOTENTE virava deny, em vez de devolver o fato já resolvido.
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log("\n== G: grounding da propria foto + dedup de decisao (achados do smoke real) ==");
+
+  // [G1] a chave que veio de vehicle_photos_resolve É aterrada — a guarda não pode negá-la depois.
+  {
+    const c = conv();
+    const block = "Pode me mandar fotos dele?";
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("request_photos"), requestedCapabilities: ["send_photos"], evidence: [{ capability: "send_photos", quote: "mandar fotos" }] };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp22" } } }, u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "r", confidence: 0.9,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estão as fotos do Jeep Compass 2022.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: resolved.data.vehicleKey, photoIds: resolved.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    // T1 = busca (é ela que ATERRA a chave), T2 = foto. Mesma ordem do smoke real e da conversa de produção:
+    // sem a oferta anterior nada aterra rm:cmp22 e a guarda de proveniência bloquearia — corretamente.
+    const buscaResponder: BrainResponder = (frame, observations) => {
+      const us: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? "quero um Compass 2022", "stock_search") };
+      const s = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!s) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass" } }, us);
+      return finU([txt("Encontrei estas opções:"), offer(s.data.items.map((v) => v.vehicleKey)), txt("Alguma te interessou?")], "offer_stock", us);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, "quero um Compass 2022", "ambiguous", buscaResponder);
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, block, "continues_offer", responder);
+    const naoAterrada = r.policyFeedback.filter((f) => has(f, "nao veio de nenhuma consulta") || has(f, "não veio de nenhuma consulta")).length;
+    check("[G1] resultado da propria foto NAO vira VEHICLE_KEY_NOT_GROUNDED", naoAterrada === 0, r.policyFeedback.join(" | ").slice(0, 160));
+    check("[G1] a foto foi RESOLVIDA uma vez so", r.exec.filter((t) => t === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G1] send_media saiu", r.hasMedia, `media=${r.hasMedia}`);
+    check("[G1] mídia é do veiculo CERTO", r.mediaKey === "rm:cmp22", `mediaKey=${r.mediaKey}`);
+    check("[G1] sem fallback tecnico", r.responseSource !== "technical_fallback", `${r.responseSource}`);
+  }
+
+  // [G2] DEDUP DE DECISÃO: a LLM repete a MESMA chamada -> recebe o FATO de volta, não um deny.
+  // Reproduz literalmente o que o gpt-4.1-mini fez no smoke.
+  {
+    const c = conv();
+    const block = "Pode me mandar fotos dele?";
+    let tentativas = 0;
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("request_photos"), requestedCapabilities: ["send_photos"], evidence: [{ capability: "send_photos", quote: "mandar fotos" }] };
+      tentativas += 1;
+      const resolved = observations.filter((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } }[];
+      // insiste na MESMA chamada nas duas primeiras vezes (como o modelo real fez)
+      if (tentativas <= 2) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "rm:cmp22" } } }, u);
+      const last = resolved[resolved.length - 1];
+      if (!last) return finU([txt("Não consegui localizar as fotos agora.")], "photo_unavailable", u);
+      return {
+        kind: "final", understanding: u,
+        decision: {
+          reasonCode: "send_photos", reasonSummary: "r", confidence: 0.9,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estão as fotos do Jeep Compass 2022.")] } },
+          proposedEffects: [reply, { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: last.data.vehicleKey, photoIds: last.data.photoIds } as ProposedEffectPlan],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const buscaResponder2: BrainResponder = (frame, observations) => {
+      const us: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? "quero um Compass 2022", "stock_search") };
+      const s = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!s) return qU({ tool: "stock_search", input: { marca: "Jeep", modelo: "Compass" } }, us);
+      return finU([txt("Encontrei estas opções:"), offer(s.data.items.map((v) => v.vehicleKey)), txt("Alguma te interessou?")], "offer_stock", us);
+    };
+    await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, "quero um Compass 2022", "ambiguous", buscaResponder2);
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, block, "continues_offer", responder);
+    check("[G2] repeticao NAO reexecuta a tool (idempotente, 1 execucao real)", r.exec.filter((t) => t === "vehicle_photos_resolve").length === 1, r.exec.join(","));
+    check("[G2] repeticao NAO gera deny (dup_tool ausente)", r.retryReasons.filter((x) => x === "dup_tool").length === 0, r.retryReasons.join("|"));
+    check("[G2] turno termina sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[G2] lead NAO recebeu 'instabilidade'", !has(r.outbox, INSTABILIDADE), r.outbox.slice(0, 80));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SEÇÃO H — TESTE DE CONTRATO (exigido pelo Codex): AUTORIDADE FACTUAL ÚNICA.
+  // O v3 tinha TRÊS validações decidindo se um veículo está aterrado, e elas DIVERGIAM. Foi essa divergência que
+  // produziu o absurdo do smoke real: um deny afirmando "NENHUM veículo foi aterrado nesta conversa ainda"
+  // logo DEPOIS de a própria vehicle_photos_resolve ter aterrado o veículo com sucesso, no mesmo turno.
+  // Aqui elas ficam amarradas à MESMA chave. Se alguém fizer uma delas divergir de novo, quebra AQUI —
+  // e não num lead que fica sem foto.
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log("\n== H: contrato de autoridade factual unica (as 3 validacoes concordam) ==");
+  {
+    const { knownVehicleKeysForTest } = await import("../src/engine/central-engine.ts");
+    const { targetAcceptsKey } = await import("../src/engine/turn-understanding.ts");
+    const KEY = "rm:cmp22";
+    // Fato ÚNICO da premissa: a vehicle_photos_resolve rodou COM SUCESSO neste turno e aterrou KEY.
+    const fatoFoto = { ok: true, tool: "vehicle_photos_resolve", data: { vehicleKey: KEY, ambiguous: false, photoIds: [`${KEY}-p1`] }, source: "fake" } as QueryResult;
+    const estadoVazio = { vehicleContext: { selected: null }, lastRenderedOfferContext: null, photoLedger: { sentByVehicle: {} } } as never;
+
+    // (1) PROVENIÊNCIA — governa a EXECUÇÃO de vehicle_details / vehicle_photos_resolve
+    const grounded = knownVehicleKeysForTest([fatoFoto], [], estadoVazio);
+    check("[H] (1) proveniencia aceita a chave da PROPRIA tool", grounded.has(KEY), [...grounded].join(","));
+
+    // (2) ALVO DO TURNO — governa o ENVIO da mídia
+    const alvo = { kind: "resolved", vehicleKey: KEY, source: "single_offer", candidateVehicleKeys: [KEY], subjectModel: "Compass" } as never;
+    check("[H] (2) alvo do turno aceita a MESMA chave", targetAcceptsKey(alvo, KEY) === true);
+
+    // (3) CAPABILITY — governa a AUTORIZAÇÃO do ato pela evidência do bloco
+    const uFoto: TurnUnderstanding = { ...U("request_photos"), requestedCapabilities: ["send_photos"], evidence: [{ capability: "send_photos", quote: "manda as fotos" }] };
+    const vFoto = validateTurnUnderstanding(uFoto, "manda as fotos", true);
+    check("[H] (3) capability autoriza o ato de foto", vFoto.trusted === true && vFoto.understanding.requestedCapabilities.includes("send_photos"));
+
+    // NÃO-VACUIDADE: sem isto o teste passaria mesmo se as validações aceitassem qualquer coisa.
+    const inventada = "ford-ecosport-2020";
+    check("[H] chave inventada NAO e aterrada", !grounded.has(inventada));
+    check("[H] alvo resolvido REJEITA chave de outro carro", targetAcceptsKey(alvo, inventada) === false);
+
+    check("[H] INVARIANTE: execucao e envio concordam na chave aterrada por tool",
+      grounded.has(KEY) && targetAcceptsKey(alvo, KEY) === true && !grounded.has(inventada));
+  }
+
   console.log(`\n== F2.70: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("\nFALHAS:\n" + fails.map((f) => ` - ${f}`).join("\n")); process.exit(1); }
 }

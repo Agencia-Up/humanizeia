@@ -137,6 +137,10 @@ export type PhotoResolveResult = {
   readonly vehicleKey: string;
   readonly ambiguous: boolean;
   readonly photoIds: readonly string[];
+  // ⭐CADEIA DE MÍDIA (2026-07-19): o SNAPSHOT resolvido (id + url) na MESMA leitura que produziu os ids.
+  // É ele que viaja até o envio, para o dispatcher não precisar reler o feed AO VIVO e descartar as fotos na
+  // menor deriva. Opcional só por compatibilidade com fontes/fakes antigos; o adapter real sempre preenche.
+  readonly media?: readonly { readonly id: string; readonly url: string }[];
 };
 
 export interface VehiclePhotoSource {

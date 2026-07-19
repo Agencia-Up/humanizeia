@@ -98,6 +98,9 @@ export function createReadQueryRunner(ref: TenantAgentRef, sources: ReadQueryRun
               vehicleKey: resolved.vehicleKey,
               ambiguous: resolved.ambiguous,
               photoIds: [...resolved.photoIds],
+              // Keep the URLs from the same stock snapshot. The dispatcher must not
+              // re-read a live feed after this tool has resolved the photos.
+              ...(resolved.media ? { media: resolved.media.map((photo) => ({ id: photo.id, url: photo.url })) } : {}),
             },
           };
         }

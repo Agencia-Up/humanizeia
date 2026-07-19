@@ -74,7 +74,8 @@ function recentlySentPhotos(state: ConversationState, modelNorm: string): boolea
 }
 
 export type PhotoIntentResult =
-  | { readonly kind: "send"; readonly vehicleKey: string; readonly vehicleLabel: string; readonly photoIds: string[] }
+  // ⭐CADEIA DE MÍDIA: o snapshot resolvido acompanha a decisão de envio até virar efeito.
+  | { readonly kind: "send"; readonly vehicleKey: string; readonly vehicleLabel: string; readonly photoIds: string[]; readonly media?: readonly { readonly id: string; readonly url: string }[] }
   | { readonly kind: "not_found"; readonly vehicleLabel: string }
   | { readonly kind: "already_sent"; readonly vehicleLabel: string }
   | { readonly kind: "ask_which" };
@@ -123,7 +124,9 @@ async function resolvePhotosForKey(
   const sent = state.photoLedger.sentByVehicle[vehicleKey] ?? [];
   const ledgerHasAll = photoIds.every((id) => sent.includes(id));
   if (!wantsMore && (ledgerHasAll || recentlySentPhotos(state, modeloNorm))) return { kind: "already_sent", vehicleLabel: label };
-  return { kind: "send", vehicleKey, vehicleLabel: label, photoIds };
+  // ⭐CADEIA DE MÍDIA: o snapshot {id,url} que ESTA leitura resolveu segue junto com os ids. Sem isto o campo
+  // existiria no tipo mas nunca seria preenchido — o dispatcher voltaria a reler o feed e a correção seria inerte.
+  return { kind: "send", vehicleKey, vehicleLabel: label, photoIds, ...(photoRes.data.media ? { media: photoRes.data.media } : {}) };
 }
 
 // F2.7.12.1: resolucao UNIFICADA (Layer 1 e Layer 2). Ordem: ordinal FORTE -> modelo no TEXTO DO LEAD ->
@@ -272,7 +275,8 @@ export function buildPhotoTurnOutput(result: PhotoIntentResult, turnId: Id, _now
         { kind: "send_message", planId: "reply", order: 0, onSuccess: [] },
         {
           kind: "send_media", planId: "photos", order: 1,
-          vehicleKey: result.vehicleKey, photoIds: result.photoIds,
+          // ⭐CADEIA DE MÍDIA: o snapshot resolvido pela tool segue junto (saída da tool = entrada do próximo passo).
+          vehicleKey: result.vehicleKey, photoIds: result.photoIds, ...(result.media ? { media: result.media } : {}),
           onSuccess: [{ op: "mark_photos_sent", effectId: mediaEffectId, vehicleKey: result.vehicleKey, photoIds: result.photoIds }],
         },
       ],

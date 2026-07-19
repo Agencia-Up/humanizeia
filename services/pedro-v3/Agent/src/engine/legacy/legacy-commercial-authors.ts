@@ -92,7 +92,9 @@ export function buildDeterministicPhotoResponse(args: {
     // PARTE B (missão): anexa mark_photos_sent para o photoLedger ACUMULAR os IDs enviados (dedup durável de "manda mais").
     // Os photoIds aqui são o conjunto completo; a CURADORIA (cap 5 + dedup) é aplicada 1x no chokepoint capPhotoEffects,
     // que reescreve ESTE onSuccess para os IDs realmente enviados. (Antes era onSuccess:[] e o ledger não populava.)
-    const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey: targetKey, photoIds: [...photos.data.photoIds] }], vehicleKey: targetKey, photoIds: [...photos.data.photoIds] };
+    // ⭐CADEIA DE MÍDIA: também aqui o snapshot resolvido pela tool acompanha o plano (o executor legado usa o MESMO
+    // dispatcher, então precisa do mesmo contrato — senão este caminho continuaria relendo o feed no envio).
+    const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey: targetKey, photoIds: [...photos.data.photoIds] }], vehicleKey: targetKey, photoIds: [...photos.data.photoIds], ...(photos.data.media ? { media: photos.data.media } : {}) };
     const text = label ? `Aqui estão as fotos do ${label}. Quer que eu te passe mais detalhes dele?` : "Aqui estão as fotos que você pediu. Quer que eu te passe mais detalhes desse carro?";
     return build(ensureSendMessage([media]), text, "send_photos", "send_vehicle_photos", "executor determinístico de foto (alvo do assunto + photoIds reais)", 0.9, target.source);
   }
@@ -120,7 +122,13 @@ export function capPhotoEffects(decision: TurnDecision, state: ConversationState
     if (sel.selectedPhotoIds.length === 0) continue;   // tudo já enviado -> NÃO reenvia (drop; não manda 0 nem repete)
     if (sel.selectedPhotoIds.length === p.photoIds.length) { newPlan.push(p); continue; }   // nada a recortar/dedupar
     const onSuccess = (p.onSuccess ?? []).map((op) => op.op === "mark_photos_sent" ? { ...op, photoIds: [...sel.selectedPhotoIds] } : op);
-    newPlan.push({ ...p, photoIds: [...sel.selectedPhotoIds], onSuccess });
+    // ⭐CADEIA DE MÍDIA: ao recortar os ids, o SNAPSHOT tem de ser recortado junto — senão o plano sairia com mais
+    // urls do que ids selecionados e o dispatcher enviaria fotos já enviadas (ou a mais). Filtra preservando a
+    // ORDEM da seleção, não a do snapshot.
+    const media = p.media
+      ? sel.selectedPhotoIds.map((id) => p.media!.find((m) => m.id === id)).filter((m): m is NonNullable<typeof m> => m != null)
+      : undefined;
+    newPlan.push({ ...p, photoIds: [...sel.selectedPhotoIds], onSuccess, ...(media ? { media } : {}) });
   }
   return { ...decision, effectPlan: newPlan };
 }

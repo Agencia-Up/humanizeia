@@ -53,6 +53,7 @@ const P2008: VehicleFact = { vehicleKey: "rm:2008", marca: "PEUGEOT", modelo: "2
 const REN16: VehicleFact = { vehicleKey: "rm:ren16", marca: "JEEP", modelo: "Renegade", ano: 2016, preco: 71990, km: 98000, cambio: "Automatico", cor: "Branco", tipo: "suv" };
 const REN18: VehicleFact = { vehicleKey: "rm:ren18", marca: "JEEP", modelo: "Renegade", ano: 2018, preco: 72990, km: 85000, cambio: "Automatico", cor: "Branco", tipo: "suv" };
 const STOCK = [AIRCROSS, P2008, REN16, REN18];
+let photoQueryExecutions = 0;
 const catalog = buildTenantCatalog(STOCK);
 const extractor = new CatalogClaimExtractor(catalog);
 const sdrPolicy = buildSdrQualificationPolicy({ qualificationQuestions: [], agentName: "Aloan", companyName: "Icom", promptText: "Você é o Aloan da Icom." } as never);
@@ -65,7 +66,7 @@ const runQuery = async (call: QueryCall): Promise<QueryResult> => {
     if (inp.tipo) items = items.filter((v) => v.tipo === inp.tipo);
     return { ok: true, tool: "stock_search", data: { items, filtersUsed: inp as Record<string, never> }, source: "fake" } as QueryResult;
   }
-  if (call.tool === "vehicle_photos_resolve") { const key = (call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key ?? ""; return { ok: true, tool: "vehicle_photos_resolve", data: { vehicleKey: key, ambiguous: false, photoIds: ["p1", "p2"] }, source: "fake" } as QueryResult; }
+  if (call.tool === "vehicle_photos_resolve") { photoQueryExecutions += 1; const key = (call.input as { vehicleRef?: { key?: string } }).vehicleRef?.key ?? ""; return { ok: true, tool: "vehicle_photos_resolve", data: { vehicleKey: key, ambiguous: false, photoIds: ["p1", "p2"] }, source: "fake" } as QueryResult; }
   if (call.tool === "vehicle_details") { const v = STOCK.find((x) => x.vehicleKey === (call.input as { vehicleKey?: string }).vehicleKey); return v ? { ok: true, tool: "vehicle_details", data: { vehicle: v }, source: "fake" } as QueryResult : { ok: false, tool: "vehicle_details", error: { code: "NOT_FOUND", message: "n/a", retryable: false } } as QueryResult; }
   throw new Error("tool " + call.tool);
 };
@@ -415,9 +416,11 @@ async function main(): Promise<void> {
     const c = convWired(db);
     await c.t("tem SUV automático?", searchSuv);
     await c.t("Gostei do Aircross", () => finU([txt("Ótima escolha! Quer que eu envie as fotos dele?")], U("select_vehicle", "Gostei do Aircross", "select")));
+    photoQueryExecutions = 0;
     const photoU = U("request_photos", "me manda fotos dele", "send_photos");
     const tP = await c.t("me manda fotos dele", () => qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, photoU));
-    const realPhotoResults = tP.observations.filter((o) => o.tool === "vehicle_photos_resolve" && o.ok).length;
+    // Cached facts may be replayed into later brain frames. Count actual runner calls, not observations.
+    const realPhotoResults = photoQueryExecutions;
     const duplicateFeedbacks = tP.observations.filter((o) => o.tool === "response" && !o.ok && (o as { error?: { code?: string } }).error?.code === "DUP_PHOTO_RESOLVE").length;
     check("[C2-PH1] photo resolve idêntica executa uma vez e o loop recebe cap", realPhotoResults === 1 && duplicateFeedbacks <= 2, `real=${realPhotoResults} dup=${duplicateFeedbacks}`);
     check("[C2-PH2] cérebro que nunca finaliza NÃO é substituído pela engine: zero mídia comercial fabricada", !tP.outbox.some((x) => x.kind === "send_media") && tP.responseSource === "technical_fallback", `source=${tP.responseSource}`);

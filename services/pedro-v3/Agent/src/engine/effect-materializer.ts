@@ -27,7 +27,9 @@ function payloadFor(plan: EffectPlan, composed: RenderedResponse): { [k: string]
     case "send_message":
       return { text: composed.text };
     case "send_media":
-      return { vehicleKey: plan.vehicleKey, photoIds: plan.photoIds };
+      // ⭐CADEIA DE MÍDIA: o snapshot resolvido pela tool entra no OUTBOX. É o que torna o envio independente de uma
+      // segunda leitura do feed no momento do dispatch (que podia acontecer minutos depois, com o estoque já mudado).
+      return { vehicleKey: plan.vehicleKey, photoIds: plan.photoIds, ...(plan.media ? { media: plan.media.map((m) => ({ id: m.id, url: m.url })) } : {}) };
     case "crm_write":
       return { leadId: plan.leadId, fields: plan.fields };
     case "schedule_visit":

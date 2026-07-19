@@ -105,7 +105,21 @@ export type QueryInputMap = {
 export type QueryOutputMap = {
   stock_search: { items: VehicleFact[]; filtersUsed: Record<string, JsonValue> };
   vehicle_details: { vehicle: VehicleFact };
-  vehicle_photos_resolve: { vehicleKey: string; ambiguous: boolean; photoIds: string[] };
+  // ⭐CADEIA DE MÍDIA (2026-07-19): a tool devolve o SNAPSHOT resolvido (id + url), não só referências opacas.
+  //
+  // DEFEITO CORRIGIDO: `photoIds` sozinho obrigava o dispatcher a RE-RESOLVER as urls no momento do envio, com uma
+  // SEGUNDA leitura do feed de estoque AO VIVO (photo-source.resolveUrls -> loader.loadAll). Qualquer deriva entre as
+  // duas leituras — carro vendido, fingerprint colidindo, UMA foto a menos — devolvia contagem diferente e o envio
+  // morria com `media_reference_not_resolvable` e `retryable:false`: as fotos sumiam em silêncio. Era um agente com
+  // dois passos lendo a mesma verdade em momentos distintos, e o segundo mandando.
+  //
+  // INVARIANTE (o que o N8N faz naturalmente): a saída da tool É a entrada do passo seguinte. O conjunto resolvido
+  // viaja pela cadeia decisão -> plano -> outbox -> envio. As urls do feed NÃO são assinadas nem expiram (vêm de
+  // `vehicle.pictureJs`), então o snapshot é seguro — foi essa verificação que decidiu o desenho.
+  //
+  // `media` é opcional só para compatibilidade com registros antigos no outbox e com fakes de teste; o adapter real
+  // SEMPRE preenche, e o dispatcher só re-resolve quando ele vem ausente.
+  vehicle_photos_resolve: { vehicleKey: string; ambiguous: boolean; photoIds: string[]; media?: readonly ResolvedPhoto[] };
   crm_read: { leadId: string; name?: string | null };
   knowledge_search: { chunks: KnowledgeChunk[]; confidence: number };
 };
@@ -155,7 +169,9 @@ export type EffectPlanBase = {
   onSuccess: EffectOutcomeMutation[]; // o que aplicar no estado ao receber receipt
 };
 export type SendMessagePlan = EffectPlanBase & { kind: "send_message" };
-export type SendMediaPlan = EffectPlanBase & { kind: "send_media"; vehicleKey: string; photoIds: string[] };
+// ⭐CADEIA DE MÍDIA: o conjunto RESOLVIDO pela tool, carregado ponta a ponta (decisão -> plano -> outbox -> envio).
+export type ResolvedPhoto = { readonly id: string; readonly url: string };
+export type SendMediaPlan = EffectPlanBase & { kind: "send_media"; vehicleKey: string; photoIds: string[]; media?: readonly ResolvedPhoto[] };
 export type CrmWritePlan = EffectPlanBase & { kind: "crm_write"; leadId: string; fields: Record<string, JsonValue> };
 export type SchedulePlan = EffectPlanBase & { kind: "schedule_visit"; leadId: string; slot: string };
 // HF-1 (2026-07-11): a LLM NUNCA fornece sellerId — o plano de handoff carrega o leadId + o MOTIVO tipado

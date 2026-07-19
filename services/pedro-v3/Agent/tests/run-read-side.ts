@@ -1027,6 +1027,7 @@ async function main(): Promise<void> {
   check("QueryRunner photos com ref nao-veiculo vira VALIDATION", !qrPhotosInvalid.ok && qrPhotosInvalid.tool === "vehicle_photos_resolve" && qrPhotosInvalid.error.code === "VALIDATION");
   const qrPhotos = await queryRunner({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: "revendamais:101" } } });
   check("QueryRunner vehicle_photos_resolve retorna ids", qrPhotos.ok && qrPhotos.tool === "vehicle_photos_resolve" && qrPhotos.data.photoIds.length === 2);
+  check("QueryRunner vehicle_photos_resolve preserva snapshot de URLs", qrPhotos.ok && qrPhotos.tool === "vehicle_photos_resolve" && qrPhotos.data.media?.length === qrPhotos.data.photoIds.length && qrPhotos.data.media?.every((photo) => photo.id && photo.url));
   const qrCrm = await queryRunner({ tool: "crm_read", input: { leadId: LEAD_A } });
   check("QueryRunner crm_read retorna somente leadId/name", qrCrm.ok && qrCrm.tool === "crm_read" && Object.keys(qrCrm.data).sort().join(",") === "leadId,name" && qrCrm.data.name === "Carlos Cliente");
   const qrCrmMissing = await queryRunner({ tool: "crm_read", input: { leadId: "123e4567-e89b-42d3-a456-426614174099" } });

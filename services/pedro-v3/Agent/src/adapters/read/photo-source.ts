@@ -50,10 +50,13 @@ export class V2VehiclePhotoSource implements VehiclePhotoSource {
     }
 
     const photos = parseVehiclePhotos(vehicleKey, vehicle.pictureJs);
+    // ⭐CADEIA DE MÍDIA (2026-07-19): devolve o SNAPSHOT (id + url) junto dos ids. É este conjunto que viaja até o
+    // envio — sem ele, o dispatcher precisava reler o feed AO VIVO e descartava as fotos a qualquer deriva.
     return {
       vehicleKey,
       ambiguous: false,
-      photoIds: photos.map(p => p.id)
+      photoIds: photos.map(p => p.id),
+      media: photos.map(p => ({ id: p.id, url: p.url })),
     };
   }
 

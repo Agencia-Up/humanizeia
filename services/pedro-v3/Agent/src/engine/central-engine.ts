@@ -476,9 +476,24 @@ export function canonicalizeSelectMutations(muts: readonly DecisionMutation[], f
 }
 // P0-2 (audit): TODA vehicleKey conhecida no turno (fatos + identidade + seleção + oferta) — para o guard "nenhuma
 // resposta ao lead contém literalmente uma chave interna".
+// ⭐Exportado para o TESTE DE CONTRATO da autoridade factual única (F2.70 seção H). O teste amarra esta função,
+// `targetAcceptsKey` e a validação de capability à MESMA chave — foi a divergência entre elas que produziu o deny
+// que afirmava "nenhum veículo aterrado" logo após a tool aterrar o veículo.
+export function knownVehicleKeysForTest(facts: readonly QueryResult[], identities: readonly RememberedVehicleIdentity[], state: ConversationState): Set<string> {
+  return knownVehicleKeys(facts, identities, state);
+}
 function knownVehicleKeys(facts: readonly QueryResult[], identities: readonly RememberedVehicleIdentity[], state: ConversationState): Set<string> {
   const keys = new Set<string>();
-  for (const f of facts) { if (!f.ok) continue; if (f.tool === "stock_search") for (const v of f.data.items) keys.add(v.vehicleKey); if (f.tool === "vehicle_details") keys.add(f.data.vehicle.vehicleKey); }
+  for (const f of facts) {
+    if (!f.ok) continue;
+    if (f.tool === "stock_search") for (const v of f.data.items) keys.add(v.vehicleKey);
+    if (f.tool === "vehicle_details") keys.add(f.data.vehicle.vehicleKey);
+    // ⭐CORREÇÃO (smoke real 19/07, auditoria Codex): um `vehicle_photos_resolve` BEM-SUCEDIDO aterra o vehicleKey
+    // tanto quanto uma busca ou um detalhe — o fato veio da MESMA fonte. Faltava esta linha, e a guarda de
+    // proveniência que eu adicionei hoje passou a negar a foto DEPOIS de já ter resolvido a foto: a LLM tomou
+    // VEHICLE_KEY_NOT_GROUNDED e repetiu a tool 3x. Só deu certo porque ela insistiu — o contrato estava errado.
+    if (f.tool === "vehicle_photos_resolve") keys.add(f.data.vehicleKey);
+  }
   for (const id of identities) keys.add(id.vehicleKey);
   if (state.vehicleContext.selected?.key) keys.add(state.vehicleContext.selected.key);
   for (const it of state.lastRenderedOfferContext?.items ?? []) keys.add(it.vehicleKey);
@@ -710,7 +725,26 @@ function authorFromBrainDraft(args: {
   // INVARIANTE: todo deny de alvo precisa carregar o que o satisfaz — a chave certa (alvo resolvido), a lista de
   // candidatos (alvo ambíguo -> a LLM pergunta QUAL) ou a instrução de localizar por stock_search (nada aterrado).
   // Sem conjunto admissível, um deny é um beco sem saída.
-  if (photoAuthorized && sendMediaKeys.some((k) => !targetAcceptsKey(args.target, k))) {
+  // ⭐AUTORIDADE FACTUAL ÚNICA (auditoria Codex, 19/07). Uma chave vinda de uma TOOL BEM-SUCEDIDA DESTE TURNO está
+  // aterrada — ponto. Antes, este guard consultava só `targetAcceptsKey`, que ignora os fatos do turno; quando o alvo
+  // não estava resolvido ele negava dizendo "NENHUM veículo foi aterrado nesta conversa ainda" — uma AFIRMAÇÃO FALSA,
+  // porque a própria vehicle_photos_resolve acabara de aterrar aquele veículo com sucesso no mesmo turno.
+  //
+  // Princípio: um deny precisa de RAZÃO POSITIVA. "Eu não resolvi o alvo" não é evidência de que a chave está errada.
+  // Quando o alvo ESTÁ resolvido, a divergência continua sendo bloqueio real (não enviar foto do carro errado).
+  // ⚠️ ESCOPO ESTREITO, e a F2.23 provou por quê: minha 1ª versão usou `knownVehicleKeys` (TODAS as chaves do turno,
+  // inclusive os N resultados de uma stock_search) e passou a autorizar foto de QUALQUER carro que aparecesse na
+  // busca — 10 regressões. A proteção "não enviar a foto do carro errado" é real e não pode ser afrouxada.
+  //
+  // O relaxamento vale SOMENTE quando: (a) o engine NÃO resolveu o alvo (logo não tem base para afirmar que a chave
+  // está errada) E (b) a chave veio de uma vehicle_photos_resolve BEM-SUCEDIDA deste turno — a LLM resolveu a foto
+  // DAQUELE veículo. Com alvo resolvido, divergência continua sendo bloqueio.
+  const photoResolvedKeys = new Set(
+    args.facts.filter((f): f is Extract<QueryResult, { ok: true; tool: "vehicle_photos_resolve" }> => f.ok && f.tool === "vehicle_photos_resolve")
+      .map((f) => f.data.vehicleKey),
+  );
+  const targetIsResolved = args.target.kind === "resolved";
+  if (photoAuthorized && sendMediaKeys.some((k) => !targetAcceptsKey(args.target, k) && (targetIsResolved || !photoResolvedKeys.has(k)))) {
     const alvo = args.target.kind !== "conflict" && args.target.subjectModel ? `do ${args.target.subjectModel}` : "do carro que o cliente pediu";
     const admissiveis = args.target.kind === "resolved"
       ? [args.target.vehicleKey, ...args.target.candidateVehicleKeys]
@@ -2609,6 +2643,21 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             continue;
           }
           if (call.tool === "vehicle_photos_resolve") {
+            // ⭐DEDUP DE DECISÃO, NÃO DENY (auditoria Codex sobre o smoke real de 19/07). Repetir a MESMA chamada é
+            // idempotente: o certo é DEVOLVER o resultado já resolvido — sem reexecutar a tool e SEM novo deny.
+            //
+            // Antes, a repetição virava DUP_PHOTO_RESOLVE (uma observação de ERRO). No smoke com gpt-4.1-mini a LLM
+            // chamou vehicle_photos_resolve 3x e colecionou denies; o envio só saiu porque ela insistiu, não porque o
+            // contrato estava correto. Repreender quem repete uma consulta idempotente é regra de conduta disfarçada
+            // de segurança: o fato já existe, então basta entregá-lo de novo.
+            const cached = facts.find((f) => f.ok && f.tool === "vehicle_photos_resolve");
+            if (cached) {
+              observations.push(toAgentObservation(cached));
+              // Trava própria: devolver o fato é o certo, mas se a LLM insistir sem finalizar o turno não pode
+              // queimar o orçamento inteiro. Ela recebe o resultado e o loop sai para a autoria final.
+              if (++dupPhotoLoopCount >= 2) break;
+              continue;
+            }
             observations.push({ tool: "response", ok: false, error: { code: "DUP_PHOTO_RESOLVE", message: "Você JÁ consultou as fotos deste veículo neste turno e tem o resultado. Finalize AGORA usando esse fato; NÃO chame vehicle_photos_resolve novamente." } });
             if (llmFirst) break;
             if (++dupPhotoLoopCount >= 2) break;
