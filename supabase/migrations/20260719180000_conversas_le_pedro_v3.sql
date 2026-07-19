@@ -84,7 +84,7 @@ BEGIN
     WHERE h.user_id = v_tenant AND split_part(h.remote_jid,'@',1) = ANY(v_variants)
     UNION ALL
     -- NOVO: IA do Pedro V3 — mensagem do LEAD (v3_inbox.raw->>'text')
-    SELECT 'v3'::text, vi.event_id, 'incoming'::text,
+    SELECT 'v3'::text, md5(vi.event_id)::uuid, 'incoming'::text,
            vi.raw->>'text', 'text'::text,
            NULL::text, NULL::text, NULL::text, NULL::jsonb,
            coalesce(vi.received_at, vi.created_at)
@@ -98,7 +98,7 @@ BEGIN
       )
     UNION ALL
     -- NOVO: IA do Pedro V3 — resposta da IA (v3_effect_outbox.payload->>'text')
-    SELECT 'v3'::text, eo.effect_id, 'outgoing'::text,
+    SELECT 'v3'::text, md5(eo.effect_id)::uuid, 'outgoing'::text,
            eo.payload->>'text',
            CASE WHEN eo.kind = 'send_media' THEN 'image' ELSE 'text' END,
            NULL::text, NULL::text, NULL::text, NULL::jsonb, eo.created_at
