@@ -13,7 +13,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // Guard interno das funcoes de feedback: secret FEEDBACK_VIEW_KEY (setado no
 // dashboard). Sem literal no codigo — se o secret faltar, falha fechado.
 const VIEW_KEY = Deno.env.get('FEEDBACK_VIEW_KEY') || '';
-const TENANT_DEFAULT = 'f49fd48a-4386-4009-95f3-26a5100b84f7';
+// Sem tenant padrao: alerta NUNCA pode rodar para conta errada. tenant_id e
+// obrigatorio e validado por UUID (mesmo padrao do feedback-relatorio-enviar).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SUPA_URL = Deno.env.get('SUPABASE_URL')!;
 
 const json = (b: unknown, s = 200) =>
@@ -64,7 +66,14 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body?.k !== VIEW_KEY) return json({ ok: false, error: 'forbidden' }, 403);
 
-    const tenant = String(body?.tenant_id || TENANT_DEFAULT);
+    const tenant = String(body?.tenant_id || '').trim();
+    if (!UUID_RE.test(tenant)) {
+      return json({
+        ok: false,
+        error: 'tenant_id obrigatorio',
+        motivo: 'Alerta bloqueado: chamada sem conta master explicita. Nao existe fallback para tenant padrao.',
+      }, 400);
+    }
     const testNumber = body?.test_number ? normNum(String(body.test_number)) : '';
     const isTest = !!testNumber;
     const admin = createClient(SUPA_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -122,18 +131,55 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Registro em feedback_alertas: entrega o canal painel_flag (Realtime) E
-    // marca como avisado (idempotencia). No teste NAO grava (nao queima casos reais).
+    // Registro em feedback_alertas (idempotencia SEM queimar retry):
+    //   - enviado_em PREENCHIDO = entrega efetivada -> a RPC feedback_alertas_pendentes
+    //     nao devolve mais o caso (queimado de verdade).
+    //   - enviado_em NULL = apenas sinal de painel durante falha de WhatsApp -> a RPC
+    //     CONTINUA devolvendo o caso, permitindo retry do WhatsApp na proxima rodada.
+    // Regras:
+    //   1) WhatsApp enviado com sucesso -> canal 'whatsapp' + enviado_em (queima).
+    //   2) WhatsApp falhou/sem instancia + painel_flag ativo:
+    //      - se whatsapp NEM esta configurado -> painel e o canal final: 'painel_flag'
+    //        com enviado_em (queima).
+    //      - se whatsapp esta configurado -> 'painel_flag' com enviado_em NULL
+    //        (painel acende via Realtime; retry do WhatsApp segue aberto). Anti-flood:
+    //        insere painel_flag no maximo 1x por conversa.
+    //   3) So whatsapp configurado e falhou -> nao grava nada (retry na proxima rodada).
+    // No teste (test_number) NAO grava nada — teste nunca queima casos reais.
     let registrados = 0;
     if (!isTest) {
-      const canalUsado = enviados > 0 ? 'whatsapp' : (canais.includes('painel_flag') ? 'painel_flag' : 'whatsapp');
-      const rows = casos.filter((c) => c.conversa_id).map((c) => ({
-        tenant_id: tenant, feedback_conversa_id: c.conversa_id, tipo: 'bom_em_risco',
-        canal: canalUsado, enviado_em: enviados > 0 ? new Date().toISOString() : null, lido: false,
-      }));
-      if (rows.length) {
-        const { error: insErr } = await admin.from('feedback_alertas').insert(rows);
-        if (!insErr) registrados = rows.length; else results.push({ registro: insErr.message });
+      const now = new Date().toISOString();
+      const ids = casos.filter((c) => c.conversa_id).map((c) => c.conversa_id);
+      if (ids.length) {
+        if (enviados > 0) {
+          // Entrega efetivada por WhatsApp.
+          const rows = ids.map((id) => ({
+            tenant_id: tenant, feedback_conversa_id: id, tipo: 'bom_em_risco',
+            canal: 'whatsapp', enviado_em: now, lido: false,
+          }));
+          const { error: insErr } = await admin.from('feedback_alertas').insert(rows);
+          if (!insErr) registrados = rows.length; else results.push({ registro: insErr.message });
+        } else if (canais.includes('painel_flag')) {
+          const painelEhCanalFinal = !canais.includes('whatsapp');
+          // Anti-duplicata: so insere painel_flag para conversas que ainda nao tem.
+          const { data: existentes } = await admin.from('feedback_alertas')
+            .select('feedback_conversa_id').eq('tenant_id', tenant)
+            .eq('canal', 'painel_flag').in('feedback_conversa_id', ids);
+          const jaTem = new Set((existentes || []).map((r: any) => r.feedback_conversa_id));
+          const rows = ids.filter((id) => !jaTem.has(id)).map((id) => ({
+            tenant_id: tenant, feedback_conversa_id: id, tipo: 'bom_em_risco',
+            canal: 'painel_flag',
+            // painel como canal FINAL queima; painel como fallback de falha nao queima
+            enviado_em: painelEhCanalFinal ? now : null,
+            lido: false,
+          }));
+          if (rows.length) {
+            const { error: insErr } = await admin.from('feedback_alertas').insert(rows);
+            if (!insErr) registrados = rows.length; else results.push({ registro: insErr.message });
+          }
+          if (!painelEhCanalFinal) results.push({ retry: 'WhatsApp falhou; painel sinalizado sem queimar retry futuro' });
+        }
+        // else: so whatsapp configurado e falhou -> nada gravado, retry aberto.
       }
     }
 
