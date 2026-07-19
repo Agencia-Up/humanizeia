@@ -1,1 +1,0 @@
-UPDATE wa_instances SET status = 'connected' WHERE instance_name IN ('golden-community-02') AND status != 'connected';

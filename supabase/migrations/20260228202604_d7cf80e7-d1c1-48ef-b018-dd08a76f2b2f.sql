@@ -1,1 +1,0 @@
-ALTER TABLE public.whatsapp_config ADD CONSTRAINT whatsapp_config_user_id_unique UNIQUE (user_id);

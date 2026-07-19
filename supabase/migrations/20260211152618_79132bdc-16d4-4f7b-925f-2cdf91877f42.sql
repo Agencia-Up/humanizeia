@@ -1,1 +1,0 @@
-ALTER TABLE public.swipe_files ADD COLUMN source text NOT NULL DEFAULT 'manual';
