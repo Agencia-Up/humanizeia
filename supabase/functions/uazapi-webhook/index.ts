@@ -4,6 +4,7 @@ import { sellerPhoneKey as _sellerPhoneKey, uniqueSellersByPhone as _uniqueSelle
 import { buildEnrichedBriefing as _buildEnrichedBriefing } from "../_shared/transfer/buildBriefing.ts";
 import { logTransferFailure, resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
+import { resolveAutomationRules } from "../_shared/automation/rules.ts";
 
 // Re-exports com nomes originais pra não quebrar call sites existentes.
 // Quando todo o arquivo migrar pra usar `_sellerPhoneKey` direto, esses
@@ -857,11 +858,18 @@ function isPedroTransferStage(status: string | null | undefined): boolean {
   return ['inativo', 'pouco_qualificado', 'qualificado'].includes(String(status || '').trim());
 }
 
+/** Confirmação operacional: mensagem arbitrária do vendedor não assume lead. */
+function isSellerAckMessage(value: string | null | undefined): boolean {
+  const text = normalizePtText(value).replace(/[.!?,;:]+$/g, '').trim();
+  return /^(ok|okay|ciente|confirmo|assumo|vou atender|pode deixar|pode deixar comigo|vou cuidar)$/.test(text);
+}
+
 async function maybeHandleSellerAck(
   supabase: any,
   waInstance: any,
   agent: any,
   remoteJid: string,
+  messageText: string | null | undefined,
 ) {
   const senderPhone = digitsOnly(remoteJid);
   const { data: sellers } = await supabase
@@ -881,6 +889,11 @@ async function maybeHandleSellerAck(
     });
 
   if (matches.length === 0) return { isSeller: false };
+
+  if (!isSellerAckMessage(messageText)) {
+    console.log(`[TransferGuard] Mensagem do vendedor ${matches[0].name} não é confirmação; transferência permanece pendente.`);
+    return { isSeller: true, confirmed: false, reason: 'ack_required' };
+  }
 
   const seller = matches[0];
   const sellerIds = matches.map((row: any) => row.id).filter(Boolean);
@@ -2826,7 +2839,7 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
 
   console.log(`[ISOLAMENTO] [ROTEADO] numero=${instanceName} agente=${agent.id} (${agent.name}) motivo=numero_do_agente`);
 
-  const guardedSellerAck = await maybeHandleSellerAck(supabase, waInstance, agent, remoteJid);
+  const guardedSellerAck = await maybeHandleSellerAck(supabase, waInstance, agent, remoteJid, userText);
   if (guardedSellerAck.isSeller) {
     return new Response(JSON.stringify({
       ok: true,
@@ -2884,6 +2897,9 @@ async function processMessage(supabase: any, instanceName: string, remoteJid: st
   const senderSellerIds = senderSellers.map((seller: any) => seller.id).filter(Boolean);
 
   if (senderSeller) {
+    if (!isSellerAckMessage(userText)) {
+      return new Response(JSON.stringify({ ok: true, seller_ack: true, confirmed: false, reason: 'ack_required' }), { headers: corsHeaders });
+    }
     console.log(`[Transfer] Mensagem do vendedor ${senderSeller.name} (id=${senderSeller.id}, jid=${remoteJid}) — verificando transfer pendente`);
     const now = new Date().toISOString();
     // FIX-12 (fallback): mesma correção do maybeHandleSellerAck. Antes pegava a
@@ -4162,7 +4178,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
               });
             } else {
               // 4. Inserir transfer record
-              const timeoutAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+              const timeoutAt = new Date(Date.now() + resolveAutomationRules(agent.automation_rules).transfer.seller_response_min * 60 * 1000).toISOString();
               await supabase.from('ai_lead_transfers').insert({
                 user_id: agent.user_id,
                 lead_id: leadRow.id,
@@ -4539,7 +4555,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
             }
 
             if (!skipTransfer) {
-              const timeoutAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+              const timeoutAt = new Date(Date.now() + resolveAutomationRules(agent.automation_rules).transfer.seller_response_min * 60 * 1000).toISOString();
 
               if (isReturnLead && returnSeller) {
                 // ── LEAD RETORNOU: vai direto ao vendedor que já o atendeu ─
@@ -4568,7 +4584,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                   `*Telefone:* ${phoneNumber}\n\n` +
                   `📝 *O que ele quer agora:*\n${args.resumo}\n\n` +
                   `👉 *Atender:* https://wa.me/${phoneNumber}\n\n` +
-                  `⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
+                  `⏰ *Responda em até ${resolveAutomationRules(agent.automation_rules).transfer.seller_response_min} minutos para confirmar o recebimento.*`;
 
                 const returnSellerMsg = composeSellerMsg(agent, buildEtiquetas({
                   state: conversationState,
@@ -4696,7 +4712,7 @@ REGRAS DE BUSCA DO ESTOQUE BNDV:
                     `*Contato:* ${phoneNumber}\n\n` +
                     `📝 *Resumo:*\n${args.resumo}\n\n` +
                     `👉 *Atender:* https://wa.me/${phoneNumber}\n\n` +
-                    `⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo da fila.*`;
+                    `⏰ *Responda esta mensagem em até ${resolveAutomationRules(agent.automation_rules).transfer.seller_response_min} minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo da fila.*`;
 
                   const sellerMsgFinal = composeSellerMsg(agent, buildEtiquetas({
                     state: conversationState,

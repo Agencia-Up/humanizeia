@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════
-// Regras de automacao do Pedro v2 (follow-up + transferencia), configuraveis por
+// Regras de automacao do Pedro (follow-up + transferencia), configuraveis por
 // agente via portal (wa_ai_agents.automation_rules JSONB). Fonte UNICA de verdade
 // + defaults. Modulo PURO (sem dependencias externas) para ser importado tanto
 // pelas edge functions com client inline (cron-lead-followup, transfer-timeout-
@@ -8,7 +8,7 @@
 // REGRA DE OURO: agente SEM automation_rules (NULL) = comportamento LEGADO
 // (follow-up 5/8/12, 3o transfere, timeout 15min, janela de repasse fixa).
 // `window` so e considerado configurado quando o objeto existe; senao usa a
-// janela legada (3 faixas hardcoded no transfer-timeout-checker).
+// janela legada definida neste modulo (seg-sab; domingo sem repasse).
 // ════════════════════════════════════════════════════════════════════════════
 
 export type FollowupRules = {
@@ -124,7 +124,54 @@ function parseHHMM(value: string): number {
  */
 export function isWithinConfiguredWindow(window: RepassWindow | null, now: Date): boolean | null {
   if (!window) return null;
+  if (brasiliaWeekday(now) === 0) return false;
   if (!window.enabled) return true;
   const min = brasiliaMinutesOfDay(now);
   return min >= parseHHMM(window.start) && min <= parseHHMM(window.end);
+}
+
+function brasiliaParts(dt: Date): { year: number; month: number; day: number; weekday: number } {
+  const shifted = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate(),
+    weekday: shifted.getUTCDay(),
+  };
+}
+
+function brasiliaWeekday(dt: Date): number {
+  return brasiliaParts(dt).weekday;
+}
+
+export function legacyTransferWindow(now: Date): { start: number; end: number } {
+  return brasiliaWeekday(now) === 6
+    ? { start: 10 * 60 + 11, end: 18 * 60 + 29 }
+    : { start: 10 * 60 + 11, end: 19 * 60 + 29 };
+}
+
+/** Janela efetiva do agente: customizada quando habilitada, legada nos demais casos. */
+export function isWithinTransferWindow(window: RepassWindow | null, now: Date): boolean {
+  if (brasiliaWeekday(now) === 0) return false;
+  if (window?.enabled === true) return isWithinConfiguredWindow(window, now) === true;
+  const min = brasiliaMinutesOfDay(now);
+  const legacy = legacyTransferWindow(now);
+  return min >= legacy.start && min <= legacy.end;
+}
+
+/** Próxima abertura em UTC; domingo sempre salta para segunda-feira. */
+export function nextTransferWindowStart(window: RepassWindow | null, now: Date): Date {
+  const current = brasiliaParts(now);
+  const start = window?.enabled === true ? parseHHMM(window.start) : legacyTransferWindow(now).start;
+  const currentMin = brasiliaMinutesOfDay(now);
+  let daysAhead = current.weekday === 0 ? 1 : currentMin >= start ? 1 : 0;
+  if (current.weekday === 6 && currentMin >= start && !isWithinTransferWindow(window, now)) daysAhead = 2;
+  const localMidnightUtc = Date.UTC(current.year, current.month, current.day, 3, 0, 0, 0);
+  let result = new Date(localMidnightUtc + (daysAhead * 24 * 60 + start) * 60 * 1000);
+  if (brasiliaWeekday(result) === 0) result = new Date(result.getTime() + 24 * 60 * 60 * 1000);
+  return result;
+}
+
+export function rearmTransferAtNextWindow(window: RepassWindow | null, now: Date, sellerResponseMin: number): Date {
+  return new Date(nextTransferWindowStart(window, now).getTime() + Math.max(1, sellerResponseMin) * 60 * 1000);
 }

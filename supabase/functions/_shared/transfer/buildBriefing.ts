@@ -126,7 +126,7 @@ export function buildEnrichedBriefing(input: {
   lines.push('');
   lines.push(`📲 *Atender:* https://wa.me/${(s.lead?.telefone || leadPhone || '').replace(/\D/g, '')}`);
   lines.push('');
-  lines.push(`_Briefing V2 gerado pelo Pedro SDR (${agentName})_`);
+  lines.push(`_Briefing v3 gerado pelo Pedro SDR (${agentName})_`);
   return lines.join('\n');
 }
 
@@ -181,6 +181,22 @@ export async function buildConversationBriefing(
 }
 
 // ─── Versão MARCOS (lead manual sem histórico WhatsApp) ────────────────────
+
+/** Contexto único para transferências manuais e por timeout do Pedro v3. */
+export async function buildPedroV3ConversationBriefing(
+  supabase: any,
+  lead: ConversationLeadLike,
+  meta: { reason?: string | null; sellerName?: string | null } = {},
+): Promise<string> {
+  const context = await buildConversationBriefing(supabase, lead);
+  return [
+    "*CONTEXTO DO LEAD - PEDRO V3*",
+    meta.reason ? `Motivo do encaminhamento: ${meta.reason}` : "",
+    meta.sellerName ? `Vendedor destinatario: ${meta.sellerName}` : "",
+    "",
+    context,
+  ].filter(Boolean).join("\n").substring(0, 2200);
+}
 
 export interface MarcosLeadLike {
   name?: string | null;

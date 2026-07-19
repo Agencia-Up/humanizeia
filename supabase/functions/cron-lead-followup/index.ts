@@ -1,5 +1,8 @@
 import { logTransferFailure } from '../_shared/pedro-v2/logTransferFailure.ts';
-import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+import { resolveAutomationRules, isWithinTransferWindow, rearmTransferAtNextWindow } from "../_shared/automation/rules.ts";
+import { pickNextTimeoutSeller } from "../_shared/transfer/timeoutRouting.ts";
+import { sellerPhoneKey } from "../_shared/transfer/phoneKey.ts";
+import { buildPedroV3ConversationBriefing } from "../_shared/transfer/buildBriefing.ts";
 import { managerPhones } from "../_shared/transfer/managers.ts";
 import { resolveLeadInterestVehicle } from "../_shared/transfer/interestVehicle.ts";
 import { leadTransferStatusLine, leadTransferStatusText } from "../_shared/transfer/leadStatus.ts";
@@ -245,115 +248,6 @@ function uniqueSellersByPhone(sellers: any[] = [], excludeId?: string, excludePh
   });
 }
 
-// ── Horario operacional de repasse (Brasilia) ────────────────────────────────
-// Seg-Sab: 10:11 - 19:29 | Dom/Feriado: 11:11 - 17:29
-// Leads criados fora da janela NAO entram no rodizio de repasse.
-// Ao entrar no horario, leads da noite NAO sao repassados retroativamente.
-
-function brasiliaMinOfDay(dt: Date): number {
-  const nowBrasilia = new Date(dt.getTime() - 3 * 60 * 60 * 1000);
-  return nowBrasilia.getUTCHours() * 60 + nowBrasilia.getUTCMinutes();
-}
-
-function toBrasilia(dt: Date): Date {
-  return new Date(dt.getTime() - 3 * 60 * 60 * 1000);
-}
-
-// ── Pascoa (algoritmo Computus) e feriados nacionais ─────────────────────────
-function getEasterDate(year: number): Date {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-function getBrazilianHolidays(year: number): Set<string> {
-  const holidays = new Set<string>();
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-  const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400000);
-
-  holidays.add(`${year}-01-01`); // Confraternizacao Universal
-  holidays.add(`${year}-04-21`); // Tiradentes
-  holidays.add(`${year}-05-01`); // Dia do Trabalho
-  holidays.add(`${year}-09-07`); // Independencia
-  holidays.add(`${year}-10-12`); // Nossa Sra. Aparecida
-  holidays.add(`${year}-11-02`); // Finados
-  holidays.add(`${year}-11-15`); // Proclamacao da Republica
-  holidays.add(`${year}-12-25`); // Natal
-
-  const easter = getEasterDate(year);
-  holidays.add(fmt(addDays(easter, -48))); // Segunda de Carnaval
-  holidays.add(fmt(addDays(easter, -47))); // Terca de Carnaval
-  holidays.add(fmt(addDays(easter, -2)));  // Sexta-feira Santa
-  holidays.add(fmt(addDays(easter, 60)));  // Corpus Christi
-
-  return holidays;
-}
-
-function isDomingoOuFeriado(dt: Date): boolean {
-  const brasilia = toBrasilia(dt);
-  if (brasilia.getUTCDay() === 0) return true;
-  const year = brasilia.getUTCFullYear();
-  const dateStr = `${year}-${String(brasilia.getUTCMonth() + 1).padStart(2, '0')}-${String(brasilia.getUTCDate()).padStart(2, '0')}`;
-  return getBrazilianHolidays(year).has(dateStr);
-}
-
-// Seg-Sex: 10:11-19:29 | Sab: 10:11-18:29 | Dom/Feriado: 11:11-17:29
-function getRepassWindow(dt: Date): { start: number; end: number; label: string } {
-  const brasilia = toBrasilia(dt);
-  const dow = brasilia.getUTCDay(); // 0=dom, 6=sab
-
-  if (dow === 0 || isDomingoOuFeriado(dt)) {
-    return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: '11:11-17:29 (dom/feriado)' };
-  }
-  if (dow === 6) {
-    return { start: 10 * 60 + 11, end: 18 * 60 + 29, label: '10:11-18:29 (sabado)' };
-  }
-  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11-19:29 (seg-sex)' };
-}
-
-/**
- * Verifica se o horario atual esta dentro da janela de rodizio vendedor -> vendedor.
- * Seg-Sab: 10:11-19:29 | Dom/Feriado: 11:11-17:29
- * A transferencia inicial do lead para o primeiro vendedor segue ativa 24h.
- */
-function isDentroDoHorarioOperacional(now: Date): boolean {
-  const minutosDoDia = brasiliaMinOfDay(now);
-  const hora = Math.floor(minutosDoDia / 60);
-  const minuto = minutosDoDia % 60;
-  const { start, end, label } = getRepassWindow(now);
-  const ativo = minutosDoDia >= start && minutosDoDia <= end;
-  console.log(`[Cron] Hora Brasilia: ${hora}:${String(minuto).padStart(2, '0')} | Horario operacional: ${ativo ? 'SIM' : 'NAO'} (${label})`);
-  return ativo;
-}
-
-/** Verifica se um transfer foi CRIADO dentro da janela de repasse do dia em questao */
-function transferCriadoNoHorario(createdAt: string): boolean {
-  const dt = new Date(createdAt);
-  const min = brasiliaMinOfDay(dt);
-  const { start, end } = getRepassWindow(dt);
-  return min >= start && min <= end;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ETAPA B (2026-05-29): follow-up contextual 5/8/12 do Pedro v2.
-// GATED pela mesma allowlist do webhook (PEDRO_V2_ENABLED / _ALLOWED_USER_IDS /
-// _ALLOWED_USER_EMAILS). Leads NAO-v2 (v1/Marcos/outras contas) seguem no fluxo
-// classico 5/10 mais abaixo, INTOCADO. Controle de etapa em
-// pedro_conversation_state.state.followup (sem migration).
-// ════════════════════════════════════════════════════════════════════════════
 function parseCsvEnv(name: string): string[] {
   return String(Deno.env.get(name) || "")
     .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -711,17 +605,15 @@ Deno.serve(async (req) => {
 
     console.log(`[Cron] Iniciando varredura. Agora: ${now.toISOString()} | 5m ago: ${fiveMinsAgo} | 10m ago: ${tenMinsAgo}`);
 
-    const operacional = isDentroDoHorarioOperacional(now);
-
     // ════════════════════════════════════════════════════════════════
     // SECAO 1: ROTATIVIDADE DE VENDEDORES (transferencia pendente > 10 min)
     // REGRA: O vendedor tem 10 minutos para responder "Ok" a partir do momento
     //        em que RECEBEU a notificacao (ai_lead_transfers.created_at).
     //        Usa ai_lead_transfers como fonte de verdade, NAO last_interaction_at.
-    //        So executa dentro do horario operacional (10:10 - 21:30 Brasilia).
+    //        Cada agente aplica sua propria janela comercial; domingo nunca repassa.
     // ════════════════════════════════════════════════════════════════
-    if (operacional) {
-      // Buscar transferencias pendentes onde o vendedor NAO confirmou em 10 minutos
+    {
+      // Buscar transferencias pendentes; o timeout efetivo vem das regras do agente.
       const { data: pendingTransfers } = await supabase
         .from('ai_lead_transfers')
         .select('*, lead:ai_crm_leads(*, wa_ai_agents!ai_crm_leads_agent_id_fkey(id, name, instance_id, instance_ids, automation_rules))')
@@ -748,29 +640,18 @@ Deno.serve(async (req) => {
           // Tempo de resposta do vendedor (por agente). Ainda nao deu o tempo -> espera.
           const elapsedMinT = (now.getTime() - new Date(transfer.created_at).getTime()) / 60000;
           if (elapsedMinT < aRules.transfer.seller_response_min) continue;
-          // ── Janela de repasse ──
-          // Configurada (por agente): so repassa se AGORA estiver dentro dela
-          // (narrowa dentro do horario operacional global ja checado acima).
-          // Sem config: regra legada — lead CRIADO fora da janela fica com o vendedor.
-          if (aRules.transfer.window) {
-            // (a) nao repassa ENQUANTO agora estiver fora da janela.
-            if (isWithinConfiguredWindow(aRules.transfer.window, now) === false) continue;
-            // (b) lead CRIADO fora da janela (ex.: madrugada) fica com o vendedor —
-            //     NAO repassa retroativamente quando o expediente volta de manha.
-            //     Espelha a regra legada do branch abaixo. Sem isto, o lead da noite
-            //     era repassado as 10h e o "Ok" do vendedor caia em "ja repassado".
-            if (isWithinConfiguredWindow(aRules.transfer.window, new Date(transfer.created_at)) === false) {
-              console.log(`[Cron] Transfer ${transfer.id} criado fora da janela configurada (${transfer.created_at}). Auto-confirmando - lead fica com o vendedor.`);
-              await supabase.from('ai_lead_transfers')
-                .update({ transfer_status: 'confirmed', is_confirmed: true })
-                .eq('id', transfer.id);
-              continue;
-            }
-          } else if (!transferCriadoNoHorario(transfer.created_at)) {
-            console.log(`[Cron] Transfer ${transfer.id} criado fora do horario de repasse (${transfer.created_at}). Auto-confirmando - lead fica com vendedor atual.`);
-            await supabase.from('ai_lead_transfers')
-              .update({ transfer_status: 'confirmed', is_confirmed: true })
-              .eq('id', transfer.id);
+          // Fora do expediente, inclusive domingo, a transferência permanece
+          // pendente. A confirmação continua sendo uma ação real do vendedor;
+          // o cron apenas rearma o timeout para a próxima abertura configurada.
+          if (!isWithinTransferWindow(aRules.transfer.window, now)) {
+            const rearmedAt = rearmTransferAtNextWindow(
+              aRules.transfer.window,
+              now,
+              aRules.transfer.seller_response_min,
+            );
+            await supabase.from('ai_lead_transfers').update({
+              confirmation_timeout_at: rearmedAt.toISOString(),
+            }).eq('id', transfer.id).eq('transfer_status', 'pending').eq('is_confirmed', false);
             continue;
           }
 
@@ -798,6 +679,7 @@ Deno.serve(async (req) => {
             .from('ai_lead_transfers')
             .select('id, to_member_id, created_at, is_confirmed, transfer_status')
             .eq('lead_id', lead.id)
+            .order('created_at', { ascending: false })
             .limit(50);
           const confirmedForLead = Array.isArray(transfersForLead)
             ? transfersForLead.find((row: any) => row?.is_confirmed === true || row?.transfer_status === 'confirmed')
@@ -896,20 +778,21 @@ Deno.serve(async (req) => {
               let expSellerNum = expiredSeller.whatsapp_number.replace(/\D/g, '');
               if (expSellerNum.length === 10 || expSellerNum.length === 11) expSellerNum = `55${expSellerNum}`;
 
-              const missedMsg = `*AVISO AO VENDEDOR ANTERIOR*\n\nO lead *${lead.lead_name || 'Desconhecido'}* (+${String(lead.remote_jid || '').split('@')[0] || 'sem telefone'}) foi repassado porque nao houve confirmacao dentro do prazo.\n\n*Por favor, NAO entre em contato com este cliente.*`;
+              const missedMsg = `*AVISO AO VENDEDOR ANTERIOR*\n\nO lead *${lead.lead_name || 'Desconhecido'}* (+${String(lead.remote_jid || '').split('@')[0] || 'sem telefone'}) foi repassado porque nao houve confirmacao dentro de ${aRules.transfer.seller_response_min} minutos.\n\n*Por favor, NAO entre em contato com este cliente.*`;
 
               await sendUazapiTextMessage(expBaseUrl, expInstKey, expiredInstance.instance_name, expSellerNum, `${expSellerNum}@s.whatsapp.net`, missedMsg);
               console.log(`[Cron] Aviso enviado para ${expiredSeller.name} (perdeu o lead por inatividade).`);
             }
           }
 
-          const availableSellers = uniqueSellersByPhone(
+          const nextSeller = pickNextTimeoutSeller(
             teamMembers || [],
+            transfersForLead || [],
             currentSellerId,
-            sellerPhoneKey({ whatsapp_number: expiredSeller?.whatsapp_number })
+            sellerPhoneKey({ whatsapp_number: expiredSeller?.whatsapp_number }),
           );
 
-          if (availableSellers.length === 0) {
+          if (!nextSeller) {
             console.log(`[Cron] Nenhum outro vendedor disponivel para o agente ${agentId}. Lead ${lead.id} permanece com vendedor atual.`);
             // Diagnostico: rodizio sem outro vendedor para assumir.
             await logTransferFailure({
@@ -923,17 +806,19 @@ Deno.serve(async (req) => {
               remote_jid: lead.remote_jid,
               attempted_transfer: true,
               source: 'cron-lead-followup',
-              reason_detail: 'Transferencia expirou (vendedor nao respondeu em 10min) e nao ha outro vendedor ativo para o rodizio.',
+              reason_detail: `Transferencia expirou (vendedor nao respondeu em ${aRules.transfer.seller_response_min}min) e nao ha outro vendedor ativo para o rodizio.`,
             });
             // Repassar de volta para o mesmo (sem outros disponiveis)
             await supabase.from('ai_lead_transfers')
-              .update({ transfer_status: 'pending' })
+              .update({
+                transfer_status: 'pending',
+                confirmation_timeout_at: rearmTransferAtNextWindow(aRules.transfer.window, now, aRules.transfer.seller_response_min).toISOString(),
+              })
               .eq('id', transfer.id);
             continue;
           }
 
-          const nextSeller = availableSellers[0];
-          console.log(`[Cron] Repassando lead ${lead.id} de ${expiredSeller?.name || currentSellerId} para ${nextSeller.name} (nao respondeu em 10min).`);
+          console.log(`[Cron] Repassando lead ${lead.id} de ${expiredSeller?.name || currentSellerId} para ${nextSeller.name} (nao respondeu em ${aRules.transfer.seller_response_min}min).`);
 
           // ── NOTIFICA O PROXIMO VENDEDOR PRIMEIRO (gate anti-repasse-fantasma, #2) ──────
           // So reatribui o lead no CRM se conseguir AVISAR o proximo vendedor. Se o envio
@@ -958,7 +843,18 @@ Deno.serve(async (req) => {
             let aiGeneratedSummary = lead.summary || (veiculoInteresseRep
               ? `Veiculo de interesse: ${veiculoInteresseRep}. Lead qualificado aguardando atendimento.`
               : 'Lead qualificado aguardando atendimento.');
-            try {
+            const isV3Transfer = isPedroV3ExclusiveScope({
+              tenantId: lead.user_id,
+              agentId,
+              mode: v3Mode,
+              activeScopes: v3Scopes,
+            });
+            if (isV3Transfer) {
+              aiGeneratedSummary = await buildPedroV3ConversationBriefing(supabase, lead, {
+                reason: "Escalonamento por timeout do vendedor",
+                sellerName: nextSeller.name,
+              });
+            } else try {
               const { data: fullChat } = await supabase
                 .from('wa_chat_history')
                 .select('role, content, created_at')
@@ -993,7 +889,7 @@ Deno.serve(async (req) => {
               }
             } catch (e) { /* silencioso */ }
 
-            const notificationMsg = `*LEAD REPASSADO (Vendedor anterior nao respondeu em 10min)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n${leadTransferStatusLine("repassado")}\n*Numero:* +${phoneNumber}${veiculoInteresseRep ? `\n🚗 *Veículo:* ${veiculoInteresseRep}` : ""}\n*Agente IA:* ${agentData?.name || 'Assistente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" para assumir este atendimento!*`;
+            const notificationMsg = `*LEAD REPASSADO (Vendedor anterior nao respondeu em ${aRules.transfer.seller_response_min}min)*\n\n*Nome:* ${lead.lead_name || 'Desconhecido'}\n${leadTransferStatusLine("repassado")}\n*Numero:* +${phoneNumber}${veiculoInteresseRep ? `\n🚗 *Veículo:* ${veiculoInteresseRep}` : ""}\n*Agente IA:* ${agentData?.name || 'Assistente'}\n\n--------------------\n*ANALISE DO LEAD PELA IA:*\n${aiGeneratedSummary}\n\n--------------------\n\n*Atender agora:* https://wa.me/${phoneNumber}\n\n*Responda "Ok" em ate ${aRules.transfer.seller_response_min} minutos para assumir este atendimento!*`;
 
             nextNotified = await sendUazapiTextMessage(baseUrl, instKey, instance.instance_name, cleanSellerNum, `${cleanSellerNum}@s.whatsapp.net`, notificationMsg);
             if (nextNotified) console.log(`[Cron] Notificacao enviada para ${nextSeller.name}.`);
@@ -1004,7 +900,10 @@ Deno.serve(async (req) => {
           // numero = problema de config (nao e desconexao) -> segue o fluxo pra nao travar.
           if (nextHasNumber && !nextNotified) {
             console.warn(`[Cron] Lead ${lead.id}: falha ao notificar ${nextSeller.name} (WhatsApp da loja offline?). Revertendo expire pra pending — reatribuicao adiada.`);
-            await supabase.from('ai_lead_transfers').update({ transfer_status: 'pending' }).eq('id', transfer.id);
+            await supabase.from('ai_lead_transfers').update({
+              transfer_status: 'pending',
+              confirmation_timeout_at: new Date(now.getTime() + aRules.transfer.seller_response_min * 60000).toISOString(),
+            }).eq('id', transfer.id);
             await logTransferFailure({
               user_id: lead.user_id, reason_code: 'notificacao_falhou', mode: 'pedro',
               lead_id: lead.id, agent_id: agentId, member_id: nextSeller.id,
@@ -1033,18 +932,16 @@ Deno.serve(async (req) => {
             lead_id: lead.id,
             from_member_id: currentSellerId,
             to_member_id: nextSeller.id,
-            transfer_reason: 'Rodizio por Inatividade do Vendedor (10min)',
-            notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em 10 minutos`,
+            transfer_reason: `Rodizio por Inatividade do Vendedor (${aRules.transfer.seller_response_min}min)`,
+            notes: `Repassado de ${currentSellerId} para ${nextSeller.name} por falta de resposta em ${aRules.transfer.seller_response_min} minutos`,
             transfer_status: 'pending',
             is_confirmed: false,
-            confirmation_timeout_at: new Date(now.getTime() + 15 * 60000).toISOString(),
+            confirmation_timeout_at: new Date(now.getTime() + aRules.transfer.seller_response_min * 60000).toISOString(),
           });
         }
       } else {
         console.log('[Cron] Nenhuma transferencia pendente com timeout.');
       }
-    } else {
-      console.log('[Cron] Fora do horario operacional. Secao 1 (rodizio) ignorada.');
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1304,7 +1201,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       build: 'etapa-b-followup-5-8-12-v1',
-      horario_operacional: operacional,
+      horario_operacional: "por_agente",
       processed_5_min: processed5Min,
       processed_10_min: processed10Min
     }), { headers: corsHeaders, status: 200 })

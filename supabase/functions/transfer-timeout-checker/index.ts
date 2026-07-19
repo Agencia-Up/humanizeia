@@ -1,7 +1,8 @@
 import { logTransferFailure, resolveTransferFailures } from '../_shared/pedro-v2/logTransferFailure.ts';
-import { resolveAutomationRules, isWithinConfiguredWindow } from "../_shared/automation/rules.ts";
+import { resolveAutomationRules, isWithinTransferWindow, rearmTransferAtNextWindow } from "../_shared/automation/rules.ts";
 import { pickNextTimeoutSeller } from "../_shared/transfer/timeoutRouting.ts";
 import { sellerPhoneKey } from "../_shared/transfer/phoneKey.ts";
+import { buildPedroV3ConversationBriefing } from "../_shared/transfer/buildBriefing.ts";
 
 // ─── Inline PostgREST client (no external imports) ──────────────────────────
 function createSupabaseClient(url: string, key: string) {
@@ -198,88 +199,6 @@ const corsHeaders = {
 // não confirme. Ao entrar no horário, leads da noite NÃO são repassados
 // retroativamente — só novos leads a partir do início da janela entram no rodízio.
 
-function brasiliaMinutesOfDay(dt: Date): number {
-  const utcMin = dt.getUTCHours() * 60 + dt.getUTCMinutes();
-  return ((utcMin - 180) + 1440) % 1440; // UTC-3
-}
-
-function toBrasilia(dt: Date): Date {
-  return new Date(dt.getTime() - 3 * 60 * 60 * 1000);
-}
-
-// ── Páscoa (algoritmo Computus) e feriados nacionais ─────────────────────────
-function getEasterDate(year: number): Date {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-function getBrazilianHolidays(year: number): Set<string> {
-  const holidays = new Set<string>();
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-  const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86400000);
-
-  // Feriados fixos
-  holidays.add(`${year}-01-01`);
-  holidays.add(`${year}-04-21`);
-  holidays.add(`${year}-05-01`);
-  holidays.add(`${year}-09-07`);
-  holidays.add(`${year}-10-12`);
-  holidays.add(`${year}-11-02`);
-  holidays.add(`${year}-11-15`);
-  holidays.add(`${year}-12-25`);
-
-  // Feriados móveis (baseados na Páscoa)
-  const easter = getEasterDate(year);
-  holidays.add(fmt(addDays(easter, -48))); // Segunda de Carnaval
-  holidays.add(fmt(addDays(easter, -47))); // Terça de Carnaval
-  holidays.add(fmt(addDays(easter, -2)));  // Sexta-feira Santa
-  holidays.add(fmt(addDays(easter, 60)));  // Corpus Christi
-
-  return holidays;
-}
-
-function isDomingoOuFeriado(dt: Date): boolean {
-  const brasilia = toBrasilia(dt);
-  if (brasilia.getUTCDay() === 0) return true;
-  const year = brasilia.getUTCFullYear();
-  const dateStr = `${year}-${String(brasilia.getUTCMonth() + 1).padStart(2, '0')}-${String(brasilia.getUTCDate()).padStart(2, '0')}`;
-  return getBrazilianHolidays(year).has(dateStr);
-}
-
-// Janela dinâmica conforme o dia
-function getRepassWindow(dt: Date): { start: number; end: number; label: string } {
-  const brasilia = toBrasilia(dt);
-  const dow = brasilia.getUTCDay();
-
-  if (dow === 0 || isDomingoOuFeriado(dt)) {
-    return { start: 11 * 60 + 11, end: 17 * 60 + 29, label: '11:11–17:29 (dom/feriado)' };
-  }
-  if (dow === 6) {
-    return { start: 10 * 60 + 11, end: 18 * 60 + 29, label: '10:11–18:29 (sábado)' };
-  }
-  return { start: 10 * 60 + 11, end: 19 * 60 + 29, label: '10:11–19:29 (seg–sex)' };
-}
-
-function isWithinRepassWindow(dt: Date): boolean {
-  const min = brasiliaMinutesOfDay(dt);
-  const { start, end } = getRepassWindow(dt);
-  return min >= start && min <= end;
-}
-
 // ── Função auxiliar: round-robin ──────────────────────────────────────────────
 // ─── Main handler ────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
@@ -301,26 +220,6 @@ Deno.serve(async (req) => {
 
   try {
     // ── Janela de repasse (horário de Brasília, UTC-3) ──────────────────────
-    const nowDate = new Date();
-    const brasilMin = brasiliaMinutesOfDay(nowDate);
-    const brasiliaHour = Math.floor(brasilMin / 60);
-    const brasiliaMinute = brasilMin % 60;
-    const window = getRepassWindow(nowDate);
-
-    const isWorkingHours = isWithinRepassWindow(nowDate);
-
-    if (!isWorkingHours) {
-      console.log(`[Timeout] Fora da janela de repasse — ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')} Brasília (janela: ${window.label}). Nenhum repasse feito.`);
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          processed: 0,
-          message: `Fora do horário de repasse (${window.label}). Hora atual em Brasília: ${brasiliaHour}:${String(brasiliaMinute).padStart(2, '0')}`,
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
     const now = new Date().toISOString();
 
     // Busca todos os transfers pendentes que já expiraram
@@ -413,24 +312,20 @@ Deno.serve(async (req) => {
         // ── Regra de horário: só repassa se o transfer foi CRIADO dentro da
         //    janela operacional. Leads que chegaram durante a noite ficam com
         //    o vendedor — não são repassados retroativamente. ──────
-        const transferCreatedAt = new Date(transfer.created_at || now);
-        if (aRules.transfer.window) {
-          // (a) so repassa se AGORA estiver dentro da janela configurada.
-          if (isWithinConfiguredWindow(aRules.transfer.window, new Date()) === false) continue;
-          // (b) lead CRIADO fora da janela (madrugada) fica com o vendedor — nao
-          //     repassa retroativamente quando o expediente volta (espelha o legado).
-          if (isWithinConfiguredWindow(aRules.transfer.window, transferCreatedAt) === false) {
-            console.log(`[Timeout] Transfer ${transfer.id} criado fora da janela configurada (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor.`);
-            await supabase.from('ai_lead_transfers')
-              .update({ transfer_status: 'confirmed', is_confirmed: true })
-              .eq('id', transfer.id);
-            continue;
-          }
-        } else if (!isWithinRepassWindow(transferCreatedAt)) {
-          console.log(`[Timeout] Transfer ${transfer.id} criado fora do horário de repasse (${transferCreatedAt.toISOString()}). Auto-confirmando — lead fica com vendedor atual.`);
-          await supabase.from('ai_lead_transfers')
-            .update({ transfer_status: 'confirmed', is_confirmed: true })
-            .eq('id', transfer.id);
+        // Fora do expediente, inclusive domingo, a pendência continua pendente.
+        // Nunca auto-confirme: confirmação é uma ação real do vendedor. Rearme
+        // para a próxima abertura e dê o timeout inteiro a partir dela.
+        const nowDate = new Date();
+        if (!isWithinTransferWindow(aRules.transfer.window, nowDate)) {
+          const rearmedAt = rearmTransferAtNextWindow(
+            aRules.transfer.window,
+            nowDate,
+            aRules.transfer.seller_response_min,
+          );
+          await supabase.from('ai_lead_transfers').update({
+            confirmation_timeout_at: rearmedAt.toISOString(),
+          }).eq('id', transfer.id).eq('transfer_status', 'pending').eq('is_confirmed', false);
+          console.log(`[Timeout] Fora da janela do agente; transfer ${transfer.id} permanece pendente até ${rearmedAt.toISOString()}.`);
           continue;
         }
 
@@ -482,7 +377,7 @@ Deno.serve(async (req) => {
         if (!pickNextTimeoutSeller(preflightRoster, [], expiredSeller.id, sellerPhoneKey(expiredSeller))) {
           await supabase.from('ai_lead_transfers').update({
             transfer_status: 'pending',
-            confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            confirmation_timeout_at: rearmTransferAtNextWindow(aRules.transfer.window, new Date(), aRules.transfer.seller_response_min).toISOString(),
           }).eq('id', transfer.id).eq('transfer_status', 'expired');
           continue;
         }
@@ -511,6 +406,7 @@ Deno.serve(async (req) => {
           .from('ai_lead_transfers')
           .select('to_member_id,created_at')
           .eq('user_id', transfer.user_id)
+          .eq('lead_id', lead.id)
           .order('created_at', { ascending: false })
           .limit(100);
 
@@ -542,13 +438,13 @@ Deno.serve(async (req) => {
           // “passado para o próximo” ser a única evidência operacional.
           await supabase.from('ai_lead_transfers').update({
             transfer_status: 'pending',
-            confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            confirmation_timeout_at: rearmTransferAtNextWindow(aRules.transfer.window, new Date(), aRules.transfer.seller_response_min).toISOString(),
           }).eq('id', transfer.id).eq('transfer_status', 'expired');
           continue;
         }
 
         // 5. Cria novo transfer para o próximo vendedor
-        const newTimeout = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+        const newTimeout = new Date(Date.now() + aRules.transfer.seller_response_min * 60 * 1000).toISOString();
         const { error: nextTransferErr } = await supabase.from('ai_lead_transfers').insert({
           user_id: transfer.user_id,
           lead_id: lead.id,
@@ -565,7 +461,7 @@ Deno.serve(async (req) => {
           console.error(`[Timeout] Falha ao criar transfer para ${nextSeller.name}:`, nextTransferErr);
           await supabase.from('ai_lead_transfers').update({
             transfer_status: 'pending',
-            confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            confirmation_timeout_at: rearmTransferAtNextWindow(aRules.transfer.window, new Date(), aRules.transfer.seller_response_min).toISOString(),
           }).eq('id', transfer.id).eq('transfer_status', 'expired');
           continue;
         }
@@ -592,7 +488,11 @@ Deno.serve(async (req) => {
           const baseUrl = (waInstance.api_url || '').replace(/\/$/, '');
           const instKey = waInstance.api_key_encrypted || '';
 
-          const nextMsg = `🚨 *LEAD QUALIFICADO — VOCÊ É O PRÓXIMO DA FILA*\n\n*Nome:* ${lead.lead_name || ''}\n\n📝 *Resumo:*\n${lead.summary || ''}\n\n⏰ *Responda esta mensagem em até 15 minutos para confirmar o recebimento. Se não responder, o lead passa para o próximo.*`;
+          const v3Briefing = await buildPedroV3ConversationBriefing(supabase, lead, {
+            reason: "Escalonamento por timeout",
+            sellerName: nextSeller.name,
+          });
+          const nextMsg = `🚨 *NOVO LEAD PARA ATENDIMENTO (Pedro v3)*\n\n*Cliente:* ${lead.lead_name || 'Contato WhatsApp'}\n*Contato:* ${lead.remote_jid || ''}\n\n${v3Briefing}\n\n⏰ *Responda "Ok" em até ${aRules.transfer.seller_response_min} minutos para assumir este atendimento. Se não responder, ele seguirá para o próximo vendedor.*`;
 
           try {
             const sendRes = await fetch(`${baseUrl}/send/text`, {
@@ -618,7 +518,7 @@ Deno.serve(async (req) => {
             // e permite nova tentativa no próximo ciclo.
             await supabase.from('ai_lead_transfers').update({
               transfer_status: 'pending',
-              confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+              confirmation_timeout_at: rearmTransferAtNextWindow(aRules.transfer.window, new Date(), aRules.transfer.seller_response_min).toISOString(),
             }).eq('id', transfer.id).eq('transfer_status', 'expired');
             await logTransferFailure({
               user_id: transfer.user_id,
@@ -646,7 +546,7 @@ Deno.serve(async (req) => {
 
           const baseUrl = (waInstance.api_url || '').replace(/\/$/, '');
           const instKey = waInstance.api_key_encrypted || '';
-          const missedMsg = `⚠️ *LEAD REPASSADO*\n\nO lead *${lead.lead_name || ''}* não teve sua confirmação dentro de 15 minutos e foi passado para o próximo da fila.\n\n🚫 *Por favor, não entre em contato com este lead.*`;
+          const missedMsg = `⚠️ *LEAD REPASSADO*\n\nO lead *${lead.lead_name || 'Contato WhatsApp'}* não teve sua confirmação dentro de ${aRules.transfer.seller_response_min} minutos e foi passado para o próximo da fila.\n\n🚫 *Por favor, não entre em contato com este lead.*`;
 
           try {
             await fetch(`${baseUrl}/send/text`, {

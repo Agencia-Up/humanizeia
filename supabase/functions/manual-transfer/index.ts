@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
+import { buildPedroV3ConversationBriefing, buildMarcosBriefing, buildManagerReport } from "../_shared/transfer/buildBriefing.ts";
+import { resolveAutomationRules } from "../_shared/automation/rules.ts";
 import { resolveTransferFailures } from "../_shared/pedro-v2/logTransferFailure.ts";
 import { managerPhones } from "../_shared/transfer/managers.ts";
 import { buildEtiquetas, composeGerenteMsg, composeSellerMsg, maybeStripEmojis } from "../_shared/transfer/messageTemplates.ts";
@@ -950,10 +951,11 @@ Deno.serve(async (req) => {
     // 3. Fetch agent config (for gerente_phone + instance_ids)
     const { data: agentConfig } = await supabase
       .from("wa_ai_agents")
-      .select("gerente_phone, gerente_phone_2, name, instance_ids, instance_id, briefing_template_vendedor, briefing_template_gerente, gerente_feedback_completo, mensagens_sem_emoji")
+      .select("gerente_phone, gerente_phone_2, name, instance_ids, instance_id, briefing_template_vendedor, briefing_template_gerente, gerente_feedback_completo, mensagens_sem_emoji, automation_rules")
       .eq("id", lead.agent_id)
       .maybeSingle();
     const agentForTemplate = templateAgent({ ...(lead.agent || {}), ...(agentConfig || {}) }, "Pedro");
+    const transferRules = resolveAutomationRules(agentConfig?.automation_rules).transfer;
 
     // 4. Fetch WhatsApp instance — prioriza a instância do agente
     let instance: any = null;
@@ -993,7 +995,10 @@ Deno.serve(async (req) => {
     const pushName = lead.lead_name || "Não informado";
     const agentName = agentForTemplate.name || "Pedro";
     const transferredAt = brDateTime();
-    const conversationBriefing = await buildConversationBriefing(supabase, lead);
+    const conversationBriefing = await buildPedroV3ConversationBriefing(supabase, lead, {
+      reason: "Transferência manual — aguardando confirmação do vendedor",
+      sellerName: member.name,
+    });
     const msgVars = buildEtiquetas({ lead: { telefone: phone, nome: pushName } }, {
       agentName,
       leadName: pushName,
@@ -1023,7 +1028,7 @@ ${notes ? `\n💬 *Observação:* ${notes}\n\n━━━━━━━━━━━�
 👉 *Atender agora:* https://wa.me/${phone}
 
 ⚡ O cliente está aguardando seu contato!
-⏰ *Responda em até 15 minutos para confirmar o recebimento.*`;
+⏰ *Responda "Ok" em até ${transferRules.seller_response_min} minutos para confirmar o recebimento.*`;
     const sellerMsg = maybeStripEmojis(agentForTemplate, composeSellerMsg(agentForTemplate, msgVars, sellerFallback));
 
     await sendWAMessage(instance, member.whatsapp_number, sellerMsg);
@@ -1088,7 +1093,7 @@ _Gerado automaticamente pelo Pedro SDR_`;
       notes: notes || conversationBriefing,
       is_confirmed: false,
       transfer_status: "pending",
-      confirmation_timeout_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      confirmation_timeout_at: new Date(Date.now() + transferRules.seller_response_min * 60 * 1000).toISOString(),
       triggered_by_user_id: userId,
       triggered_by_name: operatorName,
     };
