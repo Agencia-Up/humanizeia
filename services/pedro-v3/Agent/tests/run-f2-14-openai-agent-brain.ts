@@ -622,10 +622,18 @@ async function main(): Promise<void> {
       recentTranscript: [{ role: "agent", text: "Qual parcela cabe no seu orcamento?" }],
       conversationContext: { ...frame("x").conversationContext, lastAgentMessage: "Qual parcela cabe no seu orcamento?" },
     };
-    let exhausted = false;
-    try { await brain.proposeNextStep(exhaustedFrame, []); }
-    catch (error) { exhausted = (error as Error).message === "SEMANTIC_CRITIC_EXHAUSTED"; }
-    check("[19] esgotamento semantico termina o ciclo sem liberar draft reprovado", exhausted && i === 4, `calls=${i}`);
+    // ⭐CONTRATO INVERTIDO (auditoria de deny, 19/07): antes o esgotamento do crítico semântico fazia `throw`, o
+    // engine tratava como falha de provedor e o lead recebia "Tive uma instabilidade". Uma reprovação de ESTILO
+    // destruía o turno. Agora falha ABERTO, como o crítico de FORMA sempre fez (openai-agent-brain.ts ~700): as
+    // reescritas se esgotam e a resposta comercial da LLM segue para as validações de FATO do engine, que ainda
+    // podem negá-la por motivo real. O teto de chamadas continua valendo — o que muda é o desfecho, não o limite.
+    let threw = false;
+    let step: Awaited<ReturnType<typeof brain.proposeNextStep>> | null = null;
+    try { step = await brain.proposeNextStep(exhaustedFrame, []); }
+    catch { threw = true; }
+    check("[19] esgotamento semantico NAO derruba o turno (fail-open)", !threw, "ainda lanca excecao");
+    check("[19] esgotamento semantico devolve o draft da LLM ao inves de fallback", step != null && step.kind === "final", `kind=${step?.kind}`);
+    check("[19] esgotamento semantico respeita o teto de chamadas", i === 4, `calls=${i}`);
   }
 
   // [20] Mesmo que o critic marque os checks como true, a propria classificacao

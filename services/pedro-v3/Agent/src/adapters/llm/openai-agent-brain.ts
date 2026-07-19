@@ -729,7 +729,18 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     if (!this.#semanticCriticEnabled || step.kind !== "final" || step.decision.responsePlan.draft == null) return step;
     const critique = await this.#critique(frame, observations, step);
     if (critique.pass) return step;
-    if (semanticRewriteCount >= MAX_SEMANTIC_REWRITES) throw new Error("SEMANTIC_CRITIC_EXHAUSTED");
+    // ⭐AUDITORIA DE DENY (2026-07-19) — FAIL-OPEN. Aqui havia `throw new Error("SEMANTIC_CRITIC_EXHAUSTED")`, que o
+    // engine captura como falha de provedor -> break -> "Tive uma instabilidade". Ou seja: uma reprovação de ESTILO
+    // destruía o turno e o lead ficava sem resposta.
+    //
+    // O próprio arquivo já provava qual é o comportamento certo: o crítico de FORMA (linha ~700) resolve o mesmo
+    // dilema falhando ABERTO — esgotou as reescritas, devolve o draft da LLM e segue. A assimetria era o bug.
+    //
+    // INVARIANTE: estilo, repetição, quantidade de perguntas e condução NUNCA podem terminar em fallback técnico.
+    // Podem pedir reescrita; esgotada a reescrita, a resposta comercial SEGURA da LLM prevalece. Quem barra conteúdo
+    // é grounding/PII/efeito — não gosto conversacional. O draft segue para as validações de FATO no engine, que
+    // continuam podendo negá-lo por motivo real.
+    if (semanticRewriteCount >= MAX_SEMANTIC_REWRITES) return step;
     return this.proposeNextStep(frame, [...observations, {
       tool: "response",
       ok: false,

@@ -423,6 +423,33 @@ async function main(): Promise<void> {
     check("[D2] fragmento trivial nao e absolvido por acidente", trivial.length === 1, JSON.stringify(trivial));
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SEÇÃO E (cenário 3 do Codex) — turno SEM pendência factual tem de poder FECHAR
+  // Incidente: 19/07 12:56, lead 24 99827-5607. As fotos foram enviadas com sucesso; o lead respondeu
+  // "Ok. Obrigado." e o agente respondeu bem — mas o engine EXIGIU efeito handoff com reason=qualified_handoff,
+  // motivo que OUTRA guarda nega quando a qualificação não está completa. 4 denies idênticos -> "Tive uma
+  // instabilidade". A correção não foi refinar o motivo: foi REMOVER a exigência. Encerrar sem transferir é
+  // decisão conversacional da LLM, não invariante de fato ou segurança.
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log("\n== E: turno sem pendencia factual FECHA (nenhum efeito obrigatorio) ==");
+
+  for (const [nome, block, texto] of [
+    ["E1 obrigado", "Ok.\nObrigado.", "Perfeito, fico à disposição caso queira saber mais ou agendar uma visita."],
+    ["E2 vou ver as fotos", "Ok. Obrigado pela atenção. Vou dar uma olhada nas fotos", "Fico à disposição! Qualquer dúvida sobre ele, é só chamar."],
+  ] as const) {
+    const c = conv();
+    const responder: BrainResponder = (frame) => {
+      const u: TurnUnderstanding = { ...U("disengagement"), evidence: ev(frame.block ?? block, null, 2) };
+      return finU([txt(texto)], "closing", u);   // fecha SEM propor handoff — e isso é legítimo
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder);
+    check(`[${nome}] turno commitado`, r.committed);
+    check(`[${nome}] resposta da LLM foi ACEITA (sem fallback)`, r.responseSource !== "technical_fallback", `responseSource=${r.responseSource}`);
+    check(`[${nome}] lead NAO recebeu 'instabilidade'`, !has(r.outbox, INSTABILIDADE), r.outbox.slice(0, 80));
+    check(`[${nome}] o texto QUE A LLM ESCREVEU chegou ao lead`, has(r.outbox, texto.slice(0, 28)), r.outbox.slice(0, 90));
+    check(`[${nome}] ZERO deny repetido`, r.policyFeedback.length === 0, `policyFeedback=${r.policyFeedback.length}`);
+  }
+
   console.log(`\n== F2.70: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("\nFALHAS:\n" + fails.map((f) => ` - ${f}`).join("\n")); process.exit(1); }
 }

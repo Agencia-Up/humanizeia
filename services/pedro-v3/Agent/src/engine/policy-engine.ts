@@ -389,7 +389,12 @@ export const PolicyEngine = {
     if (!skipStyleChecks && contactPhoneKnownFromChannel(ctx.state.conversationId) && asksLeadContactPhone(composed.text)) {
       return [{ policyId: "POL-PHONE-KNOWN", outcome: "deny", violations: ["nao peca o telefone do lead: no WhatsApp o numero de contato ja e conhecido pelo canal. Use-o como contato e avance o funil (nao pergunte telefone salvo se o prompt pedir um numero alternativo)"] }];
     }
-    if (contactPhoneKnownFromChannel(ctx.state.conversationId) && asksToResendInstitutionalInfoViaWhatsApp(composed.text)) {
+    // ⭐AUDITORIA DE DENY (2026-07-19): esta era a ÚNICA guarda deste bloco de ESTILO sem o gate `!skipStyleChecks`
+    // (as vizinhas em 389/419/436 têm). Resultado: rodava HARD em produção (central_active) negando por preferência
+    // conversacional — "não ofereça reenviar o endereço pelo WhatsApp" — e um deny de estilo sem trava própria queima
+    // o orçamento do turno até "Tive uma instabilidade". Alinhada às irmãs: continua valendo no legado, vira advisory
+    // no LLM-first. Redundância de canal é gosto, não risco factual.
+    if (!skipStyleChecks && contactPhoneKnownFromChannel(ctx.state.conversationId) && asksToResendInstitutionalInfoViaWhatsApp(composed.text)) {
       return [{ policyId: "POL-SAME-CHANNEL-REDUNDANCY", outcome: "deny", violations: ["a resposta ja mostrou endereco/local/horario nesta conversa do WhatsApp e nao pode oferecer reenviar a mesma informacao pelo WhatsApp; reescreva respondendo ao ato atual ou conduzindo o proximo passo coerente"] }];
     }
     // POL-QUESTION-OBJECTIVE (R10-2 Codex): UMA pergunta por mensagem, SEM exceção. A classificação lê a ÚLTIMA

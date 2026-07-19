@@ -14,13 +14,13 @@
 // e NENHUM dispatcher é criado aqui.
 // ============================================================================
 import type { DecisionLlm } from "../domain/llm.ts";
-import type { Clock, Persistence, UnitOfWork, WorkingMemoryOutcomeStore } from "../domain/ports.ts";
+import type { Clock, Persistence, UnitOfWork } from "../domain/ports.ts";
 import type { TurnContextPreparer, QueryLoopLimits } from "../domain/context.ts";
 import type { TurnContext } from "../domain/context.ts";
 import { createInitialState } from "../domain/conversation-state.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type {
-  DecisionMutation, ProposedDecision, ProposedEffectPlan, QueryCall, QueryResult, TurnAction, TurnDecision, EffectResult, ResponseDraft,
+  DecisionMutation, ProposedDecision, ProposedEffectPlan, QueryCall, QueryResult, TurnAction, TurnDecision, ResponseDraft,
 } from "../domain/decision.ts";
 import type {
   AgentBrainPort, AgentBrainDecision, AgentBrainStep, AgentToolObservation, CentralQueryCall, PersistedWorkingMemory,
@@ -39,13 +39,12 @@ import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, 
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, detectExplicitOptOut, type LeadEngagement } from "./lead-intent.ts";
-import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, sanitizeAdContext, resolveAdReferenceKey, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, type AdFocusedVehicle } from "./ad-context.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, resolveAdReferenceKey, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, type AdFocusedVehicle } from "./ad-context.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
-import type { InboxRecord, OutboxRecord, ProviderCapability, TurnEventRecord } from "../domain/effect-intent.ts";
-import { redact } from "../domain/effect-intent.ts";
-import type { Id, Iso, JsonValue, VehicleFact, RememberedVehicleIdentity } from "../domain/types.ts";
+import type { InboxRecord, OutboxRecord, ProviderCapability } from "../domain/effect-intent.ts";
+import type { Id, JsonValue, VehicleFact, RememberedVehicleIdentity } from "../domain/types.ts";
 import { composeAndVerify, withTimeout } from "./decision-engine.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { PolicyEngine, hasDeny } from "./policy-engine.ts";
@@ -81,13 +80,34 @@ import { normalizeText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
 import { assertReplayWiring, isLegacyReplayEnabled, assertLegacyAuthoringAuthorized } from "./legacy/legacy-replay.ts";
 import {
+  authoredPresentsVehicles,
+  buildDeterministicPhotoResponse,
+  buildDisengagementResponse,
+  buildInstitutionalResponse,
+  buildMoreOptionsScopeQuestion,
+  buildRelaxedOfferResponse,
+  capPhotoEffects,
+} from "./legacy/legacy-commercial-authors.ts";
+import {
   loadPersistedWorkingMemory, deriveCanonicalViews, applyDecisionWorkingMemoryMutations,
-  applySystemWorkingMemoryMutations, applyEffectOutcomeToWorkingMemory, isValidPhotoActionDraft,
+  applySystemWorkingMemoryMutations, isValidPhotoActionDraft,
   toAgentObservation, toToolResultMemory, toToolTelemetry,
 } from "./working-memory.ts";
 import type { TenantBusinessInfoSource } from "./tenant-business-info.ts";
 import { resolveTenantBusinessInfo, businessInfoToolResultMemory } from "./tenant-business-info.ts";
 import { invalidBrazilGreeting } from "./channel-time.ts";
+import { applyAcceptedPhotoActionOutcome, reconcileAcceptedPhotoOutcomes } from "./photo-outcome.ts";
+import {
+  aggregateLeadMessage,
+  adContextFromInbox,
+  deriveProposedAction,
+  ensureSendMessage,
+  isKernelQueryCall,
+  leadNameHintFromInbox,
+  makeEvent,
+} from "./central-turn-io.ts";
+import { buildRememberedIdentities, canonicalVehicleLabel, groundNamedVehicles, parseLabel } from "./vehicle-label.ts";
+export { applyAcceptedPhotoActionOutcome, reconcileAcceptedPhotoOutcomes } from "./photo-outcome.ts";
 
 // ── Flag de modo ─────────────────────────────────────────────────────────────────────────────────────────────
 export type BrainMode = "off" | "central_shadow" | "central_active";
@@ -98,7 +118,6 @@ export function readBrainMode(env: Record<string, string | undefined> = process.
 export function isCentralShadowMode(env: Record<string, string | undefined> = process.env): boolean {
   return readBrainMode(env) === "central_shadow";
 }
-
 export const DEFAULT_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read", "knowledge_search"] as const;
 
 export type CentralTurnArgs = {
@@ -179,7 +198,6 @@ function classifyDenyCategory(feedback: string): HardDenyCategory {
   if (/draft|parts estruturadas|malformad|corromp/.test(f)) return "structural";
   return "other";
 }
-
 // ⭐F7-2 (observabilidade anti retry-storm): categoria CURTA por retry/nudge do loop do cérebro, derivada do CODE (e da
 // mensagem quando o code é ambíguo) da observação de CONTROLE empurrada antes de cada continue/break. É SÓ relato —
 // NÃO altera decisão, caps nem grounding. Usada para surfaçar retryReasons/retryReasonCounts no decision_final e no
@@ -404,94 +422,6 @@ export type CentralTurnResult =
   | { status: "superseded"; turnId: Id; claimedEventIds: Id[]; pendingCount: number };
 
 // ── helpers puros ──────────────────────────────────────────────────────────────────────────────────────────
-function payloadJson(value: unknown): JsonValue {
-  if (value === undefined) return null;
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
-  if (Array.isArray(value)) return value.map(payloadJson);
-  if (typeof value === "object") { const out: { [k: string]: JsonValue } = {}; for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = payloadJson(v); return out; }
-  return String(value);
-}
-function textFromInbox(rec: InboxRecord): string {
-  const raw = rec.raw as Record<string, unknown>;
-  const text = raw.text ?? raw.message ?? raw.body ?? raw.transcription ?? "";
-  if (typeof text === "string" && text.trim() !== "") return text.trim();
-  // ⭐FASE 6 (mídia em TODOS os caminhos de ingestão): a transcrição de áudio / legenda-descrição de imagem vive em
-  // `mediaContext.text` (kind: audio|image|video|document). Se o texto primário está vazio, o bloco DEVE surface esse
-  // conteúdo — senão o cérebro voa cego e degrada em "instabilidade" (o incidente P4 do áudio). Chokepoint ÚNICO:
-  // cobre toda ingestão que passa por aggregateLeadMessage, não só um bridge. Ausência de transcrição -> marcador
-  // HONESTO por tipo de mídia (contexto p/ o cérebro, que autora a resposta natural — NUNCA o engine escreve).
-  const mc = (raw.mediaContext ?? raw.media_context) as Record<string, unknown> | undefined;
-  if (mc && typeof mc === "object") {
-    const mcText = mc.text ?? mc.transcription ?? mc.caption;
-    if (typeof mcText === "string" && mcText.trim() !== "") return mcText.trim();
-    const kind = typeof mc.kind === "string" ? mc.kind : null;
-    if (kind === "audio") return "[o cliente enviou um áudio que não consegui transcrever]";
-    if (kind === "image") return "[o cliente enviou uma imagem, sem texto]";
-    if (kind === "video") return "[o cliente enviou um vídeo]";
-    if (kind === "document") return "[o cliente enviou um documento]";
-    if (mc.has_media_context === true) return "[o cliente enviou uma mídia]";
-  }
-  return typeof text === "string" ? text.trim() : "";
-}
-// F2.32 (CTWA): o contexto de anúncio viaja no `raw.adContext` do inbox (o bridge o coloca na 1ª mensagem). Lê o PRIMEIRO
-// da rajada (sanitizado). Ausente -> null (o engine herda do state = recuperação de rajada).
-// ⭐SEM inv.7: hint de NOME do WhatsApp (pushName sanitizado no bridge) — viaja no raw do inbox; a validação de
-// nome real (isRealLeadName) acontece no builder do CRM. Lê o MAIS RECENTE presente no bloco.
-function leadNameHintFromInbox(records: InboxRecord[]): string | null {
-  for (let i = records.length - 1; i >= 0; i--) {
-    const raw = records[i]?.raw as Record<string, unknown> | undefined;
-    const hint = raw?.leadNameHint;
-    if (typeof hint === "string" && hint.trim().length >= 2) return hint.trim().slice(0, 60);
-  }
-  return null;
-}
-function adContextFromInbox(records: InboxRecord[]): AdContext | null {
-  const ordered = [...records].sort((a, b) => {
-    const ta = Date.parse(a.receivedAt), tb = Date.parse(b.receivedAt);
-    if (ta !== tb) return ta - tb;
-    return a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0;
-  });
-  for (const rec of ordered) {
-    const raw = rec.raw as Record<string, unknown>;
-    const ad = raw.adContext;
-    if (ad && typeof ad === "object") {
-      const capturedRaw = (ad as Record<string, unknown>).capturedAtTurn;
-      const sanitized = sanitizeAdContext(ad, typeof capturedRaw === "number" ? capturedRaw : 0);
-      if (sanitized) return sanitized;
-    }
-  }
-  return null;
-}
-function aggregateLeadMessage(records: InboxRecord[]): string {
-  const ordered = [...records].sort((a, b) => {
-    const ta = Date.parse(a.receivedAt), tb = Date.parse(b.receivedAt);
-    if (ta !== tb) return ta - tb;
-    return a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0;
-  });
-  return ordered.map(textFromInbox).filter(Boolean).join("\n");
-}
-function makeEvent(args: { conversationId: Id; turnId: Id; type: string; suffix: string; payload: { [k: string]: JsonValue }; at: Iso }): TurnEventRecord {
-  return { eventId: `${args.turnId}:${args.suffix}`, conversationId: args.conversationId, turnId: args.turnId, type: args.type, payloadSchemaVersion: 1, payload: redact(args.payload), at: args.at };
-}
-function deriveProposedAction(effects: readonly ProposedEffectPlan[]): TurnAction {
-  if (effects.some((e) => e.kind === "send_media")) return "send_photos";
-  if (effects.some((e) => e.kind === "handoff")) return "handoff";
-  if (effects.some((e) => e.kind === "schedule_visit")) return "schedule_visit";
-  return "reply";
-}
-// Toda resposta precisa de UM send_message (o texto renderizado vai nele). Se o cérebro não propôs, injeta.
-function ensureSendMessage(effects: readonly ProposedEffectPlan[]): ProposedEffectPlan[] {
-  const list = [...effects];
-  if (!list.some((e) => e.kind === "send_message")) {
-    list.unshift({ kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan);
-  }
-  return list;
-}
-// tool `crm_read` só passa com leadId; tenant_business_info não é QueryCall (tratada à parte). Aqui autorizamos
-// só a superfície do kernel (POL-STATE-011) — a policy VALIDA, não escolhe assunto.
-function isKernelQueryCall(call: CentralQueryCall): call is QueryCall {
-  return call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve" || call.tool === "crm_read";
-}
 
 // ── Enforcement determinístico de invariantes (Brain/11 §5: validador/executor; NÃO conduz o assunto) ──────────
 // PEDIDO de foto AGORA (imperativo) — distinto de PERGUNTA de memória ("qual carro pedi fotos?").
@@ -523,94 +453,6 @@ export function trimToOneQuestion(text: string): string {
   return kept.join(" ").trim();
 }
 
-// Parser de label "Marca Modelo Ano" -> identidade (ano só se o token final for um ano real; senão null).
-function parseLabel(label: string | null | undefined): { marca: string | null; modelo: string | null; ano: number | null } {
-  if (!label) return { marca: null, modelo: null, ano: null };
-  const tokens = label.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length < 2) return { marca: null, modelo: null, ano: null };
-  const yearTok = tokens[tokens.length - 1];
-  const hasYear = /^(19|20)\d{2}$/.test(yearTok);
-  const marca = tokens[0];
-  const modelo = (hasYear ? tokens.slice(1, -1) : tokens.slice(1)).join(" ");
-  if (!marca || !modelo) return { marca: null, modelo: null, ano: null };
-  return { marca, modelo, ano: hasYear ? Number(yearTok) : null };
-}
-// Identidades LEMBRADAS (audit autoria única): marca/modelo/ano (real ou null) de ofertas/seleção/foto anteriores.
-// SÓ para NOMEAR no renderer — NUNCA km/câmbio/cor/preço. ZERO VehicleFact fabricado (nada de ano=0/preco=-1).
-// Atributo só vem de QueryResult REAL do MESMO vehicleKey (renderer falha fechado sem o fato).
-function buildRememberedIdentities(state: ConversationState): RememberedVehicleIdentity[] {
-  const out: RememberedVehicleIdentity[] = [];
-  const seen = new Set<string>();
-  const push = (key: string | null | undefined, marca: string | null | undefined, modelo: string | null | undefined, ano: number | null | undefined): void => {
-    if (!key || !marca || !modelo || seen.has(key)) return;
-    seen.add(key);
-    out.push({ vehicleKey: key, marca, modelo, ano: typeof ano === "number" && ano > 0 ? ano : null });
-  };
-  for (const it of state.lastRenderedOfferContext?.items ?? []) push(it.vehicleKey, it.marca, it.modelo, it.ano ?? null);
-  const sel = state.vehicleContext?.selected;
-  if (sel?.key) { const p = parseLabel(sel.label); push(sel.key, p.marca, p.modelo, p.ano); }
-  const lastPhoto = loadPersistedWorkingMemory(state.workingMemory).memory.lastPhotoAction;
-  if (lastPhoto?.vehicleKey) { const p = parseLabel(lastPhoto.label); push(lastPhoto.vehicleKey, p.marca, p.modelo, p.ano); }
-  return out;
-}
-
-// Auto-grounding (executor determinístico): veículos que a RESPOSTA pode nomear — alvo de foto (send_media) e o
-// selecionado — precisam estar nos FATOS p/ o compose citar nome/atributo aterrado. vehicle_photos_resolve NÃO
-// devolve marca/modelo; então buscamos vehicle_details (dados REAIS: preço/câmbio/cor) desses veículos. Bounded (3),
-// best-effort (falha não derruba o turno). Não conduz o assunto — só garante grounding do que já foi decidido.
-async function groundNamedVehicles(args: {
-  readonly proposedEffects: readonly ProposedEffectPlan[];
-  readonly state: ConversationState;
-  readonly facts: readonly QueryResult[];
-  readonly identities: readonly RememberedVehicleIdentity[];
-  readonly runQuery: QueryRunner;
-  readonly timeoutMs: number;
-  readonly beforeExecute?: (vehicleKey: string) => void;
-  readonly onExecuted?: (result: QueryResult, ms: number) => void;
-}): Promise<QueryResult[]> {
-  const keys = new Set<string>();
-  for (const e of args.proposedEffects) if (e.kind === "send_media" && typeof e.vehicleKey === "string" && e.vehicleKey) keys.add(e.vehicleKey);
-  if (args.state.vehicleContext.selected?.key) keys.add(args.state.vehicleContext.selected.key);
-  if (keys.size === 0) return [];
-  const known = new Set<string>();
-  for (const f of args.facts) {
-    if (!f.ok) continue;
-    if (f.tool === "stock_search") for (const v of f.data.items) known.add(v.vehicleKey);
-    if (f.tool === "vehicle_details") known.add(f.data.vehicle.vehicleKey);
-  }
-  // Identidade LEMBRADA cobre o NOME (marca/modelo) -> não re-consulta só p/ nomear (legacy). Atributo continua
-  // aterrado no compose/validate contra fato REAL; identidade nunca vira "0 km"/preço.
-  for (const id of args.identities) known.add(id.vehicleKey);
-  const toFetch = [...keys].filter((k) => !known.has(k)).slice(0, 3);
-  const out: QueryResult[] = [];
-  for (const vehicleKey of toFetch) {
-    try {
-      args.beforeExecute?.(vehicleKey);
-      const started = Date.now();
-      const res = await withTimeout(args.runQuery({ tool: "vehicle_details", input: { vehicleKey } }), args.timeoutMs, "query: ground vehicle_details");
-      args.onExecuted?.(res, Math.max(0, Date.now() - started));
-      if (res.ok) out.push(res);
-    } catch { /* best-effort: grounding ausente só significa que o compose não poderá nomear o veículo */ }
-  }
-  return out;
-}
-
-// Nome HUMANO do veículo (MARCA MODELO ANO) a partir dos fatos REAIS do turno + identidade lembrada + oferta anterior
-// + seleção. NUNCA devolve a chave crua (P0-2/audit): sem nome humano -> null (o chamador NÃO persiste/expõe a chave).
-function canonicalVehicleLabel(vehicleKey: string, facts: readonly QueryResult[], identities: readonly RememberedVehicleIdentity[], state: ConversationState): string | null {
-  for (const f of facts) {
-    if (!f.ok) continue;
-    if (f.tool === "stock_search") { const v = f.data.items.find((x) => x.vehicleKey === vehicleKey); if (v) { const l = [v.marca, v.modelo, v.ano].filter(Boolean).join(" ").trim(); if (l) return l; } }
-    if (f.tool === "vehicle_details" && f.data.vehicle.vehicleKey === vehicleKey) { const v = f.data.vehicle; const l = [v.marca, v.modelo, v.ano].filter(Boolean).join(" ").trim(); if (l) return l; }
-  }
-  const id = identities.find((i) => i.vehicleKey === vehicleKey);
-  if (id) { const l = [id.marca, id.modelo, id.ano].filter(Boolean).join(" ").trim(); if (l && l !== vehicleKey) return l; }
-  const it = state.lastRenderedOfferContext?.items.find((i) => i.vehicleKey === vehicleKey);
-  if (it) { const l = [it.marca, it.modelo, it.ano].filter(Boolean).join(" ").trim(); if (l) return l; }
-  const sel = state.vehicleContext.selected;
-  if (sel?.key === vehicleKey && sel.label && sel.label !== vehicleKey) return sel.label;
-  return null;   // NUNCA a chave crua
-}
 // P0-2 + Hardening 1 (audit): o LABEL de toda select_vehicle_focus vem EXCLUSIVAMENTE de fonte CANÔNICA (VehicleFact /
 // RememberedVehicleIdentity / lastRenderedOfferContext) via canonicalVehicleLabel -> "MARCA MODELO ANO". NUNCA aceita o
 // label proposto pela LLM como fallback. Sem label canônico -> DESCARTA só a seleção (jamais persiste label vazio/da
@@ -1064,9 +906,21 @@ function authorFromBrainDraft(args: {
   // the executable handoff act when that capability is actually available.
   const disengagementIntent = args.requireBrain && args.proposedPrimaryIntent === "disengagement";
   const disengagementHandoffProposed = proposedEffects.some((effect) => effect.kind === "handoff" || effect.kind === "notify_seller");
-  if (disengagementIntent && args.handoffPlannable === true && !disengagementHandoffProposed) {
-    return { ok: false, feedback: "Voce declarou que o bloco atual encerra o atendimento por desinteresse. Como a transferencia esta disponivel, inclua no mesmo final o efeito handoff com reason=qualified_handoff. A engine canonicaliza o motivo operacional e suspende o follow-up; nao reabra o funil nem colete dados." };
-  }
+  // ⭐AD-6 (2026-07-19) — REGRA REMOVIDA, não refinada.
+  //
+  // Aqui existia um deny: "você declarou encerramento e a transferência está disponível, então INCLUA o efeito
+  // handoff com reason=qualified_handoff". Dois defeitos, um em cima do outro:
+  //   1. `qualified_handoff` é NEGADO pelo gate de efeito quando a qualificação não está completa — e quem só
+  //      agradece e se despede é exatamente o caso não-qualificado. O engine exigia o único motivo que ele mesmo
+  //      proibia. Medido em produção (19/07, lead 24 99827-5607, "Ok. Obrigado."): 4 denies idênticos -> fallback.
+  //   2. Mais fundo: transferir ao encerrar é REGRA DE NEGÓCIO, não invariante de fato ou segurança. Um turno sem
+  //      pendência factual e sem efeito necessário — "Perfeito, fico à disposição" — tem de poder FECHAR.
+  //      Transformar essa preferência em deny é o que engessou o v2: o engine decidindo conduta comercial.
+  //
+  // A disponibilidade de transferência continua chegando à LLM como FATO no contexto, e o protocolo já descreve
+  // quando `handoff_after_closure` cabe. Se ela escolher não transferir, perdemos uma transferência — não a
+  // conversa inteira. Perder o lead num "Tive uma instabilidade" é estritamente pior do que não transferir.
+  void disengagementIntent; void disengagementHandoffProposed;
   // ⭐Codex P0 (rodada 2): PROMESSA/OFERTA de transferência a consultor/vendedor SEM efeito real materializado
   // (handoff/notify_seller inexistentes nesta fase) é mentira operacional — mesmo padrão do textPromisesPhoto.
   // A LLM reescreve conduzindo ELA MESMA. Quando a Fase 3 materializar o handoff, a promessa passa a exigir o
@@ -1395,192 +1249,6 @@ function turnCompletenessFeedback(args: {
 // ║ responseSource deterministic_*, bloqueado pela invariante de saída em qualquer modo de produção. Relocação      ║
 // ║ física destes corpos p/ o módulo legacy/ é follow-up cosmético (o isolamento comportamental já é definitivo).   ║
 // ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
-// ── P0-C (audit): EXECUTOR DETERMINÍSTICO de foto. Usado no single-author quando o cérebro NÃO autorou resposta
-//    aterrada. Pedido de foto + alvo resolvido (ordinal/modelo da última lista ou selecionado) + vehicle_photos_resolve
-//    OK com photoIds -> materializa send_media (nunca fallback genérico). Sem alvo/lista -> pede qual veículo (não
-//    consulta arbitrário). Alvo resolvido mas sem photoIds -> honesto e específico. PURO. ───────────────────────────
-function buildDeterministicPhotoResponse(args: {
-  readonly leadMessage: string;
-  readonly ctx: TurnContext;
-  readonly facts: readonly QueryResult[];
-  readonly identities: readonly RememberedVehicleIdentity[];
-  readonly turnId: string;
-  readonly photoVU: ValidatedUnderstanding | null;   // P0-2: vU que autoriza foto (llmFirst=cérebro; senão fallback)
-  readonly requireBrain: boolean;
-  readonly target: TargetResolution;                 // P0-1: alvo do assunto (verificado por modelo)
-  readonly adCandidateKeys: readonly string[];       // Fix C: candidatos do anúncio (>1 -> pergunta qual, lista só eles)
-}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[]; targetSource: TargetResolutionSource } | null {
-  // P0-2: em llmFirst sem cérebro NÃO envia — EXCETO alvo resolvido (ordinal/anúncio/seleção/modelo) + pedido de foto (grounding
-  // máximo; nunca "foto solta"), OU conjunto CANDIDATO do anúncio (>1) + pedido de foto (aí pergunta QUAL, não escolhe errado).
-  if (!authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain) && !authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) && !(args.adCandidateKeys.length > 1 && leadRequestsPhoto(args.leadMessage))) return null;
-  const state = args.ctx.state;
-  const factsArr = [...args.facts];
-  const build = (proposedEffects: ProposedEffectPlan[], text: string, action: TurnAction, reasonCode: string, reasonSummary: string, confidence: number, targetSource: TargetResolutionSource) => {
-    const proposal: ProposedDecision = { proposedAction: action, facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode, reasonSummary, confidence };
-    const post = PolicyEngine.postQuery(proposal, factsArr, args.ctx);
-    if (hasDeny(post)) return null;
-    const decision = finalize(args.turnId, proposal, post, factsArr);
-    return { decision, composed: { draft: { parts: [{ type: "text" as const, content: text }] }, text }, proposedEffects, targetSource };
-  };
-  // P0-1: o ALVO vem do ASSUNTO (ordinal/modelo verificado/pronome), NUNCA de um photo fact solto. Ambíguo/ausente -> pergunta.
-  const target = args.target;
-  const hasList = (state.lastRenderedOfferContext?.items?.length ?? 0) > 0;
-  if (target.kind !== "resolved") {
-    // Fix C: pedido de foto do anúncio com >1 CANDIDATO (ex.: 2 Onix 2025) -> lista SÓ os candidatos do anúncio e pergunta
-    // qual, NUNCA re-lista o estoque todo nem escolhe errado. Aterrado nos itens já ofertados (marca/modelo/ano/preço reais).
-    const candItems = (state.lastRenderedOfferContext?.items ?? []).filter((it) => args.adCandidateKeys.includes(it.vehicleKey));
-    if (candItems.length > 1) {
-      const lines = candItems.slice(0, 4).map((it, i) => { const lbl = [it.marca, it.modelo, it.ano].filter(Boolean).join(" "); const price = typeof it.preco === "number" && it.preco > 0 ? ` — R$ ${it.preco.toLocaleString("pt-BR")}` : ""; return `${i + 1}. ${lbl}${price}`; });
-      const text = `Do anúncio, temos essas opções:\n${lines.join("\n")}\nDe qual você quer as fotos? Me diz o número ou o ano.`;
-      return build(ensureSendMessage([]), text, "clarify", "photo_clarify_ad_candidates", "pedido de foto do anúncio com >1 candidato -> lista só os candidatos do anúncio", 0.6, "ambiguous");
-    }
-    const text = target.kind === "ambiguous"
-      ? `Temos mais de uma opção${target.subjectModel ? ` de ${target.subjectModel}` : ""}. De qual você quer as fotos? Me diz o número ou o ano.`
-      : (hasList ? "De qual carro da lista você quer as fotos? Me diz o número ou o modelo." : "Claro! De qual carro você quer ver as fotos?");
-    return build(ensureSendMessage([]), text, "clarify", "photo_clarify_which", "pedido de foto sem alvo único do assunto", 0.5, target.kind === "ambiguous" ? "ambiguous" : "none");
-  }
-  const targetKey = target.vehicleKey;
-  const label = canonicalVehicleLabel(targetKey, args.facts, args.identities, state);
-  // P0-1: a foto SÓ vale se o vehicle_photos_resolve for do ALVO (key ∈ candidates). Fato de outro carro é IGNORADO.
-  const photos = args.facts.find(
-    (f): f is Extract<QueryResult, { ok: true; tool: "vehicle_photos_resolve" }> =>
-      f.ok && f.tool === "vehicle_photos_resolve" && f.data.vehicleKey === targetKey && targetAcceptsKey(target, f.data.vehicleKey) && f.data.photoIds.length > 0,
-  );
-  if (photos) {
-    // PARTE B (missão): anexa mark_photos_sent para o photoLedger ACUMULAR os IDs enviados (dedup durável de "manda mais").
-    // Os photoIds aqui são o conjunto completo; a CURADORIA (cap 5 + dedup) é aplicada 1x no chokepoint capPhotoEffects,
-    // que reescreve ESTE onSuccess para os IDs realmente enviados. (Antes era onSuccess:[] e o ledger não populava.)
-    const media: ProposedEffectPlan = { kind: "send_media", planId: "photos", order: 1, onSuccess: [{ op: "mark_photos_sent", effectId: "x", vehicleKey: targetKey, photoIds: [...photos.data.photoIds] }], vehicleKey: targetKey, photoIds: [...photos.data.photoIds] };
-    const text = label ? `Aqui estão as fotos do ${label}. Quer que eu te passe mais detalhes dele?` : "Aqui estão as fotos que você pediu. Quer que eu te passe mais detalhes desse carro?";
-    return build(ensureSendMessage([media]), text, "send_photos", "send_vehicle_photos", "executor determinístico de foto (alvo do assunto + photoIds reais)", 0.9, target.source);
-  }
-  const text = label ? `Não localizei as fotos do ${label} agora. Quer que eu te passe os detalhes dele por aqui?` : "Não localizei as fotos desse carro agora. Quer que eu te passe os detalhes dele por aqui?";
-  return build(ensureSendMessage([]), text, "clarify", "photo_unavailable", "alvo resolvido mas sem photoIds do assunto", 0.4, target.source);
-}
-
-// ── PARTE B (missão): CURADORIA de fotos no chokepoint ÚNICO da decisão finalizada. Limita o payload de send_media a
-//    até 5 fotos com DIVERSIDADE (photo-selection) e remove as JÁ ENVIADAS (dedup durável: photoLedger ∪ lastPhotoAction
-//    do MESMO veículo). NÃO muda a decisão do cérebro (mesmo carro, mesma fala) — só seleciona melhor o payload de mídia.
-//    Reescreve também o onSuccess mark_photos_sent para os IDs REALMENTE enviados (ledger consistente). PURO. ───────────
-type LastPhotoWM = { readonly lastPhotoAction?: { readonly vehicleKey: string; readonly photoIds: readonly string[] } | null };
-function photoIdsAlreadySent(state: ConversationState, wm: LastPhotoWM, vehicleKey: string): string[] {
-  const ledger = state.photoLedger?.sentByVehicle?.[vehicleKey] ?? [];
-  const last = (wm.lastPhotoAction && wm.lastPhotoAction.vehicleKey === vehicleKey) ? wm.lastPhotoAction.photoIds : [];
-  return [...new Set([...ledger, ...last])];
-}
-function capPhotoEffects(decision: TurnDecision, state: ConversationState, wm: LastPhotoWM): TurnDecision {
-  if (!decision.effectPlan.some((p) => p.kind === "send_media")) return decision;
-  const newPlan: (typeof decision.effectPlan)[number][] = [];
-  for (const p of decision.effectPlan) {
-    if (p.kind !== "send_media" || !p.photoIds || p.photoIds.length === 0) { newPlan.push(p); continue; }
-    const sent = photoIdsAlreadySent(state, wm, p.vehicleKey);
-    const sel = selectPhotos({ availablePhotoIds: p.photoIds, alreadySentPhotoIds: sent });
-    if (sel.selectedPhotoIds.length === 0) continue;   // tudo já enviado -> NÃO reenvia (drop; não manda 0 nem repete)
-    if (sel.selectedPhotoIds.length === p.photoIds.length) { newPlan.push(p); continue; }   // nada a recortar/dedupar
-    const onSuccess = (p.onSuccess ?? []).map((op) => op.op === "mark_photos_sent" ? { ...op, photoIds: [...sel.selectedPhotoIds] } : op);
-    newPlan.push({ ...p, photoIds: [...sel.selectedPhotoIds], onSuccess });
-  }
-  return { ...decision, effectPlan: newPlan };
-}
-
-// ── P0 ROTEAMENTO POR DOMÍNIO (missão): RESPOSTA INSTITUCIONAL determinística. Se o lead pediu endereço/horário/loja e
-//    a tool tenant_business_info RESOLVEU o tópico, o turno NUNCA vira technical_fallback — responde com os FATOS da tool
-//    (não menu, não "não consegui confirmar"). Tópicos ok respondidos; NOT_CONFIGURED respondido honestamente. Não cita
-//    carro, não usa vehicle_details, não pergunta funil. É o fallback determinístico MÍNIMO que a missão autoriza (§4). PURO.
-function buildInstitutionalResponse(args: {
-  readonly leadMessage: string;
-  readonly institutionalObs: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;
-  readonly ctx: TurnContext;
-  readonly turnId: string;
-}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } | null {
-  const topics = institutionalTopicsRequested(args.leadMessage);
-  // audit Codex (§G): contato (instagram/site/telefone) não é topic da tool -> honesto (o prompt tem, mas o determinístico
-  // não parseia; a resposta natural do cérebro é a via principal, isto é só o backstop honesto — nunca fallback técnico).
-  if (topics.length === 0) {
-    if (!mentionsContact(args.leadMessage)) return null;
-    const text = "Sobre o nosso contato, deixa eu confirmar essa informação com a equipe e já te passo. Posso te ajudar em mais alguma coisa?";
-    const pe = ensureSendMessage([]);
-    const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "institutional_answer", reasonSummary: "contato institucional (honesto)", confidence: 0.7 };
-    return { decision: finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []), composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
-  }
-  const clauses: string[] = [];
-  for (const topic of topics) {
-    const obs = args.institutionalObs.get(topic);
-    if (obs?.ok && obs.tool === "tenant_business_info") {
-      const v = obs.data.value;
-      clauses.push(topic === "address" ? `a loja fica na ${v}` : topic === "hours" ? `nosso horário é ${v}` : `nossa unidade é ${v}`);
-    } else {
-      // NOT_CONFIGURED / falha -> honesto (nunca inventa). audit Codex (§F): mesmo TODOS ausentes gera resposta honesta.
-      clauses.push(topic === "address" ? "sobre o endereço, ainda não tenho ele configurado aqui, mas confirmo com a equipe"
-        : topic === "hours" ? "sobre o horário, ainda não tenho essa informação configurada aqui, mas confirmo com a equipe"
-        : "sobre a unidade, ainda não tenho isso configurado aqui");
-    }
-  }
-  const body = clauses.length === 1 ? clauses[0] : `${clauses.slice(0, -1).join(", ")} e ${clauses[clauses.length - 1]}`;
-  const text = `Claro! ${body.charAt(0).toUpperCase()}${body.slice(1)}. Posso te ajudar em mais alguma coisa?`;
-  const proposedEffects = ensureSendMessage([]);
-  const proposal: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects, responsePlan: { guidance: text }, reasonCode: "institutional_answer", reasonSummary: "resposta institucional determinística (fatos da tool)", confidence: 0.9 };
-  const decision = finalize(args.turnId, proposal, PolicyEngine.postQuery(proposal, [], args.ctx), []);
-  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects };
-}
-
-// ── Fase 4 (Evidence H): DESINTERESSE. Lead desengajado -> resposta CURTA e humana, SEM lista/funil/pressão. Executor
-//    determinístico (como o institucional): usado quando o cérebro não autora. NÃO empurra venda; deixa a porta aberta. ──
-function buildDisengagementResponse(args: { readonly engagement: LeadEngagement; readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
-  const text = args.engagement === "not_interested"
-    ? "Sem problema! Se precisar de qualquer informação sobre os nossos veículos, fico por aqui à disposição. 😊"
-    : "Tranquilo! Qualquer coisa que precisar sobre os veículos, é só me chamar. 😊";
-  const pe = ensureSendMessage([]);
-  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "lead_disengaged", reasonSummary: "desinteresse -> resposta curta, sem funil/lista", confidence: 0.85 };
-  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
-  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
-}
-
-// F2.29 (invariante 5): "mais opções/tem outros?" SEM escopo recuperável (nem filtro comercial ativo, nem oferta homogênea
-// derivável) -> o engine PERGUNTA o escopo em vez de listar genérico. Determinístico, aterrado, honesto: não inventa lista,
-// não mostra moto/carros aleatórios. Só dispara quando o cérebro não autorou resposta aceitável (fallback do else-branch).
-function buildMoreOptionsScopeQuestion(args: { readonly ctx: TurnContext; readonly turnId: string }): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
-  const text = "Claro! Pra te mostrar as opções certas, você quer ver outros de qual tipo (SUV, sedan, hatch, picape) ou faixa de valor?";
-  const pe = ensureSendMessage([]);
-  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "more_options_needs_scope", reasonSummary: "mais opções sem escopo recuperável -> pergunta tipo/faixa (nunca lista genérico)", confidence: 0.8 };
-  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, [], args.ctx), []);
-  return { decision, composed: { draft: { parts: [{ type: "text", content: text }] }, text }, proposedEffects: pe };
-}
-
-// ── Fix A (audit CTWA — condução SDR): resposta de RECUPERAÇÃO por RELAXAMENTO. A busca EXATA zerou; o engine já rodou a
-//    cascata (async) e achou itens REAIS num filtro relaxado. Aqui monta a resposta que CONDUZ: nomeia o filtro original que
-//    não achou + apresenta a lista relaxada ATERRADA + uma pergunta única. Nunca "quer que eu veja outras opções?" solto. PURO. ──
-// Fix A: a autoria do cérebro JÁ apresenta veículo (lista de oferta OU foto)? Se sim, não sobrepõe com o relaxamento. PURO.
-function authoredPresentsVehicles(composed: RenderedResponse | null, effects: readonly ProposedEffectPlan[] | null): boolean {
-  if (effects?.some((e) => e.kind === "send_media")) return true;
-  return (composed?.draft?.parts ?? []).some((p) => (p as { type?: string }).type === "vehicle_offer_list");
-}
-const RELAX_LEADIN: Record<RelaxKind, string> = {
-  same_type_in_range: "eu não encontrei agora, mas nessa faixa achei estas opções pra você",
-  drop_ceiling: "eu não encontrei exatamente nessa faixa, mas tenho estas bem próximas, um pouco acima",
-  same_brand_in_range: "eu não encontrei, mas nessa faixa tenho outras opções da mesma marca",
-  same_type: "eu não encontrei nessa faixa, mas tenho estas do mesmo tipo",
-  in_range: "eu não encontrei, mas nessa faixa tenho estas opções",
-};
-function buildRelaxedOfferResponse(args: {
-  readonly zeroedDesc: string;
-  readonly kind: RelaxKind;
-  readonly items: readonly VehicleFact[];
-  readonly facts: readonly QueryResult[];
-  readonly identities: readonly RememberedVehicleIdentity[];
-  readonly ctx: TurnContext;
-  readonly turnId: string;
-}): { decision: TurnDecision; composed: RenderedResponse; proposedEffects: ProposedEffectPlan[] } {
-  const keys = args.items.slice(0, 4).map((v) => v.vehicleKey);
-  const lead = args.zeroedDesc ? `${args.zeroedDesc} ${RELAX_LEADIN[args.kind]}:` : `Não achei exatamente isso, mas ${RELAX_LEADIN[args.kind]}:`;
-  const draft: ResponseDraft = { parts: [{ type: "text", content: lead }, { type: "vehicle_offer_list", vehicleKeys: keys }, { type: "text", content: "Quer que eu te mostre as fotos ou os detalhes de alguma?" }] };
-  const factsArr = [...args.facts];
-  const text = ResponseRenderer.render(draft, factsArr, args.ctx.state, args.identities);
-  const pe = ensureSendMessage([]);
-  const prop: ProposedDecision = { proposedAction: "reply", facts: [], proposedEffects: pe, responsePlan: { guidance: text }, reasonCode: "recovery_relaxed_offer", reasonSummary: `busca vazia -> relaxamento ${args.kind} com itens reais`, confidence: 0.7 };
-  const decision = finalize(args.turnId, prop, PolicyEngine.postQuery(prop, factsArr, args.ctx), factsArr);
-  return { decision, composed: { draft, text }, proposedEffects: pe };
-}
 
 // ── Fix B (audit CTWA — condução SDR): ABERTURA por anúncio genérico. Detectores + resposta de DESCOBERTA. ──
 // O texto ABRE pedindo o NOME/dado de contato do lead (abertura burocrática de formulário)? PURO.
@@ -3810,82 +3478,4 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       return { status: "commit_failed", turnId, claimedEventIds, reason: err instanceof Error ? err.message : String(err) };
     }
   });
-}
-
-// ============================================================================
-// B item 2 — Outcome ACCEPTED da ação de foto: promove pendingPhotoActions[effectId] -> WorkingMemory.lastPhotoAction.
-//   accepted (ou delivered) -> atualiza lastPhotoAction (accepted-safe); NÃO toca photoLedger (isso é do
-//   commitEffectOutcome no nível delivered). Idempotência INDEPENDENTE via appliedAcceptedEffectIds (NÃO usa o
-//   outcomeAppliedAt do outbox, que governa a fase delivered — um marcador não pode impedir o outro). newer-wins
-//   pelo sourceTurnNumber (applyEffectOutcomeToWorkingMemory). failed/outcome_uncertain NÃO consomem idempotência.
-// ============================================================================
-export async function applyAcceptedPhotoActionOutcome(args: {
-  readonly persistence: Persistence;
-  readonly conversationId: string;
-  readonly effectId: string;
-  readonly result: EffectResult;
-  readonly maxCasRetries?: number;
-}): Promise<{ ok: true; applied: boolean } | { ok: false; reason: string }> {
-  const { persistence, conversationId, effectId, result } = args;
-  if (result.effectId !== effectId) return { ok: false, reason: `effectId mismatch (${result.effectId} != ${effectId})` };
-  if (result.status !== "succeeded") return { ok: true, applied: false };                    // failed/uncertain: não consome
-  if (result.receipt.level !== "accepted" && result.receipt.level !== "delivered") return { ok: true, applied: false };
-  const retries = args.maxCasRetries ?? 3;
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const snapshot = await persistence.load(conversationId);
-    if (!snapshot) return { ok: false, reason: "state_not_found" };
-    const state = snapshot.state;
-    const alreadyApplied = state.appliedAcceptedEffectIds ?? [];
-    if (alreadyApplied.includes(effectId)) return { ok: true, applied: false };              // idempotente (accepted OU delivered posterior)
-    const draft = state.pendingPhotoActions?.[effectId];
-    if (!draft) return { ok: true, applied: false };                                          // não é ação de foto rastreada
-    const persisted: PersistedWorkingMemory = loadPersistedWorkingMemory(state.workingMemory).memory;
-    const red = applyEffectOutcomeToWorkingMemory(persisted, { op: "mark_photo_action_accepted", action: draft }, result);
-    if (!red.ok) return { ok: false, reason: red.rejected.map((r) => r.reason).join("; ") };
-    // Audit Codex: envia SOMENTE a WorkingMemory (nunca o ConversationState completo). O adapter/RPC carrega o estado
-    // ATUAL e atualiza só workingMemory/appliedAcceptedEffectIds/version/updatedAt (preserva o resto). Fail-closed
-    // se o adapter não expõe a capability (nunca cai num casState de estado completo — o UnitOfWork é só de turno).
-    const wmStore = persistence as Partial<WorkingMemoryOutcomeStore>;
-    if (typeof wmStore.commitWorkingMemoryOutcome !== "function") return { ok: false, reason: "persistence_missing_working_memory_outcome" };
-    const c = await wmStore.commitWorkingMemoryOutcome(conversationId, effectId, snapshot.version, red.next, result.receipt.at);
-    if (!c.ok) return { ok: false, reason: c.reason };
-    if (c.applied) return { ok: true, applied: true };
-    // applied=false -> duplicado (o loop recarrega e vê alreadyApplied -> no-op) OU conflito de versão -> reprocessa.
-  }
-  return { ok: false, reason: "cas_retries_exhausted" };
-}
-
-// ============================================================================
-// R13-D/4 (audit Codex): RECONCILIAÇÃO DURÁVEL da promoção accepted-safe. Rastro durável = um send_media 'succeeded'
-// (accepted|delivered) cujo effectId NÃO está em appliedAcceptedEffectIds e TEM um pendingPhotoAction. Isso acontece
-// se a promoção falhou (CAS/transiente) DEPOIS do dispatch. Reprocessa via applyAcceptedPhotoActionOutcome (idempotente,
-// SEM redispatch — a mídia já foi enviada; isto é só escrita de WorkingMemory). Um scheduler/poller pode chamar isto
-// periodicamente; sobrevive a restart (o rastro está no estado persistido).
-// ============================================================================
-export async function reconcileAcceptedPhotoOutcomes(args: {
-  readonly persistence: Persistence;
-  readonly conversationId: string;
-}): Promise<{ reconciled: number; failed: number; pending: number }> {
-  const { persistence, conversationId } = args;
-  const snapshot = await persistence.load(conversationId);
-  if (!snapshot) return { reconciled: 0, failed: 0, pending: 0 };
-  const applied = new Set(snapshot.state.appliedAcceptedEffectIds ?? []);
-  const drafts = snapshot.state.pendingPhotoActions ?? {};
-  const outbox = await persistence.listOutbox(conversationId);
-  let reconciled = 0, failed = 0, pending = 0;
-  for (const rec of outbox) {
-    if (rec.kind !== "send_media" || rec.status !== "succeeded") continue;
-    if (rec.receiptLevel !== "accepted" && rec.receiptLevel !== "delivered") continue;
-    if (applied.has(rec.effectId)) continue;   // já promovido
-    if (!drafts[rec.effectId]) continue;        // sem draft rastreado (não é ação de foto do central)
-    pending += 1;
-    const pr = rec.providerReceipt;
-    const receiptAt = (pr && typeof pr === "object" && !Array.isArray(pr) && typeof (pr as { at?: unknown }).at === "string")
-      ? (pr as { at: string }).at : (rec.terminalAt ?? rec.createdAt);
-    const result: EffectResult = { status: "succeeded", effectId: rec.effectId, receipt: { effectId: rec.effectId, level: rec.receiptLevel, at: receiptAt } };
-    const r = await applyAcceptedPhotoActionOutcome({ persistence, conversationId, effectId: rec.effectId, result });
-    if (r.ok && r.applied) reconciled += 1; else if (!r.ok) failed += 1;
-  }
-  return { reconciled, failed, pending };
 }
