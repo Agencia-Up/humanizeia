@@ -6,7 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus, Target, Brain, Activity, FlaskConical, RotateCcw, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PlugZap, Save, Loader2, Clock, MessageSquareText, ArrowRightLeft, FileClock, Users, Plus, Target, Brain, Activity, FlaskConical, RotateCcw, RefreshCw, ShieldCheck, Smartphone, Megaphone } from 'lucide-react';
+import { StatusPill, InfoNote, StatTile } from './RegrasUi';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -410,13 +412,30 @@ export function RegrasAutomacoesTab() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold">Regras & Automações</h2>
         <p className="text-sm text-muted-foreground">
-          Controle as regras automáticas da plataforma: liga/desliga, tempos e horários. As mudanças valem para toda a sua conta.
+          A central de configuração da sua conta, organizada por setor. As mudanças valem para toda a conta.
         </p>
       </div>
+
+      <Tabs defaultValue="whatsapp" className="w-full">
+        <TabsList className="h-auto w-full flex flex-wrap justify-start gap-1 p-1">
+          <TabsTrigger value="whatsapp" className="gap-1.5 text-xs"><Smartphone className="h-3.5 w-3.5" /> WhatsApp</TabsTrigger>
+          <TabsTrigger value="feedback" className="gap-1.5 text-xs"><FileClock className="h-3.5 w-3.5" /> Feedback</TabsTrigger>
+          <TabsTrigger value="cerebro" className="gap-1.5 text-xs"><Brain className="h-3.5 w-3.5" /> Cérebro</TabsTrigger>
+          <TabsTrigger value="diagnostico" className="gap-1.5 text-xs"><Activity className="h-3.5 w-3.5" /> Diagnóstico</TabsTrigger>
+          <TabsTrigger value="meta" className="gap-1.5 text-xs"><Target className="h-3.5 w-3.5" /> Meta</TabsTrigger>
+          <TabsTrigger value="jose" className="gap-1.5 text-xs"><Megaphone className="h-3.5 w-3.5" /> José</TabsTrigger>
+        </TabsList>
+
+        {/* ════ Setor 1 · Operação WhatsApp ════ */}
+        <TabsContent value="whatsapp" className="mt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2"><Smartphone className="h-4 w-4 text-emerald-400" /> Operação WhatsApp</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Reconexão de vendedores, follow-up automático da IA e repasse de leads entre vendedores.</p>
+          </div>
 
       {/* ── Reconexão do vendedor ── */}
       <Card>
@@ -429,11 +448,14 @@ export function RegrasAutomacoesTab() {
               <div>
                 <CardTitle className="text-base">Lembrete de reconexão do vendedor</CardTitle>
                 <CardDescription className="text-xs mt-0.5">
-                  Quando o WhatsApp de um vendedor cai, a plataforma manda um lembrete pra ele reconectar. Aqui você define se envia, de quanto em quanto tempo e em qual horário.
+                  Quando o vendedor fica desconectado, a Logos envia um aviso para ele reconectar.
                 </CardDescription>
               </div>
             </div>
-            <Switch checked={cfg.reconexao_enabled} onCheckedChange={(v) => setCfg((c) => ({ ...c, reconexao_enabled: v }))} disabled={loading} />
+            <div className="flex items-center gap-2 shrink-0">
+              <StatusPill tone={cfg.reconexao_enabled ? 'on' : 'off'}>{cfg.reconexao_enabled ? 'Ativo' : 'Desligado'}</StatusPill>
+              <Switch checked={cfg.reconexao_enabled} onCheckedChange={(v) => setCfg((c) => ({ ...c, reconexao_enabled: v }))} disabled={loading} />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -507,11 +529,14 @@ export function RegrasAutomacoesTab() {
                   <div>
                     <CardTitle className="text-base">Follow-up da IA</CardTitle>
                     <CardDescription className="text-xs mt-0.5">
-                      Quando o cliente para de responder, a IA reengaja em 2 tempos e, no 3º, transfere pra um vendedor. Ajuste os minutos de cada etapa.
+                      Quando o cliente para de responder, a IA manda até 2 mensagens de retomada e depois passa para um vendedor.
                     </CardDescription>
                   </div>
                 </div>
-                <Switch checked={fu.enabled} onCheckedChange={(v) => setFu((f) => ({ ...f, enabled: v }))} disabled={loadingAg} />
+                <div className="flex items-center gap-2 shrink-0">
+                  <StatusPill tone={fu.enabled ? 'on' : 'off'}>{fu.enabled ? 'Ativo' : 'Desligado'}</StatusPill>
+                  <Switch checked={fu.enabled} onCheckedChange={(v) => setFu((f) => ({ ...f, enabled: v }))} disabled={loadingAg} />
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -562,11 +587,14 @@ export function RegrasAutomacoesTab() {
                   <div>
                     <CardTitle className="text-base">Transferência para o próximo vendedor</CardTitle>
                     <CardDescription className="text-xs mt-0.5">
-                      Se o vendedor não confirmar o lead a tempo, o sistema repassa para o próximo da fila. Defina o tempo de confirmação e a janela de horário do repasse.
+                      Se o vendedor não confirmar o lead a tempo, a Logos repassa para o próximo da fila.
                     </CardDescription>
                   </div>
                 </div>
-                <Switch checked={tr.enabled} onCheckedChange={(v) => setTr((t) => ({ ...t, enabled: v }))} disabled={loadingAg} />
+                <div className="flex items-center gap-2 shrink-0">
+                  <StatusPill tone={tr.enabled ? 'on' : 'off'}>{tr.enabled ? 'Ativo' : 'Desligado'}</StatusPill>
+                  <Switch checked={tr.enabled} onCheckedChange={(v) => setTr((t) => ({ ...t, enabled: v }))} disabled={loadingAg} />
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -608,6 +636,14 @@ export function RegrasAutomacoesTab() {
           </Card>
         </>
       )}
+        </TabsContent>
+
+        {/* ════ Setor 2 · Feedback e Relatórios ════ */}
+        <TabsContent value="feedback" className="mt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2"><FileClock className="h-4 w-4 text-amber-400" /> Feedback e Relatórios</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Escolha quando o relatório de atendimento será enviado, o período analisado e quem recebe.</p>
+          </div>
 
       {/* ── Relatório de atendimento (feedback diário no WhatsApp) ── */}
       <Card>
@@ -620,11 +656,14 @@ export function RegrasAutomacoesTab() {
               <div>
                 <CardTitle className="text-base">Relatório de atendimento</CardTitle>
                 <CardDescription className="text-xs mt-0.5">
-                  Todo dia a plataforma envia no WhatsApp o resumo do atendimento (funil + gargalo + por vendedor). Aqui você define se envia, a que horas e quem recebe.
+                  A Logos envia no WhatsApp o resumo do atendimento: funil, gargalo e desempenho por vendedor.
                 </CardDescription>
               </div>
             </div>
-            <Switch checked={cfg.relatorio_atendimento_enabled} onCheckedChange={(v) => setCfg((c) => ({ ...c, relatorio_atendimento_enabled: v }))} disabled={loading} />
+            <div className="flex items-center gap-2 shrink-0">
+              <StatusPill tone={cfg.relatorio_atendimento_enabled ? 'on' : 'off'}>{cfg.relatorio_atendimento_enabled ? 'Ativo' : 'Desligado'}</StatusPill>
+              <Switch checked={cfg.relatorio_atendimento_enabled} onCheckedChange={(v) => setCfg((c) => ({ ...c, relatorio_atendimento_enabled: v }))} disabled={loading} />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -651,6 +690,7 @@ export function RegrasAutomacoesTab() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>{JANELAS.map((j) => <SelectItem key={j.v} value={j.v}>{j.l}</SelectItem>)}</SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground">A janela define quanto tempo de conversa entra no relatório.</p>
                   </div>
                 </div>
 
@@ -702,12 +742,12 @@ export function RegrasAutomacoesTab() {
                   <p className="text-[11px] text-muted-foreground">Sem configuração o padrão continua: todo dia às 08:00.</p>
                 </div>
 
-                <p className="text-[11px] text-amber-500/90">💡 Prompts muito longos e janelas maiores podem aumentar o consumo de IA.</p>
+                <p className="text-[11px] text-amber-500/90">💡 Janelas maiores analisam mais conversas e podem aumentar o consumo de IA.</p>
               </div>
               {!cfg.relatorio_atendimento_enabled && <p className="text-xs text-amber-500">Desligado: o relatório de atendimento não será enviado.</p>}
               <div className="flex justify-end">
                 <Button onClick={salvarRelatorioAtendimento} disabled={savingRel} className="gap-2">
-                  {savingRel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar horário
+                  {savingRel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Salvar agenda do relatório
                 </Button>
               </div>
 
@@ -752,6 +792,14 @@ export function RegrasAutomacoesTab() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ════ Setor 3 · Cérebro da Análise ════ */}
+        <TabsContent value="cerebro" className="mt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2"><Brain className="h-4 w-4 text-fuchsia-400" /> Cérebro da Análise</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">O Cérebro personalizado muda o jeito da IA avaliar os atendimentos. O formato técnico continua protegido pela Logos.</p>
+          </div>
 
       {/* ── Cérebro da análise (camada de inteligência do Feedback) ── */}
       <Card>
@@ -764,11 +812,14 @@ export function RegrasAutomacoesTab() {
               <div>
                 <CardTitle className="text-base">Cérebro da análise</CardTitle>
                 <CardDescription className="text-xs mt-0.5">
-                  Personalize COMO a IA avalia os atendimentos: quem é o especialista, critérios e tom do feedback. O formato técnico da resposta é protegido pela plataforma.
+                  Diga quem é o especialista, o que ele valoriza e o tom do feedback. Desligado, a análise usa o padrão Logos.
                 </CardDescription>
               </div>
             </div>
-            <Switch checked={!!brain.enabled} onCheckedChange={(v) => setBrain((b: any) => ({ ...b, enabled: v }))} disabled={loadingBrain} />
+            <div className="flex items-center gap-2 shrink-0">
+              <StatusPill tone={brain.enabled ? 'on' : 'off'}>{brain.enabled ? 'Ativo' : 'Desligado'}</StatusPill>
+              <Switch checked={!!brain.enabled} onCheckedChange={(v) => setBrain((b: any) => ({ ...b, enabled: v }))} disabled={loadingBrain} />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -808,13 +859,9 @@ export function RegrasAutomacoesTab() {
                 </div>
               </div>
 
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2 flex items-start gap-2">
-                <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-muted-foreground">
-                  O <span className="text-foreground font-medium">contrato técnico é protegido</span>: a plataforma sempre anexa o formato obrigatório da resposta (score, sinais, ações do gestor/vendedor etc.). Seu texto personaliza a inteligência, nunca remove o formato.
-                  {' '}💡 Prompts muito longos e janelas maiores podem aumentar o consumo de IA.
-                </p>
-              </div>
+              <InfoNote icon={<ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />}>
+                O <span className="text-foreground font-medium">formato técnico é protegido</span>: a Logos sempre anexa o formato obrigatório da resposta (nota, sinais, ações do gestor e do vendedor). Seu texto muda o jeito de avaliar, nunca remove o formato. Prompts muito longos podem aumentar o consumo de IA.
+              </InfoNote>
 
               {brainTest && (
                 <div className={cn('rounded-lg border px-3 py-2 text-xs space-y-1',
@@ -849,6 +896,14 @@ export function RegrasAutomacoesTab() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ════ Setor 4 · Saúde e Diagnóstico ════ */}
+        <TabsContent value="diagnostico" className="mt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2"><Activity className="h-4 w-4 text-sky-400" /> Saúde e Diagnóstico</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Acompanhe se está tudo rodando: relatórios, análises, custo e envio de eventos à Meta. Somente leitura.</p>
+          </div>
 
       {/* ── Saúde do Cérebro de Feedback ── */}
       <Card>
@@ -860,39 +915,37 @@ export function RegrasAutomacoesTab() {
               </div>
               <div>
                 <CardTitle className="text-base">Saúde do Cérebro e CAPI</CardTitle>
-                <CardDescription className="text-xs mt-0.5">Relatórios, análises, custo, confiança, alertas e envio de eventos à Meta (somente leitura).</CardDescription>
+                <CardDescription className="text-xs mt-0.5">Relatórios, análises, custo, confiança, alertas e envio de eventos à Meta.</CardDescription>
               </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={recarregarSaude} disabled={loadingSaude} className="gap-1.5">
-              {loadingSaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Atualizar
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              {!loadingSaude && saude?.rotina && (
+                <StatusPill tone={saude.rotina === 'alerta' ? 'warn' : 'ok'}>{saude.rotina === 'alerta' ? 'Atenção' : 'Saudável'}</StatusPill>
+              )}
+              <Button variant="ghost" size="sm" onClick={recarregarSaude} disabled={loadingSaude} className="gap-1.5">
+                {loadingSaude ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Atualizar
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {loadingSaude ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
           ) : !saude ? (
-            <p className="text-xs text-muted-foreground">Sem dados de saúde ainda — as métricas aparecem depois das primeiras análises.</p>
+            <p className="text-xs text-muted-foreground">Ainda não há dados de saúde. As métricas aparecem depois das primeiras análises de atendimento.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Última análise</p>
-                <p className="text-sm font-medium">{saude.ultima_analise ? new Date(saude.ultima_analise).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'}</p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Último relatório enviado</p>
-                <p className="text-sm font-medium">{saude?.relatorios?.ultimo_envio ? new Date(saude.relatorios.ultimo_envio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'}</p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Falhas recentes (janela {saude.janela_dias ?? 7}d)</p>
-                <p className={cn('text-sm font-medium', Number(saude?.analises?.falharam) > 0 ? 'text-amber-400' : '')}>{Number(saude?.analises?.falharam ?? 0)} análise(s) · {Number(saude?.relatorios?.falhas ?? 0)} relatório(s)</p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Análises pendentes</p>
-                <p className="text-sm font-medium">{Number(saude?.pendentes?.total ?? saude?.pendentes_estimados ?? 0)}</p>
-              </div>
+              <StatTile label="Última análise"
+                value={saude.ultima_analise ? new Date(saude.ultima_analise).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'} />
+              <StatTile label="Último relatório enviado"
+                value={saude?.relatorios?.ultimo_envio ? new Date(saude.relatorios.ultimo_envio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—'} />
+              <StatTile label={`Falhas recentes (${saude.janela_dias ?? 7} dias)`}
+                warn={Number(saude?.analises?.falharam) > 0}
+                value={`${Number(saude?.analises?.falharam ?? 0)} análise(s) · ${Number(saude?.relatorios?.falhas ?? 0)} relatório(s)`} />
+              <StatTile label="Análises pendentes"
+                value={Number(saude?.pendentes?.total ?? saude?.pendentes_estimados ?? 0)} />
               {saude.rotina_motivo && (
-                <p className="sm:col-span-2 lg:col-span-4 text-[11px] text-muted-foreground">Status: <span className={cn('font-medium', saude.rotina === 'alerta' ? 'text-amber-400' : 'text-emerald-400')}>{saude.rotina || 'ok'}</span> — {saude.rotina_motivo}</p>
+                <p className="sm:col-span-2 lg:col-span-4 text-[11px] text-muted-foreground">Status: <span className={cn('font-medium', saude.rotina === 'alerta' ? 'text-amber-400' : 'text-emerald-400')}>{saude.rotina === 'alerta' ? 'atenção' : 'saudável'}</span> — {saude.rotina_motivo}</p>
               )}
             </div>
           )}
@@ -900,71 +953,42 @@ export function RegrasAutomacoesTab() {
           {/* ── Saúde executiva (feedback_operational_health, janela 7d) ── */}
           {!loadingSaude && health?.ok && (
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Relatórios (7d)</p>
-                <p className={cn('text-sm font-medium', Number(health?.relatorio?.falhas_7d) > 0 ? 'text-amber-400' : '')}>
-                  {Number(health?.relatorio?.enviados_7d ?? 0)} enviado(s) · {Number(health?.relatorio?.falhas_7d ?? 0)} falha(s)
-                </p>
-                {health?.relatorio?.ultima_falha_em && (
-                  <p className="text-[10px] text-amber-400/80 truncate" title={String(health?.relatorio?.ultima_falha_erro || '')}>
-                    Última falha: {new Date(health.relatorio.ultima_falha_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
-                  </p>
-                )}
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Análises (7d)</p>
-                <p className="text-sm font-medium">
-                  {Number(health?.analises?.concluidas ?? 0)} ok · {Number(health?.analises?.pendentes ?? 0)} pend. · <span className={Number(health?.analises?.falharam) > 0 ? 'text-amber-400' : ''}>{Number(health?.analises?.falharam ?? 0)} falha(s)</span>
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Custo da análise (7d)</p>
-                <p className="text-sm font-medium">
-                  {Number(health?.custo?.custo_usd_7d ?? 0) > 0 ? `US$ ${Number(health.custo.custo_usd_7d).toFixed(4)}` : '—'}
-                  {Number(health?.custo?.tokens_7d ?? 0) > 0 ? ` · ${Number(health.custo.tokens_7d).toLocaleString('pt-BR')} tokens` : ''}
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2">
-                <p className="text-[11px] text-muted-foreground">Confiança das análises (7d)</p>
-                <p className="text-sm font-medium">
-                  {Number(health?.confianca?.alta ?? 0)} alta · {Number(health?.confianca?.media ?? 0)} média · <span className={Number(health?.confianca?.baixa) > 0 ? 'text-amber-400' : ''}>{Number(health?.confianca?.baixa ?? 0)} baixa</span>
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2 sm:col-span-2 lg:col-span-2">
-                <p className="text-[11px] text-muted-foreground">Alertas de risco</p>
-                <p className="text-sm font-medium">
-                  {Number(health?.alertas?.pendentes ?? 0)} pendente(s) · {Number(health?.alertas?.enviados_7d ?? 0)} enviado(s) 7d
-                  {health?.alertas?.ultimo_envio ? ` · último ${new Date(health.alertas.ultimo_envio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
-                </p>
-                {health?.alertas?.ultima_falha_em && (
-                  <p className="text-[10px] text-amber-400/80 truncate" title={String(health?.alertas?.ultima_falha_erro || '')}>
-                    Última falha: {new Date(health.alertas.ultima_falha_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
-                  </p>
-                )}
-              </div>
+              <StatTile label="Relatórios (7 dias)"
+                warn={Number(health?.relatorio?.falhas_7d) > 0}
+                value={`${Number(health?.relatorio?.enviados_7d ?? 0)} enviado(s) · ${Number(health?.relatorio?.falhas_7d ?? 0)} falha(s)`}
+                sub={health?.relatorio?.ultima_falha_em ? `Última falha: ${new Date(health.relatorio.ultima_falha_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : undefined}
+                subTitle={String(health?.relatorio?.ultima_falha_erro || '')} />
+              <StatTile label="Análises (7 dias)"
+                value={<>{Number(health?.analises?.concluidas ?? 0)} ok · {Number(health?.analises?.pendentes ?? 0)} pend. · <span className={Number(health?.analises?.falharam) > 0 ? 'text-amber-400' : ''}>{Number(health?.analises?.falharam ?? 0)} falha(s)</span></>} />
+              <StatTile label="Custo da análise (7 dias)"
+                value={`${Number(health?.custo?.custo_usd_7d ?? 0) > 0 ? `US$ ${Number(health.custo.custo_usd_7d).toFixed(4)}` : '—'}${Number(health?.custo?.tokens_7d ?? 0) > 0 ? ` · ${Number(health.custo.tokens_7d).toLocaleString('pt-BR')} tokens` : ''}`} />
+              <StatTile label="Confiança das análises (7 dias)"
+                value={<>{Number(health?.confianca?.alta ?? 0)} alta · {Number(health?.confianca?.media ?? 0)} média · <span className={Number(health?.confianca?.baixa) > 0 ? 'text-amber-400' : ''}>{Number(health?.confianca?.baixa ?? 0)} baixa</span></>} />
+              <StatTile className="sm:col-span-2 lg:col-span-2" label="Alertas de risco"
+                value={`${Number(health?.alertas?.pendentes ?? 0)} pendente(s) · ${Number(health?.alertas?.enviados_7d ?? 0)} enviado(s) 7d${health?.alertas?.ultimo_envio ? ` · último ${new Date(health.alertas.ultimo_envio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}`}
+                sub={health?.alertas?.ultima_falha_em ? `Última falha: ${new Date(health.alertas.ultima_falha_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : undefined}
+                subTitle={String(health?.alertas?.ultima_falha_erro || '')} />
               {/* CAPI (capi_quality_status — leitura; não altera o envio) */}
-              <div className="rounded-lg border border-border/40 bg-background/40 px-3 py-2 sm:col-span-2 lg:col-span-2">
-                <p className="text-[11px] text-muted-foreground">Meta CAPI (eventos de qualidade)</p>
-                {capi?.ok ? (
-                  <>
-                    <p className="text-sm font-medium">
-                      {Number(capi?.sent ?? 0)} enviado(s) · {Number(capi?.pending ?? 0)} pendente(s) · <span className={Number(capi?.failed) > 0 ? 'text-amber-400' : ''}>{Number(capi?.failed ?? 0)} falha(s)</span>
-                      {capi?.last_sent_at ? ` · último ${new Date(capi.last_sent_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
-                    </p>
-                    {capi?.last_failed_at && (
-                      <p className="text-[10px] text-amber-400/80 truncate" title={String(capi?.last_error || '')}>
-                        Última falha: {new Date(capi.last_failed_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}{capi?.last_error ? ` — ${String(capi.last_error).slice(0, 80)}` : ''}
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-sm font-medium">—</p>
-                )}
-              </div>
+              <StatTile className="sm:col-span-2 lg:col-span-2" label="Meta CAPI (eventos de qualidade)"
+                value={capi?.ok
+                  ? (Number(capi?.sent ?? 0) + Number(capi?.pending ?? 0) + Number(capi?.failed ?? 0) === 0
+                    ? 'Sem evento enviado ainda'
+                    : <>{Number(capi?.sent ?? 0)} enviado(s) · {Number(capi?.pending ?? 0)} pendente(s) · <span className={Number(capi?.failed) > 0 ? 'text-amber-400' : ''}>{Number(capi?.failed ?? 0)} falha(s)</span>{capi?.last_sent_at ? ` · último ${new Date(capi.last_sent_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}</>)
+                  : 'Sem evento enviado ainda'}
+                sub={capi?.last_failed_at ? `Última falha: ${new Date(capi.last_failed_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}${capi?.last_error ? ` — ${String(capi.last_error).slice(0, 80)}` : ''}` : undefined}
+                subTitle={String(capi?.last_error || '')} />
             </div>
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ════ Setor 5 · Meta e Conversões ════ */}
+        <TabsContent value="meta" className="mt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2"><Target className="h-4 w-4 text-violet-400" /> Meta e Conversões</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Esses eventos já são enviados para o seu Pixel. A conversão personalizada precisa ser criada por você na Meta.</p>
+          </div>
 
       {/* ── Conversões personalizadas na Meta (fluxo ASSISTIDO — checklist manual) ── */}
       <Card>
@@ -976,7 +1000,7 @@ export function RegrasAutomacoesTab() {
             <div>
               <CardTitle className="text-base">Conversões personalizadas (Meta)</CardTitle>
               <CardDescription className="text-xs mt-0.5">
-                Os eventos abaixo já são enviados ao seu Pixel via CAPI, mas a Meta NÃO cria a conversão personalizada sozinha — crie manualmente no Gerenciador de Eventos e marque aqui quando concluir.
+                A Meta não cria a conversão personalizada sozinha. Crie no Gerenciador de Eventos e marque aqui quando concluir.
               </CardDescription>
             </div>
           </div>
@@ -1023,6 +1047,14 @@ export function RegrasAutomacoesTab() {
           </p>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* ════ Setor 6 · José / Tráfego Pago ════ */}
+        <TabsContent value="jose" className="mt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2"><Megaphone className="h-4 w-4 text-orange-400" /> José / Tráfego Pago</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">O resumo diário das campanhas que o José envia no WhatsApp: horário e número que recebe.</p>
+          </div>
 
       {/* ── Relatório do José (campanhas — Fluxo A / apollo_cron_config) ── */}
       <Card>
@@ -1035,12 +1067,16 @@ export function RegrasAutomacoesTab() {
               <div>
                 <CardTitle className="text-base">Relatório do José (campanhas)</CardTitle>
                 <CardDescription className="text-xs mt-0.5">
-                  Resumo diário do tráfego pago que o José envia no WhatsApp. Defina se envia, a que horas e para qual número.
+                  Resumo diário do tráfego pago no WhatsApp. Defina se envia, a que horas e para qual número.
                 </CardDescription>
               </div>
             </div>
             {jose && (
-              <Switch checked={!!jose.send_daily_report} onCheckedChange={(v) => setJose((j: any) => ({ ...j, send_daily_report: v }))} disabled={loadingJose} />
+              <div className="flex items-center gap-2 shrink-0">
+                {jose.is_enabled === false && <StatusPill tone="warn">José pausado</StatusPill>}
+                <StatusPill tone={jose.send_daily_report ? 'on' : 'off'}>{jose.send_daily_report ? 'Ativo' : 'Desligado'}</StatusPill>
+                <Switch checked={!!jose.send_daily_report} onCheckedChange={(v) => setJose((j: any) => ({ ...j, send_daily_report: v }))} disabled={loadingJose} />
+              </div>
             )}
           </div>
         </CardHeader>
@@ -1088,6 +1124,8 @@ export function RegrasAutomacoesTab() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
