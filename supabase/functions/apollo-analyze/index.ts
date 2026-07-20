@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { resolveEffectiveTenant } from "../_shared/resolveTenant.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,12 +39,16 @@ Deno.serve(async (req) => {
         status: 401, headers: corsHeaders,
       });
     }
-    const userId = userData.user.id;
+    const callerId = userData.user.id;
 
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    // Tenant efetivo: dono = ele mesmo; vendedor/parceiro = a MASTER (opera a conta
+    // da master). Zero regressão pro dono. Resolvido após o admin (service role).
+    const userId = await resolveEffectiveTenant(admin, callerId);
 
     const body = await req.json().catch(() => ({}));
     const { campaign_id, action } = body;

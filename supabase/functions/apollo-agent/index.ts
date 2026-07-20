@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { logAiCall } from "../_shared/observability/aiCallLog.ts";
 import { leadQualityByAd, leadMotivosByAd, formatMotivos, sellerFeedbackByAd } from "../_shared/jose-v2/leadQuality.ts";
+import { resolveEffectiveTenant } from "../_shared/resolveTenant.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,7 +62,10 @@ Deno.serve(async (req) => {
       if (userError || !user) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
       }
-      userId = user.id;
+      // Tenant efetivo: dono = ele mesmo; vendedor/parceiro = a MASTER (opera a conta
+      // da master; o Facebook fica na master p/ o tracking). ZERO regressão pro dono.
+      // O shim `const user = { id: userId }` abaixo propaga isto pros 39 usos de user.id.
+      userId = await resolveEffectiveTenant(admin, user.id);
     }
 
     // Expose as user object for backward compat with rest of code

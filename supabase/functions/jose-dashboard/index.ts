@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { getDashboardCards } from "../_shared/jose-v2/dashboardQueries.ts";
 import { isFeatureEnabled } from "../_shared/jose-v2/flags.ts";
 import { analyzeCreativeImage } from "../_shared/jose-v2/visionAnalysis.ts";
+import { resolveEffectiveTenant } from "../_shared/resolveTenant.ts";
 
 /**
  * jose-dashboard — José Cabine de Comando / Bloco A (cards Power BI).
@@ -61,7 +62,8 @@ Deno.serve(async (req) => {
       );
       const { data: { user }, error } = await userClient.auth.getUser();
       if (error || !user) return json({ error: "Unauthorized" }, 401);
-      userId = user.id;
+      // Tenant efetivo: dono = ele mesmo; vendedor/parceiro = a MASTER. Zero regressão pro dono.
+      userId = await resolveEffectiveTenant(admin, user.id);
     }
 
     // Flag desligado => não calcula nada (fail-safe).
