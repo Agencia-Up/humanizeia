@@ -2,12 +2,28 @@
 // not inspect or decide anything about the lead's commercial conversation.
 import { sellerPhoneKey, uniqueSellersByPhone, type SellerLike } from "./phoneKey.ts";
 
-export type TimeoutSeller = SellerLike & { id?: string; is_active?: boolean };
+export type TimeoutSeller = SellerLike & {
+  id?: string;
+  name?: string | null;
+  is_active?: boolean;
+  last_lead_received_at?: string | null;
+};
 export type RecentTransfer = { to_member_id?: string | null; created_at?: string | null };
 
+// Escolhe o proximo vendedor pela MESMA fila do Painel ao Vivo e das demais
+// rotas de transferencia (uazapi-webhook, manual-transfer): quem NUNCA recebeu
+// (last_lead_received_at null) vai PRIMEIRO; senao, quem recebeu ha MAIS tempo.
+//
+// Antes esta funcao ordenava pelo historico de ai_lead_transfers, um sinal
+// DIFERENTE do que o painel usa e que ja tinha divergido em producao (5 de 6
+// vendedores da Icom fora de sincronia; o painel apontava um vendedor e o
+// timeout escalava para outro). Pior: a reordenacao manual da fila que o gestor
+// faz no painel grava SO o last_lead_received_at, entao era ignorada aqui.
+// Agora os dois caminhos leem o mesmo campo. `recentTransfers` foi mantido na
+// assinatura por compatibilidade, mas NAO decide mais a ordem.
 export function pickNextTimeoutSeller(
   sellers: readonly TimeoutSeller[],
-  recentTransfers: readonly RecentTransfer[],
+  _recentTransfers: readonly RecentTransfer[],
   excludeId?: string | null,
   excludePhoneKey?: string | null,
 ): TimeoutSeller | null {
@@ -19,15 +35,9 @@ export function pickNextTimeoutSeller(
   }));
   if (active.length === 0) return null;
 
-  const lastReceived = new Map<string, number>();
-  for (const transfer of recentTransfers) {
-    if (!transfer.to_member_id || lastReceived.has(transfer.to_member_id)) continue;
-    const timestamp = Date.parse(String(transfer.created_at || ""));
-    lastReceived.set(transfer.to_member_id, Number.isFinite(timestamp) ? timestamp : 0);
-  }
-  const neverReceived = active.filter((seller) => !lastReceived.has(String(seller.id || "")));
-  if (neverReceived.length > 0) return neverReceived[0];
+  const never = active.filter((seller) => !seller.last_lead_received_at);
+  if (never.length > 0) return never[0];
   return [...active].sort((a, b) =>
-    (lastReceived.get(String(a.id || "")) || 0) - (lastReceived.get(String(b.id || "")) || 0)
+    Date.parse(String(a.last_lead_received_at || "")) - Date.parse(String(b.last_lead_received_at || ""))
   )[0] || null;
 }

@@ -560,6 +560,18 @@ Deno.serve(async (req) => {
           }
         }
 
+        // Carimba o vendedor escalado como "recebeu agora": ele vai para o FIM da
+        // fila do Painel ao Vivo. É o MESMO sinal (last_lead_received_at) que o
+        // uazapi-webhook, o manual-transfer e a reordenação manual do painel já
+        // usam — sem este carimbo, o recém-escalado continuaria "na frente" e
+        // poderia ser reescolhido logo no próximo timeout. Só carimba quando ele
+        // foi de fato notificado (recebeu o lead).
+        if (nextSellerNotified) {
+          await supabase.from('ai_team_members')
+            .update({ last_lead_received_at: new Date().toISOString() })
+            .eq('id', nextSeller.id);
+        }
+
         processed++;
       } catch (innerErr) {
         console.error(`[Timeout] Erro ao processar transfer ${transfer.id}:`, innerErr);
