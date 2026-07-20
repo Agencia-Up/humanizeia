@@ -869,32 +869,53 @@ export default function JoseTrafego() {
                   <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-orange-500/10 text-4xl">
                     🎯
                   </div>
-                  <div>
-                    <h2 className="text-2xl font-bold mb-2">Conectar Meta Ads</h2>
-                    <p className="text-muted-foreground text-sm leading-relaxed">
-                      Para o José monitorar e otimizar suas campanhas, precisa da permissão de acesso à sua conta do Meta.
-                    </p>
-                  </div>
-                  <div className="w-full space-y-2 text-left">
-                    {[
-                      { emoji: '⚡', text: 'Conexão em menos de 2 minutos' },
-                      { emoji: '🔒', text: 'Acesso seguro via Meta OAuth' },
-                      { emoji: '🤖', text: 'José analisa e otimiza automaticamente' },
-                    ].map(item => (
-                      <div key={item.text} className="flex items-center gap-3 rounded-xl bg-muted/40 px-4 py-3">
-                        <span className="text-xl">{item.emoji}</span>
-                        <span className="text-sm font-medium">{item.text}</span>
+                  {isSeller ? (
+                    /* Parceiro/vendedor: a conexão do Meta é da conta PRINCIPAL (é onde
+                       roda o rastreamento/CAPI). Ele NÃO reconecta — herda automaticamente
+                       quando o responsável conecta. Sem botão de conectar. */
+                    <>
+                      <div>
+                        <h2 className="text-2xl font-bold mb-2">Conexão gerenciada pela conta principal</h2>
+                        <p className="text-muted-foreground text-sm leading-relaxed">
+                          A conexão do Meta Ads fica na conta principal — é lá que o rastreamento precisa ficar
+                          para tudo funcionar. Assim que o responsável conectar o Facebook, você passa a ver e
+                          operar as campanhas por aqui automaticamente, <strong>sem precisar reconectar</strong>.
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                  <Button
-                    onClick={startOAuth}
-                    disabled={isConnecting}
-                    className="w-full h-12 text-base bg-orange-500 hover:bg-orange-600"
-                  >
-                    {isConnecting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Plug className="mr-2 h-5 w-5" />}
-                    {isConnecting ? 'Conectando...' : 'Conectar minha conta'}
-                  </Button>
+                      <div className="w-full rounded-xl bg-muted/40 px-4 py-3 text-left text-sm text-muted-foreground">
+                        Peça ao responsável da conta para conectar o Meta Ads em <span className="font-medium text-foreground">José → Conectar</span>.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <h2 className="text-2xl font-bold mb-2">Conectar Meta Ads</h2>
+                        <p className="text-muted-foreground text-sm leading-relaxed">
+                          Para o José monitorar e otimizar suas campanhas, precisa da permissão de acesso à sua conta do Meta.
+                        </p>
+                      </div>
+                      <div className="w-full space-y-2 text-left">
+                        {[
+                          { emoji: '⚡', text: 'Conexão em menos de 2 minutos' },
+                          { emoji: '🔒', text: 'Acesso seguro via Meta OAuth' },
+                          { emoji: '🤖', text: 'José analisa e otimiza automaticamente' },
+                        ].map(item => (
+                          <div key={item.text} className="flex items-center gap-3 rounded-xl bg-muted/40 px-4 py-3">
+                            <span className="text-xl">{item.emoji}</span>
+                            <span className="text-sm font-medium">{item.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        onClick={startOAuth}
+                        disabled={isConnecting}
+                        className="w-full h-12 text-base bg-orange-500 hover:bg-orange-600"
+                      >
+                        {isConnecting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Plug className="mr-2 h-5 w-5" />}
+                        {isConnecting ? 'Conectando...' : 'Conectar minha conta'}
+                      </Button>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </div>

@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { resolveEffectiveTenant } from "../_shared/resolveTenant.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,7 +36,16 @@ Deno.serve(async (req) => {
         headers: corsHeaders,
       });
     }
-    const userId = user.id;
+    // Client service-role: resolve o tenant efetivo e lê ad_accounts (com token).
+    const adminClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    // Tenant efetivo: dono = ele mesmo; vendedor/parceiro = a MASTER (opera a conta
+    // de anúncios da master; o Facebook fica na master p/ o tracking). ZERO regressão
+    // pro dono. Antes era `const userId = user.id`, que deixava o parceiro sem conta.
+    const userId = await resolveEffectiveTenant(adminClient, user.id);
 
     const { endpoint, params, method, body, targetAccountId } = await req.json();
 
@@ -47,10 +57,6 @@ Deno.serve(async (req) => {
     }
 
     // Get user's Meta ad account - use targetAccountId if provided, else fallback to first
-    const adminClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     let accountQuery = adminClient
       .from("ad_accounts")
@@ -161,8 +167,8 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify(metaData), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err?.message || String(err) }), {
       status: 500,
       headers: corsHeaders,
     });

@@ -67,13 +67,11 @@ export function useMetaConnection() {
     if (!user) return;
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('ad_accounts')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('platform', 'meta')
-        .eq('is_active', true)
-        .order('created_at', { ascending: true });
+      // Tenant efetivo: dono vê as próprias contas; vendedor/parceiro herda as da
+      // MASTER (RPC get_effective_ad_accounts, SECURITY DEFINER, SEM o token). Antes
+      // era .eq('user_id', user.id) — o parceiro via vazio e era forçado a reconectar
+      // o Facebook, que precisa ficar na master pro tracking/CAPI.
+      const { data, error } = await supabase.rpc('get_effective_ad_accounts');
 
       if (!error && data && data.length > 0) {
         setConnectedAccounts(data as ConnectedAccount[]);
