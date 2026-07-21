@@ -17,6 +17,7 @@ export function MetaAdsSettingsTab() {
     isConnecting,
     isLoading,
     connectedAccount,
+    connectedAccounts,
     availableAccounts,
     pixels,
     pages,
@@ -25,7 +26,8 @@ export function MetaAdsSettingsTab() {
     handleCallback,
     consumeOAuthSession,
     saveSelectedAssets,
-    disconnect,
+    selectConnectedAccount,
+    disconnectAccount,
   } = useMetaConnection();
 
   const [showAddAnother, setShowAddAnother] = useState(false);
@@ -129,35 +131,62 @@ export function MetaAdsSettingsTab() {
               Senão a tela "Conectado" esconderia os checkboxes e "conectava direto". */}
           {!hasDetectedAssets && connectedAccount && !showAddAnother ? (
             <div className="space-y-4">
-              <div className="rounded-lg bg-muted/50 p-4 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Conta:</span>
-                  <span className="font-medium">{connectedAccount.account_name}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">ID:</span>
-                  <span className="font-mono text-xs">{connectedAccount.account_id}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Moeda:</span>
-                  <span>{connectedAccount.currency || 'BRL'}</span>
-                </div>
-                {connectedAccount.last_sync_at && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Última sync:</span>
-                    <span>{new Date(connectedAccount.last_sync_at).toLocaleString('pt-BR')}</span>
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="destructive" size="sm" onClick={disconnect}>
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Desconectar
-                </Button>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm text-muted-foreground">
+                  <b className="text-foreground">{connectedAccounts.length}</b> conta(s) integrada(s).
+                  A marcada (●) é a que o <b className="text-foreground">JOSÉ</b> usa nas análises — clique em outra pra trocar.
+                </p>
                 <Button variant="outline" size="sm" onClick={() => setShowAddAnother(true)}>
                   <ExternalLink className="h-4 w-4 mr-2" />
                   Conectar outra conta
                 </Button>
+              </div>
+
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {connectedAccounts.map((acc) => {
+                  const ativa = acc.id === connectedAccount.id;
+                  return (
+                    <div
+                      key={acc.id}
+                      className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${
+                        ativa ? 'border-primary/50 bg-primary/5' : 'border-border/50'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => selectConnectedAccount(acc.id)}
+                        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                        title={ativa ? 'Conta ativa no JOSÉ' : 'Usar esta conta no JOSÉ'}
+                      >
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                          ativa ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'
+                        }`}>
+                          {ativa && <Check className="h-3 w-3" />}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate">{acc.account_name}</p>
+                          <p className="text-xs text-muted-foreground font-mono truncate">
+                            {acc.account_id} · {acc.currency || 'BRL'}
+                          </p>
+                        </div>
+                      </button>
+                      {ativa && (
+                        <Badge className="bg-success/20 text-success border-success/30 text-[10px] shrink-0">
+                          Ativa no JOSÉ
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => disconnectAccount(acc.id)}
+                        title="Remover esta conta"
+                      >
+                        <LogOut className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : hasDetectedAssets ? (

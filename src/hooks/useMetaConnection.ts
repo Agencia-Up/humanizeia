@@ -371,6 +371,25 @@ export function useMetaConnection() {
     }
   };
 
+  // Remove UMA conta específica (multi-conta): desativa e recarrega a lista. Se a conta
+  // removida era a ativa, o fetchConnectedAccount reelege a próxima que sobrar (ou null).
+  const disconnectAccount = async (accountId: string) => {
+    try {
+      const { error } = await supabase
+        .from('ad_accounts')
+        .update({ is_active: false })
+        .eq('id', accountId);
+      if (error) throw error;
+      if (localStorage.getItem(SELECTED_ACCOUNT_KEY) === accountId) {
+        localStorage.removeItem(SELECTED_ACCOUNT_KEY);
+      }
+      await fetchConnectedAccount();
+      toast({ title: 'Conta removida', description: 'A conta Meta foi desconectada.' });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
   return {
     isConnecting,
     isLoading,
