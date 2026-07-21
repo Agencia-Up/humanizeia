@@ -133,7 +133,7 @@ const PLATFORMS: PlatformDef[] = [
     icon: <InstagramIcon />,
     iconBg: 'bg-pink-500/15',
     description: 'Publicar posts, reels e carrosséis no Instagram',
-    status: 'available' as const,
+    status: 'coming_soon' as const,
     steps: [
       {
         title: '✅ Antes de começar — 2 requisitos obrigatórios',
@@ -168,7 +168,7 @@ const PLATFORMS: PlatformDef[] = [
     icon: <GoogleIcon />,
     iconBg: 'bg-red-500/15 text-red-500',
     description: 'Pesquisa, Display, YouTube e Shopping',
-    status: 'available',
+    status: 'coming_soon',
     steps: [
       {
         title: '✅ Antes de começar',
@@ -233,7 +233,7 @@ const PLATFORMS: PlatformDef[] = [
     icon: <TikTokIcon />,
     iconBg: 'bg-foreground/10 text-foreground',
     description: 'Anúncios em vídeo para audiência jovem',
-    status: 'available',
+    status: 'coming_soon',
     steps: [
       {
         title: '✅ Antes de começar',
@@ -268,7 +268,7 @@ const PLATFORMS: PlatformDef[] = [
     icon: <Briefcase className="h-6 w-6" />,
     iconBg: 'bg-blue-700/15 text-blue-700',
     description: 'Anúncios B2B para profissionais e empresas',
-    status: 'available',
+    status: 'coming_soon',
     steps: [
       {
         title: '✅ Antes de começar',
