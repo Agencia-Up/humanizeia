@@ -11,6 +11,7 @@
 import type { TenantAgentRef } from "../../domain/read-ports.ts";
 import type { SellerCandidate } from "../../engine/transfer-templates.ts";
 import { resolveAutomationRules } from "../../engine/automation-rules.ts";
+import { normalizeAgentResponseSchedule } from "../../domain/agent-response-schedule.ts";
 import type {
   InsertTransferInput, TransferAgentConfig, TransferLeadRow, TransferRow, TransferSagaStore,
 } from "./transfer-store.ts";
@@ -104,6 +105,7 @@ export class SupabaseTransferStore implements TransferSagaStore {
     return {
       agentName: typeof row.name === "string" && row.name.trim() ? row.name.trim() : "Agente",
       rules: resolveAutomationRules(row.automation_rules),
+      responseSchedule: normalizeAgentResponseSchedule({ automationRules: row.automation_rules }),
       briefingTemplateVendedor: typeof row.briefing_template_vendedor === "string" ? row.briefing_template_vendedor : null,
       briefingTemplateGerente: typeof row.briefing_template_gerente === "string" ? row.briefing_template_gerente : null,
       mensagensSemEmoji: row.mensagens_sem_emoji === true,

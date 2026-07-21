@@ -12,9 +12,10 @@ function check(label: string, ok: boolean) {
   else { failures++; console.error(`FAIL ${label}`); }
 }
 
-const first = { id: "seller-1", whatsapp_number: "5511999991111", is_active: true };
-const second = { id: "seller-2", whatsapp_number: "5511999992222", is_active: true };
-const tenantSeller = { id: "seller-3", whatsapp_number: "5511999993333", is_active: true };
+const first = { id: "seller-1", whatsapp_number: "5511999991111", is_active: true, last_lead_received_at: "2026-07-20T13:00:00.000Z" };
+const second = { id: "seller-2", whatsapp_number: "5511999992222", is_active: true, last_lead_received_at: "2026-07-20T14:00:00.000Z" };
+const tenantSeller = { id: "seller-3", whatsapp_number: "5511999993333", is_active: true, last_lead_received_at: "2026-07-20T15:00:00.000Z" };
+const neverSeller = { id: "seller-never", whatsapp_number: "5511999994444", is_active: true, last_lead_received_at: null };
 
 check(
   "timeout resolves a tenant roster seller",
@@ -26,7 +27,7 @@ check(
 );
 check(
   "timeout prioritizes a seller that never received a transfer",
-  pickNextTimeoutSeller([first, second], [{ to_member_id: "seller-1", created_at: "2026-07-17T10:00:00.000Z" }], null, null)?.id === "seller-2",
+  pickNextTimeoutSeller([first, neverSeller], [{ to_member_id: "seller-1", created_at: "2026-07-17T10:00:00.000Z" }], null, null)?.id === "seller-never",
 );
 check(
   "timeout returns no recipient when the queue has no alternative",

@@ -7,6 +7,7 @@
 import type { TenantAgentRef } from "../../domain/read-ports.ts";
 import type { SellerCandidate } from "../../engine/transfer-templates.ts";
 import type { AutomationRules } from "../../engine/automation-rules.ts";
+import type { AgentResponseSchedule } from "../../domain/agent-response-schedule.ts";
 
 export type TransferLeadRow = {
   readonly id: string;
@@ -45,6 +46,7 @@ export type InsertTransferInput = {
 export type TransferAgentConfig = {
   readonly agentName: string;
   readonly rules: AutomationRules;
+  readonly responseSchedule?: AgentResponseSchedule;
   readonly briefingTemplateVendedor: string | null;
   readonly briefingTemplateGerente: string | null;
   readonly mensagensSemEmoji: boolean;

@@ -50,6 +50,7 @@ import { validateEffectPlans } from "./finalizer.ts";
 import { createHash } from "node:crypto";
 import type { SensitiveVaultPort } from "../adapters/persistence/sensitive-vault.ts";
 import { CompositeKnowledgeSource, type KnowledgeSource } from "../domain/knowledge.ts";
+import { isWithinAgentResponseSchedule } from "../domain/agent-response-schedule.ts";
 
 // R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
 // lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
@@ -222,6 +223,11 @@ export class PilotActiveRoot {
   get mode(): PilotBrainMode {
     // central_* só valem com o AgentBrain configurado; senão degrada p/ off (fail-safe).
     return this.brainMode !== "off" && this.agentBrain ? this.brainMode : "off";
+  }
+
+  /** Operational gate only; it never changes CRM or manual-transfer behavior. */
+  isAutomaticResponseAllowed(at = this.clock.now()): boolean {
+    return isWithinAgentResponseSchedule(at, this.runtimeConfig.responseSchedule);
   }
 
   static async create(config: PilotActiveConfig, deps: PilotActiveDeps): Promise<PilotActiveRoot> {

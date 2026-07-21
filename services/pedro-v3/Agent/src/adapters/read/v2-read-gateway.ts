@@ -32,6 +32,11 @@ export type OwnedAgentRow = {
   readonly sellsMotorcycles: boolean;
   readonly blockedCategories: readonly string[];
   readonly ragRestricted: boolean;
+  readonly businessHoursOnly?: boolean;
+  readonly businessHoursStart?: string | null;
+  readonly businessHoursEnd?: string | null;
+  readonly businessHoursDays?: readonly number[] | null;
+  readonly automationRules?: unknown;
   readonly isActive: boolean;
   readonly updatedAt: string;
 };

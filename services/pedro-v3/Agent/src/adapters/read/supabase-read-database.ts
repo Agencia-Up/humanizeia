@@ -47,6 +47,7 @@ const AGENT_COLUMNS: readonly V2ColumnName[] = [
   "id", "user_id", "instance_id", "name", "system_prompt", "use_funnel_config", "company_name",
   "model", "temperature", "sdr_goal", "qualification_questions", "sells_motorcycles",
   "blocked_categories", "rag_restricted", "is_active", "updated_at",
+  "business_hours_only", "business_hours_start", "business_hours_end", "automation_rules",
 ];
 const FUNNEL_COLUMNS: readonly V2ColumnName[] = ["agent_id", "user_id", "generated_system_prompt", "tenant_policies", "updated_at"];
 const METADATA_COLUMNS: readonly V2ColumnName[] = ["id", "user_id", "platform", "is_active", "updated_at"];

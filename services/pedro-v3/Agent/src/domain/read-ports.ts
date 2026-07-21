@@ -11,6 +11,7 @@
 import type { Awaitable } from "./ports.ts";
 import type { SecretRef } from "./credential-provider.ts";
 import type { TenantFunnelPolicy } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import type { AgentResponseSchedule } from "./agent-response-schedule.ts";
 
 // Seletor canônico e único de tenant+agente.
 export type TenantAgentRef = {
@@ -45,6 +46,8 @@ export type TenantRuntimeConfig = {
   readonly sellsMotorcycles: boolean;
   readonly blockedCategories: readonly string[];
   readonly ragRestricted: boolean;
+  /** Per-agent automatic-response window. CRM ingestion and manual handoff are independent. */
+  readonly responseSchedule?: AgentResponseSchedule;
   readonly stockProvider: SelectedStockProvider; // revendamais vence bndv (R1 / decisão do dono)
   readonly stockSecretRef: SecretRef | null;     // opaco; null quando stockProvider="none"
   readonly versionStamp: string;                 // updatedAt do agente — futura invalidação de cache

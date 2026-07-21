@@ -22,7 +22,8 @@ export type FollowupEvaluationReason =
   | "lead_replied_after_anchor"
   | "stage_planned"
   | "effect_pending"
-  | "not_due";
+  | "not_due"
+  | "outside_response_schedule";
 
 export type FollowupEvaluation = {
   readonly due: FollowupDue | null;

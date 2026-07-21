@@ -22,6 +22,7 @@ import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
 import { evaluateFollowup, type FollowupEvaluationReason } from "../engine/followup-policy.ts";
+import { isWithinAgentResponseSchedule } from "../domain/agent-response-schedule.ts";
 import { PEDRO_V3_RUNTIME_RELEASE } from "./runtime-release.ts";
 import { findSettledAcrossScopes } from "./settled-scope-finder.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport, RetryingModelHttpTransport } from "./fetch-transports.ts";
@@ -425,6 +426,19 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }));
       return;
     }
+    // The message and CRM identity were already ingested/bound above. Outside
+    // the tenant-configured window, leave the settled block pending: no LLM,
+    // WhatsApp reply, follow-up, or automatic handoff is produced. Manual
+    // transfer from the panel does not pass through this gate.
+    if (!root.isAutomaticResponseAllowed(this.#clock.now())) {
+      console.log(JSON.stringify({
+        event: "pedro_v3_response_schedule_closed",
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        conversationId: settled.conversationId,
+      }));
+      return;
+    }
     this.#turnSeq += 1;
     const turnId = `poll-${this.#turnSeq}-${randomUUID()}`;
     const processed = await root.processConversation({
@@ -469,6 +483,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         if (!config?.rules.followup.enabled) {
           skip("rules_disabled");
           if (!config) lastFailure ??= "agent_config_missing";
+          continue;
+        }
+        if (!isWithinAgentResponseSchedule(tickAt, config.responseSchedule)) {
+          skip("outside_response_schedule");
           continue;
         }
         for (const candidate of candidates) {

@@ -24,6 +24,7 @@ import type {
 import { makeSecretRef } from "../../domain/credential-provider.ts";
 import type { SecretRef } from "../../domain/credential-provider.ts";
 import { normalizeTenantPolicies } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import { normalizeAgentResponseSchedule } from "../../domain/agent-response-schedule.ts";
 import {
   assertTenantAgentRef,
   type OwnedAgentRow,
@@ -201,6 +202,12 @@ export class V2TenantConfigSource implements TenantConfigSource {
       sellsMotorcycles: !!agent.sellsMotorcycles,
       blockedCategories: Object.freeze([...(agent.blockedCategories ?? [])]),
       ragRestricted: !!agent.ragRestricted,
+      responseSchedule: normalizeAgentResponseSchedule({
+        automationRules: agent.automationRules,
+        businessHoursOnly: agent.businessHoursOnly,
+        businessHoursStart: agent.businessHoursStart,
+        businessHoursEnd: agent.businessHoursEnd,
+      }),
       stockProvider: sel.provider,
       stockSecretRef: sel.secretRef, // já frozen em makeSecretRef
       versionStamp,

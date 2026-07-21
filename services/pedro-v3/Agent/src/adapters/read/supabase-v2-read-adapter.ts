@@ -36,6 +36,10 @@ export type V2ColumnName =
   | "sells_motorcycles"
   | "blocked_categories"
   | "rag_restricted"
+  | "business_hours_only"
+  | "business_hours_start"
+  | "business_hours_end"
+  | "automation_rules"
   | "is_active"
   | "updated_at"
   | "generated_system_prompt"
@@ -77,7 +81,7 @@ const AGENT_COLUMNS = Object.freeze([
   "qualification_questions",
   "sells_motorcycles",
   "blocked_categories",
-  "rag_restricted",
+  "rag_restricted", "business_hours_only", "business_hours_start", "business_hours_end", "automation_rules",
   "is_active",
   "updated_at",
 ] satisfies readonly V2ColumnName[]);
@@ -146,6 +150,10 @@ function mapAgentRow(row: Record<string, unknown>): OwnedAgentRow {
     sellsMotorcycles: asBoolean(row.sells_motorcycles),
     blockedCategories: asStringArray(row.blocked_categories),
     ragRestricted: asBoolean(row.rag_restricted),
+    businessHoursOnly: asBoolean(row.business_hours_only),
+    businessHoursStart: asString(row.business_hours_start),
+    businessHoursEnd: asString(row.business_hours_end),
+    automationRules: row.automation_rules ?? null,
     isActive: asBoolean(row.is_active),
     updatedAt: asString(row.updated_at) ?? "",
   };
