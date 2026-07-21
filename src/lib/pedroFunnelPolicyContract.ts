@@ -346,9 +346,9 @@ export function buildTenantPolicyPromptSection(input: unknown): string {
   if (policies.length === 0) return "";
   const ordered = [...policies].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   const lines = ordered.map((policy) => [
-    `- [${policy.id}] ${policy.name} (domínio: ${policy.domain}, prioridade: ${policy.priority})`,
+    `- [${policy.id}] ${policy.name} (área: ${tenantPolicyDomainLabel(policy.domain)}, prioridade: ${policy.priority})`,
     `  Quando: ${policy.when}`,
-    `  Ação esperada: ${policy.action}`,
+    `  Ação esperada: ${tenantPolicyActionLabel(policy.action)}`,
     `  Evidência necessária: ${policy.evidenceRequirement}`,
     `  Orientação de resposta: ${policy.responseGuidance}`,
   ].join("\n")).join("\n\n");
@@ -366,3 +366,27 @@ Estas políticas descrevem preferências comerciais da empresa. Você, a LLM, de
 
 ${lines}`;
 }
+/** Rótulos em português; os valores do contrato continuam sendo códigos internos. */
+export const TENANT_POLICY_DOMAIN_LABELS: Record<TenantPolicyDomain, string> = {
+  financial: "Financeiro",
+  service_area: "\u00C1rea de atendimento",
+  qualification: "Qualifica\u00E7\u00E3o",
+  handoff: "Transfer\u00EAncia",
+  disqualification: "Desqualifica\u00E7\u00E3o",
+  followup: "Follow-up",
+  business: "Informa\u00E7\u00F5es da empresa",
+};
+
+export const TENANT_POLICY_ACTION_LABELS: Record<TenantPolicyAction, string> = {
+  continue: "Continuar atendimento",
+  ask_clarification: "Pedir esclarecimento",
+  inform: "Informar o cliente",
+  disqualify: "Desqualificar lead",
+  handoff: "Transferir para vendedor",
+};
+
+export const tenantPolicyDomainLabel = (domain: TenantPolicyDomain): string =>
+  TENANT_POLICY_DOMAIN_LABELS[domain] ?? domain;
+
+export const tenantPolicyActionLabel = (action: TenantPolicyAction): string =>
+  TENANT_POLICY_ACTION_LABELS[action] ?? action;

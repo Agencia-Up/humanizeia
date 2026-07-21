@@ -23,6 +23,8 @@ import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   TENANT_POLICY_ACTIONS,
+  tenantPolicyActionLabel,
+  tenantPolicyDomainLabel,
   TENANT_POLICY_DOMAINS,
   validateTenantFunnelConfig,
   validateTenantPolicies,
@@ -49,6 +51,7 @@ import {
   Brain,
   Eye,
   AlertCircle,
+  Info,
   Wand2,
 } from 'lucide-react';
 
@@ -248,6 +251,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   const [useFunnelConfig, setUseFunnelConfig] = useState(false);
   const [hasBackup, setHasBackup] = useState(false);
   const [cfg, setCfg] = useState<FunnelConfig>(DEFAULT_CONFIG);
+  const [showPolicyHelp, setShowPolicyHelp] = useState(false);
 
   // ── Autosave: salva alterações automaticamente em background a cada 2s
   // sem digitação. NÃO gera prompt (só persiste no agent_funnel_config).
@@ -646,14 +650,40 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
 
       <Card className="border-violet-500/20 bg-violet-500/5">
         <CardHeader className="pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 text-violet-300">
-            <Brain className="h-3.5 w-3.5" /> Políticas comerciais da empresa
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-xs flex items-center gap-2 text-violet-300">
+              <Brain className="h-3.5 w-3.5" /> Regras comerciais da empresa
+            </CardTitle>
+            <Button type="button" size="icon" variant="ghost" className="ml-auto h-7 w-7 text-violet-300 hover:text-violet-100 hover:bg-violet-500/15" onClick={() => setShowPolicyHelp((visible) => !visible)} aria-label="Como funcionam as regras comerciais" aria-expanded={showPolicyHelp} title="Como funcionam as regras comerciais">
+              <Info className="h-4 w-4" />
+            </Button>
+          </div>
           <CardDescription className="text-[11px]">
-            Configure condições que a LLM deve interpretar. A engine não usa palavras-chave para decidir.
+            Descreva situações da sua operação para o agente interpretar durante a conversa. Ele não usa palavras-chave isoladas para decidir.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0 space-y-3">
+          {showPolicyHelp && (
+            <div className="rounded-md border border-violet-400/25 bg-violet-950/20 p-3 text-[11px] leading-relaxed text-muted-foreground">
+              <div className="flex items-start gap-2">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-300" />
+                <div className="space-y-2">
+                  <p className="font-medium text-violet-100">Como usar estas regras</p>
+                  <p>
+                    Escreva cada regra como falaria com um vendedor: explique a situação, o que comprova o caso e como o agente deve conduzir o atendimento.
+                  </p>
+                  <div className="rounded border border-border/40 bg-background/40 p-2.5 space-y-1.5">
+                    <p className="font-medium text-foreground">Exemplo: cliente sem entrada</p>
+                    <p><span className="text-violet-200">Quando:</span> cliente disser claramente que não possui entrada.</p>
+                    <p><span className="text-violet-200">Evidência:</span> fala explícita do cliente, não uma suposição.</p>
+                    <p><span className="text-violet-200">Ação:</span> desqualificar o lead.</p>
+                    <p><span className="text-violet-200">Condução:</span> explicar com respeito, sem insistir, e encerrar.</p>
+                  </div>
+                  <p className="text-violet-200/80">A prioridade menor vem primeiro quando duas regras tratam da mesma situação.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {cfg.tenant_policies.map((policy, index) => (
             <div key={`${policy.id}-${index}`} className="rounded-md border border-border/40 bg-background/40 p-3 space-y-2">
               <div className="flex items-center gap-2">
@@ -674,15 +704,15 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <Select value={policy.domain} onValueChange={(value) => updatePolicy(index, { domain: value as TenantPolicyDomain })}>
-                  <SelectTrigger className="text-xs h-8"><SelectValue placeholder="Domínio" /></SelectTrigger>
+                  <SelectTrigger className="text-xs h-8"><SelectValue placeholder="Área da regra" /></SelectTrigger>
                   <SelectContent>
-                    {TENANT_POLICY_DOMAINS.map((domain) => <SelectItem key={domain} value={domain} className="text-xs">{domain}</SelectItem>)}
+                    {TENANT_POLICY_DOMAINS.map((domain) => <SelectItem key={domain} value={domain} className="text-xs">{tenantPolicyDomainLabel(domain)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select value={policy.action} onValueChange={(value) => updatePolicy(index, { action: value as TenantPolicyAction })}>
-                  <SelectTrigger className="text-xs h-8"><SelectValue placeholder="Ação da LLM" /></SelectTrigger>
+                  <SelectTrigger className="text-xs h-8"><SelectValue placeholder="O que fazer" /></SelectTrigger>
                   <SelectContent>
-                    {TENANT_POLICY_ACTIONS.map((action) => <SelectItem key={action} value={action} className="text-xs">{action}</SelectItem>)}
+                    {TENANT_POLICY_ACTIONS.map((action) => <SelectItem key={action} value={action} className="text-xs">{tenantPolicyActionLabel(action)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Input
