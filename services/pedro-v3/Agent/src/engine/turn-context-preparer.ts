@@ -23,6 +23,13 @@ export class StockTenantCatalogSource implements TenantCatalogSource {
   }
 }
 
+/** Catalog boundary for non-automotive profiles: no stock read, no vehicle claims. */
+export class EmptyTenantCatalogSource implements TenantCatalogSource {
+  async loadCatalog(_ref: TenantAgentRef): Promise<TenantCatalog> {
+    return { entries: [] };
+  }
+}
+
 export class CatalogClaimExtractor implements ClaimExtractor {
   constructor(private readonly catalog: TenantCatalog) {}
 

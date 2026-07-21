@@ -25,6 +25,7 @@ import { makeSecretRef } from "../../domain/credential-provider.ts";
 import type { SecretRef } from "../../domain/credential-provider.ts";
 import { normalizeTenantPolicies } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
 import { normalizeAgentResponseSchedule } from "../../domain/agent-response-schedule.ts";
+import { normalizeAgentProfileType, isGeneralSdrProfile } from "../../domain/agent-profile.ts";
 import {
   assertTenantAgentRef,
   type OwnedAgentRow,
@@ -170,11 +171,17 @@ export class V2TenantConfigSource implements TenantConfigSource {
       tenantPolicies = normalizeTenantPolicies(fc?.tenantPolicies);
     }
 
-    const stockCall = await tryGateway(() => this.gateway.listActiveStockIntegrationMetadata(ref));
-    if (!stockCall.ok) return fail("READ_SOURCE_FAILURE", "falha ao ler integrações de estoque");
-    const stock = selectStock(ref, stockCall.value);
-    if (!stock.ok) return fail(stock.code, stock.detail);
-    const sel = stock.selection;
+    // SDR Geral não é um agente automotivo: não lê metadata de estoque e não
+    // cria integração fictícia. A Base/knowledge continua disponível no runtime.
+    const agentType = normalizeAgentProfileType(agent.agentType);
+    let sel: StockSelection = { provider: "none", secretRef: null, integrationId: null, integrationUpdatedAt: null };
+    if (!isGeneralSdrProfile(agentType)) {
+      const stockCall = await tryGateway(() => this.gateway.listActiveStockIntegrationMetadata(ref));
+      if (!stockCall.ok) return fail("READ_SOURCE_FAILURE", "falha ao ler integrações de estoque");
+      const stock = selectStock(ref, stockCall.value);
+      if (!stock.ok) return fail(stock.code, stock.detail);
+      sel = stock.selection;
+    }
 
     // versionStamp composto e determinístico (sem prompt nem segredo): muda quando
     // muda qualquer fonte efetiva (agente, funil-quando-usado, provider/integração).
@@ -188,6 +195,7 @@ export class V2TenantConfigSource implements TenantConfigSource {
       tenantId: ref.tenantId,
       agentId: ref.agentId,
       agentName: agent.name,
+      agentType,
       companyName: normalizeCompany(agent.companyName),
       instanceId: agent.instanceId ?? null,
       promptText,

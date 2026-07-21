@@ -878,7 +878,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     setSaving(false);
   };
 
-  const isSdr = agentType === 'sdr';
+  const isSdr = agentType === 'sdr' || agentType === 'sdr_geral';
   const handleDialogOpenChange = (val: boolean) => {
     if (!val) {
       stopPolling();
@@ -1130,6 +1130,11 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
                 </Select>
               </div>
 
+              {agentType === 'sdr_geral' && (
+                <p className="text-xs text-muted-foreground mb-4">
+                  SDR - Geral atende qualquer tipo de negócio usando a Base de conhecimento. A consulta de estoque de veículos fica desativada.
+                </p>
+              )}
               {/* WhatsApp Connection */}
               <div className="space-y-4 border rounded-lg p-4 bg-muted/10">
                 <Label className="text-sm font-semibold">Conexão WhatsApp</Label>

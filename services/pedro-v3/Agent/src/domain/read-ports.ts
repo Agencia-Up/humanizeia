@@ -12,6 +12,7 @@ import type { Awaitable } from "./ports.ts";
 import type { SecretRef } from "./credential-provider.ts";
 import type { TenantFunnelPolicy } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
 import type { AgentResponseSchedule } from "./agent-response-schedule.ts";
+import type { AgentProfileType } from "./agent-profile.ts";
 
 // Seletor canônico e único de tenant+agente.
 export type TenantAgentRef = {
@@ -33,6 +34,8 @@ export type TenantRuntimeConfig = {
   readonly tenantId: string;
   readonly agentId: string;
   readonly agentName: string;
+  /** Perfil operacional escolhido no portal; personalidade e condução continuam no prompt. */
+  readonly agentType?: AgentProfileType;
   readonly companyName: string | null;          // "" normalizado vira null
   readonly instanceId: string | null;           // null no piloto (sem WhatsApp ligado)
   readonly promptText: string;

@@ -21,6 +21,7 @@ export type OwnedAgentRow = {
   readonly id: string;
   readonly tenantId: string;
   readonly name: string;
+  readonly agentType?: string | null;
   readonly instanceId: string | null;
   readonly systemPrompt: string | null;
   readonly useFunnelConfig: boolean;

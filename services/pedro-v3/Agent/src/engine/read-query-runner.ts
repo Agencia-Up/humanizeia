@@ -16,6 +16,8 @@ export type ReadQueryRunnerSources = {
   readonly vehiclePhotos: VehiclePhotoSource;
   readonly crm: CrmReadSource;
   readonly knowledge?: KnowledgeSource;
+  /** Capability boundary shared by the LLM schema and runtime executor. */
+  readonly allowedTools?: readonly string[];
 };
 
 function validation(message: string): ToolError {
@@ -58,7 +60,11 @@ function toJsonRecord(value: Record<string, unknown>): Record<string, string | n
 }
 
 export function createReadQueryRunner(ref: TenantAgentRef, sources: ReadQueryRunnerSources): QueryRunner {
+  const allowedTools = sources.allowedTools ? new Set(sources.allowedTools) : null;
   return async (call: QueryCall): Promise<QueryResult> => {
+    if (allowedTools && !allowedTools.has(call.tool)) {
+      return { ok: false, tool: call.tool, error: { code: "FORBIDDEN", message: "tool not enabled for this agent profile", retryable: false } } as QueryResult;
+    }
     try {
       switch (call.tool) {
         case "stock_search": {

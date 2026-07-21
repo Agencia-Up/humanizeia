@@ -128,7 +128,8 @@
     "test:f271": "tsx tests/run-f2-71-tenant-policy-contract.ts",
     "smoke:f272": "tsx eval/run-f2-72-real-ad-policy.ts",
     "test:transfer": "tsx tests/run-transfer-infrastructure.ts",
-    "test:agent-schedule": "tsx tests/run-agent-response-schedule.ts"
+    "test:agent-schedule": "tsx tests/run-agent-response-schedule.ts",
+    "test:agent-profile": "tsx tests/run-agent-profile.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.3",

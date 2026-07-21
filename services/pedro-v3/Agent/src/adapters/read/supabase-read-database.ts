@@ -44,7 +44,8 @@ function set(cols: readonly V2ColumnName[]): ReadonlySet<V2ColumnName> {
 }
 
 const AGENT_COLUMNS: readonly V2ColumnName[] = [
-  "id", "user_id", "instance_id", "name", "system_prompt", "use_funnel_config", "company_name",
+  "id", "user_id", "instance_id", "name",
+  "agent_type", "system_prompt", "use_funnel_config", "company_name",
   "model", "temperature", "sdr_goal", "qualification_questions", "sells_motorcycles",
   "blocked_categories", "rag_restricted", "is_active", "updated_at",
   "business_hours_only", "business_hours_start", "business_hours_end", "automation_rules",

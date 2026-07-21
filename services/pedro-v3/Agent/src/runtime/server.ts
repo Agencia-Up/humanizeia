@@ -14,6 +14,7 @@ import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receip
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
 import { OpenAiAgentBrain } from "../adapters/llm/openai-agent-brain.ts";
 import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
+import { allowedToolsForAgentProfile } from "../domain/agent-profile.ts";
 import { resolveTenantAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
 import { DebouncePoller } from "./debounce-poller.ts";
@@ -49,7 +50,7 @@ const PILOT_TURN_LIMITS = {
 
 const MAX_REQUEST_BYTES = 32 * 1024;
 
-const CENTRAL_BRAIN_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "knowledge_search"] as const;
+
 
 // R13-D/4: modo do cérebro do piloto (default OFF). central_active só vale dentro do escopo do piloto (Douglas),
 // que o próprio runtime já garante (PEDRO_V3_PILOT_TENANT_ID). Rollback imediato = voltar a env p/ off.
@@ -312,7 +313,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           // ⭐Item 5: json_schema strict + envelope understanding tornam a saída mais verbosa; 1200 truncava (finish=length ->
           // "JSON inválido"). 2200 dá folga p/ understanding + draft com lista de ofertas sem cortar o JSON no meio.
           temperature: 0.2, maxCompletionTokens: this.#aiProvider.provider === "deepseek" ? 1_600 : 2_200, timeoutMs: 45_000,
-          allowedTools: [...CENTRAL_BRAIN_ALLOWED_TOOLS],
+          allowedTools: [...allowedToolsForAgentProfile(config.agentType)],
           handoffEnabled: this.#handoffEnabled,
           followupEnabled: this.#followupEnabled,
           semanticCriticEnabled: false,

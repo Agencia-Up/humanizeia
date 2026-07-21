@@ -26,6 +26,7 @@ export type V2ColumnName =
   | "agent_id"
   | "instance_id"
   | "name"
+  | "agent_type"
   | "system_prompt"
   | "use_funnel_config"
   | "company_name"
@@ -72,6 +73,7 @@ const AGENT_COLUMNS = Object.freeze([
   "user_id",
   "instance_id",
   "name",
+  "agent_type",
   "system_prompt",
   "use_funnel_config",
   "company_name",
@@ -139,6 +141,7 @@ function mapAgentRow(row: Record<string, unknown>): OwnedAgentRow {
     id: asString(row.id) ?? "",
     tenantId: asString(row.user_id) ?? "",
     name: asString(row.name) ?? "",
+    agentType: asString(row.agent_type),
     instanceId: asString(row.instance_id),
     systemPrompt: asString(row.system_prompt),
     useFunnelConfig: asBoolean(row.use_funnel_config),

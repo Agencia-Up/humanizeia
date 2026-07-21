@@ -24,7 +24,7 @@ import type { TransferSagaStore } from "../adapters/effects/transfer-store.ts";
 import { sellerPhoneKey } from "./transfer-templates.ts";
 import { PromptBoundConversationAdapter } from "../adapters/llm/prompt-bound-conversation.ts";
 import { createReadQueryRunner } from "./read-query-runner.ts";
-import { ConversationTurnContextPreparer, StockTenantCatalogSource, type TenantCatalogSource } from "./turn-context-preparer.ts";
+import { ConversationTurnContextPreparer, EmptyTenantCatalogSource, StockTenantCatalogSource, type TenantCatalogSource } from "./turn-context-preparer.ts";
 import { evaluatePedroV3PilotScope, type PedroV3ActiveScope } from "../domain/pilot-scope.ts";
 import type { OutboxRecord } from "../domain/effect-intent.ts";
 import { runConversationTurn, type ConversationEngineResult } from "./conversation-engine.ts";
@@ -49,6 +49,7 @@ import { loadPersistedWorkingMemory } from "./working-memory.ts";
 import { validateEffectPlans } from "./finalizer.ts";
 import { createHash } from "node:crypto";
 import type { SensitiveVaultPort } from "../adapters/persistence/sensitive-vault.ts";
+import { allowedToolsForAgentProfile, isGeneralSdrProfile } from "../domain/agent-profile.ts";
 import { CompositeKnowledgeSource, type KnowledgeSource } from "../domain/knowledge.ts";
 import { isWithinAgentResponseSchedule } from "../domain/agent-response-schedule.ts";
 
@@ -93,7 +94,7 @@ export type PilotActiveDeps = {
 };
 
 const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
-const CENTRAL_ALLOWED_TOOLS = ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "knowledge_search"] as const;
+
 
 // Extrai o texto do ÚLTIMO turno do lead do estado (p/ o shadow reprocessar o mesmo bloco que o canônico viu).
 function lastLeadBlock(state: { recentTurns?: { role?: string; text?: string }[] } | undefined | null): string | null {
@@ -256,21 +257,24 @@ export class PilotActiveRoot {
     const photoSource = new V2VehiclePhotoSource(loader);
     const crmSource = new V2CrmReadSource(gateway);
     const knowledgeSource = new CompositeKnowledgeSource(deps.knowledgeSource ?? null);
+    const allowedTools = allowedToolsForAgentProfile(runtimeConfig.agentType);
     const runQuery = createReadQueryRunner(ref, {
       stock: stockSource,
       vehicleDetails: stockSource,
       vehiclePhotos: photoSource,
       crm: crmSource,
       knowledge: knowledgeSource,
+      allowedTools,
     });
-
     const instanceSource = new V2WhatsAppInstanceSource(deps.db);
     const instance = await instanceSource.loadOwnedInstance(ref, runtimeConfig.instanceId);
     if (!instance) throw new PilotActiveRootError("INSTANCE_NOT_FOUND");
     if (instance.provider !== "uazapi") throw new PilotActiveRootError("INSTANCE_PROVIDER_UNSUPPORTED");
 
     const llm = new PromptBoundConversationAdapter(runtimeConfig, model);
-    const catalogSource = deps.catalogSource ?? new StockTenantCatalogSource(stockSource);
+    const catalogSource = deps.catalogSource ?? (isGeneralSdrProfile(runtimeConfig.agentType)
+      ? new EmptyTenantCatalogSource()
+      : new StockTenantCatalogSource(stockSource));
     const contextPreparer = new ConversationTurnContextPreparer(ref, llm, catalogSource, deps.independentClaimExtractor);
 
     // R13-D/4: cérebro central real (OpenAI) só é materializado quando o modo pede; fatos de negócio do prompt.
@@ -372,7 +376,7 @@ export class PilotActiveRoot {
     return {
       brain: this.agentBrain!, llm: this.llm, runQuery: this.runQuery, businessInfo: this.businessInfo,
       contextPreparer: this.contextPreparer, clock: this.clock, portalPromptSha256: this.promptSha256,
-      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: CENTRAL_ALLOWED_TOOLS,
+      limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: allowedToolsForAgentProfile(this.runtimeConfig.agentType),
     };
   }
 
@@ -423,7 +427,7 @@ export class PilotActiveRoot {
       limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 6,
       sdrPolicy: this.sdrPolicy,
       tenantPolicies: this.runtimeConfig.tenantPolicies,
-      allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
+      allowedTools: allowedToolsForAgentProfile(this.runtimeConfig.agentType), providerCapability: { send_message: "none", send_media: "none" },
       // AUTORIA ÚNICA (audit): central_active NUNCA usa o 2º compose (DecisionLlm) — o cérebro autora o ResponseDraft.
       singleAuthor: true,
       // LLM-FIRST (missão SDR real): o engine NÃO gerencia objetivo de funil — o cérebro conduz; guardrails só validam.
