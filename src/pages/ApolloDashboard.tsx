@@ -1550,9 +1550,30 @@ export default function ApolloDashboard() {
               </Button>
               {/* Status CLARO de José ligado/parado + botão direto (sem a inversão do kill-switch). */}
               <JoseStatusBadge />
-              <Badge variant="outline" className="gap-1.5 text-xs h-7 px-2.5">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" /> Conectado às suas contas
-              </Badge>
+              {/* Troca-conta DIRETO no header do José (pedido do dono): mostra a conta ATIVA e,
+                  se houver +1 integrada, vira dropdown pra escolher qual conta o José analisa.
+                  Antes era um selo estático "Conectado às suas contas" — não dizia qual conta
+                  nem deixava trocar. Usa o mesmo estado (useMetaConnection) das Integrações. */}
+              {connectedAccounts.length > 1 ? (
+                <Select value={connectedAccount?.id ?? ''} onValueChange={selectConnectedAccount}>
+                  <SelectTrigger className="h-7 w-auto min-w-[190px] gap-1.5 text-xs">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                    <SelectValue placeholder="Trocar conta de anúncio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {connectedAccounts.map((acc) => (
+                      <SelectItem key={acc.id} value={acc.id} className="text-xs">
+                        {acc.account_name} · {acc.currency || 'BRL'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Badge variant="outline" className="gap-1.5 text-xs h-7 px-2.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  {connectedAccount?.account_name ? `Conta: ${connectedAccount.account_name}` : 'Conectado às suas contas'}
+                </Badge>
+              )}
             </div>
           </div>
         )}
