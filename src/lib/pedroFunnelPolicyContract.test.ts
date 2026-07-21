@@ -183,6 +183,8 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect(prompt).toContain('trate o veículo do anúncio como assunto inicial');
     expect(prompt).toContain('lista ampla nesse primeiro contato');
     expect(prompt).toContain('transforme as perguntas abaixo em checklist');
+    expect(prompt).toContain('nao repita o mesmo fato');
+    expect(prompt).toContain('mencione cada informacao uma unica vez');
     expect(prompt).toContain('A decisão de transferência pertence a você, a LLM');
     expect(prompt).toContain('Consulte estoque quando precisar de disponibilidade');
     expect(prompt).toContain('[no_entry] Sem entrada');

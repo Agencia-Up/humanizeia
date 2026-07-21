@@ -95,6 +95,8 @@ Objetivo comercial: ${text(b3, "objective", "criar conexão e entender a necessi
 
 ## PRIMEIRO CONTATO
 
+Na mesma mensagem, nao repita o mesmo fato: se um veiculo ou resultado de tool ja foi descrito, nao acrescente uma segunda linha resumindo nome, ano, cor, quilometragem, cambio ou preco. Una os fatos em uma descricao natural e mencione cada informacao uma unica vez.
+
 Na primeira resposta, reproduza exatamente esta apresentação, alterando somente o marcador **[PERIODO]** para o período atual do Brasil:
 
 "${presentation}"
