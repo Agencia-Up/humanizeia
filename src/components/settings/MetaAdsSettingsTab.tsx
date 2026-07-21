@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   CheckCircle, XCircle, Loader2, LogOut, ExternalLink,
-  Globe, Building2, Radio, FileImage
+  Globe, Building2, Radio, FileImage, Check
 } from 'lucide-react';
 import { useMetaConnection, MetaPixel, MetaPage, MetaBusiness } from '@/hooks/useMetaConnection';
 import { AccountSelector } from '@/components/onboarding/AccountSelector';
@@ -24,11 +24,10 @@ export function MetaAdsSettingsTab() {
     startOAuth,
     handleCallback,
     consumeOAuthSession,
-    selectAccount,
+    saveSelectedAssets,
     disconnect,
   } = useMetaConnection();
 
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showAddAnother, setShowAddAnother] = useState(false);
   // Trava pra o auto-disparo do OAuth acontecer no máximo uma vez por montagem.
   const autoStartedRef = useRef(false);
@@ -62,12 +61,6 @@ export function MetaAdsSettingsTab() {
       setSearchParams(searchParams, { replace: true });
     }
   }, [searchParams]);
-
-  const handleSelectFromList = (account: any) => {
-    setSelectedAccountId(account.id);
-    selectAccount(account);
-    setShowAddAnother(false);
-  };
 
   const hasDetectedAssets = availableAccounts.length > 0 || pixels.length > 0 || pages.length > 0 || businesses.length > 0;
 
@@ -171,8 +164,7 @@ export function MetaAdsSettingsTab() {
               pages={pages}
               businesses={businesses}
               isConnecting={isConnecting}
-              selectedAccountId={selectedAccountId}
-              onSelectAccount={handleSelectFromList}
+              onSaveSelected={(sel) => { saveSelectedAssets(sel); setShowAddAnother(false); }}
             />
           ) : (
             <div className="space-y-5">
@@ -198,47 +190,71 @@ export function MetaAdsSettingsTab() {
   );
 }
 
-// Detected assets view with tabs
+// Detected assets view — CHECKBOXES: o usuário escolhe o que integrar (Fix 2).
+// Contas / Pixels / Páginas são selecionáveis (múltiplos); só o marcado sobe.
 function DetectedAssetsView({
   accounts,
   pixels,
   pages,
   businesses,
   isConnecting,
-  selectedAccountId,
-  onSelectAccount,
+  onSaveSelected,
 }: {
   accounts: any[];
   pixels: MetaPixel[];
   pages: MetaPage[];
   businesses: MetaBusiness[];
   isConnecting: boolean;
-  selectedAccountId: string | null;
-  onSelectAccount: (account: any) => void;
+  onSaveSelected: (sel: { accounts: any[]; pixels: MetaPixel[]; pages: MetaPage[] }) => void;
 }) {
+  const [selAcc, setSelAcc] = useState<Set<string>>(() => new Set(accounts.map((a) => a.id)));
+  const [selPix, setSelPix] = useState<Set<string>>(() => new Set(pixels.map((p) => p.id)));
+  const [selPage, setSelPage] = useState<Set<string>>(() => new Set(pages.map((p) => p.id)));
+
+  const toggle = (set: Set<string>, setSet: (s: Set<string>) => void, id: string) => {
+    const n = new Set(set);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    setSet(n);
+  };
+  const total = selAcc.size + selPix.size + selPage.size;
+
+  const CheckRow = ({ checked, onClick, children }: { checked: boolean; onClick: () => void; children: React.ReactNode }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+        checked ? 'border-primary/50 bg-primary/5' : 'border-border/50 hover:border-primary/30'
+      }`}
+    >
+      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 ${
+        checked ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground/40'
+      }`}>
+        {checked && <Check className="h-3 w-3" />}
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </button>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 rounded-lg bg-primary/10 p-3 text-sm text-primary">
         <CheckCircle className="h-4 w-4 shrink-0" />
-        <span className="font-medium">
-          Detectamos {accounts.length} conta(s), {pixels.length} pixel(s), {pages.length} página(s)
-          {businesses.length > 0 && `, ${businesses.length} Business Manager(s)`}
-        </span>
+        <span className="font-medium">Facebook conectado. Marque o que quer integrar — só o selecionado sobe.</span>
       </div>
 
       <Tabs defaultValue="accounts" className="w-full">
         <TabsList className="w-full grid grid-cols-4 bg-muted/50">
           <TabsTrigger value="accounts" className="gap-1 text-xs">
             <Globe className="h-3 w-3" />
-            Contas ({accounts.length})
+            Contas ({selAcc.size}/{accounts.length})
           </TabsTrigger>
           <TabsTrigger value="pixels" className="gap-1 text-xs">
             <Radio className="h-3 w-3" />
-            Pixels ({pixels.length})
+            Pixels ({selPix.size}/{pixels.length})
           </TabsTrigger>
           <TabsTrigger value="pages" className="gap-1 text-xs">
             <FileImage className="h-3 w-3" />
-            Páginas ({pages.length})
+            Páginas ({selPage.size}/{pages.length})
           </TabsTrigger>
           <TabsTrigger value="business" className="gap-1 text-xs">
             <Building2 className="h-3 w-3" />
@@ -247,38 +263,16 @@ function DetectedAssetsView({
         </TabsList>
 
         <TabsContent value="accounts" className="mt-3">
-          <p className="text-sm text-muted-foreground mb-3">
-            Selecione a conta de anúncios principal:
-          </p>
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {accounts.map((account) => (
-              <div
-                key={account.id}
-                className="flex items-center justify-between rounded-lg border border-border/50 p-3 hover:border-primary/40 transition-colors"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-sm truncate">{account.name}</p>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="font-mono">{account.id}</span>
-                    {account.currency && <span>• {account.currency}</span>}
-                    {account.business_name && (
-                      <span className="truncate">• {account.business_name}</span>
-                    )}
-                  </div>
+              <CheckRow key={account.id} checked={selAcc.has(account.id)} onClick={() => toggle(selAcc, setSelAcc, account.id)}>
+                <p className="font-medium text-sm truncate">{account.name}</p>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="font-mono">{account.id}</span>
+                  {account.currency && <span>• {account.currency}</span>}
+                  {account.business_name && <span className="truncate">• {account.business_name}</span>}
                 </div>
-                <Button
-                  size="sm"
-                  className="gradient-primary shrink-0 ml-3"
-                  onClick={() => onSelectAccount(account)}
-                  disabled={isConnecting}
-                >
-                  {isConnecting && selectedAccountId === account.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    'Usar esta'
-                  )}
-                </Button>
-              </div>
+              </CheckRow>
             ))}
             {accounts.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-4">Nenhuma conta de anúncios encontrada.</p>
@@ -287,35 +281,22 @@ function DetectedAssetsView({
         </TabsContent>
 
         <TabsContent value="pixels" className="mt-3">
-          <p className="text-sm text-muted-foreground mb-3">
-            Pixels vinculados às suas contas:
-          </p>
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {pixels.map((pixel) => (
-              <div
-                key={pixel.id}
-                className="flex items-center justify-between rounded-lg border border-border/50 p-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-sm truncate">{pixel.name}</p>
-                    {pixel.is_unavailable ? (
-                      <Badge variant="secondary" className="text-[10px] shrink-0">Inativo</Badge>
-                    ) : (
-                      <Badge className="bg-success/20 text-success border-success/30 text-[10px] shrink-0">Ativo</Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                    <span className="font-mono">{pixel.id}</span>
-                    <span>• {pixel.ad_account_name}</span>
-                  </div>
-                  {pixel.last_fired_time && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Último disparo: {new Date(pixel.last_fired_time).toLocaleString('pt-BR')}
-                    </p>
+              <CheckRow key={pixel.id} checked={selPix.has(pixel.id)} onClick={() => toggle(selPix, setSelPix, pixel.id)}>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-sm truncate">{pixel.name}</p>
+                  {pixel.is_unavailable ? (
+                    <Badge variant="secondary" className="text-[10px] shrink-0">Inativo</Badge>
+                  ) : (
+                    <Badge className="bg-success/20 text-success border-success/30 text-[10px] shrink-0">Ativo</Badge>
                   )}
                 </div>
-              </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                  <span className="font-mono">{pixel.id}</span>
+                  <span>• {pixel.ad_account_name}</span>
+                </div>
+              </CheckRow>
             ))}
             {pixels.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-4">Nenhum pixel encontrado.</p>
@@ -324,36 +305,26 @@ function DetectedAssetsView({
         </TabsContent>
 
         <TabsContent value="pages" className="mt-3">
-          <p className="text-sm text-muted-foreground mb-3">
-            Páginas do Facebook vinculadas:
-          </p>
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {pages.map((page) => (
-              <div
-                key={page.id}
-                className="flex items-center gap-3 rounded-lg border border-border/50 p-3"
-              >
-                {page.picture_url ? (
-                  <img
-                    src={page.picture_url}
-                    alt={page.name}
-                    className="h-10 w-10 rounded-lg object-cover shrink-0"
-                  />
-                ) : (
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-                    <FileImage className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-sm truncate">{page.name}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {page.category && <span>{page.category}</span>}
-                    {page.fan_count > 0 && (
-                      <span>• {page.fan_count.toLocaleString('pt-BR')} curtidas</span>
-                    )}
+              <CheckRow key={page.id} checked={selPage.has(page.id)} onClick={() => toggle(selPage, setSelPage, page.id)}>
+                <div className="flex items-center gap-3">
+                  {page.picture_url ? (
+                    <img src={page.picture_url} alt={page.name} className="h-9 w-9 rounded-lg object-cover shrink-0" />
+                  ) : (
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted shrink-0">
+                      <FileImage className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm truncate">{page.name}</p>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {page.category && <span>{page.category}</span>}
+                      {page.fan_count > 0 && <span>• {page.fan_count.toLocaleString('pt-BR')} curtidas</span>}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </CheckRow>
             ))}
             {pages.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-4">Nenhuma página encontrada.</p>
@@ -362,21 +333,12 @@ function DetectedAssetsView({
         </TabsContent>
 
         <TabsContent value="business" className="mt-3">
-          <p className="text-sm text-muted-foreground mb-3">
-            Business Managers identificados:
-          </p>
+          <p className="text-sm text-muted-foreground mb-3">Business Managers identificados (informativo):</p>
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {businesses.map((bm) => (
-              <div
-                key={bm.id}
-                className="flex items-center gap-3 rounded-lg border border-border/50 p-3"
-              >
+              <div key={bm.id} className="flex items-center gap-3 rounded-lg border border-border/50 p-3">
                 {bm.picture_url ? (
-                  <img
-                    src={bm.picture_url}
-                    alt={bm.name}
-                    className="h-10 w-10 rounded-lg object-cover shrink-0"
-                  />
+                  <img src={bm.picture_url} alt={bm.name} className="h-10 w-10 rounded-lg object-cover shrink-0" />
                 ) : (
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
                     <Building2 className="h-5 w-5 text-muted-foreground" />
@@ -387,10 +349,7 @@ function DetectedAssetsView({
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-mono">{bm.id}</span>
                     {bm.verification_status && (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px]"
-                      >
+                      <Badge variant="secondary" className="text-[10px]">
                         {bm.verification_status === 'verified' ? '✓ Verificado' : bm.verification_status}
                       </Badge>
                     )}
@@ -404,6 +363,24 @@ function DetectedAssetsView({
           </div>
         </TabsContent>
       </Tabs>
+
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-muted/30 p-3">
+        <span className="text-sm text-muted-foreground">
+          Selecionado: <b className="text-foreground">{selAcc.size} conta(s) · {selPix.size} pixel(s) · {selPage.size} página(s)</b>
+        </span>
+        <Button
+          className="gradient-primary shrink-0"
+          disabled={isConnecting || total === 0}
+          onClick={() => onSaveSelected({
+            accounts: accounts.filter((a) => selAcc.has(a.id)),
+            pixels: pixels.filter((p) => selPix.has(p.id)),
+            pages: pages.filter((p) => selPage.has(p.id)),
+          })}
+        >
+          {isConnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+          Conectar selecionados
+        </Button>
+      </div>
     </div>
   );
 }

@@ -149,13 +149,16 @@ function getExternalOrigin(req: Request, url: URL) {
 
 function safeReturnTo(req: Request, url: URL, rawReturnTo: string | null) {
   const origin = getExternalOrigin(req, url);
-  if (!rawReturnTo) return `${origin}/settings`;
+  // Fallback vai pra tela que REALMENTE consome a sessao OAuth (/integrations/meta),
+  // nao /settings (que nao monta o MetaAdsSettingsTab -> sessao nunca consumida).
+  const fallback = `${origin}/integrations/meta`;
+  if (!rawReturnTo) return fallback;
   try {
     const parsed = new URL(rawReturnTo, origin);
-    if (parsed.origin !== origin) return `${origin}/settings`;
+    if (parsed.origin !== origin) return fallback;
     return parsed.toString();
   } catch {
-    return `${origin}/settings`;
+    return fallback;
   }
 }
 
@@ -328,7 +331,7 @@ async function handleGetLogin(req: Request, url: URL) {
 }
 
 async function handleGetCallback(req: Request, url: URL) {
-  const fallback = `${getExternalOrigin(req, url)}/settings`;
+  const fallback = `${getExternalOrigin(req, url)}/integrations/meta`;
   const error = url.searchParams.get("error_description") || url.searchParams.get("error");
   if (error) return redirectResponse(withQuery(fallback, { meta_error: error }));
 
@@ -504,6 +507,86 @@ async function handleSaveAccount(req: Request, body: any) {
   return jsonResponse({ account: result.data });
 }
 
+// NOVO (Fix 2): salva MÚLTIPLAS contas + persiste os pixels e páginas SELECIONADOS
+// de uma vez. O usuário escolhe (checkboxes) o que integrar; nada mais é automático.
+async function handleSaveSelected(req: Request, body: any) {
+  const userId = await getAuthenticatedUser(req);
+  if (!userId) return jsonResponse({ error: "Unauthorized" }, 401);
+
+  const accessToken = body?.access_token;
+  const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
+  const pixels = Array.isArray(body?.pixels) ? body.pixels : [];
+  const pages = Array.isArray(body?.pages) ? body.pages : [];
+  if (!accessToken) return jsonResponse({ error: "access_token obrigatorio" }, 400);
+  if (accounts.length === 0 && pixels.length === 0 && pages.length === 0) {
+    return jsonResponse({ error: "Selecione ao menos um item para integrar" }, 400);
+  }
+
+  const admin = adminClient();
+  const { data: profile } = await admin.from("profiles").select("organization_id").eq("id", userId).maybeSingle();
+  const orgId = profile?.organization_id || null;
+  const now = new Date().toISOString();
+  const saved = { accounts: 0, pixels: 0, pages: 0 };
+  const errors: string[] = [];
+
+  for (const a of accounts) {
+    const r = await saveAdAccount(userId, {
+      account_id: String(a.account_id ?? a.id ?? "").replace("act_", ""),
+      account_name: a.name ?? a.account_name ?? `act_${a.account_id ?? a.id ?? ""}`,
+      currency: a.currency || "BRL",
+      timezone: a.timezone_name || a.timezone || "America/Sao_Paulo",
+      access_token: accessToken,
+    });
+    if (r.error) errors.push(`conta ${a.name ?? a.id}: ${r.error}`);
+    else saved.accounts++;
+  }
+
+  for (const px of pixels) {
+    const pixelId = String(px.id ?? px.pixel_id ?? "");
+    if (!pixelId) continue;
+    const { error } = await admin.from("meta_pixels").upsert({
+      user_id: userId,
+      pixel_id: pixelId,
+      pixel_name: px.name ?? px.pixel_name ?? null,
+      access_token_encrypted: accessToken,
+      is_active: true,
+      updated_at: now,
+    }, { onConflict: "user_id,pixel_id" });
+    if (error) errors.push(`pixel ${px.name ?? pixelId}: ${error.message}`);
+    else saved.pixels++;
+  }
+
+  for (const pg of pages) {
+    const pageId = String(pg.id ?? pg.page_id ?? "");
+    if (!pageId) continue;
+    const { error } = await admin.from("meta_pages").upsert({
+      user_id: userId,
+      organization_id: orgId,
+      page_id: pageId,
+      page_name: pg.name ?? pg.page_name ?? null,
+      category: pg.category ?? null,
+      fan_count: pg.fan_count ?? 0,
+      picture_url: pg.picture_url ?? null,
+      access_token_encrypted: accessToken,
+      is_active: true,
+      updated_at: now,
+    }, { onConflict: "user_id,page_id" });
+    if (error) errors.push(`pagina ${pg.name ?? pageId}: ${error.message}`);
+    else saved.pages++;
+  }
+
+  // Devolve a 1a conta salva pro selo do front virar na hora (mesma rede de seguranca do save_account).
+  let account: any = null;
+  if (accounts[0]) {
+    const acctId = String(accounts[0].account_id ?? accounts[0].id ?? "").replace("act_", "");
+    const { data: acc } = await admin.from("ad_accounts").select("*")
+      .eq("user_id", userId).eq("platform", "meta").eq("account_id", acctId).maybeSingle();
+    account = acc || null;
+  }
+
+  return jsonResponse({ ok: true, saved, errors, account });
+}
+
 async function handleConsumeSession(req: Request, sessionId: string) {
   const userId = await getAuthenticatedUser(req);
   if (!userId) return jsonResponse({ error: "Unauthorized" }, 401);
@@ -539,6 +622,8 @@ async function handlePost(req: Request) {
       return handleConnectWithToken(req, body.access_token, body.account_id);
     case "save_account":
       return handleSaveAccount(req, body);
+    case "save_selected":
+      return handleSaveSelected(req, body);
     case "consume_session":
       return handleConsumeSession(req, body.session_id);
     default:

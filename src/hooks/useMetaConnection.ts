@@ -255,7 +255,7 @@ export function useMetaConnection() {
     if (!pendingToken) return;
     setIsConnecting(true);
     try {
-      const { error } = await supabase.functions.invoke('meta-oauth', {
+      const { data, error } = await supabase.functions.invoke('meta-oauth', {
         body: {
           action: 'save_account',
           account_id: account.id,
@@ -274,6 +274,14 @@ export function useMetaConnection() {
       setPages([]);
       setBusinesses([]);
       await fetchConnectedAccount();
+      // Rede de seguranca do selo: a edge JA devolve a conta salva (data.account). Se a
+      // releitura (RPC get_effective_ad_accounts) voltar vazia/lenta, refletimos
+      // "Conectado" com o dado do backend em vez de deixar o selo em "Nao conectado".
+      const saved = (data as any)?.account as ConnectedAccount | undefined;
+      if (saved) {
+        setConnectedAccount((prev) => prev ?? saved);
+        setConnectedAccounts((prev) => (prev.length ? prev : [saved]));
+      }
 
       toast({
         title: 'Conta conectada!',
@@ -285,6 +293,55 @@ export function useMetaConnection() {
         description: err.message || 'Não foi possível salvar a conta.',
         variant: 'destructive',
       });
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Fix 2: salva de uma vez as contas/pixels/paginas SELECIONADOS (checkboxes).
+  const saveSelectedAssets = async (sel: { accounts: any[]; pixels: MetaPixel[]; pages: MetaPage[] }) => {
+    if (!pendingToken) return { success: false };
+    setIsConnecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-oauth', {
+        body: {
+          action: 'save_selected',
+          access_token: pendingToken,
+          accounts: sel.accounts,
+          pixels: sel.pixels,
+          pages: sel.pages,
+        },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      setPendingToken(null);
+      setAvailableAccounts([]);
+      setPixels([]);
+      setPages([]);
+      setBusinesses([]);
+
+      // selo vira na hora com a conta que a edge devolve
+      const saved = (data as any)?.account as ConnectedAccount | undefined;
+      if (saved) {
+        setConnectedAccount((prev) => prev ?? saved);
+        setConnectedAccounts((prev) => (prev.length ? prev : [saved]));
+      }
+      await fetchConnectedAccount();
+
+      const s = (data as any)?.saved || {};
+      toast({
+        title: 'Integrado com sucesso!',
+        description: `${s.accounts || 0} conta(s), ${s.pixels || 0} pixel(s) e ${s.pages || 0} página(s) conectados.`,
+      });
+      return { success: true };
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao integrar',
+        description: err.message || 'Não foi possível salvar a seleção.',
+        variant: 'destructive',
+      });
+      return { success: false };
     } finally {
       setIsConnecting(false);
     }
@@ -327,6 +384,7 @@ export function useMetaConnection() {
     handleCallback,
     consumeOAuthSession,
     selectAccount,
+    saveSelectedAssets,
     selectConnectedAccount,
     disconnect,
     connectWithToken,
