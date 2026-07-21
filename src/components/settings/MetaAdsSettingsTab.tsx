@@ -124,7 +124,10 @@ export function MetaAdsSettingsTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {connectedAccount && !showAddAnother ? (
+          {/* PRECEDÊNCIA: se o Facebook acabou de voltar com ativos pra escolher
+              (hasDetectedAssets), o PICKER manda — mesmo já estando conectado.
+              Senão a tela "Conectado" esconderia os checkboxes e "conectava direto". */}
+          {!hasDetectedAssets && connectedAccount && !showAddAnother ? (
             <div className="space-y-4">
               <div className="rounded-lg bg-muted/50 p-4 space-y-2">
                 <div className="flex items-center justify-between text-sm">
@@ -207,9 +210,11 @@ function DetectedAssetsView({
   isConnecting: boolean;
   onSaveSelected: (sel: { accounts: any[]; pixels: MetaPixel[]; pages: MetaPage[] }) => void;
 }) {
-  const [selAcc, setSelAcc] = useState<Set<string>>(() => new Set(accounts.map((a) => a.id)));
-  const [selPix, setSelPix] = useState<Set<string>>(() => new Set(pixels.map((p) => p.id)));
-  const [selPage, setSelPage] = useState<Set<string>>(() => new Set(pages.map((p) => p.id)));
+  // Começa com NADA marcado: o dono decide exatamente o que integrar (não "conecta
+  // tudo direto"). O botão "Conectar selecionados" fica travado até marcar ao menos 1.
+  const [selAcc, setSelAcc] = useState<Set<string>>(() => new Set());
+  const [selPix, setSelPix] = useState<Set<string>>(() => new Set());
+  const [selPage, setSelPage] = useState<Set<string>>(() => new Set());
 
   const toggle = (set: Set<string>, setSet: (s: Set<string>) => void, id: string) => {
     const n = new Set(set);
