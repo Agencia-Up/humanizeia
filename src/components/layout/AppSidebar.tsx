@@ -452,6 +452,9 @@ export function AppSidebar() {
             <NavGroup label="WhatsApp" collapsed={collapsed}>
               <NavItem collapsed={collapsed} item={{ title: 'Conversas', url: '/conversas', icon: MessageCircle }} />
               <NavItem collapsed={collapsed} item={{ title: 'Pixel & Conversões', url: '/meta-pixels', icon: Plug }} />
+              {/* Relatórios da conta (feedbacks/relatórios da IA — Pedro + Marcos). Saiu de
+                  DENTRO do agente Pedro; fica master-only por estar neste braço da sidebar. */}
+              <NavItem collapsed={collapsed} item={{ title: 'Relatórios', url: '/relatorios', icon: FileText }} />
             </NavGroup>
 
             {/* ── Sistema ── */}

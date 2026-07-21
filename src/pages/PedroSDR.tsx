@@ -24,7 +24,7 @@ import {
   ChevronRight, ChevronLeft, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
   Pin, PinOff, Image, Mic, Video, Upload, X, Trash2, Download,
   Plus, GripVertical, FileSpreadsheet, CheckCircle, XCircle, AlertTriangle,
-  Pencil, Check, Trophy, FileText,
+  Pencil, Check, Trophy,
 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
 import {
@@ -47,7 +47,6 @@ import { FollowupFunnelBuilder } from '@/components/pedro/FollowupFunnelBuilder'
 import { FollowupIAConfigModal } from '@/components/pedro/FollowupIAConfigModal';
 import { ConsignadoVehicleForm } from '@/components/marcos/ConsignadoVehicleForm';
 import { SellerManagerTab } from '@/components/pedro/SellerManagerTab';
-import { FeedbacksArea } from '@/components/pedro/FeedbacksArea';
 import FeedbacksHistoryTab from '@/components/feedback/FeedbacksHistoryTab';
 import { FeedbackAnalytics } from '@/components/pedro/FeedbackAnalytics';
 import { ManagerFeedbackConfigCard } from '@/components/pedro/ManagerFeedbackConfigCard';
@@ -5176,10 +5175,6 @@ export function CrmAvancadoTab({
             ...(!isMarcosCrm ? [
               { id: 'leads',     label: 'Lista',      icon: Users,          badge: 0 },
             ] : []),
-            // Relatórios: histórico dos relatórios que a IA produziu — só master.
-            ...(!isSeller && !isMarcosCrm ? [
-              { id: 'feedbacks', label: 'Relatórios',  icon: FileText,       badge: 0 },
-            ] : []),
             // Diagnóstico e Vendedores: ferramentas do gerente — só master.
             ...(!isSeller && !isMarcosCrm ? [
               { id: 'diagnostico', label: 'Diagnóstico', icon: AlertTriangle, badge: semVendedorTotal },
@@ -6198,10 +6193,8 @@ export function CrmAvancadoTab({
         </DialogContent>
       </Dialog>
 
-      {/* ── Relatórios: histórico dos relatórios que a IA produziu — só master ── */}
-      {view === 'feedbacks' && !isSeller && (
-        <FeedbacksArea />
-      )}
+      {/* Aba "Relatórios" MOVIDA pra sidebar (WhatsApp > Relatórios, /relatorios) — o
+          relatório engloba Pedro + Marcos, não é exclusivo do Pedro. Ver Relatorios.tsx. */}
       {/* Bloco antigo (feedback manual do vendedor) DESATIVADO — mantido só como
           referência; o novo histórico de relatórios substitui esta aba. */}
       {false && view === 'feedbacks' && (

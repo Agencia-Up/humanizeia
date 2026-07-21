@@ -257,6 +257,7 @@ const PainelGeral = lazy(() => import("./pages/PainelGeral"));
 const WhatsAppCampaigns = lazy(() => import("./pages/WhatsAppCampaigns"));
 const WhatsAppGroups = lazy(() => import("./pages/WhatsAppGroups"));
 const MetaPixels = lazy(() => import("./pages/MetaPixels"));
+const Relatorios = lazy(() => import("./pages/Relatorios"));
 const MetaAudiences = lazy(() => import("./pages/MetaAudiences"));
 const WhatsAppCAPI = lazy(() => import("./pages/WhatsAppCAPI"));
 const SalomaoOrchestrator = lazy(() => import("./pages/SalomaoOrchestrator"));
@@ -409,6 +410,7 @@ const App = () => (
                 <Route path="/whatsapp/capi"        element={<ProtectedRoute><Lazy><WhatsAppCAPI /></Lazy></ProtectedRoute>} />
 
                 <Route path="/meta-pixels"          element={<ProtectedRoute><Lazy><MetaPixels /></Lazy></ProtectedRoute>} />
+                <Route path="/relatorios"           element={<ProtectedRoute><Lazy><Relatorios /></Lazy></ProtectedRoute>} />
                 <Route path="/meta-audiences"       element={<ProtectedRoute><Lazy><MetaAudiences /></Lazy></ProtectedRoute>} />
 
                 {/* Salomao em STANDBY (02/07): oculto e rota redireciona pro painel. */}
