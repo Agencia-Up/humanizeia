@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useWhatsAppCAPITrack, useWhatsAppCAPIFunnel, useWhatsAppCAPIStats } from '@/hooks/useWhatsAppCAPI';
+import { useWhatsAppCAPITrack, useWhatsAppCAPIFunnel, useWhatsAppCAPIStats, useCAPISendStatus } from '@/hooks/useWhatsAppCAPI';
 import { useMetaPixels } from '@/hooks/useCAPI';
 import { Activity, ArrowRight, DollarSign, Send, Target, TrendingUp, Users, Zap } from 'lucide-react';
 import { format } from 'date-fns';
@@ -25,6 +25,7 @@ export default function WhatsAppCAPI() {
   const track = useWhatsAppCAPITrack();
   const { data: funnelEvents, isLoading } = useWhatsAppCAPIFunnel();
   const { data: stats } = useWhatsAppCAPIStats();
+  const { data: sendStatus } = useCAPISendStatus();
 
   const [phone, setPhone] = useState('');
   const [stage, setStage] = useState<string>('lead');
@@ -58,6 +59,53 @@ export default function WhatsAppCAPI() {
             Avise o Meta quando um lead avançar no funil — melhora automaticamente seus anúncios
           </p>
         </div>
+
+        {/* Status REAL do envio ao Meta (eventos automaticos de qualidade do lead) */}
+        {(() => {
+          const total = sendStatus?.total7d ?? 0;
+          const ok = total > 0;
+          const LABELS: Record<string, { label: string; cls: string }> = {
+            LeadQualificado: { label: 'Lead qualificado', cls: 'text-emerald-500 dark:text-emerald-400' },
+            LeadPoucoQualificado: { label: 'Lead pouco qualificado', cls: 'text-yellow-500 dark:text-yellow-400' },
+            LeadRuim: { label: 'Lead ruim', cls: 'text-red-500 dark:text-red-400' },
+            Purchase: { label: 'Venda', cls: 'text-emerald-500 dark:text-emerald-400' },
+          };
+          return (
+            <Card className={ok ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-yellow-500/30 bg-yellow-500/5'}>
+              <CardContent className="pt-5 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <span className="text-xl leading-none mt-0.5">{ok ? '✅' : '⏳'}</span>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground">
+                      {ok ? 'Conectado e enviando pro Meta' : 'Aguardando os primeiros eventos'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {ok
+                        ? `Nos últimos 7 dias, ${total} evento${total === 1 ? '' : 's'} de qualidade ${total === 1 ? 'foi enviado' : 'foram enviados'} e confirmados pelo Meta${sendStatus?.ultimo ? ` — último em ${format(new Date(sendStatus.ultimo), 'dd/MM HH:mm')}` : ''}.`
+                        : 'Assim que a IA classificar seus leads, os eventos aparecem aqui e vão pro Meta automaticamente.'}
+                    </p>
+                  </div>
+                </div>
+                {ok && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(sendStatus?.porEvento || {}).map(([ev, n]) => {
+                      const m = LABELS[ev] || { label: ev, cls: 'text-muted-foreground' };
+                      return (
+                        <span key={ev} className="rounded-full border border-border/50 bg-background/60 px-2.5 py-1 text-xs">
+                          <span className={`font-semibold ${m.cls}`}>{n as number}</span>{' '}
+                          <span className="text-muted-foreground">{m.label}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
+                  💡 A IA classifica a qualidade de cada lead e avisa o Meta sozinha. O algoritmo usa isso pra <span className="font-medium text-foreground">buscar mais gente parecida com seus melhores leads</span> — você não precisa fazer nada.
+                </p>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Onboarding card */}
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-5 flex gap-3">

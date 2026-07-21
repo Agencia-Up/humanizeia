@@ -90,6 +90,38 @@ export function useWhatsAppCAPIStats() {
   });
 }
 
+// Status REAL do envio ao Meta (tabela meta_capi_events) — os eventos de QUALIDADE
+// do lead que a IA envia AUTOMATICAMENTE (LeadQualificado/PoucoQualificado/Ruim/
+// Purchase). É separado do wa_capi_funnel (funil manual). Serve pro card de status
+// da tela: prova que está indo pro Meta e explica o que está acontecendo.
+export function useCAPISendStatus() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['capi-send-status', user?.id],
+    queryFn: async () => {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from('meta_capi_events' as any)
+        .select('event_name, status, response_code, sent_at, created_at')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const rows = (data || []) as any[];
+      const enviados = rows.filter((r) => r.status === 'sent');
+      const porEvento: Record<string, number> = {};
+      for (const r of enviados) porEvento[r.event_name] = (porEvento[r.event_name] || 0) + 1;
+      return {
+        total7d: enviados.length,
+        confirmados: enviados.filter((r) => r.response_code === 200).length,
+        porEvento,
+        ultimo: enviados[0]?.sent_at || enviados[0]?.created_at || null,
+      };
+    },
+    enabled: !!user,
+    refetchInterval: 60000,
+  });
+}
+
 // Convenience hooks for each funnel stage
 export function useTrackSale() {
   const track = useWhatsAppCAPITrack();
