@@ -5,6 +5,7 @@ import {
   validateTenantFunnelConfig,
   validateTenantPolicies,
 } from './pedroFunnelPolicyContract';
+import { buildTenantSdrSystemPrompt } from './pedroFunnelPrompt';
 
 describe('Pedro v3 tenant funnel policies', () => {
   const noEntry = {
@@ -141,5 +142,54 @@ describe('Pedro v3 tenant funnel policies', () => {
     );
     expect(inventedEvidence.some((issue) => issue.code === 'evidence_not_in_current_block')).toBe(true);
     expect(validateTenantPolicyDecision(null, 'qualquer bloco', [noEntry])).toEqual([]);
+  });
+
+  it('compiles one canonical SDR prompt with portal precedence and adaptive funnel semantics', () => {
+    const prompt = buildTenantSdrSystemPrompt({
+      bloco1_identidade: { agent_name: 'Carvalho', role: 'consultor', company: 'Icom Motors', niche: 'automóveis' },
+      bloco3_abordagem: {
+        objective: 'entender o veículo e o momento de compra',
+        presentation: '[PERIODO]! Sou o Carvalho, consultor aqui de IA da Icom Motors 😊 Você é aqui de Taubaté mesmo já conhece a nossa loja?',
+        first_question: 'Qual modelo você procura?',
+        avoid: ['não repetir perguntas respondidas'],
+      },
+      bloco4_qualificacao: {
+        objective: 'qualificar com naturalidade',
+        questions: ['Você tem carro para troca?', 'Qual faixa de parcela cabe no orçamento?'],
+        required_data: ['interesse real', 'forma de pagamento'],
+        transfer_now_rules: ['lead pede um vendedor'],
+      },
+      bloco5_ramificacoes: { branches: [{ trigger: 'financiamento', questions: ['entender entrada e parcela'] }] },
+      bloco6_criterios: {
+        qualified_when: ['interesse confirmado e próximo passo claro'],
+        disqualified_when: ['não possui entrada, quando essa regra estiver ativa'],
+        closing_message: 'Tudo bem, não vou tomar mais seu tempo.',
+      },
+      bloco7_transferencia: {
+        required_data: ['contexto confirmado'],
+        customer_message: 'Vou te conectar com um consultor.',
+        internal_summary_template: 'Interesse: (contexto real)',
+      },
+      bloco8_regras: { always: ['ser claro'], never: ['inventar preço'] },
+      bloco9_empresa: { name: 'Icom Motors', address: 'Taubaté', hours: '9h às 19h', website: '', price_range: '', differentiators: '' },
+      tenant_policies: [noEntry],
+    });
+
+    expect(prompt).toContain('# PEDRO V3 — PROMPT COMERCIAL DO PORTAL');
+    expect(prompt).toContain('A mensagem atual do lead vence um objetivo antigo');
+    expect(prompt).toContain('reproduza exatamente esta apresentação');
+    expect(prompt).toContain('[PERIODO]! Sou o Carvalho');
+    expect(prompt).toContain('se houver ');
+    expect(prompt).toContain('trate o veículo do anúncio como assunto inicial');
+    expect(prompt).toContain('lista ampla nesse primeiro contato');
+    expect(prompt).toContain('transforme as perguntas abaixo em checklist');
+    expect(prompt).toContain('A decisão de transferência pertence a você, a LLM');
+    expect(prompt).toContain('Consulte estoque quando precisar de disponibilidade');
+    expect(prompt).toContain('[no_entry] Sem entrada');
+    expect((prompt.match(/## PRIMEIRO CONTATO/g) ?? []).length).toBe(1);
+    expect((prompt.match(/## QUALIFICAÇÃO ADAPTATIVA/g) ?? []).length).toBe(1);
+    expect((prompt.match(/## CAPACIDADES OPERACIONAIS/g) ?? []).length).toBe(1);
+    expect(prompt).not.toContain('SE O CLIENTE RESPONDER');
+    expect(prompt).not.toContain('if (');
   });
 });

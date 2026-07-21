@@ -799,6 +799,9 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Apresentação na primeira mensagem</Label>
+              <p className="text-[10px] text-muted-foreground/80 mt-1">
+                A LLM reproduz este texto na abertura. Use [PERIODO] para o horário do Brasil; não coloque aqui uma segunda pergunta.
+              </p>
               <Textarea
                 value={cfg.bloco3_abordagem.presentation}
                 onChange={(e) => setCfg({ ...cfg, bloco3_abordagem: { ...cfg.bloco3_abordagem, presentation: e.target.value } })}
@@ -843,19 +846,19 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               />
             </div>
             <ArrayEditor
-              label="Perguntas obrigatórias (na ordem)"
+              label="Perguntas preferenciais (a LLM adapta ao diálogo)"
               items={cfg.bloco4_qualificacao.questions}
               onChange={(questions) => setCfg({ ...cfg, bloco4_qualificacao: { ...cfg.bloco4_qualificacao, questions } })}
               placeholder="Ex: Qual é o seu nome?"
             />
             <ArrayEditor
-              label="Dados obrigatórios a coletar"
+              label="Dados úteis antes da transferência"
               items={cfg.bloco4_qualificacao.required_data}
               onChange={(required_data) => setCfg({ ...cfg, bloco4_qualificacao: { ...cfg.bloco4_qualificacao, required_data } })}
               placeholder="Ex: Nome completo"
             />
             <ArrayEditor
-              label="Hora de transferir (gatilhos imediatos)"
+              label="Sinais de transferência (a LLM interpreta no contexto)"
               items={cfg.bloco4_qualificacao.transfer_now_rules || []}
               onChange={(transfer_now_rules) => setCfg({ ...cfg, bloco4_qualificacao: { ...cfg.bloco4_qualificacao, transfer_now_rules } })}
               placeholder="Ex: Cliente informou que quer financiar e tem carro para troca"

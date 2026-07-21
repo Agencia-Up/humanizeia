@@ -22,6 +22,7 @@ import {
   validateTenantFunnelConfig,
   validateTenantPolicies,
 } from '../../../src/lib/pedroFunnelPolicyContract.ts';
+import { buildTenantSdrSystemPrompt } from '../../../src/lib/pedroFunnelPrompt.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,7 +46,10 @@ function val(obj: any, key: string, fallback = '(não definido)'): string {
 }
 
 // ── Builder do system prompt final ───────────────────────────────────────────
-function buildSystemPrompt(cfg: any): string {
+// Mantido apenas durante a migração para não perder o diff histórico. O runtime
+// usa exclusivamente o compilador compartilhado abaixo; esta implementação
+// antiga deve ser removida quando o rollout do novo contrato estiver concluído.
+function legacyBuildSystemPrompt(cfg: any): string {
   const b1 = cfg.bloco1_identidade || {};
   const b3 = cfg.bloco3_abordagem || {};
   const b4 = cfg.bloco4_qualificacao || {};
@@ -254,7 +258,7 @@ serve(async (req) => {
       throw new Error(`Políticas comerciais inválidas: ${policyErrors.map((issue) => issue.message).join(' ')}`);
     }
 
-    const newPrompt = buildSystemPrompt(cfg);
+    const newPrompt = buildTenantSdrSystemPrompt(cfg);
 
     // 1) salva o prompt gerado no agent_funnel_config
     const { error: cfgUpdErr } = await supabase
