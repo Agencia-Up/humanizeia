@@ -1613,12 +1613,12 @@ export default function ApolloDashboard() {
               <AlertTriangle className="h-10 w-10 text-amber-400" />
               <div className="text-center space-y-1">
                 <p className="font-semibold text-amber-400">Conta Meta Ads não conectada</p>
-                <p className="text-xs text-muted-foreground max-w-sm">Para o JOSÉ analisar suas campanhas, conecte sua conta Meta Ads primeiro.</p>
+                <p className="text-xs text-muted-foreground max-w-sm">Para o JOSÉ analisar suas campanhas, conecte sua conta na aba <span className="font-medium text-foreground">Integrações</span> (barra lateral). É lá que ficam as conexões de Meta / Facebook Ads — o JOSÉ usa a conta que você conectar por lá.</p>
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => { window.location.href = '/connect-accounts'; }} className="gap-2 bg-amber-500 hover:bg-amber-600 text-black">
+                <Button onClick={() => { window.location.href = '/integrations'; }} className="gap-2 bg-amber-500 hover:bg-amber-600 text-black">
                   <Zap className="h-4 w-4" />
-                  Conectar Meta Ads
+                  Ir para Integrações
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleDiagnose} disabled={isDiagnosing} className="gap-2 text-xs">
                   {isDiagnosing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Activity className="h-3 w-3" />}
