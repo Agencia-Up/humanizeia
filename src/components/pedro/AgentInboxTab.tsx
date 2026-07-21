@@ -106,6 +106,25 @@ function fmtTime(iso: string) {
   return format(d, 'dd/MM HH:mm', { locale: ptBR });
 }
 
+// #1 — Divisoria de dia no chat (estilo WhatsApp): "Hoje" / "Ontem" / "21/07/2026".
+function fmtDaySep(iso: string) {
+  const d = new Date(iso);
+  if (isToday(d)) return 'Hoje';
+  if (isYesterday(d)) return 'Ontem';
+  return format(d, 'dd/MM/yyyy', { locale: ptBR });
+}
+
+// #2 — Hora relativa curta pra lista lateral: "agora" / "ha X min" / senao a hora.
+function fmtRelative(iso: string | null | undefined) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return 'agora';
+  if (diffMin < 60) return `há ${diffMin} min`;
+  return fmtTime(iso);
+}
+
 function initials(name: string | null, phone: string) {
   if (name && name.length >= 2) return name.slice(0, 2).toUpperCase();
   return cleanPhone(phone).slice(-2);
@@ -141,6 +160,27 @@ function phoneCanonical(value: string | null | undefined): string {
   if (core.startsWith('55') && core.length > 11) core = core.slice(2);
   if (core.length === 11 && core[2] === '9') core = core.slice(0, 2) + core.slice(3);
   return core;
+}
+
+/* #6 — Todas as formas plausiveis de um numero BR (com/sem DDI 55, com/sem 9o digito),
+   pra buscar a foto no wa_contacts sem depender do formato exato salvo. Ex.: lead
+   "5512991097564" casa com contato salvo como "12991097564". */
+function phoneVariants(value: string | null | undefined): string[] {
+  const clean = cleanPhone(value);
+  if (!clean) return [];
+  const set = new Set<string>([clean, phoneCanonical(value)]);
+  let core = clean;
+  if (core.startsWith('55') && core.length > 11) core = core.slice(2);
+  set.add(core);
+  set.add('55' + core);
+  if (core.length === 11 && core[2] === '9') {
+    const no9 = core.slice(0, 2) + core.slice(3);
+    set.add(no9); set.add('55' + no9);
+  } else if (core.length === 10) {
+    const with9 = core.slice(0, 2) + '9' + core.slice(2);
+    set.add(with9); set.add('55' + with9);
+  }
+  return Array.from(set).filter(Boolean);
 }
 
 
@@ -415,7 +455,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
 
   useEffect(() => {
     if (!userId || leads.length === 0) return;
-    const phones = Array.from(new Set(leads.map(lead => cleanPhone(lead.remote_jid)).filter(Boolean)));
+    const phones = Array.from(new Set(leads.flatMap(lead => phoneVariants(lead.remote_jid))));
     if (phones.length === 0) return;
 
     let cancelled = false;
@@ -463,7 +503,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     });
     if (missing.length === 0) return;
 
-    for (const lead of missing.slice(0, 6)) {
+    for (const lead of missing.slice(0, 20)) {
       const phone = cleanPhone(lead.remote_jid);
       profilePhotoAttemptsRef.current.add(phone);
       supabase.functions.invoke('wa-sync-profile-photo', {
@@ -642,7 +682,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         if (Math.abs(new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) > 120000) return false;
         const aMedia = a.message_type !== 'text';
         const bMedia = b.message_type !== 'text';
-        if (aMedia && bMedia) return a.message_type === b.message_type;
+        // #5 — audio/ptt/voice contam como o MESMO tipo: assim o audio TOCAVEL do Pedro
+        // V2 substitui o .enc do inbox (que nao abre) mesmo com rotulo diferente.
+        const normType = (t: string) => (t === 'ptt' || t === 'voice') ? 'audio' : t;
+        if (aMedia && bMedia) return normType(a.message_type) === normType(b.message_type);
         return (a.content || '').trim() === (b.content || '').trim();
       };
       const merged: Message[] = [...inboxRows];
@@ -1347,6 +1390,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const transferAtMs = transferInfo ? new Date(transferInfo.at).getTime() : null;
   const transferSellerName = transferInfo?.toMemberId ? (sellerNameById.get(transferInfo.toMemberId) || null) : null;
   const selectedAssignedSeller = selectedLead?.assigned_to_id ? (sellerNameById.get(selectedLead.assigned_to_id) || null) : null;
+  // #3 — ultima atualizacao = mensagem mais recente (vendedor OU IA); lista ja ordenada asc.
+  const lastActivityIso = messages.length ? messages[messages.length - 1].created_at : null;
   // Metrica de tempo ate o 1o contato: do OK (confirmed_at) ate a 1a mensagem ENVIADA depois dele.
   const firstPostIdx = transferAtMs != null ? messages.findIndex(m => new Date(m.created_at).getTime() >= transferAtMs) : -1;
   const firstContactMsg = transferAtMs != null ? messages.find(m => m.direction === 'outgoing' && new Date(m.created_at).getTime() >= transferAtMs) : null;
@@ -1629,7 +1674,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             {lead.lead_name || lead.remote_jid}
                           </p>
                           <span className="text-[11px] text-muted-foreground shrink-0">
-                            {lead.last_interaction_at ? fmtTime(lead.last_interaction_at) : ''}
+                            {fmtRelative(lead.last_interaction_at || leadArrivalIso(lead))}
                           </span>
                         </div>
                         <div className="mt-1 flex items-center gap-2">
@@ -1758,6 +1803,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                     <span className="mx-1 hidden text-[#3a4650] sm:inline">|</span>
                     <span className="truncate">{selectedAssignedSeller ? `Vendedor: ${selectedAssignedSeller}` : `${selectedLead.message_count ?? 0} msgs`}</span>
                   </p>
+                  {lastActivityIso && (
+                    <p className={`${unified ? 'text-[11px] text-[#8696a0]' : 'text-[11px] text-muted-foreground'} truncate`}>
+                      Última atualização {fmtTime(lastActivityIso)}
+                    </p>
+                  )}
                   {selectedLeadTags.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
                       {selectedLeadTags.slice(0, 4).map(tag => (
@@ -1881,6 +1931,13 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   <div className="space-y-2">
                     {messages.map((msg, idx) => {
                       const isOutgoing = msg.direction === 'outgoing';
+                      // #4 — origem REAL do balao: IA = log do Pedro (id "wch-" + saida);
+                      // vendedor = envio manual (inbox + saida); lead = qualquer entrada.
+                      const isIa = isOutgoing && String(msg.id).startsWith('wch-');
+                      const isSeller = isOutgoing && !isIa;
+                      // #1 — divisoria de dia quando muda o dia da mensagem anterior.
+                      const prevMsg = idx > 0 ? messages[idx - 1] : null;
+                      const showDaySep = !prevMsg || new Date(prevMsg.created_at).toDateString() !== new Date(msg.created_at).toDateString();
                       // FASE 1: fase da IA = mensagens ANTES da transferencia confirmada.
                       const curIa = transferAtMs != null && new Date(msg.created_at).getTime() < transferAtMs;
                       const showIaHeader = transferAtMs != null && idx === 0 && curIa;
@@ -1898,6 +1955,13 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                       const caption = displayText(msg.content);
                       return (
                         <Fragment key={msg.id}>
+                          {showDaySep && (
+                            <div className="flex justify-center my-2">
+                              <span className="text-[11px] text-[#8696a0] bg-[#182229] px-3 py-1 rounded-lg shadow-sm uppercase tracking-wide">
+                                {fmtDaySep(msg.created_at)}
+                              </span>
+                            </div>
+                          )}
                           {showIaHeader && (
                             <div className="flex justify-center my-2">
                               <span className="inline-flex items-center gap-1.5 text-[11px] text-violet-200/90 bg-[#2a2340] px-3 py-1 rounded-full shadow-sm">
@@ -1908,9 +1972,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           {showHandoff && handoffCard}
                         <div data-media-resolving={isResolvingMedia || undefined} className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                           <div className={`${unified ? 'max-w-[88%] rounded-2xl px-3.5 py-2.5 sm:max-w-[76%] sm:px-4 lg:max-w-[68%]' : 'max-w-[78%] rounded-lg px-3 py-2'} ${zoomClasses.bubble} leading-relaxed shadow-md ${
-                            isOutgoing
-                              ? (curIa ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm' : 'bg-[#075e54] text-[#e9edef] rounded-tr-sm')
-                              : (curIa ? 'bg-[#241f33] text-[#e9edef] rounded-tl-sm border border-violet-500/20' : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5')
+                            isIa
+                              ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm border border-violet-400/30'
+                              : isSeller
+                              ? 'bg-[#075e54] text-[#e9edef] rounded-tr-sm'
+                              : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5'
                           }`}>
                             {album.length > 0 ? (
                               <div className={`grid ${album.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mb-2 max-w-[min(76vw,360px)]`}>
