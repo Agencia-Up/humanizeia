@@ -48,7 +48,7 @@ const AGENT_COLUMNS: readonly V2ColumnName[] = [
   "model", "temperature", "sdr_goal", "qualification_questions", "sells_motorcycles",
   "blocked_categories", "rag_restricted", "is_active", "updated_at",
 ];
-const FUNNEL_COLUMNS: readonly V2ColumnName[] = ["agent_id", "user_id", "generated_system_prompt", "updated_at"];
+const FUNNEL_COLUMNS: readonly V2ColumnName[] = ["agent_id", "user_id", "generated_system_prompt", "tenant_policies", "updated_at"];
 const METADATA_COLUMNS: readonly V2ColumnName[] = ["id", "user_id", "platform", "is_active", "updated_at"];
 const SECRET_COLUMNS: readonly V2ColumnName[] = ["id", "user_id", "platform", "api_key_encrypted", "is_active"];
 const WA_INSTANCE_COLUMNS: readonly V2ColumnName[] = ["id", "user_id", "instance_name", "api_url", "provider"];
@@ -114,6 +114,13 @@ function sanitizedFailure(): Error {
   return new Error("SUPABASE_READ_FAILURE");
 }
 
+class OptionalFunnelColumnMissingError extends Error {
+  constructor() {
+    super("OPTIONAL_FUNNEL_COLUMN_MISSING");
+    this.name = "OptionalFunnelColumnMissingError";
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -177,7 +184,18 @@ export class SupabaseReadOnlyDatabase implements V2ReadDatabase {
   }
 
   async selectOne(table: V2TableName, columns: readonly V2ColumnName[], where: V2WhereEquals): Promise<Record<string, unknown> | null> {
-    const rows = await this.query(table, "selectOne", columns, where, 1);
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.query(table, "selectOne", columns, where, 1);
+    } catch (error) {
+      // Rolling deploy compatibility: the policy column is additive. Until its
+      // migration reaches every Supabase project, keep reading the portal prompt.
+      if (!(error instanceof OptionalFunnelColumnMissingError)
+        || table !== "agent_funnel_config"
+        || !columns.includes("tenant_policies")) throw error;
+      const legacyColumns = columns.filter((column) => column !== "tenant_policies");
+      rows = await this.query(table, "selectOne", legacyColumns, where, 1);
+    }
     return rows[0] ?? null;
   }
 
@@ -292,7 +310,13 @@ export class SupabaseReadOnlyDatabase implements V2ReadDatabase {
     }
 
     try {
-      if (!res.ok) throw sanitizedFailure();
+      if (!res.ok) {
+        const errorBody = await this.readBounded(res, controller.signal).catch(() => "");
+        if (res.status === 400 && errorBody.includes("column agent_funnel_config.tenant_policies does not exist")) {
+          throw new OptionalFunnelColumnMissingError();
+        }
+        throw sanitizedFailure();
+      }
       if (!(res.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) throw sanitizedFailure();
 
       const text = await this.readBounded(res, controller.signal);
@@ -317,7 +341,8 @@ export class SupabaseReadOnlyDatabase implements V2ReadDatabase {
         }
         return projected;
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof OptionalFunnelColumnMissingError) throw error;
       throw sanitizedFailure();
     } finally {
       // O deadline cobre fetch, headers e o consumo COMPLETO do corpo.

@@ -71,6 +71,26 @@ function stringFromSecret(obj: Record<string, unknown>, keys: readonly string[])
   return "";
 }
 
+const STOCK_LOAD_RETRY_DELAY_MS = 150;
+
+function isRetryableStockLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /SAFE_FETCH_FAILURE:\s*(?:TIMEOUT|NETWORK_ERROR|HTTP_STATUS_(?:408|425|429|5\d\d))\b/i.test(message);
+}
+
+async function loadStockSnapshotWithBoundedRetry<T>(load: () => Promise<T>): Promise<T> {
+  try {
+    return await load();
+  } catch (error) {
+    // SafeHttpClient already retries transient GET failures. This single
+    // loader-level retry also covers POST feeds such as BNDV, without retrying
+    // validation/auth/configuration failures or creating a retry storm.
+    if (!isRetryableStockLoadError(error)) throw error;
+    await new Promise<void>((resolve) => setTimeout(resolve, STOCK_LOAD_RETRY_DELAY_MS));
+    return load();
+  }
+}
+
 export class V2StockLoader implements StockLoader {
   constructor(
     private readonly gateway: V2ReadGateway,
@@ -106,7 +126,7 @@ export class V2StockLoader implements StockLoader {
 
     const cacheExtraKey = `${integration.id}:${integration.updatedAt || "no-ts"}`;
 
-    return this.cache.getOrFetch(ref.tenantId, provider, cacheExtraKey, async () => {
+    return this.cache.getOrFetch(ref.tenantId, provider, cacheExtraKey, () => loadStockSnapshotWithBoundedRetry(async () => {
       const cred = parseSecretMaterial(integrationRes.secret.material);
 
       if (provider === "revendamais") {
@@ -190,6 +210,6 @@ export class V2StockLoader implements StockLoader {
           }
         })
         .filter((v: NormalizedVehicle | null): v is NormalizedVehicle => v !== null);
-    });
+    }));
   }
 }

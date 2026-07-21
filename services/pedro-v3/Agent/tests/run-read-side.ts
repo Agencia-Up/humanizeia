@@ -164,7 +164,7 @@ class RecordingV2ReadDatabase implements V2ReadDatabase {
 const TENANT_A = "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0";
 const TENANT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const AGENT_RAW = "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185"; // "Aloan" — prompt cru
-const AGENT_FUNNEL = "11111111-2222-4333-8444-555555555555"; // usa funil
+const AGENT_FUNNEL = "11111111-2222-4333-8444-555555555555"; // usa políticas do funil, prompt do portal
 const AGENT_INACTIVE = "99999999-9999-4999-8999-999999999999";
 const AGENT_BADTEMP = "22222222-2222-4222-8222-222222222222";
 const AGENT_BADMODEL = "33333333-3333-4333-8333-333333333333";
@@ -199,7 +199,7 @@ function agent(over: Partial<OwnedAgentRow> & { id: string; tenantId: string }):
 
 const agents: OwnedAgentRow[] = [
   agent({ id: AGENT_RAW, tenantId: TENANT_A }),
-  agent({ id: AGENT_FUNNEL, tenantId: TENANT_A, useFunnelConfig: true, systemPrompt: PROMPT_CANARY }),
+  agent({ id: AGENT_FUNNEL, tenantId: TENANT_A, useFunnelConfig: true, systemPrompt: "Prompt atual editado no portal." }),
   agent({ id: AGENT_INACTIVE, tenantId: TENANT_A, isActive: false }),
   agent({ id: AGENT_BADTEMP, tenantId: TENANT_A, temperature: 5 as unknown as number }),
   agent({ id: AGENT_BADMODEL, tenantId: TENANT_A, model: 123 as unknown as string }),
@@ -248,15 +248,15 @@ async function main(): Promise<void> {
   check("prompt cru resolvido", r1.ok && r1.config.promptSource === "raw_system_prompt" && r1.config.promptText === "Você é o Aloan, SDR da loja.");
 
   const r7 = await source.load({ tenantId: TENANT_A, agentId: AGENT_FUNNEL });
-  check("prompt de funil resolvido", r7.ok && r7.config.promptSource === "funnel_generated" && r7.config.promptText === "Prompt gerado pelo funil.", JSON.stringify(r7));
+  check("prompt do portal vence artefato gerado do funil", r7.ok && r7.config.promptSource === "raw_system_prompt" && r7.config.promptText === "Prompt atual editado no portal.", JSON.stringify(r7));
 
   const r8a = await source.load({ tenantId: TENANT_A, agentId: AGENT_EMPTY_FUNNEL });
-  check("funil vazio → PROMPT_SOURCE_EMPTY", isErr(r8a, "PROMPT_SOURCE_EMPTY"), JSON.stringify(r8a));
+  check("artefato de funil vazio não apaga prompt do portal", r8a.ok && r8a.config.promptText === PROMPT_CANARY, JSON.stringify(r8a));
   const r8b = await new V2TenantConfigSource(new FakeV2ReadGateway({
     agents: [agent({ id: "raw-empty", tenantId: TENANT_A, systemPrompt: "   " })], funnels: [], integrationsByTenant: {},
   })).load({ tenantId: TENANT_A, agentId: "raw-empty" });
   check("system_prompt vazio → PROMPT_SOURCE_EMPTY", isErr(r8b, "PROMPT_SOURCE_EMPTY"), JSON.stringify(r8b));
-  check("erro de prompt vazio não vaza conteúdo do prompt", !containsValue(r8a, PROMPT_CANARY));
+  check("erro de prompt vazio não vaza conteúdo do prompt", !containsValue(r8b, PROMPT_CANARY));
 
   // ── estoque ───────────────────────────────────────────────────────────────
   check("RevendaMais vence BNDV", r1.ok && r1.config.stockProvider === "revendamais" && r1.config.stockSecretRef?.integrationId === "int-rm");
@@ -754,6 +754,43 @@ async function main(): Promise<void> {
   check("resolveUrls reconstrói URLs por hashes", urlsResolved.length === 1 && urlsResolved[0].includes("101_1.jpg"));
 
   // Teste de validação de URL de foto insegura
+  // Falha transitória de feed BNDV: POST não deve deixar o primeiro lead
+  // morrer como UPSTREAM quando a mesma leitura funciona na tentativa seguinte.
+  const bndvGateway = new FakeV2ReadGateway({
+    agents,
+    funnels: [],
+    integrationsByTenant: { [TENANT_A]: [BNDV] },
+    integrationSecrets: { "int-bndv": { api_token: SECRET_TOKEN, feed_url: "unused" } },
+  });
+  const bndvCredentials = new FakeCredentialProvider({
+    "int-bndv": { tenantId: TENANT_A, provider: "bndv", material: JSON.stringify({ api_token: SECRET_TOKEN }) },
+  });
+  let transientFetches = 0;
+  const transientTransport = new FakeHttpTransport(async () => {
+    transientFetches += 1;
+    if (transientFetches === 1) throw new Error("temporary upstream interruption");
+    return new Response(JSON.stringify({ data: { vehiclesBy: mockVehicles.map((v) => ({
+      modelName: v.model,
+      markName: v.make,
+      year: v.year,
+      km: 90000,
+      saleValue: v.price,
+      color: v.color ?? "Prata",
+      transmissionName: v.gear ?? "Manual",
+      pictureJs: JSON.stringify(v.images_large ?? []),
+      vehicleExternalKey: String(v.vehicle_id),
+      subCategoryName: v.body_type ?? "hatch",
+    })) } }), { headers: new Headers({ "content-type": "application/json" }) });
+  });
+  const transientLoader = new V2StockLoader(
+    bndvGateway,
+    bndvCredentials,
+    new ReadCache<NormalizedVehicle[]>(fakeClock, { enabled: true, ttlMs: 60000, maxItems: 10 }),
+    new SafeHttpClient(dnsFake, transientTransport, sleeperFake),
+  );
+  const transientVehicles = await transientLoader.loadAll({ tenantId: TENANT_A, agentId: AGENT_RAW });
+  check("falha transitória BNDV recupera com retry limitado", transientVehicles.length > 0 && transientFetches === 2, `vehicles=${transientVehicles.length} fetches=${transientFetches}`);
+
   const resMobi = await stockSource.search({ tenantId: TENANT_A, agentId: AGENT_RAW }, { modelo: "Mobi" });
   check("foto com URL insegura (HTTP) é descartada", resMobi.items.length === 1 && resMobi.items[0].photoIds === undefined);
 

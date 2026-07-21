@@ -3,8 +3,9 @@
 // ----------------------------------------------------------------------------
 // Renderiza dentro da aba "Agente IA" do Pedro (master). Permite ao master
 // configurar o funil em 8 acordeons (BLOCO 2 é fixo, não editável). Ao salvar,
-// chama a edge function generate-agent-funnel-prompt que monta o system_prompt
-// final e sobrescreve wa_ai_agents.system_prompt (com backup automático).
+// chama a edge function generate-agent-funnel-prompt que monta o prompt derivado
+// e sincroniza wa_ai_agents.system_prompt (com backup automático). O segundo é
+// a fonte efetiva única do texto que o runtime envia à LLM.
 //
 // Botão "Restaurar Prompt Anterior" → rollback 1-clique.
 // ============================================================================
@@ -19,6 +20,16 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  TENANT_POLICY_ACTIONS,
+  TENANT_POLICY_DOMAINS,
+  validateTenantFunnelConfig,
+  validateTenantPolicies,
+  type TenantFunnelPolicy,
+  type TenantPolicyAction,
+  type TenantPolicyDomain,
+} from '@/lib/pedroFunnelPolicyContract';
 import {
   Accordion,
   AccordionContent,
@@ -61,6 +72,7 @@ interface FunnelConfig {
   bloco7_transferencia: Bloco7;
   bloco8_regras: Bloco8;
   bloco9_empresa: Bloco9;
+  tenant_policies: TenantFunnelPolicy[];
 }
 
 const DEFAULT_CONFIG: FunnelConfig = {
@@ -70,16 +82,14 @@ const DEFAULT_CONFIG: FunnelConfig = {
     objective: '',
     questions: [],
     required_data: [],
-    transfer_now_rules: [
-      'Cliente informou que quer financiar e tem carro para troca',
-      'Cliente pediu para falar com vendedor ou consultor',
-    ],
+    transfer_now_rules: [],
   },
   bloco5_ramificacoes: { branches: [] },
   bloco6_criterios: { qualified_when: [], disqualified_when: [], closing_message: '' },
   bloco7_transferencia: { required_data: [], customer_message: '', internal_summary_template: '' },
   bloco8_regras: { always: [], never: [] },
   bloco9_empresa: { name: '', address: '', hours: '', website: '', price_range: '', differentiators: '' },
+  tenant_policies: [],
 };
 
 // ── Auto-seed: pré-preenche o funil com dados que o agente JÁ TEM em wa_ai_agents
@@ -106,26 +116,23 @@ function seedConfigFromAgent(agent: any): FunnelConfig {
     bloco3_abordagem: {
       objective: 'Criar conexão e identificar o cliente',
       presentation: name && company ? `Oi! Sou o ${name}, da ${company} 😊` : '',
-      first_question: 'Você é de qual cidade?',
-      avoid: ['Falar preço antes de qualificar', 'Pressionar o cliente', 'Pular etapas do funil'],
+      first_question: '',
+      avoid: [],
     },
     bloco4_qualificacao: {
       objective: 'Entender o perfil e necessidade do cliente',
-      questions: qq.length > 0 ? qq : ['Qual é o seu nome?', 'O que você está procurando?'],
-      required_data: ['Nome completo', 'Contato (telefone)', 'Interesse específico'],
-      transfer_now_rules: [
-        'Cliente informou que quer financiar e tem carro para troca',
-        'Cliente pediu para falar com vendedor ou consultor',
-      ],
+      questions: qq,
+      required_data: [],
+      transfer_now_rules: [],
     },
     bloco5_ramificacoes: { branches: [] },
     bloco6_criterios: {
-      qualified_when: ['Tem interesse real de compra', 'Tem condições financeiras compatíveis', 'Forneceu todos os dados obrigatórios'],
-      disqualified_when: ['Sem condições financeiras mínimas no momento'],
-      closing_message: '{nome}, prefiro ser honesto com você — no momento talvez não seja o melhor cenário, mas pode me chamar quando a situação mudar 😊',
+      qualified_when: [],
+      disqualified_when: [],
+      closing_message: '',
     },
     bloco7_transferencia: {
-      required_data: ['Nome completo', 'Contato (telefone)', 'Interesse específico'],
+      required_data: [],
       customer_message: name && company
         ? `{nome}, vou te conectar agora com nosso especialista da ${company}! 🤝`
         : '{nome}, vou te conectar agora com nosso especialista! 🤝',
@@ -145,6 +152,7 @@ function seedConfigFromAgent(agent: any): FunnelConfig {
       price_range: '',
       differentiators: services || (sdrGoal ? `Objetivo: ${sdrGoal}` : ''),
     },
+    tenant_policies: [],
   };
 }
 
@@ -161,9 +169,14 @@ function ArrayEditor({
   placeholder?: string;
 }) {
   const [draft, setDraft] = useState('');
+  const displayLabel = label.startsWith('Perguntas obrigat') && label.includes('ordem')
+    ? 'Perguntas preferenciais (adapte ao diÃ¡logo)'
+    : label.startsWith('Hora de transfer')
+      ? 'Sinais de transferÃªncia (a LLM interpreta no contexto)'
+      : label;
   return (
     <div className="space-y-2">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Label className="text-xs text-muted-foreground">{displayLabel}</Label>
       <div className="space-y-1.5">
         {items.map((item, i) => (
           <div key={i} className="flex items-center gap-2">
@@ -290,14 +303,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     if (!cfg.bloco1_identidade.agent_name?.trim()) missing.push('Bloco 1: Nome do agente');
     if (!cfg.bloco1_identidade.company?.trim()) missing.push('Bloco 1: Empresa');
     if (!cfg.bloco3_abordagem.presentation?.trim()) missing.push('Bloco 3: Apresentação inicial');
-    if (!cfg.bloco3_abordagem.first_question?.trim()) missing.push('Bloco 3: Primeira pergunta');
-    if (!cfg.bloco4_qualificacao.questions || cfg.bloco4_qualificacao.questions.length === 0)
-      missing.push('Bloco 4: Pelo menos 1 pergunta de qualificação');
-    if (!cfg.bloco7_transferencia.required_data || cfg.bloco7_transferencia.required_data.length === 0)
-      missing.push('Bloco 7: Dados obrigatórios para transferência');
-    if (!cfg.bloco7_transferencia.customer_message?.trim()) missing.push('Bloco 7: Mensagem ao cliente');
     if (!cfg.bloco9_empresa.name?.trim()) missing.push('Bloco 9: Nome da empresa');
-    return { isValid: missing.length === 0, missing };
+    const funnelIssues = validateTenantFunnelConfig(cfg);
+    const policyIssues = validateTenantPolicies(cfg.tenant_policies);
+    const funnelErrors = funnelIssues.filter((issue) => issue.severity === 'error');
+    const policyErrors = policyIssues.filter((issue) => issue.severity === 'error');
+    return { isValid: missing.length === 0 && funnelErrors.length === 0 && policyErrors.length === 0, missing, funnelIssues, policyIssues };
   }, [cfg]);
 
   // ── Carrega config existente + status do agente ───────────────────────────
@@ -339,6 +350,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             bloco7_transferencia: { ...DEFAULT_CONFIG.bloco7_transferencia, ...(cfgRow.bloco7_transferencia || {}) },
             bloco8_regras: { ...DEFAULT_CONFIG.bloco8_regras, ...(cfgRow.bloco8_regras || {}) },
             bloco9_empresa: { ...DEFAULT_CONFIG.bloco9_empresa, ...(cfgRow.bloco9_empresa || {}) },
+            tenant_policies: Array.isArray(cfgRow.tenant_policies) ? cfgRow.tenant_policies : [],
           });
         } else if (agent) {
           // Sem config ainda — aplica seed automático com dados do agente
@@ -367,6 +379,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   // ── Salvar config + gerar prompt ──────────────────────────────────────────
   const handleSaveAndGenerate = async () => {
     if (!agentId || !userId) return;
+    const funnelErrors = validateTenantFunnelConfig(cfg).filter((issue) => issue.severity === 'error');
+    const policyErrors = validateTenantPolicies(cfg.tenant_policies).filter((issue) => issue.severity === 'error');
+    if (funnelErrors.length > 0 || policyErrors.length > 0) {
+      toast({ title: 'Revise as políticas comerciais', description: policyErrors[0].message, variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       // Upsert config
@@ -427,19 +445,9 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     setPreviewLoading(true);
     setPreviewOpen(true);
     try {
-      // 1) Tenta ler o prompt gerado da tabela agent_funnel_config (último salvo)
-      const { data: cfgRow } = await (supabase as any)
-        .from('agent_funnel_config')
-        .select('generated_system_prompt')
-        .eq('agent_id', agentId)
-        .maybeSingle();
-
-      if (cfgRow?.generated_system_prompt) {
-        setPreviewText(cfgRow.generated_system_prompt);
-        return;
-      }
-
-      // 2) Fallback: lê o system_prompt atual do agente (pode ser manual)
+      // O system_prompt é a fonte única do runtime. Não mostrar o artefato
+      // derivado primeiro, porque ele pode estar atrasado após uma edição na
+      // aba Geral.
       const { data: agent } = await (supabase as any)
         .from('wa_ai_agents')
         .select('system_prompt')
@@ -447,7 +455,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         .maybeSingle();
       setPreviewText(
         agent?.system_prompt
-        || '(O funil ainda não foi gerado. Clique em "Salvar e Gerar Prompt" pra criar.)'
+        || '(O prompt ainda não foi configurado.)'
       );
     } finally {
       setPreviewLoading(false);
@@ -472,6 +480,29 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     } finally {
       setRestoring(false);
     }
+  };
+
+  const updatePolicy = (index: number, patch: Partial<TenantFunnelPolicy>) => {
+    const next = cfg.tenant_policies.map((policy, policyIndex) =>
+      policyIndex === index ? { ...policy, ...patch } : policy,
+    );
+    setCfg({ ...cfg, tenant_policies: next });
+  };
+
+  const addPolicy = () => {
+    const index = cfg.tenant_policies.length + 1;
+    const policy: TenantFunnelPolicy = {
+      id: `policy_${index}`,
+      enabled: true,
+      name: '',
+      domain: 'qualification',
+      when: '',
+      action: 'ask_clarification',
+      responseGuidance: '',
+      evidenceRequirement: '',
+      priority: 50,
+    };
+    setCfg({ ...cfg, tenant_policies: [...cfg.tenant_policies, policy] });
   };
 
   if (loading) {
@@ -593,25 +624,105 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         </CardContent>
       </Card>
 
-      {/* BLOCO 2 — Comportamento Obrigatório (READ-ONLY, fixo) */}
+      {/* CONTRATO FIXO DA PLATAFORMA — não é política comercial do cliente */}
       <Card className="border-amber-500/20 bg-amber-500/5">
         <CardHeader className="pb-2">
           <CardTitle className="text-xs flex items-center gap-2 text-amber-400">
-            <ShieldCheck className="h-3.5 w-3.5" /> BLOCO 2 — Comportamento Obrigatório (FIXO)
+            <ShieldCheck className="h-3.5 w-3.5" /> CONTRATO PEDRO V3 (FIXO)
           </CardTitle>
           <CardDescription className="text-[11px]">
-            Regras que sempre se aplicam, independente do nicho. Não editáveis.
+            Regras técnicas da plataforma. A personalidade e as políticas comerciais ficam nos blocos editáveis.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           <ul className="text-[11px] text-muted-foreground space-y-0.5 list-disc list-inside">
-            <li>Uma mensagem curta por vez (1–2 linhas), direto ao ponto</li>
-            <li>Uma pergunta por mensagem, só se avança a qualificação — pode terminar SEM pergunta</li>
-            <li>Sem pergunta-isca genérica e sem elogiar o cliente ou o produto</li>
-            <li>Nunca pressiona; lê o tom e desqualifica lead frio/hostil (1 resgate, depois encerra)</li>
-            <li>Nunca fala preço antes de qualificar, nunca tenta fechar a venda</li>
-            <li>Trata o cliente pelo nome quando souber e varia o tom (não repete frases)</li>
+            <li>A LLM interpreta o bloco atual, decide a resposta e as tools.</li>
+            <li>A engine só valida fatos, segurança, evidência e efeitos autorizados.</li>
+            <li>Estoque, detalhes, fotos, conhecimento, transferência e CRM seguem o contrato operacional v3.</li>
+            <li>O prompt da loja define personalidade, perguntas e condução comercial.</li>
           </ul>
+        </CardContent>
+      </Card>
+
+      <Card className="border-violet-500/20 bg-violet-500/5">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-xs flex items-center gap-2 text-violet-300">
+            <Brain className="h-3.5 w-3.5" /> Políticas comerciais da empresa
+          </CardTitle>
+          <CardDescription className="text-[11px]">
+            Configure condições que a LLM deve interpretar. A engine não usa palavras-chave para decidir.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-3">
+          {cfg.tenant_policies.map((policy, index) => (
+            <div key={`${policy.id}-${index}`} className="rounded-md border border-border/40 bg-background/40 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={policy.name}
+                  onChange={(e) => updatePolicy(index, { name: e.target.value })}
+                  placeholder="Ex: Sem entrada"
+                  className="text-xs h-8 flex-1"
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-red-400 hover:text-red-300"
+                  onClick={() => setCfg({ ...cfg, tenant_policies: cfg.tenant_policies.filter((_, i) => i !== index) })}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Select value={policy.domain} onValueChange={(value) => updatePolicy(index, { domain: value as TenantPolicyDomain })}>
+                  <SelectTrigger className="text-xs h-8"><SelectValue placeholder="Domínio" /></SelectTrigger>
+                  <SelectContent>
+                    {TENANT_POLICY_DOMAINS.map((domain) => <SelectItem key={domain} value={domain} className="text-xs">{domain}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={policy.action} onValueChange={(value) => updatePolicy(index, { action: value as TenantPolicyAction })}>
+                  <SelectTrigger className="text-xs h-8"><SelectValue placeholder="Ação da LLM" /></SelectTrigger>
+                  <SelectContent>
+                    {TENANT_POLICY_ACTIONS.map((action) => <SelectItem key={action} value={action} className="text-xs">{action}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={policy.priority}
+                  onChange={(e) => updatePolicy(index, { priority: Number(e.target.value) })}
+                  placeholder="Prioridade"
+                  className="text-xs h-8"
+                />
+              </div>
+              <Textarea
+                value={policy.when}
+                onChange={(e) => updatePolicy(index, { when: e.target.value })}
+                placeholder="Quando se aplica? Ex.: quando o lead informar explicitamente que não possui entrada"
+                className="text-xs min-h-[52px]"
+              />
+              <Textarea
+                value={policy.evidenceRequirement}
+                onChange={(e) => updatePolicy(index, { evidenceRequirement: e.target.value })}
+                placeholder="Qual evidência é necessária? Ex.: fala literal do lead; não inferir pelo silêncio"
+                className="text-xs min-h-[52px]"
+              />
+              <Textarea
+                value={policy.responseGuidance}
+                onChange={(e) => updatePolicy(index, { responseGuidance: e.target.value })}
+                placeholder="Como conduzir? Ex.: encerrar cordialmente sem insistir e cancelar follow-up"
+                className="text-xs min-h-[52px]"
+              />
+            </div>
+          ))}
+          <Button size="sm" variant="outline" onClick={addPolicy} className="text-xs gap-1.5 w-full">
+            <Plus className="h-3.5 w-3.5" /> Adicionar política comercial
+          </Button>
+          {validation.policyIssues.some((issue) => issue.severity === 'warning') && (
+            <p className="text-[10px] text-amber-300/80">
+              Existem políticas potencialmente conflitantes. Revise as prioridades antes de gerar o prompt.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -691,7 +802,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               <Textarea
                 value={cfg.bloco3_abordagem.presentation}
                 onChange={(e) => setCfg({ ...cfg, bloco3_abordagem: { ...cfg.bloco3_abordagem, presentation: e.target.value } })}
-                placeholder="Ex: Oi! Sou o Carvalho, da Icom Motors 😊"
+                placeholder="Ex: [PERIODO]! Sou o Carvalho, consultor aqui de Icom Motors 😊 Você é aqui de Taubaté mesmo já conhece a nossa loja?"
                 className="text-xs min-h-[60px]"
               />
             </div>
@@ -1026,10 +1137,10 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               <div className="space-y-0.5">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Eye className="h-4 w-4 text-blue-400" />
-                  Prompt gerado — o que a IA recebe
+                  Prompt efetivo — o que a IA recebe
                 </CardTitle>
                 <CardDescription className="text-[11px]">
-                  Conteúdo atual de <code className="text-blue-400">wa_ai_agents.system_prompt</code>.
+                  Conteúdo atual de <code className="text-blue-400">wa_ai_agents.system_prompt</code>, fonte única do runtime.
                 </CardDescription>
               </div>
               <div className="flex gap-1.5">

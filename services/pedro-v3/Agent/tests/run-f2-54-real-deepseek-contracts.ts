@@ -83,7 +83,7 @@ console.log("== F2.54: contratos achados no audit real DeepSeek ==");
     ...search, requestedCapabilities: [], evidence: [{ quote: searchBlock }],
   };
   const searchWithoutCapabilityValidated = validateTurnUnderstanding(searchWithoutCapability, searchBlock, true);
-  check("[M-3b] primaryIntent search_stock com evidence atual autoriza busca sem contrato duplicado", searchWithoutCapabilityValidated.trusted && isStockSearchTurn(searchWithoutCapabilityValidated));
+  check("[M-3b] primaryIntent search_stock sem capability não autoriza busca", searchWithoutCapabilityValidated.trusted && !isStockSearchTurn(searchWithoutCapabilityValidated));
   const adDetailSearch: TurnUnderstanding = {
     ...search, subject: "explicit_model", subjectValue: "HB20X",
     evidence: [{ capability: "stock_search", quote: "Quantos km" }],

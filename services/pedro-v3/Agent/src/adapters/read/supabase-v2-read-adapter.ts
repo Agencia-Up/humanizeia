@@ -39,6 +39,7 @@ export type V2ColumnName =
   | "is_active"
   | "updated_at"
   | "generated_system_prompt"
+  | "tenant_policies"
   | "platform"
   | "provider"
   | "api_key_encrypted"
@@ -85,6 +86,7 @@ const FUNNEL_COLUMNS = Object.freeze([
   "agent_id",
   "user_id",
   "generated_system_prompt",
+  "tenant_policies",
   "updated_at",
 ] satisfies readonly V2ColumnName[]);
 
@@ -154,6 +156,7 @@ function mapFunnelRow(row: Record<string, unknown>): OwnedFunnelConfigRow {
     agentId: asString(row.agent_id) ?? "",
     tenantId: asString(row.user_id) ?? "",
     generatedSystemPrompt: asString(row.generated_system_prompt),
+    tenantPolicies: row.tenant_policies ?? [],
     updatedAt: asString(row.updated_at),
   };
 }

@@ -152,6 +152,31 @@ async function main(): Promise<void> {
     const row = await db.selectOne("wa_ai_agents", ["id", "user_id", "name"], { id: AGENT_A, user_id: TENANT_A });
     check("select permitido funciona", row?.id === AGENT_A && row?.user_id === TENANT_A, JSON.stringify(row));
   }
+  {
+    const legacyFunnel: HttpTransport = {
+      async fetch(url) {
+        const select = new URL(url).searchParams.get("select") ?? "";
+        if (select.includes("tenant_policies")) {
+          return new Response(JSON.stringify({ code: "42703", message: "column agent_funnel_config.tenant_policies does not exist" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify([{
+          agent_id: AGENT_A,
+          user_id: TENANT_A,
+          generated_system_prompt: "prompt legado",
+          updated_at: NOW,
+        }]), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    };
+    const legacyDb = makeDb(legacyFunnel);
+    const row = await legacyDb.selectOne("agent_funnel_config", ["agent_id", "user_id", "generated_system_prompt", "tenant_policies", "updated_at"], {
+      agent_id: AGENT_A,
+      user_id: TENANT_A,
+    });
+    check("funil legado sem tenant_policies continua carregando o prompt", row?.generated_system_prompt === "prompt legado" && !Object.prototype.hasOwnProperty.call(row ?? {}, "tenant_policies"));
+  }
   await expectThrow("tabela não permitida é rejeitada", () => db.selectMany("secrets_table" as V2TableName, ["id"], { user_id: TENANT_A }), "SUPABASE_READ_FAILURE");
   await expectThrow("coluna não permitida é rejeitada", () => db.selectMany("wa_ai_agents", ["password" as V2ColumnName], { user_id: TENANT_A }), "SUPABASE_READ_FAILURE");
   await expectThrow("ausência de filtro de tenant falha", () => db.selectOne("wa_ai_agents", ["id"], { id: AGENT_A } as Record<string, string>), "SUPABASE_READ_FAILURE");

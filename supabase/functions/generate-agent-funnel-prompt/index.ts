@@ -1,12 +1,12 @@
 // ============================================================================
 // generate-agent-funnel-prompt
 // ----------------------------------------------------------------------------
-// Lê agent_funnel_config para um agent_id, monta o system_prompt final no
+// Lê agent_funnel_config para um agent_id, monta o prompt derivado no
 // formato dos 9 blocos do MD genérico (com Diretriz Mestra de inteligência
 // adaptativa no topo) e:
-//   1) salva em agent_funnel_config.generated_system_prompt
+//   1) salva o artefato derivado em agent_funnel_config.generated_system_prompt
 //   2) faz backup do wa_ai_agents.system_prompt atual em system_prompt_backup
-//   3) sobrescreve wa_ai_agents.system_prompt com o novo prompt
+//   3) sincroniza wa_ai_agents.system_prompt, a fonte efetiva única do runtime
 //   4) marca wa_ai_agents.use_funnel_config = true
 //
 // Body: { action: 'generate' | 'restore', agent_id: uuid }
@@ -17,6 +17,11 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  buildTenantPolicyPromptSection,
+  validateTenantFunnelConfig,
+  validateTenantPolicies,
+} from '../../../src/lib/pedroFunnelPolicyContract.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -49,6 +54,7 @@ function buildSystemPrompt(cfg: any): string {
   const b7 = cfg.bloco7_transferencia || {};
   const b8 = cfg.bloco8_regras || {};
   const b9 = cfg.bloco9_empresa || {};
+  const policySection = buildTenantPolicyPromptSection(cfg.tenant_policies);
 
   const branches = Array.isArray(b5.branches) ? b5.branches : [];
   const branchesText = branches.length === 0
@@ -59,22 +65,9 @@ function buildSystemPrompt(cfg: any): string {
         return `SE O CLIENTE RESPONDER [${trigger.toUpperCase()}]:\n${qs}`;
       }).join('\n\n');
 
-  return `# COMO VOCÊ FALA (REGRAS DE FORMA — valem SEMPRE, acima de tudo)
+  return `# CONFIGURAÇÃO COMERCIAL DA EMPRESA
 
-O cliente tem pressa. Fale MENOS e pergunte MELHOR. Estas regras de forma prevalecem sobre qualquer outra instrução de estilo:
-- UMA mensagem curta por vez (1–2 linhas), um balão só. Direto ao ponto.
-- UMA pergunta por mensagem, e SÓ se ela AVANÇA a qualificação. PODE (e deve) terminar SEM pergunta quando está só respondendo algo. NUNCA force uma pergunta no fim.
-- PROIBIDO pergunta-isca genérica: "posso ajudar em mais alguma coisa?", "o que acha?", "tem alguma dúvida?", "ainda posso te ajudar?".
-- PROIBIDO elogiar o cliente ou o produto ("que ótimo!", "excelente escolha!", "ótima versão"). Sem floreio, sem repetir de volta o que o cliente disse, sem se reapresentar.
-- PROIBIDO abrir a mensagem com interjeição de entusiasmo/validação ("Ótimo!", "Perfeito!", "Show!", "Maravilha!", "Que bom!", "Legal!"). Comece direto pelo conteúdo (a resposta, o dado ou a pergunta).
-- PROIBIDO encerrar com filler de cortesia vazio ("qualquer dúvida, estou à disposição", "estou aqui se precisar", "fico à disposição"). Termine no conteúdo.
-- Não repita perguntas já respondidas (lembre-se de tudo que já foi dito). Empatia SÓ quando o cliente traz uma objeção/problema real — nunca empatia preventiva.
-- Espelhe o cliente: ele curto → você curto. No máximo 1 emoji. Trate pelo nome quando souber e varie o tom (não repita frases).
-- Se o cliente já deu uma informação, pule a pergunta. Se ele quer comprar/agendar, acelere para a transferência.
-
-A estrutura de blocos abaixo define O QUÊ coletar e a personalidade — estas regras de forma definem COMO. Em conflito de FORMA, estas regras acima prevalecem.
-
----
+Os blocos abaixo descrevem a identidade, o negócio, os objetivos e as preferências comerciais do cliente. Interprete-os junto com a conversa real; não transforme os campos em uma fila mecânica de perguntas.
 
 # BLOCO 1 — IDENTIDADE
 
@@ -86,14 +79,9 @@ Seu papel é EXCLUSIVAMENTE de SDR: abordar o cliente, qualificá-lo e transferi
 
 ---
 
-# BLOCO 2 — COMPORTAMENTO OBRIGATÓRIO (REGRAS FIXAS)
+# BLOCO 2 — CONTEXTO DA CONFIGURAÇÃO
 
-- Faça apenas UMA pergunta por mensagem (e só se avança a qualificação).
-- Nunca pressione o cliente nem insista após um sinal de desinteresse.
-- Nunca fale preço/condições antes de qualificar, nunca tente fechar a venda.
-- Colete os dados obrigatórios mínimos ANTES de transferir.
-- Trate o cliente pelo nome quando souber e varie o tom (não repita frases).
-- Leia o tom do cliente: se houver desinteresse/hostilidade, siga o bloco de DESQUALIFICAÇÃO, não empurre o funil.
+Este bloco não substitui o contrato operacional do Pedro v3. Ele apenas registra preferências comerciais configuradas para esta empresa. A LLM deve adaptá-las ao bloco atual, respeitar uma mudança explícita do lead e não repetir informação ou pergunta já respondida.
 
 ---
 
@@ -104,8 +92,15 @@ Seu papel é EXCLUSIVAMENTE de SDR: abordar o cliente, qualificá-lo e transferi
 **Apresentação na primeira mensagem:**
 "${val(b3, 'presentation', 'Olá! Tudo bem?')}"
 
+**Contrato de reprodução da apresentação:**
+- O texto acima é a abertura literal definida pela empresa. Na primeira resposta, reproduza-o sem resumir,
+  parafrasear, trocar a identidade ou acrescentar uma pergunta diferente.
+- Se o texto contiver o marcador **[PERIODO]**, substitua somente esse marcador por "Bom dia", "Boa tarde" ou
+  "Boa noite", usando o horário atual do Brasil. Não altere nenhuma outra palavra.
+- Se a apresentação já terminar com uma pergunta, não acrescente a primeira pergunta abaixo no mesmo turno.
+
 **Primeira pergunta de conexão (após se apresentar):**
-"${val(b3, 'first_question', 'Como posso te ajudar?')}"
+"${val(b3, 'first_question', '(não definida; responda ao bloco atual do lead)')}"
 
 **O que NÃO fazer nesta etapa:**
 ${listOrEmpty(b3.avoid)}
@@ -116,13 +111,13 @@ ${listOrEmpty(b3.avoid)}
 
 **Objetivo:** ${val(b4, 'objective', 'entender o perfil e necessidade do cliente')}
 
-**Perguntas obrigatórias** (faça UMA por vez, na ordem — adapte se o cliente já respondeu antecipadamente):
+**Perguntas preferenciais** (use somente quando forem relevantes ao bloco atual; adapte a ordem quando o cliente já respondeu):
 ${listOrEmpty(b4.questions, '1. ').replace(/^1\. /gm, (_m, ..._args) => '').split('\n').map((line, i) => line ? `${i + 1}. ${line.replace(/^- /, '')}` : '').filter(Boolean).join('\n') || '(nenhuma pergunta configurada)'}
 
-**Dados obrigatórios a coletar antes da transferência:**
+**Dados que a empresa prefere ter antes de uma transferência qualificada:**
 ${listOrEmpty(b4.required_data, '✅ ')}
 
-**Hora de transferir imediatamente** (se acontecer qualquer regra abaixo, pare de perguntar e encaminhe ao vendedor):
+**Sinais comerciais para considerar uma transferência** (a decisão continua sendo da LLM e deve respeitar o contrato operacional):
 ${listOrEmpty(b4.transfer_now_rules, '⚡ ')}
 
 ---
@@ -130,6 +125,8 @@ ${listOrEmpty(b4.transfer_now_rules, '⚡ ')}
 # BLOCO 5 — RAMIFICAÇÕES DO FUNIL
 
 Após a pergunta-chave de qualificação, o funil se divide:
+
+As ramificaÃ§Ãµes abaixo sÃ£o possibilidades interpretadas pela LLM conforme o sentido da resposta. NÃ£o sÃ£o uma fila de perguntas, nÃ£o obrigam uma ordem fixa e nÃ£o vencem uma mudanÃ§a explÃ­cita de assunto:
 
 ${branchesText}
 
@@ -140,24 +137,25 @@ ${branchesText}
 **TRANSFERIR (lead qualificado)** quando:
 ${listOrEmpty(b6.qualified_when, '✅ ')}
 
-**DETECTAR DESINTERESSE / HOSTILIDADE (prioridade máxima — leia o tom ANTES de qualquer pergunta):**
-São SINAIS NEGATIVOS: deboche/sarcasmo ("rsss", "kkk", "aff", ironia); desmerecer a oferta ("a minha vale mais", "tá velho"); objeção forte ("tá caro", "muito longe"); desconfiança ("é golpe", "não confio"); evasão/silêncio (respostas de 1 palavra, "vou pensar", "depois", sem perguntar nada). Encerre também quando:
+**PREFERÊNCIAS DE DESQUALIFICAÇÃO DA EMPRESA:**
+Avalie o sentido da fala e o contexto antes de aplicar qualquer critério. Respostas curtas, uma objeção, "vou pensar", distância ou agradecimento isolado não são desinteresse automaticamente. Encerre também quando as políticas específicas abaixo forem realmente satisfeitas:
 ${listOrEmpty(b6.disqualified_when, '❌ ')}
 
-**REGRA DE 1 RESGATE (nunca insista 2x):** no PRIMEIRO sinal negativo, faça NO MÁXIMO uma tentativa curta e leve, sem pressão (ex.: "muito longe" → ofereça avaliação/proposta à distância). Se o cliente mantiver o sinal, PARE de empurrar o funil.
-**"É GOLPE"/desconfiança:** responda no MÁXIMO UMA vez com credibilidade real (loja física, endereço, "pode pesquisar no Google") — sem se defender demais. Se persistir, encerre. NUNCA siga empurrando qualificação por cima de uma acusação de golpe.
+Não trate uma objeção ou dúvida como desinteresse automaticamente. Se houver desinteresse inequívoco ou uma política de desqualificação aplicável, siga a orientação configurada e encerre sem continuar empurrando o funil.
 
 **ENCERRAR (saída graciosa — sem nova pergunta de venda):** agradeça + reconheça sem rebater + porta aberta. Ex.: "${val(b6, 'closing_message', 'Tranquilo, (nome)! Não vou tomar seu tempo. Se mudar de ideia ou quiser ver outras opções, é só me chamar por aqui. 👍')}"
 NUNCA humilhe, NUNCA seja frio — esse cliente pode voltar qualificado.
 
-**TEMPERATURA (informe ao vendedor):** 🔥 quente (pediu preço/agenda, deu dados) · 🌤️ morno (interesse sem urgência) · ❄️ frio/pouco qualificado (evasivo, "longe"/"tá caro" educado) · ⛔ desqualificado (golpe/hostil/deboche persistente).
+**TEMPERATURA (informe ao vendedor):** use os sinais reais da conversa e as categorias configuradas pela empresa. Não classifique como desqualificado somente por resposta curta, objeção, localização incerta ou agradecimento.
 
 ---
 
 # BLOCO 7 — ETAPA 3: TRANSFERÊNCIA
 
-**Transferir SOMENTE quando tiver coletado:**
+**Dados preferenciais para uma transferência qualificada:**
 ${listOrEmpty(b7.required_data, '✅ ')}
+
+Pedido explícito de humano e outras exceções previstas no contrato operacional não podem ser bloqueados por esta lista.
 
 **Mensagem para o cliente ao transferir:**
 "${val(b7, 'customer_message', '(nome), vou te conectar agora com nosso especialista! 🤝')}"
@@ -185,6 +183,8 @@ ${listOrEmpty(b8.never)}
 - **Site/Instagram:** ${val(b9, 'website')}
 - **Faixa de preço:** ${val(b9, 'price_range')}
 - **Diferenciais:** ${val(b9, 'differentiators')}
+
+${policySection ? `${policySection}\n\n---` : ''}
 
 ---
 
@@ -243,6 +243,17 @@ serve(async (req) => {
     if (cfgErr) throw new Error(cfgErr.message);
     if (!cfg) throw new Error('Configuração do funil não encontrada para este agente');
 
+    const funnelIssues = validateTenantFunnelConfig(cfg);
+    const policyIssues = validateTenantPolicies(cfg.tenant_policies);
+    const configErrors = funnelIssues.filter((issue) => issue.severity === 'error');
+    const policyErrors = policyIssues.filter((issue) => issue.severity === 'error');
+    if (configErrors.length > 0) {
+      throw new Error(`A configuraÃ§Ã£o do Funil possui erros: ${configErrors.map((issue) => issue.message).join(' ')}`);
+    }
+    if (policyErrors.length > 0) {
+      throw new Error(`Políticas comerciais inválidas: ${policyErrors.map((issue) => issue.message).join(' ')}`);
+    }
+
     const newPrompt = buildSystemPrompt(cfg);
 
     // 1) salva o prompt gerado no agent_funnel_config
@@ -271,6 +282,8 @@ serve(async (req) => {
       success: true,
       generated: true,
       prompt_length: newPrompt.length,
+      funnel_warnings: funnelIssues.filter((issue) => issue.severity === 'warning'),
+      policy_warnings: policyIssues.filter((issue) => issue.severity === 'warning'),
       backup_created: !agent.system_prompt_backup && !!agent.system_prompt,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

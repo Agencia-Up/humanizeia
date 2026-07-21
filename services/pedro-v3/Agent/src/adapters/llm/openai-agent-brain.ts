@@ -21,6 +21,8 @@ import type { KnowledgeGap } from "../../domain/knowledge.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
 import { getBrazilChannelTime } from "../../engine/channel-time.ts";
 export { getBrazilChannelTime } from "../../engine/channel-time.ts";
+import type { TenantPolicyDecision } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import { TENANT_POLICY_ACTIONS } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
 
 export type OpenAiAgentBrainConfig = {
   readonly model: string;
@@ -47,6 +49,7 @@ const DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_HOSTS = ["api.openai.com"];
 const MAX_SEMANTIC_REWRITES = 1;
 const MAX_CONVERSATION_FORM_REWRITES = 2;
+const BRAIN_OUTPUT_COMPACT_RETRY_CODE = "BRAIN_OUTPUT_COMPACT_RETRY";
 const SEMANTIC_LANES = ["purchase_stock", "trade_vehicle", "payment_financing", "visit_schedule", "identity_data", "institutional", "social", "other"] as const;
 const VEHICLE_TYPES: readonly VehicleType[] = ["suv", "sedan", "hatch", "pickup", "unknown"];
 const TRANSMISSIONS: readonly TransmissionPreference[] = ["automatic", "manual"];
@@ -133,8 +136,9 @@ QUALIDADE CONVERSACIONAL GLOBAL
 
 UNDERSTANDING OBRIGATORIO
 Todo query ou final inclui na raiz:
-"understanding":{"primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|disengagement|conversation_repair|request_human|sensitive_data|other","requestedCapabilities":["stock_search"|"send_photos"|"vehicle_details"|"institutional_info"|"knowledge_search"|"recall"|"select"|"handoff"],"subject":"explicit_model|ordinal_from_last_offer|offer_reference|selected_vehicle|vehicle_type|budget|none","subjectValue":"<valor ou null>","subjectSource":"current_turn|memory|inference|none","evidence":[{"capability":"<capability>","quote":"<trecho literal do bloco atual>"}],"isTopicChange":true|false,"answeredLeadQuestions":[]}
+"understanding":{"primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|disengagement|conversation_repair|request_human|sensitive_data|other","requestedCapabilities":["stock_search"|"send_photos"|"vehicle_details"|"institutional_info"|"knowledge_search"|"recall"|"select"|"handoff"],"subject":"explicit_model|ordinal_from_last_offer|offer_reference|selected_vehicle|vehicle_type|budget|none","subjectValue":"<valor ou null>","subjectSource":"current_turn|memory|inference|none","evidence":[{"capability":"<capability>","quote":"<trecho literal do bloco atual>"}],"isTopicChange":true|false,"answeredLeadQuestions":[],"policyDecision":null|{"policyId":"<id configurado>","action":"continue|ask_clarification|inform|disqualify|handoff","evidence":"<trecho literal do bloco atual>"}}
 - Cada evidence.quote deve existir literalmente no bloco atual. Memoria nunca vira evidencia do turno.
+- policyDecision deve ser null quando nenhuma política configurada foi considerada. Quando não for null, declare somente uma política apresentada no contexto da empresa, a ação configurada para ela e uma evidência literal do bloco atual. Não invente id, não aplique política por palavra isolada e não use esse campo para escolher o assunto.
 - requestedCapabilities cobre apenas atos pedidos/agora necessarios. primaryIntent e o primeiro ato a tratar.
 
 TOOLS
@@ -161,7 +165,7 @@ Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0
 - Nunca use string solta dentro de parts, nunca invente outro type e nunca coloque send_media/image/media em parts. Use message_break somente quando o prompt pedir baloes separados; nunca no meio de vehicle_offer_list.
 - Para uma resposta conversacional sem fatos de estoque, use somente {"type":"text","content":"..."}.
 - Exemplo completo de final conversacional valido (copie a FORMA, nao o texto):
-  {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"isTopicChange":false,"answeredLeadQuestions":[]},"reasonCode":"reply","confidence":0.9,"guidance":"responder naturalmente","draft":{"parts":[{"type":"text","content":"Claro. Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
+  {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"reasonCode":"reply","confidence":0.9,"guidance":"responder naturalmente","draft":{"parts":[{"type":"text","content":"Claro. Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Lista usa somente keys retornadas por stock_search; atributos/precos usam fatos aterrados.
 - Uma stock_search pode sustentar dois formatos escolhidos por voce conforme a conversa: vehicle_offer_list quando o lead pediu alternativas/lista, ou vehicle_ref/money_ref de UMA mesma key quando o assunto e um veiculo especifico. Resultado de busca nao obriga lista.
 - send_media e handoff ficam em effects. Nunca exponha vehicleKey, refs internas, CPF/data ou segredos no texto.
@@ -194,9 +198,24 @@ ABERTURA
   pergunta), reproduza-a COMO O PROMPT MANDA, alterando apenas o que o proprio prompt marcar como variavel
   (por exemplo, a saudacao pelo periodo do dia, disponivel em context.channel). Nao resuma, nao parafraseie e nao
   troque por uma saudacao generica sua.
+- O primeiro balao deve conter somente essa abertura do portal. Nao acrescente lista, estoque, pedido de nome,
+  pergunta de pagamento ou explicacao do anuncio dentro dele. Se a abertura do portal terminar com uma pergunta,
+  preserve essa pergunta; ela continua sendo a pergunta social/comercial definida pelo lojista.
 - openingContext.specificAdEntry / adGenericEntry indicam que o lead chegou por um anuncio. Origem NAO cancela a
   abertura do portal: ela define o ASSUNTO que vem DEPOIS dela. Em anuncio ESPECIFICO, apresente-se como o portal
-  manda e so entao fale do veiculo anunciado (use {"type":"message_break"} entre a apresentacao e o assunto).
+  manda e, NO MESMO RESULTADO FINAL E NO MESMO TURNO, fale do veiculo anunciado em um segundo balao. A forma
+  obrigatoria desse caso e: {"type":"text"} com a abertura, {"type":"message_break"}, depois outro {"type":"text"}
+  sobre o anuncio. Nao finalize depois do primeiro balao nem espere uma nova mensagem do lead para falar do carro.
+  No segundo balao, use o veiculo anunciado como assunto. Se ja houver fatos de estoque, use somente esses fatos.
+  Se ainda nao houver disponibilidade ou atributos aterrados, nao invente preco, km, cor ou disponibilidade: mencione
+  apenas a identidade do veiculo fornecida pelo anuncio e ofereca confirmar detalhes ou enviar fotos. Voce pode chamar
+  stock_search para confirmar disponibilidade/atributos quando essa for a sua decisao; depois do resultado, finalize
+  no mesmo turno com os fatos recebidos. Nao fique preso numa busca para conseguir abrir a conversa e nao transforme
+  a entrada em anuncio especifico numa lista ampla.
+- Quando specificAdEntry=true, uma resposta final contendo somente a apresentacao e incompleta. O fato de o lead ter
+  escrito apenas uma saudacao curta nao muda isso: a origem do anuncio e contexto factual do turno, nao um motivo para
+  adiar o assunto. Se a busca retornar zero, seja honesto sobre o veiculo anunciado e conduza para uma alternativa;
+  se retornar candidatos, mantenha o foco neles, sem despejar o estoque inteiro.
 - Se o prompt do portal nao definir apresentacao alguma, conduza naturalmente com a identidade que ele descreve.
 
 CONTEXTO
@@ -216,7 +235,7 @@ SAIDA E EFEITOS
 - Responda SEMPRE com UM único objeto JSON válido (sem texto fora do JSON, sem cercas markdown como tres crases).
 - Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{...}}}
 - Nunca omita understanding em uma query. Exemplo valido (troque os valores pelo bloco atual):
-  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"isTopicChange":false,"answeredLeadQuestions":[]},"call":{"tool":"stock_search","input":{"tipo":"suv"}}}
+  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"call":{"tool":"stock_search","input":{"tipo":"suv"}}}
 - O quote do exemplo deve ser um trecho literal do bloco atual. Uma query sem understanding e evidence e invalida e deve ser reescrita por voce.
 - Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
@@ -284,14 +303,20 @@ function toolInputSchema(tool: string): Record<string, unknown> {
 }
 function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, unknown> {
   const evidenceItem = strictObj(["capability", "quote"], { capability: { type: ["string", "null"], enum: [...TURN_CAPABILITIES, null] }, quote: S_STR });
+  const policyDecision = strictObj(["policyId", "action", "evidence"], {
+    policyId: S_STR,
+    action: { type: "string", enum: ["continue", "ask_clarification", "inform", "disqualify", "handoff"] },
+    evidence: S_STR,
+  });
   const understanding = strictObj(
-    ["primaryIntent", "requestedCapabilities", "subject", "subjectValue", "subjectSource", "evidence", "isTopicChange", "answeredLeadQuestions"],
+    ["primaryIntent", "requestedCapabilities", "subject", "subjectValue", "subjectSource", "evidence", "isTopicChange", "answeredLeadQuestions", "policyDecision"],
     { primaryIntent: { type: "string", enum: [...PRIMARY_INTENTS] },
       requestedCapabilities: { type: "array", items: { type: "string", enum: [...TURN_CAPABILITIES] } },
       subject: { type: "string", enum: [...TURN_SUBJECT_KINDS] }, subjectValue: S_STR_NULL,
       subjectSource: { type: "string", enum: [...SUBJECT_SOURCES] },
       evidence: { type: "array", items: evidenceItem }, isTopicChange: { type: "boolean" },
-      answeredLeadQuestions: { type: "array", items: S_STR } });
+      answeredLeadQuestions: { type: "array", items: S_STR },
+      policyDecision: { anyOf: [{ type: "null" }, policyDecision] } });
   // call = anyOf {null | branch por tool do ALLOWLIST REAL}; cada branch carrega só o input daquela tool.
   const callBranches = allowedTools.map((t) => strictObj(["tool", "input"], { tool: { type: "string", enum: [t] }, input: toolInputSchema(t) }));
   const call = { anyOf: [{ type: "null" }, ...callBranches] };
@@ -516,7 +541,14 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#semanticCriticEnabled = config.semanticCriticEnabled === true;
     this.#semanticCriticModel = config.semanticCriticModel?.trim() || "gpt-4.1";
     this.#temperature = config.temperature ?? 0;
-    this.#maxTokens = config.maxCompletionTokens ?? 1200;
+    // 1.200 era suficiente para um JSON pequeno, mas não para o contrato
+    // estrito + understanding + draft de uma abertura/anúncio OpenAI. Quando
+    // o chamador não informa o limite, terminar no meio do JSON transforma
+    // uma resposta válida em technical_fallback. O smoke DeepSeek continua
+    // deliberadamente enxuto para não aumentar custo; o parâmetro próprio do
+    // provedor identifica esse caminho sem mudar a decisão da LLM.
+    this.#maxTokens = config.maxCompletionTokens
+      ?? (config.tokenParameter === "max_tokens" ? 1_200 : 2_200);
     this.#timeoutMs = config.timeoutMs ?? 30_000;
     this.#allowedTools = new Set(config.allowedTools ?? ["stock_search", "vehicle_details", "vehicle_photos_resolve", "tenant_business_info", "crm_read", "knowledge_search"]);
     // ⭐auditoria Codex #3: o schema sai do allowlist REAL desta instância (ex.: central_active não tem crm_read).
@@ -631,10 +663,18 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     };
     const historyMessages = recentHistory
       .map((turn) => ({ role: turn.role === "lead" ? "user" : "assistant", content: turn.text }));
-    const rewriteFeedback = observations
+    const compactOutputRetry = observations.some((observation) => !observation.ok
+      && observation.tool === "response"
+      && observation.error.code === BRAIN_OUTPUT_COMPACT_RETRY_CODE);
+    const rewriteFeedback = compactOutputRetry
+      ? []
+      : observations
       .flatMap((observation) => !observation.ok && observation.tool === "response" ? [observation.error.message.trim()] : [])
       .filter(Boolean)
       .slice(-3);
+    const compactOutputInstruction = compactOutputRetry
+      ? "SAIDA COMPACTA OBRIGATORIA: a tentativa anterior foi interrompida antes de fechar o JSON. Reinterprete o mesmo bloco atual e devolva agora UM JSON completo e minimo. Preserve a decisao semantica correta, as evidencias literais e os efeitos realmente decididos. Use uma unica chamada de tool se ela for necessaria; no final, escreva no maximo duas partes curtas de draft, uma pergunta no maximo, guidance curto e sem repetir historico. Nao omita campos obrigatorios nem acrescente explicacoes fora do JSON."
+      : null;
     const buildMessages = () => [
       { role: "system", content: this.#portalPrompt },
       { role: "system", content: this.#operationalPrompt },
@@ -648,7 +688,18 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           ]
         : frame.block },
       ...(rewriteFeedback.length > 0 ? [{ role: "system", content: `REESCRITA OBRIGATORIA DA RESPOSTA AO USER IMEDIATAMENTE ANTERIOR:\n- ${rewriteFeedback.join("\n- ")}\nMantenha o ato atual. Nao repita a forma reprovada. Devolva novamente o JSON completo corrigido.` }] : []),
+      ...(compactOutputInstruction != null ? [{ role: "system", content: compactOutputInstruction }] : []),
     ];
+    const compactRetryObservation = (): AgentToolObservation => ({
+      tool: "response",
+      ok: false,
+      error: {
+        code: BRAIN_OUTPUT_COMPACT_RETRY_CODE,
+        message: "A saída estruturada da LLM foi interrompida ou não respeitou o shape. Faça uma única reautoria compacta do mesmo turno.",
+      },
+    });
+    const retryCompactOutputOnce = (): Promise<AgentBrainStep> =>
+      this.proposeNextStep(frame, [...observations, compactRetryObservation()]);
     let bodyText: string;
     try {
       const hasPolicyRetry = observations.some((o) => !o.ok && o.tool === "response");
@@ -690,10 +741,31 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       // vs JSON malformado. Antes tudo virava "brain JSON inválido" cego. Com json_schema strict o corte é a causa comum.
       const refusal = typeof choice?.message?.refusal === "string" ? choice.message.refusal : undefined;
       if (refusal) return this.#safeFinal(`brain recusou: ${refusal.slice(0, 80)}`);
+      // finish=length é uma resposta parcial mesmo quando o provedor deixou
+      // um prefixo que por acaso ainda parece JSON. Nunca tente decodificar
+      // esse prefixo: faça uma única reautoria compacta.
+      if (finishReason === "length") {
+        return compactOutputRetry ? this.#safeFinal("brain JSON inválido (finish=length após reautoria compacta)") : await retryCompactOutputOnce();
+      }
       const raw = choice?.message?.content;
       content = typeof raw === "string" ? JSON.parse(raw) : null;
-    } catch { return this.#safeFinal(`brain JSON inválido${finishReason ? ` (finish=${finishReason})` : ""}`); }
+    } catch {
+      return compactOutputRetry
+        ? this.#safeFinal(`brain JSON inválido${finishReason ? ` (finish=${finishReason} após reautoria compacta)` : ""}`)
+        : await retryCompactOutputOnce();
+    }
     let step = this.#decodeStep(content, frame, observations);
+    // Respostas 2xx também podem ser JSON válido, mas não ser um agent_step
+    // decodificável (shape incompleto, tool inválida etc.). Essa falha de
+    // aderência merece a mesma única reautoria compacta; devolver imediatamente
+    // um final sem understanding fazia o engine repetir o envelope grande até
+    // esgotar brainMaxSteps.
+    if (!compactOutputRetry
+      && step.kind === "final"
+      && step.decision.reasonCode === "brain_fallback"
+      && /shape|query inválida|query inv|JSON inválido/i.test(step.decision.reasonSummary)) {
+      return await retryCompactOutputOnce();
+    }
     const formRewriteCount = observations.filter((observation) => !observation.ok
       && observation.tool === "response" && observation.error.code === "CONVERSATION_FORM").length;
     if (step.kind === "final" && step.decision.responsePlan.draft != null
@@ -1076,10 +1148,19 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           return [{ capability: cap, quote: e.quote.slice(0, 120) }];
         })
       : [];
+    const rawPolicy = isRecord(raw.policyDecision) ? raw.policyDecision : null;
+    const policyDecision: TenantPolicyDecision | null = rawPolicy
+      && typeof rawPolicy.policyId === "string"
+      && typeof rawPolicy.action === "string"
+      && TENANT_POLICY_ACTIONS.includes(rawPolicy.action as TenantPolicyDecision["action"])
+      && typeof rawPolicy.evidence === "string"
+      ? { policyId: rawPolicy.policyId.slice(0, 120), action: rawPolicy.action as TenantPolicyDecision["action"], evidence: rawPolicy.evidence.slice(0, 240) }
+      : null;
     return {
       primaryIntent: pi as PrimaryIntent, requestedCapabilities: caps, subject, subjectValue: str(raw.subjectValue),
       subjectSource, evidence, isTopicChange: raw.isTopicChange === true,
       answeredLeadQuestions: Array.isArray(raw.answeredLeadQuestions) ? raw.answeredLeadQuestions.filter((q): q is string => typeof q === "string") : [],
+      policyDecision,
     };
   }
 

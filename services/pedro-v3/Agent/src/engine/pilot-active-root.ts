@@ -416,6 +416,7 @@ export class PilotActiveRoot {
       // consome passo extra quando NEGA (raro); o turno típico ainda finaliza em 1-2 passos.
       limits: CENTRAL_TURN_LIMITS, maxValidationAttempts: input.maxValidationAttempts, brainMaxSteps: 6,
       sdrPolicy: this.sdrPolicy,
+      tenantPolicies: this.runtimeConfig.tenantPolicies,
       allowedTools: CENTRAL_ALLOWED_TOOLS, providerCapability: { send_message: "none", send_media: "none" },
       // AUTORIA ÚNICA (audit): central_active NUNCA usa o 2º compose (DecisionLlm) — o cérebro autora o ResponseDraft.
       singleAuthor: true,

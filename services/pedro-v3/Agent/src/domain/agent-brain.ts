@@ -20,6 +20,7 @@
 import type { DecisionMutation, ProposedEffectPlan, QueryCall, QueryOutputMap, ResponseDraft, TurnRelation } from "./decision.ts";
 import type { SlotName, Iso } from "./types.ts";
 import type { KnowledgeGap } from "./knowledge.ts";
+import type { TenantPolicyDecision } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
 
 export const WORKING_MEMORY_SCHEMA_VERSION = 1 as const;
 
@@ -379,6 +380,8 @@ export type TurnUnderstanding = {
   readonly evidence: readonly TurnUnderstandingEvidence[];   // cada quote TEM de existir no bloco atual
   readonly isTopicChange: boolean;
   readonly answeredLeadQuestions: readonly string[];
+  /** Declaração opcional da LLM; nunca é inferida pela engine. */
+  readonly policyDecision?: TenantPolicyDecision | null;
 };
 
 export type AgentBrainStep =

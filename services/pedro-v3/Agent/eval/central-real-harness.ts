@@ -20,6 +20,7 @@ import { InMemoryPersistence, FakeIdGen } from "../src/adapters/persistence/in-m
 import { createInitialState } from "../src/domain/conversation-state.ts";
 import type { ConversationState } from "../src/domain/conversation-state.ts";
 import type { AgentBrainPort, AgentBrainStep, AgentToolObservation, TurnFrame } from "../src/domain/agent-brain.ts";
+import type { TenantPolicyDecision } from "../../../../src/lib/pedroFunnelPolicyContract.ts";
 import type { EffectReceipt, EffectResult } from "../src/domain/decision.ts";
 import { redact } from "../src/domain/effect-intent.ts";
 import { createHash } from "node:crypto";
@@ -45,6 +46,8 @@ export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?:
   const runtimeConfig = promptText === assembly.runtimeConfig.promptText
     ? assembly.runtimeConfig
     : { ...assembly.runtimeConfig, promptText };
+  const brainMaxCompletionTokens = Number(process.env.CENTRAL_EVAL_BRAIN_MAX_COMPLETION_TOKENS ?? "2200");
+  const composeMaxCompletionTokens = Number(process.env.CENTRAL_EVAL_COMPOSE_MAX_COMPLETION_TOKENS ?? "1200");
   // BRAIN (planner) temp 0.2 — decisões consistentes (buscar-antes-de-listar, resolver-antes-de-enviar-foto).
   const brainTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
   brainTransport.fullPrompt = promptText;
@@ -54,7 +57,7 @@ export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?:
     tokenParameter: assembly.aiProvider.tokenParameter,
     model: assembly.aiProvider.model,
     retryModel: assembly.aiProvider.retryModel,
-    temperature: 0.1, maxCompletionTokens: 2200, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+    temperature: 0.1, maxCompletionTokens: brainMaxCompletionTokens, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
     semanticCriticEnabled: process.env.PEDRO_V3_EVAL_SEMANTIC_CRITIC === "1", semanticCriticModel: "gpt-4.1",
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
@@ -70,7 +73,7 @@ export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?:
       temperatureOverride: 0.3,
       timeoutMs: 30_000,
       maxResponseBytes: 2 * 1024 * 1024,
-      maxCompletionTokens: 1_200,
+      maxCompletionTokens: composeMaxCompletionTokens,
     },
   })(runtimeConfig);
   const composeLlm = new PromptBoundConversationAdapter(runtimeConfig, composeModel);
@@ -203,6 +206,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
         contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: assembly.ref.tenantId, agentId: assembly.ref.agentId, leadId: opts.crmLeadId ?? null,
         workerId: "central-eval", turnId, leaseTtlMs: 120_000, portalPromptSha256: assembly.promptSha,
         limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+        tenantPolicies: assembly.runtimeConfig.tenantPolicies,
         providerCapability: { send_message: "none", send_media: "none" },
         singleAuthor: opts.singleAuthor ?? false, llmFirst: opts.llmFirst ?? false,
         // MISSÃO PII: handoff plannable no smoke (fake — efeitos seguem OFF/simulados; NENHUM vendedor real
@@ -247,6 +251,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       degradationKind: r?.status === "committed" ? r.degradationKind : undefined,
       providerFallbackReason: r?.status === "committed" ? (r.providerFallbackReason ? sanitize(r.providerFallbackReason).slice(0, 120) : null) : undefined,
       policyFeedback: r?.status === "committed" ? r.policyFeedback.map((f) => sanitize(f).slice(0, 200)) : undefined,
+      policyDecision: r?.status === "committed" ? (r.understanding.policyDecision ?? null) as TenantPolicyDecision | null : undefined,
       primaryIntent: r?.status === "committed" ? r.understanding.primaryIntent : undefined,
       targetResolutionSource: r?.status === "committed" ? r.targetResolutionSource : undefined,
       resolvedVehicleKey: r?.status === "committed" ? r.resolvedVehicleKey : undefined,

@@ -10,6 +10,7 @@ export type CentralTurnCapture = {
   degradationKind?: string;                // ⭐FASE 1: causa da degradação (provider_transport|response_rejected|grounding_rejected|tool_denied_no_evidence|retry_exhausted|none)
   providerFallbackReason?: string | null;  // ⭐FASE 1: motivo sanitizado do provedor quando houve falha real (HTTP/timeout/JSON)
   policyFeedback?: readonly string[];      // diagnóstico: feedbacks de deny devolvidos ao cérebro (revela por que degradou)
+  policyDecision?: import("../../../../src/lib/pedroFunnelPolicyContract.ts").TenantPolicyDecision | null;
   primaryIntent?: string;                  // T6 fonte única: semântica do turno (do cérebro OU fallback validado)
   targetResolutionSource?: string | null;  // T6: como o alvo do turno foi resolvido (turn_photo_fact/turn_ordinal/...)
   resolvedVehicleKey?: string | null;      // T6: veículo do send_media do turno (alvo efetivo)

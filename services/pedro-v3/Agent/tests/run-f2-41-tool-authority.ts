@@ -299,6 +299,25 @@ async function main(): Promise<void> {
     check("[G-6] ato final e search_stock", t2.primaryIntent === "search_stock", `intent=${t2.primaryIntent}`);
   }
 
+  // D) CONTRATO INCOMPLETO: primaryIntent=search_stock com quote atual, mas
+  // sem capability stock_search. Evidência geral não completa uma decisão de
+  // tool; o engine deve devolver feedback e aceitar a resposta conversacional
+  // seguinte, sem executar stock_search por conta própria.
+  {
+    const c = conv();
+    let calls = 0;
+    const incomplete: BrainResponder = (_f, obs) => {
+      if (obs.some((o) => o.tool === "response" && !o.ok)) {
+        return finU([txt("Entendi. Posso te ajudar com essa dúvida sem consultar o estoque agora.")], "reply", U("conversation_repair"));
+      }
+      calls += 1;
+      return finU([txt("Vou verificar as opções para você.")], "reply", { ...U("search_stock"), evidence: [{ quote: "quero SUV" }] });
+    };
+    const t1 = await c.t("quero SUV", incomplete);
+    check("[D-1] search_stock sem capability própria não executa tool", t1.stockCalls === 0 && calls >= 1, `calls=${t1.stockCalls} brain=${calls}`);
+    check("[D-2] contrato incompleto devolve feedback e permite resposta", t1.committed && !t1.terminalSafe && has(t1.outbox, "Entendi"), `committed=${t1.committed} outbox=\"${t1.outbox}\" pf=${JSON.stringify(t1.pf)}`);
+  }
+
   console.log(`\n== F2.41: ${ok} OK | ${fail} FALHA ==`);
   if (fail > 0) { console.error("FALHAS:\n - " + fails.join("\n - ")); process.exit(1); }
 }

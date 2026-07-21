@@ -78,6 +78,39 @@ async function main(): Promise<void> {
     check("[1] decode query stock_search (tipo+precoMax)", step.kind === "query" && step.call.tool === "stock_search" && (step.call.input as { tipo?: string; precoMax?: number }).tipo === "suv" && (step.call.input as { precoMax?: number }).precoMax === 90000);
   }
   // [2] final decode com send_media + guidance
+  // [1a] A resposta truncada não deve voltar ao engine como um passo vazio
+  // para repetir o mesmo envelope pesado. O adapter faz uma única reautoria
+  // compacta e preserva o turno atual.
+  {
+    const understanding = {
+      primaryIntent: "smalltalk", requestedCapabilities: [], subject: "none", subjectValue: null,
+      subjectSource: "current_turn", evidence: [], isTopicChange: false, answeredLeadQuestions: [], policyDecision: null,
+    };
+    const finalJson = JSON.stringify({
+      kind: "final", understanding, reasonCode: "reply", confidence: 0.9, guidance: "responder curto",
+      draft: { parts: [{ type: "text", content: "Claro. Estou por aqui." }] },
+      effects: [{ kind: "send_message" }],
+    });
+    let calls = 0;
+    let lastRequest: ModelHttpRequest | undefined;
+    const transport: ModelHttpTransport = {
+      async postJson(_url: string, request: ModelHttpRequest): Promise<ModelHttpResponse> {
+        lastRequest = request;
+        calls += 1;
+        const bodyText = calls === 1
+          ? JSON.stringify({ choices: [{ finish_reason: "length", message: { content: '{"kind":"final","understanding":' } }] })
+          : JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: finalJson } }] });
+        return { status: 200, contentType: "application/json", bodyText };
+      },
+    };
+    const brain = new OpenAiAgentBrain(SECRET, transport, PORTAL_PROMPT, { model: "gpt-4.1-mini", maxCompletionTokens: 1200 });
+    const step = await brain.proposeNextStep(frame("oi"), []);
+    const body = typeof lastRequest?.body === "string" ? lastRequest.body : "";
+    check("[1a] finish=length faz uma única reautoria compacta", calls === 2 && step.kind === "final" && step.decision.reasonCode === "reply", `calls=${calls} reason=${step.kind === "final" ? step.decision.reasonCode : step.kind}`);
+    check("[1a] reautoria compacta é uma instrução técnica, não roteamento comercial", body.includes("SAIDA COMPACTA OBRIGATORIA") && !body.includes("stock_search AGORA"));
+  }
+
+  // [2] final decode com send_media + guidance
   {
     const { brain } = brainWith(JSON.stringify({ kind: "final", reasonCode: "photo", confidence: 0.9, guidance: "Aqui estão as fotos que você pediu", effects: [{ kind: "send_message" }, { kind: "send_media", vehicleKey: "rm:1", photoIds: ["p1", "p2"] }] }));
     const step = await brain.proposeNextStep(frame("manda foto"), []);

@@ -8,7 +8,7 @@
 //  - 2ª camada de propriedade: revalida tenantId/agentId nos dados retornados;
 //  - exceções do gateway → READ_SOURCE_FAILURE (nunca propaga error.message cru);
 //  - metadata de estoque validada estruturalmente (id/tenant/provider/timestamp/dup);
-//  - versionStamp composto (agente + funil-quando-usado + provider/integração);
+//  - versionStamp composto (prompt do portal + funil/políticas + provider/integração);
 //  - config imutável de verdade (arrays clonados + Object.freeze recursivo).
 
 import type {
@@ -23,6 +23,7 @@ import type {
 } from "../../domain/read-ports.ts";
 import { makeSecretRef } from "../../domain/credential-provider.ts";
 import type { SecretRef } from "../../domain/credential-provider.ts";
+import { normalizeTenantPolicies } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
 import {
   assertTenantAgentRef,
   type OwnedAgentRow,
@@ -147,9 +148,16 @@ export class V2TenantConfigSource implements TenantConfigSource {
     if (!temperature.ok) return fail("INVALID_TEMPERATURE", "temperature fora do contrato (0..2 ou null)");
 
     // Prompt (sem fallback silencioso; nunca expõe conteúdo em erro).
-    let promptText: string;
-    let promptSource: TenantRuntimeConfig["promptSource"];
+    // `wa_ai_agents.system_prompt` é a fonte única do texto que o cliente editou
+    // no portal e que a LLM recebe. O Funil continua sendo carregado quando
+    // habilitado para fornecer tenantPolicies, mas generated_system_prompt é
+    // apenas um artefato derivado. Usá-lo como autoridade criava duas versões:
+    // a tela mostrava o prompt novo e o runtime podia executar o antigo.
+    const promptText = agent.systemPrompt?.trim() ?? "";
+    if (promptText === "") return fail("PROMPT_SOURCE_EMPTY", "system_prompt vazio");
+    const promptSource: TenantRuntimeConfig["promptSource"] = "raw_system_prompt";
     let funnelUpdatedAt: string | null = null;
+    let tenantPolicies = normalizeTenantPolicies([]);
     if (agent.useFunnelConfig) {
       const fcCall = await tryGateway(() => this.gateway.getOwnedFunnelConfig(ref));
       if (!fcCall.ok) return fail("READ_SOURCE_FAILURE", "falha ao ler o funil");
@@ -157,16 +165,8 @@ export class V2TenantConfigSource implements TenantConfigSource {
       if (fc && (fc.agentId !== ref.agentId || fc.tenantId !== ref.tenantId)) {
         return fail("SOURCE_OWNERSHIP_MISMATCH", "funil retornado não pertence ao ref");
       }
-      const generated = fc?.generatedSystemPrompt?.trim() ?? "";
-      if (generated === "") return fail("PROMPT_SOURCE_EMPTY", "generated_system_prompt vazio");
-      promptText = generated;
-      promptSource = "funnel_generated";
       funnelUpdatedAt = fc?.updatedAt ?? null;
-    } else {
-      const raw = agent.systemPrompt?.trim() ?? "";
-      if (raw === "") return fail("PROMPT_SOURCE_EMPTY", "system_prompt vazio");
-      promptText = raw;
-      promptSource = "raw_system_prompt";
+      tenantPolicies = normalizeTenantPolicies(fc?.tenantPolicies);
     }
 
     const stockCall = await tryGateway(() => this.gateway.listActiveStockIntegrationMetadata(ref));
@@ -179,7 +179,7 @@ export class V2TenantConfigSource implements TenantConfigSource {
     // muda qualquer fonte efetiva (agente, funil-quando-usado, provider/integração).
     const versionStamp = [
       `agent:${agent.updatedAt}`,
-      `funnel:${promptSource === "funnel_generated" ? (funnelUpdatedAt ?? "-") : "-"}`,
+      `funnel:${agent.useFunnelConfig ? (funnelUpdatedAt ?? "-") : "-"}`,
       `stock:${sel.provider}:${sel.integrationId ?? "-"}:${sel.integrationUpdatedAt ?? "-"}`,
     ].join("|");
 
@@ -197,6 +197,7 @@ export class V2TenantConfigSource implements TenantConfigSource {
       qualificationQuestions: agent.qualificationQuestions
         ? Object.freeze([...agent.qualificationQuestions])
         : null,
+      tenantPolicies: Object.freeze(tenantPolicies),
       sellsMotorcycles: !!agent.sellsMotorcycles,
       blockedCategories: Object.freeze([...(agent.blockedCategories ?? [])]),
       ragRestricted: !!agent.ragRestricted,

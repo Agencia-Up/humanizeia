@@ -41,6 +41,7 @@ export type OwnedFunnelConfigRow = {
   readonly agentId: string;
   readonly tenantId: string;
   readonly generatedSystemPrompt: string | null;
+  readonly tenantPolicies?: unknown;
   readonly updatedAt: string | null;
 };
 

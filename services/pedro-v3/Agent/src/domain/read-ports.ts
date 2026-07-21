@@ -10,6 +10,7 @@
 
 import type { Awaitable } from "./ports.ts";
 import type { SecretRef } from "./credential-provider.ts";
+import type { TenantFunnelPolicy } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
 
 // Seletor canônico e único de tenant+agente.
 export type TenantAgentRef = {
@@ -39,6 +40,8 @@ export type TenantRuntimeConfig = {
   readonly temperature: number | null;
   readonly sdrGoal: string | null;
   readonly qualificationQuestions: readonly string[] | null;
+  /** Políticas estruturadas do funil; contexto para a LLM, não roteamento da engine. */
+  readonly tenantPolicies?: readonly TenantFunnelPolicy[];
   readonly sellsMotorcycles: boolean;
   readonly blockedCategories: readonly string[];
   readonly ragRestricted: boolean;

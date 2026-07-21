@@ -18,6 +18,7 @@ import { isVisitAct } from "./visit-semantics.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { FrameSignals, TurnUnderstanding, TurnCapability, TurnUnderstandingEvidence, PrimaryIntent, TurnSubjectKind } from "../domain/agent-brain.ts";
+import { validateTenantPolicyDecision } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
 
 // ── Validação de evidência ──────────────────────────────────────────────────────────────────────────────────────
 function quoteInBlock(block: string, quote: string): boolean {
@@ -90,6 +91,7 @@ export function hasActiveVisitContext(input: {
 // Contexto de validação (opcional): relações semânticas que a MEMÓRIA fornece para o turno atual. Sem ele, só o ato
 // EXPLÍCITO no bloco vale (comportamento legado). Nunca autoriza tool/effect — só permite aceitar um understanding coerente.
 export type TurnValidationContext = {
+  readonly tenantPolicies?: unknown;
   readonly visitActive?: boolean;   // há visita/agendamento em andamento (interesseVisita=true / pergunta pendente / última pergunta pediu dia-horário)
 };
 
@@ -157,6 +159,8 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   if (u.primaryIntent === "sensitive_data" && !SENSITIVE_DATA_ACT_RX.test(norm)) {
     issues.push("sensitive_data sem token sensivel validado no bloco atual");
   }
+  const policyIssues = validateTenantPolicyDecision(u.policyDecision, block, context?.tenantPolicies);
+  issues.push(...policyIssues.map((issue) => `declaração de política inválida: ${issue.message}`));
   return issues;
 }
 
@@ -363,13 +367,13 @@ export function toolCapabilityAuthorized(v: ValidatedUnderstanding | null, tool:
   if (!cap) return false;
   if (v.understanding.requestedCapabilities.includes(cap) && capabilityHasOwnEvidence(v, cap)) return true;
 
-  // The LLM owns the act. Valid evidence proves that act belongs to the current
-  // block; capability labels are useful metadata, not a competing authority.
-  if (tool === "stock_search") return v.understanding.primaryIntent === "search_stock" && v.validEvidence.length > 0;
-  if (tool === "vehicle_details") return v.understanding.primaryIntent === "vehicle_detail" && v.validEvidence.length > 0;
-  if (tool === "vehicle_photos_resolve") {
-    return v.validEvidence.some((e) => PHOTO_EVIDENCE_RX.test(normalizeText(e.quote)));
-  }
+  // A capability is part of the LLM's decision contract, not decoration. A
+  // valid quote alone must not let the engine turn an incomplete intent label
+  // into a commercial tool call. The caller receives feedback and the LLM can
+  // re-emit a complete decision for the current block.
+  if (tool === "stock_search") return false;
+  if (tool === "vehicle_details") return false;
+  if (tool === "vehicle_photos_resolve") return false;
   if (tool === "knowledge_search") return v.understanding.primaryIntent !== "smalltalk" && v.validEvidence.length > 0;
   return false;
 }

@@ -159,6 +159,8 @@ export type CentralTurnArgs = {
   readonly limits: QueryLoopLimits;
   readonly maxValidationAttempts: number;
   readonly sdrPolicy?: SdrQualificationPolicy;
+  /** Configuração estruturada do cliente; contexto para a LLM, não decisão da engine. */
+  readonly tenantPolicies?: unknown;
   readonly brainMaxSteps?: number;                       // teto de passos de ferramenta do cérebro (default 4)
   readonly allowedTools?: ReadonlySet<string> | readonly string[];
   readonly providerCapability?: Partial<Record<OutboxRecord["kind"], ProviderCapability>>;
@@ -773,7 +775,13 @@ function authorFromBrainDraft(args: {
     : photoSafeEffects;
   const proposedEffects = ensureSendMessage(brainEffects);
   const proposedQualifiedHandoff = proposedEffects.some((effect) => effect.kind === "handoff" && effect.reason === "qualified_handoff");
-  const qualifiedHandoffReady = args.qualifiedHandoffReadyFor?.(args.proposedPrimaryIntent ?? null) === true;
+  // No readiness callback means central_active has deliberately delegated the
+  // commercial qualification decision to the portal prompt/LLM. In that mode
+  // the engine must not treat an absent internal SDR policy as a negative fact.
+  // A callback is supplied only by the legacy/replay path, where it remains a
+  // factual safety gate for the old objective machinery.
+  const qualifiedHandoffReady = args.qualifiedHandoffReadyFor == null
+    || args.qualifiedHandoffReadyFor(args.proposedPrimaryIntent ?? null) === true;
   if (args.requireBrain && proposedQualifiedHandoff && args.humanRequested !== true && !qualifiedHandoffReady) {
     return {
       ok: false,
@@ -1589,6 +1597,14 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
   const allowed = new Set(args.allowedTools ?? DEFAULT_ALLOWED_TOOLS);
   const brainMaxSteps = args.brainMaxSteps ?? 4;
   const blockAwaitMaxMs = args.blockAwaitMaxMs ?? DEFAULT_DEBOUNCE_CONFIG.maxWaitMs;   // teto anti-parcial (P0 bloco-do-lead)
+  // CENTRAL_ACTIVE AUTHORITY BOUNDARY:
+  // the portal prompt owns commercial conduction, funnel questions and qualification.
+  // Keep the configured SDR policy available only to the legacy/replay path, where it
+  // is part of the old deterministic objective bookkeeping. In llmFirst, the engine
+  // may validate factual safety and effect executability, but must not turn portal
+  // policy into an extra question, objective, or handoff decision.
+  const engineSdrPolicy = args.llmFirst === true ? undefined : sdrPolicy;
+
   let claimedEventIds: Id[] = [];
 
   return persistence.withLease(conversationId, workerId, leaseTtlMs, async (lease): Promise<CentralTurnResult> => {
@@ -1965,6 +1981,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           pendingSchedulingSlot: persisted0.pendingAgentQuestion?.slot ?? null,
           recentTurns: contextState.recentTurns ?? [],
         }),
+        tenantPolicies: args.tenantPolicies,
       };
       const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true, turnValidationContext) : null);
       const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false, turnValidationContext);
@@ -2055,9 +2072,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // Read-only portal fact: qualified_handoff is executable only after the
       // configured qualification view is complete. The LLM remains the sole
       // author of the decision and reply; this is only an effect-safety gate.
-      const qualifiedHandoffReadyFor = args.sdrPolicy == null
+      const qualifiedHandoffReadyFor = engineSdrPolicy == null
         ? undefined
-        : (primaryIntent: string | null): boolean => isSdrHandoffReadyForIntent(contextState, args.sdrPolicy!, primaryIntent);
+        : (primaryIntent: string | null): boolean => isSdrHandoffReadyForIntent(contextState, engineSdrPolicy, primaryIntent);
       const photoVU = (): ValidatedUnderstanding | null => (llmFirst ? brainVU() : authoritativeVU());
       const brainAuthorizesResolvedPhotoAct = (target: TargetResolution): boolean => {
         const v = photoVU();
@@ -3040,7 +3057,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         // objetivo de funil seja persistido (funil = contexto read-only; a LLM decide a condução). Fora do llm_first,
         // `reconcileObjectiveWithQuestion` continua persistindo o objetivo = pergunta REALMENTE enviada (legado).
         if (llmFirst) effectiveDecision = stripAllObjectiveMutations(effectiveDecision);
-        else if (sdrPolicy && !degraded) effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: sdrPolicy });
+        else if (engineSdrPolicy && !degraded) effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: engineSdrPolicy });
         turnOutput = { decision: effectiveDecision, composed, facts, loopExhausted: false, terminalSafe: degraded, steps: brainSteps };
       } else {
         // ── LEGACY (compose por DecisionLlm): caminho anterior, intocado (shadow/testes de engine). ──
@@ -3105,8 +3122,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           const recall = `Você pediu as fotos do ${recalledLabel}. Quer que eu te passe mais detalhes dele?`;
           composed = { draft: { parts: [{ type: "text", content: recall }] }, text: recall };
         }
-        if (sdrPolicy && !terminalSafe) {
-          effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: sdrPolicy });
+        if (engineSdrPolicy && !terminalSafe) {
+          effectiveDecision = reconcileObjectiveWithQuestion({ decision: effectiveDecision, composedText: composed.text, state: contextState, turnId, policy: engineSdrPolicy });
         }
         degraded = terminalSafe;
         turnOutput = { decision: effectiveDecision, composed, facts, loopExhausted: false, terminalSafe, steps: brainSteps };

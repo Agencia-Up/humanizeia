@@ -243,6 +243,23 @@ async function main(): Promise<void> {
     });
     check("[E3] outra conjugação ('passo aí') também vale — fix por classe, não por frase",
       outraForma.outboxKinds.includes("handoff"), `outbox=[${outraForma.outboxKinds.join(",")}]`);
+
+    // E4 — central_active não transforma a política SDR em um segundo decisor.
+    // Mesmo que a LLM declare qualified_handoff antes de todos os slots internos
+    // estarem preenchidos, a engine só valida executabilidade/efeito; a decisão
+    // comercial continua pertencendo ao prompt do portal.
+    const portalDecide = await runTurn({
+      state: seedIncident("c-e4"),
+      leadText: "Vou até ai sou de sjc.",
+      step: finalWith(
+        [txt("Perfeito! Vou te passar para um consultor que te recebe na loja.")],
+        U("visit", "Vou até ai"),
+        [reply, handoffEffect("qualified_handoff")],
+      ),
+    });
+    check("[E4] central_active não bloqueia qualified_handoff por slots SDR internos",
+      portalDecide.outboxKinds.includes("handoff"), `outbox=[${portalDecide.outboxKinds.join(",")}]`);
+    check("[E4] a resposta continua sendo a autoria da LLM", /consultor/i.test(portalDecide.text), portalDecide.text);
   }
 
   // ── H) DEGRAU 3 — SEMÂNTICA DE VISITA em unidade pura. O risco aqui é FALSO POSITIVO. ──

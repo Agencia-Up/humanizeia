@@ -258,6 +258,14 @@ async function main(): Promise<void> {
     check("[A5] promessa sem busca NAO chega ao lead", !has(r.outbox, "Temos várias opções"), r.outbox.slice(0, 80));
   }
 
+  // [D] Contrato ativo de entrada por anúncio específico: a abertura e o veículo
+  // precisam ser produzidos no mesmo resultado da LLM. O teste é estrutural:
+  // não força a engine a escolher estoque; impede que o contrato volte a permitir
+  // a saudação isolada que empurra o assunto do anúncio para o próximo turno.
+  check("[D1] contrato exige anúncio no mesmo resultado final", /NO MESMO RESULTADO FINAL E NO MESMO TURNO/i.test(COMPACT_OPERATIONAL_PROMPT));
+  check("[D2] contrato exige message_break entre abertura e veículo", /message_break.*depois outro.*text/i.test(COMPACT_OPERATIONAL_PROMPT.replace(/\s+/g, " ")));
+  check("[D3] contrato rejeita abertura isolada semanticamente", /resposta final contendo somente a apresenta[cç][aã]o e incompleta/i.test(COMPACT_OPERATIONAL_PROMPT));
+
   // [A6] SATISFAZIBILIDADE: ato institucional SEM tópico atendível pela tool (instagram/telefone).
   // Regressão real pega pela F2.22 [G] durante esta missão: trocar o regex pelo ato declarado, sozinho, fazia o engine
   // exigir tenant_business_info para "qual o instagram de vocês?" — e a tool só atende address|hours|unit.
