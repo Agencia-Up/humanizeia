@@ -1377,6 +1377,7 @@ export function CrmAvancadoTab({
   // filter states
   const [filterStatus, setFilterStatus]   = useState<string>('all');
   const [filterSeller, setFilterSeller]   = useState<string>('all');
+  const [perdidosIaOn, setPerdidosIaOn]   = useState(false);   // filtro rapido: leads perdidos/desqualificados pela IA
   const [searchTerm,   setSearchTerm]     = useState('');
   const searchFetchKeyRef = useRef<string>('');
   // filtro de data dos leads (barra superior — Pedro e Marcos)
@@ -4820,6 +4821,8 @@ export function CrmAvancadoTab({
   // Leads SEM vendedor (assigned_to_id nulo) = aguardando direcionamento. Alimenta a contagem
   // do botao rapido de filtro na barra (Pedro e Marcos, componente compartilhado).
   const semVendedorCount = leads.filter(l => !l.assigned_to_id).length;
+  // Leads PERDIDOS/DESQUALIFICADOS pela IA = status 'perdido' ou 'inativo'. Alimenta o botao rapido.
+  const perdidosIaCount = leads.filter(l => l.status_crm === 'perdido' || l.status_crm === 'inativo').length;
   const filteredLeads = leads.filter(l => {
     if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (isDirectPhoneSearch) {
@@ -4830,6 +4833,8 @@ export function CrmAvancadoTab({
       return true;
     }
     if (filterStatus !== 'all' && (l.status_crm || 'novo') !== filterStatus) return false;
+    // Filtro rapido "Perdidos pela IA": so leads perdido/inativo (desqualificados pela IA).
+    if (perdidosIaOn && l.status_crm !== 'perdido' && l.status_crm !== 'inativo') return false;
     if (filterSeller === 'unassigned' && l.assigned_to_id) return false;
     if (filterSeller !== 'all' && filterSeller !== 'unassigned' && l.assigned_to_id !== filterSeller) return false;
     if (leadDateBounds) {
@@ -5277,6 +5282,28 @@ export function CrmAvancadoTab({
                 <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
                   filterSeller === 'unassigned' ? 'bg-white/25 text-white' : 'bg-orange-500 text-white'
                 }`}>{semVendedorCount}</span>
+              )}
+            </Button>
+          )}
+          {/* Botao rapido: leads que a IA PERDEU/DESQUALIFICOU (status perdido + inativo). Pedro E
+              Marcos. Toggle proprio (perdidosIaOn), sem mexer no filtro de status normal. */}
+          {!isSeller && (view === 'pipeline' || view === 'leads') && (
+            <Button
+              variant="outline" size="sm"
+              onClick={() => setPerdidosIaOn(v => !v)}
+              className={`h-9 shrink-0 gap-1.5 px-3 text-xs sm:h-7 sm:px-2.5 ${
+                perdidosIaOn
+                  ? 'bg-red-600 text-white hover:bg-red-700 border-red-600'
+                  : 'border-red-500/30 text-red-400 hover:bg-red-500/10'
+              }`}
+              title="Mostra os leads que a IA marcou como PERDIDO ou INATIVO (desqualificados). Clique de novo pra limpar."
+            >
+              <XCircle className="h-3.5 w-3.5" />
+              Perdidos pela IA
+              {perdidosIaCount > 0 && (
+                <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                  perdidosIaOn ? 'bg-white/25 text-white' : 'bg-red-500 text-white'
+                }`}>{perdidosIaCount}</span>
               )}
             </Button>
           )}
