@@ -5152,19 +5152,19 @@ export function CrmAvancadoTab({
   };
 
   return (
-    <div className={`mobile-crm-shell space-y-3 p-2 sm:space-y-4 sm:p-4 lg:p-6 ${view === 'pipeline' ? 'flex h-full min-h-0 flex-col' : ''}`}>
+    <div className={`mobile-crm-shell space-y-2.5 p-2 sm:space-y-3 sm:p-4 lg:px-6 lg:py-3 ${view === 'pipeline' ? 'flex h-full min-h-0 flex-col' : ''}`}>
       {/* ── Métricas ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-2.5">
         {[
           { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       color: 'text-blue-400' },
           { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       color: 'text-emerald-400' },
           { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  color: 'text-cyan-400' },
           { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   color: 'text-purple-400' },
         ].map(m => (
-          <div key={m.label} className="flex items-center gap-2 rounded-xl border border-border/50 bg-card px-3 py-3 sm:gap-3 sm:px-4">
+          <div key={m.label} className="flex items-center gap-2 rounded-xl border border-border/50 bg-card px-3 py-2 sm:gap-3 sm:px-4 sm:py-2.5">
             <m.icon className={`h-4 w-4 sm:h-5 sm:w-5 ${m.color} shrink-0`} />
             <div className="min-w-0">
-              <p className="text-lg font-bold leading-none text-foreground sm:text-xl">{m.value}</p>
+              <p className="text-base font-bold leading-none text-foreground sm:text-lg">{m.value}</p>
               <p className="text-[10px] text-muted-foreground mt-0.5">{m.label}</p>
             </div>
           </div>
