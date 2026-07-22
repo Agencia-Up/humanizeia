@@ -4945,6 +4945,36 @@ export function CrmAvancadoTab({
     return { total: sellerLeads.length, today: since(dToday), week: since(dWeek), month: since(dMonth) };
   })();
 
+  // Tendência (% vs período anterior) dos cards de métrica. Client-side, a partir dos
+  // leads já carregados (cap 2000) — SEM escrita/consulta nova no banco. Para tenants
+  // com ≤2000 leads bate exato com os números; acima, é a tendência dos 2000 mais recentes.
+  const fmtTrend = (cur: number, prev: number) => {
+    if (prev <= 0) return cur > 0 ? { txt: 'novo', dir: 'up' as const } : { txt: '—', dir: 'flat' as const };
+    const p = Math.round(((cur - prev) / prev) * 100);
+    return { txt: `${p > 0 ? '+' : ''}${p}%`, dir: (p > 0 ? 'up' : p < 0 ? 'down' : 'flat') as const };
+  };
+  const metricTrend = (() => {
+    const src = (!isMarcosCrm || filterSeller === 'all')
+      ? leads
+      : leads.filter(l => filterSeller === 'unassigned' ? !l.assigned_to_id : l.assigned_to_id === filterSeller);
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const dY = new Date(d0); dY.setDate(dY.getDate() - 1);
+    const dW = new Date(d0); dW.setDate(dW.getDate() - ((d0.getDay() + 6) % 7));
+    const dWp = new Date(dW); dWp.setDate(dWp.getDate() - 7);
+    const dM = new Date(d0.getFullYear(), d0.getMonth(), 1);
+    const dMp = new Date(d0.getFullYear(), d0.getMonth() - 1, 1);
+    const inRange = (a: Date, b?: Date) => src.filter(l => {
+      if (!l.created_at) return false;
+      const t = new Date(l.created_at);
+      return t >= a && (!b || t < b);
+    }).length;
+    return {
+      today: fmtTrend(inRange(d0), inRange(dY, d0)),
+      week:  fmtTrend(inRange(dW), inRange(dWp, dW)),
+      month: fmtTrend(inRange(dM), inRange(dMp, dM)),
+    };
+  })();
+
   // Fase 6 Feature C: cálculo de inativo + handlers de seleção/disparo
   const INATIVO_DIAS = 7;
   const inativoCutoffMs = Date.now() - INATIVO_DIAS * 24 * 60 * 60 * 1000;
@@ -5156,10 +5186,10 @@ export function CrmAvancadoTab({
       {/* ── Métricas ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-2.5">
         {[
-          { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       tint: 'bg-blue-500/10 text-blue-500 dark:text-blue-400' },
-          { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       tint: 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400' },
-          { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  tint: 'bg-cyan-500/10 text-cyan-500 dark:text-cyan-400' },
-          { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   tint: 'bg-purple-500/10 text-purple-500 dark:text-purple-400' },
+          { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       tint: 'bg-blue-500/10 text-blue-500 dark:text-blue-400',       delta: fmtTrend(displayMetrics.month, displayMetrics.total - displayMetrics.month), sub: 'vs mês passado' },
+          { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       tint: 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400', delta: metricTrend.today, sub: 'vs ontem' },
+          { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  tint: 'bg-cyan-500/10 text-cyan-500 dark:text-cyan-400',       delta: metricTrend.week,  sub: 'vs semana passada' },
+          { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   tint: 'bg-purple-500/10 text-purple-500 dark:text-purple-400', delta: metricTrend.month, sub: 'vs mês passado' },
         ].map(m => (
           <div key={m.label} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm sm:px-4 sm:py-3">
             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] sm:h-10 sm:w-10 ${m.tint}`}>
@@ -5167,7 +5197,12 @@ export function CrmAvancadoTab({
             </span>
             <div className="min-w-0">
               <p className="text-lg font-bold leading-none text-foreground sm:text-xl">{m.value}</p>
-              <p className="text-[11px] text-muted-foreground mt-1">{m.label}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{m.label}</p>
+              <p className={`mt-1 flex items-center gap-1 text-[10px] font-semibold leading-none ${m.delta.dir === 'up' ? 'text-emerald-600 dark:text-emerald-400' : m.delta.dir === 'down' ? 'text-red-500 dark:text-red-400' : 'text-muted-foreground'}`}>
+                {m.delta.dir === 'up' ? '▲' : m.delta.dir === 'down' ? '▼' : ''}
+                <span>{m.delta.txt}</span>
+                <span className="hidden truncate font-normal text-muted-foreground sm:inline">{m.sub}</span>
+              </p>
             </div>
           </div>
         ))}
@@ -6871,14 +6906,14 @@ export default function PedroSDR() {
       <div className="flex h-full flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-2.5 px-3 pb-2 pt-1 sm:gap-3 sm:px-4 lg:px-6">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500/20 to-cyan-600/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-            <Bot className="h-4 w-4 text-blue-400" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/25 to-green-600/25 border border-emerald-500/40 flex items-center justify-center shrink-0">
+            <Bot className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="text-lg font-bold text-foreground leading-tight">Pedro</h1>
-              <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px]">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse mr-1.5 inline-block" />
+              <Badge className="bg-emerald-500/20 text-emerald-600 border-emerald-500/30 text-[10px] dark:text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1.5 inline-block dark:bg-emerald-400" />
                 Agente Online
               </Badge>
               {isSeller && (
@@ -6891,6 +6926,17 @@ export default function PedroSDR() {
               {isSeller ? 'Painel do Vendedor — seus leads e atendimentos' : 'Funil do Agente — Qualificação de Leads & Automação Comercial'}
             </p>
           </div>
+          {!isSeller && (
+            <button
+              type="button"
+              onClick={() => handleTabChange('agente')}
+              className="ml-auto hidden shrink-0 items-center gap-2 rounded-lg border border-border/60 bg-card px-3 py-1.5 text-xs font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-400 sm:flex"
+              title="Abrir a configuração do agente (Agente IA)"
+            >
+              <Bot className="h-4 w-4" />
+              Ver perfil do agente
+            </button>
+          )}
         </div>
 
         {/* Tabs */}
