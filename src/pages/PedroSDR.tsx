@@ -18,7 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { descricaoErro } from '@/lib/erroAmigavel';
 import {
-  Bot, MonitorPlay, BarChart3, Loader2, Users, MessageSquare, Inbox,
+  Bot, MonitorPlay, BarChart3, Loader2, Users, UserX, MessageSquare, Inbox,
   ArrowRightLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
   Zap, PhoneCall, NotebookPen, Send, CalendarClock, Flag,
   ChevronRight, ChevronLeft, StickyNote, BellRing, RefreshCw, Eye, EyeOff,
@@ -4817,6 +4817,9 @@ export function CrmAvancadoTab({
   const searchTermTrimmed = searchTerm.toLowerCase().trim();
   const searchTermDigits = searchTermTrimmed.replace(/\D/g, '');
   const isDirectPhoneSearch = searchTermDigits.length >= 8;
+  // Leads SEM vendedor (assigned_to_id nulo) = aguardando direcionamento. Alimenta a contagem
+  // do botao rapido de filtro na barra (Pedro e Marcos, componente compartilhado).
+  const semVendedorCount = leads.filter(l => !l.assigned_to_id).length;
   const filteredLeads = leads.filter(l => {
     if (isSeller && memberIds.length > 0 && !memberIds.includes(l.assigned_to_id)) return false;
     if (isDirectPhoneSearch) {
@@ -5253,6 +5256,29 @@ export function CrmAvancadoTab({
                 </div>
               )}
             </>
+          )}
+          {/* Botao rapido: filtra os leads SEM vendedor (aguardando direcionamento), com contagem.
+              Aparece no Pedro E no Marcos (CrmAvancadoTab compartilhado). Toggle liga/desliga —
+              usa o mesmo estado filterSeller='unassigned' do dropdown, entao ficam sincronizados. */}
+          {!isSeller && (view === 'pipeline' || view === 'leads') && (
+            <Button
+              variant="outline" size="sm"
+              onClick={() => setFilterSeller(filterSeller === 'unassigned' ? 'all' : 'unassigned')}
+              className={`h-9 shrink-0 gap-1.5 px-3 text-xs sm:h-7 sm:px-2.5 ${
+                filterSeller === 'unassigned'
+                  ? 'bg-orange-500 text-white hover:bg-orange-600 border-orange-500'
+                  : 'border-orange-500/30 text-orange-400 hover:bg-orange-500/10'
+              }`}
+              title="Mostra só os leads SEM vendedor (aguardando direcionamento). Clique de novo pra limpar."
+            >
+              <UserX className="h-3.5 w-3.5" />
+              Sem vendedor
+              {semVendedorCount > 0 && (
+                <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                  filterSeller === 'unassigned' ? 'bg-white/25 text-white' : 'bg-orange-500 text-white'
+                }`}>{semVendedorCount}</span>
+              )}
+            </Button>
           )}
           {!isSeller && teamMembers.length > 0 && (view === 'pipeline' || view === 'leads') && (
             <Select value={filterSeller} onValueChange={setFilterSeller}>
