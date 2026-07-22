@@ -5285,9 +5285,10 @@ export function CrmAvancadoTab({
               )}
             </Button>
           )}
-          {/* Botao rapido: leads que a IA PERDEU/DESQUALIFICOU (status perdido + inativo). Pedro E
-              Marcos. Toggle proprio (perdidosIaOn), sem mexer no filtro de status normal. */}
-          {!isSeller && (view === 'pipeline' || view === 'leads') && (
+          {/* Botao rapido: leads que a IA PERDEU/DESQUALIFICOU (status perdido + inativo).
+              SO no PEDRO (!isMarcosCrm): o Marcos e CRM MANUAL (nao tem IA que desqualifica) e usa
+              etapas proprias (stage_id UUID), entao o filtro de status texto nem se aplica la. */}
+          {!isSeller && !isMarcosCrm && (view === 'pipeline' || view === 'leads') && (
             <Button
               variant="outline" size="sm"
               onClick={() => setPerdidosIaOn(v => !v)}
