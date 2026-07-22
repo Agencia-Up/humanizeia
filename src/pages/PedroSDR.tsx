@@ -5156,16 +5156,18 @@ export function CrmAvancadoTab({
       {/* ── Métricas ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-2.5">
         {[
-          { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       color: 'text-blue-400' },
-          { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       color: 'text-emerald-400' },
-          { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  color: 'text-cyan-400' },
-          { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   color: 'text-purple-400' },
+          { label: 'Total Leads',  value: displayMetrics.total,  icon: Users,       tint: 'bg-blue-500/10 text-blue-500 dark:text-blue-400' },
+          { label: 'Hoje',         value: displayMetrics.today,  icon: Clock,       tint: 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-400' },
+          { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  tint: 'bg-cyan-500/10 text-cyan-500 dark:text-cyan-400' },
+          { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   tint: 'bg-purple-500/10 text-purple-500 dark:text-purple-400' },
         ].map(m => (
-          <div key={m.label} className="flex items-center gap-2 rounded-xl border border-border/50 bg-card px-3 py-2 sm:gap-3 sm:px-4 sm:py-2.5">
-            <m.icon className={`h-4 w-4 sm:h-5 sm:w-5 ${m.color} shrink-0`} />
+          <div key={m.label} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm sm:px-4 sm:py-3">
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] sm:h-10 sm:w-10 ${m.tint}`}>
+              <m.icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+            </span>
             <div className="min-w-0">
-              <p className="text-base font-bold leading-none text-foreground sm:text-lg">{m.value}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">{m.label}</p>
+              <p className="text-lg font-bold leading-none text-foreground sm:text-xl">{m.value}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{m.label}</p>
             </div>
           </div>
         ))}
@@ -5683,7 +5685,7 @@ export function CrmAvancadoTab({
                   <div
                     ref={colProvided.innerRef}
                     {...colProvided.draggableProps}
-                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-card/50 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''} ${colSnapshot.isDragging ? 'shadow-2xl ring-2 ring-blue-400/50 rotate-1' : ''}`}
+                    className={`w-[82vw] max-w-[310px] shrink-0 rounded-xl border bg-muted/40 sm:w-[260px] ${useHex ? '' : col.border} ${isWin ? 'border-emerald-400/60 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20' : ''} ${colSnapshot.isDragging ? 'shadow-2xl ring-2 ring-blue-400/50 rotate-1' : ''}`}
                     style={{ ...colProvided.draggableProps.style, ...(useHex ? { borderColor: `${hex}4d` } : {}) }}
                   >
                     {/* Header INTEIRO e a pegada da coluna: alvo grande, "clicou em cima
@@ -5691,16 +5693,19 @@ export function CrmAvancadoTab({
                         continuam como apoio (celular / quem nao quer arrastar). */}
                     <div
                       {...colProvided.dragHandleProps}
-                      className={`px-2.5 py-2 rounded-t-xl ${isWin ? 'bg-emerald-500/25' : (useHex ? '' : col.bg)} flex items-center justify-between gap-1 select-none cursor-grab active:cursor-grabbing touch-none`}
-                      style={useHex ? { backgroundColor: `${hex}1a` } : undefined}
+                      className="px-2.5 py-2.5 rounded-t-xl flex items-center justify-between gap-1 select-none cursor-grab active:cursor-grabbing touch-none"
                       title="Arraste para trocar a coluna de lugar"
                     >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/50" />
-                        <span className="text-sm shrink-0">{col.emoji}</span>
-                        <span className={`text-xs font-semibold truncate ${isWin ? 'text-emerald-200' : 'text-foreground'}`}>{col.title}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${isWin ? 'bg-emerald-500/20' : (useHex ? '' : col.bg)}`}
+                          style={useHex ? { backgroundColor: `${hex}1f` } : undefined}
+                        >
+                          {col.emoji}
+                        </span>
+                        <span className={`text-sm font-semibold truncate ${isWin ? 'text-emerald-600 dark:text-emerald-300' : 'text-foreground'}`}>{col.title}</span>
                         {isWin && (
-                          <span className="shrink-0 text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-emerald-100">
+                          <span className="shrink-0 text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-200">
                             Venda
                           </span>
                         )}
@@ -5730,8 +5735,7 @@ export function CrmAvancadoTab({
                         >
                           <ChevronRight className="h-3.5 w-3.5" />
                         </button>
-                        <span className={`ml-0.5 w-5 h-5 rounded-full ${useHex ? '' : col.bg} flex items-center justify-center text-[10px] font-bold text-foreground`}
-                          style={useHex ? { backgroundColor: `${hex}26` } : undefined}>
+                        <span className="ml-1 min-w-[22px] rounded-full border border-border/60 bg-card px-2 py-0.5 text-center text-xs font-bold text-muted-foreground">
                           {colLeads.length}
                         </span>
                       </div>
@@ -5785,10 +5789,10 @@ export function CrmAvancadoTab({
                                       loadLeadDetail(lead);
                                     }
                                   }}
-                                  className={`w-full text-left bg-background border rounded-lg p-3 transition-all space-y-2 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
+                                  className={`w-full text-left bg-card border rounded-lg p-3 transition-all space-y-2 group cursor-pointer shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
                                     dragSnapshot.isDragging
                                       ? 'border-blue-500/60 shadow-lg shadow-blue-500/10 ring-1 ring-blue-500/30'
-                                      : 'border-border/40 hover:border-blue-500/40 hover:bg-blue-500/5'
+                                      : 'border-border/50 hover:border-blue-500/40 hover:bg-blue-500/5'
                                   }`}
                                 >
                                   <div className="flex items-start gap-2">
@@ -5814,6 +5818,9 @@ export function CrmAvancadoTab({
                                     >
                                       <GripVertical className="h-4 w-4" />
                                     </div>
+                                    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ${(['bg-blue-500','bg-emerald-500','bg-violet-500','bg-pink-500','bg-amber-500','bg-cyan-600','bg-rose-500','bg-indigo-500'])[((lead.lead_name || 'L').trim().charCodeAt(0) || 76) % 8]}`} aria-hidden="true">
+                                      {(lead.lead_name || 'L').trim().charAt(0).toUpperCase() || 'L'}
+                                    </span>
                                     <button
                                       onClick={(event) => {
                                         event.stopPropagation();
@@ -5885,10 +5892,11 @@ export function CrmAvancadoTab({
                                       <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2 whitespace-pre-line">{lead.summary}</p>
                                     </button>
                                   )}
-                                  <div className="flex items-center justify-between gap-1">
-                                    <div className="flex items-center gap-1.5">
+                                  <div className="flex items-center justify-between gap-1 border-t border-border/50 pt-2">
+                                    <div className="flex items-center gap-1.5 min-w-0">
                                       {lead.member && (
-                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium truncate max-w-[80px]">
+                                        <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground truncate max-w-[110px]" title={lead.member.name}>
+                                          <Users className="h-3 w-3 shrink-0 text-muted-foreground/70" />
                                           {lead.member.name}
                                         </span>
                                       )}
@@ -5929,7 +5937,7 @@ export function CrmAvancadoTab({
                                             atual: normalizeStatus(lead.status_crm || 'novo', pipelineColumns),
                                           });
                                         }}
-                                        className="shrink-0 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-blue-500/10 hover:text-blue-400 border border-border/40"
+                                        className="shrink-0 rounded-md border border-border/50 bg-muted/50 px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
                                         title="Mover para outra coluna"
                                       >
                                         Mover
