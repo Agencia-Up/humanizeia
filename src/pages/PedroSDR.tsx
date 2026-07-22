@@ -5288,7 +5288,10 @@ export function CrmAvancadoTab({
               <SelectContent>
                 <SelectItem value="all" className="text-xs">Todos</SelectItem>
                 <SelectItem value="unassigned" className="text-xs text-muted-foreground">Sem vendedor</SelectItem>
-                {teamMembers.filter(m => m.active_in_system !== false).map(m => (
+                {/* Só VENDEDORES de verdade no filtro: exclui gerente / gestor de trafego /
+                    funcionario sem funcao de vendedor (is_manager=true). O CRM e dos vendedores
+                    que trabalham os leads — mesma regra do activeBulkSellers. */}
+                {teamMembers.filter(m => m.active_in_system !== false && !m.is_manager).map(m => (
                   <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>
                 ))}
               </SelectContent>
