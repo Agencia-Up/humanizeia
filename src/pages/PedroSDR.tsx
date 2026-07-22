@@ -1290,6 +1290,7 @@ interface BulkLeadRow {
 }
 
 type CrmMode = 'pedro' | 'marcos';
+type CrmView = 'pipeline' | 'leads' | 'feedbacks' | 'trafego' | 'sellers' | 'diagnostico';
 
 interface CrmAvancadoTabProps {
   userId: string | undefined;
@@ -1298,6 +1299,10 @@ interface CrmAvancadoTabProps {
   memberIdsProp?: string[];
   masterUserIdProp?: string | null;
   memberIdProp?: string | null;
+  // Nav unificada (só master no Pedro): a barra de abas de cima controla o `view` do CRM.
+  // Sem esses props (Marcos / vendedor), o CRM usa o sub-menu interno (comportamento antigo).
+  viewProp?: CrmView;
+  onViewChange?: (v: CrmView) => void;
 }
 
 export function CrmAvancadoTab({
@@ -1306,7 +1311,9 @@ export function CrmAvancadoTab({
   isSellerProp,
   memberIdsProp,
   masterUserIdProp,
-  memberIdProp
+  memberIdProp,
+  viewProp,
+  onViewChange
 }: CrmAvancadoTabProps) {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -1372,7 +1379,11 @@ export function CrmAvancadoTab({
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
   const [cancellingFollowupId, setCancellingFollowupId] = useState<string | null>(null);
   const [transfers, setTransfers] = useState<LeadTransfer[]>([]);
-  const [view, setView] = useState<'pipeline' | 'leads' | 'feedbacks' | 'trafego' | 'sellers' | 'diagnostico'>('pipeline');
+  // `view` opcionalmente controlado pela barra de cima (master). Sem props, usa estado local
+  // (Marcos/vendedor) — comportamento antigo. setView é chamado só pelo sub-menu interno.
+  const [localView, setLocalView] = useState<CrmView>('pipeline');
+  const view = viewProp ?? localView;
+  const setView = (v: CrmView) => { onViewChange ? onViewChange(v) : setLocalView(v); };
 
   // filter states
   const [filterStatus, setFilterStatus]   = useState<string>('all');
@@ -5210,6 +5221,7 @@ export function CrmAvancadoTab({
 
       {/* ── Sub-nav + busca + refresh ────────────────────────────────── */}
       <div className="mobile-crm-actions flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        {!onViewChange && (
         <div className="mobile-tabs-scroll flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted/40 p-1">
           {[
             { id: 'pipeline',  label: 'CRM',        icon: ArrowRightLeft, badge: 0 },
@@ -5241,6 +5253,7 @@ export function CrmAvancadoTab({
             </button>
           ))}
         </div>
+        )}
         <div className="mobile-crm-tools flex w-full items-center gap-1.5 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
           {!isSeller && (
             <Button
@@ -6872,6 +6885,9 @@ export default function PedroSDR() {
   const masterDefaultTab = FEATURES.agentPerformanceTab ? 'performance' : 'crm';
   const defaultTab = isSeller ? (tabs[0]?.id || 'crm') : (tabParam || masterDefaultTab);
   const [activeTab, setActiveTab] = useState(defaultTab);
+  // Nav unificada (master): a barra de abas de cima também escolhe o "view" do CRM
+  // (Visão Geral / Lista / Diagnóstico). Passado como prop pro CrmAvancadoTab.
+  const [crmView, setCrmView] = useState<CrmView>('pipeline');
 
   // Sincroniza activeTab → URL. Assim, mesmo se o ErrorBoundary remontar
   // a página, a URL ainda carrega o tab atual e o useEffect abaixo restaura.
@@ -6943,6 +6959,7 @@ export default function PedroSDR() {
         <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col min-h-0">
           <div className="border-b border-border/40 px-1 sm:px-4 lg:px-6">
             <div className="mobile-tabs-scroll overflow-x-auto">
+            {isSeller ? (
             <TabsList className="h-auto min-w-max bg-transparent p-0 gap-1">
               {tabs.map(tab => (
                 <TabsTrigger
@@ -6955,6 +6972,38 @@ export default function PedroSDR() {
                 </TabsTrigger>
               ))}
             </TabsList>
+            ) : (
+            // Nav unificada (master): as sub-views do CRM (Visão Geral/Lista/Diagnóstico) sobem
+            // pra barra de topo, junto das demais abas. Botões custom porque as 3 primeiras
+            // compartilham activeTab='crm' e só trocam o `view` (o Radix não distingue por value).
+            <div className="flex h-auto min-w-max gap-1">
+              {([
+                { key: 'pipeline',    emoji: '🗒️', label: 'Visão Geral',      tab: 'crm',                view: 'pipeline' },
+                { key: 'leads',       emoji: '📇', label: 'Lista de Leads',   tab: 'crm',                view: 'leads' },
+                { key: 'diagnostico', emoji: '⚠️', label: 'Diagnóstico',      tab: 'crm',                view: 'diagnostico' },
+                { key: 'vendedores',  emoji: '👥', label: 'Vendedores',       tab: 'vendedores' },
+                { key: 'feedbacks',   emoji: '💬', label: 'Feedbacks',        tab: 'feedbacks-vendedor' },
+                { key: 'agente',      emoji: '🤖', label: 'Agente IA',        tab: 'agente' },
+                { key: 'inbox-ia',    emoji: '📨', label: 'Conversas IA',     tab: 'inbox-ia' },
+                { key: 'meta-forms',  emoji: '📋', label: 'Formulários Meta', tab: 'meta-forms' },
+              ] as Array<{ key: string; emoji: string; label: string; tab: string; view?: CrmView }>).map(item => {
+                const active = item.view ? (activeTab === item.tab && crmView === item.view) : (activeTab === item.tab);
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => { handleTabChange(item.tab); if (item.view) setCrmView(item.view); }}
+                    className={`flex min-h-10 shrink-0 items-center gap-1.5 rounded-none border-b-2 px-3 py-2 text-xs font-medium transition-all sm:min-h-0 sm:py-1.5 ${
+                      active ? 'border-blue-500 text-blue-400' : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <span>{item.emoji}</span>
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            )}
             </div>
           </div>
 
@@ -6975,6 +7024,8 @@ export default function PedroSDR() {
                 memberIdsProp={memberIds}
                 masterUserIdProp={masterUserId}
                 memberIdProp={seller?.id}
+                viewProp={!isSeller ? crmView : undefined}
+                onViewChange={!isSeller ? setCrmView : undefined}
               />
             </TabsContent>
 
