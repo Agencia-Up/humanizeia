@@ -426,7 +426,11 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       p_agent_id: (selectedAgentId && selectedAgentId !== ALL_AGENTS) ? selectedAgentId : null,
       p_seller_member_ids: (sellerFilterIds && sellerFilterIds.length > 0) ? sellerFilterIds : null,
       p_include_marcos: !!unified,
-      p_limit: 2000,
+      // SEM teto pratico: carrega TODAS as conversas, entao o badge (leads.length) mostra
+      // o numero REAL. 100000 e so um limite de seguranca (50x maior que qualquer conta
+      // real) -> "ilimitado" de verdade travaria o navegador. Antes era 2000, que ESCONDIA
+      // conversas silenciosamente (ex.: Icom tem 1.681 e so mostrava 1.000/2.000).
+      p_limit: 100000,
     });
     if (error) { setLeads([]); setLoadingLeads(false); return; }
     const merged: Lead[] = ((data || []) as any[]).map((l): Lead => ({
