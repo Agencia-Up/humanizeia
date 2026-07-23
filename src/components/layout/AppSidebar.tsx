@@ -136,10 +136,10 @@ function NavItem({
         <NavLink
           to={item.url}
           end={item.url === '/dashboard' || item.url === '/tela-inicial'}
-          className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-sidebar-foreground/72 transition-all hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-semibold border-l-2 border-sidebar-primary pl-[9px] shadow-sm"
+          className="group flex items-center gap-2.5 rounded-xl border border-transparent px-2.5 py-2 text-sm text-sidebar-foreground/72 transition-all hover:border-sidebar-border/70 hover:bg-sidebar-accent/80 hover:text-sidebar-accent-foreground hover:shadow-sm"
+          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-semibold border-sidebar-primary/35 border-l-2 pl-[9px] shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
         >
-          <item.icon className="h-4 w-4 shrink-0" />
+          <item.icon className="h-4 w-4 shrink-0 text-sidebar-foreground/72 transition-colors group-hover:text-sidebar-accent-foreground" />
           {!collapsed && <span className="flex-1 truncate">{item.title}</span>}
           {!collapsed && (item.badge || 0) > 0 && (
             <Badge className="ml-auto h-4 min-w-4 rounded-full px-1 text-[9px] bg-primary text-primary-foreground border-0">
@@ -311,22 +311,22 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="logos-app-sidebar border-r border-sidebar-border/80">
 
       {/* ── Logo ── */}
-      <SidebarHeader className="border-b border-sidebar-border/80 p-3">
+      <SidebarHeader className="border-b border-sidebar-border/80 p-3.5">
         {collapsed ? (
           <div className="flex justify-center">
             <button
               onClick={toggleSidebar}
-              className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-sidebar-accent transition-colors"
+              className="logos-sidebar-brand flex h-11 w-11 items-center justify-center transition-colors hover:border-sidebar-primary/40"
             >
-              <LogosIAIcon size={28} variant="auto" />
+              <LogosIAIcon size={34} variant="auto" />
             </button>
           </div>
         ) : (
-          <div className="flex items-center justify-between">
-            <LogosIALogo size="sm" variant="auto" />
+          <div className="logos-sidebar-brand flex items-center justify-between gap-2 px-3 py-2.5">
+            <LogosIALogo size="lg" variant="auto" className="max-w-[150px]" />
             <button
               onClick={toggleSidebar}
-              className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-accent transition-colors"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
             >
               <X className="h-3.5 w-3.5 text-muted-foreground" />
             </button>

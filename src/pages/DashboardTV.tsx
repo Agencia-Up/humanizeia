@@ -1349,7 +1349,7 @@ export default function DashboardTV({ embedded = false }: DashboardTVProps = {})
   // coluna flex, sem scroll. ~2% de padding em cada eixo = margem de overscan
   // pra TVs que cortam as bordas. A área de vendedores (flex-1) absorve a sobra.
   const wrapperClass = embedded
-    ? 'h-full overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white'
+    ? 'dashboard-tv-embedded h-full overflow-hidden rounded-[28px] border border-border/70 bg-transparent text-foreground'
     : 'relative flex flex-col h-[100dvh] w-[100dvw] overflow-hidden px-[2vw] py-[2vh] bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white';
 
   // Loading inicial (perfil + dados)
