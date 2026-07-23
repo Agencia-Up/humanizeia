@@ -69,19 +69,24 @@ const MODEL_LABELS: Record<string, { short: string; color: string }> = {
 
 const AGENT_TYPE_CONFIG: Record<string, { emoji: string; label: string; color: string }> = {
   sdr: { emoji: '📞', label: 'SDR', color: 'text-teal-400' },
+  sdr_geral: { emoji: '🎯', label: 'SDR - Geral', color: 'text-violet-400' },
   support: { emoji: '🛠️', label: 'Suporte', color: 'text-blue-400' },
   sales: { emoji: '💰', label: 'Vendas', color: 'text-yellow-400' },
   generic: { emoji: '🤖', label: 'Genérico', color: 'text-slate-400' },
 };
 
 function AgentAvatar({ agent }: { agent: AIAgent }) {
-  const typeConfig = AGENT_TYPE_CONFIG[agent.agent_type || 'generic'];
-  const initials = agent.name.slice(0, 2).toUpperCase();
+  // agent_type is persisted data and can contain a value introduced by a newer
+  // version or an older tenant. The list page must remain renderable even when
+  // that value is not known by this bundle (especially after saving SDR Geral).
+  const typeConfig = AGENT_TYPE_CONFIG[agent.agent_type || 'generic'] || AGENT_TYPE_CONFIG.generic;
+  const agentName = typeof agent.name === 'string' ? agent.name : 'Agente IA';
+  const initials = agentName.slice(0, 2).toUpperCase();
 
   if (agent.avatar_url) {
     return (
       <div className="relative">
-        <img src={agent.avatar_url} alt={agent.name} className="w-12 h-12 rounded-xl object-cover" />
+        <img src={agent.avatar_url} alt={agentName} className="w-12 h-12 rounded-xl object-cover" />
         <span className={`absolute -bottom-1 -right-1 text-lg`}>{typeConfig.emoji}</span>
       </div>
     );
