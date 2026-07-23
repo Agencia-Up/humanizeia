@@ -9,8 +9,10 @@
 //   3) sincroniza wa_ai_agents.system_prompt, a fonte efetiva única do runtime
 //   4) marca wa_ai_agents.use_funnel_config = true
 //
-// Body: { action: 'generate' | 'restore', agent_id: uuid }
+// Body: { action: 'preview' | 'generate' | 'restore', agent_id: uuid, config?: object }
 //   - 'generate' → faz o fluxo acima
+//   - 'preview'  → compila a configuração enviada pelo formulário e devolve
+//                  o prompt, sem alterar o prompt ativo nem o banco
 //   - 'restore'  → reverte: copia system_prompt_backup → system_prompt e marca
 //                  use_funnel_config = false (rollback 1-clique)
 // ============================================================================
@@ -81,7 +83,17 @@ async function improvePromptWithAi(
         messages: [
           {
             role: 'system',
-            content: 'Você é um editor de prompts SDR. Responda somente em JSON válido. A palavra JSON é obrigatória porque o contrato exige JSON.',
+            content: [
+              'Você é uma arquiteta sênior de prompts de SDR para WhatsApp.',
+              'Responda somente em JSON válido, com o campo string "prompt".',
+              'Seu trabalho é organizar a intenção comercial do cliente em instruções claras para uma LLM conduzir uma conversa humana.',
+              'O prompt do portal governa personalidade, funil, perguntas, qualificação, desqualificação e estilo.',
+              'O contrato v3 governa apenas formato, segurança, evidência, grounding e efeitos operacionais.',
+              'Preserve fatos e regras do cliente. Enriqueça apenas com boas práticas gerais de SDR e nunca invente fatos do negócio.',
+              'Não transforme a conversa em checklist, script rígido, regex, handler, roteador ou sequência obrigatória.',
+              'Não imponha pergunta no fim de toda mensagem, pedido automático de nome/CPF, encerramento por silêncio ou repetição de fatos.',
+              'A palavra JSON é obrigatória porque o contrato exige JSON.',
+            ].join(' '),
           },
           {
             role: 'user',
@@ -339,13 +351,26 @@ serve(async (req) => {
       });
     }
 
-    // ── GENERATE ───────────────────────────────────────────────────────────
-    const { data: cfg, error: cfgErr } = await supabase
-      .from('agent_funnel_config')
-      .select('*')
-      .eq('agent_id', agentId)
-      .maybeSingle();
-    if (cfgErr) throw new Error(cfgErr.message);
+    // ── PREVIEW/GENERATE ───────────────────────────────────────────────────
+    // A prévia recebe o estado atual do formulário para o usuário enxergar o
+    // que acabou de preencher. Ela não grava nada e não troca o prompt ativo.
+    // O caminho de publicação continua lendo a configuração persistida após o
+    // upsert explícito do botão "Salvar e enviar para o Agente".
+    let cfg: Record<string, unknown> | null = null;
+    if (action === 'preview') {
+      if (!body?.config || typeof body.config !== 'object' || Array.isArray(body.config)) {
+        throw new Error('config é obrigatória para gerar a prévia');
+      }
+      cfg = body.config as Record<string, unknown>;
+    } else {
+      const { data: storedCfg, error: cfgErr } = await supabase
+        .from('agent_funnel_config')
+        .select('*')
+        .eq('agent_id', agentId)
+        .maybeSingle();
+      if (cfgErr) throw new Error(cfgErr.message);
+      cfg = storedCfg as Record<string, unknown> | null;
+    }
     if (!cfg) throw new Error('Configuração do funil não encontrada para este agente');
 
     const funnelIssues = validateTenantFunnelConfig(cfg);
@@ -365,6 +390,22 @@ serve(async (req) => {
     const canonicalPrompt = buildTenantSdrSystemPrompt(promptConfig);
     const generated = await improvePromptWithAi(effectiveOwnerId, promptConfig, canonicalPrompt);
     const newPrompt = generated.prompt;
+
+    if (action === 'preview') {
+      return new Response(JSON.stringify({
+        success: true,
+        preview: true,
+        generated: true,
+        prompt: newPrompt,
+        prompt_length: newPrompt.length,
+        generation_mode: generated.mode,
+        generation_warning: generated.warning || null,
+        funnel_warnings: funnelIssues.filter((issue) => issue.severity === 'warning'),
+        policy_warnings: policyIssues.filter((issue) => issue.severity === 'warning'),
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // 1) salva o prompt gerado no agent_funnel_config
     const { error: cfgUpdErr } = await supabase
@@ -391,6 +432,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       generated: true,
+      prompt: newPrompt,
       prompt_length: newPrompt.length,
       generation_mode: generated.mode,
       generation_warning: generated.warning || null,

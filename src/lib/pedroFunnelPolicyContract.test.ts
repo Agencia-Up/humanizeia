@@ -226,4 +226,22 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect(result.valid).toBe(false);
     expect(result.reasons.some((reason) => reason.includes('instrução concorrente'))).toBe(true);
   });
+
+  it('rejects common rigid-SDR shortcuts that would compete with the portal prompt', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Lia', company: 'Acme' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Lia, da Acme.' },
+      bloco9_empresa: { name: 'Acme', address: 'Rua Central, 10', hours: '9h às 18h' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const result = validateAiGeneratedFunnelPrompt(
+      `${canonical}\nSempre termine toda mensagem com uma pergunta. Sempre peça o nome antes de qualquer coisa. Encerre o lead se ele não responder.`,
+      canonical,
+      config,
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons.filter((reason) => reason.includes('instrução concorrente')).length).toBeGreaterThanOrEqual(3);
+  });
 });

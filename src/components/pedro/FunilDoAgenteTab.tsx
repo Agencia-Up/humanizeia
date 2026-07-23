@@ -316,6 +316,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewText, setPreviewText] = useState('');
+  const [previewMode, setPreviewMode] = useState<'ai' | 'fallback' | 'published'>('ai');
+  const [previewWarning, setPreviewWarning] = useState('');
 
   // Validação: blocos críticos pra IA funcionar bem (não bloqueiam, só avisam)
   const validation = useMemo(() => {
@@ -378,7 +380,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
           setCfg(seeded);
           toast({
             title: '🪄 Funil pré-preenchido',
-            description: 'Usamos os dados do agente como base. Revise os blocos e clique em Salvar e Gerar Prompt.',
+            description: 'Usamos os dados do agente como base. Revise os blocos e gere uma prévia antes de publicar.',
           });
         }
         // Marca que carga inicial terminou — daqui pra frente, qualquer
@@ -396,24 +398,55 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
-  // ── Salvar config + gerar prompt ──────────────────────────────────────────
-  const handleSaveAndGenerate = async () => {
-    if (!agentId || !userId) return;
+  const validateBeforePromptAction = () => {
     const funnelErrors = validateTenantFunnelConfig(cfg).filter((issue) => issue.severity === 'error');
     const policyErrors = validateTenantPolicies(cfg.tenant_policies).filter((issue) => issue.severity === 'error');
-    if (funnelErrors.length > 0 || policyErrors.length > 0) {
-      // BUGFIX: antes usava policyErrors[0].message direto. Quando o erro era do FUNIL
-      // (funnelErrors) e não havia nenhum policyError, policyErrors[0] era undefined e o
-      // clique quebrava CALADO — não salvava e não mostrava aviso nenhum. Agora mostra o
-      // 1º erro real (funil OU política), com o título certo, sempre.
-      const firstIssue = funnelErrors[0] || policyErrors[0];
+    if (funnelErrors.length === 0 && policyErrors.length === 0) return true;
+
+    const firstIssue = funnelErrors[0] || policyErrors[0];
+    toast({
+      title: funnelErrors.length > 0 ? 'Complete o funil antes de gerar' : 'Revise as políticas comerciais',
+      description: firstIssue?.message || 'Revise os campos obrigatórios do funil antes de gerar o prompt.',
+      variant: 'destructive',
+    });
+    return false;
+  };
+
+  // ── Gera uma prévia da configuração atual, sem publicar no agente ────────
+  const handleGenerateWithAi = async () => {
+    if (!agentId || !userId || !validateBeforePromptAction()) return;
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-agent-funnel-prompt', {
+        body: { action: 'preview', agent_id: agentId, config: cfg },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      setPreviewText(data?.prompt || '(A IA não retornou um prompt.)');
+      setPreviewMode(data?.generation_mode === 'ai' ? 'ai' : 'fallback');
+      setPreviewWarning(data?.generation_warning || '');
       toast({
-        title: funnelErrors.length > 0 ? 'Complete o funil antes de gerar' : 'Revise as políticas comerciais',
-        description: firstIssue?.message || 'Revise os campos obrigatórios do funil antes de gerar o prompt.',
+        title: data?.generation_mode === 'ai' ? '✨ Prompt gerado com IA' : 'Prompt v3 gerado com segurança',
+        description: data?.generation_warning || 'A prévia usa exatamente os dados preenchidos. Nada foi publicado ainda.',
+      });
+    } catch (err: any) {
+      setPreviewText('');
+      setPreviewWarning('');
+      toast({
+        title: 'Erro ao gerar com IA',
+        description: isMissingTenantPoliciesColumn(err) ? funnelSchemaMigrationMessage() : err.message,
         variant: 'destructive',
       });
-      return;
+    } finally {
+      setPreviewLoading(false);
     }
+  };
+
+  // ── Salva a configuração e publica o prompt no agente ────────────────────
+  const handleSaveAndSend = async () => {
+    if (!agentId || !userId) return;
+    if (!validateBeforePromptAction()) return;
     setSaving(true);
     try {
       // Upsert config
@@ -435,16 +468,20 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
 
       setUseFunnelConfig(true);
       if (data?.backup_created) setHasBackup(true);
+      setPreviewText(data?.prompt || '');
+      setPreviewMode('published');
+      setPreviewWarning(data?.generation_warning || '');
+      setPreviewOpen(true);
 
       toast({
-        title: '✅ Funil salvo e prompt gerado',
+        title: '✅ Funil salvo e enviado para o Agente',
         description: data?.generation_mode === 'ai'
           ? `A IA aprimorou o prompt comercial dentro do contrato v3 (${data?.prompt_length || '?'} chars).`
           : `Prompt v3 canônico aplicado com segurança (${data?.prompt_length || '?'} chars).`,
       });
     } catch (err: any) {
       toast({
-        title: 'Erro ao salvar',
+        title: 'Erro ao salvar e enviar',
         description: isMissingTenantPoliciesColumn(err) ? funnelSchemaMigrationMessage() : err.message,
         variant: 'destructive',
       });
@@ -471,29 +508,6 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       toast({ title: '🪄 Funil re-preenchido com os dados do agente' });
     } catch (err: any) {
       toast({ title: 'Erro ao re-preencher', description: err.message, variant: 'destructive' });
-    }
-  };
-
-  // ── Preview do prompt gerado (lê o atual do agente OU mostra gerado on-the-fly) ──
-  const handlePreview = async () => {
-    if (!agentId) return;
-    setPreviewLoading(true);
-    setPreviewOpen(true);
-    try {
-      // O system_prompt é a fonte única do runtime. Não mostrar o artefato
-      // derivado primeiro, porque ele pode estar atrasado após uma edição na
-      // aba Geral.
-      const { data: agent } = await (supabase as any)
-        .from('wa_ai_agents')
-        .select('system_prompt')
-        .eq('id', agentId)
-        .maybeSingle();
-      setPreviewText(
-        agent?.system_prompt
-        || '(O prompt ainda não foi configurado.)'
-      );
-    } finally {
-      setPreviewLoading(false);
     }
   };
 
@@ -560,8 +574,7 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
                 Funil do Agente
               </CardTitle>
               <CardDescription className="text-xs">
-                Configure os 9 blocos da estrutura SDR. Ao salvar, geramos um system prompt
-                otimizado com diretriz de inteligência adaptativa.
+                Preencha o contexto comercial do seu SDR. Gere uma prévia com IA e publique no agente somente quando estiver satisfeito.
               </CardDescription>
             </div>
             <div className="flex flex-col items-end gap-1.5">
@@ -614,48 +627,6 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={handleSaveAndGenerate}
-              disabled={saving}
-              className="text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              Salvar e gerar com IA
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handlePreview}
-              className="text-xs gap-1.5"
-            >
-              <Eye className="h-3.5 w-3.5" />
-              Ver Prompt Gerado
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleReseed}
-              className="text-xs gap-1.5 text-violet-400 border-violet-500/30 hover:bg-violet-500/10"
-              title="Reaproveita nome, empresa, endereço, sdr_goal e qualification_questions do agente"
-            >
-              <Wand2 className="h-3.5 w-3.5" />
-              Auto-preencher do Agente
-            </Button>
-            {hasBackup && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleRestore}
-                disabled={restoring}
-                className="text-xs gap-1.5"
-              >
-                {restoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                Restaurar Prompt Anterior
-              </Button>
-            )}
-          </div>
         </CardContent>
       </Card>
 
@@ -1157,16 +1128,27 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
 
       </Accordion>
 
-      {/* Botão final (mesmo do header, pra usuário não ter que rolar pra cima) */}
+      {/* Ações ficam no fim para não disputar atenção com o preenchimento. */}
       <div className="flex flex-wrap justify-end gap-2 pt-2 pb-6">
         <Button
           size="sm"
           variant="outline"
-          onClick={handlePreview}
+          onClick={handleGenerateWithAi}
+          disabled={previewLoading}
           className="text-xs gap-1.5"
         >
-          <Eye className="h-3.5 w-3.5" />
-          Ver Prompt Gerado
+          {previewLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          Gerar com IA
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleReseed}
+          className="text-xs gap-1.5 text-violet-400 border-violet-500/30 hover:bg-violet-500/10"
+          title="Reaproveita nome, empresa, endereço, objetivo e perguntas do agente"
+        >
+          <Wand2 className="h-3.5 w-3.5" />
+          Reaproveitar dados do Agente
         </Button>
         {hasBackup && (
           <Button
@@ -1182,12 +1164,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         )}
         <Button
           size="sm"
-          onClick={handleSaveAndGenerate}
+          onClick={handleSaveAndSend}
           disabled={saving}
           className="text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-          Salvar e gerar com IA
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          Salvar e enviar para o Agente
         </Button>
       </div>
 
@@ -1201,10 +1183,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               <div className="space-y-0.5">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <Eye className="h-4 w-4 text-blue-400" />
-                  Prompt efetivo — o que a IA recebe
+                  {previewMode === 'published' ? 'Prompt enviado para o Agente' : 'Prévia do prompt gerado com IA'}
                 </CardTitle>
                 <CardDescription className="text-[11px]">
-                  Conteúdo atual de <code className="text-blue-400">wa_ai_agents.system_prompt</code>, fonte única do runtime.
+                  {previewMode === 'published'
+                    ? <>Este é o prompt publicado em <code className="text-blue-400">wa_ai_agents.system_prompt</code>, fonte única do runtime.</>
+                    : 'Esta prévia usa os dados atuais do formulário e ainda não altera o prompt ativo.'}
                 </CardDescription>
               </div>
               <div className="flex gap-1.5">
@@ -1238,6 +1222,12 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
                 </pre>
               )}
             </div>
+            {previewWarning && (
+              <div className="flex items-start gap-2 mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-[10px] text-amber-200/90">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{previewWarning}</span>
+              </div>
+            )}
             <p className="text-[10px] text-muted-foreground mt-1.5 text-right">
               {previewText.length.toLocaleString()} caracteres
             </p>

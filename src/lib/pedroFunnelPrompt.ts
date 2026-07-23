@@ -55,10 +55,16 @@ export function validateAiGeneratedFunnelPrompt(
   const requiredSections = [
     "# PEDRO V3",
     "## PRECEDÊNCIA E PAPEL",
+    "## IDENTIDADE DA EMPRESA",
+    "## CONDUÇÃO NATURAL",
     "## PRIMEIRO CONTATO",
     "## QUALIFICAÇÃO ADAPTATIVA",
+    "## QUALIFICAÇÃO, DESQUALIFICAÇÃO E ENCERRAMENTO",
     "## TRANSFERÊNCIA PARA HUMANO",
+    "## REGRAS ESPECÍFICAS DA EMPRESA",
+    "## INFORMAÇÕES DA EMPRESA",
     "## CAPACIDADES OPERACIONAIS",
+    "## REGRA FINAL",
   ];
 
   if (!prompt) reasons.push("saída vazia");
@@ -73,6 +79,9 @@ export function validateAiGeneratedFunnelPrompt(
     /engine\s+(?:deve\s+)?(?:decidir|escolher|perguntar|conduzir)/i,
     /for[cç]e\s+stock_search/i,
     /use\s+regex\s+(?:para|e)\s+(?:decidir|rotear)/i,
+    /(?:sempre|nunca)\s+(?:termine|finalize)\s+(?:toda|cada)\s+mensagem\s+com\s+uma\s+pergunta/i,
+    /(?:sempre|antes de qualquer coisa)\s+peça\s+(?:o\s+)?(?:nome|cpf)/i,
+    /(?:desqualifique|encerre)\s+(?:o\s+)?lead\s+(?:se|quando)\s+(?:ele\s+)?(?:não responder|demorar)/i,
   ];
   for (const expression of forbidden) {
     if (expression.test(prompt)) reasons.push(`instrução concorrente detectada: ${expression.source}`);
@@ -107,15 +116,26 @@ export function validateAiGeneratedFunnelPrompt(
 }
 
 export function buildFunnelPromptEditorRequest(config: unknown, canonicalPrompt: string): string {
-  return `Você é o editor do prompt comercial do Pedro v3. Responda em JSON válido, com um único campo string chamado "prompt".
+  return `Você é a arquiteta sênior de prompts de SDR do Pedro v3. Responda em JSON válido, com um único campo string chamado "prompt".
 
-O texto final será usado como system prompt de um SDR no WhatsApp. Melhore clareza, ordem, naturalidade e aplicabilidade das orientações comerciais do cliente, mas preserve integralmente o contrato técnico do Pedro v3 já presente no prompt canônico.
+O texto final será usado como system prompt de um SDR no WhatsApp. Transforme a configuração preenchida pelo cliente em um prompt claro, natural, completo e executável pela LLM. Preserve as decisões comerciais do cliente, mas organize-as para que sejam interpretadas pelo contexto da conversa — nunca como checklist, script rígido ou roteador de palavras-chave.
+
+O prompt do portal é a fonte principal da personalidade, do funil, das perguntas, da qualificação, da desqualificação e do estilo. O contrato técnico v3 é a camada operacional que protege fatos e executa efeitos; ele não pode assumir a condução comercial do atendimento.
+
+COMO ENRIQUECER SEM INVENTAR:
+- Complete somente boas práticas gerais de atendimento SDR: escuta ativa, resposta ao último bloco, uma pergunta relevante por vez, memória dos fatos já confirmados, adaptação quando o lead muda de assunto e transição natural para o humano.
+- Não invente fatos do negócio. Não crie preços, produtos, prazos, políticas, endereço, horários, condições, garantias, ferramentas ou capacidades que não estejam na configuração ou no contrato canônico.
+- Preserve fatos, exemplos, marcadores como [PERIODO], políticas e instruções específicas do cliente. Se uma regra estiver ambígua, mantenha a intenção e deixe a LLM pedir esclarecimento quando necessário.
+- Explique que perguntas são preferências adaptativas: a LLM usa somente o que ainda falta e nunca repete pergunta ou fato já confirmado.
+- Mantenha uma seção de abertura literal, uma seção de condução natural, qualificação adaptativa, ramificações, critérios de transferência/encerramento, regras específicas, informações da empresa e capacidades operacionais.
+- Use exatamente estes títulos principais para o contrato ser validado: ## PRECEDÊNCIA E PAPEL, ## IDENTIDADE DA EMPRESA, ## CONDUÇÃO NATURAL, ## PRIMEIRO CONTATO, ## QUALIFICAÇÃO ADAPTATIVA, ## QUALIFICAÇÃO, DESQUALIFICAÇÃO E ENCERRAMENTO, ## TRANSFERÊNCIA PARA HUMANO, ## REGRAS ESPECÍFICAS DA EMPRESA, ## INFORMAÇÕES DA EMPRESA, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL.
 
 REGRAS INEGOCIÁVEIS:
 - O prompt do portal define identidade, personalidade, perguntas, funil, qualificação, desqualificação e tom.
 - A mensagem atual do lead vence objetivo antigo; a LLM decide a resposta e se há tool necessária.
 - A engine não conduz a venda, não escolhe assunto, não inventa pergunta e não pode ser instruída a forçar uma tool.
 - Não crie regex, handlers, roteamento determinístico, etapas obrigatórias ou regras por frase.
+- Não crie regras artificiais como "toda mensagem termina com pergunta", "sempre peça nome/CPF", "encerre se o lead demorar" ou "siga esta ordem sem exceção".
 - Não invente produto, preço, política, endereço, horário, tool ou capacidade.
 - Preserve todos os fatos configurados pelo cliente, inclusive regras específicas e apresentação.
 - Não remova as seções do contrato v3, as capacidades autorizadas, a precedência do portal ou a autoria da LLM.
