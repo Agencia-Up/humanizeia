@@ -73,8 +73,13 @@ serve(async (req) => {
       body: JSON.stringify({
         enabled: true,
         url: webhookUrl,
-        events: ["messages", "connection"],
+        // Uazapi's public webhook contract uses these lowercase event names.
+        // Uppercase Evolution-style names are accepted by some versions but
+        // do not deliver messages on the Uazapi runtime.
+        events: ["messages", "messages_update", "connection"],
         excludeMessages: ["wasSentByApi"],
+        addUrlEvents: false,
+        addUrlTypesMessages: false,
       }),
     });
 

@@ -2,19 +2,19 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isPedroV2EnabledForUser } from "../_shared/pedro-v2/server.ts";
 
 const UAZAPI_WEBHOOK_EVENTS = [
-  "MESSAGES_UPSERT",
-  "MESSAGES_SET",
-  "MESSAGES_UPDATE",
-  "CONNECTION_UPDATE",
+  "messages",
+  "messages_update",
+  "connection",
 ];
 
 function buildWebhookPayload(webhookUrl: string, instanceName?: string) {
   return {
     enabled: true,
     url: webhookUrl,
-    webhook_by_events: false,
-    webhook_base64: false,
     events: UAZAPI_WEBHOOK_EVENTS,
+    excludeMessages: ["wasSentByApi"],
+    addUrlEvents: false,
+    addUrlTypesMessages: false,
     ...(instanceName ? { instanceName } : {}),
   };
 }
