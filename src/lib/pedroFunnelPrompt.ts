@@ -1,4 +1,6 @@
-import { buildTenantPolicyPromptSection, type TenantFunnelPolicy } from "./pedroFunnelPolicyContract";
+// The .ts extension is required when this shared compiler is bundled by
+// Supabase/Deno. Vite and TypeScript also support it via allowImportingTsExtensions.
+import { buildTenantPolicyPromptSection, type TenantFunnelPolicy } from "./pedroFunnelPolicyContract.ts";
 
 type FunnelRecord = Record<string, unknown>;
 
