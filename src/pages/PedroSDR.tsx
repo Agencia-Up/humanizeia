@@ -146,12 +146,15 @@ function usePerfData(userId: string | undefined) {
         // ── 1. Detecta se é vendedor e resolve IDs ──────────────────────────
         const { data: memberRows } = await (supabase as any)
           .from('ai_team_members')
-          .select('id, user_id')
+          .select('id, user_id, is_manager')
           .eq('auth_user_id', userId);
         const memberList = Array.isArray(memberRows) && memberRows.length > 0 ? memberRows : null;
         const isSeller    = !!memberList;
         const masterUid   = isSeller ? memberList![0].user_id : userId;
         const memberIds   = isSeller ? memberList!.map((m: any) => m.id) : [];
+        // Gerente/ADM: enxerga o tenant inteiro (a RLS já entrega tudo; aqui só
+        // NÃO cortamos client-side pro "atribuído a mim").
+        const isManager   = isSeller && memberList!.some((m: any) => !!m.is_manager);
 
         const hoje = new Date();
         hoje.setHours(0, 0, 0, 0);
@@ -181,11 +184,11 @@ function usePerfData(userId: string | undefined) {
         const agents: any[]   = agentRes.data  || [];
         const sellers: any[]  = teamRes.data   || [];
 
-        // ── 3. Filtra para o vendedor (se for seller) ───────────────────────
-        const leads = isSeller
+        // ── 3. Filtra para o vendedor (se for seller; gerente vê o tenant) ──
+        const leads = (isSeller && !isManager)
           ? allLeads.filter(l => l.assigned_to_id && memberIds.includes(l.assigned_to_id))
           : allLeads;
-        const trans = isSeller
+        const trans = (isSeller && !isManager)
           ? allTrans.filter(t => t.to_member_id && memberIds.includes(t.to_member_id))
           : allTrans;
 
@@ -1299,6 +1302,9 @@ interface CrmAvancadoTabProps {
   memberIdsProp?: string[];
   masterUserIdProp?: string | null;
   memberIdProp?: string | null;
+  // Gerente/ADM da conta (membro is_manager): vê os leads do TENANT inteiro
+  // (leitura via RLS/RPC); aqui só pula o filtro client-side "atribuído a mim".
+  sellerIsManagerProp?: boolean;
   // Nav unificada (só master no Pedro): a barra de abas de cima controla o `view` do CRM.
   // Sem esses props (Marcos / vendedor), o CRM usa o sub-menu interno (comportamento antigo).
   viewProp?: CrmView;
@@ -1312,6 +1318,7 @@ export function CrmAvancadoTab({
   memberIdsProp,
   masterUserIdProp,
   memberIdProp,
+  sellerIsManagerProp,
   viewProp,
   onViewChange
 }: CrmAvancadoTabProps) {
@@ -1321,6 +1328,7 @@ export function CrmAvancadoTab({
   const [isSeller, setIsSeller] = useState(isSellerProp ?? false);
   const [memberId, setMemberId] = useState<string | null>(memberIdProp ?? null);
   const [memberIds, setMemberIds] = useState<string[]>(memberIdsProp ?? []);
+  const [sellerIsManager, setSellerIsManager] = useState<boolean>(sellerIsManagerProp ?? false);
   // Fase 6.4 hotfix: effectiveUserId no escopo do componente (era local em fns,
   // causava ReferenceError no JSX do DynamicSelect e quebrava a pagina toda)
   const [effectiveUserIdState, setEffectiveUserIdState] = useState<string | null>(null);
@@ -1491,7 +1499,7 @@ export function CrmAvancadoTab({
     (async () => {
       const { data } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, user_id, is_active')
+        .select('id, user_id, is_active, is_manager')
         .eq('auth_user_id', userId)
         .order('is_active', { ascending: false })
         .order('created_at', { ascending: false });
@@ -1500,6 +1508,7 @@ export function CrmAvancadoTab({
         setIsSeller(true);
         setMemberId(rows[0].id);
         setMemberIds(rows.map((r: any) => r.id));
+        setSellerIsManager(rows.some((r: any) => !!r.is_manager));
       }
     })();
   }, [userId, isSellerProp]);
@@ -1509,6 +1518,12 @@ export function CrmAvancadoTab({
       setMemberIds(memberIdsProp);
     }
   }, [memberIdsProp]);
+
+  useEffect(() => {
+    if (sellerIsManagerProp !== undefined) {
+      setSellerIsManager(sellerIsManagerProp);
+    }
+  }, [sellerIsManagerProp]);
 
   useEffect(() => {
     if (memberIdProp !== undefined) {
@@ -1625,7 +1640,7 @@ export function CrmAvancadoTab({
             .select('id', { count: 'exact', head: true })
             .eq('user_id', effectiveUserId)
             .not('source', 'like', 'Pedro SDR%');
-          if (isSeller && memberIds.length > 0) query = query.in('assigned_to', memberIds);
+          if (isSeller && !sellerIsManager && memberIds.length > 0) query = query.in('assigned_to', memberIds);
           if (from) query = query.gte('created_at', from.toISOString());
           return query;
         };
@@ -1639,7 +1654,7 @@ export function CrmAvancadoTab({
           .not('source', 'like', 'Pedro SDR%')
           .order('created_at', { ascending: false })
           .limit(500);
-        if (isSeller && memberIds.length > 0) {
+        if (isSeller && !sellerIsManager && memberIds.length > 0) {
           marcosLeadsQuery = marcosLeadsQuery.in('assigned_to', memberIds);
         }
 
@@ -1754,7 +1769,7 @@ export function CrmAvancadoTab({
           .eq('user_id', effectiveUserId);
 
         if (from) query = query.gte('created_at', from.toISOString());
-        if (isSeller && memberIds.length > 0) query = query.in('assigned_to_id', memberIds);
+        if (isSeller && !sellerIsManager && memberIds.length > 0) query = query.in('assigned_to_id', memberIds);
 
         return query;
       };
@@ -1773,7 +1788,7 @@ export function CrmAvancadoTab({
         .select('id, lead_name, remote_jid, status, status_crm, summary, next_followup_at, seller_notes_count, assigned_to_id, agent_id, created_at, arrived_at, client_city, vehicle_interest, visit_scheduled, visit_scheduled_at, last_user_reply_at')
         .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
-      if (isSeller && memberIds.length > 0) {
+      if (isSeller && !sellerIsManager && memberIds.length > 0) {
         leadsQuery.in('assigned_to_id', memberIds);
       } else {
         // Master vê até 500 leads (margem segura). Antes era 100 e escondia
@@ -1950,7 +1965,7 @@ export function CrmAvancadoTab({
     }
   };
 
-  useEffect(() => { fetchData(); }, [userId, isSeller, memberIds.length]);
+  useEffect(() => { fetchData(); }, [userId, isSeller, sellerIsManager, memberIds.length]);
 
   const leadMatchesSearch = useCallback((lead: Pick<CrmLead, 'lead_name' | 'remote_jid'>, rawTerm: string) => {
     const term = rawTerm.toLowerCase().trim();
@@ -7086,6 +7101,7 @@ export default function PedroSDR() {
                 memberIdsProp={memberIds}
                 masterUserIdProp={masterUserId}
                 memberIdProp={seller?.id}
+                sellerIsManagerProp={isManager}
                 viewProp={!isSeller ? crmView : undefined}
                 onViewChange={!isSeller ? setCrmView : undefined}
               />

@@ -10,6 +10,9 @@ export interface SellerInfo {
   agent_id: string | null;
   is_active: boolean;
   active_in_system?: boolean | null;
+  // Gerente/ADM da conta (ex.: marketing): NÃO recebe lead (fora da fila), mas
+  // ENXERGA todos os leads do tenant (RLS + RPCs têm a cláusula de gerente).
+  is_manager?: boolean | null;
   visible_features: VisibleFeatures | null;
 }
 
@@ -109,6 +112,10 @@ export interface SellerProfileResult {
   // Todos os ids de ai_team_members do vendedor (ele pode pertencer a varios
   // agentes). Usado p/ escopar leads atribuidos a ele (ex: Conversas IA, CRM).
   memberIds: string[];
+  // Gerente/ADM da conta: alguma linha do membro tem is_manager=true. Vê os
+  // leads do TENANT inteiro (leitura) — a RLS e as RPCs têm a cláusula; as telas
+  // usam isto só pra PULAR o filtro client-side de "atribuído a mim".
+  isManager: boolean;
   visibleFeatures: VisibleFeatures;
   loading: boolean;
 }
@@ -119,6 +126,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
     seller: null,
     masterUserId: null,
     memberIds: [],
+    isManager: false,
     visibleFeatures: DEFAULT_SELLER_FEATURES,
     loading: true,
   });
@@ -136,7 +144,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
     if (!authUserId) {
       setResult(prev => (prev.loading ? prev : {
         isSeller: false, seller: null, masterUserId: null, memberIds: [],
-        visibleFeatures: DEFAULT_SELLER_FEATURES, loading: true,
+        isManager: false, visibleFeatures: DEFAULT_SELLER_FEATURES, loading: true,
       }));
       return;
     }
@@ -159,7 +167,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
       const isSeller = profile?.role === 'seller';
 
       if (!isSeller) {
-        setResult({ isSeller: false, seller: null, masterUserId: null, memberIds: [], visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
+        setResult({ isSeller: false, seller: null, masterUserId: null, memberIds: [], isManager: false, visibleFeatures: DEFAULT_SELLER_FEATURES, loading: false });
         return;
       }
 
@@ -167,7 +175,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
       //    (o vendedor pode pertencer a múltiplos agentes, cada um com suas visible_features)
       const { data: memberData } = await (supabase as any)
         .from('ai_team_members')
-        .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, active_in_system, visible_features')
+        .select('id, name, whatsapp_number, email, user_id, agent_id, is_active, active_in_system, is_manager, visible_features')
         .eq('auth_user_id', authUserId)
         .neq('active_in_system', false)
         .order('is_active', { ascending: false })
@@ -182,6 +190,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
           seller: null,
           masterUserId: null,
           memberIds: [],
+          isManager: false,
           visibleFeatures: DEFAULT_SELLER_FEATURES,
           loading: false,
         });
@@ -219,6 +228,7 @@ export function useSellerProfile(authUserId?: string | null): SellerProfileResul
         seller,
         masterUserId: seller?.user_id || (profile as any)?.manager_id || null,
         memberIds: allRecords.map((r) => r.id).filter(Boolean),
+        isManager: allRecords.some((r) => !!r.is_manager),
         visibleFeatures: features,
         loading: false,
       });
