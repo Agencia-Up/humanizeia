@@ -183,7 +183,7 @@
 @layer base {
   :root {
     /* Light mode - Sabedoria Tecnológica */
-    --background: 220 20% 97%;
+    --background: 220 24% 95%;
     --foreground: 231 40% 15%;
 
     --card: 0 0% 100%;
@@ -213,8 +213,10 @@
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 0%;
 
-    --border: 220 15% 88%;
-    --input: 220 15% 88%;
+    /* Bordas mais escuras/nítidas no tema claro (antes 88% ficava "apagado"
+       sobre cards brancos). Dark mode NÃO muda (tem bloco próprio abaixo). */
+    --border: 220 16% 78%;
+    --input: 220 16% 82%;
     --ring: 231 75% 30%;
 
     --radius: 0.75rem;

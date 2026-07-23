@@ -5211,7 +5211,7 @@ export function CrmAvancadoTab({
           { label: 'Na Semana',    value: displayMetrics.week,   icon: TrendingUp,  tint: 'bg-cyan-500/10 text-cyan-500 dark:text-cyan-400',       delta: metricTrend.week,  sub: 'vs semana passada' },
           { label: 'No Mês',       value: displayMetrics.month,  icon: BarChart3,   tint: 'bg-purple-500/10 text-purple-500 dark:text-purple-400', delta: metricTrend.month, sub: 'vs mês passado' },
         ].map(m => (
-          <div key={m.label} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm sm:px-4 sm:py-3">
+          <div key={m.label} className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 shadow-sm dark:border-border/60 sm:px-4 sm:py-3">
             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] sm:h-10 sm:w-10 ${m.tint}`}>
               <m.icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
             </span>
@@ -5835,7 +5835,7 @@ export function CrmAvancadoTab({
                                   className={`w-full text-left bg-card border rounded-lg p-3 transition-all space-y-2 group cursor-pointer shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
                                     dragSnapshot.isDragging
                                       ? 'border-blue-500/60 shadow-lg shadow-blue-500/10 ring-1 ring-blue-500/30'
-                                      : 'border-border/50 hover:border-blue-500/40 hover:bg-blue-500/5'
+                                      : 'border-border hover:border-blue-500/40 hover:bg-blue-500/5 dark:border-border/50'
                                   }`}
                                 >
                                   <div className="flex items-start gap-2">
@@ -6157,7 +6157,7 @@ export function CrmAvancadoTab({
               className={`w-full text-left border rounded-xl px-4 py-3 transition-all group cursor-pointer ${
                 unassigned
                   ? 'bg-amber-500/5 border-amber-500/40 hover:border-amber-500/60'
-                  : 'bg-card border-border/50 hover:border-blue-500/40 hover:bg-blue-500/5'
+                  : 'bg-card border-border hover:border-blue-500/40 hover:bg-blue-500/5 dark:border-border/50'
               }`}
             >
               <div className="flex items-center justify-between gap-3">
