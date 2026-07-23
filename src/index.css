@@ -1062,6 +1062,124 @@
     background: rgba(15, 23, 42, 0.52);
   }
 
+  html:not(.dark) main [class*="bg-card/50"],
+  html:not(.dark) main [class*="bg-card/60"],
+  html:not(.dark) main [class*="bg-card/70"],
+  html:not(.dark) main [class*="bg-background/40"],
+  html:not(.dark) main [class*="bg-muted/20"],
+  html:not(.dark) main [class*="bg-muted/30"] {
+    border-color: rgba(148, 163, 184, 0.30);
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.88)) !important;
+    box-shadow:
+      0 14px 34px rgba(15, 23, 42, 0.055),
+      inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  }
+
+  html:not(.dark) main [class*="bg-primary/5"],
+  html:not(.dark) main [class*="bg-primary/10"] {
+    border-color: rgba(37, 99, 235, 0.22);
+    background:
+      linear-gradient(135deg, rgba(37, 99, 235, 0.10), rgba(255, 255, 255, 0.82) 48%, rgba(16, 185, 129, 0.08)) !important;
+  }
+
+  html:not(.dark) main [class*="border-border/40"],
+  html:not(.dark) main [class*="border-border/50"] {
+    border-color: rgba(148, 163, 184, 0.30) !important;
+  }
+
+  html:not(.dark) main [class*="text-green-400"],
+  html:not(.dark) main [class*="text-emerald-400"] {
+    color: rgb(4, 120, 87) !important;
+  }
+
+  html:not(.dark) main [class*="text-blue-400"],
+  html:not(.dark) main [class*="text-sky-400"] {
+    color: rgb(29, 78, 216) !important;
+  }
+
+  html:not(.dark) main [class*="text-violet-300"],
+  html:not(.dark) main [class*="text-violet-400"],
+  html:not(.dark) main [class*="text-purple-400"] {
+    color: rgb(109, 40, 217) !important;
+  }
+
+  html:not(.dark) main [class*="text-yellow-400"],
+  html:not(.dark) main [class*="text-amber-400"] {
+    color: rgb(180, 83, 9) !important;
+  }
+
+  html:not(.dark) main [class*="text-red-400"],
+  html:not(.dark) main [class*="text-rose-400"] {
+    color: rgb(190, 18, 60) !important;
+  }
+
+  html:not(.dark) main input,
+  html:not(.dark) main textarea,
+  html:not(.dark) main button[role="combobox"] {
+    border-color: rgba(148, 163, 184, 0.34);
+    background-color: rgba(255, 255, 255, 0.76);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  }
+
+  html:not(.dark) main [role="tablist"] {
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background:
+      linear-gradient(135deg, rgba(226, 232, 240, 0.72), rgba(255, 255, 255, 0.70)) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  }
+
+  html:not(.dark) main [role="tab"][data-state="active"] {
+    color: rgb(15, 23, 42);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(230, 240, 255, 0.94)) !important;
+    box-shadow:
+      0 8px 22px rgba(37, 99, 235, 0.11),
+      inset 0 -2px 0 rgba(37, 99, 235, 0.40);
+  }
+
+  html:not(.dark) .logos-home-action {
+    border-color: rgba(148, 163, 184, 0.28);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 255, 0.92));
+    box-shadow:
+      0 22px 54px rgba(15, 23, 42, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.90);
+  }
+
+  html:not(.dark) .logos-home-action::before,
+  html:not(.dark) .logos-home-agent-card:not(.logos-home-agent-card-locked)::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+    background: linear-gradient(180deg, #2563eb, #10b981, #d4a017);
+    opacity: 0.72;
+  }
+
+  html:not(.dark) .logos-home-agent-card:not(.logos-home-agent-card-locked) {
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.92));
+    box-shadow:
+      0 22px 54px rgba(15, 23, 42, 0.09),
+      inset 0 1px 0 rgba(255, 255, 255, 0.90);
+  }
+
+  html:not(.dark) .feedback-report-shell {
+    background:
+      radial-gradient(circle at 10% 8%, rgba(37, 99, 235, 0.13), transparent 30%),
+      radial-gradient(circle at 88% 0%, rgba(16, 185, 129, 0.13), transparent 28%),
+      linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(234, 241, 250, 0.96));
+  }
+
+  html:not(.dark) .feedback-report-card,
+  html:not(.dark) .feedback-report-hero {
+    border-color: rgba(148, 163, 184, 0.30);
+    box-shadow:
+      0 20px 52px rgba(15, 23, 42, 0.075),
+      inset 0 1px 0 rgba(255, 255, 255, 0.90);
+  }
+
   @media (max-width: 768px) {
     .logos-home-plan-card {
       padding: 1rem;

@@ -340,23 +340,23 @@ export function FeedbackPorVendedorTab() {
                     </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3 lg:w-[62%]">
-                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 shadow-sm">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
                         <AlertTriangle className="h-3.5 w-3.5" /> Risco
                       </div>
-                      <p className="mt-1 text-xs text-amber-100/80">{ins.risco}</p>
+                      <p className="mt-1 text-xs text-amber-900/85 dark:text-amber-100/80">{ins.risco}</p>
                     </div>
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 shadow-sm">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Acao
                       </div>
-                      <p className="mt-1 text-xs text-emerald-100/80">{ins.acao}</p>
+                      <p className="mt-1 text-xs text-emerald-900/85 dark:text-emerald-100/80">{ins.acao}</p>
                     </div>
-                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-sky-300">
+                    <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 shadow-sm">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300">
                         <ClipboardList className="h-3.5 w-3.5" /> Prova
                       </div>
-                      <p className="mt-1 text-xs text-sky-100/80">{ins.prova}</p>
+                      <p className="mt-1 text-xs text-sky-900/85 dark:text-sky-100/80">{ins.prova}</p>
                     </div>
                   </div>
                 </div>
@@ -410,7 +410,7 @@ export function FeedbackPorVendedorTab() {
             })}
           </div>
           {atual.perdeuChance > 0 && (
-            <div className="flex items-center gap-2 text-xs bg-rose-500/10 border border-rose-500/25 text-rose-300 rounded-lg px-3 py-2">
+            <div className="flex items-center gap-2 text-xs bg-rose-500/10 border border-rose-500/25 text-rose-700 dark:text-rose-300 rounded-lg px-3 py-2">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               Perdeu <span className="font-semibold">{atual.perdeuChance}</span> chance{atual.perdeuChance > 1 ? 's' : ''} boa{atual.perdeuChance > 1 ? 's' : ''} (lead bom com atendimento fraco e sem venda).
             </div>
@@ -438,10 +438,10 @@ export function FeedbackPorVendedorTab() {
                           <span className={`text-[10px] px-2 py-0.5 rounded-full border ${q.cls}`}>{q.label}</span>
                         )}
                         {venda && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-emerald-500/15 text-emerald-300 border-emerald-500/30">Vendeu</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300">Vendeu</span>
                         )}
                         {perdeu && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-rose-500/15 text-rose-300 border-rose-500/30">Perdeu chance boa</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300">Perdeu chance boa</span>
                         )}
                         <ConfiancaAnaliseBadge confianca={c.confianca_analise} motivo={c.motivo_confianca} showMotivo={false} className="text-[10px]" />
                       </div>
@@ -477,14 +477,14 @@ export function FeedbackPorVendedorTab() {
                   {(c.acao_gestor || c.acao_vendedor || c.proxima_pergunta_ideal) && (
                     <div className="grid gap-2 text-[11px] sm:grid-cols-2">
                       {(c.acao_gestor || c.acao_vendedor) && (
-                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-100/85">
-                          <span className="font-semibold text-emerald-300">Acao sugerida: </span>
+                        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-emerald-900/85 dark:text-emerald-100/85">
+                          <span className="font-semibold text-emerald-700 dark:text-emerald-300">Acao sugerida: </span>
                           {c.acao_gestor || c.acao_vendedor}
                         </div>
                       )}
                       {c.proxima_pergunta_ideal && (
-                        <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-sky-100/85">
-                          <span className="font-semibold text-sky-300">Pergunta ideal: </span>
+                        <div className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-sky-900/85 dark:text-sky-100/85">
+                          <span className="font-semibold text-sky-700 dark:text-sky-300">Pergunta ideal: </span>
                           {c.proxima_pergunta_ideal}
                         </div>
                       )}
@@ -512,9 +512,9 @@ function MiniAcao({ titulo, subtitulo, texto, tom }: {
   tom: 'red' | 'green' | 'blue';
 }) {
   const cls = {
-    red: 'border-rose-500/20 bg-rose-500/10 text-rose-100',
-    green: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-100',
-    blue: 'border-sky-500/20 bg-sky-500/10 text-sky-100',
+    red: 'border-rose-500/25 bg-rose-500/10 text-rose-900 dark:text-rose-100',
+    green: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100',
+    blue: 'border-sky-500/25 bg-sky-500/10 text-sky-900 dark:text-sky-100',
   }[tom];
   return (
     <div className={`rounded-2xl border p-4 ${cls}`}>

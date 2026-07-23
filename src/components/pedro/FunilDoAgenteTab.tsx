@@ -642,9 +642,9 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
       </Card>
 
       {/* CONTRATO FIXO DA PLATAFORMA — não é política comercial do cliente */}
-      <Card className="border-amber-500/20 bg-amber-500/5">
+      <Card className="border-amber-500/30 bg-amber-500/10 shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 text-amber-400">
+          <CardTitle className="text-xs flex items-center gap-2 text-amber-700 dark:text-amber-400">
             <ShieldCheck className="h-3.5 w-3.5" /> CONTRATO PEDRO V3 (FIXO)
           </CardTitle>
           <CardDescription className="text-[11px]">
@@ -661,13 +661,13 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         </CardContent>
       </Card>
 
-      <Card className="border-violet-500/20 bg-violet-500/5">
+      <Card className="border-violet-500/30 bg-violet-500/10 shadow-sm">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-xs flex items-center gap-2 text-violet-300">
+            <CardTitle className="text-xs flex items-center gap-2 text-violet-700 dark:text-violet-300">
               <Brain className="h-3.5 w-3.5" /> Regras comerciais da empresa
             </CardTitle>
-            <Button type="button" size="icon" variant="ghost" className="ml-auto h-7 w-7 text-violet-300 hover:text-violet-100 hover:bg-violet-500/15" onClick={() => setShowPolicyHelp((visible) => !visible)} aria-label="Como funcionam as regras comerciais" aria-expanded={showPolicyHelp} title="Como funcionam as regras comerciais">
+            <Button type="button" size="icon" variant="ghost" className="ml-auto h-7 w-7 text-violet-700 hover:text-violet-900 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:text-violet-100" onClick={() => setShowPolicyHelp((visible) => !visible)} aria-label="Como funcionam as regras comerciais" aria-expanded={showPolicyHelp} title="Como funcionam as regras comerciais">
               <Info className="h-4 w-4" />
             </Button>
           </div>
@@ -677,22 +677,22 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         </CardHeader>
         <CardContent className="pt-0 space-y-3">
           {showPolicyHelp && (
-            <div className="rounded-md border border-violet-400/25 bg-violet-950/20 p-3 text-[11px] leading-relaxed text-muted-foreground">
+            <div className="rounded-md border border-violet-400/30 bg-violet-500/10 p-3 text-[11px] leading-relaxed text-muted-foreground">
               <div className="flex items-start gap-2">
-                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-300" />
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-700 dark:text-violet-300" />
                 <div className="space-y-2">
-                  <p className="font-medium text-violet-100">Como usar estas regras</p>
+                  <p className="font-medium text-violet-800 dark:text-violet-100">Como usar estas regras</p>
                   <p>
                     Escreva cada regra como falaria com um vendedor: explique a situação, o que comprova o caso e como o agente deve conduzir o atendimento.
                   </p>
                   <div className="rounded border border-border/40 bg-background/40 p-2.5 space-y-1.5">
                     <p className="font-medium text-foreground">Exemplo: cliente sem entrada</p>
-                    <p><span className="text-violet-200">Quando:</span> cliente disser claramente que não possui entrada.</p>
-                    <p><span className="text-violet-200">Evidência:</span> fala explícita do cliente, não uma suposição.</p>
-                    <p><span className="text-violet-200">Ação:</span> desqualificar o lead.</p>
-                    <p><span className="text-violet-200">Condução:</span> explicar com respeito, sem insistir, e encerrar.</p>
+                    <p><span className="text-violet-700 dark:text-violet-200">Quando:</span> cliente disser claramente que não possui entrada.</p>
+                    <p><span className="text-violet-700 dark:text-violet-200">Evidência:</span> fala explícita do cliente, não uma suposição.</p>
+                    <p><span className="text-violet-700 dark:text-violet-200">Ação:</span> desqualificar o lead.</p>
+                    <p><span className="text-violet-700 dark:text-violet-200">Condução:</span> explicar com respeito, sem insistir, e encerrar.</p>
                   </div>
-                  <p className="text-violet-200/80">A prioridade menor vem primeiro quando duas regras tratam da mesma situação.</p>
+                  <p className="text-violet-700/85 dark:text-violet-200/80">A prioridade menor vem primeiro quando duas regras tratam da mesma situação.</p>
                 </div>
               </div>
             </div>
