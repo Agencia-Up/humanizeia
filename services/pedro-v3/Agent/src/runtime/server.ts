@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { PostgresPersistence } from "../adapters/persistence/postgres-store.ts";
 import { decodeSensitiveVaultKey, SupabaseSensitiveVault } from "../adapters/persistence/sensitive-vault.ts";
 import { SupabaseReadOnlyDatabase } from "../adapters/read/supabase-read-database.ts";
@@ -623,8 +623,13 @@ const port = Number(process.env.PORT ?? "3000");
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RuntimeConfigError("ENV_PORT_INVALID");
 
 const runtime = new ProductionPilotRunner();
-const app = new PilotHttpApp(requiredEnv("PEDRO_V3_BRIDGE_SECRET"), runtime, runtime, () => ({
+const bridgeSecret = requiredEnv("PEDRO_V3_BRIDGE_SECRET");
+const bridgeSecretSha256 = createHash("sha256").update(bridgeSecret.trim(), "utf8").digest("hex");
+const app = new PilotHttpApp(bridgeSecret, runtime, runtime, () => ({
   runtimeRelease: PEDRO_V3_RUNTIME_RELEASE,
+  // Temporary non-secret diagnostic: lets us prove which deployed environment
+  // is serving /health without exposing the bridge credential itself.
+  bridgeSecretSha256,
   configuredBrainMode: resolveBrainMode(),
   aiProvider: resolveAiProviderRuntime(process.env).provider,
   aiModel: resolveAiProviderRuntime(process.env).model,
