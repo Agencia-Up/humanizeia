@@ -31,7 +31,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
   ArrowLeft, ArrowRight, CheckCircle2, CreditCard, FileText,
-  Lock, QrCode, Shield, Sparkles, User,
+  Loader2, Lock, LogOut, QrCode, Shield, Sparkles, User,
 } from 'lucide-react';
 
 /* ── Tipos ─────────────────────────────────────────────────────────────── */
@@ -113,6 +113,8 @@ function brl(v: number): string {
 export default function Checkout() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [billingGate, setBillingGate] = useState<'checking' | 'public'>('checking');
+  const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
   // ?plano=pro|basico (links separados por plano). Compat: plano=mensal|anual → Pro.
   const planoRaw = searchParams.get('plano') || 'pro';
   const planType: PlanType =
@@ -158,6 +160,55 @@ export default function Checkout() {
   // Etapa 3
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // O checkout também é uma rota pública para novos clientes, mas uma conta
+  // interna/administrativa autenticada nunca deve permanecer nele. Isso evita
+  // que o usuário fique preso na tela depois que o paywall foi corrigido no
+  // RPC: a rota já estava aberta e não reavaliava o destino.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData.user;
+        if (!user) {
+          if (alive) {
+            setSignedInEmail(null);
+            setBillingGate('public');
+          }
+          return;
+        }
+
+        setSignedInEmail(user.email ?? null);
+
+        const { data: status, error } = await (supabase as any).rpc(
+          'get_effective_subscription_status',
+          { p_user_id: user.id },
+        );
+        if (!alive) return;
+
+        const isBillingExempt = !error && (
+          status?.billing_exempt === true
+          || status?.status === 'administrativa'
+          || status?.status === 'interna'
+        );
+
+        if (isBillingExempt) {
+          navigate('/tela-inicial', { replace: true });
+          return;
+        }
+
+        setBillingGate('public');
+      } catch {
+        // Falha de rede não bloqueia o checkout público.
+        if (alive) setBillingGate('public');
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [navigate]);
 
   // Validações da etapa 1
   const docValid = personType === 'pf' ? isValidCPF(docNumber) : isValidCNPJ(docNumber);
@@ -319,6 +370,14 @@ export default function Checkout() {
 
   const docMasked = personType === 'pf' ? maskCPF(docNumber) : maskCNPJ(docNumber);
 
+  if (billingGate === 'checking') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div
       className="checkout-light min-h-screen text-foreground"
@@ -347,6 +406,21 @@ export default function Checkout() {
             <Shield className="h-4 w-4" />
             <span className="hidden sm:inline">Pagamento seguro · SSL</span>
             <span className="sm:hidden">Seguro · SSL</span>
+            {signedInEmail && (
+              <button
+                type="button"
+                className="ml-3 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors hover:bg-black/5"
+                style={{ color: 'var(--brand-navy)' }}
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                  navigate('/auth', { replace: true });
+                }}
+                title={`Sair de ${signedInEmail}`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Trocar conta
+              </button>
+            )}
           </div>
         </div>
       </header>
