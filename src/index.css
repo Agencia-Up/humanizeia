@@ -413,6 +413,18 @@
     box-shadow: 14px 0 38px hsl(224 44% 14% / 0.07);
   }
 
+  .logos-app-sidebar [data-sidebar="sidebar"] svg {
+    color: rgb(16 185 129) !important;
+    stroke: currentColor;
+  }
+
+  .logos-app-sidebar [data-sidebar="sidebar"] a:hover svg,
+  .logos-app-sidebar [data-sidebar="sidebar"] button:hover svg,
+  .logos-app-sidebar [data-sidebar="sidebar"] .active svg,
+  .logos-app-sidebar [data-sidebar="sidebar"] [aria-current="page"] svg {
+    color: rgb(5 150 105) !important;
+  }
+
   .dark .logos-app-sidebar [data-sidebar="sidebar"] {
     background:
       radial-gradient(circle at 35% 0%, rgba(212, 160, 23, 0.11), transparent 30%),
