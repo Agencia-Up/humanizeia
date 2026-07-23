@@ -766,7 +766,7 @@ async function handleUazapiProvider(supabase: any, body: any) {
       body: JSON.stringify({
         enabled: true,
         url: webhookUrl,
-        events: ['messages', 'connection'],
+        events: ['messages', 'messages_update', 'connection', 'qrcode'],
         excludeMessages: ['wasSentByApi'],
       }),
     });

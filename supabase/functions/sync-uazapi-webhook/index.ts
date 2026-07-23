@@ -76,7 +76,7 @@ serve(async (req) => {
         // Uazapi's public webhook contract uses these lowercase event names.
         // Uppercase Evolution-style names are accepted by some versions but
         // do not deliver messages on the Uazapi runtime.
-        events: ["messages", "messages_update", "connection"],
+        events: ["messages", "messages_update", "connection", "qrcode"],
         excludeMessages: ["wasSentByApi"],
         addUrlEvents: false,
         addUrlTypesMessages: false,
