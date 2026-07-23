@@ -7071,7 +7071,7 @@ export default function PedroSDR() {
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto">
+          <div className="crm-scroll-y flex-1 min-h-0 overflow-auto">
             {/* Performance — desativada via FEATURES.agentPerformanceTab (27/05/2026).
                 Conteúdo consolidado vive em /painel-geral pra master. */}
             {FEATURES.agentPerformanceTab && (!isSeller || visibleFeatures.tab_performance) && (

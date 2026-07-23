@@ -15,7 +15,7 @@ export default function FluxCRM({ embedded }: { embedded?: boolean } = {}) {
   // preservar o estado. Embutido no Marcos: o CRM precisa do PROPRIO scroll
   // vertical (MarcosLeads usa um container overflow-hidden).
   if (embedded) {
-    return <div className="h-full overflow-y-auto">{content}</div>;
+    return <div className="crm-scroll-y h-full overflow-y-auto">{content}</div>;
   }
   return <MainLayout>{content}</MainLayout>;
 }

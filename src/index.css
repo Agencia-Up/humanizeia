@@ -36,26 +36,52 @@
 
   @media (min-width: 641px) {
     .mobile-kanban-scroll {
-      scrollbar-width: thin;
-      scrollbar-color: hsl(var(--border)) transparent;
+      scrollbar-width: auto;
+      scrollbar-color: rgba(16, 185, 129, 0.6) transparent;
     }
 
+    /* Barra PROEMINENTE de ponta a ponta: vertical (lateral direita) E horizontal.
+       Antes só setava height -> a barra vertical ficava invisivel. */
     .mobile-kanban-scroll::-webkit-scrollbar {
-      height: 10px;
+      width: 12px;
+      height: 12px;
     }
 
     .mobile-kanban-scroll::-webkit-scrollbar-thumb {
-      background: hsl(var(--border));
-      border-radius: 6px;
+      background: rgba(16, 185, 129, 0.55);
+      border-radius: 8px;
+      min-height: 44px;
     }
 
     .mobile-kanban-scroll::-webkit-scrollbar-thumb:hover {
-      background: hsl(var(--muted-foreground));
+      background: rgba(16, 185, 129, 0.85);
     }
 
     .mobile-kanban-scroll::-webkit-scrollbar-track {
       background: transparent;
     }
+  }
+
+  /* Scroll vertical PROEMINENTE reaproveitavel (Lista de Leads e conteudo das
+     abas do agente): barra grossa e visivel na lateral direita, ponta a ponta. */
+  .crm-scroll-y {
+    scrollbar-width: auto;
+    scrollbar-color: rgba(16, 185, 129, 0.6) transparent;
+  }
+  .crm-scroll-y::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  .crm-scroll-y::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.55);
+    border-radius: 8px;
+    min-height: 44px;
+  }
+  .crm-scroll-y::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.85);
+  }
+  .crm-scroll-y::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   @media (max-width: 640px) {
