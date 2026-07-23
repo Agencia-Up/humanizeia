@@ -42,6 +42,25 @@ export function digits(s?: string | null): string {
   return (s || '').replace(/\D/g, '');
 }
 
+// Normalização p/ dedupe de mensagem (espaços colapsados + minúsculas).
+export function normalizeFeedbackText(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Empurra na thread SEM duplicar: mesma pessoa + mesmo texto normalizado +
+// menos de 120s de distância = mesma mensagem vista por duas fontes (ex.:
+// v3_inbox e wa_inbox). Medido em 23/07: 0 colisões reais em 384 eventos —
+// isto é cinto-e-suspensório, não cirurgia. Usado SÓ nas mensagens vindas do
+// V3 (as fontes antigas continuam com push direto, comportamento intacto).
+export function pushThreadDedup(arr: ThreadMessage[], msg: ThreadMessage): void {
+  const norm = normalizeFeedbackText(msg.texto);
+  const t = new Date(msg.timestamp).getTime();
+  const dup = arr.some((m) => m.from === msg.from
+    && Math.abs(new Date(m.timestamp).getTime() - t) < 120_000
+    && normalizeFeedbackText(m.texto) === norm);
+  if (!dup) arr.push(msg);
+}
+
 // Limite de tentativas e janela de re-tentativa pra transcricao com falha
 // temporaria (UAZAPI/OpenAI instavel, midia ainda propagando). Evita inutilizar
 // o audio pra sempre por uma falha unica, sem repetir infinitamente.
@@ -135,7 +154,8 @@ export async function buildLeadThread(
   let nome: string | null = null;
   let telefone: string | null = null;
   let jid = '';
-  // Fase 3 — contadores de cobertura (audio/imagem do canal humano wa_inbox).
+  // Fase 3 — contadores de cobertura (audio/imagem do canal humano wa_inbox
+  // e, desde 23/07, também da entrada do lead pelo Pedro V3 em v3_inbox).
   let audiosTotal = 0;
   let audiosTranscritos = 0;
   let imagensDetectadas = 0;
@@ -216,6 +236,10 @@ export async function buildLeadThread(
   // vendedor injustamente. Le SO efeitos despachados (dispatched_at) da conversa
   // deste lead. Best-effort: erro/ausencia de V3 => segue apenas com as fontes
   // V2 (comportamento antigo intacto).
+  // convIds do V3 ficam fora do try: reusados mais abaixo pra ler o v3_inbox
+  // (mensagens do CLIENTE) depois da seção wa_inbox — assim o dedupe dá
+  // preferência às linhas antigas quando a mesma mensagem existir nas duas.
+  let v3ConvIds: string[] = [];
   if (leadSource === 'pedro') {
     try {
       const { data: rotas } = await admin
@@ -224,6 +248,7 @@ export async function buildLeadThread(
         .eq('tenant_id', tenant)
         .eq('lead_id', String(leadId));
       const convIds = [...new Set((rotas || []).map((r: any) => r.conversation_id).filter(Boolean))];
+      v3ConvIds = convIds as string[];
       if (convIds.length) {
         const { data: fx } = await admin
           .from('v3_effect_outbox')
@@ -304,6 +329,49 @@ export async function buildLeadThread(
         thread.push({ from: 'cliente', texto, timestamp: m.created_at, canal: 'marcos' });
       }
     }
+  }
+
+  // ── Pedro V3 — mensagens do CLIENTE (v3_inbox) ─────────────────────────────
+  // Conversa v3 PURA não tem linha em wa_inbox/wa_chat_history: sem este bloco
+  // a análise via a IA falando "sozinha" (35 casos medidos em 23/07). Extração
+  // SEGURA feita NO PostgREST (select de sub-campos do raw): só text e
+  // mediaContext.kind/text/summary saem do banco — raw inteiro e raw.sensitive
+  // NUNCA chegam aqui. Mesmos campos da RPC get_allowed_lead_messages
+  // (migration 20260723150000). Roda DEPOIS da seção wa_inbox de propósito:
+  // o pushThreadDedup dá preferência à linha antiga se a mesma mensagem
+  // existir nas duas fontes. Best-effort como o bloco da IA (erro => segue).
+  if (leadSource === 'pedro' && v3ConvIds.length) {
+    try {
+      const { data: vin } = await admin
+        .from('v3_inbox')
+        .select('event_id, received_at, created_at, texto:raw->>text, mc_kind:raw->mediaContext->>kind, mc_text:raw->mediaContext->>text, mc_summary:raw->mediaContext->>summary')
+        .eq('tenant_id', tenant)
+        .in('conversation_id', v3ConvIds)
+        .order('received_at', { ascending: true })
+        .limit(400);
+      for (const ev of ((vin || []) as any[])) {
+        const kind = (typeof ev.mc_kind === 'string' && ev.mc_kind) ? ev.mc_kind : null;
+        const bruto = [ev.texto, ev.mc_text, ev.mc_summary]
+          .find((t: unknown) => typeof t === 'string' && (t as string).trim()) as string | undefined;
+        const temMedia = kind !== null;
+        if (!bruto && !temMedia) continue; // sem texto e sem mídia => nada a analisar
+        // Cobertura: mídia do lead vinda pelo V3 conta igual à do wa_inbox.
+        // Áudio v3 já chega transcrito pelo motor (texto no próprio raw).
+        if (kind === 'image') imagensDetectadas++;
+        if (kind === 'audio') { audiosTotal++; if (bruto) audiosTranscritos++; }
+        const texto = bruto
+          ? (kind === 'audio' ? `🎤 (áudio) ${bruto.trim()}` : bruto.trim())
+          : '[mídia recebida]';
+        const msg: ThreadMessage = {
+          from: 'cliente', texto,
+          timestamp: (ev.received_at || ev.created_at) as string,
+          canal: 'pedro',
+        };
+        // Placeholder de mídia sem texto: push direto (duas fotos seguidas são
+        // DUAS mensagens; o dedupe por texto igual as fundiria errado).
+        if (!bruto) thread.push(msg); else pushThreadDedup(thread, msg);
+      }
+    } catch (_e) { /* tenant sem V3 / erro transitório -> segue com as fontes antigas */ }
   }
 
   const byTime = (a: ThreadMessage, b: ThreadMessage) =>
