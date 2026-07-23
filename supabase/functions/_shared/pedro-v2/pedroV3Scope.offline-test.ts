@@ -8,6 +8,7 @@ import {
 const DOUGLAS = { tenantId: "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0", agentId: "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185" };
 const BRUNO = { tenantId: "f49fd48a-4386-4009-95f3-26a5100b84f7", agentId: "aee7e916-31b1-431c-ba6f-f38178fd4899" };
 const AVANT = { tenantId: "7e23b020-0377-4120-a6a4-502701d62208", agentId: "03421f26-f4e3-48f1-a791-24fc438e9b3d" };
+const MONACO = { tenantId: "cf55ad47-4261-4a9c-8e3c-751c3f022b86", agentId: "61054aad-da4f-4ad1-b094-77b3ecfda8e3" };
 
 let ok = 0;
 let failed = 0;
@@ -51,9 +52,17 @@ check("workers v2 bloqueiam Bruno quando o escopo v3 esta active", isPedroV3Excl
   activeScopes: scopes,
 }));
 
-check("workers v2 nao bloqueiam Bruno quando o v3 esta shadow", !isPedroV3ExclusiveScope({
+check("rollout global ignora mode shadow legado e mantém Bruno no v3", isPedroV3ExclusiveScope({
   ...BRUNO,
   mode: "shadow",
+  activeScopes: scopes,
+}));
+
+const monacoDecision = evaluatePedroV3PilotAgent({ id: MONACO.agentId, user_id: MONACO.tenantId }, null, "off", scopes);
+check("Monaco entra no v3 mesmo com mode off legado", monacoDecision.enabled && monacoDecision.mode === "active");
+check("workers v2 bloqueiam Monaco no rollout global", isPedroV3ExclusiveScope({
+  ...MONACO,
+  mode: "off",
   activeScopes: scopes,
 }));
 

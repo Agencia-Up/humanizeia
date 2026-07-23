@@ -98,8 +98,14 @@ export function evaluatePedroV3PilotScope(input: {
     return { enabled: false, mode: "off", identityMatched, reason: "not_pilot_identity" };
   }
 
-  // Missing mode is active after the global rollout. Explicit "off" remains
-  // the emergency kill switch and keeps rollback possible without a deploy.
+  // The rollout is global and v3-only. A stale pilot mode must not leave an
+  // active account without an engine after the v2 fallback was removed. Keep
+  // accepting the field for API compatibility, but do not let it override the
+  // global ownership decision.
+  if (PEDRO_V3_GLOBAL_ROLLOUT) {
+    return { enabled: true, mode: "active", identityMatched, reason: "pilot_allowed" };
+  }
+
   const rawMode = String(input.mode ?? "").trim();
   const mode = rawMode === "" ? "active" : normalizePilotMode(rawMode);
   if (mode === "off") {

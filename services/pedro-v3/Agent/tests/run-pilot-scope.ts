@@ -1,5 +1,5 @@
 // Pedro v3 rollout tests.
-// Proves the global rollout, while preserving the explicit off kill switch.
+// Proves the global rollout. Legacy mode values must not disable v3.
 
 import {
   evaluatePedroV3PilotScope,
@@ -60,7 +60,7 @@ check("modo desconhecido vira off", normalizePilotMode("prod") === "off");
     agentId: PEDRO_V3_PILOT_AGENT_ID,
     mode: "shadow",
   });
-  check("tenant+agent exatos habilitam shadow", decision.enabled && decision.mode === "shadow", JSON.stringify(decision));
+  check("tenant+agent exatos ignoram shadow legado e ficam active", decision.enabled && decision.mode === "active", JSON.stringify(decision));
 }
 
 {
@@ -104,7 +104,7 @@ check("modo desconhecido vira off", normalizePilotMode("prod") === "off");
     agentId: PEDRO_V3_PILOT_AGENT_ID,
     mode: "off",
   });
-  check("identidade piloto com mode off continua desligada", !decision.enabled && decision.reason === "pilot_disabled", JSON.stringify(decision));
+  check("identidade piloto com mode off legado continua no v3", decision.enabled && decision.mode === "active", JSON.stringify(decision));
 }
 
 if (fail > 0) {

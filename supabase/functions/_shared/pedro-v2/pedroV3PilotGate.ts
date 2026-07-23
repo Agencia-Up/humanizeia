@@ -2,8 +2,9 @@
 //
 // The historical name is kept for import compatibility, but production is now
 // v3-only: every real tenant+agent identity is eligible for v3. The old
-// PEDRO_V3_ACTIVE_SCOPES variable remains parseable for diagnostics and older
-// callers, but it is no longer an activation allowlist.
+// PEDRO_V3_ACTIVE_SCOPES and PEDRO_V3_PILOT_MODE variables remain parseable for
+// diagnostics and older callers, but neither is an activation allowlist or a
+// production routing decision anymore.
 
 export const PEDRO_V3_PILOT_TENANT_ID = "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0";
 export const PEDRO_V3_PILOT_AGENT_ID = "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185";
@@ -95,8 +96,15 @@ export function evaluatePedroV3Pilot(input: {
     return { enabled: false, mode: "off", identityMatched, reason: "not_pilot_identity" };
   }
 
-  // Missing mode means active after the global rollout. An explicit "off"
-  // still remains an emergency kill switch.
+  // Global rollout is intentionally authoritative. A stale pilot variable must
+  // not create the dangerous split-brain state where v2 is blocked but v3 is
+  // also disabled, leaving every lead without an answer. Keep accepting the
+  // field for compatibility/diagnostics, but always route a valid tenant+agent
+  // identity to the active v3 runtime.
+  if (PEDRO_V3_GLOBAL_ROLLOUT) {
+    return { enabled: true, mode: "active", identityMatched, reason: "pilot_allowed" };
+  }
+
   const rawMode = String(input.mode ?? "").trim();
   const mode = rawMode === "" ? "active" : normalizePedroV3PilotMode(rawMode);
   if (mode === "off") {
