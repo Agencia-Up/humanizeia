@@ -1374,6 +1374,9 @@ export function CrmAvancadoTab({
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [backupDownloading, setBackupDownloading] = useState(false);
+  // Backup por coluna: modal + etapas marcadas (Set vazio = todas).
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [backupCols, setBackupCols] = useState<Set<string>>(new Set());
   const [selectedLead, setSelectedLead] = useState<CrmLead | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [schedules, setSchedules] = useState<FollowupSchedule[]>([]);
@@ -5073,7 +5076,7 @@ export function CrmAvancadoTab({
     setTimeout(() => { window.location.href = '/whatsapp/broadcast'; }, 600);
   };
 
-  const handleDownloadBackup = async () => {
+  const handleDownloadBackup = async (cols?: Set<string>) => {
     if (!userId || isSeller) return;
 
     const agentName = isMarcosCrm ? 'Marcos' : 'Pedro';
@@ -5087,7 +5090,13 @@ export function CrmAvancadoTab({
     try {
       const rows = await fetchAllBackupRows(table, '*', ownerId);
 
-      const exportRows = rows.map((row: any) => {
+      // Backup por coluna: filtra pelas etapas marcadas (Set vazio/ausente = TODAS).
+      // Usa a MESMA normalização do Kanban, então cada lead cai na coluna onde ele
+      // aparece na tela (Pedro: status_crm; Marcos: stage_id).
+      const colOf = (row: any) => normalizeStatus((isMarcosCrm ? row.stage_id : row.status_crm) || row.status || 'novo', pipelineColumns);
+      const rowsToExport = (cols && cols.size > 0) ? rows.filter((row: any) => cols.has(colOf(row))) : rows;
+
+      const exportRows = rowsToExport.map((row: any) => {
         const customFields = row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields : {};
 
         if (isMarcosCrm) {
@@ -5255,15 +5264,15 @@ export function CrmAvancadoTab({
         </div>
         )}
         <div className="mobile-crm-tools flex w-full items-center gap-1.5 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
-          {!isSeller && (
+          {!isSeller && view === 'leads' && (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={handleDownloadBackup}
+              onClick={() => setBackupOpen(true)}
               disabled={backupDownloading}
               className="h-9 shrink-0 gap-1.5 border-emerald-500/30 px-3 text-xs text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 sm:h-7 sm:px-2.5"
-              title={`Baixar backup completo dos leads do ${isMarcosCrm ? 'Marcos' : 'Pedro'}`}
+              title="Backup dos leads — escolha baixar tudo ou etapas específicas"
             >
               {backupDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
               Backup dos leads
@@ -6014,6 +6023,61 @@ export function CrmAvancadoTab({
       )}
 
       {/* ── Popup: "Mover para" — caminho sem arrastar (essencial no celular) ── */}
+      {/* ── Backup dos leads: baixar tudo ou só etapas escolhidas ── */}
+      <Dialog open={backupOpen} onOpenChange={o => { if (!backupDownloading) setBackupOpen(o); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2">
+              <Download className="h-4 w-4 text-emerald-500" />
+              Backup dos leads
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Marque as etapas que quer exportar. <b>Nenhuma marcada = baixa todas.</b>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground">
+              {backupCols.size === 0 ? 'Todas as etapas' : `${backupCols.size} etapa(s) marcada(s)`}
+            </span>
+            <div className="flex gap-3">
+              <button type="button" className="text-emerald-500 hover:underline" onClick={() => setBackupCols(new Set(pipelineColumns.map(c => c.id)))}>Marcar todas</button>
+              <button type="button" className="text-muted-foreground hover:underline" onClick={() => setBackupCols(new Set())}>Limpar</button>
+            </div>
+          </div>
+          <div className="max-h-[46vh] space-y-1.5 overflow-y-auto pr-1">
+            {pipelineColumns.map(col => {
+              const count = leads.filter(l => normalizeStatus(l.status_crm || 'novo', pipelineColumns) === col.id).length;
+              const checked = backupCols.has(col.id);
+              return (
+                <label key={col.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border/50 bg-card px-3 py-2 hover:border-emerald-500/40">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => setBackupCols(prev => { const n = new Set(prev); if (n.has(col.id)) n.delete(col.id); else n.add(col.id); return n; })}
+                    className="h-4 w-4 shrink-0 rounded accent-emerald-500"
+                  />
+                  <span className="text-sm shrink-0">{col.emoji}</span>
+                  <span className="flex-1 truncate text-sm font-medium text-foreground">{col.title}</span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{count}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button variant="ghost" size="sm" onClick={() => setBackupOpen(false)} disabled={backupDownloading}>Cancelar</Button>
+            <Button
+              size="sm"
+              onClick={async () => { await handleDownloadBackup(backupCols); setBackupOpen(false); }}
+              disabled={backupDownloading}
+              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              {backupDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              Baixar Excel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!moverLead} onOpenChange={(o) => { if (!o) setMoverLead(null); }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
