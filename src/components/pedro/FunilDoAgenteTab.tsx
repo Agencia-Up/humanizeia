@@ -402,7 +402,16 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     const funnelErrors = validateTenantFunnelConfig(cfg).filter((issue) => issue.severity === 'error');
     const policyErrors = validateTenantPolicies(cfg.tenant_policies).filter((issue) => issue.severity === 'error');
     if (funnelErrors.length > 0 || policyErrors.length > 0) {
-      toast({ title: 'Revise as políticas comerciais', description: policyErrors[0].message, variant: 'destructive' });
+      // BUGFIX: antes usava policyErrors[0].message direto. Quando o erro era do FUNIL
+      // (funnelErrors) e não havia nenhum policyError, policyErrors[0] era undefined e o
+      // clique quebrava CALADO — não salvava e não mostrava aviso nenhum. Agora mostra o
+      // 1º erro real (funil OU política), com o título certo, sempre.
+      const firstIssue = funnelErrors[0] || policyErrors[0];
+      toast({
+        title: funnelErrors.length > 0 ? 'Complete o funil antes de gerar' : 'Revise as políticas comerciais',
+        description: firstIssue?.message || 'Revise os campos obrigatórios do funil antes de gerar o prompt.',
+        variant: 'destructive',
+      });
       return;
     }
     setSaving(true);
