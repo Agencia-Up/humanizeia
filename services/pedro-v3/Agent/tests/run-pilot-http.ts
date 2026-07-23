@@ -160,7 +160,7 @@ await expectError(
   const runner = new FakeRunner();
   const app = new PilotHttpApp(SECRET, runner);
   const response = await app.handle(request({ ...BASE_PAYLOAD, agentId: "agent-outro" }));
-  check("escopo fora do piloto bloqueia antes do runner", response.status === 403 && parsed(response.body).ingested === false && runner.calls.length === 0);
+  check("identidade completa entra no rollout global", response.status === 200 && parsed(response.body).ingested === true && runner.calls.length === 1);
 }
 
 {
@@ -239,12 +239,12 @@ await expectError(
     status: "Delivered",
     occurredAt: "2026-06-28T12:00:05.000Z",
   }));
-  check("receipt aceita somente delivered/read", invalidStatus.status === 400 && receiptRunner.calls.length === 0);
-  check("receipt cross-tenant falha antes do runner", crossTenant.status === 403 && receiptRunner.calls.length === 0);
+  check("receipt rejeita status fora do contrato", invalidStatus.status === 400);
+  check("receipt com identidade completa entra no rollout global", crossTenant.status === 200 && receiptRunner.calls.length === 1);
 
   const delivered = await app.handle(receiptRequest());
-  check("receipt delivered autenticado chama runner", delivered.status === 200 && parsed(delivered.body).status === "applied" && receiptRunner.calls.length === 1);
-  check("receipt normaliza status e timestamp", receiptRunner.calls[0]?.status === "delivered" && receiptRunner.calls[0]?.occurredAt === "2026-06-28T12:00:05.000Z");
+  check("receipt delivered autenticado chama runner", delivered.status === 200 && parsed(delivered.body).status === "applied" && receiptRunner.calls.length === 2);
+  check("receipt normaliza status e timestamp", receiptRunner.calls[1]?.status === "delivered" && receiptRunner.calls[1]?.occurredAt === "2026-06-28T12:00:05.000Z");
 
   receiptRunner.error = new Error("database secret detail");
   const failedReceipt = await app.handle(receiptRequest());

@@ -1,8 +1,9 @@
-// Pedro v3 pilot gate.
+// Pedro v3 rollout gate.
 //
-// This module is deliberately tiny and deterministic: the v3 pilot can only
-// match the owner's explicit tenant+agent pair. Never authorize by email,
-// agent name, instance fallback, or "first active agent".
+// The historical name is kept for import compatibility, but production is now
+// v3-only: every real tenant+agent identity is eligible for v3. The old
+// PEDRO_V3_ACTIVE_SCOPES variable remains parseable for diagnostics and older
+// callers, but it is no longer an activation allowlist.
 
 export const PEDRO_V3_PILOT_TENANT_ID = "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0";
 export const PEDRO_V3_PILOT_AGENT_ID = "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185";
@@ -17,6 +18,7 @@ export type PedroV3ActiveScope = {
 // Migração concluída: esta Edge Function conserva o nome histórico, mas não
 // pode mais entregar turnos comerciais ao Pedro v2.
 export const PEDRO_V3_ONLY = true;
+export const PEDRO_V3_GLOBAL_ROLLOUT = true;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -38,8 +40,9 @@ export function normalizePedroV3PilotMode(value: unknown): PedroV3PilotMode {
   return "off";
 }
 
-// Explicit allowlist shared with the Node runtime. An absent list preserves
-// the legacy pilot only; invalid config must never broaden Edge routing.
+// Compatibility parser shared with the Node runtime. The list is retained so
+// old deployments can still report malformed configuration, but global v3
+// rollout does not require or depend on this variable.
 export function parsePedroV3ActiveScopes(value: unknown): readonly PedroV3ActiveScope[] {
   if (value == null || String(value).trim() === "") return Object.freeze([LEGACY_PEDRO_V3_SCOPE]);
   let parsed: unknown;
@@ -75,6 +78,9 @@ export function isPedroV3PilotIdentity(input: {
   tenantId?: string | null;
   agentId?: string | null;
 }, scopes: readonly PedroV3ActiveScope[] = [LEGACY_PEDRO_V3_SCOPE]): boolean {
+  if (PEDRO_V3_GLOBAL_ROLLOUT) {
+    return Boolean(String(input.tenantId || "").trim() && String(input.agentId || "").trim());
+  }
   return scopes.some((scope) => scope.tenantId === input.tenantId && scope.agentId === input.agentId);
 }
 
@@ -89,7 +95,10 @@ export function evaluatePedroV3Pilot(input: {
     return { enabled: false, mode: "off", identityMatched, reason: "not_pilot_identity" };
   }
 
-  const mode = normalizePedroV3PilotMode(input.mode);
+  // Missing mode means active after the global rollout. An explicit "off"
+  // still remains an emergency kill switch.
+  const rawMode = String(input.mode ?? "").trim();
+  const mode = rawMode === "" ? "active" : normalizePedroV3PilotMode(rawMode);
   if (mode === "off") {
     return { enabled: false, mode, identityMatched, reason: "pilot_disabled" };
   }

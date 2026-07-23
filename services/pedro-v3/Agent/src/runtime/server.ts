@@ -18,7 +18,7 @@ import { allowedToolsForAgentProfile } from "../domain/agent-profile.ts";
 import { resolveTenantAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
 import { DebouncePoller } from "./debounce-poller.ts";
-import { parsePedroV3ActiveScopes, type PedroV3ActiveScope } from "../domain/pilot-scope.ts";
+import { parsePedroV3ActiveScopes, PEDRO_V3_GLOBAL_ROLLOUT, type PedroV3ActiveScope } from "../domain/pilot-scope.ts";
 import type { SettledConversation } from "../domain/ports.ts";
 import { RealClock } from "./real-clock.ts";
 import { sanitizeTurnError } from "./sanitize-error.ts";
@@ -97,7 +97,9 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   readonly #serviceRoleKey: string;
   readonly #aiProvider: AiProviderRuntimeConfig;
   readonly #allowedUazapiHosts: readonly string[];
-  readonly #activeScopes: readonly PedroV3ActiveScope[];
+  #activeScopes: readonly PedroV3ActiveScope[];
+  #activeScopesRefreshedAt = 0;
+  #activeScopesRefresh: Promise<void> | null = null;
   readonly #clock = new RealClock();
   readonly #debounce: DebounceConfig;
   // FASE 1 CRM + Opção A: UMA instância (stateless) implementa as DUAS portas — CrmLeadStore (update
@@ -131,7 +133,23 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     // F2.6J: a chave OpenAI NAO vem de env global. E resolvida por tenant (BYOK) via Vault/RPC.
     this.#aiProvider = resolveAiProviderRuntime(process.env);
     this.#allowedUazapiHosts = commaList("PEDRO_V3_ALLOWED_UAZAPI_HOSTS");
-    this.#activeScopes = parsePedroV3ActiveScopes(process.env.PEDRO_V3_ACTIVE_SCOPES);
+    let configuredScopes: readonly PedroV3ActiveScope[] = [];
+    try {
+      configuredScopes = parsePedroV3ActiveScopes(process.env.PEDRO_V3_ACTIVE_SCOPES);
+    } catch (error) {
+      // Global rollout does not depend on the legacy allowlist. Keep the
+      // process alive if a stale/malformed variable is still present; the
+      // parser remains strict for explicit legacy use and its own tests.
+      console.error("pedro_v3_active_scopes_invalid_ignored", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // In the global rollout an absent env var must not leave the workers with
+    // only the historical pilot. Keep explicit scopes as a bootstrap fallback
+    // until the first database discovery completes.
+    this.#activeScopes = PEDRO_V3_GLOBAL_ROLLOUT
+      ? (process.env.PEDRO_V3_ACTIVE_SCOPES?.trim() ? configuredScopes : [])
+      : configuredScopes;
     // F2.7.6: janela de debounce + intervalo do poller (defaults 6000/12000/2000ms).
     this.#debounce = resolveDebounceConfig(process.env);
     this.#crmLeadStore = process.env.PEDRO_V3_CRM_WRITE?.trim() === "active"
@@ -172,6 +190,54 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     return this.#activeScopes.find((scope) => scope.tenantId === tenantId && scope.agentId === agentId) ?? null;
   }
 
+  #rememberScope(scope: { readonly tenantId: string; readonly agentId: string }): void {
+    if (!PEDRO_V3_GLOBAL_ROLLOUT || !scope.tenantId.trim() || !scope.agentId.trim()) return;
+    if (this.#activeScopes.some((item) => item.tenantId === scope.tenantId && item.agentId === scope.agentId)) return;
+    this.#activeScopes = [...this.#activeScopes, { tenantId: scope.tenantId, agentId: scope.agentId }];
+  }
+
+  // The HTTP gate is global, but background workers still need concrete
+  // tenant+agent pairs to query their isolated partitions.
+  async #refreshActiveScopes(force = false): Promise<void> {
+    if (!PEDRO_V3_GLOBAL_ROLLOUT) return;
+    const now = Date.now();
+    if (!force && now - this.#activeScopesRefreshedAt < 30_000) return;
+    if (this.#activeScopesRefresh) return this.#activeScopesRefresh;
+    this.#activeScopesRefresh = (async () => {
+      try {
+        const rows = await this.#gateway().selectMany(
+          "wa_ai_agents",
+          { is_active: true },
+          { columns: "id,user_id", limit: 500 },
+        );
+        const discovered: PedroV3ActiveScope[] = [];
+        const seen = new Set<string>();
+        for (const row of rows) {
+          const tenantId = typeof row.user_id === "string" ? row.user_id.trim() : "";
+          const agentId = typeof row.id === "string" ? row.id.trim() : "";
+          if (!tenantId || !agentId) continue;
+          const key = `${tenantId}:${agentId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          discovered.push({ tenantId, agentId });
+        }
+        // Preserve a scope learned from a just-ingested request while replacing
+        // the periodic snapshot, so refresh cannot create a response gap.
+        const current = this.#activeScopes.filter((scope) => !seen.has(`${scope.tenantId}:${scope.agentId}`));
+        this.#activeScopes = [...discovered, ...current];
+        this.#activeScopesRefreshedAt = Date.now();
+        console.log(JSON.stringify({ event: "pedro_v3_active_scopes_refreshed", count: this.#activeScopes.length }));
+      } catch (error) {
+        // Keep the last snapshot. Inbound turns also call #rememberScope, so a
+        // newly active account still works while discovery is unavailable.
+        console.error(JSON.stringify({ event: "pedro_v3_active_scopes_refresh_failed", reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)) }));
+      } finally {
+        this.#activeScopesRefresh = null;
+      }
+    })();
+    return this.#activeScopesRefresh;
+  }
+
   get followupDiagnostics(): Readonly<Record<string, unknown>> {
     return {
       ...this.#followupDiagnostics,
@@ -194,6 +260,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   }
 
   async applyReceipt(payload: PilotReceiptPayload) {
+    this.#rememberScope({ tenantId: payload.tenantId, agentId: payload.agentId });
     const persistence = new PostgresPersistence(this.#gateway(), {
       tenantId: payload.tenantId,
       clock: this.#clock,
@@ -231,6 +298,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   // despachar) fica p/ o poller quando a conversa "assenta" (debounce). Resposta
   // {status:"accepted", ingested:true} -> o bridge mantem routed: pedro_v3 (contrato intacto).
   async run(payload: PilotTurnPayload) {
+    this.#rememberScope({ tenantId: payload.tenantId, agentId: payload.agentId });
     const persistence = new PostgresPersistence(this.#gateway(), {
       tenantId: payload.tenantId,
       clock: this.#clock,
@@ -262,6 +330,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
   // Consulta cada escopo autorizado isoladamente. Nunca ha leitura cross-tenant.
   async findSettled(nowIso: string): Promise<SettledConversation[]> {
+    await this.#refreshActiveScopes();
     const result = await findSettledAcrossScopes(this.#activeScopes, async (scope) => {
       const persistence = new PostgresPersistence(this.#gateway(), { tenantId: scope.tenantId, clock: this.#clock });
       const settled = await persistence.findSettledConversations(nowIso, this.#debounce.debounceMs, this.#debounce.maxWaitMs, 20);
@@ -463,6 +532,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
   }
 
   async processDueFollowups(): Promise<{ checked: number; planned: number; failed: number }> {
+    await this.#refreshActiveScopes();
     const tickAt = this.#clock.now();
     const skipped: Partial<Record<FollowupEvaluationReason, number>> = {};
     const skip = (reason: FollowupEvaluationReason) => { skipped[reason] = (skipped[reason] ?? 0) + 1; };

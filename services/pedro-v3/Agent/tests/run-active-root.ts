@@ -274,8 +274,8 @@ class FailWmPromotion extends InMemoryPersistence {
 console.log("F2.6F active pilot root (fake I/O, no network):");
 
 await expectThrow(
-  "nao cria root para agent fora do piloto",
-  () => PilotActiveRoot.create({ mode: "active", tenantId: TENANT_ID, agentId: "agent-outro" }, {
+  "nao cria root sem identidade completa",
+  () => PilotActiveRoot.create({ mode: "active", tenantId: "", agentId: "agent-outro" }, {
     db: seed(), decryptor: new V2PlaintextApiKeyReader(), clock: new FakeClock(NOW), model: new ScriptedModel(replyProposal("x", "Oi", "Oi"), "Oi"), whatsappTransport: new RecordingUazapiTransport(), allowedUazapiHosts: ["api.uazapi.example"], catalogSource: new StaticCatalogSource(),
   }),
   "PILOT_ACTIVE_SCOPE_DENIED",

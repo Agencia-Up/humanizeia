@@ -308,7 +308,18 @@ serve(async (req) => {
       .maybeSingle();
     if (agentErr) throw new Error(agentErr.message);
     if (!agent) throw new Error('Agente não encontrado');
-    if (agent.user_id !== user.id) throw new Error('Sem permissão sobre este agente');
+    // The browser resolves a seller to the master's user_id. Mirror that
+    // ownership rule here because this function uses the service-role client
+    // and therefore cannot rely on the browser RLS context.
+    const { data: sellerMembership } = await supabase
+      .from('ai_team_members')
+      .select('user_id, agent_id')
+      .eq('auth_user_id', user.id)
+      .eq('agent_id', agentId)
+      .limit(1)
+      .maybeSingle();
+    const effectiveOwnerId = sellerMembership?.user_id || user.id;
+    if (agent.user_id !== effectiveOwnerId) throw new Error('Sem permissão sobre este agente');
 
     // ── RESTORE ────────────────────────────────────────────────────────────
     if (action === 'restore') {
@@ -352,7 +363,7 @@ serve(async (req) => {
     // sendo definidos pelo prompt configurado no portal.
     const promptConfig = { ...cfg, agent_type: agent.agent_type || 'generic' };
     const canonicalPrompt = buildTenantSdrSystemPrompt(promptConfig);
-    const generated = await improvePromptWithAi(user.id, promptConfig, canonicalPrompt);
+    const generated = await improvePromptWithAi(effectiveOwnerId, promptConfig, canonicalPrompt);
     const newPrompt = generated.prompt;
 
     // 1) salva o prompt gerado no agent_funnel_config

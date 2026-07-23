@@ -1,5 +1,5 @@
-// Pedro v3 pilot scope tests.
-// Proves that only the owner's explicit tenant+agent pair can enter v3.
+// Pedro v3 rollout tests.
+// Proves the global rollout, while preserving the explicit off kill switch.
 
 import {
   evaluatePedroV3PilotScope,
@@ -40,13 +40,13 @@ check("modo desconhecido vira off", normalizePilotMode("prod") === "off");
   ]));
   check("allowlist explicita preserva dois pares tenant+agent", scopes.length === 2 && scopes[1]?.tenantId === BRUNO_SCOPE.tenantId);
   const decision = evaluatePedroV3PilotScope({ ...BRUNO_SCOPE, mode: "active", activeScopes: scopes });
-  check("Bruno so entra quando esta na allowlist", decision.enabled && decision.mode === "active", JSON.stringify(decision));
+  check("Bruno entra no v3 no rollout global", decision.enabled && decision.mode === "active", JSON.stringify(decision));
   const crossed = evaluatePedroV3PilotScope({ tenantId: BRUNO_SCOPE.tenantId, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active", activeScopes: scopes });
-  check("allowlist nunca combina tenant e agent de escopos diferentes", !crossed.enabled, JSON.stringify(crossed));
+  check("identidades fora da lista antiga tambem entram no rollout global", crossed.enabled, JSON.stringify(crossed));
 }
 
 {
-  check("allowlist ausente preserva somente o piloto legado", parsePedroV3ActiveScopes(undefined).length === 1);
+  check("parser legado continua estavel sem exigir a variavel", parsePedroV3ActiveScopes(undefined).length === 1);
   for (const value of ["{", "[]", JSON.stringify([{ tenantId: BRUNO_SCOPE.tenantId, agentId: "invalido" }])]) {
     let rejected = false;
     try { parsePedroV3ActiveScopes(value); } catch { rejected = true; }
@@ -78,7 +78,7 @@ check("modo desconhecido vira off", normalizePilotMode("prod") === "off");
     agentId: "agent-de-outro-cliente",
     mode: "active",
   });
-  check("tenant certo com agent errado bloqueia", !decision.enabled && decision.reason === "not_pilot_identity", JSON.stringify(decision));
+  check("tenant certo com outro agent entra no rollout global", decision.enabled, JSON.stringify(decision));
 }
 
 {
@@ -87,7 +87,15 @@ check("modo desconhecido vira off", normalizePilotMode("prod") === "off");
     agentId: PEDRO_V3_PILOT_AGENT_ID,
     mode: "active",
   });
-  check("agent certo com tenant errado bloqueia", !decision.enabled && decision.reason === "not_pilot_identity", JSON.stringify(decision));
+  check("agent certo com outro tenant entra no rollout global", decision.enabled, JSON.stringify(decision));
+}
+
+{
+  const decision = evaluatePedroV3PilotScope({
+    tenantId: "tenant-novo",
+    agentId: "agent-novo",
+  });
+  check("modo ausente ativa o v3 global", decision.enabled && decision.mode === "active", JSON.stringify(decision));
 }
 
 {

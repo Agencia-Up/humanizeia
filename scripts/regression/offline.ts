@@ -115,8 +115,8 @@ const labels = (rk: any[]) => rk.map((r) => `${r.vehicle.markName} ${r.vehicle.m
 const models = (rk: any[]) => new Set(rk.map((r) => String(r.vehicle.modelName).toLowerCase().split(" ")[0]));
 
 console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
-// Pedro v3 pilot gate: antes de ligar qualquer handler real, provar que o acesso
-// e exclusivamente por tenant+agent exatos. Email/nome/instancia nunca autorizam.
+// Pedro v3 rollout gate: qualquer identidade tenant+agent completa entra no v3;
+// email/nome/instancia nunca substituem uma identidade ausente.
 {
   check("v3-gate", "modo invalido cai para off", normalizePedroV3PilotMode("production") === "off");
   const shadow = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "shadow" });
@@ -125,11 +125,14 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   const active = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active" });
   check("v3-gate", "tenant+agent exatos habilitam active", active.enabled && active.mode === "active", JSON.stringify(active));
 
-  const wrongAgent = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: "outro-agent", mode: "active" });
-  check("v3-gate", "tenant certo + agent errado NAO habilita", !wrongAgent.enabled && wrongAgent.reason === "not_pilot_identity", JSON.stringify(wrongAgent));
+  const otherAgent = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: "outro-agent", mode: "active" });
+  check("v3-gate", "tenant certo + outro agent entra no rollout global", otherAgent.enabled && otherAgent.mode === "active", JSON.stringify(otherAgent));
 
-  const wrongTenant = evaluatePedroV3Pilot({ tenantId: "outro-tenant", agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active" });
-  check("v3-gate", "agent certo + tenant errado NAO habilita", !wrongTenant.enabled && wrongTenant.reason === "not_pilot_identity", JSON.stringify(wrongTenant));
+  const otherTenant = evaluatePedroV3Pilot({ tenantId: "outro-tenant", agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active" });
+  check("v3-gate", "agent certo + outro tenant entra no rollout global", otherTenant.enabled && otherTenant.mode === "active", JSON.stringify(otherTenant));
+
+  const missingTenant = evaluatePedroV3Pilot({ tenantId: "", agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "active" });
+  check("v3-gate", "identidade sem tenant continua bloqueada", !missingTenant.enabled && missingTenant.reason === "not_pilot_identity", JSON.stringify(missingTenant));
 
   const off = evaluatePedroV3Pilot({ tenantId: PEDRO_V3_PILOT_TENANT_ID, agentId: PEDRO_V3_PILOT_AGENT_ID, mode: "off" });
   check("v3-gate", "identidade piloto com mode off fica desligada", !off.enabled && off.reason === "pilot_disabled", JSON.stringify(off));
@@ -161,8 +164,10 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   check("v3-bridge", "ids sao deterministas no retry", built.ok && repeated.ok && built.turn.eventId === repeated.turn.eventId && built.turn.turnId === repeated.turn.turnId && built.turn.conversationId === repeated.turn.conversationId, JSON.stringify({ built, repeated }));
   check("v3-bridge", "telefone e texto sao normalizados", built.ok && built.turn.to === "5512999999999" && built.turn.messageText === "Boa noite", JSON.stringify(built));
 
-  const wrongTenant = await buildPedroV3BridgeTurn({ payload, tenantId: "outro-tenant", agentId: PEDRO_V3_PILOT_AGENT_ID, build: "v220-test" });
-  check("v3-bridge", "tenant fora do piloto nunca vai ao v3", !wrongTenant.ok && wrongTenant.reason === "not_pilot_identity", JSON.stringify(wrongTenant));
+  const otherTenant = await buildPedroV3BridgeTurn({ payload, tenantId: "outro-tenant", agentId: PEDRO_V3_PILOT_AGENT_ID, build: "v220-test" });
+  check("v3-bridge", "outro tenant com identidade completa chega ao v3 global", otherTenant.ok, JSON.stringify(otherTenant));
+  const missingTenant = await buildPedroV3BridgeTurn({ payload, tenantId: "", agentId: PEDRO_V3_PILOT_AGENT_ID, build: "v220-test" });
+  check("v3-bridge", "bridge sem tenant continua fora do v3", !missingTenant.ok && missingTenant.reason === "not_pilot_identity", JSON.stringify(missingTenant));
 
   const audioOnly = await buildPedroV3BridgeTurn({
     payload: { message: { key: { id: "AUDIO-1", remoteJid: "5512999999999@s.whatsapp.net" }, audio: { url: "https://example.invalid/audio" } } },
@@ -202,7 +207,7 @@ console.log("\n=== SUÍTE OFFLINE Pedro v2 (sem rede / sem LLM / $0) ===\n");
   });
   check("v3-bridge", "messages_update Delivered gera receipt tipado", deliveredReceipt.ok && deliveredReceipt.receipt.status === "delivered" && deliveredReceipt.receipt.providerMessageId === "3EB0ABC123", JSON.stringify(deliveredReceipt));
   check("v3-bridge", "status Sent nao promove memoria entregue", !sentReceipt.ok && sentReceipt.reason === "status_ignored", JSON.stringify(sentReceipt));
-  check("v3-bridge", "receipt de outro tenant nunca chega ao v3", !foreignReceipt.ok && foreignReceipt.reason === "not_pilot_identity", JSON.stringify(foreignReceipt));
+  check("v3-bridge", "receipt com identidade completa chega ao v3 global", foreignReceipt.ok, JSON.stringify(foreignReceipt));
 }
 // ── BUSCA (rankVehicles) — onde mais nasceram bugs ──────────────────────────
 {

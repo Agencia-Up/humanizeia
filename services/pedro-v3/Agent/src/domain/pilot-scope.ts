@@ -1,12 +1,15 @@
-// Pedro v3 pilot scope.
+// Pedro v3 rollout scope.
 //
-// The active pilot is not a marketing flag and not an email check. It is a
-// hard tenant+agent authorization boundary so production clients remain on v2.
+// This module keeps the old pilot API for compatibility, but production is now
+// globally v3-only. PEDRO_V3_ACTIVE_SCOPES is retained as a parseable legacy
+// diagnostic setting; it is not required to activate a tenant or agent.
 
 export const PEDRO_V3_PILOT_TENANT_ID = "ecb26258-ffe6-4fe2-9efc-8ab2fc3a61b0";
 export const PEDRO_V3_PILOT_AGENT_ID = "d4fd5c38-dd37-4da5-a971-5a7b7dfb9185";
 
 export type PilotMode = "off" | "shadow" | "active";
+
+export const PEDRO_V3_GLOBAL_ROLLOUT = true;
 
 export type PedroV3ActiveScope = {
   readonly tenantId: string;
@@ -34,7 +37,8 @@ export const LEGACY_PEDRO_V3_SCOPE: PedroV3ActiveScope = Object.freeze({
 });
 
 // A lista vem da infra, mas este parser permanece puro para o bridge e o runtime
-// usarem exatamente o mesmo contrato. Ausencia preserva somente o piloto legado.
+// usarem exatamente o mesmo contrato. Ela não é mais necessária no rollout
+// global; mantemos o parsing para detectar configuração antiga malformada.
 export function parsePedroV3ActiveScopes(value: unknown): readonly PedroV3ActiveScope[] {
   if (value == null || String(value).trim() === "") return Object.freeze([LEGACY_PEDRO_V3_SCOPE]);
   let parsed: unknown;
@@ -70,6 +74,9 @@ export function isPedroV3ActiveScope(
   input: { readonly tenantId?: string | null; readonly agentId?: string | null },
   scopes: readonly PedroV3ActiveScope[] = [LEGACY_PEDRO_V3_SCOPE],
 ): boolean {
+  if (PEDRO_V3_GLOBAL_ROLLOUT) {
+    return Boolean(String(input.tenantId ?? "").trim() && String(input.agentId ?? "").trim());
+  }
   return scopes.some((scope) => input.tenantId === scope.tenantId && input.agentId === scope.agentId);
 }
 
@@ -91,7 +98,10 @@ export function evaluatePedroV3PilotScope(input: {
     return { enabled: false, mode: "off", identityMatched, reason: "not_pilot_identity" };
   }
 
-  const mode = normalizePilotMode(input.mode);
+  // Missing mode is active after the global rollout. Explicit "off" remains
+  // the emergency kill switch and keeps rollback possible without a deploy.
+  const rawMode = String(input.mode ?? "").trim();
+  const mode = rawMode === "" ? "active" : normalizePilotMode(rawMode);
   if (mode === "off") {
     return { enabled: false, mode, identityMatched, reason: "pilot_disabled" };
   }

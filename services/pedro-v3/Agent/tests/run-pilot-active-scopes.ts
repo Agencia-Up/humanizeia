@@ -63,11 +63,14 @@ const app = new PilotHttpApp(SECRET, runner, undefined, undefined, activeScopes)
 const brunoAccepted = await app.handle(request(turn(BRUNO_SCOPE)));
 check("escopo Bruno autorizado chega ao runner", brunoAccepted.status === 200 && runner.calls.length === 1 && runner.calls[0]?.agentId === BRUNO_SCOPE.agentId);
 
-const crossedRejected = await app.handle(request(turn({ tenantId: BRUNO_SCOPE.tenantId, agentId: PEDRO_V3_PILOT_AGENT_ID })));
-check("par cruzado Bruno/Douglas falha fechado", crossedRejected.status === 403 && runner.calls.length === 1);
+const crossedAccepted = await app.handle(request(turn({ tenantId: BRUNO_SCOPE.tenantId, agentId: PEDRO_V3_PILOT_AGENT_ID })));
+check("par cruzado tambem entra no rollout global", crossedAccepted.status === 200 && runner.calls.length === 2);
 
-const unknownRejected = await app.handle(request(turn({ tenantId: "5f2a9543-4d60-4623-9c3f-f3c35b3b44a8", agentId: BRUNO_SCOPE.agentId })));
-check("tenant desconhecido falha fechado", unknownRejected.status === 403 && runner.calls.length === 1);
+const unknownAccepted = await app.handle(request(turn({ tenantId: "5f2a9543-4d60-4623-9c3f-f3c35b3b44a8", agentId: BRUNO_SCOPE.agentId })));
+check("tenant novo com identidade completa entra no rollout global", unknownAccepted.status === 200 && runner.calls.length === 3);
+
+const missingIdentity = await app.handle(request(turn({ tenantId: "", agentId: BRUNO_SCOPE.agentId })));
+check("identidade sem tenant continua falhando fechado", missingIdentity.status !== 200 && runner.calls.length === 3);
 
 if (failed > 0) {
   console.error(`=== ACTIVE SCOPES: ${ok} OK | ${failed} FALHA ===`);

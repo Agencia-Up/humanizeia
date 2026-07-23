@@ -39,6 +39,9 @@ const TABLE_ALLOWLIST = new Set([
   "v3_conversation_state",
   "v3_effect_outbox",
   "v3_conversation_routing",
+  // Global rollout: discover active tenant+agent identities from the source
+  // of truth instead of requiring PEDRO_V3_ACTIVE_SCOPES.
+  "wa_ai_agents",
   // BYOK grandfather (F2.6K): leitura de profiles.created_at p/ decidir grandfathered (fail-open).
   "profiles",
 ]);

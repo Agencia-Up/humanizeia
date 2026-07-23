@@ -32,7 +32,7 @@ console.log("Pedro v3 edge active scopes:");
 const scopes = parsePedroV3ActiveScopes(JSON.stringify([DOUGLAS, BRUNO, AVANT]));
 
 const agentDecision = evaluatePedroV3PilotAgent({ id: BRUNO.agentId, user_id: BRUNO.tenantId }, null, "active", scopes);
-check("gate Edge aceita Bruno somente pela allowlist", agentDecision.enabled && agentDecision.mode === "active");
+check("gate Edge aceita Bruno no rollout global", agentDecision.enabled && agentDecision.mode === "active");
 
 const avantDecision = evaluatePedroV3PilotAgent({ id: AVANT.agentId, user_id: AVANT.tenantId }, null, "active", scopes);
 check("gate Edge aceita Avant/Manu pela allowlist", avantDecision.enabled && avantDecision.mode === "active");
@@ -43,7 +43,7 @@ check("workers v2 bloqueiam Avant/Manu quando o escopo v3 esta active", isPedroV
 }));
 
 const crossDecision = evaluatePedroV3PilotAgent({ id: DOUGLAS.agentId, user_id: BRUNO.tenantId }, null, "active", scopes);
-check("gate Edge rejeita tenant Bruno com agente Douglas", !crossDecision.enabled);
+check("gate Edge aceita identidade cruzada completa no rollout global", crossDecision.enabled);
 
 check("workers v2 bloqueiam Bruno quando o escopo v3 esta active", isPedroV3ExclusiveScope({
   ...BRUNO,
@@ -57,7 +57,7 @@ check("workers v2 nao bloqueiam Bruno quando o v3 esta shadow", !isPedroV3Exclus
   activeScopes: scopes,
 }));
 
-check("workers v2 nao bloqueiam identidade cruzada", !isPedroV3ExclusiveScope({
+check("workers v2 bloqueiam identidade cruzada completa no rollout global", isPedroV3ExclusiveScope({
   tenantId: BRUNO.tenantId,
   agentId: DOUGLAS.agentId,
   mode: "active",
@@ -68,7 +68,7 @@ const brunoTurn = await buildPedroV3BridgeTurn({ payload: payload("wamid.bruno.1
 check("bridge mantém tenant e agent Bruno no turno", brunoTurn.ok && brunoTurn.turn.tenantId === BRUNO.tenantId && brunoTurn.turn.agentId === BRUNO.agentId);
 
 const crossTurn = await buildPedroV3BridgeTurn({ payload: payload("wamid.bruno.2", "Tem HB20?"), tenantId: BRUNO.tenantId, agentId: DOUGLAS.agentId, build: "test", activeScopes: scopes });
-check("bridge fecha turno de identidade cruzada", !crossTurn.ok && crossTurn.reason === "not_pilot_identity");
+check("bridge aceita turno de identidade cruzada completa no rollout global", crossTurn.ok);
 
 const receipt = buildPedroV3DeliveryReceipt({
   payload: { EventType: "messages_update", message: { messageid: "wamid.bruno.receipt", status: "delivered" } },
