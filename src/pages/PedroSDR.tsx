@@ -6945,7 +6945,7 @@ const ALL_SELLER_TABS = [
 
 export default function PedroSDR() {
   const { user } = useAuth();
-  const { isSeller, seller, masterUserId, memberIds, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
+  const { isSeller, seller, masterUserId, memberIds, isManager, visibleFeatures, loading: sellerLoading } = useSellerProfile(user?.id);
   // Dono dos dados: master usa o proprio id; vendedor usa o id do master (os
   // agentes/leads/inbox ficam gravados sob o master, nao sob o auth do vendedor).
   const inboxOwnerId = masterUserId || user?.id;
