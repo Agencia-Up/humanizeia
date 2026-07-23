@@ -211,23 +211,23 @@ export function FeedbackNepqTab() {
             </p>
           </div>
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+            <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
               <BookOpen className="h-3.5 w-3.5" /> Impacto na venda
             </div>
-            <p className="mt-2 text-sm text-amber-100/85">{leituraPontoFraco.impacto}</p>
+            <p className="mt-2 text-sm text-amber-800/85 dark:text-amber-100/85">{leituraPontoFraco.impacto}</p>
           </div>
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
-            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
               <Lightbulb className="h-3.5 w-3.5" /> Proxima acao
             </div>
-            <p className="mt-2 text-sm text-emerald-100/85">{leituraPontoFraco.acao}</p>
+            <p className="mt-2 text-sm text-emerald-800/85 dark:text-emerald-100/85">{leituraPontoFraco.acao}</p>
           </div>
         </div>
       )}
 
       {/* Alerta de conflito */}
       {alertas.length > 0 && (
-        <div className="flex items-start gap-2 text-xs bg-rose-500/10 border border-rose-500/25 text-rose-300 rounded-lg px-3 py-2">
+        <div className="flex items-start gap-2 text-xs bg-rose-500/10 border border-rose-500/25 text-rose-700 rounded-lg px-3 py-2 dark:text-rose-300">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
           <span><span className="font-semibold">Atenção:</span> {alertas.map((a) => nomes[a.vendedor_id] || '?').join(', ')} está marcando lead bom como ruim (conflito de rotulagem) — isso corrompe o aprendizado das campanhas. Priorize o alinhamento.</span>
         </div>

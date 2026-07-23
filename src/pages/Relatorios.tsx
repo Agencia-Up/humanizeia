@@ -28,9 +28,10 @@ export default function Relatorios() {
 
   return (
     <MainLayout>
-      <div className="mx-auto w-full max-w-6xl space-y-4 p-4 md:p-6">
+      <div className="mx-auto w-full max-w-6xl p-4 md:p-6">
+        <div className="feedback-report-shell space-y-4 p-4 md:p-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10 shadow-sm">
             <FileText className="h-5 w-5 text-primary" />
           </div>
           <div>
@@ -41,6 +42,7 @@ export default function Relatorios() {
           </div>
         </div>
         <FeedbacksArea />
+        </div>
       </div>
     </MainLayout>
   );

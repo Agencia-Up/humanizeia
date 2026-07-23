@@ -41,10 +41,10 @@ interface Conversa {
 }
 
 const QMAP: Record<string, { label: string; cls: string }> = {
-  '1_alto':     { label: 'lead forte',    cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
-  '2_medio':    { label: 'lead bom',      cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30' },
-  '3_baixo':    { label: 'lead difícil',  cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
-  '4_nao_lead': { label: 'não era lead',  cls: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
+  '1_alto':     { label: 'lead forte',    cls: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300' },
+  '2_medio':    { label: 'lead bom',      cls: 'bg-sky-500/15 text-sky-700 border-sky-500/30 dark:text-sky-300' },
+  '3_baixo':    { label: 'lead difícil',  cls: 'bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300' },
+  '4_nao_lead': { label: 'não era lead',  cls: 'bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300' },
 };
 
 // Potencial do lead: qualidade oficial > potencial do especialista > temperatura.
@@ -114,16 +114,16 @@ function fmtMin(mRaw: number): string {
   return `${m} min`;
 }
 function scoreCls(s: number): string {
-  if (s >= 70) return 'text-emerald-400';
-  if (s >= 50) return 'text-sky-400';
-  if (s >= 30) return 'text-amber-400';
-  return 'text-rose-400';
+  if (s >= 70) return 'text-emerald-600 dark:text-emerald-400';
+  if (s >= 50) return 'text-sky-600 dark:text-sky-400';
+  if (s >= 30) return 'text-amber-600 dark:text-amber-400';
+  return 'text-rose-600 dark:text-rose-400';
 }
 function decisaoScore(s: number): { label: string; cls: string } {
-  if (s >= 70) return { label: 'Atendimento forte', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' };
-  if (s >= 50) return { label: 'Atendimento ok', cls: 'text-sky-300 bg-sky-500/10 border-sky-500/25' };
-  if (s >= 30) return { label: 'Precisa ajuste', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/25' };
-  return { label: 'Risco de perda', cls: 'text-rose-300 bg-rose-500/10 border-rose-500/25' };
+  if (s >= 70) return { label: 'Atendimento forte', cls: 'text-emerald-700 bg-emerald-500/10 border-emerald-500/25 dark:text-emerald-300' };
+  if (s >= 50) return { label: 'Atendimento ok', cls: 'text-sky-700 bg-sky-500/10 border-sky-500/25 dark:text-sky-300' };
+  if (s >= 30) return { label: 'Precisa ajuste', cls: 'text-amber-700 bg-amber-500/10 border-amber-500/25 dark:text-amber-300' };
+  return { label: 'Risco de perda', cls: 'text-rose-700 bg-rose-500/10 border-rose-500/25 dark:text-rose-300' };
 }
 function vendedorInsight(v: Vendedor): { resumo: string; risco: string; acao: string; prova: string } {
   const pctBem = v.bons ? Math.round((v.bemAtendidos / v.bons) * 100) : 0;
@@ -394,9 +394,9 @@ export function FeedbackPorVendedorTab() {
             {[
               { lb: 'Nota média', v: atual.scoreMedio, cls: scoreCls(atual.scoreMedio), ic: Star },
               { lb: 'Leads analisados', v: atual.analisados, cls: 'text-foreground', ic: Users },
-              { lb: 'Leads bons', v: atual.bons, cls: 'text-sky-400', ic: Trophy },
-              { lb: 'Bem atendidos', v: atual.bemAtendidos, cls: 'text-emerald-400', ic: Star },
-              { lb: 'Vendas', v: atual.vendas, cls: 'text-emerald-400', ic: Trophy },
+              { lb: 'Leads bons', v: atual.bons, cls: 'text-sky-600 dark:text-sky-400', ic: Trophy },
+              { lb: 'Bem atendidos', v: atual.bemAtendidos, cls: 'text-emerald-600 dark:text-emerald-400', ic: Star },
+              { lb: 'Vendas', v: atual.vendas, cls: 'text-emerald-600 dark:text-emerald-400', ic: Trophy },
             ].map((t) => {
               const Ic = t.ic;
               return (

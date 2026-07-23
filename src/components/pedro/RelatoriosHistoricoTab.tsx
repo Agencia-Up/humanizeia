@@ -20,18 +20,18 @@ interface Relatorio {
 
 const QORDER = ['1_alto', '2_medio', '3_baixo', '4_nao_lead', 'sem'] as const;
 const QMAP: Record<string, { label: string; cls: string }> = {
-  '1_alto':     { label: 'forte',       cls: 'text-emerald-400' },
-  '2_medio':    { label: 'bom',         cls: 'text-sky-400' },
-  '3_baixo':    { label: 'difícil',     cls: 'text-amber-400' },
-  '4_nao_lead': { label: 'não era lead', cls: 'text-rose-400' },
+  '1_alto':     { label: 'forte',       cls: 'text-emerald-600 dark:text-emerald-400' },
+  '2_medio':    { label: 'bom',         cls: 'text-sky-600 dark:text-sky-400' },
+  '3_baixo':    { label: 'difícil',     cls: 'text-amber-600 dark:text-amber-400' },
+  '4_nao_lead': { label: 'não era lead', cls: 'text-rose-600 dark:text-rose-400' },
   'sem':        { label: 'sem análise', cls: 'text-muted-foreground' },
 };
 
 const STATUS: Record<string, { label: string; cls: string; icon: typeof CheckCircle2 }> = {
-  enviado:  { label: 'Enviado',  cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', icon: CheckCircle2 },
-  gerado:   { label: 'Gerado',   cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30',       icon: Clock },
+  enviado:  { label: 'Enviado',  cls: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300', icon: CheckCircle2 },
+  gerado:   { label: 'Gerado',   cls: 'bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300',       icon: Clock },
   pendente: { label: 'Pendente', cls: 'bg-muted text-muted-foreground border-border/40',          icon: Clock },
-  falhou:   { label: 'Falhou',   cls: 'bg-rose-500/15 text-rose-300 border-rose-500/30',          icon: AlertTriangle },
+  falhou:   { label: 'Falhou',   cls: 'bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300',          icon: AlertTriangle },
 };
 
 function fmtData(d: string): string {
@@ -101,7 +101,7 @@ export function RelatoriosHistoricoTab() {
 
       {!loading && rows.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
-          <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className="feedback-report-card rounded-2xl p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <Lightbulb className="h-4 w-4 text-primary" />
               Linha do tempo gerencial
@@ -111,23 +111,23 @@ export function RelatoriosHistoricoTab() {
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+            <div className="feedback-report-subtle rounded-xl p-3">
               <div className="text-[11px] text-muted-foreground">Leads recebidos</div>
               <div className="mt-1 text-lg font-semibold text-foreground">{resumoGeral.totalRecebidos}</div>
               <div className="text-[10px] text-muted-foreground">{resumoGeral.totalAnalisados} analisados</div>
             </div>
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3">
-              <div className="flex items-center gap-1 text-[11px] text-emerald-200"><Send className="h-3 w-3" /> Enviados</div>
-              <div className="mt-1 text-lg font-semibold text-emerald-300">{resumoGeral.enviados}</div>
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 p-3">
+              <div className="flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-200"><Send className="h-3 w-3" /> Enviados</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{resumoGeral.enviados}</div>
             </div>
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
-              <div className="text-[11px] text-amber-200">Pendentes</div>
-              <div className="mt-1 text-lg font-semibold text-amber-300">{resumoGeral.pendentes}</div>
-              <div className="text-[10px] text-amber-100/80">{resumoGeral.totalPendentes} sem analise</div>
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
+              <div className="text-[11px] text-amber-700 dark:text-amber-200">Pendentes</div>
+              <div className="mt-1 text-lg font-semibold text-amber-700 dark:text-amber-300">{resumoGeral.pendentes}</div>
+              <div className="text-[10px] text-amber-700/80 dark:text-amber-100/80">{resumoGeral.totalPendentes} sem analise</div>
             </div>
-            <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3">
-              <div className="text-[11px] text-rose-200">Falhas</div>
-              <div className="mt-1 text-lg font-semibold text-rose-300">{resumoGeral.falhas}</div>
+            <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 p-3">
+              <div className="text-[11px] text-rose-700 dark:text-rose-200">Falhas</div>
+              <div className="mt-1 text-lg font-semibold text-rose-700 dark:text-rose-300">{resumoGeral.falhas}</div>
             </div>
           </div>
         </div>
@@ -151,7 +151,7 @@ export function RelatoriosHistoricoTab() {
             const porQ = resumo.por_qualidade || {};
             const dests: any[] = Array.isArray(resumo.destinatarios) ? resumo.destinatarios : [];
             return (
-              <div key={r.id} className="bg-card border border-border/50 rounded-xl px-4 py-3">
+              <div key={r.id} className="feedback-report-card rounded-xl px-4 py-3">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -173,7 +173,7 @@ export function RelatoriosHistoricoTab() {
                         </span>
                       )}
                       {typeof resumo.leads_qualificados === 'number' && (
-                        <span className="text-[11px] text-emerald-300">
+                        <span className="text-[11px] text-emerald-600 dark:text-emerald-300">
                           {Number(resumo.leads_qualificados) || 0} com interesse real
                         </span>
                       )}

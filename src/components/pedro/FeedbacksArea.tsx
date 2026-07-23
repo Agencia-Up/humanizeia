@@ -20,7 +20,7 @@ export function FeedbacksArea() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-card p-4 shadow-sm">
+      <div className="feedback-report-hero rounded-2xl p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[11px] font-medium text-primary">
@@ -32,17 +32,17 @@ export function FeedbacksArea() {
               Primeiro vem a leitura executiva. Depois, se precisar, voce abre os detalhes por vendedor, produto, qualidade e historico.
             </p>
           </div>
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+          <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-200">
             <div className="flex items-center gap-2 font-semibold">
               <ShieldCheck className="h-4 w-4" />
               Regra de confianca
             </div>
-            <p className="mt-1 text-emerald-100/80">Toda conclusao precisa ter fonte, periodo, contexto e proxima acao.</p>
+            <p className="mt-1 text-emerald-700/80 dark:text-emerald-100/80">Toda conclusao precisa ter fonte, periodo, contexto e proxima acao.</p>
           </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border/50 bg-muted/50 p-1">
+      <div className="feedback-report-control flex flex-wrap items-center gap-1 rounded-xl p-1">
         {tabs.map((t) => {
           const Ic = t.icon;
           const on = aba === t.id;
@@ -51,7 +51,7 @@ export function FeedbacksArea() {
               key={t.id}
               onClick={() => setAba(t.id)}
               className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                on ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                on ? 'bg-white text-foreground shadow-sm dark:bg-card' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <Ic className="h-3.5 w-3.5" /> {t.label}

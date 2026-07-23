@@ -57,7 +57,7 @@ function confiancaProduto(totalProdutos: number, produtosComTrafego: number, jos
   if (!joseTemDados) {
     return {
       label: 'Sem dados da Meta',
-      cls: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+      cls: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200',
       desc: 'A qualidade dos leads aparece, mas o gasto de campanha ainda nao foi carregado.',
     };
   }
@@ -72,20 +72,20 @@ function confiancaProduto(totalProdutos: number, produtosComTrafego: number, jos
   if (cobertura >= 0.75) {
     return {
       label: 'Dados confiaveis',
-      cls: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+      cls: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200',
       desc: 'A maior parte dos produtos analisados tem vinculo com campanhas do Jose.',
     };
   }
   if (cobertura >= 0.35) {
     return {
       label: 'Dados parciais',
-      cls: 'border-sky-500/25 bg-sky-500/10 text-sky-200',
+      cls: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200',
       desc: 'Parte dos produtos foi vinculada a campanhas; use como direcao, nao como fechamento financeiro.',
     };
   }
   return {
     label: 'Baixa cobertura',
-    cls: 'border-rose-500/25 bg-rose-500/10 text-rose-200',
+    cls: 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-200',
     desc: 'Poucos produtos foram encontrados nas campanhas. Pode haver criativo generico, anuncio sem modelo ou divergencia de nome.',
   };
 }
@@ -395,7 +395,7 @@ export function FeedbackPorProdutoTab() {
             </div>
             <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
               <div className="text-[11px] text-muted-foreground">Leads bons</div>
-              <div className="mt-1 text-lg font-semibold text-emerald-300">{tot.q}</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-700 dark:text-emerald-300">{tot.q}</div>
             </div>
             <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
               <div className="text-[11px] text-muted-foreground">Custo/lead bom</div>
@@ -411,7 +411,7 @@ export function FeedbackPorProdutoTab() {
         </div>
         <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Info className="h-4 w-4 text-sky-300" />
+            <Info className="h-4 w-4 text-sky-600 dark:text-sky-300" />
             Como ler estes numeros
           </div>
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{confianca.desc}</p>

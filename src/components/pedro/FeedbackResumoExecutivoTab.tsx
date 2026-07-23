@@ -158,26 +158,26 @@ function textoAcao(c?: Conversa | null): string {
 
 function classeScore(score: number | null): string {
   const s = Number(score) || 0;
-  if (s >= 70) return 'text-emerald-300';
-  if (s >= 50) return 'text-sky-300';
-  if (s >= 30) return 'text-amber-300';
-  return 'text-rose-300';
+  if (s >= 70) return 'text-emerald-600 dark:text-emerald-300';
+  if (s >= 50) return 'text-sky-600 dark:text-sky-300';
+  if (s >= 30) return 'text-amber-600 dark:text-amber-300';
+  return 'text-rose-600 dark:text-rose-300';
 }
 
 function nivelConfianca(qtd: number, parcial = false): { label: string; cls: string; desc: string } {
   if (qtd >= 30 && !parcial) return {
     label: 'Confianca alta',
-    cls: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+    cls: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200',
     desc: 'Ha volume suficiente para orientar decisao.',
   };
   if (qtd >= 10) return {
     label: 'Confianca media',
-    cls: 'border-sky-500/25 bg-sky-500/10 text-sky-200',
+    cls: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200',
     desc: 'Bom para direcionar, mas ainda vale conferir os detalhes.',
   };
   return {
     label: 'Confianca baixa',
-    cls: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+    cls: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200',
     desc: 'Pouco volume. Use como sinal inicial, nao como conclusao final.',
   };
 }
@@ -297,13 +297,13 @@ export function FeedbackResumoExecutivoTab() {
 
   if (erro) {
     return (
-      <div className="rounded-2xl border border-rose-500/25 bg-rose-500/10 p-5 text-sm text-rose-100">
+      <div className="rounded-2xl border border-rose-500/25 bg-rose-500/10 p-5 text-sm text-rose-700 dark:text-rose-100">
         <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" />
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600 dark:text-rose-300" />
           <div>
             <div className="font-semibold">Nao consegui montar o resumo executivo.</div>
-            <p className="mt-1 text-rose-100/80">{erro}</p>
-            <button onClick={load} className="mt-3 rounded-lg border border-rose-300/30 px-3 py-1.5 text-xs font-semibold text-rose-50 hover:bg-rose-500/10">
+            <p className="mt-1 text-rose-700/80 dark:text-rose-100/80">{erro}</p>
+            <button onClick={load} className="mt-3 rounded-lg border border-rose-400/40 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-500/10 dark:border-rose-300/30 dark:text-rose-50">
               Tentar novamente
             </button>
           </div>
@@ -319,7 +319,7 @@ export function FeedbackResumoExecutivoTab() {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 lg:grid-cols-[1.25fr_0.75fr]">
-        <div className="rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/12 via-card to-card p-5 shadow-sm">
+        <div className="feedback-report-hero rounded-2xl p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
@@ -397,7 +397,7 @@ export function FeedbackResumoExecutivoTab() {
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-2xl border border-border/60 bg-card p-4">
+        <div className="feedback-report-card rounded-2xl p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <TrendingUp className="h-4 w-4 text-emerald-400" />
             O que repetir
@@ -408,7 +408,7 @@ export function FeedbackResumoExecutivoTab() {
               : 'Ainda falta volume minimo para apontar um exemplo positivo com seguranca.'}
           </p>
         </div>
-        <div className="rounded-2xl border border-border/60 bg-card p-4">
+        <div className="feedback-report-card rounded-2xl p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <BarChart3 className="h-4 w-4 text-primary" />
             Saude da rotina
@@ -447,7 +447,7 @@ function MiniHealth({ label, value, hint, warn = false }: { label: string; value
   return (
     <div className={`rounded-xl border px-3 py-2 ${warn ? 'border-amber-500/25 bg-amber-500/10' : 'border-emerald-500/20 bg-emerald-500/10'}`}>
       <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
-      <div className={`text-lg font-semibold ${warn ? 'text-amber-200' : 'text-emerald-200'}`}>{value}</div>
+      <div className={`text-lg font-semibold ${warn ? 'text-amber-700 dark:text-amber-200' : 'text-emerald-700 dark:text-emerald-200'}`}>{value}</div>
       <div className="text-[10px] text-muted-foreground">{hint}</div>
     </div>
   );
@@ -460,10 +460,10 @@ function KpiCard({ icon: Icon, label, value, tone }: {
   tone: 'default' | 'blue' | 'green' | 'red';
 }) {
   const cls = {
-    default: 'border-border/60 bg-card text-foreground',
-    blue: 'border-sky-500/20 bg-sky-500/10 text-sky-200',
-    green: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
-    red: 'border-rose-500/20 bg-rose-500/10 text-rose-200',
+    default: 'border-border/60 bg-white text-foreground shadow-sm dark:bg-card',
+    blue: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200',
+    green: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200',
+    red: 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-200',
   }[tone];
   return (
     <div className={`rounded-xl border p-3 ${cls}`}>
@@ -487,18 +487,18 @@ function DecisionCard({ icon: Icon, title, headline, body, proof, action, tone }
   const styles = {
     red: {
       wrap: 'border-rose-500/25 bg-rose-500/10',
-      icon: 'text-rose-300',
-      chip: 'border-rose-500/25 bg-rose-500/10 text-rose-200',
+      icon: 'text-rose-600 dark:text-rose-300',
+      chip: 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-200',
     },
     amber: {
       wrap: 'border-amber-500/25 bg-amber-500/10',
-      icon: 'text-amber-300',
-      chip: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
+      icon: 'text-amber-600 dark:text-amber-300',
+      chip: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200',
     },
     blue: {
       wrap: 'border-sky-500/25 bg-sky-500/10',
-      icon: 'text-sky-300',
-      chip: 'border-sky-500/25 bg-sky-500/10 text-sky-200',
+      icon: 'text-sky-600 dark:text-sky-300',
+      chip: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200',
     },
   }[tone];
   return (
@@ -516,7 +516,7 @@ function DecisionCard({ icon: Icon, title, headline, body, proof, action, tone }
         <p className="mt-1 text-xs text-foreground/85">{proof}</p>
       </div>
       <div className="mt-3 flex items-start gap-2 text-xs text-foreground/85">
-        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
+        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
         <span>{action}</span>
       </div>
     </div>
