@@ -65,6 +65,9 @@ interface Message {
   media_list?: { file?: string; url?: string; type?: string; caption?: string }[] | null;
   created_at: string;
   contact_name: string | null;
+  // Quem falou de verdade (vem da RPC): 'cliente' | 'ia' | 'vendedor'.
+  // Cobre o Pedro V3, cujas mensagens da IA NÃO têm prefixo "wch-".
+  actor?: string | null;
 }
 
 interface TransferSeller {
@@ -657,6 +660,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             media_list: mediaList,
             created_at: r.created_at,
             contact_name: null,
+            actor: r.actor || null,
           });
         } else {
           inboxRows.push({
@@ -671,6 +675,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
             remote_message_id: r.remote_message_id || null,
             created_at: r.created_at,
             contact_name: null,
+            actor: r.actor || null,
           });
         }
       }
@@ -844,6 +849,40 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, [selectedLeadId, fetchMessages]);
+
+  /* ── Realtime como SINAL (Pedro V3 + wa_inbox) ─────────────────── */
+  // O payload do evento NUNCA entra no estado nem é renderizado: serve só de
+  // gatilho pra re-consultar as RPCs seguras (lista + timeline), que revalidam
+  // permissão no servidor. Debounce evita rajada (o V3 emite vários eventos por
+  // turno). O polling de 7s acima permanece como fallback — inclusive pro
+  // vendedor, que não recebe eventos v3 (RLS das tabelas v3 é só do master).
+  const fetchLeadsRef = useRef(fetchLeads);
+  useEffect(() => { fetchLeadsRef.current = fetchLeads; }, [fetchLeads]);
+  const fetchMessagesSignalRef = useRef(fetchMessages);
+  useEffect(() => { fetchMessagesSignalRef.current = fetchMessages; }, [fetchMessages]);
+  const rtDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    const signal = () => {
+      if (rtDebounceRef.current) clearTimeout(rtDebounceRef.current);
+      rtDebounceRef.current = setTimeout(() => {
+        fetchLeadsRef.current();
+        fetchMessagesSignalRef.current(true); // no-op se nenhum lead aberto
+      }, 1200);
+    };
+    const ch = supabase
+      .channel(`pedro-conv-rt-${userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_inbox', filter: `user_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'v3_inbox', filter: `tenant_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_effect_outbox', filter: `tenant_id=eq.${userId}` }, signal)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_conversation_state', filter: `tenant_id=eq.${userId}` }, signal)
+      .subscribe();
+    return () => {
+      if (rtDebounceRef.current) clearTimeout(rtDebounceRef.current);
+      supabase.removeChannel(ch);
+    };
+  }, [userId]);
 
   /* ── Limpeza da gravacao ao desmontar ──────────────────────────── */
   useEffect(() => {
@@ -1935,9 +1974,10 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   <div className="space-y-2">
                     {messages.map((msg, idx) => {
                       const isOutgoing = msg.direction === 'outgoing';
-                      // #4 — origem REAL do balao: IA = log do Pedro (id "wch-" + saida);
+                      // #4 — origem REAL do balao: actor da RPC ('ia' cobre Pedro V3 e
+                      // instancias da IA no wa_inbox); fallback legado = id "wch-" (V2).
                       // vendedor = envio manual (inbox + saida); lead = qualquer entrada.
-                      const isIa = isOutgoing && String(msg.id).startsWith('wch-');
+                      const isIa = isOutgoing && (msg.actor === 'ia' || String(msg.id).startsWith('wch-'));
                       const isSeller = isOutgoing && !isIa;
                       // #1 — divisoria de dia quando muda o dia da mensagem anterior.
                       const prevMsg = idx > 0 ? messages[idx - 1] : null;

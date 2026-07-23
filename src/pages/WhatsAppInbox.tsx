@@ -51,6 +51,8 @@ interface InboxMessage {
   ai_sentiment: string | null;
   is_read: boolean;
   created_at: string;
+  // Quem falou (da RPC): 'cliente' | 'ia' | 'vendedor'. Cobre o Pedro V3.
+  actor?: string | null;
 }
 
 interface Conversation {
@@ -444,6 +446,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             ai_sentiment: null,
             is_read: true,
             created_at: r.created_at,
+            actor: r.actor || null,
           });
         } else {
           inboxRows.push({
@@ -462,6 +465,7 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             ai_sentiment: null,
             is_read: true,
             created_at: r.created_at,
+            actor: r.actor || null,
           });
         }
       }
@@ -671,6 +675,8 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
   useEffect(() => { fetchMessagesRef.current = fetchMessages; }, [fetchMessages]);
   const selectedConvKeyRef = useRef(selectedConvKey);
   useEffect(() => { selectedConvKeyRef.current = selectedConvKey; }, [selectedConvKey]);
+  // Debounce dos sinais v3 do realtime (o V3 emite vários eventos por turno).
+  const v3DebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Ref de instâncias visíveis — usada pelo realtime pra ignorar inbox alheia
   const allInstancesRef = useRef(allInstances);
@@ -707,9 +713,33 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
             fetchMessagesRef.current(selPhone, selInst === 'null' ? null : selInst);
           }
         }
-      })
+      });
+
+    // Pedro V3 — eventos v3 são SÓ SINAL (sem phone no payload; nada é lido do
+    // evento): re-consulta a lista e a timeline aberta pelas RPCs seguras, com
+    // debounce (o V3 emite vários eventos por turno). Vendedor não recebe esses
+    // eventos (RLS v3 = tenant/master), mas a fase pós-transferência dele vive
+    // no wa_inbox, coberto pelo sinal acima.
+    const v3Signal = () => {
+      if (v3DebounceRef.current) clearTimeout(v3DebounceRef.current);
+      v3DebounceRef.current = setTimeout(() => {
+        fetchConversationsRef.current(false);
+        const convKey = selectedConvKeyRef.current;
+        if (convKey) {
+          const [selPhone, selInst] = convKey.split('::');
+          fetchMessagesRef.current(selPhone, selInst === 'null' ? null : selInst);
+        }
+      }, 1200);
+    };
+    ch
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'v3_inbox', filter: `tenant_id=eq.${effectiveUserId}` }, v3Signal)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_effect_outbox', filter: `tenant_id=eq.${effectiveUserId}` }, v3Signal)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'v3_conversation_state', filter: `tenant_id=eq.${effectiveUserId}` }, v3Signal)
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      if (v3DebounceRef.current) clearTimeout(v3DebounceRef.current);
+      supabase.removeChannel(ch);
+    };
   }, [effectiveUserId, isSeller, sellerLeadPhones]); // refs garantem acesso à versão atual
 
   /* ── Selecionar conversa ───────────────────────────────────────── */
@@ -1451,6 +1481,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                     <>
                       {messages.map((msg, idx) => {
                         const isOut = msg.direction === 'outgoing';
+                        // Balão da IA (Pedro V3/V2 e instâncias da IA) = roxo, igual ao
+                        // inbox do Pedro; vendedor segue verde. actor vem da RPC segura.
+                        const isAi = isOut && (msg.actor === 'ia' || String(msg.id).startsWith('wch-'));
                         const prevMsg = messages[idx - 1];
                         const showDate = !prevMsg || format(new Date(msg.created_at), 'dd/MM/yyyy') !== format(new Date(prevMsg.created_at), 'dd/MM/yyyy');
                         const sameDir = prevMsg && prevMsg.direction === msg.direction;
@@ -1478,7 +1511,9 @@ export default function WhatsAppInbox({ embedded }: { embedded?: boolean } = {})
                             <div className={`flex ${isOut ? 'justify-end' : 'justify-start'} ${gap}`}>
                               <div className={`max-w-[84%] sm:max-w-[74%] flex flex-col ${isOut ? 'items-end' : 'items-start'}`}>
                                 <div className={`relative px-3 py-2 rounded-lg shadow-md overflow-hidden ${
-                                  isOut
+                                  isAi
+                                    ? 'bg-[#4a3f6b] text-[#e9edef] rounded-tr-sm border border-violet-400/30'
+                                    : isOut
                                     ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-sm'
                                     : 'bg-[#202c33] text-[#e9edef] rounded-tl-sm border border-white/5'
                                 }`}>
