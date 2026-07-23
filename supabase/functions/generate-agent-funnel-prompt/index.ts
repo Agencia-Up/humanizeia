@@ -23,6 +23,11 @@ import {
   validateTenantPolicies,
 } from '../../../src/lib/pedroFunnelPolicyContract.ts';
 import { buildTenantSdrSystemPrompt } from '../../../src/lib/pedroFunnelPrompt.ts';
+import {
+  buildFunnelPromptEditorRequest,
+  validateAiGeneratedFunnelPrompt,
+} from '../../../src/lib/pedroFunnelPrompt.ts';
+import { resolveAiKey } from '../_shared/aiKeys.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,6 +38,91 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
+
+const FUNNEL_PROMPT_MODEL = Deno.env.get('PEDRO_FUNNEL_PROMPT_MODEL') || 'gpt-4.1-mini';
+
+type PromptGenerationResult = {
+  prompt: string;
+  mode: 'ai' | 'deterministic_fallback';
+  warning?: string;
+};
+
+/**
+ * A IA só edita o texto comercial. O prompt canônico continua sendo a
+ * autoridade técnica e é usado como fallback quando a saída não for segura.
+ */
+async function improvePromptWithAi(
+  userId: string,
+  config: Record<string, unknown>,
+  canonicalPrompt: string,
+): Promise<PromptGenerationResult> {
+  const fallback = (warning: string): PromptGenerationResult => ({
+    prompt: canonicalPrompt,
+    mode: 'deterministic_fallback',
+    warning,
+  });
+
+  try {
+    // Mantém a mesma política BYOK do runtime: contas novas precisam da
+    // própria chave; não transforme o botão do portal em gasto silencioso da
+    // chave da plataforma.
+    const resolved = await resolveAiKey(supabase, userId, 'openai');
+    if (!resolved.key) return fallback('IA de geração não configurada; usamos o prompt v3 canônico.');
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${resolved.key}`,
+      },
+      body: JSON.stringify({
+        model: FUNNEL_PROMPT_MODEL,
+        max_completion_tokens: 6500,
+        messages: [
+          {
+            role: 'system',
+            content: 'Você é um editor de prompts SDR. Responda somente em JSON válido. A palavra JSON é obrigatória porque o contrato exige JSON.',
+          },
+          {
+            role: 'user',
+            content: buildFunnelPromptEditorRequest(config, canonicalPrompt),
+          },
+        ],
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'pedro_v3_funnel_prompt',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: { prompt: { type: 'string' } },
+              required: ['prompt'],
+            },
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) return fallback(`IA indisponível (${response.status}); usamos o prompt v3 canônico.`);
+    const payload = await response.json();
+    const content = payload?.choices?.[0]?.message?.content;
+    let generated = '';
+    try {
+      generated = typeof content === 'string' ? JSON.parse(content)?.prompt : '';
+    } catch {
+      return fallback('A IA retornou JSON inválido; usamos o prompt v3 canônico.');
+    }
+
+    const validation = validateAiGeneratedFunnelPrompt(generated, canonicalPrompt, config);
+    if (!validation.valid) {
+      return fallback(`A IA não passou na validação do contrato v3: ${validation.reasons.slice(0, 3).join('; ')}`);
+    }
+    return { prompt: generated.trim(), mode: 'ai' };
+  } catch (error) {
+    return fallback(`Falha controlada na IA de geração: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
+  }
+}
 
 // ── Helpers de formatação ────────────────────────────────────────────────────
 function listOrEmpty(arr: any, prefix = '- '): string {
@@ -213,7 +303,7 @@ serve(async (req) => {
     // Carrega o agente e valida ownership
     const { data: agent, error: agentErr } = await supabase
       .from('wa_ai_agents')
-      .select('id, user_id, system_prompt, system_prompt_backup, use_funnel_config')
+      .select('id, user_id, agent_type, system_prompt, system_prompt_backup, use_funnel_config')
       .eq('id', agentId)
       .maybeSingle();
     if (agentErr) throw new Error(agentErr.message);
@@ -258,7 +348,12 @@ serve(async (req) => {
       throw new Error(`Políticas comerciais inválidas: ${policyErrors.map((issue) => issue.message).join(' ')}`);
     }
 
-    const newPrompt = buildTenantSdrSystemPrompt(cfg);
+    // O tipo operacional limita capacidades; personalidade e funil continuam
+    // sendo definidos pelo prompt configurado no portal.
+    const promptConfig = { ...cfg, agent_type: agent.agent_type || 'generic' };
+    const canonicalPrompt = buildTenantSdrSystemPrompt(promptConfig);
+    const generated = await improvePromptWithAi(user.id, promptConfig, canonicalPrompt);
+    const newPrompt = generated.prompt;
 
     // 1) salva o prompt gerado no agent_funnel_config
     const { error: cfgUpdErr } = await supabase
@@ -286,6 +381,8 @@ serve(async (req) => {
       success: true,
       generated: true,
       prompt_length: newPrompt.length,
+      generation_mode: generated.mode,
+      generation_warning: generated.warning || null,
       funnel_warnings: funnelIssues.filter((issue) => issue.severity === 'warning'),
       policy_warnings: policyIssues.filter((issue) => issue.severity === 'warning'),
       backup_created: !agent.system_prompt_backup && !!agent.system_prompt,

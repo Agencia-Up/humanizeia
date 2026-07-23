@@ -243,6 +243,19 @@ interface FunilDoAgenteTabProps {
   userId: string;           // master user_id
 }
 
+function isMissingTenantPoliciesColumn(error: unknown): boolean {
+  const value = error as { code?: string; message?: string } | null;
+  const message = String(value?.message || error || '').toLowerCase();
+  return value?.code === '42703'
+    || (message.includes('tenant_policies') && message.includes('schema cache'))
+    || message.includes("column 'tenant_policies'")
+    || message.includes('column agent_funnel_config.tenant_policies');
+}
+
+function funnelSchemaMigrationMessage(): string {
+  return 'O banco ainda não recebeu a estrutura das políticas do Funil (tenant_policies). Aplique a migration 20260723090000_agent_funnel_policies_schema_cache.sql no SQL Editor do Supabase e tente novamente.';
+}
+
 export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabProps) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -275,7 +288,10 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
         setAutosaveStatus('saved');
         // Volta pra idle após 2s pra UI não ficar permanente
         setTimeout(() => setAutosaveStatus('idle'), 2000);
-      } catch {
+      } catch (error) {
+        // Não engole o erro: sem essa coluna, salvar as políticas faria o
+        // cliente acreditar que suas regras foram persistidas quando não
+        // foram. Mostramos a ação exata necessária.
         setAutosaveStatus('error');
       }
     }, 2000);
@@ -413,10 +429,16 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
 
       toast({
         title: '✅ Funil salvo e prompt gerado',
-        description: `O agente agora usa a configuração do funil (${data?.prompt_length || '?'} chars).`,
+        description: data?.generation_mode === 'ai'
+          ? `A IA aprimorou o prompt comercial dentro do contrato v3 (${data?.prompt_length || '?'} chars).`
+          : `Prompt v3 canônico aplicado com segurança (${data?.prompt_length || '?'} chars).`,
       });
     } catch (err: any) {
-      toast({ title: 'Erro ao salvar', description: err.message, variant: 'destructive' });
+      toast({
+        title: 'Erro ao salvar',
+        description: isMissingTenantPoliciesColumn(err) ? funnelSchemaMigrationMessage() : err.message,
+        variant: 'destructive',
+      });
     } finally {
       setSaving(false);
     }
@@ -590,8 +612,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               disabled={saving}
               className="text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              Salvar e Gerar Prompt
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              Salvar e gerar com IA
             </Button>
             <Button
               size="sm"
@@ -1155,8 +1177,8 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
           disabled={saving}
           className="text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          Salvar e Gerar Prompt
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          Salvar e gerar com IA
         </Button>
       </div>
 

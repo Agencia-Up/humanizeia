@@ -5,7 +5,7 @@ import {
   validateTenantFunnelConfig,
   validateTenantPolicies,
 } from './pedroFunnelPolicyContract';
-import { buildTenantSdrSystemPrompt } from './pedroFunnelPrompt';
+import { buildTenantSdrSystemPrompt, validateAiGeneratedFunnelPrompt } from './pedroFunnelPrompt';
 
 describe('Pedro v3 tenant funnel policies', () => {
   const noEntry = {
@@ -193,5 +193,37 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect((prompt.match(/## CAPACIDADES OPERACIONAIS/g) ?? []).length).toBe(1);
     expect(prompt).not.toContain('SE O CLIENTE RESPONDER');
     expect(prompt).not.toContain('if (');
+  });
+
+  it('keeps the general SDR prompt free of automotive capabilities', () => {
+    const config = {
+      agent_type: 'sdr_geral',
+      bloco1_identidade: { agent_name: 'Lia', role: 'SDR', company: 'Acme', niche: 'serviços' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Lia, da Acme.', objective: 'entender a necessidade' },
+      bloco9_empresa: { name: 'Acme', address: 'Rua Central, 10', hours: '9h às 18h' },
+    };
+    const prompt = buildTenantSdrSystemPrompt(config);
+
+    expect(prompt).toContain('Este é um SDR Geral');
+    expect(prompt).toContain('Base de conhecimento');
+    expect(prompt).not.toContain('stock_search');
+    expect(prompt).not.toContain('vehicle_photos_resolve');
+    expect(validateAiGeneratedFunnelPrompt(prompt, prompt, config).valid).toBe(true);
+  });
+
+  it('rejects an AI prompt that removes the v3 contract or invents engine routing', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Lia', company: 'Acme' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Lia, da Acme.' },
+      bloco9_empresa: { name: 'Acme', address: 'Rua Central, 10', hours: '9h às 18h' },
+    };
+    const result = validateAiGeneratedFunnelPrompt(
+      '# PEDRO V3\nA engine deve decidir o assunto e forçar stock_search.',
+      buildTenantSdrSystemPrompt(config),
+      config,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reasons.some((reason) => reason.includes('instrução concorrente'))).toBe(true);
   });
 });
