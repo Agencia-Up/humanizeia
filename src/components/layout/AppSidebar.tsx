@@ -10,7 +10,7 @@ import {
   Sparkles,
   Moon,
   Sun,
-  X,
+  PanelLeftClose,
   LogOut,
   Send,
   Inbox,
@@ -326,9 +326,11 @@ export function AppSidebar() {
             <LogosIALogo size="lg" variant="auto" className="max-w-[150px]" />
             <button
               onClick={toggleSidebar}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              aria-label="Minimizar menu lateral"
+              title="Minimizar menu"
+              className="group flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-sidebar-border/70 bg-white/70 text-sidebar-foreground/55 shadow-sm transition-all hover:-translate-x-0.5 hover:border-sidebar-primary/45 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:bg-white/5 dark:hover:bg-white/10"
             >
-              <X className="h-3.5 w-3.5 text-muted-foreground" />
+              <PanelLeftClose className="h-4 w-4 transition-transform group-hover:scale-105" />
             </button>
           </div>
         )}
