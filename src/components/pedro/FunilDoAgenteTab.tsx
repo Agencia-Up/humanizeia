@@ -172,6 +172,14 @@ function ArrayEditor({
   placeholder?: string;
 }) {
   const [draft, setDraft] = useState('');
+  const draftRef = useRef('');
+  const commitDraft = () => {
+    const value = draftRef.current.trim();
+    if (!value) return;
+    onChange([...items, value]);
+    draftRef.current = '';
+    setDraft('');
+  };
   const displayLabel = label.startsWith('Perguntas obrigat') && label.includes('ordem')
     ? 'Perguntas preferenciais (adapte ao diÃ¡logo)'
     : label.startsWith('Hora de transfer')
@@ -205,11 +213,15 @@ function ArrayEditor({
         <div className="flex items-center gap-2">
           <Input
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              draftRef.current = e.target.value;
+              setDraft(e.target.value);
+            }}
+            onBlur={commitDraft}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && draft.trim()) {
-                onChange([...items, draft.trim()]);
-                setDraft('');
+                e.preventDefault();
+                commitDraft();
               }
             }}
             placeholder={placeholder}
@@ -219,12 +231,11 @@ function ArrayEditor({
             size="icon"
             variant="ghost"
             className="h-8 w-8 text-blue-400 hover:text-blue-300"
-            onClick={() => {
-              if (draft.trim()) {
-                onChange([...items, draft.trim()]);
-                setDraft('');
-              }
+            onMouseDown={(e) => {
+              e.preventDefault();
+              commitDraft();
             }}
+            onClick={commitDraft}
           >
             <Plus className="h-3.5 w-3.5" />
           </Button>
@@ -937,16 +948,53 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  <ArrayEditor
-                    label="Perguntas neste ramo"
-                    items={br.questions}
-                    onChange={(questions) => {
-                      const next = [...cfg.bloco5_ramificacoes.branches];
-                      next[i] = { ...next[i], questions };
-                      setCfg({ ...cfg, bloco5_ramificacoes: { branches: next } });
-                    }}
-                    placeholder="Ex: Qual sua idade?"
-                  />
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">Perguntas neste ramo</Label>
+                    <div className="space-y-1.5">
+                      {(br.questions.length > 0 ? br.questions : ['']).map((question, qIndex) => (
+                        <div key={qIndex} className="flex items-center gap-2">
+                          <Input
+                            value={question}
+                            onChange={(e) => {
+                              const next = [...cfg.bloco5_ramificacoes.branches];
+                              const questions = [...(next[i].questions || [])];
+                              questions[qIndex] = e.target.value;
+                              next[i] = { ...next[i], questions };
+                              setCfg({ ...cfg, bloco5_ramificacoes: { branches: next } });
+                            }}
+                            placeholder="Ex: Coletar CPF, data de nascimento, parcela ideal e valor de entrada"
+                            className="text-xs h-8"
+                          />
+                          {br.questions.length > 1 && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-red-400 hover:text-red-300"
+                              onClick={() => {
+                                const next = [...cfg.bloco5_ramificacoes.branches];
+                                next[i] = { ...next[i], questions: next[i].questions.filter((_, idx) => idx !== qIndex) };
+                                setCfg({ ...cfg, bloco5_ramificacoes: { branches: next } });
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs text-blue-400 hover:text-blue-300"
+                        onClick={() => {
+                          const next = [...cfg.bloco5_ramificacoes.branches];
+                          next[i] = { ...next[i], questions: [...(next[i].questions || []), ''] };
+                          setCfg({ ...cfg, bloco5_ramificacoes: { branches: next } });
+                        }}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar outra orientação
+                      </Button>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             ))}
