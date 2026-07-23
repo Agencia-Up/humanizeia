@@ -30,12 +30,12 @@ export function Topbar() {
   };
 
   return (
-    <header className="shrink-0 sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-border/50 bg-background/95 px-3 backdrop-blur-xl shadow-sm sm:h-16 sm:px-4 lg:px-6">
+    <header className="logos-topbar shrink-0 sticky top-0 z-40 flex h-14 w-full items-center justify-between border-b border-border/60 bg-background/95 px-3 backdrop-blur-xl sm:h-16 sm:px-4 lg:px-6">
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
         <SidebarTrigger className="lg:hidden"><Menu className="h-5 w-5" /></SidebarTrigger>
         <div className="relative hidden md:block">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Buscar campanhas, criativos, relatorios..." className="w-80 bg-muted/50 pl-10 focus:bg-background" />
+          <Input placeholder="Buscar campanhas, criativos, relatorios..." className="w-80 rounded-xl border-border/70 bg-white/80 pl-10 shadow-sm focus:bg-background dark:bg-muted/50" />
         </div>
       </div>
 

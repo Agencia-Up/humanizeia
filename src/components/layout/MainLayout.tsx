@@ -51,7 +51,7 @@ export function MainLayout({ children }: MainLayoutProps) {
 
   return (
     <SidebarProvider defaultOpen={sidebarOpen} open={sidebarOpen} onOpenChange={setSidebarOpen}>
-      <div className={`flex h-screen w-full overflow-hidden bg-background ${isAgentHubHome ? 'logos-home-layout' : ''}`}>
+      <div className={`logos-app-shell flex h-screen w-full overflow-hidden bg-background ${isAgentHubHome ? 'logos-home-layout' : ''}`}>
         <AppSidebar />
         <SidebarInset className="flex flex-1 flex-col overflow-hidden relative">
           

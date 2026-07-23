@@ -136,8 +136,8 @@ function NavItem({
         <NavLink
           to={item.url}
           end={item.url === '/dashboard' || item.url === '/tela-inicial'}
-          className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/60 hover:text-foreground"
-          activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary pl-[9px]"
+          className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-sidebar-foreground/72 transition-all hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          activeClassName="bg-sidebar-accent text-sidebar-accent-foreground font-semibold border-l-2 border-sidebar-primary pl-[9px] shadow-sm"
         >
           <item.icon className="h-4 w-4 shrink-0" />
           {!collapsed && <span className="flex-1 truncate">{item.title}</span>}
@@ -269,7 +269,7 @@ function NavGroup({
     <Collapsible open={isOpen} onOpenChange={() => toggleSidebarGroup(label)}>
       <SidebarGroup className="py-0.5">
         <CollapsibleTrigger asChild>
-          <SidebarGroupLabel className="flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50 cursor-pointer hover:text-muted-foreground transition-colors select-none">
+          <SidebarGroupLabel className="flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/45 cursor-pointer hover:text-sidebar-foreground/70 transition-colors select-none">
             {label}
             <ChevronDown className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`} />
           </SidebarGroupLabel>
@@ -308,22 +308,22 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-border/40">
+    <Sidebar collapsible="icon" className="logos-app-sidebar border-r border-sidebar-border/80">
 
       {/* ── Logo ── */}
-      <SidebarHeader className="border-b border-border/40 p-3">
+      <SidebarHeader className="border-b border-sidebar-border/80 p-3">
         {collapsed ? (
           <div className="flex justify-center">
             <button
               onClick={toggleSidebar}
-              className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-accent/50 transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-sidebar-accent transition-colors"
             >
-              <LogosIAIcon size={28} variant="dark" />
+              <LogosIAIcon size={28} variant="auto" />
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <LogosIALogo size="sm" variant="dark" />
+            <LogosIALogo size="sm" variant="auto" />
             <button
               onClick={toggleSidebar}
               className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-accent transition-colors"
@@ -478,7 +478,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       {/* ── Footer ── */}
-      <SidebarFooter className={`border-t border-border/40 p-2 ${collapsed ? 'items-center' : ''}`}>
+      <SidebarFooter className={`border-t border-sidebar-border/80 p-2 ${collapsed ? 'items-center' : ''}`}>
         {!collapsed && (
           <div className="px-1 pb-1">
             <TokenWidgetCompact />

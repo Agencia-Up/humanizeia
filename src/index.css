@@ -183,26 +183,26 @@
 @layer base {
   :root {
     /* Light mode - Sabedoria Tecnológica */
-    --background: 220 24% 95%;
-    --foreground: 231 40% 15%;
+    --background: 218 42% 97%;
+    --foreground: 224 44% 14%;
 
     --card: 0 0% 100%;
-    --card-foreground: 231 40% 15%;
+    --card-foreground: 224 44% 14%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 231 40% 15%;
+    --popover-foreground: 224 44% 14%;
 
-    --primary: 231 75% 30%;
+    --primary: 224 82% 50%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 45 100% 50%;
-    --secondary-foreground: 231 40% 15%;
+    --secondary-foreground: 224 44% 14%;
 
-    --muted: 220 15% 92%;
-    --muted-foreground: 220 10% 45%;
+    --muted: 218 32% 93%;
+    --muted-foreground: 220 14% 42%;
 
     --accent: 45 100% 50%;
-    --accent-foreground: 231 40% 15%;
+    --accent-foreground: 224 44% 14%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
@@ -215,25 +215,25 @@
 
     /* Bordas mais escuras/nítidas no tema claro (antes 88% ficava "apagado"
        sobre cards brancos). Dark mode NÃO muda (tem bloco próprio abaixo). */
-    --border: 220 16% 78%;
-    --input: 220 16% 82%;
-    --ring: 231 75% 30%;
+    --border: 219 24% 84%;
+    --input: 219 24% 86%;
+    --ring: 224 82% 50%;
 
     --radius: 0.75rem;
 
     /* Gradient colors */
-    --gradient-start: 231 75% 30%;
+    --gradient-start: 224 82% 50%;
     --gradient-end: 45 100% 50%;
 
     /* Sidebar */
-    --sidebar-background: 231 40% 12%;
-    --sidebar-foreground: 220 20% 95%;
-    --sidebar-primary: 45 100% 50%;
-    --sidebar-primary-foreground: 231 40% 15%;
-    --sidebar-accent: 231 40% 18%;
-    --sidebar-accent-foreground: 220 20% 95%;
-    --sidebar-border: 231 30% 22%;
-    --sidebar-ring: 45 100% 50%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 224 44% 20%;
+    --sidebar-primary: 160 84% 39%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 219 80% 96%;
+    --sidebar-accent-foreground: 224 82% 38%;
+    --sidebar-border: 219 28% 88%;
+    --sidebar-ring: 224 82% 50%;
 
     /* Chart colors */
     --chart-1: 231 75% 45%;
@@ -360,6 +360,75 @@
 }
 
 @layer components {
+  .logos-app-shell {
+    background:
+      linear-gradient(180deg, hsl(var(--background)) 0%, hsl(214 45% 95%) 100%);
+  }
+
+  .dark .logos-app-shell {
+    background: hsl(var(--background));
+  }
+
+  .logos-topbar {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.94), hsl(218 42% 98% / 0.9));
+    box-shadow: 0 1px 0 hsl(219 28% 88% / 0.85), 0 18px 44px hsl(224 44% 14% / 0.05);
+  }
+
+  .dark .logos-topbar {
+    background: hsl(var(--background) / 0.95);
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.55);
+  }
+
+  .logos-app-sidebar [data-sidebar="sidebar"] {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(217 45% 98%) 100%);
+    box-shadow: 12px 0 34px hsl(224 44% 14% / 0.05);
+  }
+
+  .dark .logos-app-sidebar [data-sidebar="sidebar"] {
+    background: hsl(var(--sidebar-background));
+    box-shadow: none;
+  }
+
+  .logos-crm-card {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100%), hsl(218 42% 99%));
+    box-shadow: 0 10px 28px hsl(224 44% 14% / 0.07);
+  }
+
+  .dark .logos-crm-card {
+    background: hsl(var(--card));
+    box-shadow: none;
+  }
+
+  .logos-lead-card {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100%), hsl(218 42% 99%));
+    box-shadow: 0 8px 20px hsl(224 44% 14% / 0.075);
+  }
+
+  .logos-lead-card:hover {
+    box-shadow: 0 14px 28px hsl(224 82% 50% / 0.12);
+  }
+
+  .dark .logos-lead-card {
+    background: hsl(var(--card));
+    box-shadow: none;
+  }
+
+  .logos-seller-chip {
+    background: linear-gradient(135deg, hsl(210 100% 96%), hsl(160 84% 95%));
+    color: hsl(224 60% 26%);
+    border-color: hsl(190 80% 72% / 0.65);
+  }
+
+  .dark .logos-seller-chip {
+    background: hsl(160 84% 39% / 0.12);
+    color: hsl(160 84% 72%);
+    border-color: hsl(160 84% 39% / 0.32);
+  }
+
   .logos-dashboard-shell {
     position: relative;
     isolation: isolate;
