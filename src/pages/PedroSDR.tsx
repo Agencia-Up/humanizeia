@@ -5264,20 +5264,6 @@ export function CrmAvancadoTab({
         </div>
         )}
         <div className="mobile-crm-tools flex w-full items-center gap-1.5 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
-          {!isSeller && view === 'leads' && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setBackupOpen(true)}
-              disabled={backupDownloading}
-              className="h-9 shrink-0 gap-1.5 border-emerald-500/30 px-3 text-xs text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 sm:h-7 sm:px-2.5"
-              title="Backup dos leads — escolha baixar tudo ou etapas específicas"
-            >
-              {backupDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-              Backup dos leads
-            </Button>
-          )}
           <Input
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
@@ -6132,6 +6118,18 @@ export function CrmAvancadoTab({
                   </button>
                 );
               })}
+              {!isSeller && (
+                <button
+                  type="button"
+                  onClick={() => setBackupOpen(true)}
+                  disabled={backupDownloading}
+                  className="ml-auto flex items-center gap-1 rounded-full border border-emerald-500/40 px-2 py-1 text-[10px] text-emerald-400 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
+                  title="Backup dos leads — escolha baixar tudo ou etapas específicas"
+                >
+                  {backupDownloading ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Download className="h-2.5 w-2.5" />}
+                  Backup dos leads
+                </button>
+              )}
             </div>
           )}
           {filterStatus !== 'all' && (
