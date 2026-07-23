@@ -335,6 +335,13 @@
     font-family: 'Inter', system-ui, sans-serif;
   }
 
+  html:not(.dark) body {
+    background:
+      radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.12), transparent 34%),
+      radial-gradient(circle at 88% 10%, rgba(16, 185, 129, 0.10), transparent 28%),
+      linear-gradient(135deg, #eaf1fb 0%, #f4f8fd 46%, #e7eef8 100%);
+  }
+
   h1, h2, h3, h4, h5, h6,
   .font-heading {
     font-family: 'Lexend', 'Inter', system-ui, sans-serif;
@@ -361,8 +368,27 @@
 
 @layer components {
   .logos-app-shell {
+    position: relative;
+    isolation: isolate;
     background:
-      linear-gradient(180deg, hsl(var(--background)) 0%, hsl(214 45% 95%) 100%);
+      radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.12), transparent 32%),
+      radial-gradient(circle at 86% 12%, rgba(16, 185, 129, 0.10), transparent 28%),
+      linear-gradient(135deg, #eaf1fb 0%, #f3f7fc 46%, #e7eef8 100%);
+  }
+
+  html:not(.dark) .logos-app-shell::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      linear-gradient(126deg, transparent 0%, rgba(255, 255, 255, 0.50) 24%, transparent 48%),
+      linear-gradient(306deg, transparent 0%, rgba(37, 99, 235, 0.055) 16%, transparent 39%),
+      linear-gradient(90deg, rgba(15, 23, 42, 0.026) 1px, transparent 1px),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.018) 1px, transparent 1px);
+    background-size: auto, auto, 72px 72px, 72px 72px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0.14));
   }
 
   .dark .logos-app-shell {
@@ -371,8 +397,8 @@
 
   .logos-topbar {
     background:
-      linear-gradient(180deg, hsl(0 0% 100% / 0.94), hsl(218 42% 98% / 0.9));
-    box-shadow: 0 1px 0 hsl(219 28% 88% / 0.85), 0 18px 44px hsl(224 44% 14% / 0.05);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(239, 246, 255, 0.90));
+    box-shadow: 0 1px 0 hsl(219 28% 84% / 0.95), 0 18px 44px hsl(224 44% 14% / 0.07);
   }
 
   .dark .logos-topbar {
@@ -729,17 +755,20 @@
 
   html:not(.dark) .logos-home-layout {
     background:
-      radial-gradient(circle at 72% 18%, rgba(59, 130, 246, 0.14), transparent 34%),
-      radial-gradient(circle at 22% 14%, rgba(16, 185, 129, 0.11), transparent 28%),
-      linear-gradient(135deg, #f8fbff 0%, #eef4fb 48%, #f7fbff 100%);
+      linear-gradient(128deg, rgba(37, 99, 235, 0.11) 0%, transparent 23%),
+      linear-gradient(312deg, rgba(15, 23, 42, 0.055) 0%, transparent 34%),
+      radial-gradient(circle at 70% 20%, rgba(59, 130, 246, 0.16), transparent 34%),
+      radial-gradient(circle at 26% 10%, rgba(212, 160, 23, 0.13), transparent 26%),
+      linear-gradient(135deg, #eaf1fb 0%, #f4f8fd 44%, #e7eef8 100%);
   }
 
   html:not(.dark) .logos-home-layout::before {
     background:
+      linear-gradient(118deg, transparent 0%, rgba(255, 255, 255, 0.54) 24%, transparent 46%),
       linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px),
-      linear-gradient(180deg, rgba(15, 23, 42, 0.025) 1px, transparent 1px);
-    background-size: 64px 64px;
-    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.08));
+      linear-gradient(180deg, rgba(15, 23, 42, 0.022) 1px, transparent 1px);
+    background-size: auto, 72px 72px, 72px 72px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0.10));
   }
 
   html:not(.dark) .logos-home-layout header {
@@ -786,11 +815,12 @@
   }
 
   html:not(.dark) .logos-home-plan-card {
-    border-color: rgba(148, 163, 184, 0.32);
+    border-color: rgba(37, 99, 235, 0.36);
     background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(239, 246, 255, 0.86));
+      linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(232, 241, 255, 0.90));
     box-shadow:
-      0 22px 58px rgba(15, 23, 42, 0.10),
+      0 26px 68px rgba(15, 23, 42, 0.14),
+      0 0 0 1px rgba(255, 255, 255, 0.72) inset,
       inset 0 1px 0 rgba(255, 255, 255, 0.86);
   }
 
@@ -833,12 +863,13 @@
   }
 
   html:not(.dark) .logos-home-action {
-    box-shadow: 0 16px 42px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.86);
+    border-color: rgba(148, 163, 184, 0.34);
+    box-shadow: 0 22px 54px rgba(15, 23, 42, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.90);
   }
 
   html:not(.dark) .logos-home-action-green {
-    border-color: rgba(16, 185, 129, 0.36);
-    background: linear-gradient(135deg, rgba(236, 253, 245, 0.98), rgba(255, 255, 255, 0.94));
+    border-color: rgba(16, 185, 129, 0.42);
+    background: linear-gradient(135deg, rgba(220, 252, 231, 0.86), rgba(255, 255, 255, 0.96));
   }
 
   .logos-home-action-green::before {
@@ -855,8 +886,8 @@
   }
 
   html:not(.dark) .logos-home-action-gold {
-    border-color: rgba(212, 160, 23, 0.38);
-    background: linear-gradient(135deg, rgba(255, 251, 235, 0.98), rgba(255, 255, 255, 0.94));
+    border-color: rgba(249, 115, 22, 0.42);
+    background: linear-gradient(135deg, rgba(255, 237, 213, 0.84), rgba(255, 255, 255, 0.96));
   }
 
   .logos-home-action-gold::before {
@@ -932,11 +963,12 @@
   }
 
   html:not(.dark) .logos-home-agent-card {
-    border-color: rgba(148, 163, 184, 0.30);
+    border-color: rgba(148, 163, 184, 0.36);
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 251, 255, 0.94));
+      linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(237, 244, 252, 0.91));
     box-shadow:
-      0 18px 46px rgba(15, 23, 42, 0.08),
+      0 22px 56px rgba(15, 23, 42, 0.11),
+      0 0 0 1px rgba(255, 255, 255, 0.70) inset,
       inset 0 1px 0 rgba(255, 255, 255, 0.84);
   }
 
@@ -1068,19 +1100,29 @@
   html:not(.dark) main [class*="bg-background/40"],
   html:not(.dark) main [class*="bg-muted/20"],
   html:not(.dark) main [class*="bg-muted/30"] {
-    border-color: rgba(148, 163, 184, 0.30);
+    border-color: rgba(148, 163, 184, 0.36);
     background:
-      linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.88)) !important;
+      linear-gradient(145deg, rgba(255, 255, 255, 0.97), rgba(235, 243, 252, 0.90)) !important;
     box-shadow:
-      0 14px 34px rgba(15, 23, 42, 0.055),
+      0 18px 44px rgba(15, 23, 42, 0.085),
       inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  }
+
+  html:not(.dark) main .bg-card,
+  html:not(.dark) main [class~="bg-card"] {
+    border-color: rgba(148, 163, 184, 0.32) !important;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(240, 246, 253, 0.92)) !important;
+    box-shadow:
+      0 14px 36px rgba(15, 23, 42, 0.065),
+      inset 0 1px 0 rgba(255, 255, 255, 0.88) !important;
   }
 
   html:not(.dark) main [class*="bg-primary/5"],
   html:not(.dark) main [class*="bg-primary/10"] {
-    border-color: rgba(37, 99, 235, 0.22);
+    border-color: rgba(37, 99, 235, 0.28);
     background:
-      linear-gradient(135deg, rgba(37, 99, 235, 0.10), rgba(255, 255, 255, 0.82) 48%, rgba(16, 185, 129, 0.08)) !important;
+      linear-gradient(135deg, rgba(37, 99, 235, 0.13), rgba(255, 255, 255, 0.84) 48%, rgba(16, 185, 129, 0.10)) !important;
   }
 
   html:not(.dark) main [class*="border-border/40"],
@@ -1117,16 +1159,20 @@
   html:not(.dark) main input,
   html:not(.dark) main textarea,
   html:not(.dark) main button[role="combobox"] {
-    border-color: rgba(148, 163, 184, 0.34);
-    background-color: rgba(255, 255, 255, 0.76);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    border-color: rgba(148, 163, 184, 0.42);
+    background-color: rgba(255, 255, 255, 0.82);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      0 8px 18px rgba(15, 23, 42, 0.035);
   }
 
   html:not(.dark) main [role="tablist"] {
-    border: 1px solid rgba(148, 163, 184, 0.24);
+    border: 1px solid rgba(148, 163, 184, 0.32);
     background:
-      linear-gradient(135deg, rgba(226, 232, 240, 0.72), rgba(255, 255, 255, 0.70)) !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+      linear-gradient(135deg, rgba(212, 224, 239, 0.78), rgba(255, 255, 255, 0.72)) !important;
+    box-shadow:
+      0 10px 28px rgba(15, 23, 42, 0.055),
+      inset 0 1px 0 rgba(255, 255, 255, 0.82);
   }
 
   html:not(.dark) main [role="tab"][data-state="active"] {
@@ -1136,6 +1182,28 @@
     box-shadow:
       0 8px 22px rgba(37, 99, 235, 0.11),
       inset 0 -2px 0 rgba(37, 99, 235, 0.40);
+  }
+
+  html:not(.dark) main table {
+    border-color: rgba(148, 163, 184, 0.28);
+  }
+
+  html:not(.dark) main thead {
+    background:
+      linear-gradient(135deg, rgba(226, 232, 240, 0.72), rgba(255, 255, 255, 0.42));
+  }
+
+  html:not(.dark) main tbody tr {
+    border-color: rgba(148, 163, 184, 0.22);
+  }
+
+  html:not(.dark) main tbody tr:hover {
+    background: rgba(239, 246, 255, 0.56);
+  }
+
+  html:not(.dark) main [class*="rounded-2xl"][class*="border"],
+  html:not(.dark) main [class*="rounded-xl"][class*="border"] {
+    border-color: rgba(148, 163, 184, 0.32);
   }
 
   html:not(.dark) .logos-home-action {
