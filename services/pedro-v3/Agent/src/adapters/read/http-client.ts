@@ -54,6 +54,10 @@ export type SafeRequestOptions = {
   readonly timeoutMs?: number;
   readonly maxRetries?: number;
   readonly provider: "revendamais" | "bndv";
+  // Por padrão a resposta DEVE ser application/json (feeds/estoque). O endpoint BNDV /login pode devolver o token
+  // como texto puro; só ESSE caso passa expectJson:false. Todas as demais travas (SSRF/IP/host/tamanho/redirect)
+  // continuam valendo — some apenas a exigência de content-type JSON.
+  readonly expectJson?: boolean;
 };
 
 // Verifica se um IP é privado, loopback ou link-local
@@ -229,8 +233,9 @@ export class SafeHttpClient {
 
         const contentType = res.headers.get("content-type") || "";
 
-        // Validação de content-type obrigatória também no GET
-        if (!contentType.toLowerCase().includes("application/json")) {
+        // Validação de content-type obrigatória também no GET — EXCETO quando o chamador declara expectJson:false
+        // (só o BNDV /login, que pode devolver o token como texto puro). Todas as outras travas seguem ativas.
+        if (options.expectJson !== false && !contentType.toLowerCase().includes("application/json")) {
           throw new Error("INVALID_CONTENT_TYPE");
         }
 

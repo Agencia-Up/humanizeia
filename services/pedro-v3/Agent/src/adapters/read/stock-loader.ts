@@ -5,6 +5,7 @@ import { makeSecretRef } from "../../domain/credential-provider.ts";
 import { ReadCache } from "./cache.ts";
 import { SafeHttpClient } from "./http-client.ts";
 import { decodeNormalizedVehicle } from "./stock-normalizer.ts";
+import { parseBndvCredentials, resolveBndvAuthHeader } from "./bndv-auth.ts";
 
 export interface StockLoader {
   loadAll(ref: TenantAgentRef): Promise<NormalizedVehicle[]>;
@@ -121,7 +122,12 @@ export class V2StockLoader implements StockLoader {
 
     const integrationRes = await this.credentialProvider.resolve(secretRef);
     if (!integrationRes.ok) {
-      return [];
+      // ⭐HONESTIDADE DE ESTOQUE (incidente Mônaco 2026-07-24): uma integração CONFIGURADA (chosen != null acima) cuja
+      // credencial NÃO resolve é FALHA DE CARGA, não "loja sem o carro". Lançar — em vez de `return []` — faz o runner
+      // emitir stock_search {ok:false}, que o engine trata como indisponibilidade honesta (recovery_stock_failed),
+      // nunca "não temos". `return []` aqui virava mentira silenciosa ao lead (token morto -> "não temos SUVs").
+      // Isto NÃO afeta "sem integração": esse caso já retornou [] antes (chosen == null), fora deste ponto.
+      throw new Error("STOCK_UNAVAILABLE: stock credential unresolved");
     }
 
     const cacheExtraKey = `${integration.id}:${integration.updatedAt || "no-ts"}`;
@@ -160,9 +166,12 @@ export class V2StockLoader implements StockLoader {
           .filter((v: NormalizedVehicle | null): v is NormalizedVehicle => v !== null);
       }
 
-      const apiToken = stringFromSecret(cred, ["api_token", "token"]);
-      if (!apiToken) {
-        throw new Error("API_TOKEN_NOT_FOUND");
+      // ⭐BNDV DOIS MODOS (incidente Mônaco 2026-07-24): resolve Bearer legado (api_token) OU faz /login (external_key+
+      // password). Sem isto o v3 só falava o modo legado e todo cliente do fluxo novo caía com catálogo 0. Auth que não
+      // resolve = FALHA DE CARGA honesta (STOCK_UNAVAILABLE), nunca "loja vazia".
+      const auth = await resolveBndvAuthHeader(parseBndvCredentials(cred), this.httpClient);
+      if (!auth.ok) {
+        throw new Error(`STOCK_UNAVAILABLE: BNDV auth (${auth.error})`);
       }
 
       const graphqlQuery = `
@@ -188,7 +197,7 @@ export class V2StockLoader implements StockLoader {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiToken}`
+          "Authorization": auth.authHeader
         },
         body: JSON.stringify({ query: graphqlQuery }),
         provider
@@ -198,8 +207,15 @@ export class V2StockLoader implements StockLoader {
         throw new Error("INVALID_CONTENT_TYPE");
       }
 
-      const json = JSON.parse(text) as { data?: { vehiclesBy?: unknown } };
-      const rawList = Array.isArray(json?.data?.vehiclesBy) ? json.data.vehiclesBy : [];
+      const json = JSON.parse(text) as { data?: { vehiclesBy?: unknown } | null; errors?: unknown };
+      // ⭐HONESTIDADE DE ESTOQUE: uma resposta de ERRO do provedor (GraphQL `errors`, ou `data`/`vehiclesBy` ausente =
+      // token inválido / query recusada) é FALHA DE CARGA, não estoque vazio. Só um ARRAY PRESENTE (mesmo `[]`) é
+      // resultado genuíno de "0 veículos". Lançar aqui faz o turno virar indisponibilidade honesta em vez de "não temos".
+      const errs = (json as { errors?: unknown }).errors;
+      if ((Array.isArray(errs) && errs.length > 0) || json?.data == null || !Array.isArray(json.data.vehiclesBy)) {
+        throw new Error("STOCK_UNAVAILABLE: BNDV provider returned no vehicle data");
+      }
+      const rawList = json.data.vehiclesBy;
 
       return rawList
         .map((item: unknown) => {
