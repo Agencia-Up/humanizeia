@@ -28,7 +28,7 @@ import type {
   TurnUnderstanding, SystemWorkingMemoryMutation, LeadIntentKind,
 } from "../domain/agent-brain.ts";
 import {
-  validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn, isStoreInfoTurn,
+  validateTurnUnderstanding, deriveFallbackUnderstanding, authorizesPhotoSend, isPhotoRecall, isStockSearchTurn, isStoreInfoTurn, isShortAffirmationBlock,
   resolveTurnTarget, reconcileUnderstanding, targetAcceptsKey, denyFingerprint, isPhotoDeclined,
   toolCapabilityAuthorized, selectAuthorized, authorizesPhotoByResolvedTarget, leadRequestsPhoto, acceptsAgentPhotoOffer, requestsHuman, leadRequestsHumanExplicitly, humanRequestDecisionFeedback, commercialToolAllowedForHumanRequest, sensitiveAnswerCompletenessFeedback,
   understandingAuthorityFeedback, hasActiveVisitContext,
@@ -1989,6 +1989,18 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // validada. É o que autoriza o ENGINE a agir (forçar/garantir busca). Capability solta NÃO basta: "quanto custa o
       // Onix?" (vehicle_detail) pode carregar capability de busca sem o ATO ser busca — o engine não força nada nesse caso.
       const brainSearchAct = (): boolean => lockedU?.primaryIntent === "search_stock" && isStockSearchTurn(brainVU());
+      // ⭐F2.75 (incidente Icom anúncio Peugeot 2008 -> "todos os automáticos, do menor preço"): TROCA DE DIREÇÃO é
+      // AUTORIDADE SEMÂNTICA da LLM (understanding.isTopicChange), NÃO heurística por filtro (não é "se mencionou câmbio").
+      // Quando o lead AMPLIA/SUBSTITUI/REJEITA o alvo anterior, a busca parte SÓ dos critérios do BLOCO ATUAL
+      // (currentConstraints) — o engine NÃO herda/injeta marca/modelo/tipo/ano/preço do anúncio/activeSearchConstraints
+      // (enrichStockSearchCall só PREENCHE LACUNAS; passando o escopo do-turno, o valor antigo não reentra como fill).
+      // Refinamento normal (isTopicChange=false, ex.: "até 60 mil") preserva o merge aditivo. isShortAffirmationBlock
+      // impede que "isso"/"pode ser" marcado por engano zere o escopo. `broad` NÃO é reset (segue sendo só OR entre modelos).
+      const topicChangeThisTurn = (): boolean => llmFirst && brainVU()?.understanding.isTopicChange === true && !isShortAffirmationBlock(leadMessage);
+      const searchScopeThisTurn = (): CommercialConstraints => topicChangeThisTurn() ? currentConstraints : commercialConstraints;
+      const effectiveSearchScopeThisTurn = (): CommercialConstraints => { const base = searchScopeThisTurn(); return sufficientForStockSearch(base) ? base : (moreOptionsDerivedScope ?? base); };
+      // Observabilidade (contrato Codex #7): input PROPOSTO pela LLM vs EXECUTADO — prova que o engine não reinjetou filtro antigo.
+      const stockProposedVsExecuted: Array<{ readonly proposed: unknown; readonly executed: unknown; readonly topicChange: boolean; readonly source: "brain_loop" | "det_completion" }> = [];
       // ⭐AD-1: quem exige tenant_business_info é o ATO institucional declarado pela LLM (com evidência do bloco atual),
       // não o regex mentionsStore. No legado (!llmFirst) o sinal léxico continua valendo — nada muda lá.
       //
@@ -2703,10 +2715,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           popular: frame.signals.mentionsPopular === true,
           moreOptions: frame.signals.mentionsMoreOptions,
           previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys do cérebro)
-          constraints: commercialConstraints,   // P0: preenche lacunas (marca/preço/tipo/câmbio) que o cérebro omitiu
+          constraints: searchScopeThisTurn(),   // ⭐F2.75: escopo DO TURNO (troca de direção não herda anúncio); só preenche lacunas
           wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
           enforceShownClamp: llmFirst,           // INC3: clampa só no central_active; shadow/legado mantém a união antiga
         });
+        if (call.tool === "stock_search") stockProposedVsExecuted.push({ proposed: call.input, executed: execCall.input, topicChange: topicChangeThisTurn(), source: "brain_loop" });
         // Missão P0 (audit Codex smoke): DEDUP SEMÂNTICO NO LOOP. Se ESTA busca (filtro ENRIQUECIDO) já foi executada neste
         // turno, NÃO re-observa como stock_search (é aqui, no push de toAgentObservation abaixo, que o relatório contava 7x) —
         // empurra feedback de controle (tool:"response") p/ o cérebro FINALIZAR com o resultado que já tem. Relaxamento real =
@@ -2825,16 +2838,18 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           //    numa CONTESTAÇÃO ("Corolla não é um sedan?") só porque a frase citava modelo/tipo. ──
           // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
           // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
-          if (llmFirst && brainSearchAct() && sufficientForStockSearch(effectiveSearchScope) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+          const effScopeThisTurn = effectiveSearchScopeThisTurn();   // ⭐F2.75: escopo gateado por isTopicChange (mesma autoridade do loop)
+          if (llmFirst && brainSearchAct() && sufficientForStockSearch(effScopeThisTurn) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
             try {
-              const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effectiveSearchScope) }, {
-                popular: frame.signals.mentionsPopular === true || effectiveSearchScope.popular === true,
+              const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effScopeThisTurn) }, {
+                popular: frame.signals.mentionsPopular === true || effScopeThisTurn.popular === true,
                 moreOptions: frame.signals.mentionsMoreOptions,
                 previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys)
-                constraints: effectiveSearchScope,
+                constraints: effScopeThisTurn,
                 wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
                 enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
               });
+              stockProposedVsExecuted.push({ proposed: constraintsToStockInput(effectiveSearchScope), executed: searchCall.input, topicChange: topicChangeThisTurn(), source: "det_completion" });
               const authority: ToolExecutionAuthority = {
                 principal: "llm", source: "llm_intent_completion", primaryIntent: lockedU?.primaryIntent ?? null,
                 capability: "stock_search", currentTurnEvidence: brainVU()?.trusted === true, callSite: "search_fact_completion",
@@ -3286,7 +3301,12 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       }
       if (llmFirst) {
         if (executedScope && sufficientForStockSearch(executedScope)) reduced.next.activeSearchConstraints = executedScope;
-        else if (isSearchishTurn && (sufficientForStockSearch(commercialConstraints) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = commercialConstraints;
+        else {
+          // ⭐F2.75: num turno de TROCA DE DIREÇÃO sem busca executada, persiste o escopo NOVO (currentConstraints via
+          // searchScopeThisTurn), não o mergeado velho do anúncio — assim o próximo "tem outros?" herda o estreito novo (aceite 8).
+          const fallbackScope = searchScopeThisTurn();
+          if (isSearchishTurn && (sufficientForStockSearch(fallbackScope) || commercialCorrections.removedTypes.length > 0)) reduced.next.activeSearchConstraints = fallbackScope;
+        }
       }
       // F2.32 (CTWA): persiste o CONTEXTO do anúncio — a 1ª mensagem traz o externalAdReply; as seguintes herdam do state
       // (recuperação de rajada). Anúncio NOVO (veio na rajada) é carimbado com o turnNumber atual; senão preserva o do state.
@@ -3481,6 +3501,8 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           activeSearchConstraintsBefore: contextState.activeSearchConstraints ?? null,
           activeSearchConstraintsAfter: reduced.next.activeSearchConstraints ?? null,
           stockSearchInputExecuted: lastStockFact ? lastStockFact.data.filtersUsed : null,
+          stockSearchProposedVsExecuted: JSON.parse(JSON.stringify(stockProposedVsExecuted.slice(-4))),   // ⭐F2.75 (Codex #7): proposto pela LLM vs executado (JSON puro)
+          topicChangeReset: topicChangeThisTurn(),                            // ⭐F2.75: o turno soltou o escopo do anúncio/ativo?
           moreOptions: baseSignals.mentionsMoreOptions, moreOptionsNeedsScope,
           moreOptionsInheritedScope: baseSignals.mentionsMoreOptions && sufficientForStockSearch(effectiveSearchScope) ? effectiveSearchScope : null,
           // Missão P0 (doc 2): observabilidade de latência/retry. turnLatencyMs = tempo de parede do turno (RealClock em prod);

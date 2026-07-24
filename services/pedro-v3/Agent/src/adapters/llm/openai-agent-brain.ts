@@ -140,6 +140,7 @@ Todo query ou final inclui na raiz:
 - Cada evidence.quote deve existir literalmente no bloco atual. Memoria nunca vira evidencia do turno.
 - policyDecision deve ser null quando nenhuma política configurada foi considerada. Quando não for null, declare somente uma política apresentada no contexto da empresa, a ação configurada para ela e uma evidência literal do bloco atual. Não invente id, não aplique política por palavra isolada e não use esse campo para escolher o assunto.
 - requestedCapabilities cobre apenas atos pedidos/agora necessarios. primaryIntent e o primeiro ato a tratar.
+- isTopicChange=true quando o bloco atual AMPLIA, SUBSTITUI ou REJEITA o alvo de compra anterior (do anuncio ou da ultima busca): ex.: sai de um modelo/tipo/faixa especifico para "qualquer carro", "todos os automaticos", "os mais baratos", outro modelo, ou "nao quero mais Y"/"nao e desse modelo". Nesse caso a busca parte SOMENTE dos criterios do bloco atual — nao arraste marca, modelo, tipo, ano nem preco anteriores. isTopicChange=false quando apenas ADICIONA/refina um criterio (cambio, teto de preco, cor) mantendo o MESMO alvo (ex.: "esse Peugeot e automatico?"), ou quando responde curto/confirma.
 
 TOOLS
 - Use query somente quando faltar um fato que uma tool pode fornecer. Depois de uma observacao bem-sucedida, use o resultado e finalize; nao repita a mesma consulta.

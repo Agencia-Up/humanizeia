@@ -356,6 +356,12 @@ function answersPendingPhotoTargetQuestion(target: TargetResolution, state?: Con
 // Exige: oferta de foto interrogativa na última fala do agente + afirmação curta + alvo RESOLVIDO (selected/
 // carryover). Negação/adiamento continua barrando (isPhotoDeclined). Determinístico e grounded. PURO.
 const SHORT_AFFIRMATION_RX = /^(?:sim|pode|pode sim|pode ser|quero|quero sim|manda|mande|envia|envie|claro|com certeza|por favor|bora|ok|okay|isso|aceito|show|beleza|top)[.!\s]*$/;
+
+// ⭐F2.75: uma afirmação curta ("isso"/"pode ser"/"ok") NUNCA reseta o escopo de busca do anúncio/ativo, mesmo se a LLM
+// marcar isTopicChange por engano — mesma proteção já aplicada ao carryover de veículo selecionado (ver :568). PURO.
+export function isShortAffirmationBlock(block: string): boolean {
+  return SHORT_AFFIRMATION_RX.test(normalizeText(block).trim());
+}
 export function acceptsAgentPhotoOffer(block: string, state?: ConversationState | null): boolean {
   if (isPhotoDeclined(block)) return false;
   const lastAgent = [...(state?.recentTurns ?? [])].reverse().find((t) => t.role === "agent")?.text ?? "";
