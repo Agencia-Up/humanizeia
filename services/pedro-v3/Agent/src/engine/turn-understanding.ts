@@ -159,15 +159,26 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   if (u.primaryIntent === "sensitive_data" && !SENSITIVE_DATA_ACT_RX.test(norm)) {
     issues.push("sensitive_data sem token sensivel validado no bloco atual");
   }
-  const policyIssues = validateTenantPolicyDecision(u.policyDecision, block, context?.tenantPolicies);
-  issues.push(...policyIssues.map((issue) => `declaração de política inválida: ${issue.message}`));
   return issues;
 }
 
+// ⭐G1 (incidente Icom "obrigada" 2026-07-24): uma policyDecision cuja REFERÊNCIA é inválida — política não configurada
+// (`unknown_policy`), desativada (`disabled_policy`) ou shape inválido (`invalid_shape`) — é METADADO INVÁLIDO: a LLM
+// alucinou um id. Isso NÃO pode tornar TODA a interpretação untrusted (virava "obrigada" -> understanding_required 5x ->
+// technical_fallback "instabilidade"). Descartamos a decisão (policyDecision -> null; ela NUNCA autorizou efeito/mutação/
+// handoff — só existia como gate de validação/observabilidade) e o turno segue pela sua evidência/intenção. RIGOR
+// PRESERVADO: uma política REAL e HABILITADA usada com ação incompatível ou evidência fora do bloco continua HARD (untrusted).
+const INVALID_POLICY_REFERENCE = new Set(["unknown_policy", "disabled_policy", "invalid_shape"]);
+
 export function validateTurnUnderstanding(u: TurnUnderstanding, block: string, fromBrain: boolean, context?: TurnValidationContext): ValidatedUnderstanding {
   const validEvidence = (u.evidence ?? []).filter((e) => e != null && typeof e.quote === "string" && quoteInBlock(block, e.quote));
-  const semanticIssues = semanticIssuesFor(u, block, validEvidence, context);
-  return { understanding: u, trusted: validEvidence.length > 0 && semanticIssues.length === 0, fromBrain, validEvidence, semanticIssues };
+  const issues = semanticIssuesFor(u, block, validEvidence, context);
+  const policyIssues = validateTenantPolicyDecision(u.policyDecision, block, context?.tenantPolicies);
+  const invalidReference = policyIssues.some((issue) => INVALID_POLICY_REFERENCE.has(issue.code));
+  // Policy fantasma: descarta a decisão (não autoriza nada) e NÃO adiciona issue. Policy real mal-usada: mantém HARD.
+  const understanding = invalidReference && u.policyDecision != null ? { ...u, policyDecision: null } : u;
+  if (!invalidReference) issues.push(...policyIssues.map((issue) => `declaração de política inválida: ${issue.message}`));
+  return { understanding, trusted: validEvidence.length > 0 && issues.length === 0, fromBrain, validEvidence, semanticIssues: issues };
 }
 
 export function understandingAuthorityFeedback(v: ValidatedUnderstanding): string | null {
