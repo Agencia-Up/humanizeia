@@ -8,6 +8,7 @@
 import type { LastRenderedOfferContext, RenderedOfferItem } from "../domain/conversation-state.ts";
 import type { Id, Iso, VehicleFact } from "../domain/types.ts";
 import type { QueryResult } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 import type { TurnOutput } from "./decision-engine.ts";
 import { DEFAULT_VEHICLE_OFFER_LIST_MAX_ITEMS } from "./vehicle-offer-render.ts";
 
@@ -15,7 +16,7 @@ function vehicleItemsFromFacts(facts: QueryResult[]): VehicleFact[] {
   const out: VehicleFact[] = [];
   for (const f of facts) {
     if (!f.ok) continue;
-    if (f.tool === "stock_search") out.push(...f.data.items);
+    if (f.tool === "stock_search") out.push(...stockSearchGroundableVehicles(f.data)); // F2.76: registra o candidato de família mostrado, p/ resolver "foto dele" no turno seguinte
     if (f.tool === "vehicle_details") out.push(f.data.vehicle);
   }
   return out;

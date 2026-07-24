@@ -3,7 +3,8 @@ import type {
   VehicleDetailSource,
   TenantAgentRef,
   StockSearchFilters,
-  StockSearchResult
+  StockSearchResult,
+  NormalizedVehicle
 } from "../../domain/read-ports.ts";
 import type { VehicleFact } from "../../domain/types.ts";
 import type { StockLoader } from "./stock-loader.ts";
@@ -129,70 +130,73 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       }
     }
 
-    // D) Filtro por modelo (textual, incluindo marca, modelo e versão!)
-    if (filters.modelo) {
-      const queryNorm = normalizeText(filters.modelo);
-      const queryTokens = queryNorm.split(/\s+/).filter(Boolean);
+    // D) Filtro por modelo (textual: marca+modelo+versão). O `pool` ATÉ AQUI tem os filtros OBJETIVOS (tipo/câmbio/preço/
+    // ano/marca) — é a BASE do fallback de FAMÍLIA. ⭐F2.76 def#1 (Codex): cada ALTERNATIVA de modelo (modelos[] multi-
+    // modelo OU o modelo único) casa por TODOS os seus tokens (AND interno); o veículo casa se bater QUALQUER alternativa
+    // (OR entre modelos DISTINTOS). `broad` NÃO relaxa mais o modelo — o antigo OR-de-token deixava a versão de um modelo
+    // contaminar outro ("HB20 Confort Plus" pegava "Argo Confort Plus"); segue aceito p/ compat, porém INERTE no modelo.
+    const poolBeforeModel = pool;
+    const vehicleText = (v: NormalizedVehicle): string => normalizeText(`${v.markName} ${v.modelName} ${v.versionName}`);
+    const modelAlternatives: string[][] = (filters.modelos && filters.modelos.length > 0)
+      ? filters.modelos.map((m) => normalizeText(m).split(/\s+/).filter(Boolean)).filter((toks) => toks.length > 0)
+      : (filters.modelo ? [normalizeText(filters.modelo).split(/\s+/).filter(Boolean)].filter((toks) => toks.length > 0) : []);
+    const exactPool = modelAlternatives.length === 0
+      ? poolBeforeModel
+      : poolBeforeModel.filter((v) => modelAlternatives.some((toks) => toks.every((t) => vehicleText(v).includes(t))));
 
-      if (queryTokens.length > 0) {
-        if (filters.broad) {
-          // Casamento amplo: pelo menos um token deve bater
-          pool = pool.filter(v => {
-            const vText = normalizeText(`${v.markName} ${v.modelName} ${v.versionName}`);
-            return queryTokens.some(token => vText.includes(token));
-          });
-        } else {
-          // Casamento estrito: todos os tokens devem bater
-          pool = pool.filter(v => {
-            const vText = normalizeText(`${v.markName} ${v.modelName} ${v.versionName}`);
-            return queryTokens.every(token => vText.includes(token));
-          });
-        }
+    // ⭐F2.76 (incidente Wa "HB20 Confort Plus"): a busca EXATA (com versão) vem VAZIA, mas o MODELO-BASE existe no estoque.
+    // Em vez de "não temos" seco, devolvemos CANDIDATOS DE FAMÍLIA SEPARADOS (matchKind=family_candidate), NUNCA como match
+    // exato. Preserva os filtros objetivos (já no poolBeforeModel) e só RELAXA a versão, casando pelo MODELO CANÔNICO da
+    // taxonomia ("HB20 Confort Plus" -> família "HB20"). SÓ para busca de UM modelo (não multi-modelo modelos[], onde a
+    // relaxação de versão não se aplica a um OR de modelos distintos). A LLM decide apresentar e SEMPRE confirma a versão.
+    const singleModel = filters.modelo && !(filters.modelos && filters.modelos.length > 0) ? filters.modelo : null;
+    let familyPool: readonly NormalizedVehicle[] = [];
+    if (exactPool.length === 0 && singleModel != null) {
+      const queryFamily = normalizeText(resolveCanonicalVehicleModelFromTaxonomy({ brand: filters.marca ?? "", model: singleModel, version: "" }) ?? "");
+      // Só busca família quando a consulta é MAIS ESPECÍFICA que a própria família (tem versão): "HB20 Confort Plus" != "HB20".
+      if (queryFamily.length > 0 && queryFamily !== normalizeText(singleModel)) {
+        familyPool = poolBeforeModel.filter((v) => {
+          const fam = normalizeText(resolveCanonicalVehicleModelFromTaxonomy({ brand: v.markName ?? "", model: v.modelName ?? "", version: v.versionName ?? "" }) ?? "");
+          return fam.length > 0 && fam === queryFamily;
+        });
       }
     }
 
-    // Ordenação (Desempate): Preço crescente, depois maior ano
-    pool.sort((a, b) => {
-      if (a.saleValue! !== b.saleValue!) return a.saleValue! - b.saleValue!;
-      return b.year! - a.year!;
-    });
-
-    // Mapeia para VehicleFact mantendo de-duplicação estrita de ofertas
-    const items: VehicleFact[] = [];
-    const seenKeys = new Set<string>();
-
-    for (const v of pool) {
-      const { key } = generateVehicleKey(v);
-      // REGRA: "Não devolver duas ofertas com o mesmo vehicleKey em colisão de fingerprint"
-      if (seenKeys.has(key)) {
-        continue;
+    // Mapeia NormalizedVehicle[] -> VehicleFact[] (ordena por preço asc, depois maior ano; dedup estrito de vehicleKey).
+    const toItems = (list: readonly NormalizedVehicle[]): VehicleFact[] => {
+      const sorted = [...list].sort((a, b) => (a.saleValue! !== b.saleValue! ? a.saleValue! - b.saleValue! : b.year! - a.year!));
+      const out: VehicleFact[] = [];
+      const seen = new Set<string>();
+      for (const v of sorted) {
+        const { key } = generateVehicleKey(v);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const isAmbiguous = (fingerprintCounts.get(key) || 0) > 1;
+        const classifiedType = classifyVehicleType(v.category, v.bodyType, v.source, { brand: v.markName, model: v.modelName, version: v.versionName });
+        const canonicalModel = resolveCanonicalVehicleModelFromTaxonomy({ brand: v.markName, model: v.modelName, version: v.versionName });
+        const photos = parseVehiclePhotos(key, v.pictureJs);
+        const photoIds = isAmbiguous ? [] : photos.map((p) => p.id);
+        out.push({
+          vehicleKey: key,
+          marca: this.cleanPart(v.markName || ""),
+          modelo: canonicalModel || this.cleanPart(v.modelName || ""),
+          ano: v.year!,
+          preco: v.saleValue!,
+          km: v.km !== null ? v.km : undefined,
+          cambio: v.transmissionName ? this.cleanPart(v.transmissionName) : undefined,
+          cor: v.color ? this.cleanPart(v.color) : undefined,
+          tipo: classifiedType.value,
+          photoIds: photoIds.length > 0 ? photoIds : undefined,
+        });
       }
-      seenKeys.add(key);
-
-      const isAmbiguous = (fingerprintCounts.get(key) || 0) > 1;
-      const classifiedType = classifyVehicleType(v.category, v.bodyType, v.source, { brand: v.markName, model: v.modelName, version: v.versionName });
-      const canonicalModel = resolveCanonicalVehicleModelFromTaxonomy({ brand: v.markName, model: v.modelName, version: v.versionName });
-      const photos = parseVehiclePhotos(key, v.pictureJs);
-      const photoIds = isAmbiguous ? [] : photos.map(p => p.id);
-
-      items.push({
-        vehicleKey: key,
-        marca: this.cleanPart(v.markName || ""),
-        modelo: canonicalModel || this.cleanPart(v.modelName || ""),
-        ano: v.year!,
-        preco: v.saleValue!,
-        km: v.km !== null ? v.km : undefined,
-        cambio: v.transmissionName ? this.cleanPart(v.transmissionName) : undefined,
-        cor: v.color ? this.cleanPart(v.color) : undefined,
-        tipo: classifiedType.value,
-        photoIds: photoIds.length > 0 ? photoIds : undefined
-      });
-    }
-
-    return {
-      items,
-      filtersUsed: filters
+      return out;
     };
+
+    const items = toItems(exactPool);
+    const familyCandidates = items.length === 0 ? toItems(familyPool) : [];
+    const matchKind: "exact" | "family_candidate" | "none" = items.length > 0 ? "exact" : (familyCandidates.length > 0 ? "family_candidate" : "none");
+
+    return { items, filtersUsed: filters, familyCandidates, matchKind };
   }
 
   // 2. VehicleDetailSource: getDetails

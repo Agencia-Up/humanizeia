@@ -6,6 +6,7 @@
 // Matriz MoneyRole × MoneySource validada rigidamente.
 // ============================================================================
 import type { ResponseDraft, ResponsePart, QueryResult } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { VehicleFact, RememberedVehicleIdentity } from "../domain/types.ts";
 import { renderVehicleOfferList, formatBRL } from "./vehicle-offer-render.ts";
@@ -16,7 +17,8 @@ function indexVehicles(facts: QueryResult[]): Map<string, VehicleFact> {
   const vehicles = new Map<string, VehicleFact>();
   for (const f of facts) {
     if (f.ok) {
-      if (f.tool === "stock_search") for (const v of f.data.items) vehicles.set(v.vehicleKey, v);
+      // F2.76: candidatos de família (versão exata ausente, modelo-base existe) são veículos REAIS e resolvíveis por key.
+      if (f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) vehicles.set(v.vehicleKey, v);
       if (f.tool === "vehicle_details") vehicles.set(f.data.vehicle.vehicleKey, f.data.vehicle);
     }
   }

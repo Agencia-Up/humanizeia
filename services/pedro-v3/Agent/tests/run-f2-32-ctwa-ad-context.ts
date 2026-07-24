@@ -56,7 +56,7 @@ const runQuery = async (call: QueryCall): Promise<QueryResult> => {
     const inp = call.input as { marca?: string; modelo?: string; tipo?: string; precoMax?: number; cambio?: string; excludeKeys?: string[]; broad?: boolean };
     let items = STOCK.slice();
     if (inp.marca) { const m = norm(inp.marca); items = items.filter((v) => norm(v.marca).includes(m) || m.includes(norm(v.marca))); }
-    if (inp.modelo) { const toks = norm(inp.modelo).split(/\s+/).filter(Boolean); items = items.filter((v) => { const vt = norm(`${v.marca} ${v.modelo}`); return inp.broad ? toks.some((t) => vt.includes(t)) : toks.every((t) => vt.includes(t)); }); }
+    { const alts: string[][] = (() => { const ms = (inp as { modelos?: string[] }).modelos; if (Array.isArray(ms) && ms.length > 0) return ms.map((mm) => norm(mm).split(/\s+/).filter(Boolean)).filter((t) => t.length > 0); return inp.modelo ? [norm(inp.modelo).split(/\s+/).filter(Boolean)].filter((t) => t.length > 0) : []; })(); if (alts.length > 0) items = items.filter((v) => { const vt = norm(`${v.marca} ${v.modelo}`); return alts.some((toks) => toks.every((t) => vt.includes(t))); }); }
     if (inp.tipo) items = items.filter((v) => v.tipo === inp.tipo);
     if (typeof inp.precoMax === "number") items = items.filter((v) => (v.preco ?? Infinity) <= inp.precoMax!);
     if (inp.cambio) items = items.filter((v) => (inp.cambio === "automatic") === /autom/i.test(v.cambio ?? ""));

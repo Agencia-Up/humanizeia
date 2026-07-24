@@ -26,6 +26,7 @@ import type { AgentToolObservation, ToolTelemetry } from "../domain/agent-brain.
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { SlotName } from "../domain/types.ts";
 import type { EffectResult, QueryResult } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 
 const MAX_TOOL_RESULTS = 8;
 const MAX_UNANSWERED = 8;
@@ -286,7 +287,7 @@ export function applySystemWorkingMemoryMutations(
 export function toToolResultMemory(result: QueryResult, turnId: string): ToolResultMemory {
   if (!result.ok) return { tool: result.tool, status: result.error.code === "NOT_FOUND" ? "not_found" : "error", turnId };
   switch (result.tool) {
-    case "stock_search": return { tool: "stock_search", status: result.data.items.length > 0 ? "ok" : "not_found", turnId, itemCount: result.data.items.length, factKeys: result.data.items.slice(0, 12).map((v) => v.vehicleKey) };
+    case "stock_search": { const g = stockSearchGroundableVehicles(result.data); return { tool: "stock_search", status: g.length > 0 ? "ok" : "not_found", turnId, itemCount: g.length, factKeys: g.slice(0, 12).map((v) => v.vehicleKey) }; } // F2.76: candidato de família conta como encontrado e aterra a key na recall
     case "vehicle_details": return { tool: "vehicle_details", status: "ok", turnId, factKeys: [result.data.vehicle.vehicleKey] };
     case "vehicle_photos_resolve": return { tool: "vehicle_photos_resolve", status: result.data.photoIds.length > 0 ? "ok" : "not_found", turnId, itemCount: result.data.photoIds.length, factKeys: [result.data.vehicleKey] };
     case "crm_read": return { tool: "crm_read", status: "ok", turnId }; // NUNCA nome/telefone/CPF/payload

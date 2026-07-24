@@ -118,6 +118,9 @@ export type LastRenderedOfferContext = {
 // separados). Mergeado de forma conservadora (cada dimensão do bloco atual substitui a antiga; ausente preserva). SÓ é
 // atualizado em turno de BUSCA (foto/detalhe/institucional não tocam). Tipo do DOMÍNIO; o engine (commercial-constraints)
 // reusa esta forma. modelos[] cobre "Palio ou Gol".
+// ⚠️INVARIANTE DE FORMA (F2.76): cada elemento de `modelos[]` é UMA FRASE de modelo ("HB20 Confort Plus" = 1 elemento),
+// casada por TODOS os seus tokens (AND interno); o OR é ENTRE elementos. NUNCA um token por elemento — quebrar a frase
+// faz o turno seguinte virar um OR de fragmentos e reaceitar outro modelo pelo token da versão (regressão real, F2.76).
 export type ActiveSearchConstraints = {
   marca?: string;
   modelos?: string[];

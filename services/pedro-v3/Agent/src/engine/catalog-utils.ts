@@ -151,7 +151,7 @@ export function isVehicleKeyInCatalog(catalog: TenantCatalog, vehicleKey: string
 export function isVehicleKeyGrounded(catalog: TenantCatalog, facts: readonly QueryResult[], vehicleKey: string): boolean {
   for (const f of facts) {
     if (!f.ok) continue;
-    if (f.tool === "stock_search" && f.data.items.some((i) => i.vehicleKey === vehicleKey)) return true;
+    if (f.tool === "stock_search" && stockSearchGroundableVehicles(f.data).some((i) => i.vehicleKey === vehicleKey)) return true; // F2.76: candidato de família é key REAL groundable
     if (f.tool === "vehicle_details" && f.data.vehicle.vehicleKey === vehicleKey) return true;
   }
   return isVehicleKeyInCatalog(catalog, vehicleKey);
@@ -159,6 +159,7 @@ export function isVehicleKeyGrounded(catalog: TenantCatalog, facts: readonly Que
 
 import type { VehicleFact } from "../domain/types.ts";
 import type { QueryResult } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 
 /**
  * Constrói dinamicamente o TenantCatalog a partir da lista de VehicleFacts vivos do estoque.

@@ -96,14 +96,17 @@ export type TurnInterpretation = {
 
 // ── Query loop (read-only) — Codex #4/r3 #6 ─────────────────────────────────
 export type QueryInputMap = {
-  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; hibrido?: boolean; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; broad?: boolean; excludeKeys?: string[]; includeMotorcycles?: boolean };
+  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; hibrido?: boolean; precoMax?: number; modelo?: string; modelos?: string[]; marca?: string; anos?: number[]; popular?: boolean; broad?: boolean; excludeKeys?: string[]; includeMotorcycles?: boolean };
   vehicle_details: { vehicleKey: string };
   vehicle_photos_resolve: { vehicleRef: EntityReference };
   crm_read: { leadId: string };
   knowledge_search: { query: string; topK?: number };
 };
 export type QueryOutputMap = {
-  stock_search: { items: VehicleFact[]; filtersUsed: Record<string, JsonValue> };
+  // ⭐F2.76 — `familyCandidates`/`matchKind`: quando a busca EXATA (com versão) vem VAZIA mas o MODELO-BASE existe, o
+  // read-side devolve candidatos da MESMA FAMÍLIA (marca/ano/câmbio/preço/tipo preservados). NUNCA é match exato; a LLM
+  // decide apresentar e SEMPRE confirma a versão. matchKind: "exact" (items>0) | "family_candidate" | "none" (vazio genuíno).
+  stock_search: { items: VehicleFact[]; filtersUsed: Record<string, JsonValue>; familyCandidates?: VehicleFact[]; matchKind?: "exact" | "family_candidate" | "none" };
   vehicle_details: { vehicle: VehicleFact };
   // ⭐CADEIA DE MÍDIA (2026-07-19): a tool devolve o SNAPSHOT resolvido (id + url), não só referências opacas.
   //
@@ -126,6 +129,16 @@ export type QueryOutputMap = {
 export type QueryName = keyof QueryInputMap;
 export type QueryCall = { [N in QueryName]: { tool: N; input: QueryInputMap[N] } }[QueryName];
 
+// ⭐F2.76 — veículos GROUNDÁVEIS de um stock_search: correspondências EXATAS (`items`) + CANDIDATOS DE FAMÍLIA. Ambos são
+// veículos REAIS do MESMO snapshot; para RESOLUÇÃO/ALLOWLIST de grounding (achar o fato pela key, validar preço, permitir
+// que a LLM referencie o veículo) o candidato de família vale tanto quanto o exato. A DISTINÇÃO exato vs família é
+// SEMÂNTICA (fraseado da LLM: "preciso confirmar a versão"), NÃO factual — por isso as GUARDAS DE EXIGÊNCIA/AUTORIA do
+// engine (freshStockKeys, listTurn/emptyStockTurn, recovery que LISTA) continuam lendo só `items`; só a RESOLUÇÃO/ALLOWLIST
+// usa este helper. Assim a LLM PODE apresentar o candidato aterrado, mas o engine NUNCA o força nem o lista sozinho.
+export function stockSearchGroundableVehicles(data: QueryOutputMap["stock_search"]): readonly VehicleFact[] {
+  return data.familyCandidates && data.familyCandidates.length > 0 ? [...data.items, ...data.familyCandidates] : data.items;
+}
+
 export type QueryResult = {
   [N in QueryName]:
     | { ok: true; tool: N; data: QueryOutputMap[N]; source: string }
@@ -147,16 +160,42 @@ const STOCK_TYPE_WORDS: Readonly<Record<string, VehicleType>> = {
 export type StockInputNormalization =
   | { readonly ok: true; readonly input: QueryInputMap["stock_search"] }
   | { readonly ok: false; readonly conflict: string };
+const stockTypeWordKey = (s: string): string => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 export function normalizeStockSearchInput(input: QueryInputMap["stock_search"]): StockInputNormalization {
-  if (typeof input.modelo !== "string") return { ok: true, input };
-  const key = input.modelo.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-  const asType = STOCK_TYPE_WORDS[key];
-  if (!asType) return { ok: true, input };
-  if (input.tipo != null && input.tipo !== asType) {
-    return { ok: false, conflict: `modelo '${input.modelo}' (tipo ${asType}) conflita com tipo '${input.tipo}'` };
+  let out: QueryInputMap["stock_search"] = input;
+  // Guarda do `modelo` único (existente): um termo de TIPO em `modelo` vira `tipo` (ou FALHA se conflita).
+  if (typeof out.modelo === "string") {
+    const asType = STOCK_TYPE_WORDS[stockTypeWordKey(out.modelo)];
+    if (asType) {
+      if (out.tipo != null && out.tipo !== asType) {
+        return { ok: false, conflict: `modelo '${out.modelo}' (tipo ${asType}) conflita com tipo '${out.tipo}'` };
+      }
+      const { modelo: _drop, ...rest } = out;
+      out = { ...rest, tipo: asType };
+    }
   }
-  const { modelo: _drop, ...rest } = input;
-  return { ok: true, input: { ...rest, tipo: asType } };
+  // ⭐F2.76 def#1: mesma guarda POR ALTERNATIVA em `modelos[]` — um termo de TIPO numa alternativa vira `tipo` (fail-closed
+  // no conflito); alternativas reais (palio/gol) ficam. Evita que "suv" numa alternativa passe como modelo e zere a busca.
+  if (Array.isArray(out.modelos) && out.modelos.length > 0) {
+    let tipoFromAlt: VehicleType | undefined;
+    const realModels: string[] = [];
+    for (const m of out.modelos) {
+      const asType = typeof m === "string" ? STOCK_TYPE_WORDS[stockTypeWordKey(m)] : undefined;
+      if (asType) {
+        if (out.tipo != null && out.tipo !== asType) {
+          return { ok: false, conflict: `modelo '${m}' (tipo ${asType}) conflita com tipo '${out.tipo}'` };
+        }
+        tipoFromAlt = asType;
+      } else if (typeof m === "string" && m.trim().length > 0) {
+        realModels.push(m);
+      }
+    }
+    const next: QueryInputMap["stock_search"] = { ...out };
+    if (realModels.length > 0) next.modelos = realModels; else delete next.modelos;
+    if (tipoFromAlt && next.tipo == null) next.tipo = tipoFromAlt;
+    out = next;
+  }
+  return { ok: true, input: out };
 }
 
 // ── Effect plans (união semântica) — Codex r3 #4 + outcomes r3.5 #2 ─────────

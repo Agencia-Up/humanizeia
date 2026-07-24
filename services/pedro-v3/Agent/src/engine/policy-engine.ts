@@ -4,6 +4,7 @@ import type {
   TurnDecision, EffectPlan, ProposedEffectPlan, MoneyRole,
 } from "../domain/decision.ts";
 import type { VehicleFact } from "../domain/types.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 import { isVehicleKeyGrounded, normalizeText, canonicalModel } from "./catalog-utils.ts";
 import { canonicalBrand, detectBrand } from "./commercial-constraints.ts";
 import { leadStatedMoneyValues } from "./lead-extraction.ts";
@@ -21,7 +22,7 @@ function isInstitutionalOnlyResponse(composed: RenderedResponse, ctx: TurnContex
 // F-4: acha o VehicleFact EXATO nos fatos do turno (stock_search/vehicle_details) pelo vehicleKey.
 function factByKey(facts: QueryResult[], key: string): VehicleFact | null {
   for (const f of facts) {
-    if (f.ok && f.tool === "stock_search") { const v = f.data.items.find((x) => x.vehicleKey === key); if (v) return v; }
+    if (f.ok && f.tool === "stock_search") { const v = stockSearchGroundableVehicles(f.data).find((x) => x.vehicleKey === key); if (v) return v; }
     if (f.ok && f.tool === "vehicle_details" && f.data.vehicle.vehicleKey === key) return f.data.vehicle;
   }
   return null;
@@ -217,7 +218,7 @@ function getValidVehicleKeys(facts: QueryResult[]): Set<string> {
   for (const f of facts) {
     if (f.ok) {
       if (f.tool === "stock_search") {
-        for (const v of f.data.items) keys.add(v.vehicleKey);
+        for (const v of stockSearchGroundableVehicles(f.data)) keys.add(v.vehicleKey);
       }
       if (f.tool === "vehicle_details") {
         keys.add(f.data.vehicle.vehicleKey);
@@ -234,7 +235,7 @@ function getValidBrandsAndModels(facts: QueryResult[], decision: TurnDecision): 
   for (const f of facts) {
     if (f.ok) {
       if (f.tool === "stock_search") {
-        for (const v of f.data.items) {
+        for (const v of stockSearchGroundableVehicles(f.data)) {
           brands.add(normalizeText(v.marca));
           models.add(normalizeText(v.modelo));
         }
@@ -282,7 +283,7 @@ function modelGroundedExact(claimNorm: string, validModels: Set<string>): boolea
 function priceMap(facts: QueryResult[]): Map<string, number> {
   const m = new Map<string, number>();
   for (const f of facts) {
-    if (f.ok && f.tool === "stock_search") for (const v of f.data.items) m.set(v.vehicleKey, v.preco);
+    if (f.ok && f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) m.set(v.vehicleKey, v.preco);
     if (f.ok && f.tool === "vehicle_details") m.set(f.data.vehicle.vehicleKey, f.data.vehicle.preco);
   }
   return m;
@@ -671,7 +672,7 @@ export const PolicyEngine = {
       const grounded: { marca?: string | null; modelo?: string | null; ano?: number | null; key: string }[] = [];
       for (const f of facts) {
         if (!f.ok) continue;
-        if (f.tool === "stock_search") for (const v of f.data.items) grounded.push({ marca: v.marca, modelo: v.modelo, ano: v.ano, key: v.vehicleKey });
+        if (f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) grounded.push({ marca: v.marca, modelo: v.modelo, ano: v.ano, key: v.vehicleKey });
         if (f.tool === "vehicle_details") { const v = f.data.vehicle; grounded.push({ marca: v.marca, modelo: v.modelo, ano: v.ano, key: v.vehicleKey }); }
       }
       const validModelYear = new Set<string>();            // "modeloCanonico|ano" válidos do turno
@@ -704,7 +705,7 @@ export const PolicyEngine = {
     const mentions = parseMoneyMentions(composed.text);
     const realPrices = new Set<number>();
     for (const f of facts) {
-      if (f.ok && f.tool === "stock_search") for (const v of f.data.items) realPrices.add(v.preco);
+      if (f.ok && f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) realPrices.add(v.preco);
       if (f.ok && f.tool === "vehicle_details") realPrices.add(f.data.vehicle.preco);
     }
 

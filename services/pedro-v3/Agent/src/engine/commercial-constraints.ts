@@ -218,13 +218,16 @@ export function sufficientForStockSearch(c: CommercialConstraints): boolean {
   return c.marca != null || (c.modelos != null && c.modelos.length > 0) || c.tipo != null || c.precoMax != null || c.cambio != null || c.hibrido === true || c.popular === true;
 }
 
-// Constraints -> input de stock_search (marca canonicalizada; modelos[] -> modelo + broad quando há mais de um). PURO.
+// Constraints -> input de stock_search (marca canonicalizada; >1 modelo -> `modelos[]` tipado; 1 modelo -> `modelo` com a
+// FRASE INTEIRA; NUNCA emite `broad`, que desde a F2.76 é inerte na dimensão modelo). PURO.
 export function constraintsToStockInput(c: CommercialConstraints): QueryInputMap["stock_search"] {
   const input: QueryInputMap["stock_search"] = {};
   if (c.marca) input.marca = canonicalBrand(c.marca);
   if (c.modelos && c.modelos.length > 0) {
-    input.modelo = c.modelos.join(" ");
-    if (c.modelos.length > 1) input.broad = true;   // "palio gol" -> qualquer token bate (Palio OU Gol)
+    // ⭐F2.76 def#1: multi-modelo vai como ALTERNATIVAS tipadas (modelos[]), não mais juntado em `modelo`+`broad` (o
+    // OR-de-token contaminava versão↔modelo). Um modelo único segue em `modelo` (busca por todos os seus tokens).
+    if (c.modelos.length > 1) input.modelos = [...c.modelos];
+    else input.modelo = c.modelos[0];
   }
   if (c.tipo) input.tipo = c.tipo;
   if (c.precoMax != null) input.precoMax = c.precoMax;
@@ -243,8 +246,18 @@ export function activeConstraintsFromStockInput(input: Record<string, unknown> |
   if (!input) return c;
   const marca = typeof input.marca === "string" ? input.marca : "";
   if (marca) c.marca = canonicalBrand(marca);
-  const modelo = typeof input.modelo === "string" ? input.modelo.trim() : "";
-  if (modelo) c.modelos = modelo.split(/\s+/).filter(Boolean);
+  // ⭐F2.76 def#1: escopo executado pode vir como modelos[] (multi-modelo) OU `modelo` único — persistir ambos p/ herança.
+  // ⚠️O `modelo` único é UMA alternativa INTEIRA (frase), NUNCA é quebrado em palavras. O split antigo existia só porque o
+  // multi-modelo era CODIFICADO como string juntada ("palio gol"); com `modelos[]` tipado ele virou corrupção: quebrar
+  // "HB20 Confort Plus" em ["HB20","Confort","Plus"] fazia o turno seguinte buscar um OR de 3 alternativas e reaceitar um
+  // "Fiat Argo Confort Plus" pelo token "Confort" — exatamente a contaminação que o F2.76 elimina (bloqueador do Codex).
+  if (Array.isArray(input.modelos) && input.modelos.length > 0) {
+    const alts = input.modelos.filter((m): m is string => typeof m === "string" && m.trim().length > 0).map((m) => m.trim());
+    if (alts.length > 0) c.modelos = alts;
+  } else {
+    const modelo = typeof input.modelo === "string" ? input.modelo.trim() : "";
+    if (modelo) c.modelos = [modelo];
+  }
   const tipo = typeof input.tipo === "string" ? input.tipo : "";
   if (tipo === "suv" || tipo === "sedan" || tipo === "hatch" || tipo === "pickup") c.tipo = tipo;
   if (typeof input.precoMax === "number" && input.precoMax > 0) c.precoMax = input.precoMax;

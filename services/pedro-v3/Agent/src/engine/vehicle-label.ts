@@ -7,6 +7,7 @@
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { QueryResult } from "../domain/decision.ts";
 import type { ProposedEffectPlan } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 import type { RememberedVehicleIdentity } from "../domain/types.ts";
 import { loadPersistedWorkingMemory } from "./working-memory.ts";
 import { withTimeout, type QueryRunner } from "./decision-engine.ts";
@@ -32,7 +33,7 @@ export function canonicalVehicleLabel(
   for (const f of facts) {
     if (!f.ok) continue;
     if (f.tool === "stock_search") {
-      const v = f.data.items.find((x) => x.vehicleKey === vehicleKey);
+      const v = stockSearchGroundableVehicles(f.data).find((x) => x.vehicleKey === vehicleKey);
       if (v) {
         const label = [v.marca, v.modelo, v.ano].filter(Boolean).join(" ").trim();
         if (label) return label;
@@ -92,7 +93,7 @@ export async function groundNamedVehicles(args: {
   const known = new Set<string>();
   for (const fact of args.facts) {
     if (!fact.ok) continue;
-    if (fact.tool === "stock_search") for (const vehicle of fact.data.items) known.add(vehicle.vehicleKey);
+    if (fact.tool === "stock_search") for (const vehicle of stockSearchGroundableVehicles(fact.data)) known.add(vehicle.vehicleKey);
     if (fact.tool === "vehicle_details") known.add(fact.data.vehicle.vehicleKey);
   }
   for (const identity of args.identities) known.add(identity.vehicleKey);

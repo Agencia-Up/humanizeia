@@ -78,6 +78,9 @@ export function createReadQueryRunner(ref: TenantAgentRef, sources: ReadQueryRun
             data: {
               items: [...result.items],
               filtersUsed: toJsonRecord(result.filtersUsed as Record<string, unknown>),
+              // F2.76: candidatos de família (versão exata ausente, modelo-base existe) viajam SEPARADOS até o cérebro.
+              ...(result.familyCandidates && result.familyCandidates.length > 0 ? { familyCandidates: [...result.familyCandidates] } : {}),
+              ...(result.matchKind ? { matchKind: result.matchKind } : {}),
             },
           };
         }

@@ -121,6 +121,11 @@ export type StockSearchFilters = {
   readonly hibrido?: boolean;
   readonly precoMax?: number;
   readonly modelo?: string;
+  // ⭐F2.76 def#1: MODELOS ALTERNATIVOS (ex.: ["palio","gol"] = Palio OU Gol). Cada alternativa casa por TODOS os seus
+  // tokens (AND interno); o veículo casa se bater QUALQUER alternativa (OR entre alternativas). Substitui o antigo
+  // `modelo` juntado + `broad` (que era OR-de-token e deixava a versão de um modelo contaminar outro). Uso INTERNO do
+  // engine (multi-modelo do lead); a LLM continua mandando `modelo` único.
+  readonly modelos?: readonly string[];
   readonly marca?: string;   // busca por fabricante (markName). Canonicalizado pelo engine (volks->volkswagen).
   readonly anos?: readonly number[];   // F2.28: anos RÍGIDOS (filtro duro; carro fora do ano nunca é match).
   readonly includeMotorcycles?: boolean;   // F2.29: default FALSE -> motos NUNCA entram em lista de carro (salvo lead pedir moto).
@@ -129,9 +134,18 @@ export type StockSearchFilters = {
   readonly excludeKeys?: readonly string[];
 };
 
+// Resultado da busca em estoque.
+// - `items`: correspondências EXATAS (todos os tokens do modelo/versão bateram). Ordenadas preço asc, ano desc.
+// - `familyCandidates` (F2.76): quando `items` vem VAZIO mas o MODELO-BASE existe (ex.: pediram "HB20 Confort Plus" e só há
+//   "HB20 Comfort"), são veículos da MESMA FAMÍLIA canônica (marca/ano/câmbio/preço/tipo preservados). NUNCA é match exato —
+//   a LLM decide apresentar e SEMPRE confirma a versão. Vazio quando `items` tem itens ou não há base.
+// - `matchKind`: "exact" (items>0) | "family_candidate" (só família) | "none" (vazio genuíno).
+export type StockMatchKind = "exact" | "family_candidate" | "none";
 export type StockSearchResult = {
   readonly items: readonly VehicleFact[];
   readonly filtersUsed: StockSearchFilters;
+  readonly familyCandidates?: readonly VehicleFact[];
+  readonly matchKind?: StockMatchKind;
 };
 
 export interface StockSource {

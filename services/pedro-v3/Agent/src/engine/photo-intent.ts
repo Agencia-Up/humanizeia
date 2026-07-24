@@ -14,6 +14,7 @@
 // ============================================================================
 import type { ConversationState, RenderedOfferItem } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, ProposedDecision, TurnDecision, TurnInterpretation } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 import type { Id, Iso } from "../domain/types.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { finalize, effectIdFor } from "./finalizer.ts";
@@ -177,7 +178,7 @@ async function resolveTargetPhotos(
 ): Promise<PhotoIntentResult> {
   const { state, runQuery, wantsMore } = args;
   const stockRes = await runQuery({ tool: "stock_search", input: { modelo: targetModel } });
-  const items = stockRes.ok && stockRes.tool === "stock_search" ? stockRes.data.items : [];
+  const items = stockRes.ok && stockRes.tool === "stock_search" ? stockSearchGroundableVehicles(stockRes.data) : [];
   if (items.length === 0) return { kind: "not_found", vehicleLabel: targetModel };
   const labelOf = (v: (typeof items)[number]): string => [v.marca, v.modelo, v.ano && v.ano > 0 ? String(v.ano) : null].filter(Boolean).join(" ");
   // P0-1 (Codex): se o veículo SELECIONADO está entre os resultados (compatível com o modelo citado), usa o

@@ -22,6 +22,7 @@ import type { ConversationState } from "../domain/conversation-state.ts";
 import type {
   DecisionMutation, ProposedDecision, ProposedEffectPlan, QueryCall, QueryResult, TurnAction, TurnDecision, ResponseDraft,
 } from "../domain/decision.ts";
+import { stockSearchGroundableVehicles } from "../domain/decision.ts";
 import type {
   AgentBrainPort, AgentBrainDecision, AgentBrainStep, AgentToolObservation, CentralQueryCall, PersistedWorkingMemory,
   PhotoActionDraft, ToolResultMemory, ToolTelemetry, WorkingMemoryV1, BusinessInfoTopic, CurrentTurnIntent, FrameSignals,
@@ -488,7 +489,8 @@ function knownVehicleKeys(facts: readonly QueryResult[], identities: readonly Re
   const keys = new Set<string>();
   for (const f of facts) {
     if (!f.ok) continue;
-    if (f.tool === "stock_search") for (const v of f.data.items) keys.add(v.vehicleKey);
+    // F2.76: candidatos de família são veículos REAIS e REFERENCIÁVEIS pela LLM (a exigência de listar segue só em `items`).
+    if (f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) keys.add(v.vehicleKey);
     if (f.tool === "vehicle_details") keys.add(f.data.vehicle.vehicleKey);
     // ⭐CORREÇÃO (smoke real 19/07, auditoria Codex): um `vehicle_photos_resolve` BEM-SUCEDIDO aterra o vehicleKey
     // tanto quanto uma busca ou um detalhe — o fato veio da MESMA fonte. Faltava esta linha, e a guarda de
@@ -591,9 +593,10 @@ export function enrichStockSearchCall(
   const filled: Partial<QueryCall["input"]> = {};
   if (c) {
     if (call.input.marca == null && c.marca) (filled as { marca?: string }).marca = canonicalBrand(c.marca);
-    if (call.input.modelo == null && c.modelos && c.modelos.length > 0) {
-      (filled as { modelo?: string }).modelo = c.modelos.join(" ");
-      if (c.modelos.length > 1 && call.input.broad == null) (filled as { broad?: boolean }).broad = true;
+    if (call.input.modelo == null && call.input.modelos == null && c.modelos && c.modelos.length > 0) {
+      // ⭐F2.76 def#1: preenche multi-modelo como ALTERNATIVAS tipadas (modelos[]); modelo único em `modelo`. Sem broad.
+      if (c.modelos.length > 1) (filled as { modelos?: string[] }).modelos = [...c.modelos];
+      else (filled as { modelo?: string }).modelo = c.modelos[0];
     }
     if (call.input.tipo == null && c.tipo) (filled as { tipo?: typeof c.tipo }).tipo = c.tipo;
     if (call.input.precoMax == null && c.precoMax != null) (filled as { precoMax?: number }).precoMax = c.precoMax;
@@ -1349,7 +1352,7 @@ function stockSearchFingerprint(input: Record<string, unknown>): string {
   const s = (v: unknown): string => (typeof v === "string" ? normalizeText(v) : "");
   const arr = (v: unknown): (string | number)[] => Array.isArray(v) ? [...v].map((x) => (typeof x === "number" ? x : normalizeText(String(x)))).sort() : [];
   return JSON.stringify({
-    marca: s(input.marca), modelo: s(input.modelo), tipo: s(input.tipo),
+    marca: s(input.marca), modelo: s(input.modelo), modelos: arr(input.modelos), tipo: s(input.tipo),
     precoMax: typeof input.precoMax === "number" ? input.precoMax : null,
     precoMin: typeof input.precoMin === "number" ? input.precoMin : null,
     cambio: s(input.cambio), anos: arr(input.anos), popular: input.popular === true,
@@ -1548,6 +1551,8 @@ function buildContextualRecovery(args: {
     // CONTROLE do engine (não são falha da tool).
     const CONTROL_CODES = new Set(["REQUIRED_TOOL_MISSING", "DUP_TOOL", "FORBIDDEN", "REQUIRED_TURN_UNDERSTANDING"]);
     const stockFailed = args.observations.some((o) => o.tool === "stock_search" && !o.ok && !CONTROL_CODES.has(o.error.code));
+    // F2.76 def#2: turno com CANDIDATO DE FAMÍLIA (versão exata ausente, modelo-base existe) — NUNCA afirmar ausência.
+    const hasGroundableFamily = factsArr.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length === 0 && (f.data.familyCandidates?.length ?? 0) > 0);
     const itemKeys: string[] = [];
     for (const f of factsArr) if (f.ok && f.tool === "stock_search") for (const v of f.data.items) if (!itemKeys.includes(v.vehicleKey)) itemKeys.push(v.vehicleKey);
     if (itemKeys.length > 0) {
@@ -1563,9 +1568,13 @@ function buildContextualRecovery(args: {
     // determinístico (F2.26) garante que um turno comercial SEMPRE tem fato de estoque aqui — nunca uma promessa "vou
     // procurar" sem ação. Sem constraint (fato genérico) mantém o texto padrão.
     const desc = args.constraints ? describeConstraints(args.constraints) : "";
-    if (stockRanOk) return plain(emptySearchConductingText(desc), "clarify", "recovery_stock_empty", "busca executada com 0 itens -> honesto nomeando o filtro + condução específica (ampliar faixa / outro modelo-tipo)");
+    // ⭐F2.76 def#2 + LLM-first (regra P0 do dono): com CANDIDATO DE FAMÍLIA o engine NÃO afirma ausência E NÃO escreve
+    // prosa comercial sobre o candidato — APRESENTAR o candidato é ato exclusivo da LLM (ela decide e confirma a versão).
+    // Aqui só SUPRIMIMOS a afirmação de vazio; sem autoria da LLM o turno cai na degradação observável genérica do fim
+    // desta função (technical_fallback), que não promete retorno nem inventa oferta.
+    if (stockRanOk && !hasGroundableFamily) return plain(emptySearchConductingText(desc), "clarify", "recovery_stock_empty", "busca executada com 0 itens -> honesto nomeando o filtro + condução específica (ampliar faixa / outro modelo-tipo)");
     if (stockFailed) return plain("Tive uma instabilidade pra puxar o estoque agora. Me confirma o modelo que você procura que eu já verifico?", "clarify", "recovery_stock_failed", "tool de busca falhou -> indisponibilidade temporária");
-    return plain("Qual modelo ou tipo de carro você procura? Já busco no nosso estoque pra você.", "clarify", "recovery_stock_not_run", "nenhuma busca executada -> não afirma ausência, pergunta específica");
+    if (!hasGroundableFamily) return plain("Qual modelo ou tipo de carro você procura? Já busco no nosso estoque pra você.", "clarify", "recovery_stock_not_run", "nenhuma busca executada -> não afirma ausência, pergunta específica");
   }
   // DETALHE: com veículo selecionado -> pergunta qual atributo (sem inventar); sem veículo -> pergunta qual carro.
   if (u.primaryIntent === "vehicle_detail" || u.requestedCapabilities.includes("vehicle_details")) {
@@ -1995,7 +2004,8 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // (currentConstraints) — o engine NÃO herda/injeta marca/modelo/tipo/ano/preço do anúncio/activeSearchConstraints
       // (enrichStockSearchCall só PREENCHE LACUNAS; passando o escopo do-turno, o valor antigo não reentra como fill).
       // Refinamento normal (isTopicChange=false, ex.: "até 60 mil") preserva o merge aditivo. isShortAffirmationBlock
-      // impede que "isso"/"pode ser" marcado por engano zere o escopo. `broad` NÃO é reset (segue sendo só OR entre modelos).
+      // impede que "isso"/"pode ser" marcado por engano zere o escopo. `broad` NÃO é reset — e desde a F2.76 ele é INERTE
+      // na dimensão modelo (alternativas vêm de `modelos[]`; nunca reintroduzir OR-de-token).
       const topicChangeThisTurn = (): boolean => llmFirst && brainVU()?.understanding.isTopicChange === true && !isShortAffirmationBlock(leadMessage);
       const searchScopeThisTurn = (): CommercialConstraints => topicChangeThisTurn() ? currentConstraints : commercialConstraints;
       const effectiveSearchScopeThisTurn = (): CommercialConstraints => { const base = searchScopeThisTurn(); return sufficientForStockSearch(base) ? base : (moreOptionsDerivedScope ?? base); };
@@ -2023,7 +2033,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // aproximado). A identidade do modelo é EXATA (catalog-utils.modelIdentityMatches), nunca substring.
       const buildKnownModels = (): Map<string, KnownVehicleModel> => {
         const m = new Map<string, KnownVehicleModel>();
-        for (const f of facts) { if (!f.ok) continue; if (f.tool === "stock_search") for (const v of f.data.items) m.set(v.vehicleKey, { marca: v.marca ?? null, modelo: v.modelo ?? null, ano: v.ano ?? null }); if (f.tool === "vehicle_details") m.set(f.data.vehicle.vehicleKey, { marca: f.data.vehicle.marca ?? null, modelo: f.data.vehicle.modelo ?? null, ano: f.data.vehicle.ano ?? null }); }
+        for (const f of facts) { if (!f.ok) continue; if (f.tool === "stock_search") for (const v of stockSearchGroundableVehicles(f.data)) m.set(v.vehicleKey, { marca: v.marca ?? null, modelo: v.modelo ?? null, ano: v.ano ?? null }); if (f.tool === "vehicle_details") m.set(f.data.vehicle.vehicleKey, { marca: f.data.vehicle.marca ?? null, modelo: f.data.vehicle.modelo ?? null, ano: f.data.vehicle.ano ?? null }); }
         for (const it of contextState.lastRenderedOfferContext?.items ?? []) m.set(it.vehicleKey, { marca: it.marca ?? null, modelo: it.modelo ?? null, ano: it.ano ?? null });
         for (const id of identities) m.set(id.vehicleKey, { marca: id.marca ?? null, modelo: id.modelo ?? null, ano: id.ano ?? null });
         return m;
@@ -2408,7 +2418,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const repairTurn = llmFirst && lockedU?.primaryIntent === "conversation_repair";
             // ⭐"mais opções"/busca que voltou VAZIA (todas as stock_search do turno com 0 itens): a resposta certa é a
             // LLM ser HONESTA em texto (sem re-listar os mesmos), nunca o engine escrever (recovery_stock_empty).
-            const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
+            // F2.76 def#2: "vazio" só quando NÃO há veículo GROUNDÁVEL (items ∪ familyCandidates). Um turno family_candidate
+            // (items:[] mas há candidatos de família REAIS) NÃO é busca vazia — não pode receber o feedback "voltou VAZIA".
+            const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && stockSearchGroundableVehicles(f.data).length > 0);
             if (sensitiveAnswerTurn) {
               effFeedback = `ATO ATUAL = sensitive_data. O cliente acabou de fornecer um dado sensivel validado e armazenado por referencia NESTE bloco. Motivo da rejeicao anterior: ${authored.feedback} Reemita understanding com primaryIntent="sensitive_data", zero capabilities e evidence copiada do bloco atual. Confirme o recebimento SEM repetir valor/token/ref; depois conduza com no maximo UMA pergunta util. Nao use tool comercial, nao volte a perguntar o mesmo dado e nao herde visit/financing da memoria como ato atual.`;
               keepRetrying = true;

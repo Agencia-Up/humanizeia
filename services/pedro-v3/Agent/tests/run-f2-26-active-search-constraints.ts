@@ -44,10 +44,14 @@ const executed: QueryCall[] = [];
 const runQuery = async (call: QueryCall): Promise<QueryResult> => {
   executed.push(call);
   if (call.tool === "stock_search") {
-    const inp = call.input as { marca?: string; modelo?: string; tipo?: string; precoMax?: number; cambio?: string; popular?: boolean; broad?: boolean; excludeKeys?: string[] };
+    const inp = call.input as { marca?: string; modelo?: string; modelos?: string[]; tipo?: string; precoMax?: number; cambio?: string; popular?: boolean; broad?: boolean; excludeKeys?: string[] };
     let items = STOCK.slice();
     if (inp.marca) { const m = norm(inp.marca); items = items.filter((v) => { const b = norm(v.marca); return b.includes(m) || m.includes(b); }); }
-    if (inp.modelo) { const toks = norm(inp.modelo).split(/\s+/).filter(Boolean); items = items.filter((v) => { const vt = norm(`${v.marca} ${v.modelo}`); return inp.broad ? toks.some((t) => vt.includes(t)) : toks.every((t) => vt.includes(t)); }); }
+    // F2.76 def#1: modelos[] = alternativas (cada uma all-tokens; OR entre elas); modelo único = all-tokens. broad inerte.
+    const modelAlts: string[][] = (Array.isArray(inp.modelos) && inp.modelos.length > 0)
+      ? inp.modelos.map((mm) => norm(mm).split(/\s+/).filter(Boolean)).filter((t) => t.length > 0)
+      : (inp.modelo ? [norm(inp.modelo).split(/\s+/).filter(Boolean)].filter((t) => t.length > 0) : []);
+    if (modelAlts.length > 0) items = items.filter((v) => { const vt = norm(`${v.marca} ${v.modelo}`); return modelAlts.some((toks) => toks.every((t) => vt.includes(t))); });
     if (inp.tipo) items = items.filter((v) => v.tipo === inp.tipo);
     if (typeof inp.precoMax === "number") items = items.filter((v) => (v.preco ?? Infinity) <= inp.precoMax!);
     if (inp.cambio) items = items.filter((v) => (inp.cambio === "automatic") === /autom/i.test(v.cambio ?? ""));
@@ -138,11 +142,11 @@ async function main(): Promise<void> {
   {
     const c = conv(); await c.seed();
     const t1 = await c.t("Tem Palio? Ou Gol?");
-    check("[T1a] busca por modelos Palio/Gol (broad)", has(String(t1.stockInput?.modelo ?? ""), "palio") && has(String(t1.stockInput?.modelo ?? ""), "gol"), `input=${JSON.stringify(t1.stockInput)}`);
+    check("[T1a] busca por modelos Palio/Gol (modelos[])", (((t1.stockInput as { modelos?: string[] })?.modelos ?? []).some((m) => has(m, "palio"))) && (((t1.stockInput as { modelos?: string[] })?.modelos ?? []).some((m) => has(m, "gol"))), `input=${JSON.stringify(t1.stockInput)}`);
     check("[T1b] filtro ativo persistido com os modelos", (t1.activeAfter?.modelos?.length ?? 0) === 2);
 
     const t2 = await c.t("Até 50 mil");
-    check("[T2a] (#1) preserva modelos + adiciona teto=50000", (t2.stockInput?.precoMax === 50000) && has(String(t2.stockInput?.modelo ?? ""), "gol"), `input=${JSON.stringify(t2.stockInput)}`);
+    check("[T2a] (#1) preserva modelos + adiciona teto=50000", (t2.stockInput?.precoMax === 50000) && (((t2.stockInput as { modelos?: string[] })?.modelos ?? []).some((m) => has(m, "gol"))), `input=${JSON.stringify(t2.stockInput)}`);
     check("[T2b] ativo tem modelos + precoMax", (t2.activeAfter?.modelos?.length ?? 0) === 2 && t2.activeAfter?.precoMax === 50000);
 
     const t3 = await c.t("Que seja volks");
