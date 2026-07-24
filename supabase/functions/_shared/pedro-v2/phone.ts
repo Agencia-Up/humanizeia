@@ -133,6 +133,33 @@ export function resolveUazapiPhone(payload: any): string {
   return remoteJidToPhone(resolveUazapiRemoteJid(payload));
 }
 
+// Texto da mensagem de entrada (uazapi/baileys), na MESMA precedencia de campos
+// que o pickText do orquestrador. Fonte unica compartilhada — usada pelo webhook
+// para reconhecer o "Ok" do vendedor com isSellerAckText SEM duplicar a regra.
+export function resolveUazapiText(payload: any): string {
+  const message = firstMessageLike(payload);
+  return firstNonEmpty([
+    message?.body,
+    message?.text,
+    message?.caption,
+    message?.message?.conversation,
+    message?.message?.extendedTextMessage?.text,
+    typeof message?.content === "string" ? message?.content : "",
+    payload?.text,
+    payload?.body,
+    payload?.caption,
+    payload?.message?.conversation,
+    payload?.message?.extendedTextMessage?.text,
+    payload?.message?.text,
+    payload?.message?.body,
+    payload?.data?.message?.conversation,
+    payload?.data?.message?.extendedTextMessage?.text,
+    payload?.data?.text,
+    payload?.data?.body,
+    typeof payload?.content === "string" ? payload?.content : "",
+  ]);
+}
+
 export function isSellerAckText(value?: string | null): boolean {
   const raw = String(value || "");
   const text = raw.toLowerCase().trim();

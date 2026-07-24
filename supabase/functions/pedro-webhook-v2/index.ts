@@ -12,6 +12,8 @@ import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_s
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes, PEDRO_V3_ONLY } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, enrichAdReferralWithSemanticContext, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext, type PedroV3AdReferral } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
+import { resolveUazapiPhone, resolveUazapiText } from "../_shared/pedro-v2/phone.ts";
+import { handleSellerInbound } from "../_shared/pedro-v2/transferRouter.ts";
 import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
 import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
@@ -559,6 +561,42 @@ Deno.serve(async (req) => {
     .eq("user_id", waInstance.user_id);
 
   const agentsList = Array.isArray(allAgents) ? allAgents : [];
+
+  // ── CONFIRMACAO OPERACIONAL DO VENDEDOR (antes de selectActiveAgent) ─────────
+  // Incidente 24/07 (conta WA / Wa Duda): o agente foi desativado (is_active=false)
+  // com a instancia ainda conectada; os vendedores Luiz responderam "Ok" e a
+  // transferencia NUNCA confirmou, porque selectActiveAgent retorna null p/ agente
+  // inativo e o webhook dava return ANTES de qualquer tratamento do vendedor.
+  //
+  // A confirmacao do vendedor e OPERACIONAL, nao conversacional: precisa funcionar
+  // mesmo com a IA pausada/agente inativo, e NUNCA pode acionar V2/V3. Reutiliza a
+  // regra existente (isSellerAckText) + a saga compartilhada (confirmSellerAck) —
+  // sem criar segundo parser/segunda regra. Escopo por tenant (waInstance.user_id),
+  // instancia (agente vinculado, mesmo inativo, so p/ priorizacao) e vendedor (tel).
+  {
+    // Agente vinculado a ESTA instancia, ATIVO OU NAO — so para priorizar entre
+    // linhas-irmas do mesmo vendedor. A inatividade nunca bloqueia a confirmacao.
+    const linkedAgent = agentsList.find((a: any) => agentUsesInstance(a, waInstance.id)) || null;
+    const sellerDecision = await handleSellerInbound(supabase, {
+      user_id: waInstance.user_id,
+      agent_id: linkedAgent?.id || null,
+      seller_phone: resolveUazapiPhone(payload),
+      seller_text: resolveUazapiText(payload),
+      dry_run: payload?.dry_run === true,
+    });
+    if (sellerDecision.isSeller) {
+      // Remetente e vendedor deste tenant -> resposta operacional, NUNCA V2/V3.
+      const level = sellerDecision.route === "seller_ack_failed" ? "error" : "log";
+      console[level](`[Webhook] ${sellerDecision.route} seller=${sellerDecision.seller_id ?? "?"} transfer=${sellerDecision.transfer_id ?? "-"} instance=${waInstance.id} confirmed=${sellerDecision.confirmed}`);
+      return jsonResponse({
+        ok: true, accepted: true, routed: sellerDecision.route,
+        confirmed: sellerDecision.confirmed, transfer_id: sellerDecision.transfer_id,
+        reason: sellerDecision.reason, build: PEDRO_V2_BUILD,
+      });
+    }
+    // Nao e vendedor -> segue o fluxo normal do lead (selectActiveAgent abaixo).
+  }
+
   const agent = selectActiveAgent(agentsList, waInstance.id);
 
   if (agentError || !agent) {

@@ -1,4 +1,4 @@
-import { phonesMatch } from "./phone.ts";
+import { phonesMatch, isSellerAckText } from "./phone.ts";
 import { resolveTransferFailures } from "./logTransferFailure.ts";
 import { resolveLeadInterestVehicle } from "../transfer/interestVehicle.ts";
 import { resolveAiKey } from "../aiKeys.ts";
@@ -188,6 +188,67 @@ export async function confirmSellerAck(
     .neq("id", pendingTransfer.id);
 
   return { ok: true, seller: matches[0], transfer: pendingTransfer, confirmed: true };
+}
+
+// Decisao UNICA do inbound de vendedor no webhook operacional. Compoe a REGRA de
+// confirmacao existente (isSellerAckText) com a SAGA compartilhada (confirmSellerAck)
+// num so lugar, para os webhooks nao reimplementarem roteamento nem divergirem a
+// lista de "Ok". Devolve a rota e SE o remetente e vendedor deste tenant.
+//
+// Garantias (incidente 24/07, conta WA / Wa Duda):
+//  - independe de agente ativo (o chamador ja roda ESTA funcao antes de escolher agente);
+//  - confirma SOMENTE com texto reconhecido por isSellerAckText;
+//  - idempotente: transferencia ja confirmada nao reaparece (confirmSellerAck filtra
+//    is_confirmed=false), entao "Ok" repetido cai em no_pending_transfer;
+//  - isolado por tenant: confirmSellerAck escopa por user_id e to_member_id do tenant;
+//  - NUNCA aciona V2/V3 — quem chama so encaminha lead quando isSeller === false.
+export async function handleSellerInbound(
+  supabase: any,
+  input: { user_id: string; agent_id?: string | null; seller_phone: string; seller_text: string; dry_run?: boolean },
+): Promise<{
+  isSeller: boolean;
+  route:
+    | "not_seller"
+    | "seller_message_ignored"
+    | "seller_ack_dry_run"
+    | "seller_ack_confirmation"
+    | "seller_ack_no_pending"
+    | "seller_ack_failed";
+  confirmed: boolean;
+  transfer_id: string | null;
+  seller_id: string | null;
+  reason: string | null;
+}> {
+  const shouldConfirm = isSellerAckText(input.seller_text);
+  const ack = await confirmSellerAck(supabase, {
+    user_id: input.user_id,
+    agent_id: input.agent_id ?? null,
+    seller_phone: input.seller_phone,
+    commit: shouldConfirm && input.dry_run !== true,
+  });
+  const seller_id = ack?.seller?.id ?? null;
+  const transfer_id = ack?.transfer?.id ?? null;
+
+  // Nao achou vendedor pelo telefone canonico -> NAO e vendedor: segue fluxo de lead.
+  if (ack?.reason === "seller_not_found") {
+    return { isSeller: false, route: "not_seller", confirmed: false, transfer_id: null, seller_id: null, reason: "seller_not_found" };
+  }
+  // Vendedor, mas a mensagem nao e confirmacao -> interna, ignorada. Nunca confirma.
+  if (!shouldConfirm) {
+    return { isSeller: true, route: "seller_message_ignored", confirmed: false, transfer_id, seller_id, reason: "not_ack" };
+  }
+  // Validacao/fixture: prova que chega na saga sem mutar (commit foi false).
+  if (input.dry_run === true) {
+    return { isSeller: true, route: "seller_ack_dry_run", confirmed: false, transfer_id, seller_id, reason: transfer_id ? "would_confirm" : "no_pending_transfer" };
+  }
+  if (ack?.confirmed) {
+    return { isSeller: true, route: "seller_ack_confirmation", confirmed: true, transfer_id, seller_id, reason: null };
+  }
+  if (ack?.reason === "no_pending_transfer") {
+    return { isSeller: true, route: "seller_ack_no_pending", confirmed: false, transfer_id, seller_id, reason: "no_pending_transfer" };
+  }
+  // Vendedor identificado, confirmou, mas a saga falhou (lead/transfer update). Observavel.
+  return { isSeller: true, route: "seller_ack_failed", confirmed: false, transfer_id, seller_id, reason: ack?.reason ?? "unknown" };
 }
 
 // Monta um briefing rico para o vendedor humano assumir/retomar o lead. Usa a
