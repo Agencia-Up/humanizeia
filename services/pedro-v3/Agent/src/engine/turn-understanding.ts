@@ -18,7 +18,7 @@ import { isVisitAct } from "./visit-semantics.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { FrameSignals, TurnUnderstanding, TurnCapability, TurnUnderstandingEvidence, PrimaryIntent, TurnSubjectKind } from "../domain/agent-brain.ts";
-import { validateTenantPolicyDecision } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import { validateTenantPolicyDecision } from "../domain/tenant-policy-contract.ts";
 
 // ── Validação de evidência ──────────────────────────────────────────────────────────────────────────────────────
 function quoteInBlock(block: string, quote: string): boolean {

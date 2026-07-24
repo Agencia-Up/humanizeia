@@ -10,7 +10,7 @@
 
 import type { Awaitable } from "./ports.ts";
 import type { SecretRef } from "./credential-provider.ts";
-import type { TenantFunnelPolicy } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import type { TenantFunnelPolicy } from "./tenant-policy-contract.ts";
 import type { AgentResponseSchedule } from "./agent-response-schedule.ts";
 import type { AgentProfileType } from "./agent-profile.ts";
 

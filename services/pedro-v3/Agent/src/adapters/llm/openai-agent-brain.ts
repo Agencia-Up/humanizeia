@@ -21,8 +21,8 @@ import type { KnowledgeGap } from "../../domain/knowledge.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
 import { getBrazilChannelTime } from "../../engine/channel-time.ts";
 export { getBrazilChannelTime } from "../../engine/channel-time.ts";
-import type { TenantPolicyDecision } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
-import { TENANT_POLICY_ACTIONS } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import type { TenantPolicyDecision } from "../../domain/tenant-policy-contract.ts";
+import { TENANT_POLICY_ACTIONS } from "../../domain/tenant-policy-contract.ts";
 
 export type OpenAiAgentBrainConfig = {
   readonly model: string;

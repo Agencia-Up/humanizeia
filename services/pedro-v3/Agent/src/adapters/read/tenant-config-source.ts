@@ -23,7 +23,7 @@ import type {
 } from "../../domain/read-ports.ts";
 import { makeSecretRef } from "../../domain/credential-provider.ts";
 import type { SecretRef } from "../../domain/credential-provider.ts";
-import { normalizeTenantPolicies } from "../../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import { normalizeTenantPolicies } from "../../domain/tenant-policy-contract.ts";
 import { normalizeAgentResponseSchedule } from "../../domain/agent-response-schedule.ts";
 import { normalizeAgentProfileType, isGeneralSdrProfile } from "../../domain/agent-profile.ts";
 import {

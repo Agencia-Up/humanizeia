@@ -20,7 +20,7 @@
 import type { DecisionMutation, ProposedEffectPlan, QueryCall, QueryOutputMap, ResponseDraft, TurnRelation } from "./decision.ts";
 import type { SlotName, Iso } from "./types.ts";
 import type { KnowledgeGap } from "./knowledge.ts";
-import type { TenantPolicyDecision } from "../../../../../src/lib/pedroFunnelPolicyContract.ts";
+import type { TenantPolicyDecision } from "./tenant-policy-contract.ts";
 
 export const WORKING_MEMORY_SCHEMA_VERSION = 1 as const;
 
