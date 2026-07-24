@@ -22,6 +22,8 @@ import { ReadCache } from "../src/adapters/read/cache.ts";
 import { createReadQueryRunner } from "../src/engine/read-query-runner.ts";
 import { FakeV2ReadGateway } from "../src/adapters/read/fakes/fake-v2-read-gateway.ts";
 import { FakeCredentialProvider } from "../src/adapters/read/fakes/fake-credential-provider.ts";
+import { V2PlaintextApiKeyReader } from "../src/adapters/read/v2-api-key-reader.ts";
+import { parseBndvCredentials } from "../src/adapters/read/bndv-auth.ts";
 import { SafeHttpClient, type DnsResolver, type HttpTransport, type Sleeper } from "../src/adapters/read/http-client.ts";
 import type { OwnedAgentRow, StockIntegrationMetadataRow } from "../src/adapters/read/v2-read-gateway.ts";
 import type { NormalizedVehicle } from "../src/domain/read-ports.ts";
@@ -109,6 +111,22 @@ function makeBndvLoginLoader(opts: { loginStatus?: number; loginBody?: string; l
 
 async function main(): Promise<void> {
   console.log("== F2.73: honestidade de estoque (falha != vazio) ==");
+
+  // ── PARTE 0 — DECRYPTOR: preserva external_key+password (incidente Mônaco: era descartado -> SECRET_NOT_FOUND) ──
+  const reader = new V2PlaintextApiKeyReader();
+  const ctx = (provider: string) => ({ tenantId: TENANT, integrationId: "int-bndv", provider });
+  const dLegacy = await reader.decryptApiKey(JSON.stringify({ api_token: "legacy-bearer-xyz" }), ctx("bndv"));
+  check("[D-1] BNDV {api_token} -> token flat (Icom/legado PRESERVADO)", dLegacy === "legacy-bearer-xyz", String(dLegacy));
+  const dLogin = await reader.decryptApiKey(JSON.stringify({ external_key: "EK-36chars", password: "PW8" }), ctx("bndv"));
+  const dLoginParsed = dLogin ? parseBndvCredentials(JSON.parse(dLogin)) : null;
+  check("[D-2] BNDV {external_key,password} -> material COM ambos (o fix da Mônaco; pegaria o bug)",
+    !!dLoginParsed && dLoginParsed.external_key === "EK-36chars" && dLoginParsed.password === "PW8", String(dLogin));
+  const dNoPwd = await reader.decryptApiKey(JSON.stringify({ external_key: "EK" }), ctx("bndv"));
+  check("[D-3] BNDV {external_key} sem password -> null (fail-closed)", dNoPwd === null, String(dNoPwd));
+  const dRaw = await reader.decryptApiKey("raw-token-string", ctx("bndv"));
+  check("[D-4] BNDV raw string -> o próprio raw (compat v2)", dRaw === "raw-token-string", String(dRaw));
+  const dEmpty = await reader.decryptApiKey("", ctx("bndv"));
+  check("[D-5] BNDV vazio -> null (fail-closed)", dEmpty === null, String(dEmpty));
 
   // ── PARTE 1 — LOADER: falha-de-carga LANÇA; array presente NÃO lança ────────────────────────
   const ref = { tenantId: TENANT, agentId: AGENT };

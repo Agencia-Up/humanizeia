@@ -55,8 +55,20 @@ export class V2PlaintextApiKeyReader implements SecretDecryptor {
     }
 
     if (provider === "bndv") {
-      // BNDV: token bearer. JSON -> api_token; raw escalar -> o proprio raw (como no v2).
-      if (obj) return firstNonEmptyString(obj, ["api_token", "token"]);
+      // BNDV tem DOIS modos (ver bndv-auth.ts): token bearer LEGADO e /login NOVO.
+      if (obj) {
+        // Legado (Icom/Bruno): devolve o token flat — comportamento anterior PRESERVADO byte a byte.
+        const token = firstNonEmptyString(obj, ["api_token", "token"]);
+        if (token) return token;
+        // ⭐NOVO (incidente Mônaco 2026-07-24): a credencial de /login (external_key+password) PRECISA chegar ao
+        // loader. Antes o decryptor a DESCARTAVA (retornava null p/ objeto sem api_token) -> SECRET_NOT_FOUND ->
+        // "estoque indisponível" mesmo com credencial válida. Aqui devolvemos o JSON íntegro dos campos de login
+        // p/ o loader resolver o /login. NUNCA logamos o conteúdo.
+        const extKey = firstNonEmptyString(obj, ["external_key", "externalKey"]);
+        const pwd = firstNonEmptyString(obj, ["password", "senha"]);
+        if (extKey && pwd) return JSON.stringify({ external_key: extKey, password: pwd });
+        return null;   // objeto BNDV sem credencial reconhecível -> fail-closed
+      }
       const raw = ciphertext.trim();
       return raw === "" ? null : raw;
     }
