@@ -402,7 +402,9 @@ async function main(): Promise<void> {
     check("P1 cor fora do léxico: fato 'Bordô' + texto 'bordô' -> sem deny (valor do fato presente)", !hasAttr(PolicyEngine.validateResponse(txt("Ele é bordô, bem conservado."), fB, dec, detailCtx(selB, "qual a cor?"))), "");
     const corRef: RenderedResponse = { draft: { parts: [{ type: "vehicle_ref", vehicleKey: bordo.vehicleKey, field: "cor" }] }, text: "Ele é Bordô." };
     check("P1 cor fora do léxico: vehicle_ref(cor) -> sem deny + renderiza 'Bordô'", !hasAttr(PolicyEngine.validateResponse(corRef, fB, dec, detailCtx(selB, "qual a cor?"))) && ResponseRenderer.render({ parts: [{ type: "vehicle_ref", vehicleKey: bordo.vehicleKey, field: "cor" }] }, fB, selB) === "Bordô", "");
-    check("P1 cor: deferral explícito 'vou confirmar a cor' -> sem deny", !hasAttr(PolicyEngine.validateResponse(txt("Vou confirmar a cor certinha e já te falo!"), fB, dec, detailCtx(selB, "qual a cor?"))), "");
+    // ⭐F2.80 (prioridade 3): a saída "vou confirmar depois" DEIXOU de ser aceita. O fato ('Bordô') está no turno —
+    // adiar é dodge, e nenhum mecanismo faria essa confirmação acontecer. Contrato antigo invertido de propósito.
+    check("P1 cor: 'vou confirmar a cor e já te falo' com o fato EM MÃOS -> deny (era falso escape)", hasAttr(PolicyEngine.validateResponse(txt("Vou confirmar a cor certinha e já te falo!"), fB, dec, detailCtx(selB, "qual a cor?"))), "");
     // ── CÂMBIO fora do léxico binário (fato Manual, texto 'CVT') -> deny.
     const gol: VehicleFact = { ...STOCK[0], vehicleKey: "vw|gol|2015", cambio: "Manual", cor: "Prata", ano: 2015 };
     const fG: QueryResult[] = [{ ok: true, tool: "vehicle_details", source: "fake", data: { vehicle: gol } }];

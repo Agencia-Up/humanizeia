@@ -418,11 +418,17 @@ async function main(): Promise<void> {
   }
 
   // [9a] LIMITE do loop: cérebro nunca finaliza -> fallback seguro (não trava, não silêncio).
+  // ⭐F2.81 (prioridade 4): a asserção deixou de exigir `brainSteps === 3`. Aquele número era um EFEITO COLATERAL do
+  // teto antigo (uma observação de controle por passo até esgotar brainMaxSteps), não o contrato. Com o reuso estrito
+  // do resultado, um cérebro que só repete é encerrado ANTES de queimar todos os passos — encerrar mais cedo é o
+  // comportamento desejado, não uma regressão. O que o teste tem de garantir é o CONTRATO: saída não silenciosa,
+  // limitada e sem nunca ultrapassar brainMaxSteps.
   {
     const p = freshPersistence(); const brain = new ScriptedAgentBrain(); const prep = new FixedPreparer();
     brain.setResponder(() => q({ tool: "stock_search", input: { tipo: "suv" } })); // sempre query
     const r = await runTurn({ persistence: p, clock: new FakeClock(NOW), brain, llm: llmWith(plainText), businessInfo: new FakeBusinessInfo(NO_STORE_INFO), preparer: prep, conv: "c9", turnId: "c9-t1", leadText: "oi", brainMaxSteps: 3, omitUnderstanding: true, eventSeq: 1 });
-    check("[9a] loop limite: committed com fallback + brainSteps=3", r.status === "committed" && r.brainSteps === 3 && r.composedText.length > 0, JSON.stringify(r));
+    check("[9a] loop limite: committed com fallback, sem silencio e LIMITADO (nunca passa de brainMaxSteps)",
+      r.status === "committed" && r.composedText.length > 0 && r.brainSteps >= 1 && r.brainSteps <= 3, JSON.stringify(r));
   }
   // [9b] TIMEOUT do passo do cérebro -> fallback seguro.
   {

@@ -52,8 +52,9 @@ console.log("== F2.54: contratos achados no audit real DeepSeek ==");
     claimExtractor: extractor,
   });
   const input = constraintsToStockInput(c);
-  check("[H-1] hibrido e requisito comercial explicito", c.hibrido === true && c.tipo === "sedan" && c.precoMax === 120000, JSON.stringify(c));
-  check("[H-2] busca preserva hibrido no contrato da tool", input.hibrido === true, JSON.stringify(input));
+  // F2.79: a propulsao virou dimensao TIPADA (combustivel) — mesmo requisito RIGIDO, agora generico (diesel/flex/...).
+  check("[H-1] hibrido e requisito comercial explicito (tipado)", c.combustivel === "hibrido" && c.tipo === "sedan" && c.precoMax === 120000, JSON.stringify(c));
+  check("[H-2] busca preserva a propulsao no contrato da tool", input.combustivel === "hibrido", JSON.stringify(input));
 }
 
 {

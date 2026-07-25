@@ -11,6 +11,7 @@ import { normalizeText } from "./catalog-utils.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, TurnInterpretation } from "../domain/decision.ts";
+import type { AdIdentityTarget } from "../domain/operational-context.ts";
 import type { VehicleType } from "../domain/types.ts";
 
 // Taxonomia de MERCADO ordenada por modelo mais LONGO primeiro (casa "Onix Plus" antes de "Onix", "Corolla Cross" antes
@@ -71,7 +72,7 @@ export function extractAdVehicleConstraints(
 
 // P0-A (audit Codex smoke): anos do texto do anúncio (só 4 dígitos plausíveis). Dica que, ATERRADA num veículo EXATO do
 // estoque, vira a IDENTIDADE de referência do anúncio (marca/modelo/ano). PURO.
-function adYears(text: string): number[] {
+export function adYears(text: string): number[] {
   const out: number[] = [];
   for (const m of normalizeText(text).match(/\b(?:19|20)\d{2}\b/g) ?? []) { const n = Number(m); if (n >= 1990 && n <= 2035) out.push(n); }
   return out;
@@ -208,4 +209,44 @@ export function sanitizeAdContext(raw: unknown, capturedAtTurn: number): AdConte
     semanticSource,
     capturedAtTurn,
   };
+}
+
+const AD_IDENTITY_STOPWORDS = new Set([
+  "ano", "modelo", "versao", "veiculo", "carro", "de", "do", "da", "dos", "das", "com",
+]);
+
+function identityTokens(value: string): string[] {
+  return normalizeText(value).split(" ").filter((t) => t.length > 0 && !AD_IDENTITY_STOPWORDS.has(t));
+}
+
+/**
+ * Builds the structured identity declared by the ad. Variant terms are read
+ * only from `vehicleQuery`, the semantic extraction dedicated to the image.
+ * Generic title/body copy may identify the base model but can never invent a
+ * trim. This keeps compound base models (Grand Siena, Corolla Cross, City
+ * Hatchback) distinct from actual versions.
+ */
+export function buildAdIdentityTarget(ad: AdContext | null | undefined): AdIdentityTarget | null {
+  if (!ad) return null;
+  const fullText = adText(ad);
+  const market = resolveAdVehicleFromMarket(fullText);
+  if (!market) return null;
+
+  const semanticIdentity = typeof ad.vehicleQuery === "string" && ad.vehicleQuery.trim()
+    ? ad.vehicleQuery.trim()
+    : null;
+  const years = adYears(semanticIdentity ?? fullText);
+  const ano = years.length > 0 ? years[years.length - 1] : null;
+  const identity = semanticIdentity ?? [market.marca, market.modelo, ano].filter(Boolean).join(" ");
+
+  const excluded = new Set([
+    ...identityTokens(market.marca),
+    ...identityTokens(market.modelo),
+    ...(ano == null ? [] : [String(ano)]),
+  ]);
+  const variantTokens = semanticIdentity
+    ? [...new Set(identityTokens(semanticIdentity).filter((t) => !excluded.has(t)))]
+    : [];
+
+  return { identity, marca: market.marca || null, modelo: market.modelo, ano, variantTokens };
 }

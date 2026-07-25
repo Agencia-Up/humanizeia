@@ -87,6 +87,7 @@ export interface TenantConfigSource {
 // ADIÇÕES F2.5.2B - ESTOQUE, DETALHES E FOTOS
 // ============================================================================
 import type { VehicleType, VehicleFact, TransmissionPreference } from "./types.ts";
+import type { FuelKind } from "./fuel.ts";
 
 export type TypedVehicleType = {
   readonly value: VehicleType;
@@ -115,9 +116,10 @@ export type NormalizedVehicle = {
 export type StockSearchFilters = {
   readonly tipo?: VehicleType;
   readonly cambio?: TransmissionPreference;
-  // Propulsão explicitamente solicitada pelo lead. Hoje só modelamos híbrido,
-  // pois é o requisito recorrente cujo contrário (combustão comum) não pode ser
-  // apresentado como compatível.
+  // ⭐F2.79: PROPULSÃO tipada e genérica (diesel/flex/gasolina/etanol/hibrido/eletrico). Filtro RÍGIDO:
+  // um veículo com combustível DESCONHECIDO nunca casa (fail-closed) — assim "diesel" nunca é presumido.
+  readonly combustivel?: FuelKind;
+  /** @deprecated alias de ENTRADA legado; `normalizeStockSearchInput` dobra em `combustivel:"hibrido"`. */
   readonly hibrido?: boolean;
   readonly precoMax?: number;
   readonly modelo?: string;
@@ -146,6 +148,17 @@ export type StockSearchResult = {
   readonly filtersUsed: StockSearchFilters;
   readonly familyCandidates?: readonly VehicleFact[];
   readonly matchKind?: StockMatchKind;
+  // ⭐F2.79 (capacidade de VERIFICAÇÃO): quantos veículos do pool tinham o atributo conhecido. Contado
+  // APÓS os filtros objetivos e ANTES do filtro de combustível — mede a fonte, não o resultado.
+  readonly attributeCoverage?: { readonly combustivel: { readonly known: number; readonly total: number } };
+  // Dimensões PEDIDAS que a fonte não sustenta (ex.: pediu diesel mas quase nenhum item tem combustível).
+  readonly unverifiableFilters?: readonly "combustivel"[];
+  // ⭐A LLM só pode AFIRMAR AUSÊNCIA ("não temos diesel") quando isto é true: o filtro foi realmente
+  // aplicado nesta execução E a cobertura da fonte sustenta a conclusão. Vazio + false = "não consegui confirmar".
+  readonly absenceAssertable?: boolean;
+  // ESCOPO do que foi consultado: "global" = so o combustivel filtrou (autoriza "nao temos diesel");
+  // "restricted" = havia marca/modelo/tipo/preco/ano/cambio/exclusoes -> so autoriza ausencia NAQUELE recorte.
+  readonly absenceScope?: "global" | "restricted";
 };
 
 export interface StockSource {

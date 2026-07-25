@@ -179,7 +179,11 @@ export function buildTenantCatalog(facts: readonly VehicleFact[]): TenantCatalog
       model: fact.modelo,
       aliases: [
         fact.modelo,
-        `${fact.marca} ${fact.modelo}`
+        `${fact.marca} ${fact.modelo}`,
+        ...(fact.versao ? [
+          `${fact.modelo} ${fact.versao}`,
+          `${fact.marca} ${fact.modelo} ${fact.versao}`,
+        ] : []),
       ]
     });
   }

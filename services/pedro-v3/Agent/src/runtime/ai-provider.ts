@@ -72,7 +72,12 @@ export function resolveAiProviderRuntime(env: NodeJS.ProcessEnv): AiProviderRunt
     endpointUrl: "https://api.openai.com/v1/chat/completions",
     allowedHosts: Object.freeze(["api.openai.com"]),
     model,
-    retryModel: modelValue(env.PEDRO_V3_OPENAI_RETRY_MODEL, "gpt-4.1"),
+    // ⭐FASE 5 (custo): o retry cai no PRÓPRIO modelo principal quando não há env explícita — NUNCA num default
+    // silencioso de `gpt-4.1` (5x mais caro que o mini). O smoke real da Wa mostrou `gpt-4.1-2025-04-14` nas métricas
+    // mesmo com o principal cravado em mini: todo retry do cérebro escalava de modelo sem ninguém pedir. Espelha a
+    // ramificação DeepSeek (linha 64), que já caía no próprio `model`. Escalar de modelo continua possível, mas só
+    // por decisão EXPLÍCITA via PEDRO_V3_OPENAI_RETRY_MODEL.
+    retryModel: modelValue(env.PEDRO_V3_OPENAI_RETRY_MODEL, model),
     tokenParameter: "max_completion_tokens",
   });
 }

@@ -90,7 +90,7 @@ function finWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnders
 }
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
-const photoBrain: BrainResponder = (frame, obs) => {
+const photoBrainFor = (vehicleKey: string): BrainResponder => (frame, obs) => {
   const understanding: TurnUnderstanding = {
     ...U("request_photos"), requestedCapabilities: ["send_photos"], subject: "selected_vehicle", subjectSource: "memory",
     evidence: [{ capability: "send_photos", quote: (frame.block ?? "").trim() || "fotos" }],
@@ -98,7 +98,7 @@ const photoBrain: BrainResponder = (frame, obs) => {
   const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
   return photo?.data.photoIds.length
     ? finWithEffects([txt("Aqui estao as fotos que voce pediu.")], "send_vehicle_photos", understanding, [reply, media(photo.data.vehicleKey, photo.data.photoIds)])
-    : finU([txt("Vou confirmar as fotos desse veiculo.")], "resolve_vehicle_photos", understanding);
+    : qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: vehicleKey } } }, understanding);
 };
 const searchUOf = (block: string): TurnUnderstanding => ({ primaryIntent: "search_stock", requestedCapabilities: ["stock_search"], subject: "none", subjectValue: null, subjectSource: "current_turn", evidence: [{ capability: "stock_search", quote: (block ?? "").trim().split(/\s+/).slice(0, 2).join(" ") || "tem" }], isTopicChange: false, answeredLeadQuestions: [] });
 // Busca + lista TODOS os retornados (a LLM obediente ao feedback de LISTAGEM).
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
     };
     const t1 = await c.t("Oi, tenho interesse", adResponder, { ad: adCompass });
     check("[E-1] entrada por anúncio + snapshot vazio -> apresenta o Compass 2019 (fatos frescos)", NO_FALLBACK(t1) && has(t1.outbox, "compass"), `src=${t1.src} outbox="${t1.outbox.slice(0, 120)}"`);
-    const t2 = await c.t("me manda fotos dele", photoBrain);
+    const t2 = await c.t("me manda fotos dele", photoBrainFor(COMPASS.vehicleKey));
     // O seed do anúncio roda 1 stock_search de ATERRAMENTO (F2.33 P0-A: com snapshot vazio é o que aterra a foto
     // pronominal) — o que a missão proíbe é DESVIAR (listar/oferecer em vez da foto), não o grounding interno.
     check("[E-2] foto 'dele' resolve o COMPASS do anúncio (send_media do mesmo key, sem re-lista)", t2.hasMedia && t2.mediaKey === "rm:compass" && t2.stockCalls <= 1 && !has(t2.outbox, "Encontrei estas opções"), `media=${t2.mediaKey} calls=${t2.stockCalls} outbox="${t2.outbox.slice(0, 80)}"`);
@@ -289,9 +289,9 @@ async function main(): Promise<void> {
     const c = conv();
     c.preparer.emptyCatalog = true;
     await c.t("tem onix?", searchB({ modelo: "Onix" }));
-    const t2 = await c.t("me manda fotos do onix", photoBrain);
+    const t2 = await c.t("me manda fotos do onix", photoBrainFor(ONIX.vehicleKey));
     check("[I-1] fotos do Onix com snapshot vazio (send_media, lote 1)", t2.hasMedia && t2.mediaKey === "rm:onix" && t2.mediaPhotoIds.length > 0, `media=${t2.mediaKey} n=${t2.mediaPhotoIds.length}`);
-    const t3 = await c.t("tem mais fotos?", photoBrain);
+    const t3 = await c.t("tem mais fotos?", photoBrainFor(ONIX.vehicleKey));
     check("[I-2] 'tem mais fotos?' -> PRÓXIMO lote do MESMO Onix, sem repetir, 0 stock_search", t3.hasMedia && t3.mediaKey === "rm:onix" && t3.mediaPhotoIds.length > 0 && t3.mediaPhotoIds.every((id) => !t2.mediaPhotoIds.includes(id)) && t3.stockCalls === 0, `t2=${t2.mediaPhotoIds.join(",")} t3=${t3.mediaPhotoIds.join(",")} calls=${t3.stockCalls}`);
   }
 

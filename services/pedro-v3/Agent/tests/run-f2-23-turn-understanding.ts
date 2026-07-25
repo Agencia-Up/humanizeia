@@ -405,7 +405,7 @@ async function main(): Promise<void> {
     const uPhoto = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "T-Cross", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "T-Cross" }] });
     const cap = await c.t("T-Cross", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
       ? finU([txt("Aqui estão as fotos do T-Cross.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhoto)
-      : finU([txt("Claro, vou separar pra você.")], [reply], "reply", uPending));
+      : photoResolve(T_CROSS, uPending));
     check("[IdH] resposta ao clarify de fotos com modelo exato continua pedido de foto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
   }
   {
@@ -414,7 +414,7 @@ async function main(): Promise<void> {
     const uPhotoTypo = U("request_photos", { caps: ["send_photos"], subject: "explicit_model", subjectValue: "tcroos", subjectSource: "inference", evidence: [{ capability: "send_photos", quote: "tcroos" }] });
     const cap = await c.t("tcroos", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
       ? finU([txt("Aqui estão as fotos do T-Cross.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhotoTypo)
-      : finU([txt("Entendi.")], [reply], "reply", uPendingTypo));
+      : photoResolve(T_CROSS, uPendingTypo));
     check("[IdI] resposta ao clarify de fotos tolera typo do modelo", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
   }
   {
@@ -426,7 +426,7 @@ async function main(): Promise<void> {
     const uPhotoOrdinal = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "1", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "numero 1" }] });
     const cap = await c.t("o numero 1 da lista", "ambiguous", (_frame, obs) => obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)
       ? finU([txt("Aqui estão as fotos do primeiro veículo.")], [reply, mediaEff(T_CROSS)], "send_photos", uPhotoOrdinal)
-      : finU([txt("Boa escolha.")], [reply], "reply", uPendingOrdinal));
+      : photoResolve(T_CROSS, uPendingOrdinal));
     check("[IdJ] resposta ao clarify de fotos com ordinal envia foto do item correto", cap.hasMedia && cap.mediaKey === T_CROSS.vehicleKey && /^brain_/.test(cap.src), `media=${cap.hasMedia} key=${cap.mediaKey} src=${cap.src}`);
   }
   {

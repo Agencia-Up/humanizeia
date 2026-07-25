@@ -101,5 +101,9 @@ export function ensureSendMessage(effects: readonly ProposedEffectPlan[]): Propo
 }
 
 export function isKernelQueryCall(call: CentralQueryCall): call is QueryCall {
-  return call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve" || call.tool === "crm_read";
+  return call.tool === "stock_search"
+    || call.tool === "vehicle_details"
+    || call.tool === "vehicle_photos_resolve"
+    || call.tool === "crm_read"
+    || call.tool === "knowledge_search";
 }

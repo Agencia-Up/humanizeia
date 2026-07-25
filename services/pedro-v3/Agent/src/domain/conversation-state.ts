@@ -5,6 +5,7 @@ import type {
   Id, Iso, VehicleType, TransmissionPreference, PaymentMethod, EntityReference, ConversationStage,
   SlotName, ObjectiveType, AnswerKind, SensitiveValueRef,
 } from "./types.ts";
+import type { FuelKind } from "./fuel.ts";
 import type { PersistedWorkingMemory, PhotoActionDraft } from "./agent-brain.ts";
 import { createInitialPersistedWorkingMemory } from "./agent-brain.ts";
 
@@ -125,6 +126,9 @@ export type ActiveSearchConstraints = {
   marca?: string;
   modelos?: string[];
   tipo?: VehicleType;
+  // ⭐F2.79: propulsão TIPADA. Substitui o booleano `hibrido` (mantido só para LER estado gravado antes,
+  // promovido a combustivel:"hibrido" no ponto único de leitura — nada é reescrito no banco).
+  combustivel?: FuelKind;
   precoMax?: number;
   cambio?: TransmissionPreference;
   hibrido?: boolean;
@@ -152,6 +156,29 @@ export type AdContext = {
   capturedAtTurn: number;       // turnNumber quando capturado (herança/expiração em rajada)
 };
 
+export type PersistedAdIdentityProof = {
+  vehicleKey: string;
+  adFingerprint: string;
+  searchFingerprint: string;
+  level: "family_only" | "exact_for_ad";
+};
+
+/**
+ * Veiculo cuja existencia foi aterrada por uma tool ou oferta estruturada.
+ * Isto NAO prova que ele corresponde a uma versao anunciada; essa autoridade
+ * continua exclusivamente em `adIdentityProof`.
+ *
+ * Opcional para retrocompatibilidade com estados gravados antes desta memoria.
+ */
+export type PersistedGroundedVehicleRef = {
+  vehicleKey: string;
+  marca?: string | null;
+  modelo?: string | null;
+  versao?: string | null;
+  ano?: number | null;
+  referenceable: true;
+};
+
 export type ConversationState = {
   schemaVersion: number;
   version: number; // CAS
@@ -170,6 +197,12 @@ export type ConversationState = {
   activeSearchConstraints?: ActiveSearchConstraints | null; // F2.26: filtro de busca acumulado (merge conservador entre turnos)
   adContext?: AdContext | null;        // F2.32: contexto do anúncio CTWA (persiste + herda em rajada; turno atual sempre vence)
   moreOptionsExhausted?: number; // R10-4: nº de esgotamentos consecutivos de "mais opções" (progressão; reset=0 em nova oferta)
+  // Exact ad identity proof is independent from a previously rendered offer.
+  // Missing in old states means unknown, never confirmed.
+  adIdentityProof?: PersistedAdIdentityProof | null;
+  // Existencia factual atravessa turnos mesmo quando a LLM apresentou um unico
+  // carro em linguagem natural (sem vehicle_offer_list). Nunca promove prova de anuncio.
+  groundedVehicles?: PersistedGroundedVehicleRef[];
   searchPreferences?: { transmission: TransmissionPreference | null };
   photoLedger: PhotoLedger;
   rejected: RejectedMemory;
@@ -239,6 +272,8 @@ export function createInitialState(args: {
     lastRenderedOfferContext: null,
     activeSearchConstraints: null,
     adContext: null,
+    adIdentityProof: null,
+    groundedVehicles: [],
     searchPreferences: { transmission: null },
     photoLedger: { sentByVehicle: {} },
     rejected: { modelos: [] },

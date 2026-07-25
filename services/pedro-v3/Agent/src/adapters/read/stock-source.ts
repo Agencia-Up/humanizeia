@@ -18,6 +18,7 @@ import {
   isPopularVehicleFromTaxonomy,
   resolveCanonicalVehicleModelFromTaxonomy,
 } from "./vehicle-taxonomy.ts";
+import { canonicalFuel } from "../../domain/fuel.ts";
 
 // F2.29 (P0): detecção de MOTO por FATO da fonte (categoria/carroceria) + modelo de moto conhecido. Roda ANTES dos
 // filtros de tipo. A taxonomia de CARRO não conhece motos (resolveVehicleTypeFromTaxonomy => null p/ moto), então um
@@ -102,11 +103,10 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       });
     }
 
-    // Requisito de propulsão é duro: um carro flex/gasolina não atende um
-    // pedido por híbrido, mesmo que satisfaça tipo, preço e câmbio.
-    if (filters.hibrido === true) {
-      pool = pool.filter((v) => /\b(?:hibrid|hybrid)\b/.test(normalizeText(v.fuelName ?? "")));
-    }
+    // ⭐F2.79: PROPULSÃO é requisito DURO e GENÉRICO — um flex não atende quem pediu diesel, e vice-versa.
+    // ⚠️O FILTRO e a COBERTURA ficam DEPOIS de todos os demais filtros objetivos (inclusive modelo) — ver abaixo,
+    // após a resolução de modelo/família. Medir a cobertura aqui usaria a qualidade do catálogo INTEIRO para
+    // autorizar uma conclusão sobre um SUBCONJUNTO — foi o falso verde apontado pelo Codex.
 
     if (filters.precoMax && filters.precoMax > 0) {
       pool = pool.filter(v => v.saleValue !== null && v.saleValue <= filters.precoMax!);
@@ -162,6 +162,18 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       }
     }
 
+    // ⭐F2.79 (rodada 2 do Codex): COMBUSTÍVEL é o ÚLTIMO filtro, e a COBERTURA é medida no UNIVERSO REALMENTE
+    // CONSULTADO — ou seja, depois de marca, modelo, ano, preço, tipo e câmbio. Medir antes usaria a qualidade do
+    // catálogo inteiro para autorizar uma conclusão sobre um subconjunto sem dados (falso verde).
+    const fuelUniverse = exactPool;
+    const fuelKnown = fuelUniverse.reduce((acc, v) => acc + (canonicalFuel(v.fuelName) != null ? 1 : 0), 0);
+    const fuelCoverage = { known: fuelKnown, total: fuelUniverse.length };
+    // Veículo com combustível DESCONHECIDO nunca casa (fail-closed): nada é presumido.
+    const matchesFuel = (v: NormalizedVehicle): boolean => canonicalFuel(v.fuelName) === filters.combustivel;
+    const exactPoolFinal = filters.combustivel ? exactPool.filter(matchesFuel) : exactPool;
+    // O candidato de família também respeita a propulsão pedida: quem quer diesel não aceita um flex "da família".
+    const familyPoolFinal = filters.combustivel ? familyPool.filter(matchesFuel) : familyPool;
+
     // Mapeia NormalizedVehicle[] -> VehicleFact[] (ordena por preço asc, depois maior ano; dedup estrito de vehicleKey).
     const toItems = (list: readonly NormalizedVehicle[]): VehicleFact[] => {
       const sorted = [...list].sort((a, b) => (a.saleValue! !== b.saleValue! ? a.saleValue! - b.saleValue! : b.year! - a.year!));
@@ -180,11 +192,16 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
           vehicleKey: key,
           marca: this.cleanPart(v.markName || ""),
           modelo: canonicalModel || this.cleanPart(v.modelName || ""),
+          // Preserve the provider fact; never infer trim from the model words.
+          versao: v.versionName ? this.cleanPart(v.versionName) : undefined,
           ano: v.year!,
           preco: v.saleValue!,
           km: v.km !== null ? v.km : undefined,
           cambio: v.transmissionName ? this.cleanPart(v.transmissionName) : undefined,
           cor: v.color ? this.cleanPart(v.color) : undefined,
+          // F2.79: o FATO nasce aqui. Ausente quando a fonte não informou (ou o valor é irreconhecível).
+          combustivel: canonicalFuel(v.fuelName) ?? undefined,
+          combustivelLabel: v.fuelName ? this.cleanPart(v.fuelName) : undefined,
           tipo: classifiedType.value,
           photoIds: photoIds.length > 0 ? photoIds : undefined,
         });
@@ -192,11 +209,33 @@ export class V2StockSource implements StockSource, VehicleDetailSource {
       return out;
     };
 
-    const items = toItems(exactPool);
-    const familyCandidates = items.length === 0 ? toItems(familyPool) : [];
+    const items = toItems(exactPoolFinal);
+    const familyCandidates = items.length === 0 ? toItems(familyPoolFinal) : [];
     const matchKind: "exact" | "family_candidate" | "none" = items.length > 0 ? "exact" : (familyCandidates.length > 0 ? "family_candidate" : "none");
 
-    return { items, filtersUsed: filters, familyCandidates, matchKind };
+    // ⭐F2.79 (rodada 2 do Codex): a busca declara a PRÓPRIA capacidade de sustentar uma AFIRMAÇÃO DE AUSÊNCIA.
+    // Contrato EXATO — todas as condições, sem exceção:
+    //   filtro de combustível aplicado ∧ resultado exato VAZIO ∧ nenhum candidato de família ∧ total > 0
+    //   ∧ known === total  (cobertura INTEGRAL: 1 veículo sem combustível já pode ser o diesel procurado)
+    // Cobertura de 80% NÃO prova ausência — foi o falso verde da 1ª rodada. E resultado não-vazio jamais autoriza
+    // negar (achamos o que ele pediu). `family_candidate` também não: existe algo relacionado no estoque.
+    const fuelAsked = filters.combustivel != null;
+    const coverageTotal = fuelCoverage.total > 0 && fuelCoverage.known === fuelCoverage.total;
+    const absenceAssertable = fuelAsked && items.length === 0 && familyCandidates.length === 0 && coverageTotal;
+    // ⭐ESCOPO da ausência: uma busca RESTRITA (marca/modelo/tipo/preço/ano/câmbio/exclusões) só prova ausência
+    // NAQUELE recorte ("não encontrei SUV diesel nessa faixa"). A afirmação GLOBAL ("não temos diesel") exige uma
+    // busca GLOBAL — só o combustível como filtro. A policy usa este campo para não deixar restrito virar global.
+    const restrictive = filters.marca != null || filters.modelo != null || (filters.modelos?.length ?? 0) > 0
+      || filters.tipo != null || filters.precoMax != null || (filters.anos?.length ?? 0) > 0
+      || filters.cambio != null || filters.popular === true || (filters.excludeKeys?.length ?? 0) > 0;
+    return {
+      items, filtersUsed: filters, familyCandidates, matchKind,
+      attributeCoverage: { combustivel: fuelCoverage },
+      // "não verificável" = a fonte não sustenta a dimensão pedida (algum item do universo consultado sem combustível).
+      ...(fuelAsked && !coverageTotal ? { unverifiableFilters: ["combustivel" as const] } : {}),
+      absenceAssertable,
+      absenceScope: restrictive ? ("restricted" as const) : ("global" as const),
+    };
   }
 
   // 2. VehicleDetailSource: getDetails

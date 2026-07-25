@@ -35,7 +35,7 @@ function isHonestAbsenceClause(text: string): boolean {
   return denies && stockMeaning;
 }
 
-function splitSemanticClauses(text: string): string[] {
+export function splitSemanticClauses(text: string): string[] {
   return text.split(/[.!?;\n]+|\b(?:mas|porem|porém)\b/iu).map((s) => s.trim()).filter(Boolean);
 }
 
@@ -477,6 +477,14 @@ export const PolicyEngine = {
       }
     }
 
+    // ⭐POL-FUEL-ABSENCE FOI REMOVIDA (decisão do dono + auditoria, 25/07). Ela lia a FRASE do agente para decidir se
+    // "gostou" da resposta — interpretação lexical DEPOIS da LLM. Por mais tipada que fosse, dependia de reconhecer
+    // negação/predicado em texto livre e já tinha cobrado exceções. Isso engessa o agente e não é segurança factual.
+    // A segurança de combustível passou a vir de ONDE ela sempre deveria vir: do RESULTADO ESTRUTURADO da tool,
+    // entregue à LLM ANTES da geração (filtros aplicados, escopo, cobertura, o que não é verificável — ver
+    // `operational-context.ts`). `fuel-claims.ts` continua existindo, mas só para TELEMETRIA e avaliação offline.
+    // O engine segue rígido no que é estruturado: vehicleKey, preço/km, PII, ownership, tools, mídia e handoff.
+
     // POL-ATTR-VALUE (F-4, Codex): em pergunta de DETALHE, o VALOR do atributo afirmado no texto deve BATER
     // com o VehicleFact do veículo SELECIONADO. "ele é automático" com fato "Manual" -> deny (mismatch de valor).
     if (ctx.interpretation.relation === "asks_vehicle_detail" && ctx.state.vehicleContext.selected?.key) {
@@ -515,20 +523,21 @@ export const PolicyEngine = {
         // Regra: se o lead perguntou COR/CÂMBIO, a resposta precisa ATERRAR o valor de UMA destas formas:
         //   (a) vehicle_ref(campo) do vehicleKey exato (estruturado, sempre correto);
         //   (b) o VALOR do fato presente no texto (ex.: fato "Bordô" -> texto contém "bordo");
-        //   (c) dizer explicitamente que vai confirmar depois.
+        // ⭐F2.80 (missão P0, prioridade 3): a antiga saída (c) "dizer que vai confirmar depois" FOI REMOVIDA. Ela
+        // institucionalizava a promessa-sem-mecanismo: o fato JÁ ESTÁ no `selFact` deste turno (senão este ramo nem
+        // roda), então prometer confirmar depois é um DODGE — e nada no sistema faria essa confirmação acontecer.
         // Caso contrário -> deny (dodge ou valor não verificável). Numéricos (ano/km) ficam no mismatch acima.
         const asked = normalizeText(ctx.leadMessage);
         const askedCor = /\bcores?\b|\bcor\b/.test(asked);
         const askedCambio = /\bcambio\b|automatic|\bmanual\b/.test(asked);
-        const isDeferral = /vou confirmar|vou verificar|nao (tenho|sei).*(informa|confirma|certeza)|preciso confirmar|deixa eu (confirmar|ver)|te confirmo|ja te confirmo|verifico (isso|pra)/.test(t);
-        if (askedCor && selFact.cor && !hasRef("cor") && !isDeferral) {
+        if (askedCor && selFact.cor && !hasRef("cor")) {
           const corToken = normalizeText(selFact.cor).split(/\s+/)[0] ?? "";
-          if (corToken && !t.includes(corToken)) return attrDeny("cor", "resposta de cor precisa aterrar o valor do fato (vehicle_ref, valor do fato no texto, ou confirmar depois)");
+          if (corToken && !t.includes(corToken)) return attrDeny("cor", "resposta de cor precisa aterrar o valor do fato (vehicle_ref ou valor do fato no texto)");
         }
-        if (askedCambio && selFact.cambio && !hasRef("cambio") && !isDeferral) {
+        if (askedCambio && selFact.cambio && !hasRef("cambio")) {
           const cambioAuto = /automatic/.test(normalizeText(selFact.cambio));
           const grounded = cambioAuto ? /automat/.test(t) : /manual/.test(t);
-          if (!grounded) return attrDeny("cambio", "resposta de câmbio precisa aterrar o valor do fato (vehicle_ref, valor do fato no texto, ou confirmar depois)");
+          if (!grounded) return attrDeny("cambio", "resposta de câmbio precisa aterrar o valor do fato (vehicle_ref ou valor do fato no texto)");
         }
       }
     }
@@ -565,6 +574,14 @@ export const PolicyEngine = {
     {
       const sel = ctx.state.vehicleContext.selected;
       const addClaims = (s: string | null | undefined): void => { if (!s) return; for (const c of ctx.claimExtractor.extractClaims(s)) { if (c.kind === "brand" || c.kind === "brand_model") validBrands.add(c.normalized); if (c.kind === "model" || c.kind === "brand_model") validModels.add(c.normalized); } };
+      // The ad is a structured source for IDENTITY only. The LLM may naturally
+      // say "Jeep Compass" before consulting inventory, but this does not add a
+      // vehicleKey or authorize availability, price, mileage, color or trim.
+      for (const declared of ctx.declaredVehicleIdentities ?? []) {
+        if (declared.brand) validBrands.add(normalizeText(declared.brand));
+        validModels.add(normalizeText(declared.model));
+        addClaims(declared.label);
+      }
       if (sel?.label) addClaims(sel.label);
       for (const it of ctx.state.lastRenderedOfferContext?.items ?? []) { addClaims(it.marca ?? undefined); addClaims(it.modelo ?? undefined); if (it.marca && it.modelo) addClaims(`${it.marca} ${it.modelo}`); }
       // A entrega aceita de mídia grava um label canônico e humano na WorkingMemory. Esse label pode

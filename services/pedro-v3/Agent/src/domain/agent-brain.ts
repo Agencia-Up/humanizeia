@@ -21,6 +21,7 @@ import type { DecisionMutation, ProposedEffectPlan, QueryCall, QueryOutputMap, R
 import type { SlotName, Iso } from "./types.ts";
 import type { KnowledgeGap } from "./knowledge.ts";
 import type { TenantPolicyDecision } from "./tenant-policy-contract.ts";
+import type { OperationalContext } from "./operational-context.ts";
 
 export const WORKING_MEMORY_SCHEMA_VERSION = 1 as const;
 
@@ -230,6 +231,11 @@ export type TurnFrame = {
   // modelo pedido e corrigir digitação (ex.: "danster" -> "Duster") por SEMÂNTICA — o engine NÃO faz regex de typo.
   // Opcional: ausente/vazio quando o catálogo não trouxe modelos (frame antigo/degradado).
   readonly availableModels?: readonly string[];
+  // ⭐CONTEXTO OPERACIONAL VERIFICADO (25/07): o que a engine SABE, em DADO tipado — estado da consulta de estoque,
+  // capacidades reais do turno e o que o anúncio declarou (identidade ≠ disponibilidade). Não contém instrução:
+  // a LLM interpreta e decide. RECALCULADO A CADA PASSO — depois de uma tool, o frame seguinte já reflete o
+  // resultado (um frame congelado antes da busca continuaria afirmando que o estoque não foi consultado).
+  readonly operationalContext?: OperationalContext;
 };
 
 // ── Observação factual das tools (P0-3) — SEPARADA da telemetria ────────────────────────────────────────────

@@ -225,7 +225,7 @@ async function main(): Promise<void> {
         return finWithEffects([txt("Perfeito! Aqui estao as fotos do C3 Aircross.")], U("request_photos", "Sim", "send_photos"), [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
       }
       return sawStale(obs)
-        ? finU([txt("Perfeito! Vou buscar as fotos do C3 Aircross.")], U("request_photos", "Sim", "send_photos"))
+        ? qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, U("request_photos", "Sim", "send_photos"))
         : finU([txt("resposta com base no turno errado")], U("select_vehicle", "Gostei do Aircross"));
     });
     // Evidence stale is rejected; after the retry the brain understands the

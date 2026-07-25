@@ -1,7 +1,8 @@
 // ============================================================================
 // turn-advisories.ts — RODADA 1 (2026-07-13, autoria-LLM exclusiva). Módulo PURO
-// que produz as ORIENTAÇÕES de condução do turno, injetadas no prompt ANTES da
-// 1ª geração. Substituem os antigos denies de QUALIDADE do authorFromBrainDraft.
+// que preserva o contrato histórico de orientações usado por replay/testes.
+// O central_active NÃO injeta este builder: em produção, o prompt do portal conduz
+// a conversa e `operational-context.ts` entrega somente fatos tipados.
 //
 // CONTRATO (arquitetura RD1 + auditoria Codex):
 //  - Advisory ORIENTA, nunca decide. NÃO muda intent, tool, slot, veículo, texto
@@ -144,6 +145,11 @@ const SLOT_PT: Record<string, string> = {
 export function buildTurnAdvisories(input: TurnAdvisoryInput): string[] {
   const out: string[] = [];
   let discoveryEmitted = false;
+
+  // ⭐O ESTADO FACTUAL DO TURNO **NÃO** MORA AQUI (25/07). Uma versão anterior desta função despejava frases como
+  // "só o que está dentro desse recorte foi verificado" — engine escrevendo recomendação, que é o mesmo defeito que
+  // negar depois, só com outra roupa. Fato agora viaja TIPADO em `operational-context.ts` -> TurnFrame, recalculado a
+  // cada passo. Este builder é legado/teste e não entra no frame do central_active.
 
   // ── Abertura / descoberta — SÓ quando o bloco atual NÃO tem ato explícito prioritário. ──
   if (!input.suppressDiscovery) {

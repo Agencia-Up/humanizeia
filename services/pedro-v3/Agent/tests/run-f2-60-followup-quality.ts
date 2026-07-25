@@ -69,6 +69,35 @@ const t2Brain = new QueueBrain([
 const t2 = await authorFollowupMessageDetailed({ brain: t2Brain, state: t2State, stage: 2, turnId: "fu60-t2", now: NOW, portalPromptSha256: "sha" });
 check("T2 rejeita repeticao da pergunta anterior", t2.text === "Se ainda estiver avaliando, posso te ajudar com os detalhes desse carro. Quer continuar por aqui?" && t2.attempts === 2);
 
+// Incidente real Monaco: a mesma pergunta de nome foi reformulada em T1/T2
+// ("posso saber" -> "poderia informar") e escapava do comparador literal.
+// A memoria tipada do slot pendente deve barrar a repeticao sem escolher o
+// texto da retomada seguinte para a LLM.
+const semanticRepeatState = state();
+if (!semanticRepeatState.workingMemory) throw new Error("fixture sem workingMemory inicial");
+semanticRepeatState.workingMemory = {
+  ...semanticRepeatState.workingMemory,
+  pendingAgentQuestion: { slot: "nome", sinceTurnId: "opening" },
+};
+semanticRepeatState.recentTurns = [
+  { role: "lead", text: "Tenho interesse em financiamento.", at: "2026-07-15T12:00:00.000Z" },
+  { role: "agent", text: "Para te ajudar melhor, posso saber seu nome?", at: "2026-07-15T12:01:00.000Z" },
+];
+const semanticRepeatBrain = new QueueBrain([
+  final("Para continuarmos com o financiamento, poderia me informar seu nome?"),
+  final("Se ainda quiser entender o financiamento, sigo por aqui para te ajudar."),
+]);
+const semanticRepeat = await authorFollowupMessageDetailed({
+  brain: semanticRepeatBrain,
+  state: semanticRepeatState,
+  stage: 1,
+  turnId: "fu60-semantic-repeat",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("T1 rejeita reformulacao semantica da pergunta de nome pendente", semanticRepeat.attempts === 2
+  && semanticRepeat.text === "Se ainda quiser entender o financiamento, sigo por aqui para te ajudar.");
+
 const adState = state();
 adState.adContext = {
   adId: "ad-f260",

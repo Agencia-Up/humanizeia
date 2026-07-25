@@ -8,6 +8,7 @@ import type {
 } from "./types.ts";
 import type { PlannedObjective, OfferRecord, ConversationTurn } from "./conversation-state.ts";
 import type { KnowledgeChunk } from "./knowledge.ts";
+import type { FuelKind } from "./fuel.ts";
 
 // ── Ações ───────────────────────────────────────────────────────────────────
 export type TurnAction =
@@ -96,7 +97,9 @@ export type TurnInterpretation = {
 
 // ── Query loop (read-only) — Codex #4/r3 #6 ─────────────────────────────────
 export type QueryInputMap = {
-  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; hibrido?: boolean; precoMax?: number; modelo?: string; modelos?: string[]; marca?: string; anos?: number[]; popular?: boolean; broad?: boolean; excludeKeys?: string[]; includeMotorcycles?: boolean };
+  // `combustivel` (F2.79) é a dimensão TIPADA de propulsão; `hibrido` fica só como alias de ENTRADA legado,
+  // dobrado em `combustivel:"hibrido"` por normalizeStockSearchInput — abaixo dali existe UMA só dimensão.
+  stock_search: { tipo?: VehicleType; cambio?: TransmissionPreference; combustivel?: FuelKind; /** @deprecated */ hibrido?: boolean; precoMax?: number; modelo?: string; modelos?: string[]; marca?: string; anos?: number[]; popular?: boolean; broad?: boolean; excludeKeys?: string[]; includeMotorcycles?: boolean };
   vehicle_details: { vehicleKey: string };
   vehicle_photos_resolve: { vehicleRef: EntityReference };
   crm_read: { leadId: string };
@@ -106,7 +109,9 @@ export type QueryOutputMap = {
   // ⭐F2.76 — `familyCandidates`/`matchKind`: quando a busca EXATA (com versão) vem VAZIA mas o MODELO-BASE existe, o
   // read-side devolve candidatos da MESMA FAMÍLIA (marca/ano/câmbio/preço/tipo preservados). NUNCA é match exato; a LLM
   // decide apresentar e SEMPRE confirma a versão. matchKind: "exact" (items>0) | "family_candidate" | "none" (vazio genuíno).
-  stock_search: { items: VehicleFact[]; filtersUsed: Record<string, JsonValue>; familyCandidates?: VehicleFact[]; matchKind?: "exact" | "family_candidate" | "none" };
+  // F2.79: `attributeCoverage`/`unverifiableFilters`/`absenceAssertable` viajam até o cérebro e até a policy —
+  // são eles que separam "busquei diesel e não há" de "não consigo confirmar combustível nesta fonte".
+  stock_search: { items: VehicleFact[]; filtersUsed: Record<string, JsonValue>; familyCandidates?: VehicleFact[]; matchKind?: "exact" | "family_candidate" | "none"; attributeCoverage?: { combustivel: { known: number; total: number } }; unverifiableFilters?: readonly "combustivel"[]; absenceAssertable?: boolean; absenceScope?: "global" | "restricted" };
   vehicle_details: { vehicle: VehicleFact };
   // ⭐CADEIA DE MÍDIA (2026-07-19): a tool devolve o SNAPSHOT resolvido (id + url), não só referências opacas.
   //
@@ -163,6 +168,19 @@ export type StockInputNormalization =
 const stockTypeWordKey = (s: string): string => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 export function normalizeStockSearchInput(input: QueryInputMap["stock_search"]): StockInputNormalization {
   let out: QueryInputMap["stock_search"] = input;
+  // ⭐F2.79: PONTO ÚNICO de dobra do alias legado. `hibrido:true` vira `combustivel:"hibrido"`; conflito com
+  // um `combustivel` divergente FALHA FECHADO (mesmo padrão do conflito tipo-em-modelo abaixo) em vez de
+  // eleger silenciosamente uma das duas propulsões. Depois daqui só existe `combustivel` no sistema.
+  if (out.hibrido === true) {
+    if (out.combustivel != null && out.combustivel !== "hibrido") {
+      return { ok: false, conflict: `hibrido=true conflita com combustivel='${out.combustivel}'` };
+    }
+    const { hibrido: _drop, ...rest } = out;
+    out = { ...rest, combustivel: "hibrido" };
+  } else if (out.hibrido === false) {
+    const { hibrido: _dropFalse, ...rest } = out;   // `false` nunca significou "não-híbrido": é ausência de pedido
+    out = rest;
+  }
   // Guarda do `modelo` único (existente): um termo de TIPO em `modelo` vira `tipo` (ou FALHA se conflita).
   if (typeof out.modelo === "string") {
     const asType = STOCK_TYPE_WORDS[stockTypeWordKey(out.modelo)];

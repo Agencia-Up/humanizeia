@@ -251,20 +251,23 @@ async function main(): Promise<void> {
     const cap = await c.t("qual o horário?", "ambiguous", [nFin, nFin, nFin]);
     check("[N] horário respondido -> passa sem deny (completude satisfeita)", cap.committed && !cap.degraded && has(cap.outbox, "9h") && !cap.policyFeedback.some((f) => /horario/.test(normalizeText(f))), `src=${cap.src} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
-  // O) FOTO pedida: a não-resposta é REJEITADA e o Onix SELECIONADO é resolvido pelo executor factual.
+  // O) FOTO pedida: a não-resposta é REJEITADA e a LLM usa o feedback factual
+  //    para chamar vehicle_photos_resolve com o Onix SELECIONADO. A engine não
+  //    escolhe nem executa a tool comercial por conta própria.
   //    A LLM recebe os photoIds aterrados e é quem redige/propoe o send_media no passe final.
   //    (A ausência honesta LEGÍTIMA — alvo sem fotos — segue honrada; coberto em F2.33 A-7.)
   {
     const c = conv(makeBI(ADDR, HOURS), selectedOnix); await c.seed();
-    let n = 0;
     const cap = await c.t("me manda foto do Onix", "ambiguous", (_frame, obs) => {
-      if (obs.some((o) => !o.ok && o.error.code === "FINAL_AUTHORSHIP_REQUIRED") && obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) {
+      if (obs.some((o) => o.tool === "vehicle_photos_resolve" && o.ok)) {
         return fin([txt("Aqui estão as fotos do Onix!")], [reply, mediaEff(ONIX)], "send_vehicle_photos");
       }
-      n++;
-      return n >= 2 ? fin([txt("Poxa, não localizei as fotos do Onix agora, mas confirmo com a equipe e já te envio!")]) : fin([txt("Beleza! Deixa eu providenciar isso pra você.")]);
+      if (obs.some((o) => !o.ok && /vehicle_photos_resolve/.test(o.error.message))) {
+        return q({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: ONIX.vehicleKey } } });
+      }
+      return fin([txt("Beleza! Deixa eu providenciar isso pra você.")]);
     });
-    check("[O] executor resolve fotos e a LLM autora o send_media", cap.committed && cap.hasMedia && cap.src === "brain_retry" && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} fb=${JSON.stringify(cap.policyFeedback)}`);
+    check("[O] LLM resolve fotos e autora o send_media", cap.committed && cap.hasMedia && cap.src === "brain_retry" && cap.exec.filter((tool) => tool === "vehicle_photos_resolve").length === 1 && cap.policyFeedback.some((f) => /foto/.test(normalizeText(f))), `src=${cap.src} text="${cap.outbox}" media=${cap.hasMedia} exec=${JSON.stringify(cap.exec)} fb=${JSON.stringify(cap.policyFeedback)}`);
   }
   // P) FOTO pura com send_media satisfaz a completude (passa) — não força ausência honesta quando há mídia.
   {

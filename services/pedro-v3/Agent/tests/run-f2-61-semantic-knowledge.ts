@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { CoreSemanticKnowledgeSource, CompositeKnowledgeSource } from "../src/domain/knowledge.ts";
 import { createReadQueryRunner } from "../src/engine/read-query-runner.ts";
+import { isKernelQueryCall } from "../src/engine/central-turn-io.ts";
 import { SupabaseKnowledgeSource } from "../src/adapters/read/supabase-knowledge-source.ts";
 import type { CrmReadSource, StockSource, VehicleDetailSource, VehiclePhotoSource } from "../src/domain/read-ports.ts";
 
@@ -28,6 +29,8 @@ const emptyDetails = { async getDetails() { return null; } } as VehicleDetailSou
 const emptyPhotos = { async resolvePhotos() { return { vehicleKey: "", ambiguous: true, photoIds: [] }; }, async resolveUrls() { return []; } } as VehiclePhotoSource;
 const emptyCrm = { async readLead() { return null; } } as CrmReadSource;
 const runner = createReadQueryRunner(ref, { stock: emptyStock, vehicleDetails: emptyDetails, vehiclePhotos: emptyPhotos, crm: emptyCrm, knowledge: composite });
+assert.equal(isKernelQueryCall({ tool: "knowledge_search", input: { query: "condição de financiamento", topK: 3 } }), true);
+assert.equal(isKernelQueryCall({ tool: "tenant_business_info", input: { topic: "address" } }), false);
 const result = await runner({ tool: "knowledge_search", input: { query: "condição de financiamento", topK: 3 } });
 assert.equal(result.ok, true);
 if (result.ok && result.tool === "knowledge_search") assert.equal(result.data.chunks[0].id, "tenant:1");
@@ -42,4 +45,4 @@ assert.deepEqual(capturedBody, { query: "financiamento", tenant_id: "tenant-a", 
 assert.equal(remoteResult.chunks[0].provenance, "tenant_knowledge");
 assert.equal(remoteResult.chunks[0].confidence, 0.88);
 
-console.log("F2.61 semantic knowledge: 10 OK");
+console.log("F2.61 semantic knowledge: 12 OK");

@@ -86,7 +86,7 @@ function finWithEffects(parts: ResponsePart[], reasonCode: string, u: TurnUnders
 }
 function qU(call: { tool: string; input: Record<string, unknown> }, u: TurnUnderstanding): AgentBrainStep { return { kind: "query", call: call as never, understanding: u } as AgentBrainStep; }
 const resist: BrainResponder = () => finU([txt("Certo!")], "reply", U("other"));
-const photoRequest = (quote: string, subject: "ordinal_from_last_offer" | "selected_vehicle", subjectValue: string | null = null): BrainResponder => (_frame, obs) => {
+const photoRequest = (quote: string, subject: "ordinal_from_last_offer" | "selected_vehicle", vehicleKey: string, subjectValue: string | null = null): BrainResponder => (_frame, obs) => {
   const understanding: TurnUnderstanding = {
     ...U("request_photos"), requestedCapabilities: ["send_photos"], subject, subjectValue,
     subjectSource: subject === "selected_vehicle" ? "memory" : "current_turn",
@@ -96,7 +96,7 @@ const photoRequest = (quote: string, subject: "ordinal_from_last_offer" | "selec
   if (photo && photo.data.photoIds.length > 0) {
     return finWithEffects([txt("Aqui estao as fotos que voce pediu.")], "send_vehicle_photos", understanding, [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
   }
-  return finU([txt("Vou confirmar as fotos do carro que voce pediu.")], "resolve_vehicle_photos", understanding);
+  return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: vehicleKey } } }, understanding);
 };
 // Responder que LISTA SUVs (query stock_search{tipo:suv} -> final com offer_list dos keys retornados).
 const listSuvs: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
@@ -177,24 +177,24 @@ async function main(): Promise<void> {
     const c = conv();
     const t1 = await c.t("tem SUV?", { responder: listSuvs });
     check("[PB-0] T1 lista SUVs (2 itens)", has(t1.outbox, "Creta") && has(t1.outbox, "Renegade"), `outbox="${t1.outbox}"`);
-    const t2 = await c.t("me manda fotos do segundo", { responder: photoRequest("me manda fotos do segundo", "ordinal_from_last_offer", "2") });
+    const t2 = await c.t("me manda fotos do segundo", { responder: photoRequest("me manda fotos do segundo", "ordinal_from_last_offer", SUV_B.vehicleKey, "2") });
     check("[PB-1] T2 send_media do SUV_B com EXATAS 5 fotos (12 -> 5)", t2.hasMedia && t2.mediaKey === "rm:suvB" && t2.mediaPhotoIds.length === 5, `key=${t2.mediaKey} n=${t2.mediaPhotoIds.length} ids=${t2.mediaPhotoIds.join(",")}`);
     check("[PB-1b] as 5 têm DIVERSIDADE (inclui principal b1 e última b12, distintas)", t2.mediaPhotoIds[0] === "b1" && t2.mediaPhotoIds.includes("b12") && new Set(t2.mediaPhotoIds).size === 5, `ids=${t2.mediaPhotoIds.join(",")}`);
-    const t3 = await c.t("me manda mais fotos do segundo", { responder: photoRequest("me manda mais fotos do segundo", "ordinal_from_last_offer", "2") });
+    const t3 = await c.t("me manda mais fotos do segundo", { responder: photoRequest("me manda mais fotos do segundo", "ordinal_from_last_offer", SUV_B.vehicleKey, "2") });
     check("[PB-2] T3 'manda mais' envia PRÓXIMO lote (<=5) SEM repetir o de T2", t3.hasMedia && t3.mediaPhotoIds.length > 0 && t3.mediaPhotoIds.length <= 5 && t3.mediaPhotoIds.every((id) => !t2.mediaPhotoIds.includes(id)), `t2=${t2.mediaPhotoIds.join(",")} t3=${t3.mediaPhotoIds.join(",")}`);
   }
   // veículo com 3 fotos -> envia 3
   {
     const c = conv();
     await c.t("tem SUV?", { responder: listSuvs });
-    const t2 = await c.t("me manda foto do primeiro", { responder: photoRequest("me manda foto do primeiro", "ordinal_from_last_offer", "1") });   // ordinal 1 = SUV_A (3 fotos)
+    const t2 = await c.t("me manda foto do primeiro", { responder: photoRequest("me manda foto do primeiro", "ordinal_from_last_offer", SUV_A.vehicleKey, "1") });   // ordinal 1 = SUV_A (3 fotos)
     check("[PB-3] veículo com 3 fotos -> send_media com as 3 (não força 5)", t2.hasMedia && t2.mediaKey === "rm:suvA" && t2.mediaPhotoIds.length === 3, `key=${t2.mediaKey} n=${t2.mediaPhotoIds.length}`);
   }
   // ordinal escolhe o veículo correto (foto do 2º = SUV_B, nunca o 1º)
   {
     const c = conv();
     await c.t("tem SUV?", { responder: listSuvs });
-    const t2 = await c.t("me manda foto do segundo", { responder: photoRequest("me manda foto do segundo", "ordinal_from_last_offer", "2") });
+    const t2 = await c.t("me manda foto do segundo", { responder: photoRequest("me manda foto do segundo", "ordinal_from_last_offer", SUV_B.vehicleKey, "2") });
     check("[PB-4] foto por ordinal escolhe o carro CERTO (2º = SUV_B, não SUV_A)", t2.mediaKey === "rm:suvB", `key=${t2.mediaKey}`);
   }
   // negação "não quero fotos agora" -> sem mídia
@@ -209,8 +209,8 @@ async function main(): Promise<void> {
   {
     const c = conv();
     await c.t("tem SUV?", { responder: listSuvs });
-    const t2 = await c.t("me manda fotos do segundo", { responder: photoRequest("me manda fotos do segundo", "ordinal_from_last_offer", "2") });
-    const t3 = await c.t("Tem mais fotos?", { responder: photoRequest("Tem mais fotos?", "selected_vehicle") });
+    const t2 = await c.t("me manda fotos do segundo", { responder: photoRequest("me manda fotos do segundo", "ordinal_from_last_offer", SUV_B.vehicleKey, "2") });
+    const t3 = await c.t("Tem mais fotos?", { responder: photoRequest("Tem mais fotos?", "selected_vehicle", SUV_B.vehicleKey) });
     const t3Signals = sig(c, 2);
     check("[PB-2b] 'Tem mais fotos?' nao vira mentionsMoreOptions/stock_search", t3Signals.mentionsPhoto === true && t3Signals.mentionsMoreOptions !== true && !t3.exec.includes("stock_search"), `signals=${JSON.stringify(t3Signals)} exec=${t3.exec.join(",")}`);
     check("[PB-2c] 'Tem mais fotos?' envia proximo lote do MESMO veiculo", t3.hasMedia && t3.mediaKey === "rm:suvB" && t3.mediaPhotoIds.length > 0 && t3.mediaPhotoIds.every((id) => !t2.mediaPhotoIds.includes(id)), `key=${t3.mediaKey} t2=${t2.mediaPhotoIds.join(",")} t3=${t3.mediaPhotoIds.join(",")} outbox="${t3.outbox}"`);

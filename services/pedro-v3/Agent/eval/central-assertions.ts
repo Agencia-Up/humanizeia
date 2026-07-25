@@ -10,12 +10,14 @@ export type CentralTurnCapture = {
   degradationKind?: string;                // ⭐FASE 1: causa da degradação (provider_transport|response_rejected|grounding_rejected|tool_denied_no_evidence|retry_exhausted|none)
   providerFallbackReason?: string | null;  // ⭐FASE 1: motivo sanitizado do provedor quando houve falha real (HTTP/timeout/JSON)
   policyFeedback?: readonly string[];      // diagnóstico: feedbacks de deny devolvidos ao cérebro (revela por que degradou)
+  retryReasons?: readonly string[];        // F7-2: motivo CURTO de cada retry/nudge do loop (ordem de ocorrência)
   policyDecision?: import("../../../../src/lib/pedroFunnelPolicyContract.ts").TenantPolicyDecision | null;
   primaryIntent?: string;                  // T6 fonte única: semântica do turno (do cérebro OU fallback validado)
   targetResolutionSource?: string | null;  // T6: como o alvo do turno foi resolvido (turn_photo_fact/turn_ordinal/...)
   resolvedVehicleKey?: string | null;      // T6: veículo do send_media do turno (alvo efetivo)
   understandingFromBrain?: boolean;        // T6: o cérebro emitiu understanding? (senão caiu no fallback)
   toolsRequested: string[];
+  toolsExecuted?: string[];                // execuções REAIS do adapter; toolsRequested são propostas da LLM
   observations: { tool: string; ok: boolean }[];
   effects: { kind: string; vehicleKey?: string; photoCount?: number; status: string }[];
   handoffBriefing?: string | null;         // MISSÃO PII: briefing integral do effect handoff do turno (relatório)

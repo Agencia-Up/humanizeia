@@ -436,6 +436,15 @@ export class PilotActiveRoot {
       // Opção A: o binding POR TURNO (crm-lead-binding no server) pode desligar (mismatch) e marca o bootstrap.
       crmWriteEnabled: this.crmLeadStore != null && (input.crmWrite?.enabled ?? true),
       crmBootstrapSync: input.crmWrite?.bootstrapSync === true,
+      // ⭐CONTEXTO OPERACIONAL (25/07): fatos que só o ROOT conhece, entregues à LLM como DADO (nunca instrução).
+      // `send_media` tem rota de dispatcher registrada aqui e a fonte de fotos está montada -> o envio acontece de
+      // verdade. É disponibilidade OPERACIONAL, distinta de `providerCapability.send_media` (reconciliação), que
+      // vale "none" em produção mesmo com o envio funcionando.
+      mediaDeliveryAvailable: this.photoSource != null,
+      // ⚠️`automatedLeadFollowupEnabled` NÃO é passado aqui de propósito: este root não conhece o flag no momento do
+      // TURNO — as regras de follow-up (automation_rules) chegam só na invocação do worker (`input.rules.followup`).
+      // Passar `false` seria mentir; o contexto recebe `null` = "não informado". Ligar de verdade exige ler as
+      // automation_rules do tenant no caminho do turno — trabalho declarado, não improvisado aqui.
       handoff: {
         enabled: this.handoffEnabled,
         available: handoffAvailable,

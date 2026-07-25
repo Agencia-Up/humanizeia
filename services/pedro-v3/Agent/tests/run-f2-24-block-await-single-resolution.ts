@@ -66,6 +66,7 @@ const selMut = (v: VehicleFact) => ({ op: "select_vehicle_focus", vehicle: { kin
 function finU(parts: ResponsePart[], effects: ProposedEffectPlan[], reasonCode: string, u: TurnUnderstanding, stateMutations: unknown[] = []): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: effects, memoryMutations: [], stateMutations } as AgentBrainDecision };
 }
+const qU = (call: CentralQueryCall, understanding: TurnUnderstanding): AgentBrainStep => ({ kind: "query", call, understanding });
 
 type Cap = { status: string; outbox: string; src: string; committed: boolean; hasMedia: boolean; mediaKey: string | null; exec: string[]; targetSource: string | null; recoveryReason: string | null; selectedKey: string | null; pendingAfter: number };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, relation: TurnRelation, script: AgentBrainStep[] | BrainResponder, blockAwaitMaxMs?: number): Promise<Cap> {
@@ -168,8 +169,8 @@ async function main(): Promise<void> {
   // PARTE 5 — INTEGRAÇÃO: RESOLUÇÃO ÚNICA (bug do Compass "fotos do segundo")
   // ─────────────────────────────────────────────────────────────────────────
   {
-    // A LLM declara o ato comercial correto no mesmo ciclo. O engine só resolve
-    // o fato de fotos do alvo autorizado; não escolhe a ação nem o veículo.
+    // A LLM escolhe o alvo e chama a tool. O engine apenas executa a chamada
+    // autorizada, valida o resultado e materializa o efeito autorado pela LLM.
     const c = conv(offerCtx([COMPASS17, COMPASS19]));
     await c.seed();
     const photoU = U("request_photos", { caps: ["send_photos"], subject: "ordinal_from_last_offer", subjectValue: "2", subjectSource: "current_turn", evidence: [{ capability: "send_photos", quote: "fotos do segundo" }] });
@@ -183,7 +184,7 @@ async function main(): Promise<void> {
             photoU,
             [selMut(COMPASS19)],
           )
-        : finU([txt("Vou buscar as fotos do segundo veículo.")], [reply], "resolve_selected_photos", photoU, [selMut(COMPASS19)]);
+        : qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: COMPASS19.vehicleKey } } }, photoU);
     };
     const r = await c.t("Me mande fotos do segundo", "ambiguous", responder);
     check("[I-compass-a] envia mídia do item 2 (Compass 2019)", r.hasMedia === true && r.mediaKey === COMPASS19.vehicleKey, `hasMedia=${r.hasMedia} key=${r.mediaKey} src=${r.src}`);

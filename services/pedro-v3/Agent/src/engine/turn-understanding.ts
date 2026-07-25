@@ -88,11 +88,26 @@ export function hasActiveVisitContext(input: {
   return lastAgentAskedVisitSchedule(input.recentTurns);
 }
 
+// ⭐P0-A (missão P0, incidente Wa T9): existe ASSUNTO COMERCIAL/VEÍCULO ativo ESTRUTURADO? Só estado tipado conta —
+// veículo selecionado//em foco, oferta renderizada recente ou veículo do anúncio aterrado. NUNCA texto do bloco.
+// A memória fornece apenas a RELAÇÃO (sobre QUAL carro se fala); a INTENÇÃO segue sendo declarada pela LLM e a
+// TEMPORALIDADE segue vindo da mensagem atual. PURO/testável.
+export function hasActiveCommercialSubject(input: {
+  readonly selectedVehicleKey: string | null;
+  readonly renderedOfferCount: number;
+  readonly adVehicleKey?: string | null;
+}): boolean {
+  if (input.selectedVehicleKey != null && input.selectedVehicleKey.trim() !== "") return true;
+  if (input.renderedOfferCount > 0) return true;
+  return input.adVehicleKey != null && input.adVehicleKey.trim() !== "";
+}
+
 // Contexto de validação (opcional): relações semânticas que a MEMÓRIA fornece para o turno atual. Sem ele, só o ato
 // EXPLÍCITO no bloco vale (comportamento legado). Nunca autoriza tool/effect — só permite aceitar um understanding coerente.
 export type TurnValidationContext = {
   readonly tenantPolicies?: unknown;
   readonly visitActive?: boolean;   // há visita/agendamento em andamento (interesseVisita=true / pergunta pendente / última pergunta pediu dia-horário)
+  readonly commercialSubjectActive?: boolean;   // ⭐P0-A: há veículo/oferta ativos (assunto comercial estruturado)
 };
 
 function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: readonly TurnUnderstandingEvidence[], context?: TurnValidationContext): string[] {
@@ -141,10 +156,16 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
     // afirmação de deslocamento ("vou até aí, sou de SJC") era rejeitada e a LLM que classificasse CORRETAMENTE
     // levava deny -> retry -> fallback técnico. Agora vale a invariante: deslocamento + dêixis de destino = visita.
     const explicitVisit = isVisitAct(visitEvidence);
-    // ⭐P0-A (continuação semântica): sem ato explícito de visita, um VALOR TEMPORAL ("pra segunda"/"às 15h") só valida
-    //    quando há CONTEXTO legítimo de agendamento em andamento (visitActive). A mensagem atual é a evidência; a memória
-    //    fornece só a relação. Sem contexto, "segunda" isolada NÃO inicia agendamento (fica o issue).
-    const contextualScheduling = context?.visitActive === true && hasSchedulingTemporalValue(block);
+    // ⭐P0-A (continuação semântica): sem ato explícito de visita, um VALOR TEMPORAL ("pra segunda"/"às 15h"/"amanhã de
+    //    manhã") valida quando há CONTEXTO estruturado que dê sentido comercial ao horário — agendamento em andamento
+    //    (visitActive) OU assunto comercial ativo (veículo selecionado/oferta renderizada/anúncio aterrado).
+    //    ⚠️INCIDENTE Wa T9 ("Consigo ver amanhã de manhã?"): o 1º PEDIDO de visita era rejeitado porque exigia visitActive,
+    //    que só liga DEPOIS de uma visita já declarada — a LLM classificava CERTO e levava deny→retry→"instabilidade".
+    //    Nada aqui olha as palavras do bloco (nem "ver"/"consigo"): a mensagem dá a TEMPORALIDADE, a memória dá a RELAÇÃO
+    //    com o veículo, e a INTENÇÃO continua sendo exclusivamente da LLM. Temporalidade SEM contexto comercial e SEM
+    //    agendamento em andamento NÃO autoriza visita (fica o issue) — "amanhã" solto não vira agendamento.
+    const schedulingContext = context?.visitActive === true || context?.commercialSubjectActive === true;
+    const contextualScheduling = schedulingContext && hasSchedulingTemporalValue(block);
     if (!explicitVisit && !contextualScheduling) issues.push("visit sem evidencia de visita/agendamento no bloco atual");
   }
   if (u.primaryIntent === "request_human") {

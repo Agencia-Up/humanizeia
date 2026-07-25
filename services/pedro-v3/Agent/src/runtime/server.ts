@@ -386,7 +386,9 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
           handoffEnabled: this.#handoffEnabled,
           followupEnabled: this.#followupEnabled,
           semanticCriticEnabled: false,
-          semanticCriticModel: "gpt-4.1",
+          // FASE 5: segue o modelo do provider. Antes era `gpt-4.1` literal — mina de custo caso a flag acima fosse
+          // ligada (escalaria 5x sem ninguém pedir). Para usar outro modelo no crítico, configure explicitamente.
+          semanticCriticModel: this.#aiProvider.model,
         })
       : undefined;
     return PilotActiveRoot.create({

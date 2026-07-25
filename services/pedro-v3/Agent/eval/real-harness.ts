@@ -33,6 +33,7 @@ import { createOpenAiModelFactory } from "../src/engine/openai-canary-root.ts";
 import { AiRuntimeSecret, resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig, type RuntimeApiSecret } from "../src/runtime/ai-provider.ts";
 import { V2PlaintextApiKeyReader } from "../src/adapters/read/v2-api-key-reader.ts";
 import { V2DatabaseReadGateway, V2DatabaseCredentialProvider } from "../src/adapters/read/supabase-v2-read-adapter.ts";
+import type { V2ReadGateway } from "../src/adapters/read/v2-read-gateway.ts";
 import { V2TenantConfigSource } from "../src/adapters/read/tenant-config-source.ts";
 import { ReadCache } from "../src/adapters/read/cache.ts";
 import { SafeHttpClient } from "../src/adapters/read/http-client.ts";
@@ -358,7 +359,18 @@ export async function buildRealAssembly(clock: { now(): string }): Promise<RealA
 
 // Allows production-equivalent canaries for another explicitly selected tenant
 // without changing the legacy Douglas eval contract.
-export async function buildRealAssemblyFor(ref: TenantAgentRef, clock: { now(): string }): Promise<RealAssembly> {
+// EVAL-ONLY (o dono quer testar um agente DESATIVADO sem religá-lo em produção): faz a porta de leitura reportar o
+// agente como ativo SÓ para o eval. Não toca no banco; o gate real de produção (worker/loader) continua valendo.
+function withForcedActiveAgent(inner: V2ReadGateway): V2ReadGateway {
+  const wrapper = Object.create(inner) as V2ReadGateway;
+  wrapper.getOwnedAgent = async (ref: TenantAgentRef) => {
+    const agent = await inner.getOwnedAgent(ref);
+    return agent ? { ...agent, isActive: true } : agent;
+  };
+  return wrapper;
+}
+
+export async function buildRealAssemblyFor(ref: TenantAgentRef, clock: { now(): string }, opts: { readonly forceAgentActive?: boolean } = {}): Promise<RealAssembly> {
   const url = requiredEnv("SUPABASE_URL");
   const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
   const allowedHosts = [hostOf(url)];
@@ -409,7 +421,8 @@ export async function buildRealAssemblyFor(ref: TenantAgentRef, clock: { now(): 
     },
   });
 
-  const gateway = new V2DatabaseReadGateway(readDb);
+  const baseGateway = new V2DatabaseReadGateway(readDb);
+  const gateway = opts.forceAgentActive ? withForcedActiveAgent(baseGateway) : baseGateway;
   const loaded = await new V2TenantConfigSource(gateway).load(ref);
   if (!loaded.ok) throw new Error(`TENANT_CONFIG_INVALID:${(loaded as { error?: { code?: string } }).error?.code ?? "?"}`);
   const runtimeConfig = loaded.config;

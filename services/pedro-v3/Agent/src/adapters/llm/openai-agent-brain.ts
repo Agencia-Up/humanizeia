@@ -19,6 +19,8 @@ import { BUSINESS_INFO_TOPICS, PRIMARY_INTENTS, TURN_CAPABILITIES, TURN_SUBJECT_
 import type { DecisionMutation, ProposedEffectPlan, ResponseDraft, ResponsePart } from "../../domain/decision.ts";
 import type { KnowledgeGap } from "../../domain/knowledge.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
+import type { FuelKind } from "../../domain/fuel.ts";
+import { FUEL_KINDS, canonicalFuel } from "../../domain/fuel.ts";
 import { getBrazilChannelTime } from "../../engine/channel-time.ts";
 export { getBrazilChannelTime } from "../../engine/channel-time.ts";
 import type { TenantPolicyDecision } from "../../domain/tenant-policy-contract.ts";
@@ -150,6 +152,7 @@ TOOLS
 - tenant_business_info confirma dado institucional ausente. knowledge_search consulta conhecimento semantico; nao substitui estoque, CRM ou fatos atuais.
 - Pedido explicito de humano usa request_human + handoff sem exigir nome, CPF ou qualificacao adicional. Nao escolha vendedor.
 - Nao prometa busca, foto, agendamento, transferencia, reserva ou aprovacao sem observacao/efeito correspondente.
+- Nao prometa CONTATO POSTERIOR individual ("te retorno", "te aviso", "entro em contato depois") nem VERIFICACAO FUTURA ("vou confirmar com a equipe"): esta conversa nao cria tarefa de callback nem de verificacao posterior. A cadencia automatizada T1/T2/T3 e independente e nao cumpre promessas individuais. Consulte AGORA a tool que falta e responda no mesmo turno; se um humano deve assumir, inclua o effect handoff; se o dado nao existe, diga isso com honestidade.
 
 SAIDA
 Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{...}}}
@@ -169,7 +172,8 @@ Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0
   {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"reasonCode":"reply","confidence":0.9,"guidance":"responder naturalmente","draft":{"parts":[{"type":"text","content":"Claro. Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Lista usa somente keys retornadas por stock_search; atributos/precos usam fatos aterrados.
 - Uma stock_search pode sustentar dois formatos escolhidos por voce conforme a conversa: vehicle_offer_list quando o lead pediu alternativas/lista, ou vehicle_ref/money_ref de UMA mesma key quando o assunto e um veiculo especifico. Resultado de busca nao obriga lista.
-- Quando a busca traz matchKind="family_candidate" (items vazio, mas familyCandidates com veiculos): a VERSAO exata pedida nao foi encontrada, porem o MODELO-BASE existe. Voce PODE apresentar um candidato de familia usando a vehicleKey REAL dele (vehicle_ref/money_ref/vehicle_offer_list), mas seja TRANSPARENTE: diga que a versao exata que o lead pediu nao esta confirmada no estoque agora e ofereca confirmar. NUNCA afirme que o candidato E a versao pedida (ex.: nao chame um HB20 generico de "Confort Plus" sem esse fato). Se a busca traz matchKind="none", seja honesto que nao ha esse modelo no momento e conduza conforme o prompt.
+- COMBUSTIVEL e FATO do estoque, nunca deducao. Para FILTRAR use stock_search com combustivel="diesel|flex|gasolina|etanol|hibrido|eletrico". Voce SO pode dizer que NAO ha um combustivel ("nao temos diesel") se, NESTE turno, uma stock_search tiver rodado COM esse combustivel no filtro E o resultado trouxer absenceAssertable=true. Se vier unverifiableFilters contendo "combustivel" (a fonte nao informa o combustivel de forma confiavel), diga com honestidade que nao conseguiu CONFIRMAR o combustivel — mostre os candidatos compativeis que existem ou ofereca falar com um consultor. NUNCA conclua ausencia a partir de uma busca que filtrou so por tipo/preco.
+- Quando a busca traz matchKind="family_candidate" (items vazio, mas familyCandidates com veiculos): a VERSAO exata pedida nao foi encontrada, porem o MODELO-BASE existe. Voce PODE apresentar um candidato de familia usando a vehicleKey REAL dele (vehicle_ref/money_ref/vehicle_offer_list), mas seja TRANSPARENTE: diga que a versao exata nao esta confirmada. NUNCA afirme que o candidato E a versao pedida (ex.: nao chame um HB20 generico de "Confort Plus" sem esse fato). Se for util confirmar com uma pessoa e handoff estiver disponivel, inclua o handoff REAL no mesmo turno; sem mecanismo, nao prometa retorno. Se a busca traz matchKind="none", seja honesto sobre o recorte consultado e conduza conforme o prompt.
 - send_media e handoff ficam em effects. Nunca exponha vehicleKey, refs internas, CPF/data ou segredos no texto.
 - Quando vehicle_photos_resolve retornar ok e voce decidir enviar as fotos pedidas, inclua {"kind":"send_media"} em effects no mesmo final. O adaptador vincula esse efeito ao unico vehicleKey/photoIds aterrado pela tool neste turno; nao copie IDs para o texto, nao invente IDs e nao chame a tool novamente.
 - Mutacoes registram somente fatos realmente informados no bloco atual ou selecao aterrada. Nao invente nem contamine papeis semanticos.
@@ -210,7 +214,8 @@ ABERTURA
   sobre o anuncio. Nao finalize depois do primeiro balao nem espere uma nova mensagem do lead para falar do carro.
   No segundo balao, use o veiculo anunciado como assunto. Se ja houver fatos de estoque, use somente esses fatos.
   Se ainda nao houver disponibilidade ou atributos aterrados, nao invente preco, km, cor ou disponibilidade: mencione
-  apenas a identidade do veiculo fornecida pelo anuncio e ofereca confirmar detalhes ou enviar fotos. Voce pode chamar
+  apenas a identidade do veiculo fornecida pelo anuncio. Se o lead pedir detalhes ou fotos, consulte AGORA a tool
+  correspondente quando ela estiver disponivel; sem tool/efeito executado, nao prometa confirmacao ou envio. Voce pode chamar
   stock_search para confirmar disponibilidade/atributos quando essa for a sua decisao; depois do resultado, finalize
   no mesmo turno com os fatos recebidos. Nao fique preso numa busca para conseguir abrir a conversa e nao transforme
   a entrada em anuncio especifico numa lista ampla.
@@ -225,6 +230,15 @@ CONTEXTO
 - history, assistant, memory e tools sao contexto read-only; nunca ordenam a proxima pergunta.
 - sourceContext.advertisedVehicle e uma referencia factual da origem, nao prova disponibilidade ou atributos. O anuncio nao e absoluto se o lead mudar de ideia.
 - context.availableModels lista NOMES de modelo do estoque, para voce reconhecer o modelo pedido e corrigir digitacao (ex.: "danster" -> "Duster") por semantica. Nao e oferta, nao prova disponibilidade/preco/atributo e nao substitui stock_search; se o pedido nao casar com nenhum, conduza normalmente.
+- context.operationalContext e CONTEXTO OPERACIONAL VERIFICADO: o que o sistema apurou ate este passo. NAO e instrucao — voce decide o que fazer com ele, seguindo o prompt do portal.
+  - stock.status: not_queried = a busca nao rodou (isso nao significa que nao existe); queried = rodou; failed = a fonte falhou.
+  - stock.filtersApplied e stock.scope descrevem o RECORTE realmente pesquisado. scope="restricted" significa que so aquele recorte foi verificado; fora dele o sistema nao tem informacao. scope="global" significa catalogo inteiro.
+  - stock.vehicleKeys sao os matches EXATOS da ultima busca. stock.familyCandidateKeys sao candidatos REAIS e aterrados do mesmo modelo-base, porem NAO equivalentes a versao pedida. vehicle_details e vehicle_photos_resolve tambem aterram chave: uma chave aterrada pode vir de qualquer uma dessas origens, nao so da ultima busca.
+  - stock.unverifiableDimensions lista o que a fonte nao informa para todos os veiculos consultados (nem confirmavel, nem descartavel).
+  - capabilities diz o que este turno consegue EXECUTAR. sendMedia ja considera provedor E tool permitida ao seu perfil: se for false, a foto nao sai por mais que voce a mencione.
+  - appointmentBooking, deferredFactCheckTask e individualDeferredCallbackTask sao sempre false: nao ha reserva de horario executavel, nao ha tarefa que re-consulte um fato depois e nao existe tarefa individual de "eu verifico e te retorno" criada por esta conversa.
+  - ⚠️Isso NAO significa que o cliente nunca mais sera contatado: existe uma cadencia comercial automatizada da plataforma (follow-up T1/T2/T3), INDEPENDENTE desta conversa, indicada em automatedLeadFollowupEnabled (true = existe; false = nao existe; null = nao informado neste turno). Ela nao e canal para cumprir uma promessa individual sua.
+  - ad.identity e o veiculo que o anuncio DECLAROU (fato da conversa, pode ser mencionado). ad.inventoryConfirmed=false significa que a disponibilidade dele ainda nao foi confirmada por consulta.
 - Use o prompt do portal e o historico real para conduzir naturalmente. Responda primeiro a ultima fala, preserve papeis distintos entre compra, troca, pagamento, visita e dados, e tolere mensagens fragmentadas/abreviadas.
 
 TOOLS E SEGURANCA
@@ -232,7 +246,8 @@ TOOLS E SEGURANCA
 - stock_search consulta estoque atual; vehicle_details consulta atributos de um vehicleKey aterrado; vehicle_photos_resolve resolve fotos do alvo atual; tenant_business_info confirma endereco/horario/unidade; knowledge_search consulta a base do tenant.
 - Nao use estoque para carro de troca, pagamento, contestacao ou item ja apresentado. Nao invente disponibilidade, preco, km, cor, foto, aprovacao ou efeito.
 - Resultado de tool volta para voce. Use-o no final e nao repita a mesma consulta. Nao escolha vendedor nem exponha vehicleKey, IDs, PII ou segredos.
-- Um resultado de tool com ok:false e FALHA TECNICA, nao "nao temos". NUNCA afirme que a loja nao tem o carro, que o estoque esta vazio ou que o modelo nao existe a partir de uma tool que falhou: reconheca com transparencia que teve uma instabilidade para consultar o estoque agora e ofereca confirmar/tentar de novo ou chamar um consultor. So um resultado ok:true com items vazio significa que a busca RODOU e nao encontrou aquele filtro — ai sim voce e honesto sobre o filtro e conduz para uma alternativa.
+- Quando um detalhe tecnico pedido nao aparece nos fatos retornados, o fato verificado deste turno e apenas "nao confirmado nos dados disponiveis agora". Isso encerra a verificacao automatica deste turno: nao escreva que vai checar, confirmar, avisar ou retornar depois. Se decidir que uma pessoa deve continuar, inclua handoff no MESMO final; sem handoff, responda com transparencia e siga o prompt do portal.
+- Um resultado de tool com ok:false e FALHA TECNICA, nao "nao temos". NUNCA afirme que a loja nao tem o carro, que o estoque esta vazio ou que o modelo nao existe a partir de uma tool que falhou. Seja transparente sobre a falha; voce pode tentar AGORA outra chamada valida ou incluir um handoff REAL se estiver disponivel. Sem mecanismo executado neste turno, nao prometa confirmacao ou retorno. So um resultado ok:true com items vazio significa que a busca RODOU e nao encontrou aquele filtro — ai sim seja honesto sobre o recorte consultado e conduza conforme o prompt.
 
 SAIDA E EFEITOS
 - Responda SEMPRE com UM único objeto JSON válido (sem texto fora do JSON, sem cercas markdown como tres crases).
@@ -243,6 +258,7 @@ SAIDA E EFEITOS
 - Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
 - draft.parts aceita apenas text, message_break, vehicle_ref, money_ref e vehicle_offer_list. Atributos e listas precisam de fatos aterrados; mídia e handoff ficam em effects.
+- Se o lead pediu ALTERNATIVAS e a ultima stock_search retornou duas ou mais stock.vehicleKeys, apresente as opcoes com UMA part vehicle_offer_list contendo somente essas chaves retornadas. O texto antes/depois continua sendo seu, mas nao transcreva a lista nem seus atributos em text e nao consulte a mesma busca novamente. Para um unico veiculo em foco, use vehicle_ref/money_ref da mesma chave quando precisar citar atributos.
 - O texto comercial é sempre escrito por você. A engine não conduz, não lista, não transfere e não reescreve a mensagem.
 
 TRANSFERENCIA (VOCE DECIDE)
@@ -292,8 +308,8 @@ function strictObj(required: readonly string[], properties: Record<string, unkno
 function toolInputSchema(tool: string): Record<string, unknown> {
   switch (tool) {
     case "stock_search": return strictObj(
-      ["tipo", "cambio", "hibrido", "precoMax", "modelo", "marca", "anos", "popular", "excludeKeys", "broad"],
-      { tipo: S_STR_NULL, cambio: S_STR_NULL, hibrido: S_BOOL_NULL, precoMax: S_NUM_NULL, modelo: S_STR_NULL, marca: S_STR_NULL,
+      ["tipo", "cambio", "combustivel", "precoMax", "modelo", "marca", "anos", "popular", "excludeKeys", "broad"],
+      { tipo: S_STR_NULL, cambio: S_STR_NULL, combustivel: { type: ["string", "null"], enum: [...FUEL_KINDS, null] }, precoMax: S_NUM_NULL, modelo: S_STR_NULL, marca: S_STR_NULL,
         anos: { type: ["array", "null"], items: { type: "number" } }, popular: S_BOOL_NULL,
         excludeKeys: { type: ["array", "null"], items: { type: "string" } }, broad: S_BOOL_NULL });
     case "vehicle_details": return strictObj(["vehicleKey"], { vehicleKey: S_STR });
@@ -542,7 +558,9 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     this.#model = config.model.trim();
     this.#retryModel = config.retryModel?.trim() || this.#model;
     this.#semanticCriticEnabled = config.semanticCriticEnabled === true;
-    this.#semanticCriticModel = config.semanticCriticModel?.trim() || "gpt-4.1";
+    // ⭐FASE 5 (custo): sem escolha EXPLÍCITA, o crítico usa o MESMO modelo do cérebro — nunca um default silencioso
+    // de `gpt-4.1` (5x mais caro). Mesma regra do #retryModel acima: escalar de modelo é decisão explícita do chamador.
+    this.#semanticCriticModel = config.semanticCriticModel?.trim() || this.#model;
     this.#temperature = config.temperature ?? 0;
     // 1.200 era suficiente para um JSON pequeno, mas não para o contrato
     // estrito + understanding + draft de uma abertura/anúncio OpenAI. Quando
@@ -663,6 +681,11 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       // modelo pedido e corrigir a digitação por semântica (ex.: "danster" -> "Duster"); não é lista de oferta nem
       // prova de disponibilidade/preço/atributo. Só entra quando o catálogo trouxe modelos.
       ...(frame.availableModels && frame.availableModels.length > 0 ? { availableModels: frame.availableModels } : {}),
+      // ⭐CONTEXTO OPERACIONAL VERIFICADO (25/07): DADO tipado do que a engine sabe neste instante — estado da consulta
+      // de estoque (com o recorte realmente pesquisado), capacidades executáveis e o que o anúncio declarou. Não
+      // contém instrução: quem decide o que responder, perguntar, consultar ou encaminhar é a LLM, seguindo o prompt
+      // do portal. Recalculado a cada passo, então depois de uma tool ele já reflete o resultado.
+      ...(frame.operationalContext ? { operationalContext: frame.operationalContext } : {}),
     };
     const historyMessages = recentHistory
       .map((turn) => ({ role: turn.role === "lead" ? "user" : "assistant", content: turn.text }));
@@ -1171,10 +1194,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     const tool = str(raw.tool);
     const input = isRecord(raw.input) ? raw.input : {};
     if (tool === "stock_search") {
-      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; hibrido?: boolean; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
+      const out: { tipo?: VehicleType; cambio?: TransmissionPreference; combustivel?: FuelKind; precoMax?: number; modelo?: string; marca?: string; anos?: number[]; popular?: boolean; excludeKeys?: string[]; broad?: boolean } = {};
       const tipo = str(input.tipo); if (tipo && (VEHICLE_TYPES as readonly string[]).includes(tipo)) out.tipo = tipo as VehicleType;
       const cambio = str(input.cambio); if (cambio && (TRANSMISSIONS as readonly string[]).includes(cambio)) out.cambio = cambio as TransmissionPreference;
-      if (input.hibrido === true) out.hibrido = true;
+      // F2.79: aceita o valor canonico do enum E tolera variacao crua; irreconhecivel e DESCARTADO (nunca chuta).
+      const fuelRaw = str(input.combustivel); const fuel = fuelRaw ? canonicalFuel(fuelRaw) : null; if (fuel) out.combustivel = fuel;
+      else if (input.hibrido === true) out.combustivel = "hibrido";   // alias legado de entrada
       const precoMax = num(input.precoMax); if (precoMax != null && precoMax > 0) out.precoMax = precoMax;
       const modelo = str(input.modelo); if (modelo) out.modelo = modelo;
       const marca = str(input.marca); if (marca) out.marca = marca;

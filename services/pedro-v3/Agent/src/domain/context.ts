@@ -17,6 +17,17 @@ export type TurnContext = {
   // É a AUTORIDADE de mudança de assunto na policy: POL-TRACK-001 só se abstém quando === "search_stock". NUNCA vem de um
   // detector heurístico (deriveCurrentTurnIntent). Ausente = legado (kernel/v2/replay) -> policy mantém o comportamento antigo.
   acceptedPrimaryIntent?: PrimaryIntent;
+  /**
+   * Vehicle identities explicitly declared by a structured conversation source.
+   * This authorizes only naming the identity in natural text. It never proves
+   * inventory availability, a vehicleKey, price, mileage or any other attribute.
+   */
+  declaredVehicleIdentities?: readonly {
+    readonly source: "paid_ad";
+    readonly label: string;
+    readonly brand: string | null;
+    readonly model: string;
+  }[];
 };
 
 export type QueryLoopLimits = {

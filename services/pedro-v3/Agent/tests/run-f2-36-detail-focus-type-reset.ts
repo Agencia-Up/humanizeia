@@ -13,6 +13,8 @@ import { buildTenantCatalog } from "../src/engine/catalog-utils.ts";
 import { CatalogClaimExtractor } from "../src/engine/turn-context-preparer.ts";
 import { buildSdrQualificationPolicy } from "../src/engine/sdr-conductor.ts";
 import { createInitialState, type AdContext, type ConversationState, type ActiveSearchConstraints } from "../src/domain/conversation-state.ts";
+import { adFingerprintOf } from "../src/domain/operational-context.ts";
+import { buildAdIdentityTarget } from "../src/engine/ad-context.ts";
 import { redact } from "../src/domain/effect-intent.ts";
 import type { TurnContextPreparer } from "../src/domain/context.ts";
 import type { DecisionLlm } from "../src/domain/llm.ts";
@@ -171,6 +173,14 @@ async function runTurn(args: { state?: Partial<ConversationState>; lead: string;
 
 const offer = { sourceTurnId: "seed", createdAt: NOW, items: [HB20_2020, HB20_2019].map((v, i) => ({ ordinal: i + 1, vehicleKey: v.vehicleKey, marca: v.marca, modelo: v.modelo, ano: v.ano, preco: v.preco, tipo: v.tipo })) };
 const ad: AdContext = { adId: "ad-hb20", source: "fb", sourceUrl: null, title: "Hyundai HB20 2020", body: "HB20 automatico completo", greeting: "Tenho interesse no HYUNDAI HB20 2020", imageUrls: [], capturedAtTurn: 0 };
+const adTarget = buildAdIdentityTarget(ad);
+if (!adTarget) throw new Error("fixture_ad_target_missing");
+const exactAdProof = {
+  vehicleKey: HB20_2020.vehicleKey,
+  adFingerprint: adFingerprintOf({ adId: ad.adId, identity: adTarget.identity }),
+  searchFingerprint: JSON.stringify({ modelo: "HB20", anos: [2020] }),
+  level: "exact_for_ad" as const,
+};
 
 async function main(): Promise<void> {
   console.log("== F2.36: detail focus + broad type reset ==");
@@ -185,7 +195,7 @@ async function main(): Promise<void> {
   })());
 
   const p1 = await runTurn({
-    state: { adContext: ad, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
+    state: { adContext: ad, adIdentityProof: exactAdProof, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
     lead: "qual o valor dele?",
     relation: "asks_vehicle_detail",
     responder: detailBrain,
@@ -195,12 +205,27 @@ async function main(): Promise<void> {
   check("[P0-1c] nao roda stock_search em pergunta de atributo do veiculo focado", p1.stockInputs.length === 0, `stock=${JSON.stringify(p1.stockInputs)}`);
 
   const p1Amb = await runTurn({
-    state: { adContext: ad, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
+    state: { adContext: ad, adIdentityProof: exactAdProof, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
     lead: "qual o valor dele?",
     relation: "ambiguous",
     responder: detailBrain,
   });
   check("[P0-1d] detalhe pronominal nao depende do classificador relation=asks_vehicle_detail", p1Amb.detailKeys.length === 1 && p1Amb.detailKeys[0] === HB20_2020.vehicleKey && has(p1Amb.outbox, "73.990") && p1Amb.src !== "technical_fallback", `detailKeys=${JSON.stringify(p1Amb.detailKeys)} src=${p1Amb.src} outbox=${p1Amb.outbox}`);
+
+  const ambiguousDetailBrain: BrainResponder = (_frame, obs) => {
+    const rejected = obs.some((o) => o.tool === "response" && !o.ok && o.error.code === "RESPONSE_REJECTED");
+    return rejected
+      ? final([txt("Voce fala do HB20 2020 ou do HB20 2019?")], "clarify_vehicle_detail_target", detailU)
+      : final([txt("Ele esta por R$ 73.990.")], "premature_detail", detailU);
+  };
+  const p1NoProof = await runTurn({
+    state: { adContext: ad, adIdentityProof: null, lastRenderedOfferContext: offer, activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"] } as ActiveSearchConstraints },
+    lead: "qual o valor dele?",
+    relation: "asks_vehicle_detail",
+    responder: ambiguousDetailBrain,
+  });
+  check("[P0-1e] sem prova exata a engine nao escolhe um dos dois veiculos", p1NoProof.detailKeys.length === 0 && !has(p1NoProof.outbox, "73.990"), `detailKeys=${JSON.stringify(p1NoProof.detailKeys)} outbox=${p1NoProof.outbox}`);
+  check("[P0-1f] a LLM desambigua naturalmente sem technical_fallback", has(p1NoProof.outbox, "HB20 2020") && has(p1NoProof.outbox, "HB20 2019") && p1NoProof.src === "brain_retry", `src=${p1NoProof.src} reason=${p1NoProof.reason} outbox=${p1NoProof.outbox}`);
 
   const p2 = await runTurn({
     state: { activeSearchConstraints: { marca: "hyundai", modelos: ["HB20"], precoMax: 80000 } as ActiveSearchConstraints },

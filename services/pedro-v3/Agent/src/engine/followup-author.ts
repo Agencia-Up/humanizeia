@@ -5,6 +5,7 @@ import { buildWorkingMemory } from "./working-memory.ts";
 import { buildConversationContext } from "./conversation-context.ts";
 import type { FollowupStage } from "./followup-policy.ts";
 import { adText, resolveAdVehicleFromMarket } from "./ad-context.ts";
+import { questionSlotFromAgentText } from "./lead-extraction.ts";
 
 function questionCount(text: string): number {
   return (text.match(/\?/g) ?? []).length;
@@ -76,6 +77,15 @@ function repeatsLastAgentQuestion(text: string, previous: string | null): boolea
     const core = normalizeFollowupText(question).replace(/\?$/, "").trim();
     return core.length >= 18 && normalizedText.includes(core);
   });
+}
+
+// A pergunta pendente e um fato semantico persistido pelo turno conversacional.
+// T1/T2 podem retomar o assunto com autoria livre, mas nao devem reformular a
+// mesma pergunta de qualificacao que o lead ainda nao respondeu. Isso valida
+// repeticao; nao escolhe CTA, assunto novo ou texto para a LLM.
+function repeatsPendingQuestionSlot(text: string, pendingSlot: string | null): boolean {
+  if (!pendingSlot) return false;
+  return questionSlotFromAgentText(text) === pendingSlot;
 }
 
 function violatesFollowupStyle(text: string, stage: FollowupStage): boolean {
@@ -187,12 +197,14 @@ export async function authorFollowupMessageDetailed(args: {
     try { text = ResponseRenderer.render({ parts: textParts }, [], args.state).trim(); }
     catch { text = ""; }
     const repeatedQuestion = args.stage !== 3 && repeatsLastAgentQuestion(text, lastAgentMessage(args.state));
+    const repeatedPendingSlot = args.stage !== 3
+      && repeatsPendingQuestionSlot(text, memory.pendingAgentQuestion?.slot ?? null);
     const invalidStyle = violatesFollowupStyle(text, args.stage);
     const unsupportedClaim = claimsUnseenOutboundMaterial(text, args.state);
     const unsupportedHandoffClaim = args.stage === 3 && claimsHandoffContinuity(text) && args.handoffAvailable !== true;
     const missingHandoffClaim = args.stage === 3 && args.handoffAvailable === true && !claimsHandoffContinuity(text);
     const questions = questionCount(text);
-    if (!text || invalidStyle || repeatedQuestion || unsupportedClaim || unsupportedHandoffClaim || missingHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
+    if (!text || invalidStyle || repeatedQuestion || repeatedPendingSlot || unsupportedClaim || unsupportedHandoffClaim || missingHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
       lastReason = !text ? "text_missing" : unsupportedHandoffClaim ? "unsupported_handoff_claim" : unsupportedClaim ? "unsupported_claim" : "question_contract";
       feedback = args.stage === 3
         ? unsupportedHandoffClaim
@@ -202,8 +214,8 @@ export async function authorFollowupMessageDetailed(args: {
           : " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
         : unsupportedClaim
           ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
-        : repeatedQuestion
-          ? " FEEDBACK: voce repetiu a ultima pergunta do atendente. Retome o assunto com uma pergunta diferente, simples e facil de responder."
+        : repeatedQuestion || repeatedPendingSlot
+          ? " FEEDBACK: voce repetiu uma pergunta de qualificacao que o cliente ainda nao respondeu. Nao a reformule. Faca uma retomada diferente e ligada ao contexto; a escolha do texto continua sendo sua."
           : invalidStyle
             ? " FEEDBACK: follow-up nao pode ter saudacao, reapresentacao, 'Prefiro ser honesto' ou linguagem de desistencia. Retome o historico com naturalidade."
             : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";

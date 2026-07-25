@@ -41,7 +41,7 @@ const has = (s: string, n: string): boolean => norm(s).includes(norm(n));
 const INSTABILIDADE = "instabilidade";
 
 // Estoque da Icom no dia do incidente (sem HRV — por isso "Vcs tem na loja uma HRV?" é busca vazia LEGÍTIMA).
-const ECOSPORT20: VehicleFact = { vehicleKey: "rm:eco20", marca: "Ford", modelo: "EcoSport", ano: 2020, preco: 71990, km: 62000, cambio: "Automatico", cor: "Prata", tipo: "suv" };
+const ECOSPORT20: VehicleFact = { vehicleKey: "rm:eco20", marca: "Ford", modelo: "EcoSport", versao: "SE 1.5", ano: 2020, preco: 71990, km: 62000, cambio: "Automatico", cor: "Prata", tipo: "suv" };
 const COMPASS22: VehicleFact = { vehicleKey: "rm:cmp22", marca: "Jeep", modelo: "Compass", ano: 2022, preco: 129990, km: 41000, cambio: "Automatico", cor: "Branco", tipo: "suv" };
 const COMPASS19: VehicleFact = { vehicleKey: "rm:cmp19", marca: "Jeep", modelo: "Compass", ano: 2019, preco: 103990, km: 78000, cambio: "Automatico", cor: "Preto", tipo: "suv" };
 const RENEGADE18: VehicleFact = { vehicleKey: "rm:ren18", marca: "Jeep", modelo: "Renegade", ano: 2018, preco: 71990, km: 122000, cambio: "Automatico", cor: "Preto", tipo: "suv" };
@@ -324,6 +324,94 @@ async function main(): Promise<void> {
     check("[B1] NAO virou lista ampla (so o carro do anuncio)", !has(r.outbox, "Renegade") && !has(r.outbox, "Compass"), r.outbox.slice(0, 140));
   }
 
+  // [B1a] repro do retry-storm de 24/07: depois da busca correta, linguagem natural
+  // inequívoca sobre o ÚNICO carro encontrado precisa passar sem obrigar vehicle_ref.
+  // A policy continua validando preço/atributos/chaves separadamente.
+  {
+    const c = conv();
+    const block = "Olá! Posso ter mais informações sobre isso?";
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
+      const searched = observations.some((o) => o.tool === "stock_search" && o.ok);
+      if (!searched) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "EcoSport", anos: [2020] } }, u);
+      return finU([txt("Encontrei o Ford EcoSport 2020 do anúncio. Quer fotos ou mais detalhes dele?")], "offer_stock", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adEcoSport);
+    check("[B1a] prosa natural aterrada e commitada", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[B1a] somente uma busca e nenhuma ferramenta redundante", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
+    check("[B1a] zero grounding_deny depois do fato", !r.retryReasons.includes("grounding_deny"), r.retryReasons.join("|"));
+    check("[B1a] resposta natural chegou ao lead", has(r.outbox, "EcoSport 2020") && !has(r.outbox, INSTABILIDADE), r.outbox.slice(0, 120));
+    check("[B1a] cérebro resolveu em busca + final", r.brainCalls <= 2, `brainCalls=${r.brainCalls}`);
+  }
+
+  // [B1c] regressao do smoke real de 25/07: depois de apresentar o carro
+  // aterrado, a LLM seguiu o funil do portal e perguntou o nome. A engine nao
+  // pode reordenar essa conducao comercial nem consumir retries por isso.
+  {
+    const c = conv();
+    const block = "Olá! Vim pelo anúncio. Ainda está disponível?";
+    let attempts = 0;
+    const responder: BrainResponder = (frame, observations) => {
+      attempts += 1;
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
+      const searched = observations.some((o) => o.tool === "stock_search" && o.ok);
+      if (!searched) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "EcoSport", anos: [2020] } }, u);
+      return finU([txt("O Ford EcoSport 2020 do anúncio está disponível. Para continuar, qual é o seu nome?")], "offer_and_ask_name", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adEcoSport);
+    check("[B1c] anuncio aterrado + pergunta de nome e aceito", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[B1c] engine nao cria retry comercial de identidade", attempts === 2 && r.brainCalls <= 2, `attempts=${attempts} brainCalls=${r.brainCalls}`);
+    check("[B1c] preserva o carro factual e a autoria do funil", has(r.outbox, "EcoSport 2020") && has(r.outbox, "nome"), r.outbox.slice(0, 140));
+  }
+
+  // [B1b] regressão do smoke 25/07: a LLM apresentou o único veículo em prosa natural,
+  // sem vehicle_offer_list. A existência e a prova exata precisam atravessar o commit;
+  // no turno seguinte, "fotos dele" resolve a chave sem repetir stock_search.
+  {
+    const c = conv();
+    const opening = "Olá! Posso ter mais informações sobre isso?";
+    const openingResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? opening, "stock_search") };
+      const searched = observations.some((o) => o.tool === "stock_search" && o.ok);
+      if (!searched) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "EcoSport", anos: [2020] } }, u);
+      return finU([txt("Encontrei o Ford EcoSport SE 1.5 2020 do anúncio. Quer fotos ou mais detalhes dele?")], "offer_stock", u);
+    };
+    const first = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, opening, "ambiguous", openingResponder, adEcoSport);
+
+    const photoBlock = "Passe mais fotos dele.";
+    const photoResponder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("request_photos"),
+        requestedCapabilities: ["send_photos"],
+        evidence: [{ capability: "send_photos", quote: "fotos dele" }],
+      };
+      const resolved = observations.find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as { ok: true; data: { vehicleKey: string; photoIds: string[] } } | undefined;
+      if (!resolved) return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: ECOSPORT20.vehicleKey } } }, u);
+      return {
+        kind: "final",
+        understanding: u,
+        decision: {
+          reasonCode: "send_photos",
+          reasonSummary: "fotos do carro anunciado",
+          confidence: 0.95,
+          responsePlan: { guidance: "g", draft: { parts: [txt("Aqui estão as fotos do Ford EcoSport 2020.")] } },
+          proposedEffects: [
+            reply,
+            { kind: "send_media", planId: "photos", order: 1, onSuccess: [], vehicleKey: resolved.data.vehicleKey, photoIds: resolved.data.photoIds } as ProposedEffectPlan,
+          ],
+          memoryMutations: [], stateMutations: [],
+        } as AgentBrainDecision,
+      } as AgentBrainStep;
+    };
+    const second = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 2, photoBlock, "continues_offer", photoResponder);
+
+    check("[B1b] abertura natural foi commitada", first.committed && first.responseSource !== "technical_fallback", `${first.responseSource}`);
+    check("[B1b] pedido pronominal nao repete stock_search", !second.exec.includes("stock_search"), second.exec.join(","));
+    check("[B1b] foto executa uma vez na chave persistida", second.exec.filter((x) => x === "vehicle_photos_resolve").length === 1 && second.execKeys.includes(ECOSPORT20.vehicleKey), `${second.exec.join(",")} keys=${second.execKeys.join(",")}`);
+    check("[B1b] send_media sai do carro anunciado", second.hasMedia && second.mediaKey === ECOSPORT20.vehicleKey, `${second.mediaKey}`);
+    check("[B1b] zero fallback e zero deny de evidencia", second.responseSource !== "technical_fallback" && !second.retryReasons.includes("tool_denied_no_evidence"), `${second.responseSource}|${second.retryReasons.join("|")}`);
+  }
+
   // [B2] chave ATERRADA (vinda de stock_search) passa normalmente — a guarda não pode barrar o caminho legítimo.
   {
     const c = conv();
@@ -380,6 +468,33 @@ async function main(): Promise<void> {
     check("[B4] stock_search executou uma unica vez", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
     check("[B4] proposta duplicada consumiu no maximo uma nova autoria", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
     check("[B4] resposta final usa o estoque obtido", has(r.outbox, "SUV") || has(r.outbox, "EcoSport"), r.outbox.slice(0, 140));
+  }
+
+  // [B5] Regressao do smoke 25/07: uma busca ampla retorna varios veiculos e
+  // a primeira autoria nao usa a parte estruturada. A engine nao escolhe a
+  // resposta comercial; devolve o conjunto factual admissivel e a LLM reautora.
+  {
+    const c = conv();
+    const block = "Tem outra SUV mais em conta?";
+    const responder: BrainResponder = (frame, observations) => {
+      const us: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
+      const searched = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      const groundingFeedback = observations.find((o) => !o.ok && has(o.error.message, "vehicle_offer_list"));
+      if (!searched) return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
+      if (!groundingFeedback) return finU([txt("Encontrei boas opcoes para voce. Qual delas quer conhecer?")], "offer_stock", us);
+      return finU([
+        txt("Encontrei estas opcoes de SUV para voce:"),
+        offer(searched.data.items.map((v) => v.vehicleKey)),
+        txt("Qual delas chamou mais sua atencao?"),
+      ], "offer_stock", us);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "direction_change", responder);
+    const expected = STOCK.filter((v) => v.tipo === "suv");
+    check("[B5] busca ampla executa uma unica vez", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
+    check("[B5] feedback entrega a parte estrutural e as chaves admissiveis", r.policyFeedback.some((f) => has(f, "vehicle_offer_list") && expected.every((v) => f.includes(v.vehicleKey))), r.policyFeedback.join(" | ").slice(0, 500));
+    check("[B5] LLM reautora e o turno termina sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[B5] lista final usa somente fatos da busca", expected.every((v) => has(r.outbox, v.modelo)), r.outbox.slice(0, 260));
+    check("[B5] convergencia custa busca + duas autorias", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

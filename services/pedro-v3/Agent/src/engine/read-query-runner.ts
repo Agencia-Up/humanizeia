@@ -46,13 +46,20 @@ function isVehicleRef(input: { vehicleRef: unknown }): input is { vehicleRef: { 
   return ref.kind === "vehicle" && typeof ref.key === "string" && ref.key.trim() !== "";
 }
 
-function toJsonRecord(value: Record<string, unknown>): Record<string, string | number | boolean | null | string[]> {
-  const out: Record<string, string | number | boolean | null | string[]> = {};
+function toJsonRecord(value: Record<string, unknown>): Record<string, string | number | boolean | null | string[] | number[]> {
+  const out: Record<string, string | number | boolean | null | string[] | number[]> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (raw === undefined) continue;
     if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" || raw === null) {
       out[key] = raw;
     } else if (Array.isArray(raw) && raw.every((item) => typeof item === "string")) {
+      out[key] = raw;
+    } else if (Array.isArray(raw) && raw.every((item) => typeof item === "number" && Number.isFinite(item))) {
+      // Structured stock filters use numeric arrays for rigid years. Dropping
+      // `anos` here made the executed query lose its own proof metadata: the
+      // stock adapter filtered 2019 correctly, but the next brain step saw a
+      // search with no year and could not persist the exact ad identity. Keep
+      // the executed fact intact; this is serialization, not search policy.
       out[key] = raw;
     }
   }
@@ -81,6 +88,11 @@ export function createReadQueryRunner(ref: TenantAgentRef, sources: ReadQueryRun
               // F2.76: candidatos de família (versão exata ausente, modelo-base existe) viajam SEPARADOS até o cérebro.
               ...(result.familyCandidates && result.familyCandidates.length > 0 ? { familyCandidates: [...result.familyCandidates] } : {}),
               ...(result.matchKind ? { matchKind: result.matchKind } : {}),
+              // F2.79: capacidade de verificação do combustível — é o que autoriza (ou proíbe) afirmar ausência.
+              ...(result.attributeCoverage ? { attributeCoverage: result.attributeCoverage } : {}),
+              ...(result.unverifiableFilters && result.unverifiableFilters.length > 0 ? { unverifiableFilters: [...result.unverifiableFilters] } : {}),
+              ...(result.absenceAssertable != null ? { absenceAssertable: result.absenceAssertable } : {}),
+              ...(result.absenceScope ? { absenceScope: result.absenceScope } : {}),
             },
           };
         }

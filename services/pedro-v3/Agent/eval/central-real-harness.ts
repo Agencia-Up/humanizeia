@@ -58,7 +58,8 @@ export function buildCentralStack(assembly: RealAssembly, portalPromptOverride?:
     model: assembly.aiProvider.model,
     retryModel: assembly.aiProvider.retryModel,
     temperature: 0.1, maxCompletionTokens: brainMaxCompletionTokens, timeoutMs: 60_000, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
-    semanticCriticEnabled: process.env.PEDRO_V3_EVAL_SEMANTIC_CRITIC === "1", semanticCriticModel: "gpt-4.1",
+    // FASE 5: o crítico do smoke segue o modelo do provider (nunca escala p/ gpt-4.1 sozinho e estoura o teto).
+    semanticCriticEnabled: process.env.PEDRO_V3_EVAL_SEMANTIC_CRITIC === "1", semanticCriticModel: assembly.aiProvider.model,
   });
   // COMPOSE temp 0.3 — redige aterrado nos fatos (menos embelezamento -> menos grounding-deny -> menos terminal_safe).
   const composeTransport = new CountingModelHttpTransport(new RetryingModelHttpTransport(new FetchModelHttpTransport()));
@@ -205,7 +206,11 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
         persistence, clock: clock as never, brain: recordingBrain, llm: stack.composeLlm, runQuery: assembly.runQuery, businessInfo,
         contextPreparer: assembly.contextPreparer, conversationId: convId, tenantId: assembly.ref.tenantId, agentId: assembly.ref.agentId, leadId: opts.crmLeadId ?? null,
         workerId: "central-eval", turnId, leaseTtlMs: 120_000, portalPromptSha256: assembly.promptSha,
-        limits: CENTRAL_LIMITS, maxValidationAttempts: 3, brainMaxSteps: 6, allowedTools: [...CENTRAL_ALLOWED_TOOLS],
+        // CENTRAL_EVAL_MAX_VALIDATION_ATTEMPTS: só para DIAGNÓSTICO com teto de custo baixo (o 1º deny — que é o
+        // que identifica a guarda — já aparece na 1ª tentativa). Default 3 = fidelidade de produção.
+        // CENTRAL_EVAL_BRAIN_MAX_STEPS: teto de passos DENTRO do turno. Sem ele, um teto de custo que só é
+        // conferido ENTRE turnos não segura nada — um único turno em retry pode consumir 14 chamadas sozinho.
+        limits: CENTRAL_LIMITS, maxValidationAttempts: Number(process.env.CENTRAL_EVAL_MAX_VALIDATION_ATTEMPTS ?? "3"), brainMaxSteps: Number(process.env.CENTRAL_EVAL_BRAIN_MAX_STEPS ?? "6"), allowedTools: [...CENTRAL_ALLOWED_TOOLS],
         tenantPolicies: assembly.runtimeConfig.tenantPolicies,
         providerCapability: { send_message: "none", send_media: "none" },
         singleAuthor: opts.singleAuthor ?? false, llmFirst: opts.llmFirst ?? false,
@@ -251,6 +256,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       degradationKind: r?.status === "committed" ? r.degradationKind : undefined,
       providerFallbackReason: r?.status === "committed" ? (r.providerFallbackReason ? sanitize(r.providerFallbackReason).slice(0, 120) : null) : undefined,
       policyFeedback: r?.status === "committed" ? r.policyFeedback.map((f) => sanitize(f).slice(0, 200)) : undefined,
+      retryReasons: r?.status === "committed" ? [...(r.retryReasons ?? [])] : undefined,
       policyDecision: r?.status === "committed" ? (r.understanding.policyDecision ?? null) as TenantPolicyDecision | null : undefined,
       primaryIntent: r?.status === "committed" ? r.understanding.primaryIntent : undefined,
       targetResolutionSource: r?.status === "committed" ? r.targetResolutionSource : undefined,
@@ -261,6 +267,7 @@ export async function runCentralConversation(assembly: RealAssembly, stack: Cent
       llmCallsInTurn: allCalls.length,
       promptExactInTurn: allCalls.length === 0 ? true : allCalls.every((c) => c.promptExact === true),
       toolsRequested: [...recordingBrain.requestedTools],
+      toolsExecuted: r?.status === "committed" ? r.toolTelemetry.map((tool) => tool.tool) : [],
       observations: r?.status === "committed" ? r.toolObservations.map((o) => ({ tool: o.tool, ok: o.ok, code: o.ok ? undefined : o.error.code })) : [],
       effects: outbox.map((o) => ({ kind: o.kind, vehicleKey: o.payload?.vehicleKey, photoCount: Array.isArray(o.payload?.photoIds) ? o.payload!.photoIds!.length : undefined, status: o.status })),
       // MISSÃO PII: briefing/reason do handoff planejado no turno (relatório integral do smoke).

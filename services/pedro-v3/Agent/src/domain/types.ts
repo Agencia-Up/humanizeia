@@ -3,6 +3,8 @@
 // Fonte: Brain/02-ARQUITETURA-E-CONTRATOS.md. SEM I/O, SEM efeito externo.
 // ============================================================================
 
+import type { FuelKind } from "./fuel.ts";
+
 export type Id = string;
 export type Iso = string; // timestamp ISO-8601
 
@@ -33,11 +35,17 @@ export type VehicleFact = {
   vehicleKey: string; // estável: marca|modelo|ano
   marca: string;
   modelo: string;
+  /** Version/trim reported by the stock source. Missing means unknown. */
+  versao?: string | null;
   ano: number;
   preco: number;
   km?: number;
   cambio?: string | null; // F2.7.5: opcional — renderizado "se houver" (fonte de estoque pode preencher)
   cor?: string | null;    // F2.7.5: opcional — idem
+  // ⭐F2.79: COMBUSTÍVEL canônico (só quando a fonte informou E foi reconhecido). AUSENTE = a fonte não
+  // informou — NUNCA interpretável como "não é diesel". `combustivelLabel` guarda o rótulo cru p/ texto.
+  combustivel?: FuelKind;
+  combustivelLabel?: string | null;
   tipo: VehicleType;
   photoIds?: string[];
 };

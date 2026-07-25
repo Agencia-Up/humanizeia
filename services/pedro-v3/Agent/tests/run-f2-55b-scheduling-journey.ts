@@ -204,7 +204,10 @@ async function main(): Promise<void> {
   check("[T10d] ⭐texto VISÍVEL NÃO repergunta o DIA (dia já dado); pode pedir só o horário", !asksDay(t10.outbox), t10.outbox);
 
   // ⭐T11 "Às 15h" (horário isolado) -> P0-A composição: segunda + 15h; horário não apaga o dia
-  const t11 = await c.t("Às 15h", () => finU([txt("Perfeito! Sua visita ao Compass ficou para segunda-feira às 15h. Vou confirmar com o consultor.")], "reply", U("visit", [ev(undefined, "15h")])), "answers_pending");
+  // ⭐F2.80 (prioridade 3): o texto ANTIGO desta fixture terminava com "Vou confirmar com o consultor." — promessa de
+  // verificação posterior SEM mecanismo (nenhuma tool no turno, nenhum handoff no plano). O contrato novo nega isso,
+  // e com razão: ninguém confirmaria nada depois. A fixture passa a fechar de forma honesta, sem prometer retorno.
+  const t11 = await c.t("Às 15h", () => finU([txt("Perfeito! Segunda-feira às 15h fica ótimo pra ver o Compass. Fico à disposição por aqui até lá.")], "reply", U("visit", [ev(undefined, "15h")])), "answers_pending");
   check("[T11] ⭐'Às 15h' NÃO é technical_fallback (P0-A)", isBrain(t11.src) && !t11.terminalSafe, `src=${t11.src}`);
   check("[T11a] visit EXATO", t11.primaryIntent === "visit", `pi=${t11.primaryIntent}`);
   check("[T11b] ⭐diaHorario COMPÔS dia+horário (segunda 15h)", has(String(slotVal(t11, "diaHorario") ?? ""), "segunda") && has(String(slotVal(t11, "diaHorario") ?? ""), "15"), JSON.stringify(slotVal(t11, "diaHorario")));

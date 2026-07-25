@@ -16,6 +16,7 @@ import type { FrameSignals } from "../domain/agent-brain.ts";
 import type { ActiveSearchConstraints } from "../domain/conversation-state.ts";
 import type { VehicleType } from "../domain/types.ts";
 import { moneyByClause } from "./lead-extraction.ts";
+import { detectFuelIntent, fuelLabel, isFuelKind } from "../domain/fuel.ts";
 
 // A forma dos constraints é a MESMA do estado persistido (ActiveSearchConstraints) — domínio é a fonte do tipo.
 export type CommercialConstraints = ActiveSearchConstraints;
@@ -61,9 +62,10 @@ export function mentionsMotorcycle(block: string): boolean {
 // Propulsão é requisito de produto, não adjetivo de conversa: "sedan híbrido"
 // não pode degradar para qualquer sedan. O motor de busca recebe somente a
 // restrição afirmada; não inferimos híbrido por marca/modelo.
-const HYBRID_INTENT_RX = /\b(?:hibrid[oa]s?|hybrid)\b/;
+// ⭐F2.79: a INTENÇÃO de propulsão do lead vem da MESMA tabela do domínio que produz o FATO (fuel.ts).
+// Assim detector e filtro não podem divergir — e a dimensão deixou de ser só "híbrido sim/não".
 export function mentionsHybridPowertrain(block: string): boolean {
-  return HYBRID_INTENT_RX.test(normalizeText(block));
+  return detectFuelIntent(block) === "hibrido";
 }
 
 // ── CORREÇÕES explícitas do lead (Invariante 2 / Evidence 1): remoções de constraint do filtro ATIVO. "esquece o
@@ -139,7 +141,8 @@ export function detectCommercialConstraints(args: {
   }
   if (precoMax != null) c.precoMax = precoMax;
   if (frame.transmission) c.cambio = frame.transmission;
-  if (mentionsHybridPowertrain(args.block)) c.hibrido = true;
+  const fuelIntent = detectFuelIntent(args.block);
+  if (fuelIntent) c.combustivel = fuelIntent;   // F2.79: diesel/flex/gasolina/etanol/hibrido/eletrico
   if (args.signals.mentionsPopular === true) c.popular = true;
   const anos = detectYears(args.block);
   if (anos.length > 0) c.anos = anos;
@@ -163,7 +166,7 @@ export function relaxToSimilar(c: CommercialConstraints, keepCambio: boolean): C
   if (c.precoMax != null) out.precoMax = c.precoMax;
   if (c.popular === true) out.popular = true;
   if (keepCambio && c.cambio) out.cambio = c.cambio;
-  if (c.hibrido === true) out.hibrido = true;
+  if (c.combustivel) out.combustivel = c.combustivel;   // F2.79: "algo parecido" de um diesel continua diesel
   return out;
 }
 
@@ -207,7 +210,7 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
   if (current.modelos && current.modelos.length > 0 && current.popular !== true) delete next.popular;
   if (current.precoMax != null) next.precoMax = current.precoMax;
   if (current.cambio) next.cambio = current.cambio;
-  if (current.hibrido === true) next.hibrido = true;
+  if (current.combustivel) next.combustivel = current.combustivel;   // F2.79: dimensao do bloco ATUAL substitui a antiga
   if (current.popular) next.popular = true;
   if (current.anos && current.anos.length > 0) next.anos = [...current.anos];   // anos novos substituem os antigos (rígido)
   return next;
@@ -215,7 +218,7 @@ export function mergeActiveConstraints(active: CommercialConstraints, current: C
 
 // Constraint suficiente para DISPARAR uma busca? Qualquer filtro comercial. PURO.
 export function sufficientForStockSearch(c: CommercialConstraints): boolean {
-  return c.marca != null || (c.modelos != null && c.modelos.length > 0) || c.tipo != null || c.precoMax != null || c.cambio != null || c.hibrido === true || c.popular === true;
+  return c.marca != null || (c.modelos != null && c.modelos.length > 0) || c.tipo != null || c.precoMax != null || c.cambio != null || c.combustivel != null || c.popular === true;
 }
 
 // Constraints -> input de stock_search (marca canonicalizada; >1 modelo -> `modelos[]` tipado; 1 modelo -> `modelo` com a
@@ -232,7 +235,7 @@ export function constraintsToStockInput(c: CommercialConstraints): QueryInputMap
   if (c.tipo) input.tipo = c.tipo;
   if (c.precoMax != null) input.precoMax = c.precoMax;
   if (c.cambio) input.cambio = c.cambio;
-  if (c.hibrido === true) input.hibrido = true;
+  if (c.combustivel) input.combustivel = c.combustivel;
   if (c.popular) input.popular = true;
   if (c.anos && c.anos.length > 0) input.anos = [...c.anos];
   return input;
@@ -263,7 +266,9 @@ export function activeConstraintsFromStockInput(input: Record<string, unknown> |
   if (typeof input.precoMax === "number" && input.precoMax > 0) c.precoMax = input.precoMax;
   const cambio = typeof input.cambio === "string" ? input.cambio : "";
   if (cambio === "automatic" || cambio === "manual") c.cambio = cambio;
-  if (input.hibrido === true) c.hibrido = true;
+  // F2.79: le o valor tipado E migra o legado gravado antes (hibrido:true -> combustivel:"hibrido").
+  if (isFuelKind(input.combustivel)) c.combustivel = input.combustivel;
+  else if (input.hibrido === true) c.combustivel = "hibrido";
   if (Array.isArray(input.anos)) { const anos = input.anos.filter((y): y is number => typeof y === "number" && y >= 1990 && y <= 2035); if (anos.length > 0) c.anos = anos; }
   if (input.popular === true) c.popular = true;
   return c;
@@ -279,7 +284,7 @@ export function describeConstraints(c: CommercialConstraints): string {
   if (c.popular && parts.length === 0) parts.push("carro popular");
   if (c.precoMax != null) parts.push(`até R$ ${c.precoMax.toLocaleString("pt-BR")}`);
   if (c.cambio) parts.push(c.cambio === "automatic" ? "automático" : "manual");
-  if (c.hibrido) parts.push("híbrido");
+  if (c.combustivel) parts.push(fuelLabel(c.combustivel));
   return parts.join(" ");
 }
 
@@ -299,7 +304,7 @@ export function relaxSearchCascade(zeroed: CommercialConstraints, tipoHint?: Veh
   const keep = (base: CommercialConstraints): CommercialConstraints => {
     const c: CommercialConstraints = { ...base };
     if (zeroed.cambio) c.cambio = zeroed.cambio;
-    if (zeroed.hibrido) c.hibrido = true;
+    if (zeroed.combustivel) c.combustivel = zeroed.combustivel;   // F2.79: propulsao e RIGIDA na cascata
     if (zeroed.anos && zeroed.anos.length > 0) c.anos = [...zeroed.anos];
     return c;
   };
