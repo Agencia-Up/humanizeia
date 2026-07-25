@@ -781,18 +781,15 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, accepted: true, routed: "pedro_v3_post_transfer_hold", action: _postTransferPlan.action, build: PEDRO_V2_BUILD });
   }
 
-  // In v3-only, seller identity is intentionally outside the conversational
-  // bridge, but its confirmation must still reach the shared transfer saga.
-  // Reuse only the seller-ack branch of the legacy orchestrator; never run its
-  // commercial lead flow and never let the v3-only guard discard the "Ok".
+  // Unidade 1: a confirmacao do vendedor JA foi tratada no gateway compartilhado,
+  // ANTES de selectActiveAgent (handleSellerInbound). O caminho antigo aqui chamava
+  // o orquestrador V2 (processPedroV2Turn) so para o seller-ack — desnecessario e
+  // proibido no mundo V3-only. Mantemos apenas uma REDE DE SEGURANCA: se uma
+  // identidade de vendedor ainda chegar ate aqui, NUNCA aciona o V2 nem cai para o
+  // V3 — apenas encerra como interna. (O gateway ja retornou antes; isto e defesa.)
   if (!_dryRun && _pilotSellerInbound) {
-    const sellerAckTurn = async () => processPedroV2Turn(supabase, _turnInput).catch(_logTurnError);
-    if (typeof _waitUntil === "function") {
-      _waitUntil(sellerAckTurn());
-      return jsonResponse({ ok: true, accepted: true, routed: "seller_ack_confirmation", build: PEDRO_V2_BUILD });
-    }
-    await sellerAckTurn();
-    return jsonResponse({ ok: true, accepted: true, routed: "seller_ack_confirmation", build: PEDRO_V2_BUILD });
+    console.log("[Webhook] seller_reached_bridge_guard — ignorado (ja tratado no gateway, sem V2/V3)");
+    return jsonResponse({ ok: true, accepted: true, routed: "seller_ignored_already_handled", build: PEDRO_V2_BUILD });
   }
 
   if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
