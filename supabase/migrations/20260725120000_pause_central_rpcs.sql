@@ -99,7 +99,9 @@ begin
   return jsonb_build_object('allowed', true, 'reason', 'ok');
 end;
 $$;
-grant execute on function public.is_ai_automation_allowed(uuid, uuid, uuid, text, text) to authenticated, service_role;
+-- Grant SO a service_role: chamada apenas pelo gateway/workers (service client). Nao
+-- e exposta a usuarios autenticados para evitar sondagem cross-tenant do estado de pausa.
+grant execute on function public.is_ai_automation_allowed(uuid, uuid, uuid, text, text) to service_role;
 
 -- 4) Pausar/despausar CONVERSA (atomica + auditoria + devolve a linha)
 create or replace function public.set_conversation_ai_paused(
