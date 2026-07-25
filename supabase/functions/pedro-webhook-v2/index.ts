@@ -588,6 +588,29 @@ Deno.serve(async (req) => {
       // Remetente e vendedor deste tenant -> resposta operacional, NUNCA V2/V3.
       const level = sellerDecision.route === "seller_ack_failed" ? "error" : "log";
       console[level](`[Webhook] ${sellerDecision.route} seller=${sellerDecision.seller_id ?? "?"} transfer=${sellerDecision.transfer_id ?? "-"} instance=${waInstance.id} confirmed=${sellerDecision.confirmed}`);
+
+      // ACK OPERACIONAL AO VENDEDOR — so na PRIMEIRA confirmacao. route
+      // 'seller_ack_confirmation' == confirmSellerAck achou uma pendente e confirmou
+      // AGORA. "Ok" repetido cai em 'seller_ack_no_pending' e NAO reenvia (idempotente).
+      // Envio pela instancia do tenant (waInstance), telefone normalizado com 55 pelo
+      // sendPedroText. A falha de envio NUNCA desfaz a confirmacao ja gravada nem
+      // penaliza o vendedor: apenas registra observavel. Nunca toca V2/V3.
+      if (sellerDecision.route === "seller_ack_confirmation") {
+        try {
+          const _ackRes: any = await sendPedroText(waInstance as any, {
+            to: resolveUazapiPhone(payload),
+            text: "✅ Atendimento confirmado!\n\nO lead foi atribuído a você no CRM. Pode seguir com a venda.",
+          });
+          if (_ackRes?.ok) {
+            console.log(`[Webhook] seller_ack_sent transfer=${sellerDecision.transfer_id} seller=${sellerDecision.seller_id} instance=${waInstance.id} status=${_ackRes?.status ?? "-"} attempt=${_ackRes?.attempt ?? "-"}`);
+          } else {
+            console.error(`[Webhook] seller_ack_send_failed transfer=${sellerDecision.transfer_id} seller=${sellerDecision.seller_id} instance=${waInstance.id} status=${_ackRes?.status ?? "-"} attempt=${_ackRes?.attempt ?? "-"}`);
+          }
+        } catch (_ackErr) {
+          console.error(`[Webhook] seller_ack_send_error transfer=${sellerDecision.transfer_id} seller=${sellerDecision.seller_id} instance=${waInstance.id} err=${String((_ackErr as any)?.message || _ackErr).slice(0, 200)}`);
+        }
+      }
+
       return jsonResponse({
         ok: true, accepted: true, routed: sellerDecision.route,
         confirmed: sellerDecision.confirmed, transfer_id: sellerDecision.transfer_id,

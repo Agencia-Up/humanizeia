@@ -191,5 +191,26 @@ await (async () => {
   check("dry-run: NADA e mutado", db.ai_lead_transfers[0].is_confirmed === false && db.ai_crm_leads[0].assigned_to_id === null);
 })();
 
+// ── ACK ao vendedor: enviado SO na primeira confirmacao (route seller_ack_confirmation) ─
+// O gateway envia "Atendimento confirmado" iff route === 'seller_ack_confirmation'.
+const shouldSendAck = (route: string) => route === "seller_ack_confirmation";
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id);
+  const db: DB = { ai_team_members: [s], ai_lead_transfers: [t], ai_crm_leads: [seedLead(t.lead_id)] };
+  const sb = makeSupabase(db);
+  const r1 = await handleSellerInbound(sb, { user_id: "TENANT_A", agent_id: null, seller_phone: "12997710749", seller_text: "Ok", dry_run: false });
+  check("ACK: 1a confirmacao -> envia ACK", shouldSendAck(r1.route) === true);
+  const r2 = await handleSellerInbound(sb, { user_id: "TENANT_A", agent_id: null, seller_phone: "12997710749", seller_text: "Ok", dry_run: false });
+  check("ACK: 'Ok' repetido -> NAO reenvia (no_pending)", shouldSendAck(r2.route) === false);
+})();
+await (async () => {
+  const s = seedSeller();
+  const t = seedTransfer(s.id);
+  const db: DB = { ai_team_members: [s], ai_lead_transfers: [t], ai_crm_leads: [seedLead(t.lead_id)] };
+  const r = await handleSellerInbound(makeSupabase(db), { user_id: "TENANT_A", agent_id: null, seller_phone: "12997710749", seller_text: "Olá", dry_run: false });
+  check("ACK: mensagem comum ('Ola') -> NAO envia ACK", shouldSendAck(r.route) === false);
+})();
+
 console.log(`\nRESULT ok=${ok} failed=${failed}`);
 if (failed > 0) Deno.exit(1);
