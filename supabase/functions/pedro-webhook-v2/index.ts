@@ -799,7 +799,14 @@ Deno.serve(async (req) => {
   // v3_effect_outbox sao responsabilidade do servico V3 externo (revalidar a pausa
   // ao reservar e antes de enviar — ver docs/v3-transfer-confirmation-spec.md).
   // Falha-aberto: lead nao encontrado / decisao indisponivel => segue o fluxo atual.
-  if (!_dryRun && !_pilotSellerInbound) {
+  //
+  // PILOTO POR TENANT (isolamento obrigatorio): o gate SO roda para tenants na
+  // allowlist configuravel PAUSE_GATE_TENANT_IDS (CSV de user_id). Vazio/ausente =>
+  // gate DESLIGADO para todos (zero mudanca de comportamento). Sem tenant hard-coded.
+  // Contas fora da allowlist seguem exatamente o fluxo atual.
+  const _pauseAllowlist = (Deno.env.get("PAUSE_GATE_TENANT_IDS") || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  if (!_dryRun && !_pilotSellerInbound && _pauseAllowlist.includes(String((agent as any).user_id))) {
     const _pauseTenant = (agent as any).user_id;
     const _pauseJid = incomingRemoteJid(payload);
     let _pauseLead: any = null;
