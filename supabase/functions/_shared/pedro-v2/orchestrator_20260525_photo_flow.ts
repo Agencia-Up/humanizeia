@@ -1486,18 +1486,15 @@ export async function processPedroV2Turn(
       }
     } catch (_e) { /* deteccao de reativacao nao pode derrubar o turno */ }
   }
-  // Lead RECUPERADO que estava pausado: a IA reassume pra re-qualificar -> DESPAUSA no banco (vale
-  // pro turno inteiro/conversa, nao so este). So quando ha reativacao ativa (sinal explicito).
-  if (reactivationRecovery && lead?.ai_paused) {
-    if (!dryRun) {
-      try { await supabase.from("ai_crm_leads").update({ ai_paused: false }).eq("id", lead.id); } catch (_e) { /* nao bloqueia */ }
-    }
-    (lead as any).ai_paused = false;
-    log("info", "pedro_v2_reactivation_unpaused", { lead_id: lead.id });
-  }
+  // Regra central de pausa: a reativacao automatica da IA NAO pode remover a pausa.
+  // (Removido o auto-DESPAUSA que gravava ai_paused=false aqui.) A pausa so sai por
+  // acao explicita via set_conversation_ai_paused. O gate abaixo passa a bloquear
+  // SEMPRE que a conversa estiver pausada — inclusive sob sinal de reativacao, que
+  // antes furava o gate e fazia a IA voltar a responder num lead pausado.
+  void reactivationRecovery; // mantido para deteccao de vendedor (reactivationSellerId), nao afeta a pausa
 
   // === CHECK AI_PAUSED CONTROL ===
-  if (lead?.ai_paused && !reactivationRecovery) {
+  if (lead?.ai_paused) {
     console.log(`[PedroV2] IA pausada para ${remoteJid}. Mensagem gravada no historico, ignorando resposta automatica.`);
     return {
       ok: true,

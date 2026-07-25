@@ -792,6 +792,55 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, accepted: true, routed: "seller_ignored_already_handled", build: PEDRO_V2_BUILD });
   }
 
+  // ── GATE DE PAUSA DA IA (fonte unica: is_ai_automation_allowed) ─────────────
+  // Antes de despachar o lead pro V3: se a CONVERSA estiver pausada (ai_paused) ou
+  // o AGENTE desligado, a IA NAO gera resposta. A mensagem do cliente NUNCA se perde
+  // — e registrada no wa_inbox (aparece em Conversas). Efeitos JA enfileirados no
+  // v3_effect_outbox sao responsabilidade do servico V3 externo (revalidar a pausa
+  // ao reservar e antes de enviar — ver docs/v3-transfer-confirmation-spec.md).
+  // Falha-aberto: lead nao encontrado / decisao indisponivel => segue o fluxo atual.
+  if (!_dryRun && !_pilotSellerInbound) {
+    const _pauseTenant = (agent as any).user_id;
+    const _pauseJid = incomingRemoteJid(payload);
+    let _pauseLead: any = null;
+    if (_pauseJid) {
+      const { data } = await supabase
+        .from("ai_crm_leads").select("id, ai_paused")
+        .eq("user_id", _pauseTenant).eq("remote_jid", _pauseJid).maybeSingle();
+      _pauseLead = data;
+    }
+    const { data: _pauseDecision } = await supabase.rpc("is_ai_automation_allowed", {
+      p_tenant: _pauseTenant,
+      p_agent_id: (agent as any).id,
+      p_lead_id: _pauseLead?.id ?? null,
+      p_action_kind: "v3_effect",
+      p_origin: "ai",
+    });
+    if (_pauseDecision && _pauseDecision.allowed === false) {
+      // Registra o inbound para nao perder a mensagem durante a pausa (best-effort;
+      // o indice unico wa_inbox_remote_msg_unique deduplica retries do webhook).
+      try {
+        const _im: any = payload?.message ?? payload?.data?.message ?? payload?.data ?? payload ?? {};
+        const _imId = _im?.messageid || _im?.key?.id || _im?.id || (payload as any)?.messageid || null;
+        await supabase.from("wa_inbox").insert({
+          user_id: _pauseTenant,
+          instance_id: waInstance.id,
+          phone: resolveUazapiPhone(payload),
+          contact_name: _im?.pushName || _im?.senderName || _im?.notifyName || null,
+          direction: "incoming",
+          message_type: "text",
+          content: resolveUazapiText(payload) || "[mensagem recebida]",
+          media_url: null,
+          is_read: false,
+          is_archived: false,
+          remote_message_id: typeof _imId === "string" ? _imId : null,
+        });
+      } catch (_e) { /* inbox best-effort: nunca derruba o gate de pausa */ }
+      console.log(`[Webhook] ai_paused_no_dispatch reason=${_pauseDecision?.reason} lead=${_pauseLead?.id ?? "-"} instance=${waInstance.id}`);
+      return jsonResponse({ ok: true, accepted: true, routed: "ai_paused_no_dispatch", reason: _pauseDecision?.reason ?? "paused", build: PEDRO_V2_BUILD });
+    }
+  }
+
   if (!_dryRun && !_pilotSellerInbound && pedroV3Pilot.enabled && pedroV3Pilot.mode === "active" && typeof _waitUntil === "function") {
     const serviceUrl = Deno.env.get("PEDRO_V3_SERVICE_URL") || "";
     const bridgeSecret = Deno.env.get("PEDRO_V3_BRIDGE_SECRET") || "";
