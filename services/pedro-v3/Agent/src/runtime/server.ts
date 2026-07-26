@@ -281,11 +281,20 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       try {
         const scope = this.#scopeFor(payload.tenantId, payload.agentId);
         if (!scope) throw new Error("ACTIVE_SCOPE_DENIED");
-        const root = await this.#createRoot(scope, null, this.#gateway());
+        const gateway = this.#gateway();
+        const routing = await gateway.selectOne("v3_conversation_routing", {
+          tenant_id: payload.tenantId,
+          conversation_id: result.conversationId,
+          agent_id: payload.agentId,
+        }, "to_addr,instance_id");
+        const toAddr = typeof routing?.to_addr === "string" && routing.to_addr.trim() ? routing.to_addr.trim() : null;
+        const instanceId = typeof routing?.instance_id === "string" && routing.instance_id.trim() ? routing.instance_id.trim() : null;
+        if (!toAddr) throw new Error("RECEIPT_ROUTING_NOT_FOUND");
+        const root = await this.#createRoot(scope, null, gateway, instanceId);
         await root.flushConversationEffects({
           persistence,
           conversationId: result.conversationId,
-          to: "receipt-flush",
+          to: toAddr,
           workerId: "receipt-flush",
         });
       } catch (error) {
@@ -309,6 +318,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         eventId: payload.eventId,
         conversationId: payload.conversationId,
         agentId: payload.agentId,
+        instanceId: payload.instanceId ?? null,
         leadId: payload.leadId ?? null,
         leadNameHint: payload.leadNameHint ?? null,   // ⭐SEM inv.7: viaja no raw do inbox (como o adContext)
         toAddr: payload.to,
@@ -357,7 +367,12 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     return [...result.settled];
   }
 
-  async #createRoot(scope: PedroV3ActiveScope, leadId: string | null, gateway: SupabaseServiceGateway): Promise<PilotActiveRoot> {
+  async #createRoot(
+    scope: PedroV3ActiveScope,
+    leadId: string | null,
+    gateway: SupabaseServiceGateway,
+    instanceId: string | null = null,
+  ): Promise<PilotActiveRoot> {
     const readDb = SupabaseReadOnlyDatabase.create({
       url: this.#supabaseUrl,
       apiKey: this.#serviceRoleKey,
@@ -396,6 +411,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       mode: "active",
       tenantId: scope.tenantId,
       agentId: scope.agentId,
+      instanceId,
       leadId,
       activeScopes: this.#activeScopes,
     }, {
@@ -478,7 +494,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
         // lead_id com o null do bridge na PRÓXIMA mensagem — a fonte durável é o state (acima); isto só
         // melhora a observabilidade/settled dos próximos ticks até lá.
         try {
-          await persistence.upsertRouting(settled.conversationId, settled.agentId, binding.leadId, settled.toAddr);
+          await persistence.upsertRouting(settled.conversationId, settled.agentId, binding.leadId, settled.toAddr, settled.instanceId);
         } catch { /* best-effort: nunca bloqueia o turno */ }
       }
       if (binding.leadId != null && binding.crmEnabled) {
@@ -489,7 +505,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
     let root: PilotActiveRoot;
     try {
-      root = await this.#createRoot(scope, turnLeadId, gateway);
+      root = await this.#createRoot(scope, turnLeadId, gateway, settled.instanceId);
     } catch (error) {
       console.error(JSON.stringify({
         event: "pedro_v3_root_bootstrap_failed",
@@ -583,7 +599,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
             const evaluation = evaluateFollowup({ state: candidate.state, outbox, rules: config.rules.followup, now: this.#clock.now() });
             if (!evaluation.due) { skip(evaluation.reason); continue; }
             dueCount += 1;
-            const root = await this.#createRoot(scope, candidate.leadId, gateway);
+            const root = await this.#createRoot(scope, candidate.leadId, gateway, candidate.instanceId);
             const result = await root.processFollowup({
               persistence, conversationId: candidate.conversationId, to: candidate.toAddr,
               workerId: "followup-worker", due: evaluation.due, rules: config.rules,

@@ -3,6 +3,7 @@ import type { Clock } from "../../domain/ports.ts";
 import type { TenantAgentRef, TenantConfigSource, VehiclePhotoSource } from "../../domain/read-ports.ts";
 import { WhatsAppEffectDispatcher } from "./whatsapp-dispatcher.ts";
 import { UazapiWhatsAppSender, type UazapiHttpTransport } from "./uazapi-whatsapp-sender.ts";
+import { resolveConversationWhatsAppInstance } from "../../domain/whatsapp-instance-binding.ts";
 
 export type WhatsAppInstanceProvider = "uazapi" | "unsupported";
 
@@ -31,6 +32,8 @@ export type PilotWhatsAppRuntimeDeps = {
 export type PilotWhatsAppRuntimeConfig = {
   readonly ref: TenantAgentRef;
   readonly conversationId: string;
+  /** Instancia de origem persistida para esta conversa. */
+  readonly instanceId?: string | null;
   readonly to: string;
   readonly allowedUazapiHosts: readonly string[];
   readonly typingEnabled?: boolean;
@@ -39,6 +42,8 @@ export type PilotWhatsAppRuntimeConfig = {
 export type PilotWhatsAppRuntimeErrorCode =
   | "TENANT_CONFIG_INVALID"
   | "AGENT_WITHOUT_INSTANCE"
+  | "INSTANCE_CONTEXT_REQUIRED"
+  | "INSTANCE_NOT_BOUND_TO_AGENT"
   | "INSTANCE_NOT_FOUND"
   | "INSTANCE_PROVIDER_UNSUPPORTED"
   | "INSTANCE_OWNERSHIP_MISMATCH";
@@ -54,10 +59,9 @@ export async function createPilotWhatsAppDispatcher(
   const runtimeConfig = await deps.configSource.load(config.ref);
   if (!runtimeConfig.ok) return { ok: false, error: "TENANT_CONFIG_INVALID" };
 
-  const instanceId = runtimeConfig.config.instanceId;
-  if (typeof instanceId !== "string" || instanceId.trim().length === 0) {
-    return { ok: false, error: "AGENT_WITHOUT_INSTANCE" };
-  }
+  const resolved = resolveConversationWhatsAppInstance(runtimeConfig.config, config.instanceId);
+  if (!resolved.ok) return { ok: false, error: resolved.error };
+  const instanceId = resolved.instanceId;
 
   const instance = await deps.instanceSource.loadOwnedInstance(config.ref, instanceId);
   if (!instance) return { ok: false, error: "INSTANCE_NOT_FOUND" };

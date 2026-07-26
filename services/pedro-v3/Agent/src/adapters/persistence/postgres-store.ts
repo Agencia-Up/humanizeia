@@ -232,13 +232,14 @@ export class PostgresPersistence implements Persistence, ConversationRoutingStor
   ) {}
 
   // ── ConversationRoutingStore (F2.7.6) ─────────────────────────────────────
-  async upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): Promise<void> {
+  async upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string, instanceId: string | null = null): Promise<void> {
     await this.gateway.rpc<JsonValue>("v3_upsert_conversation_routing", {
       p_tenant_id: this.config.tenantId,
       p_conversation_id: conversationId,
       p_agent_id: agentId,
       p_lead_id: leadId,
       p_to_addr: toAddr,
+      p_instance_id: instanceId,
       p_now: this.config.clock.now(),
     });
   }
@@ -262,6 +263,7 @@ export class PostgresPersistence implements Persistence, ConversationRoutingStor
         agentId: requiredString(row, "agent_id"),
         leadId: nullableString(row, "lead_id"),
         toAddr: requiredString(row, "to_addr"),
+        instanceId: nullableString(row, "instance_id"),
         pendingCount: requiredNumber(row, "pending_count"),
       };
     });

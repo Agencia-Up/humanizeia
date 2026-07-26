@@ -44,7 +44,7 @@ export type InMemoryBacking = {
   outbox: Map<Id, OutboxRecord>;
   outboxIdem: Set<Id>;
   leases: Map<Id, Lease>;
-  routing: Map<Id, { agentId: string; leadId: string | null; toAddr: string }>;
+  routing: Map<Id, { agentId: string; leadId: string | null; toAddr: string; instanceId: string | null }>;
 };
 export function createInMemoryBacking(): InMemoryBacking {
   return { inbox: new Map(), states: new Map(), history: [], events: [], decisions: [], outbox: new Map(), outboxIdem: new Set(), leases: new Map(), routing: new Map() };
@@ -59,7 +59,7 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
   private outbox = new Map<Id, OutboxRecord>();   // por effectId
   private outboxIdem = new Set<Id>();             // idempotencyKey UNIQUE
   private leases = new Map<Id, Lease>();          // conversationId -> lease ativo
-  private routing = new Map<Id, { agentId: string; leadId: string | null; toAddr: string }>(); // F2.7.6
+  private routing = new Map<Id, { agentId: string; leadId: string | null; toAddr: string; instanceId: string | null }>(); // F2.7.6
 
   constructor(private clock: Clock, private idgen: IdGen, backing?: InMemoryBacking) {
     if (backing) {
@@ -77,8 +77,17 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
   }
 
   // ── ConversationRoutingStore (F2.7.6) ─────────────────────────────────────
-  upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): void {
-    this.routing.set(conversationId, { agentId, leadId, toAddr });
+  upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string, instanceId: string | null = null): void {
+    const current = this.routing.get(conversationId);
+    if (current?.instanceId && instanceId && current.instanceId !== instanceId) {
+      throw new Error("V3_ROUTING_INSTANCE_CONFLICT");
+    }
+    this.routing.set(conversationId, {
+      agentId,
+      leadId,
+      toAddr,
+      instanceId: current?.instanceId ?? instanceId,
+    });
   }
   findSettledConversations(nowIso: string, debounceMs: number, maxWaitMs: number, limit: number): SettledConversation[] {
     const nowMs = Date.parse(nowIso);
@@ -97,7 +106,7 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
       if (!isConversationSettled({ nowMs, oldestPendingMs: g.oldest, newestPendingMs: g.newest, debounceMs, maxWaitMs })) continue;
       const route = this.routing.get(conversationId);
       if (!route) continue; // sem roteamento -> nao da p/ despachar async; ignora
-      out.push({ conversationId, agentId: route.agentId, leadId: route.leadId, toAddr: route.toAddr, pendingCount: g.count });
+      out.push({ conversationId, agentId: route.agentId, leadId: route.leadId, toAddr: route.toAddr, instanceId: route.instanceId, pendingCount: g.count });
     }
     return out;
   }

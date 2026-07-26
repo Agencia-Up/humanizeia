@@ -132,6 +132,56 @@ async function main(): Promise<void> {
   await db.exec(f276PatchSql);
   check("patch F2.7.6 (debounce) executa integralmente em PostgreSQL", true);
 
+  // F2.85: the production schema already owns these tables. The isolated
+  // PGlite contract creates only the columns used by the routing migration.
+  await db.exec(`
+    create table if not exists public.wa_instances (
+      id uuid primary key,
+      user_id uuid not null references auth.users(id) on delete cascade,
+      instance_name text not null
+    );
+    create table if not exists public.wa_ai_agents (
+      id uuid primary key,
+      user_id uuid not null references auth.users(id) on delete cascade,
+      instance_id uuid references public.wa_instances(id)
+    );
+    create table if not exists public.wa_lead_presence (
+      instance_name text not null,
+      remote_jid text not null,
+      state text not null,
+      updated_at timestamptz not null
+    );
+  `);
+  const HIST_TENANT = "44444444-4444-4444-8444-444444444444";
+  const HIST_AGENT = "55555555-5555-4555-8555-555555555555";
+  const HIST_INSTANCE = "66666666-6666-4666-8666-666666666666";
+  await db.query("insert into auth.users(id) values ($1::uuid)", [HIST_TENANT]);
+  await db.query(
+    "insert into public.wa_instances(id,user_id,instance_name) values ($1::uuid,$2::uuid,'historical-wa')",
+    [HIST_INSTANCE, HIST_TENANT],
+  );
+  await db.query(
+    "insert into public.wa_ai_agents(id,user_id,instance_id) values ($1::uuid,$2::uuid,$3::uuid)",
+    [HIST_AGENT, HIST_TENANT, HIST_INSTANCE],
+  );
+  await db.query(
+    "insert into public.v3_conversation_routing(tenant_id,conversation_id,agent_id,lead_id,to_addr,updated_at) values ($1::uuid,'wa:historical',$2,null,'5511999990000',$3::timestamptz)",
+    [HIST_TENANT, HIST_AGENT, NOW],
+  );
+  const f285PatchUrl = new URL("../../Brain/sql/v3_f2_85_multi_instance_routing.sql", import.meta.url);
+  const f285PatchSql = await readFile(f285PatchUrl, "utf8");
+  await db.exec(f285PatchSql);
+  check("patch F2.85 (roteamento por instancia) executa integralmente em PostgreSQL", true);
+  const historicalRoute = await db.query<{ instance_id: string | null }>(
+    "select instance_id::text from public.v3_conversation_routing where tenant_id=$1::uuid and conversation_id='wa:historical'",
+    [HIST_TENANT],
+  );
+  check(
+    "F2.85 SQL: conversa anterior preserva a instancia singular usada pelo v3 antigo",
+    historicalRoute.rows[0]?.instance_id === HIST_INSTANCE,
+    JSON.stringify(historicalRoute.rows[0]),
+  );
+
   // F2.7.14: activate_objective da mesma mensagem e accepted-safe (pergunta enviada != lida).
   const f2714PatchUrl = new URL("../../Brain/sql/v3_f2_7_14_sdr_objective_accepted.sql", import.meta.url);
   const f2714PatchSql = await readFile(f2714PatchUrl, "utf8");
@@ -739,6 +789,62 @@ async function main(): Promise<void> {
     where n.nspname = 'public' and c.relname = 'v3_sensitive_vault'
   `);
   check("cofre sensivel sem leitura autenticada e com RLS", !vaultPolicy.rows[0].public_select && vaultPolicy.rows[0].rls);
+
+  // F2.85: a origem da conversa sobrevive ao debounce e nao pode trocar de
+  // instancia silenciosamente. O overload antigo continua funcional.
+  const WA1 = "22222222-2222-4222-8222-222222222222";
+  const WA2 = "33333333-3333-4333-8333-333333333333";
+  const RT_INSTANCE = "wa:deb:instance";
+  await db.query(
+    "insert into public.wa_instances(id,user_id,instance_name) values ($1::uuid,$3::uuid,'wa-1'),($2::uuid,$3::uuid,'wa-2')",
+    [WA1, WA2, TENANT],
+  );
+  await expectReject(
+    "F2.85 SQL: instancia de outro tenant nunca entra no roteamento",
+    () => db.query(
+      "select public.v3_upsert_conversation_routing($1::uuid,'wa:foreign-instance',$2,null,$3,$4::uuid,$5::timestamptz)",
+      [TENANT, AGENT, "5511666660000", HIST_INSTANCE, NOW],
+    ),
+    "V3_ROUTING_INSTANCE_OWNERSHIP_MISMATCH",
+  );
+  await db.query(
+    "select public.v3_upsert_conversation_routing($1::uuid,$2,$3,null,$4,$5::uuid,$6::timestamptz)",
+    [TENANT, RT_INSTANCE, AGENT, "5511666660000", WA1, NOW],
+  );
+  await db.query(
+    "select public.v3_upsert_conversation_routing($1::uuid,$2,$3,'lead-bound',$4,$5::timestamptz)",
+    [TENANT, RT_INSTANCE, AGENT, "5511666660000", NOW],
+  );
+  const instanceRoute = await db.query<{ instance_id: string; lead_id: string }>(
+    "select instance_id::text,lead_id from public.v3_conversation_routing where tenant_id=$1::uuid and conversation_id=$2",
+    [TENANT, RT_INSTANCE],
+  );
+  check(
+    "F2.85 SQL: update legado preserva instancia e atualiza lead",
+    instanceRoute.rows[0]?.instance_id === WA1 && instanceRoute.rows[0]?.lead_id === "lead-bound",
+    JSON.stringify(instanceRoute.rows[0]),
+  );
+  await expectReject(
+    "F2.85 SQL: conversa nao pode trocar de instancia",
+    () => db.query(
+      "select public.v3_upsert_conversation_routing($1::uuid,$2,$3,null,$4,$5::uuid,$6::timestamptz)",
+      [TENANT, RT_INSTANCE, AGENT, "5511666660000", WA2, NOW],
+    ),
+    "V3_ROUTING_INSTANCE_CONFLICT",
+  );
+  await db.query(
+    "select public.v3_ingest_inbox($1::uuid,'f285-instance-event',$2,$3::jsonb,$4::timestamptz)",
+    [TENANT, RT_INSTANCE, JSON.stringify({ __redacted: true, text: "oi" }), "2026-06-27T12:00:00.000Z"],
+  );
+  const settledInstance = await db.query<{ conversation_id: string; instance_id: string | null }>(
+    "select conversation_id,instance_id::text from public.v3_find_settled_conversations($1::uuid,$2::timestamptz,0,0,20) where conversation_id=$3",
+    [TENANT, "2026-06-27T12:00:01.000Z", RT_INSTANCE],
+  );
+  check(
+    "F2.85 SQL: debounce devolve a instancia persistida",
+    settledInstance.rows[0]?.instance_id === WA1,
+    JSON.stringify(settledInstance.rows[0]),
+  );
 
   // ── F2.7.6: roteamento + conversas assentadas (debounce) ──
   const RT = "wa:deb:1";

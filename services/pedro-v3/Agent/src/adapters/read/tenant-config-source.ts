@@ -198,6 +198,7 @@ export class V2TenantConfigSource implements TenantConfigSource {
       agentType,
       companyName: normalizeCompany(agent.companyName),
       instanceId: agent.instanceId ?? null,
+      instanceIds: Object.freeze([...(agent.instanceIds ?? [])]),
       promptText,
       promptSource,
       model: model.value,

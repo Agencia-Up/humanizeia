@@ -8,7 +8,7 @@ import {
 } from "../_shared/pedro-v2/server.ts";
 import { processPedroV2Turn } from "../_shared/pedro-v2/orchestrator_20260525_photo_flow.ts";
 import { processSofiaTurn } from "../_shared/sofia/orchestrator.ts";
-import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent } from "../_shared/pedro-v2/webhookRouting.ts";
+import { agentUsesInstance, agentLooksLikePedro, selectActiveAgent, shouldNamespaceConversationByInstance } from "../_shared/pedro-v2/webhookRouting.ts";
 import { evaluatePedroV3PilotAgent, parsePedroV3ActiveScopes, PEDRO_V3_ONLY } from "../_shared/pedro-v2/pedroV3PilotGate.ts";
 import { buildPedroV3BridgeTurn, buildPedroV3DeliveryReceipt, callPedroV3Bridge, callPedroV3ReceiptBridge, enrichAdReferralWithSemanticContext, shouldFallbackToPedroV2, conversationHasV3Routing, conversationHasV3State, incomingRemoteJid, shouldIgnorePedroInternalIdentity, type PedroV3MediaContext, type PedroV3AdReferral } from "../_shared/pedro-v2/pedroV3Bridge.ts";
 import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
@@ -883,6 +883,8 @@ Deno.serve(async (req) => {
         payload,
         tenantId: (agent as any)?.user_id,
         agentId: (agent as any)?.id,
+        instanceId: waInstance.id,
+        separateConversationByInstance: shouldNamespaceConversationByInstance(agent, waInstance.id),
         build: PEDRO_V2_BUILD,
         mediaContext,
         activeScopes: pedroV3Scopes,

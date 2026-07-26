@@ -38,6 +38,8 @@ export type TenantRuntimeConfig = {
   readonly agentType?: AgentProfileType;
   readonly companyName: string | null;          // "" normalizado vira null
   readonly instanceId: string | null;           // null no piloto (sem WhatsApp ligado)
+  /** Vinculos WhatsApp atuais. `instanceId` continua aceito para agentes legados de um numero. */
+  readonly instanceIds?: readonly string[];
   readonly promptText: string;
   readonly promptSource: PromptSource;
   readonly model: string | null;

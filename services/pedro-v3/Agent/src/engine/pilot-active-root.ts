@@ -58,6 +58,7 @@ import type {
   AutomationExecutionGate,
 } from "./automation-execution-gate.ts";
 import { sanitizeAutomationReason } from "./automation-execution-gate.ts";
+import { resolveConversationWhatsAppInstance } from "../domain/whatsapp-instance-binding.ts";
 
 // R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
 // lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
@@ -68,6 +69,8 @@ export type PilotActiveConfig = {
   readonly mode: "active";
   readonly tenantId: string;
   readonly agentId: string;
+  /** Origem da conversa. Obrigatoria quando o agente possui mais de uma instancia. */
+  readonly instanceId?: string | null;
   readonly leadId?: string | null;
   readonly activeScopes?: readonly PedroV3ActiveScope[];
 };
@@ -172,6 +175,8 @@ export class PilotActiveRootError extends Error {
     | "LLM_BRAIN_REQUIRED"
     | "TENANT_CONFIG_INVALID"
     | "AGENT_WITHOUT_INSTANCE"
+    | "INSTANCE_CONTEXT_REQUIRED"
+    | "INSTANCE_NOT_BOUND_TO_AGENT"
     | "INSTANCE_NOT_FOUND"
     | "INSTANCE_PROVIDER_UNSUPPORTED"
     | "INSTANCE_OWNERSHIP_MISMATCH") {
@@ -202,6 +207,7 @@ export class PilotActiveRoot {
     readonly ref: TenantAgentRef,
     private readonly leadId: string | null,
     private readonly runtimeConfig: TenantRuntimeConfig,
+    private readonly conversationInstanceId: string,
     private readonly clock: Clock,
     private readonly llm: PromptBoundConversationAdapter,
     private readonly runQuery: ReturnType<typeof createReadQueryRunner>,
@@ -263,7 +269,9 @@ export class PilotActiveRoot {
     const loaded = await configSource.load(ref);
     if (!loaded.ok) throw new PilotActiveRootError("TENANT_CONFIG_INVALID");
     const runtimeConfig = loaded.config;
-    if (!runtimeConfig.instanceId) throw new PilotActiveRootError("AGENT_WITHOUT_INSTANCE");
+    const instanceResolution = resolveConversationWhatsAppInstance(runtimeConfig, config.instanceId);
+    if (!instanceResolution.ok) throw new PilotActiveRootError(instanceResolution.error);
+    const conversationInstanceId = instanceResolution.instanceId;
 
     const model = deps.modelFactory?.(runtimeConfig) ?? deps.model;
     if (!model) throw new PilotActiveRootError("MODEL_NOT_CONFIGURED");
@@ -289,8 +297,11 @@ export class PilotActiveRoot {
       allowedTools,
     });
     const instanceSource = new V2WhatsAppInstanceSource(deps.db);
-    const instance = await instanceSource.loadOwnedInstance(ref, runtimeConfig.instanceId);
+    const instance = await instanceSource.loadOwnedInstance(ref, conversationInstanceId);
     if (!instance) throw new PilotActiveRootError("INSTANCE_NOT_FOUND");
+    if (instance.tenantId !== ref.tenantId || instance.instanceId !== conversationInstanceId) {
+      throw new PilotActiveRootError("INSTANCE_OWNERSHIP_MISMATCH");
+    }
     if (instance.provider !== "uazapi") throw new PilotActiveRootError("INSTANCE_PROVIDER_UNSUPPORTED");
 
     const llm = new PromptBoundConversationAdapter(runtimeConfig, model);
@@ -310,6 +321,7 @@ export class PilotActiveRoot {
       ref,
       config.leadId ?? null,
       runtimeConfig,
+      conversationInstanceId,
       deps.clock,
       llm,
       runQuery,
@@ -342,6 +354,7 @@ export class PilotActiveRoot {
       eventId: input.eventId,
       conversationId: input.conversationId,
       agentId: this.ref.agentId,
+      instanceId: this.conversationInstanceId,
       leadId: this.leadId,
       toAddr: input.to,
       messageText: input.messageText,
@@ -503,7 +516,7 @@ export class PilotActiveRoot {
   async #dispatchIfCommitted(input: PilotActiveProcessInput, committed: boolean): Promise<number> {
     if (!committed) return 0;
     const dispatcherRuntime = await createPilotWhatsAppDispatcher({
-      ref: this.ref, conversationId: input.conversationId, to: input.to, allowedUazapiHosts: this.allowedUazapiHosts, typingEnabled: this.typingEnabled,
+      ref: this.ref, conversationId: input.conversationId, instanceId: this.conversationInstanceId, to: input.to, allowedUazapiHosts: this.allowedUazapiHosts, typingEnabled: this.typingEnabled,
     }, {
       configSource: this.configSource, instanceSource: this.instanceSource, credentialProvider: this.credentialProvider,
       httpTransport: this.whatsappTransport, photoSource: this.photoSource, clock: this.clock,

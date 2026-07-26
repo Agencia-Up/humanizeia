@@ -28,6 +28,8 @@ export type PilotHttpResponse = {
 export type PilotTurnPayload = {
   readonly tenantId: string;
   readonly agentId: string;
+  /** Instancia WhatsApp que recebeu o evento. Obrigatoria em agentes multi-instancia. */
+  readonly instanceId?: string | null;
   readonly conversationId: string;
   readonly turnId: string;
   readonly eventId: string;
@@ -130,6 +132,7 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
 
   const tenantId = readString(raw.tenantId);
   const agentId = readString(raw.agentId);
+  const instanceId = raw.instanceId == null ? null : readString(raw.instanceId);
   const conversationId = readString(raw.conversationId);
   const turnId = readString(raw.turnId);
   const eventId = readString(raw.eventId);
@@ -147,6 +150,7 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
   if (!PHONE.test(to) || messageText.length > MAX_MESSAGE_CHARS) return null;
   if (!Number.isFinite(Date.parse(receivedAt))) return null;
   if (leadId !== null && !SAFE_ID.test(leadId)) return null;
+  if (instanceId !== null && !SAFE_ID.test(instanceId)) return null;
 
   // F2.32 (CTWA): adReferral opaco (só objeto simples). O engine sanitiza/clampa os campos via sanitizeAdContext.
   const adReferral = (raw.adReferral && typeof raw.adReferral === "object" && !Array.isArray(raw.adReferral)) ? raw.adReferral : undefined;
@@ -155,6 +159,7 @@ function parsePayload(bodyText: string): PilotTurnPayload | null {
   return {
     tenantId,
     agentId,
+    instanceId,
     conversationId,
     turnId,
     eventId,

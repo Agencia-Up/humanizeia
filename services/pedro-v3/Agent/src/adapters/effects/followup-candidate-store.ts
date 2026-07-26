@@ -5,6 +5,7 @@ import type { TenantAgentRef } from "../../domain/read-ports.ts";
 export type FollowupCandidate = {
   conversationId: string;
   toAddr: string;
+  instanceId: string | null;
   leadId: string | null;
   state: ConversationState;
 };
@@ -30,13 +31,14 @@ export class FollowupCandidateStore {
         tenant_id: ref.tenantId,
         conversation_id: conversationId,
         agent_id: ref.agentId,
-      }, "to_addr,lead_id");
+      }, "to_addr,lead_id,instance_id");
       const toAddr = typeof routing?.to_addr === "string" ? routing.to_addr : null;
       if (!toAddr) continue;
+      const instanceId = typeof routing?.instance_id === "string" ? routing.instance_id : null;
       const leadId = typeof state.leadId === "string"
         ? state.leadId
         : typeof routing?.lead_id === "string" ? routing.lead_id : null;
-      candidates.push({ conversationId, toAddr, leadId, state });
+      candidates.push({ conversationId, toAddr, instanceId, leadId, state });
     }
     return candidates;
   }

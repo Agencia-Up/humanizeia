@@ -48,12 +48,14 @@ export type SettledConversation = {
   readonly agentId: string;
   readonly leadId: string | null;
   readonly toAddr: string;
+  /** Instancia WhatsApp que recebeu a conversa; null apenas para registros legados. */
+  readonly instanceId: string | null;
   readonly pendingCount: number;
 };
 
 export interface ConversationRoutingStore {
   // Grava/atualiza (idempotente) o roteamento da conversa na INGESTAO.
-  upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string): Awaitable<void>;
+  upsertRouting(conversationId: Id, agentId: string, leadId: string | null, toAddr: string, instanceId?: string | null): Awaitable<void>;
   // Conversas "assentadas" (quietas >= debounceMs OU pendente mais antiga >= maxWaitMs).
   findSettledConversations(nowIso: string, debounceMs: number, maxWaitMs: number, limit: number): Awaitable<SettledConversation[]>;
 }

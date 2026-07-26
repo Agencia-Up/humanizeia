@@ -38,6 +38,7 @@ export type PedroV3MediaContext = {
 export type PedroV3BridgeTurn = {
   tenantId: string;
   agentId: string;
+  instanceId: string | null;
   conversationId: string;
   turnId: string;
   eventId: string;
@@ -53,7 +54,7 @@ export type PedroV3BridgeTurn = {
 
 export type PedroV3BridgeBuildResult =
   | { ok: true; turn: PedroV3BridgeTurn }
-  | { ok: false; reason: "not_pilot_identity" | "message_id_missing" | "phone_invalid" | "text_unsupported" };
+  | { ok: false; reason: "not_pilot_identity" | "message_id_missing" | "phone_invalid" | "text_unsupported" | "instance_id_missing" };
 
 export type PedroV3DeliveryReceipt = {
   tenantId: string;
@@ -294,6 +295,10 @@ export async function buildPedroV3BridgeTurn(input: {
   payload: any;
   tenantId: string | null | undefined;
   agentId: string | null | undefined;
+  /** Instancia UAZAPI que recebeu o evento. Opcional apenas para rollout compativel com bridges antigos. */
+  instanceId?: string | null;
+  /** Ao existir mais de um numero no agente, conversa e evento sao namespaced pela origem. */
+  separateConversationByInstance?: boolean;
   build: string;
   mediaContext?: PedroV3MediaContext | null;
   activeScopes?: readonly PedroV3ActiveScope[];
@@ -308,14 +313,18 @@ export async function buildPedroV3BridgeTurn(input: {
 
   const tenantId = input.tenantId!;
   const agentId = input.agentId!;
-  const eventHash = await sha256(`${tenantId}|${agentId}|${messageId}`);
-  const conversationHash = await sha256(`${tenantId}|${agentId}|${phone}`);
+  const instanceId = typeof input.instanceId === "string" && input.instanceId.trim() ? input.instanceId.trim() : null;
+  if (input.separateConversationByInstance && !instanceId) return { ok: false, reason: "instance_id_missing" };
+  const namespace = input.separateConversationByInstance ? `|${instanceId}` : "";
+  const eventHash = await sha256(`${tenantId}|${agentId}${namespace}|${messageId}`);
+  const conversationHash = await sha256(`${tenantId}|${agentId}${namespace}|${phone}`);
   const adReferral = extractAdReferral(input.payload);   // F2.32 (CTWA): só na 1ª msg do anúncio; senão null.
   return {
     ok: true,
     turn: {
       tenantId,
       agentId,
+      instanceId,
       conversationId: `wa:${conversationHash}`,
       turnId: `turn:${eventHash}`,
       eventId: `uazapi:${eventHash}`,

@@ -17,6 +17,8 @@ export type PilotIngestInput = {
   readonly agentId: string;
   readonly leadId: string | null;
   readonly toAddr: string;
+  /** Instancia que recebeu a mensagem. Em payload legado pode faltar; multi-instancia falha fechado no processamento. */
+  readonly instanceId?: string | null;
   readonly messageText: string;
   readonly receivedAt?: string;
   // F2.32 (CTWA): contexto de anúncio SANITIZADO (do bridge). Guardado no raw do inbox; o engine resolve o veículo e
@@ -41,7 +43,7 @@ export async function ingestPilotMessage(
   // Roteamento ANTES do insert: garante que nunca exista evento no inbox SEM roteamento
   // (orfao que o poller nunca acharia). Se isto falhar, nada foi ingerido -> ingested:false
   // -> o bridge faz fallback p/ o v2. Idempotente (upsert).
-  await persistence.upsertRouting(input.conversationId, input.agentId, input.leadId, input.toAddr);
+  await persistence.upsertRouting(input.conversationId, input.agentId, input.leadId, input.toAddr, input.instanceId ?? null);
 
   // ── MISSÃO PII (2026-07-11, causa-raiz provada): o CHECK `v3_inbox_redacted_ck` REJEITA qualquer texto com
   //    run de 11 dígitos em formato CPF — o INSERT falhava, ingested=false e a MENSAGEM DO LEAD SUMIA (sticky

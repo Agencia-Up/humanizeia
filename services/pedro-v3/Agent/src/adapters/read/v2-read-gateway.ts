@@ -23,6 +23,7 @@ export type OwnedAgentRow = {
   readonly name: string;
   readonly agentType?: string | null;
   readonly instanceId: string | null;
+  readonly instanceIds?: readonly string[];
   readonly systemPrompt: string | null;
   readonly useFunnelConfig: boolean;
   readonly companyName: string | null;

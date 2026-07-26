@@ -202,7 +202,7 @@ async function main(): Promise<void> {
   // â”€â”€ Poller: orquestra find + process, isola falhas â”€â”€
   {
     const fakeClock: Clock = { now: () => "2026-06-30T07:00:00.000Z" };
-    const s = (id: string): SettledConversation => ({ conversationId: id, agentId: AGENT, leadId: null, toAddr: TO, pendingCount: 1 });
+    const s = (id: string): SettledConversation => ({ conversationId: id, agentId: AGENT, leadId: null, toAddr: TO, instanceId: null, pendingCount: 1 });
     const processed: string[] = [];
     const poller = new DebouncePoller(async () => [s("a"), s("b")], async (c) => { processed.push(c.conversationId); }, fakeClock);
     const r = await poller.runOnce();
@@ -230,6 +230,7 @@ async function main(): Promise<void> {
         agentId: scope.agentId,
         leadId: null,
         toAddr: TO,
+        instanceId: null,
         pendingCount: 1,
       }];
     });

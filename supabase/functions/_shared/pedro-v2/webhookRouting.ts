@@ -3,11 +3,33 @@
 // escolher QUAL agente da conta atende a instancia. Mantido aqui (fonte unica)
 // pra os dois webhooks nao divergirem.
 
+export function agentInstanceIds(agent: any): string[] {
+  const values = [
+    agent?.instance_id,
+    ...(Array.isArray(agent?.instance_ids) ? agent.instance_ids : []),
+    agent?.wa_instance_id,
+    agent?.whatsapp_instance_id,
+  ];
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()))];
+}
+
 export function agentUsesInstance(agent: any, instanceId: string): boolean {
-  return agent?.instance_id === instanceId ||
-    (Array.isArray(agent?.instance_ids) && agent.instance_ids.includes(instanceId)) ||
-    agent?.wa_instance_id === instanceId ||
-    agent?.whatsapp_instance_id === instanceId;
+  return agentInstanceIds(agent).includes(instanceId);
+}
+
+export function shouldNamespaceConversationByInstance(agent: any, instanceId: string): boolean {
+  const configured = agentInstanceIds(agent);
+  if (configured.length <= 1) return false;
+
+  // `instance_id` era a unica origem usada pelo v3 antes do suporte multiplo.
+  // Manter essa instancia no namespace historico evita partir conversas em
+  // andamento quando um segundo numero e adicionado. As instancias adicionais
+  // recebem namespace proprio. Sem primaria legada nao ha origem segura para
+  // adivinhar, portanto todas as instancias ficam isoladas.
+  const legacyPrimary = typeof agent?.instance_id === "string" && agent.instance_id.trim()
+    ? agent.instance_id.trim()
+    : null;
+  return legacyPrimary == null || legacyPrimary !== instanceId;
 }
 
 export function agentLooksLikePedro(agent: any): boolean {
@@ -40,9 +62,13 @@ export function selectActiveAgent(allAgents: any[], instanceId: string): any | n
   }
 
   const activeAgents = list.filter((a) => a.is_active);
-  return activeAgents.find((a) => agentUsesInstance(a, instanceId)) ||
-    activeAgents.find(agentLooksLikePedro) ||
-    activeAgents[0] ||
-    null;
+  const exact = activeAgents.find((a) => agentUsesInstance(a, instanceId));
+  if (exact) return exact;
+
+  // Se a conta ja usa vinculos explicitos, nunca envie uma instancia desconhecida
+  // ao "primeiro agente ativo". O fallback antigo fica apenas para tenants 100%
+  // legados, ainda sem qualquer binding configurado.
+  if (list.some((agent) => agentInstanceIds(agent).length > 0)) return null;
+  return activeAgents.find(agentLooksLikePedro) || activeAgents[0] || null;
 }
 
