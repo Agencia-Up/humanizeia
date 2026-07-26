@@ -407,6 +407,43 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   check("safety", "unsupported effect kind fails closed", result.status === "failed" && result.error.code === "FORBIDDEN", JSON.stringify(result));
 }
 
+// 10b) Pausa operacional: mesmo um efeito ja persistido nao pode atravessar a borda do provider.
+// O botao pode ser acionado depois do planejamento do turno; por isso a autorizacao precisa ser
+// revalidada imediatamente antes do dispatch, nao apenas antes da chamada da LLM.
+{
+  const record = baseRecord();
+  const { p, clock, gate } = storeWith(record);
+  const sender = new RecordingSender();
+  const effectDispatcher = makeDispatcher({ sender }).dispatcher;
+  let authorizationCalls = 0;
+  const outbox = new OutboxDispatcher(p, clock, effectDispatcher, gate, "pause-test", 60_000, 25, {
+    authorize: async () => {
+      authorizationCalls += 1;
+      return { allowed: false, reason: "lead_paused" };
+    },
+  });
+  const dispatched = await outbox.dispatchConversation("conv-1");
+  const row = p.listOutbox("conv-1")[0];
+  check("pause", "efeito pendente e bloqueado antes do provider", dispatched === 0 && authorizationCalls === 1, JSON.stringify({ dispatched, authorizationCalls }));
+  check("pause", "pausa nao envia mensagem por cima do humano", sender.texts.length === 0 && sender.images.length === 0, JSON.stringify({ texts: sender.texts, images: sender.images }));
+  check("pause", "efeito bloqueado fica terminal e observavel", row?.status === "skipped" && row.lastError === "ai_automation_lead_paused", JSON.stringify(row));
+}
+
+// 10c) A autoridade central e fail-closed. Indisponibilidade do banco nao pode virar resposta automatica.
+{
+  const record = baseRecord();
+  const { p, clock, gate } = storeWith(record);
+  const sender = new RecordingSender();
+  const effectDispatcher = makeDispatcher({ sender }).dispatcher;
+  const outbox = new OutboxDispatcher(p, clock, effectDispatcher, gate, "pause-failure-test", 60_000, 25, {
+    authorize: async () => { throw new Error("database unavailable"); },
+  });
+  const dispatched = await outbox.dispatchConversation("conv-1");
+  const row = p.listOutbox("conv-1")[0];
+  check("pause", "falha da autoridade bloqueia o dispatch", dispatched === 0 && sender.texts.length === 0, JSON.stringify({ dispatched, texts: sender.texts }));
+  check("pause", "falha da autoridade fica observavel sem vazar erro", row?.status === "skipped" && row.lastError === "ai_automation_decision_unavailable", JSON.stringify(row));
+}
+
 
 // 11) Uazapi sender normalizes destination and sends accepted-only text through safe injected transport.
 {

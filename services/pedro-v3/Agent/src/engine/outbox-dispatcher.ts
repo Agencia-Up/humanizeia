@@ -23,6 +23,10 @@ export interface EffectDispatcher {
   reconcile?(record: OutboxRecord): Promise<ReconcileResult>;
 }
 
+export interface OutboxDispatchAuthorization {
+  authorize(record: OutboxRecord): Promise<{ allowed: boolean; reason: string }>;
+}
+
 export class OutboxDispatcher {
   constructor(
     private persistence: Persistence,
@@ -32,6 +36,7 @@ export class OutboxDispatcher {
     private workerId = "outbox-dispatcher",
     private claimTtlMs = 60_000,
     private batchSize = 25,
+    private authorization: OutboxDispatchAuthorization | null = null,
   ) {}
 
   async dispatchConversation(conversationId: string): Promise<number> {
@@ -55,6 +60,21 @@ export class OutboxDispatcher {
         if (!this.effectGate.isActiveMode(conversationId)) {
           await this.markAsSkipped(record, "shadow_mode_gate_active");
           continue;
+        }
+
+        if (this.authorization) {
+          try {
+            const decision = await this.authorization.authorize(record);
+            if (!decision.allowed) {
+              await this.markAsSkipped(record, `ai_automation_${decision.reason}`);
+              continue;
+            }
+          } catch {
+            // Nao envia efeito quando a autoridade de pausa esta indisponivel.
+            // Uma falha aberta aqui poderia responder por cima do humano.
+            await this.markAsSkipped(record, "ai_automation_decision_unavailable");
+            continue;
+          }
         }
 
         totalDispatched += 1;

@@ -1,5 +1,5 @@
 import { logTransferFailure } from '../_shared/pedro-v2/logTransferFailure.ts';
-import { resolveAutomationRules, isWithinTransferWindow, rearmTransferAtNextWindow } from "../_shared/automation/rules.ts";
+import { effectiveTransferDeadline, resolveAutomationRules, isWithinTransferWindow, rearmTransferAtNextWindow } from "../_shared/automation/rules.ts";
 import { pickNextTimeoutSeller } from "../_shared/transfer/timeoutRouting.ts";
 import { sellerPhoneKey } from "../_shared/transfer/phoneKey.ts";
 import { buildPedroV3ConversationBriefing } from "../_shared/transfer/buildBriefing.ts";
@@ -637,9 +637,11 @@ Deno.serve(async (req) => {
           // Transferencia desligada pelo gerente -> sem escalacao automatica
           // (o lead fica com o vendedor atual; o "Ok" dele ainda confirma).
           if (!aRules.transfer.enabled) continue;
-          // Tempo de resposta do vendedor (por agente). Ainda nao deu o tempo -> espera.
-          const elapsedMinT = (now.getTime() - new Date(transfer.created_at).getTime()) / 60000;
-          if (elapsedMinT < aRules.transfer.seller_response_min) continue;
+          // Um unico relogio para todos os workers. Depois de rearmar para a
+          // proxima abertura, created_at e antigo, mas o vendedor ainda deve
+          // receber a janela completa persistida em confirmation_timeout_at.
+          const transferDeadline = effectiveTransferDeadline(transfer, aRules.transfer.seller_response_min);
+          if (now.getTime() < transferDeadline.getTime()) continue;
           // Fora do expediente, inclusive domingo, a transferência permanece
           // pendente. A confirmação continua sendo uma ação real do vendedor;
           // o cron apenas rearma o timeout para a próxima abertura configurada.

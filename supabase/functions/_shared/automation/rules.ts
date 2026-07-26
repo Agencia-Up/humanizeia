@@ -41,9 +41,9 @@ export const DEFAULT_FOLLOWUP: FollowupRules = {
   t3_transfers: true,
 };
 
-// seller_response_min default = 10: e o tempo EFETIVO de hoje (cron-lead-followup
-// SECAO 1 escala em created_at + 10min, e o motor que dispara primeiro). O
-// confirmation_timeout_at (+15min legado) era secundario (transfer-timeout-checker).
+// seller_response_min default = 10. Toda transferencia nova persiste o prazo
+// efetivo em confirmation_timeout_at; os workers devem obedecer esse mesmo
+// relogio para nao divergirem depois de um rearm fora da janela comercial.
 export const DEFAULT_TRANSFER: TransferRules = {
   enabled: true,
   seller_response_min: 10,
@@ -174,4 +174,19 @@ export function nextTransferWindowStart(window: RepassWindow | null, now: Date):
 
 export function rearmTransferAtNextWindow(window: RepassWindow | null, now: Date, sellerResponseMin: number): Date {
   return new Date(nextTransferWindowStart(window, now).getTime() + Math.max(1, sellerResponseMin) * 60 * 1000);
+}
+
+/** Prazo autoritativo; registros legados caem em created_at + regra. */
+export function effectiveTransferDeadline(
+  transfer: { created_at: string; confirmation_timeout_at?: string | null },
+  sellerResponseMin: number,
+): Date {
+  const persisted = typeof transfer.confirmation_timeout_at === "string"
+    ? Date.parse(transfer.confirmation_timeout_at)
+    : Number.NaN;
+  if (Number.isFinite(persisted)) return new Date(persisted);
+
+  const created = Date.parse(transfer.created_at);
+  const safeCreated = Number.isFinite(created) ? created : 0;
+  return new Date(safeCreated + Math.max(1, sellerResponseMin) * 60 * 1000);
 }

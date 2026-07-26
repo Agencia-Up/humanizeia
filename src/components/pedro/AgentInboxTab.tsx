@@ -904,23 +904,38 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   }, [selectedLeadId]);
 
   /* ── Pause / Resume AI ──────────────────────────────────────────── */
+  const persistConversationPause = async (
+    lead: Lead,
+    paused: boolean,
+    reason: string,
+  ): Promise<boolean> => {
+    const { data, error } = await (supabase as any).rpc('set_conversation_ai_paused', {
+      p_lead_id: lead.id,
+      p_paused: paused,
+      p_reason: paused ? reason : null,
+      p_source: 'agent_inbox',
+    });
+    if (error) throw error;
+
+    const authoritative = Array.isArray(data) ? data[0] : data;
+    if (!authoritative || authoritative.id !== lead.id || authoritative.ai_paused !== paused) {
+      throw new Error('A pausa nao foi confirmada pelo servidor. Tente novamente.');
+    }
+
+    setLeads(prev => prev.map(l => (
+      l.id === lead.id ? { ...l, ai_paused: authoritative.ai_paused } : l
+    )));
+    setSelectedLead(prev => (
+      prev?.id === lead.id ? { ...prev, ai_paused: authoritative.ai_paused } : prev
+    ));
+    return true;
+  };
+
   const handleTogglePause = async (lead: Lead) => {
     setTogglingPause(true);
     const newPaused = !lead.ai_paused;
     try {
-      const { error } = await (supabase as any)
-        .from('ai_crm_leads')
-        .update({ ai_paused: newPaused })
-        .eq('id', lead.id);
-      if (error) throw error;
-
-      // Update local state
-      setLeads(prev => prev.map(l =>
-        l.id === lead.id ? { ...l, ai_paused: newPaused } : l
-      ));
-      if (selectedLead?.id === lead.id) {
-        setSelectedLead({ ...lead, ai_paused: newPaused });
-      }
+      await persistConversationPause(lead, newPaused, newPaused ? 'pausa_manual_no_painel' : '');
 
       toast({
         title: newPaused ? 'IA pausada nesta conversa' : 'IA reativada nesta conversa',
@@ -1008,13 +1023,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       const isMarcosLead = selectedLead.origem === 'marcos';
 
       if (!isMarcosLead && !selectedLead.ai_paused) {
-        const { error: pauseErr } = await (supabase as any)
-          .from('ai_crm_leads')
-          .update({ ai_paused: true })
-          .eq('id', selectedLead.id);
-        if (pauseErr) throw pauseErr;
-        setLeads(prev => prev.map(l => (l.id === selectedLead.id ? { ...l, ai_paused: true } : l)));
-        setSelectedLead(prev => (prev ? { ...prev, ai_paused: true } : prev));
+        await persistConversationPause(selectedLead, true, 'transferencia_manual_no_painel');
       }
 
       const { data, error } = await supabase.functions.invoke('manual-transfer', {
@@ -1110,17 +1119,17 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
      Ao responder por aqui num lead do Pedro que ainda estava com a IA ativa,
      pausa a IA silenciosamente pra ela nao responder por cima do vendedor.
      Marcos nao tem IA -> no-op. Reversivel na aba do Pedro. */
-  const ensureManualControlUnified = async () => {
-    if (!unified || !selectedLead) return;
-    if (selectedLead.origem === 'marcos') return;
-    if (selectedLead.ai_paused) return;
-    const { error } = await supabase
-      .from('ai_crm_leads')
-      .update({ ai_paused: true })
-      .eq('id', selectedLead.id);
-    if (!error) {
-      setLeads(prev => prev.map(l => (l.id === selectedLead.id ? { ...l, ai_paused: true } : l)));
-      setSelectedLead(prev => (prev ? { ...prev, ai_paused: true } : prev));
+  const ensureManualControlUnified = async (): Promise<boolean> => {
+    if (!unified || !selectedLead || selectedLead.origem === 'marcos' || selectedLead.ai_paused) return true;
+    try {
+      return await persistConversationPause(selectedLead, true, 'atendimento_manual_no_painel');
+    } catch (err: any) {
+      toast({
+        title: 'Nao foi possivel pausar a IA',
+        description: err?.message || 'Tente novamente antes de responder manualmente.',
+        variant: 'destructive',
+      });
+      return false;
     }
   };
 
@@ -1135,7 +1144,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
       return;
     }
-    if (unified) await ensureManualControlUnified();
+    if (unified && !(await ensureManualControlUnified())) return;
     setSending(true);
 
     const instId = resolveInstanceId();
@@ -1190,7 +1199,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
       return false;
     }
-    if (unified) await ensureManualControlUnified();
+    if (unified && !(await ensureManualControlUnified())) return false;
     const instId = resolveInstanceId();
     if (!instId) {
       toast({ title: 'Sem instancia vinculada a este lead', variant: 'destructive' });
@@ -1287,7 +1296,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       });
       return;
     }
-    if (unified) await ensureManualControlUnified();
+    if (unified && !(await ensureManualControlUnified())) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recordStreamRef.current = stream;

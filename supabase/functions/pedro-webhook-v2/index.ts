@@ -823,13 +823,9 @@ Deno.serve(async (req) => {
   // ao reservar e antes de enviar — ver docs/v3-transfer-confirmation-spec.md).
   // Falha-aberto: lead nao encontrado / decisao indisponivel => segue o fluxo atual.
   //
-  // PILOTO POR TENANT (isolamento obrigatorio): o gate SO roda para tenants na
-  // allowlist configuravel PAUSE_GATE_TENANT_IDS (CSV de user_id). Vazio/ausente =>
-  // gate DESLIGADO para todos (zero mudanca de comportamento). Sem tenant hard-coded.
-  // Contas fora da allowlist seguem exatamente o fluxo atual.
-  const _pauseAllowlist = (Deno.env.get("PAUSE_GATE_TENANT_IDS") || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
-  if (!_dryRun && !_pilotSellerInbound && _pauseAllowlist.includes(String((agent as any).user_id))) {
+  // O V3 e global; a pausa tambem precisa ser global. Seller ACK e operacoes
+  // manuais continuam fora deste gate pela origem operacional acima.
+  if (!_dryRun && !_pilotSellerInbound) {
     const _pauseTenant = (agent as any).user_id;
     const _pauseJid = incomingRemoteJid(payload);
     let _pauseLead: any = null;
@@ -846,7 +842,7 @@ Deno.serve(async (req) => {
       p_action_kind: "v3_effect",
       p_origin: "ai",
     });
-    if (_pauseDecision && _pauseDecision.allowed === false) {
+    if (_pauseLead?.ai_paused === true || (_pauseDecision && _pauseDecision.allowed === false)) {
       // Registra o inbound para nao perder a mensagem durante a pausa (best-effort;
       // o indice unico wa_inbox_remote_msg_unique deduplica retries do webhook).
       try {

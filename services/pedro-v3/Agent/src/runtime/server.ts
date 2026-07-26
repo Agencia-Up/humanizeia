@@ -29,6 +29,7 @@ import { findSettledAcrossScopes } from "./settled-scope-finder.ts";
 import { FetchModelHttpTransport, FetchUazapiHttpTransport, RetryingModelHttpTransport } from "./fetch-transports.ts";
 import { resolveAiProviderRuntime, resolveProviderEnvironmentSecret, type AiProviderRuntimeConfig } from "./ai-provider.ts";
 import { SupabaseServiceGateway } from "./supabase-service-gateway.ts";
+import { DatabaseAutomationExecutionGate } from "./database-automation-execution-gate.ts";
 import { SupabaseKnowledgeSource } from "../adapters/read/supabase-knowledge-source.ts";
 import {
   PilotHttpApp,
@@ -427,6 +428,7 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       transferStore: this.#transferStore,
       handoffEnabled: this.#handoffEnabled,
       sensitiveVault: this.#sensitiveVault,
+      automationGate: new DatabaseAutomationExecutionGate(gateway),
     });
   }
 
@@ -511,6 +513,18 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       }));
       return;
     }
+    const automation = await root.automationDecision("conversation_turn", turnLeadId);
+    if (!automation.allowed) {
+      console.log(JSON.stringify({
+        event: "pedro_v3_automation_blocked",
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        conversationId: settled.conversationId,
+        actionKind: "conversation_turn",
+        reason: automation.reason,
+      }));
+      return;
+    }
     this.#turnSeq += 1;
     const turnId = `poll-${this.#turnSeq}-${randomUUID()}`;
     const processed = await root.processConversation({
@@ -576,6 +590,15 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
             });
             if (result.planned) {
               planned += 1;
+            } else if (result.reason?.startsWith("automation_blocked:")) {
+              console.log(JSON.stringify({
+                event: "pedro_v3_automation_blocked",
+                conversationId: candidate.conversationId,
+                tenantId: scope.tenantId,
+                agentId: scope.agentId,
+                actionKind: "followup",
+                reason: result.reason.slice("automation_blocked:".length),
+              }));
             } else if (result.reason && result.reason !== "not_eligible") {
               failed += 1;
               lastFailure = result.reason;

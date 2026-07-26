@@ -32,6 +32,8 @@ const RPC_ALLOWLIST = new Set([
   // F2.7.6 debounce: roteamento da conversa (ingestao) + conversas assentadas (poller).
   "v3_upsert_conversation_routing",
   "v3_find_settled_conversations",
+  // Pausa central: revalidada antes da LLM, follow-up e cada efeito.
+  "is_ai_automation_allowed",
 ]);
 
 const TABLE_ALLOWLIST = new Set([

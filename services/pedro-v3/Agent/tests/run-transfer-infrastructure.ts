@@ -1,5 +1,6 @@
 import { pickNextTimeoutSeller } from "../../../../supabase/functions/_shared/transfer/timeoutRouting.ts";
 import {
+  effectiveTransferDeadline,
   isWithinTransferWindow,
   nextTransferWindowStart,
   rearmTransferAtNextWindow,
@@ -44,6 +45,18 @@ check("janela personalizada vale em dia comercial", isWithinTransferWindow(confi
 const nextMonday = nextTransferWindowStart(configured.transfer.window, sunday);
 check("domingo reabre na segunda no inicio configurado", nextMonday.toISOString() === "2026-07-20T12:11:00.000Z");
 check("timeout rearmado começa depois da abertura", rearmTransferAtNextWindow(configured.transfer.window, sunday, 15).toISOString() === "2026-07-20T12:26:00.000Z");
+
+check(
+  "prazo persistido vence sobre created_at antigo",
+  effectiveTransferDeadline({
+    created_at: "2026-07-18T22:00:00.000Z",
+    confirmation_timeout_at: "2026-07-20T12:26:00.000Z",
+  }, 15).toISOString() === "2026-07-20T12:26:00.000Z",
+);
+check(
+  "registro legado usa created_at mais seller_response_min",
+  effectiveTransferDeadline({ created_at: "2026-07-20T12:00:00.000Z" }, 15).toISOString() === "2026-07-20T12:15:00.000Z",
+);
 
 const sameLeadHistory = [
   { to_member_id: "seller-3", created_at: "2026-07-20T15:00:00.000Z" },

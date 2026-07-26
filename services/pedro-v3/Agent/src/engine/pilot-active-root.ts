@@ -52,6 +52,12 @@ import type { SensitiveVaultPort } from "../adapters/persistence/sensitive-vault
 import { allowedToolsForAgentProfile, isGeneralSdrProfile } from "../domain/agent-profile.ts";
 import { CompositeKnowledgeSource, type KnowledgeSource } from "../domain/knowledge.ts";
 import { isWithinAgentResponseSchedule } from "../domain/agent-response-schedule.ts";
+import type {
+  AutomationActionKind,
+  AutomationExecutionDecision,
+  AutomationExecutionGate,
+} from "./automation-execution-gate.ts";
+import { sanitizeAutomationReason } from "./automation-execution-gate.ts";
 
 // R13-D/4: modo do cérebro do piloto. off = handler-first (v3 atual). central_shadow = handler-first responde ao
 // lead E o cérebro central roda ISOLADO p/ comparação (zero escrita canônica, zero dispatch). central_active = o
@@ -91,6 +97,7 @@ export type PilotActiveDeps = {
   readonly sensitiveVault?: SensitiveVaultPort | null;
   /** Optional tenant RAG source. Core semantic reference is always composed in. */
   readonly knowledgeSource?: KnowledgeSource | null;
+  readonly automationGate?: AutomationExecutionGate | null;
 };
 
 const CENTRAL_TURN_LIMITS = { maxSteps: 4, totalTimeoutMs: 90_000, proposeTimeoutMs: 40_000, queryTimeoutMs: 25_000, composeTimeoutMs: 35_000 } as const;
@@ -215,6 +222,7 @@ export class PilotActiveRoot {
     private readonly transferStore: TransferSagaStore | null,
     private readonly handoffEnabled: boolean,
     private readonly sensitiveVault: SensitiveVaultPort | null,
+    private readonly automationGate: AutomationExecutionGate | null,
   ) {}
 
   get tenantConfig(): TenantRuntimeConfig {
@@ -229,6 +237,20 @@ export class PilotActiveRoot {
   /** Operational gate only; it never changes CRM or manual-transfer behavior. */
   isAutomaticResponseAllowed(at = this.clock.now()): boolean {
     return isWithinAgentResponseSchedule(at, this.runtimeConfig.responseSchedule);
+  }
+
+  async automationDecision(
+    actionKind: AutomationActionKind,
+    leadId: string | null = this.leadId,
+  ): Promise<AutomationExecutionDecision> {
+    if (!this.automationGate) return { allowed: true, reason: "gate_not_configured" };
+    try {
+      return await this.automationGate.decide({ ref: this.ref, leadId, actionKind });
+    } catch {
+      // Fail-closed: se nao e possivel provar que a automacao segue ativa, nao
+      // disputa a conversa com o atendimento humano.
+      return { allowed: false, reason: "decision_unavailable" };
+    }
   }
 
   static async create(config: PilotActiveConfig, deps: PilotActiveDeps): Promise<PilotActiveRoot> {
@@ -308,6 +330,7 @@ export class PilotActiveRoot {
       deps.transferStore ?? null,
       deps.handoffEnabled === true,
       deps.sensitiveVault ?? null,
+      deps.automationGate ?? null,
     );
   }
 
@@ -499,7 +522,23 @@ export class PilotActiveRoot {
       routes.notify_seller = new NotifySellerEffectDispatcher({ ref: this.ref, clock: this.clock, store: this.transferStore, sender: dispatcherRuntime.sender, sensitiveVault: this.sensitiveVault });
     }
     const effectDispatcher = new CompositeEffectDispatcher(routes);
-    const dispatcher = new OutboxDispatcher(input.persistence, this.clock, effectDispatcher, gate, `${input.workerId}:active-dispatcher`);
+    const dispatchSnapshot = await input.persistence.load(input.conversationId);
+    const effectLeadId = dispatchSnapshot?.state.leadId ?? this.leadId;
+    const dispatcher = new OutboxDispatcher(
+      input.persistence,
+      this.clock,
+      effectDispatcher,
+      gate,
+      `${input.workerId}:active-dispatcher`,
+      60_000,
+      25,
+      {
+        authorize: async () => {
+          const decision = await this.automationDecision("effect_dispatch", effectLeadId);
+          return { ...decision, reason: sanitizeAutomationReason(decision.reason) };
+        },
+      },
+    );
     return dispatcher.dispatchConversation(input.conversationId);
   }
 
@@ -529,6 +568,19 @@ export class PilotActiveRoot {
       // T3 deve usar a identidade durável da conversa para não perder a
       // transferência por depender apenas do snapshot de inicialização.
       const followupLeadId = snapshot.state.leadId ?? this.leadId;
+      const automation = await this.automationDecision("followup", followupLeadId);
+      if (!automation.allowed) {
+        commitFailureReason = `automation_blocked:${sanitizeAutomationReason(automation.reason)}`;
+        console.log(JSON.stringify({
+          event: "pedro_v3_automation_blocked",
+          tenantId: this.ref.tenantId,
+          agentId: this.ref.agentId,
+          conversationId: input.conversationId,
+          actionKind: "followup",
+          reason: sanitizeAutomationReason(automation.reason),
+        }));
+        return;
+      }
       const t3HandoffAvailable = input.due.stage === 3
         && input.rules.followup.t3Transfers
         && input.rules.transfer.enabled
