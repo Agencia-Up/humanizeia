@@ -374,16 +374,18 @@ async function main(): Promise<void> {
     check("[IN-7b] 0 stock_search (exec+obs) + primaryIntent=trade_in mesmo sem pergunta pendente", t2.stockCalls === 0 && t2.stockObs === 0 && t2.primaryIntent === "trade_in", `calls=${t2.stockCalls} obs=${t2.stockObs} intent=${t2.primaryIntent}`);
     check("[IN-7c] interesse de compra NÃO contaminado com renegade", !has(String(t2.slots?.interesse.value ?? ""), "renegade"), `interesse=${JSON.stringify(t2.slots?.interesse.value)}`);
   }
-  // IN-8) SANITIZACAO: o cerebro autora texto com control chars (U+001F) -> o texto de saida sai LIMPO (nunca vao pro WhatsApp).
+  // IN-8) SANITIZACAO: control chars removiveis saem antes da validacao, sem gastar retry da LLM.
   {
     const CTRL = String.fromCharCode(0x1f);
     const c = conv();
-    const cleanOnFeedback: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => obs.some((o) => o.tool === "response" && o.ok === false)
-      ? finU([txt("Olá! Eu sou o Aloan da Icom. Qual modelo, tipo de carro ou faixa de preço você procura?")], "reply", U("smalltalk"))
-      : finU([txt("Ola" + CTRL + CTRL + "! Qual modelo, tipo de carro ou faixa de preço você procura?")], "reply", U("smalltalk"));
-    const t1 = await c.t("Oi", { responder: cleanOnFeedback });
+    let brainCalls = 0;
+    const cleanWithoutRetry: BrainResponder = () => {
+      brainCalls += 1;
+      return finU([txt("Ola" + CTRL + CTRL + "! Qual modelo, tipo de carro ou faixa de preço você procura?")], "reply", U("smalltalk"));
+    };
+    const t1 = await c.t("Oi", { responder: cleanWithoutRetry });
     const hasCtrl = [...t1.outbox].some((ch) => { const cc = ch.codePointAt(0) ?? 0; return (cc < 0x20 && cc !== 9 && cc !== 10 && cc !== 13) || cc === 0x7f || cc === 0xfffd; });
-    check("[IN-8] control chars (U+001F) rejeitados + LLM reautora texto limpo", t1.src === "brain_retry" && !hasCtrl && has(t1.outbox, "Qual modelo"), `src=${t1.src} outbox=${JSON.stringify(t1.outbox)}`);
+    check("[IN-8] control chars removiveis sao normalizados sem retry", t1.src === "brain_final" && brainCalls === 1 && !hasCtrl && has(t1.outbox, "Qual modelo"), `src=${t1.src} calls=${brainCalls} outbox=${JSON.stringify(t1.outbox)}`);
   }
   // IN-9) rejeição de capability de stock_search (understanding sem evidence válida, ex.: "cadê?") NÃO conta como busca no
   //       relatório do smoke (tool:"response") + cap anti-loop; a busca comercial roda 1x na autoria determinística.

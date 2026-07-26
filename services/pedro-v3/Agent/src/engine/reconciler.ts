@@ -9,7 +9,7 @@ import { redact } from "../domain/effect-intent.ts";
 import type { EffectReceipt } from "../domain/decision.ts";
 import { commitEffectOutcome } from "./effect-outcome-commit.ts";
 import type { EffectDispatcher, ReconcileResult } from "./outbox-dispatcher.ts";
-import { isCriticalForConversationState } from "./receipt-policy.ts";
+import { isCriticalForConversationState, requiredReceiptFor } from "./receipt-policy.ts";
 
 function receiptFromRecord(record: OutboxRecord): EffectReceipt | null {
   const value = record.providerReceipt;
@@ -46,6 +46,26 @@ function receiptFromRecord(record: OutboxRecord): EffectReceipt | null {
   return { effectId, level, at, providerMessageId, perItem };
 }
 
+/**
+ * Registros antigos podem ter `receipt_level` persistido sem o JSON completo
+ * de `provider_receipt`. O nivel continua sendo um fato duravel do provider;
+ * reconstruir o receipt minimo evita reenvio e permite reaplicar outcomes
+ * accepted-safe. Nao mascaramos JSON presente e corrompido, nem inventamos o
+ * resultado item-a-item de um envio multiplo de fotos.
+ */
+function receiptForOutcomeRepair(record: OutboxRecord): EffectReceipt | null {
+  const decoded = receiptFromRecord(record);
+  if (decoded) return decoded;
+  if (record.providerReceipt != null) return null;
+  if (record.receiptLevel !== "accepted" && record.receiptLevel !== "delivered") return null;
+  if (record.onSuccess.some((mutation) =>
+    mutation.op === "mark_photos_sent" && mutation.photoIds.length > 1
+  )) return null;
+  const at = record.terminalAt ?? record.dispatchedAt ?? record.createdAt;
+  if (!at) return null;
+  return { effectId: record.effectId, level: record.receiptLevel, at };
+}
+
 export class OutboxReconciler {
   constructor(
     private persistence: Persistence,
@@ -58,12 +78,11 @@ export class OutboxReconciler {
     const now = Date.parse(this.clock.now());
 
     for (const record of records) {
-      if (
-        record.status === "succeeded"
-        && record.receiptLevel === "delivered"
-        && record.outcomeAppliedAt == null
-      ) {
-        await this.repairDeliveredOutcome(record);
+      if (record.status === "succeeded" && record.outcomeAppliedAt == null && (
+        record.receiptLevel === "delivered"
+        || (record.receiptLevel === "accepted" && requiredReceiptFor(record) === "accepted")
+      )) {
+        await this.repairSucceededOutcome(record);
         continue;
       }
 
@@ -104,11 +123,15 @@ export class OutboxReconciler {
     return record.dispatchedAt != null && now - Date.parse(record.dispatchedAt) > maxAgeMs;
   }
 
-  private async repairDeliveredOutcome(record: OutboxRecord): Promise<void> {
-    const receipt = receiptFromRecord(record);
-    if (!receipt || receipt.level !== "delivered") {
-      await this.fail(record, "delivered_receipt_invalid_for_outcome_repair");
-      return;
+  private async repairSucceededOutcome(record: OutboxRecord): Promise<void> {
+    const receipt = receiptForOutcomeRepair(record);
+    const required = requiredReceiptFor(record);
+    const meetsRequired = receipt != null && (required === "accepted" || receipt.level === "delivered");
+    if (!receipt || !meetsRequired) {
+      // O efeito externo ja teve sucesso. Metadado insuficiente para reparar o
+      // estado nao pode rebaixar esse fato para `failed` nem liberar reenvio.
+      // Mantemos o registro intacto e tornamos a inconsistência observavel.
+      throw new Error(`Receipt insuficiente para reparar outcome ${record.effectId}`);
     }
     const result = await commitEffectOutcome({
       persistence: this.persistence,
@@ -118,7 +141,7 @@ export class OutboxReconciler {
       result: { status: "succeeded", effectId: record.effectId, receipt },
     });
     if (!result.ok && !result.reason.includes("outcome_cas_conflict")) {
-      throw new Error(`Falha ao reparar outcome delivered ${record.effectId}: ${result.reason}`);
+      throw new Error(`Falha ao reparar outcome succeeded ${record.effectId}: ${result.reason}`);
     }
   }
 

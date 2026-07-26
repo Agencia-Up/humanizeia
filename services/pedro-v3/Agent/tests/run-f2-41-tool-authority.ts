@@ -75,7 +75,7 @@ const searchCorolla: BrainResponder = (_f, obs: readonly AgentToolObservation[])
 };
 
 type Slots = ConversationState["slots"];
-type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; slots: Slots | null; selectedKey: string | null; pf: string[]; authorities: readonly ToolAuthorityRecord[] };
+type Cap = { outbox: string; committed: boolean; stockCalls: number; stockObs: number; terminalSafe: boolean; primaryIntent: string | null; src: string | null; assistantAuthoring: string | null; slots: Slots | null; selectedKey: string | null; pf: string[]; authorities: readonly ToolAuthorityRecord[] };
 async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: ScriptedAgentBrain, preparer: RelPreparer, convId: string, seq: number, lead: string, responder: BrainResponder): Promise<Cap> {
   executed.length = 0; brain.setResponder(responder);
   await persistence.tryInsert({ eventId: `${convId}-e${seq}`, conversationId: convId, raw: redact({ text: lead }), receivedAt: clock.now() });
@@ -107,6 +107,7 @@ async function turn(persistence: InMemoryPersistence, clock: FakeClock, brain: S
     terminalSafe: r.status === "committed" ? r.terminalSafe : false,
     primaryIntent: r.status === "committed" ? r.understanding.primaryIntent : null,
     src: r.status === "committed" ? (r.responseSource ?? null) : null,
+    assistantAuthoring: persistedState?.recentTurns.filter((entry) => entry.role === "agent").at(-1)?.authoring ?? null,
     slots: persistedState?.slots ?? null,
     selectedKey: persistedState?.vehicleContext.selected?.key ?? null,
     pf: r.status === "committed" ? r.policyFeedback.map((x) => x.slice(0, 120)) : [],
@@ -195,7 +196,7 @@ async function main(): Promise<void> {
     const t1 = await c.t("tem corolla?", lazy);
     check("[D-1] LLM declarou busca sem executar -> engine não completa a tool", t1.stockCalls === 0, `calls=${t1.stockCalls}`);
     check("[D-2] sem chamada, não existe autoridade fantasma de complemento", t1.authorities.length === 0 && t1.stockObs === 0, JSON.stringify(t1.authorities));
-    check("[D-3] falha de contrato vira fallback técnico observável", t1.terminalSafe === true, `terminalSafe=${t1.terminalSafe} src=${t1.src}`);
+    check("[D-3] falha de contrato vira fallback técnico observável", t1.terminalSafe === true && t1.assistantAuthoring === "technical_fallback", `terminalSafe=${t1.terminalSafe} src=${t1.src} authoring=${t1.assistantAuthoring}`);
   }
 
   // ── E) ADVERSARIAL (hardening do audit): "outras opções" DENTRO de uma CONTESTAÇÃO — o regex de 'mais opções' casa,
@@ -306,16 +307,13 @@ async function main(): Promise<void> {
   {
     const c = conv();
     let calls = 0;
-    const incomplete: BrainResponder = (_f, obs) => {
-      if (obs.some((o) => o.tool === "response" && !o.ok)) {
-        return finU([txt("Entendi. Posso te ajudar com essa dúvida sem consultar o estoque agora.")], "reply", U("conversation_repair"));
-      }
+    const incomplete: BrainResponder = () => {
       calls += 1;
-      return finU([txt("Vou verificar as opções para você.")], "reply", { ...U("search_stock"), evidence: [{ quote: "quero SUV" }] });
+      return finU([txt("Não consegui entender qual veículo você procura. Pode me explicar de outro jeito?")], "clarify", { ...U("search_stock"), evidence: [{ quote: "quero SUV" }] });
     };
     const t1 = await c.t("quero SUV", incomplete);
-    check("[D-1] search_stock sem capability própria não executa tool", t1.stockCalls === 0 && calls >= 1, `calls=${t1.stockCalls} brain=${calls}`);
-    check("[D-2] contrato incompleto devolve feedback e permite resposta", t1.committed && !t1.terminalSafe && has(t1.outbox, "Entendi"), `committed=${t1.committed} outbox=\"${t1.outbox}\" pf=${JSON.stringify(t1.pf)}`);
+    check("[D-1] search_stock sem capability própria não executa tool", t1.stockCalls === 0 && calls === 1, `calls=${t1.stockCalls} brain=${calls}`);
+    check("[D-2] metadado incompleto não bloqueia esclarecimento natural", t1.committed && t1.src === "brain_final" && t1.assistantAuthoring === "llm" && has(t1.outbox, "explicar de outro jeito") && !t1.pf.some((x) => has(x, "UNDERSTANDING_INCOMPLETE")), `committed=${t1.committed} src=${t1.src} authoring=${t1.assistantAuthoring} outbox=\"${t1.outbox}\" pf=${JSON.stringify(t1.pf)}`);
   }
 
   console.log(`\n== F2.41: ${ok} OK | ${fail} FALHA ==`);

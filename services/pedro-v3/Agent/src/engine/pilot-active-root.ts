@@ -35,6 +35,7 @@ import { runCentralShadowTurn, type CentralShadowDeps } from "./central-shadow-r
 import { PromptTenantBusinessInfoSource, type TenantBusinessInfoSource } from "./tenant-business-info.ts";
 import type { AgentBrainPort } from "../domain/agent-brain.ts";
 import { OutboxDispatcher } from "./outbox-dispatcher.ts";
+import { OutboxReconciler } from "./reconciler.ts";
 import type { EffectGate } from "./effect-gate.ts";
 import type { UazapiHttpTransport } from "../adapters/effects/uazapi-whatsapp-sender.ts";
 import { createPilotWhatsAppDispatcher } from "../adapters/effects/pilot-whatsapp-runtime.ts";
@@ -151,6 +152,12 @@ export type PilotActiveProcessResult = {
   readonly outboxBeforeDispatch: readonly OutboxRecord[];
   readonly outboxAfterDispatch: readonly OutboxRecord[];
   readonly dispatched: number;
+};
+
+export type PilotEffectMaintenanceResult = {
+  readonly maintained: boolean;
+  readonly dispatched: number;
+  readonly reason?: string;
 };
 
 export type PilotFollowupInput = {
@@ -513,8 +520,12 @@ export class PilotActiveRoot {
     return { status: engine.status, engine, outboxBeforeDispatch, outboxAfterDispatch, dispatched };
   }
 
-  async #dispatchIfCommitted(input: PilotActiveProcessInput, committed: boolean): Promise<number> {
-    if (!committed) return 0;
+  async #createOutboxRuntime(
+    input: Pick<PilotActiveProcessInput, "persistence" | "conversationId" | "to" | "workerId">,
+  ): Promise<{
+    readonly effectDispatcher: CompositeEffectDispatcher;
+    readonly dispatcher: OutboxDispatcher;
+  }> {
     const dispatcherRuntime = await createPilotWhatsAppDispatcher({
       ref: this.ref, conversationId: input.conversationId, instanceId: this.conversationInstanceId, to: input.to, allowedUazapiHosts: this.allowedUazapiHosts, typingEnabled: this.typingEnabled,
     }, {
@@ -552,7 +563,13 @@ export class PilotActiveRoot {
         },
       },
     );
-    return dispatcher.dispatchConversation(input.conversationId);
+    return { effectDispatcher, dispatcher };
+  }
+
+  async #dispatchIfCommitted(input: PilotActiveProcessInput, committed: boolean): Promise<number> {
+    if (!committed) return 0;
+    const runtime = await this.#createOutboxRuntime(input);
+    return runtime.dispatcher.dispatchConversation(input.conversationId);
   }
 
   async flushConversationEffects(input: Pick<PilotActiveProcessInput, "persistence" | "conversationId" | "to" | "workerId">): Promise<number> {
@@ -562,6 +579,35 @@ export class PilotActiveRoot {
       limits: CENTRAL_TURN_LIMITS,
       maxValidationAttempts: 0,
     }, true);
+  }
+
+  /**
+   * Recupera efeitos duraveis sem depender de uma nova mensagem do lead.
+   *
+   * A autoria ja aconteceu no turno original. Este caminho nao chama a LLM,
+   * nao cria texto e nao muda a decisao comercial: apenas reconcilia o outbox
+   * vencido e tenta entregar exatamente o efeito persistido, respeitando a
+   * pausa/autoridade da conversa e a mesma idempotencia do dispatcher normal.
+   */
+  async maintainConversationEffects(
+    input: Pick<PilotActiveProcessInput, "persistence" | "conversationId" | "to" | "workerId">,
+  ): Promise<PilotEffectMaintenanceResult> {
+    const snapshot = await input.persistence.load(input.conversationId);
+    const effectLeadId = snapshot?.state.leadId ?? this.leadId;
+    const automation = await this.automationDecision("effect_dispatch", effectLeadId);
+    if (!automation.allowed) {
+      return {
+        maintained: false,
+        dispatched: 0,
+        reason: `automation_blocked:${sanitizeAutomationReason(automation.reason)}`,
+      };
+    }
+
+    const runtime = await this.#createOutboxRuntime(input);
+    const reconciler = new OutboxReconciler(input.persistence, this.clock, runtime.effectDispatcher);
+    await reconciler.reconcileConversation(input.conversationId);
+    const dispatched = await runtime.dispatcher.dispatchConversation(input.conversationId);
+    return { maintained: true, dispatched };
   }
 
   async processFollowup(input: PilotFollowupInput): Promise<{ planned: boolean; dispatched: number; reason?: string }> {
@@ -664,6 +710,7 @@ export class PilotActiveRoot {
       const outbox = materializeEffectPlans(decision, rendered, {
         conversationId: input.conversationId, createdAt: now,
         providerCapability: { send_message: "none", handoff: "none", notify_seller: "none" },
+        assistantTurnAuthoring: "system",
       });
       const next = structuredClone(snapshot.state);
       next.followupCycle = {

@@ -5,12 +5,14 @@
 import type { EffectKind, EffectOutcomeMutation, EffectPlan, RenderedResponse, TurnDecision } from "../domain/decision.ts";
 import type { OutboxRecord, ProviderCapability } from "../domain/effect-intent.ts";
 import { redact } from "../domain/effect-intent.ts";
+import type { ConversationTurnAuthoring } from "../domain/conversation-state.ts";
 import type { Id, Iso, JsonValue } from "../domain/types.ts";
 
 export type MaterializeEffectOptions = {
   conversationId: Id;
   createdAt: Iso;
   providerCapability?: Partial<Record<EffectKind, ProviderCapability>>;
+  assistantTurnAuthoring?: ConversationTurnAuthoring;
 };
 
 const DEFAULT_CAPABILITY: Record<EffectKind, ProviderCapability> = {
@@ -47,14 +49,23 @@ function payloadFor(plan: EffectPlan, composed: RenderedResponse): { [k: string]
 // append_assistant_turn. Para todo send_message com texto, injeta o outcome com o texto JA renderizado
 // (composed.text). Idempotente: nao duplica se ja houver um append_assistant_turn. Aplica em "accepted"
 // (memoria do que o agente ENVIOU) via effect-policy; nao confunde com delivered (recepcao pelo lead).
-function withAssistantTurn(plan: EffectPlan, composed: RenderedResponse, at: Iso): EffectOutcomeMutation[] {
+function withAssistantTurn(
+  plan: EffectPlan,
+  composed: RenderedResponse,
+  at: Iso,
+  authoring?: ConversationTurnAuthoring,
+): EffectOutcomeMutation[] {
   if (plan.kind !== "send_message") return plan.onSuccess;
   const text = typeof composed.text === "string" ? composed.text.trim() : "";
   if (text.length === 0) return plan.onSuccess;
   // O engine e a UNICA fonte do append_assistant_turn (texto = composed.text JA renderizado). Remove qualquer
   // um vindo do modelo (idempotente, sem duplicar fala) e injeta o deterministico.
   const others = plan.onSuccess.filter((o) => o.op !== "append_assistant_turn");
-  return [...others, { op: "append_assistant_turn", effectId: plan.effectId, turn: { role: "agent", text, at } }];
+  return [...others, {
+    op: "append_assistant_turn",
+    effectId: plan.effectId,
+    turn: { role: "agent", text, at, ...(authoring ? { authoring } : {}) },
+  }];
 }
 
 export function materializeEffectPlans(
@@ -72,7 +83,7 @@ export function materializeEffectPlans(
     order: plan.order,
     dependsOn: plan.dependsOn ?? [],
     payload: redact(payloadFor(plan, composed)),
-    onSuccess: withAssistantTurn(plan, composed, opts.createdAt),
+    onSuccess: withAssistantTurn(plan, composed, opts.createdAt, opts.assistantTurnAuthoring),
     status: "pending",
     providerCapability: opts.providerCapability?.[plan.kind] ?? DEFAULT_CAPABILITY[plan.kind],
     receiptLevel: null,

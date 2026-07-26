@@ -8,12 +8,14 @@ import { PilotActiveRoot, type PilotBrainMode } from "../engine/pilot-active-roo
 import { SupabaseCrmLeadStore } from "../adapters/effects/supabase-crm-lead-store.ts";
 import { SupabaseTransferStore } from "../adapters/effects/supabase-transfer-store.ts";
 import { FollowupCandidateStore } from "../adapters/effects/followup-candidate-store.ts";
+import { OutboxMaintenanceCandidateStore } from "../adapters/effects/outbox-maintenance-candidate-store.ts";
 import { resolveConversationLeadBinding } from "../engine/crm-lead-binding.ts";
 import { ingestPilotMessage } from "../engine/pilot-ingest.ts";
 import { applyProviderDeliveryReceipt } from "../engine/provider-delivery-receipt.ts";
 import { createOpenAiModelFactory } from "../engine/openai-canary-root.ts";
 import { OpenAiAgentBrain } from "../adapters/llm/openai-agent-brain.ts";
 import type { TenantRuntimeConfig } from "../domain/read-ports.ts";
+import type { StructuredConversationModel } from "../domain/conversation-model.ts";
 import { allowedToolsForAgentProfile } from "../domain/agent-profile.ts";
 import { resolveTenantAiSecret } from "../adapters/read/tenant-openai-key.ts";
 import { resolveDebounceConfig, type DebounceConfig } from "../engine/debounce-policy.ts";
@@ -50,6 +52,15 @@ const PILOT_TURN_LIMITS = {
 } as const;
 
 const MAX_REQUEST_BYTES = 32 * 1024;
+
+// A manutencao do outbox nunca deve depender da disponibilidade/cota da LLM.
+// Se este modelo for chamado, o teste e o runtime falham de forma explicita:
+// efeitos vencidos carregam autoria persistida e so precisam ser entregues.
+const EFFECTS_ONLY_MODEL: StructuredConversationModel = {
+  async interpret() { throw new Error("EFFECTS_ONLY_MODEL_INVOKED"); },
+  async propose() { throw new Error("EFFECTS_ONLY_MODEL_INVOKED"); },
+  async compose() { throw new Error("EFFECTS_ONLY_MODEL_INVOKED"); },
+};
 
 
 
@@ -127,6 +138,15 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
     failedScopes: number;
     lastFailure: string | null;
   } = { lastFindAt: null, succeededScopes: 0, failedScopes: 0, lastFailure: null };
+  #outboxDiagnostics: {
+    lastTickAt: string | null;
+    checked: number;
+    maintained: number;
+    dispatched: number;
+    skipped: number;
+    failed: number;
+    lastFailure: string | null;
+  } = { lastTickAt: null, checked: 0, maintained: 0, dispatched: 0, skipped: 0, failed: 0, lastFailure: null };
 
   constructor() {
     this.#supabaseUrl = requiredEnv("SUPABASE_URL");
@@ -248,6 +268,10 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
 
   get pollDiagnostics(): Readonly<Record<string, unknown>> {
     return { ...this.#pollDiagnostics };
+  }
+
+  get outboxDiagnostics(): Readonly<Record<string, unknown>> {
+    return { ...this.#outboxDiagnostics };
   }
 
   #gateway(): SupabaseServiceGateway {
@@ -446,6 +470,111 @@ class ProductionPilotRunner implements PilotTurnRunner, PilotReceiptRunner {
       sensitiveVault: this.#sensitiveVault,
       automationGate: new DatabaseAutomationExecutionGate(gateway),
     });
+  }
+
+  async #createEffectsRoot(
+    scope: PedroV3ActiveScope,
+    leadId: string | null,
+    gateway: SupabaseServiceGateway,
+    instanceId: string | null,
+  ): Promise<PilotActiveRoot> {
+    const readDb = SupabaseReadOnlyDatabase.create({
+      url: this.#supabaseUrl,
+      apiKey: this.#serviceRoleKey,
+      allowedHosts: [supabaseHost(this.#supabaseUrl)],
+      timeoutMs: 15_000,
+      maxResponseBytes: 4 * 1024 * 1024,
+    });
+    return PilotActiveRoot.create({
+      mode: "active",
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      instanceId,
+      leadId,
+      activeScopes: this.#activeScopes,
+    }, {
+      db: readDb,
+      decryptor: new V2PlaintextApiKeyReader(),
+      clock: this.#clock,
+      model: EFFECTS_ONLY_MODEL,
+      whatsappTransport: new FetchUazapiHttpTransport(),
+      allowedUazapiHosts: this.#allowedUazapiHosts,
+      typingEnabled: false,
+      brainMode: "off",
+      crmLeadStore: this.#crmLeadStore,
+      transferStore: this.#transferStore,
+      handoffEnabled: this.#handoffEnabled,
+      sensitiveVault: this.#sensitiveVault,
+      automationGate: new DatabaseAutomationExecutionGate(gateway),
+    });
+  }
+
+  async processDueOutboxMaintenance(): Promise<{
+    checked: number;
+    maintained: number;
+    dispatched: number;
+    skipped: number;
+    failed: number;
+  }> {
+    await this.#refreshActiveScopes();
+    const tickAt = this.#clock.now();
+    let checked = 0;
+    let maintained = 0;
+    let dispatched = 0;
+    let skipped = 0;
+    let failed = 0;
+    let lastFailure: string | null = null;
+
+    for (const scope of this.#activeScopes) {
+      const gateway = this.#gateway();
+      let candidates;
+      try {
+        candidates = await new OutboxMaintenanceCandidateStore(gateway).list(scope, tickAt);
+        checked += candidates.length;
+      } catch (error) {
+        failed += 1;
+        lastFailure = sanitizeTurnError(error instanceof Error ? error.message : String(error));
+        console.error(JSON.stringify({
+          event: "pedro_v3_outbox_scan_failed",
+          tenantId: scope.tenantId,
+          agentId: scope.agentId,
+          reason: lastFailure,
+        }));
+        continue;
+      }
+
+      for (const candidate of candidates) {
+        try {
+          const persistence = new PostgresPersistence(gateway, { tenantId: scope.tenantId, clock: this.#clock });
+          const root = await this.#createEffectsRoot(scope, candidate.leadId, gateway, candidate.instanceId);
+          const result = await root.maintainConversationEffects({
+            persistence,
+            conversationId: candidate.conversationId,
+            to: candidate.toAddr,
+            workerId: "outbox-maintenance-worker",
+          });
+          if (!result.maintained) {
+            skipped += 1;
+            continue;
+          }
+          maintained += 1;
+          dispatched += result.dispatched;
+        } catch (error) {
+          failed += 1;
+          lastFailure = sanitizeTurnError(error instanceof Error ? error.message : String(error));
+          console.error(JSON.stringify({
+            event: "pedro_v3_outbox_maintenance_failed",
+            tenantId: scope.tenantId,
+            agentId: scope.agentId,
+            conversationId: candidate.conversationId,
+            reason: lastFailure,
+          }));
+        }
+      }
+    }
+
+    this.#outboxDiagnostics = { lastTickAt: tickAt, checked, maintained, dispatched, skipped, failed, lastFailure };
+    return { checked, maintained, dispatched, skipped, failed };
   }
 
   // F2.7.6: processa UMA conversa assentada (claim do BLOCO -> decide -> dispatch).
@@ -681,6 +810,7 @@ const app = new PilotHttpApp(bridgeSecret, runtime, runtime, () => ({
   activeScopeCount: runtime.activeScopes.length,
   followupWorker: runtime.followupDiagnostics,
   conversationWorker: runtime.pollDiagnostics,
+  outboxWorker: runtime.outboxDiagnostics,
 }), runtime.activeScopes);
 const server = createServer(async (request, response) => {
   try {
@@ -750,10 +880,33 @@ const runFollowupTick = () => {
 const followupTimer = setInterval(runFollowupTick, 60_000);
 runFollowupTick();
 
+// Efeitos retryable e cadeias interrompidas nao podem depender de uma nova
+// mensagem do lead. O claim/requeue no banco continua atomico e idempotente;
+// este tick apenas acorda o reconciliador para os registros vencidos.
+let outboxTickRunning = false;
+const runOutboxTick = () => {
+  if (outboxTickRunning) return;
+  outboxTickRunning = true;
+  void runtime.processDueOutboxMaintenance()
+    .then((result) => {
+      if (result.checked > 0 || result.failed > 0) {
+        console.log(JSON.stringify({ event: "pedro_v3_outbox_maintenance_tick", ...result }));
+      }
+    })
+    .catch((error) => console.error(JSON.stringify({
+      event: "pedro_v3_outbox_maintenance_tick_failed",
+      reason: sanitizeTurnError(error instanceof Error ? error.message : String(error)),
+    })))
+    .finally(() => { outboxTickRunning = false; });
+};
+const outboxTimer = setInterval(runOutboxTick, 15_000);
+runOutboxTick();
+
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
     stopPoller();
     clearInterval(followupTimer);
+    clearInterval(outboxTimer);
     server.close(() => process.exit(0));
   });
 }

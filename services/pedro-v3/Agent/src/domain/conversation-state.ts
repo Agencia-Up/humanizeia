@@ -81,7 +81,18 @@ export type VehicleContext = {
 };
 export type PhotoLedger = { sentByVehicle: Record<string, string[]> }; // vehicleKey -> photoIds confirmados
 export type RejectedMemory = { modelos: string[] };
-export type ConversationTurn = { role: "lead" | "agent"; text: string; at: Iso };
+export type ConversationTurnAuthoring = "llm" | "technical_fallback" | "system";
+export type ConversationTurn = {
+  role: "lead" | "agent";
+  text: string;
+  at: Iso;
+  /**
+   * Origem factual da mensagem aceita. Opcional para estados antigos.
+   * Nao descreve qualidade nem conduz conversa; permite que automacoes nao
+   * tratem uma falha tecnica como uma resposta comercial normal.
+   */
+  authoring?: ConversationTurnAuthoring;
+};
 
 export type FollowupCycle = {
   anchorEffectId: Id;

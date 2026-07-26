@@ -69,6 +69,39 @@ const t2Brain = new QueueBrain([
 const t2 = await authorFollowupMessageDetailed({ brain: t2Brain, state: t2State, stage: 2, turnId: "fu60-t2", now: NOW, portalPromptSha256: "sha" });
 check("T2 rejeita repeticao da pergunta anterior", t2.text === "Se ainda estiver avaliando, posso te ajudar com os detalhes desse carro. Quer continuar por aqui?" && t2.attempts === 2);
 
+const paraphraseState = state();
+paraphraseState.recentTurns = [
+  { role: "agent", text: "Voce ainda quer ver os detalhes desse Equinox?", at: NOW },
+];
+const paraphraseBrain = new QueueBrain([
+  final("Ainda gostaria de ver mais detalhes do Equinox?"),
+  final("Quer que eu envie as fotos do Equinox?"),
+]);
+const paraphrase = await authorFollowupMessageDetailed({
+  brain: paraphraseBrain, state: paraphraseState, stage: 2, turnId: "fu60-paraphrase", now: NOW, portalPromptSha256: "sha",
+});
+check("T2 rejeita a mesma pergunta reformulada sem bloquear assunto novo", paraphrase.attempts === 2
+  && paraphrase.text === "Quer que eu envie as fotos do Equinox?");
+
+const distinctQuestionBrain = new QueueBrain([final("Qual a quilometragem que voce procura no Equinox?")]);
+const distinctQuestion = await authorFollowupMessageDetailed({
+  brain: distinctQuestionBrain, state: paraphraseState, stage: 2, turnId: "fu60-distinct", now: NOW, portalPromptSha256: "sha",
+});
+check("pergunta diferente sobre o mesmo veiculo continua livre", distinctQuestion.attempts === 1
+  && distinctQuestion.text?.includes("quilometragem") === true);
+
+const differentAttributeState = state();
+differentAttributeState.recentTurns = [
+  { role: "agent", text: "Qual a km do Equinox?", at: NOW },
+];
+const differentAttributeBrain = new QueueBrain([final("Qual o preco do Equinox?")]);
+const differentAttribute = await authorFollowupMessageDetailed({
+  brain: differentAttributeBrain, state: differentAttributeState, stage: 2,
+  turnId: "fu60-different-attribute", now: NOW, portalPromptSha256: "sha",
+});
+check("atributos diferentes do mesmo veiculo nao sao confundidos com repeticao", differentAttribute.attempts === 1
+  && differentAttribute.text?.includes("preco") === true);
+
 // Incidente real Monaco: a mesma pergunta de nome foi reformulada em T1/T2
 // ("posso saber" -> "poderia informar") e escapava do comparador literal.
 // A memoria tipada do slot pendente deve barrar a repeticao sem escolher o
@@ -97,6 +130,38 @@ const semanticRepeat = await authorFollowupMessageDetailed({
 });
 check("T1 rejeita reformulacao semantica da pergunta de nome pendente", semanticRepeat.attempts === 2
   && semanticRepeat.text === "Se ainda quiser entender o financiamento, sigo por aqui para te ajudar.");
+
+// Incidente real Monaco: T1 afirmou "vou encaminhar seu contato" sem existir
+// handoff nesse evento. A LLM continua livre para oferecer a transferencia; o
+// que nao pode e publicar como fato um efeito que nao sera materializado.
+const t1FalseHandoffBrain = new QueueBrain([
+  final("Vou encaminhar seu contato para um consultor de vendas, que dara continuidade ao atendimento."),
+  final("Se quiser, posso continuar te ajudando por aqui."),
+]);
+const t1FalseHandoff = await authorFollowupMessageDetailed({
+  brain: t1FalseHandoffBrain,
+  state: state(),
+  stage: 1,
+  turnId: "fu60-t1-false-handoff",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("T1 nao afirma transferencia que nao sera materializada", t1FalseHandoff.attempts === 2
+  && t1FalseHandoff.text === "Se quiser, posso continuar te ajudando por aqui.");
+
+const t2HandoffOfferBrain = new QueueBrain([
+  final("Quer que eu encaminhe seu contato para um consultor?"),
+]);
+const t2HandoffOffer = await authorFollowupMessageDetailed({
+  brain: t2HandoffOfferBrain,
+  state: state(),
+  stage: 2,
+  turnId: "fu60-t2-handoff-offer",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("T2 pode oferecer transferencia sem afirmar efeito inexistente", t2HandoffOffer.attempts === 1
+  && t2HandoffOffer.text === "Quer que eu encaminhe seu contato para um consultor?");
 
 const adState = state();
 adState.adContext = {

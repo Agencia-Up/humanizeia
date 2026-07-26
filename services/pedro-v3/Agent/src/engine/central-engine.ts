@@ -327,12 +327,6 @@ function stripControlChars(text: string): string {
   }
   return out;
 }
-// Encoding guard: corrupted model/provider text can contain control chars
-// embedded in normal words. Detect before stripping so the brain can rewrite.
-function hasCorruptedControlChars(text: string): boolean {
-  for (const ch of text) { const c = ch.codePointAt(0) ?? 0; if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0x7f || c === 0xfffd) return true; } return false;
-}
-
 function repairVisibleLatin1Escapes(text: string): string {
   if (!/(?:ðŸ|Voceaa|Taubate9|\bje1\b|\p{L}(?:eaa|e7|e9|e1|e0|e2|e3|f3|f4|f5)\b)/u.test(text)) return text;
   return text
@@ -886,6 +880,14 @@ function authorFromBrainDraft(args: {
     if (args.selectionTurn) return { ok: false, feedback: SELECTION_ATTR_FEEDBACK };
     return { ok: false, feedback: `Uma parte cita um FATO ausente/não consultado (${String((err as Error)?.message ?? err).slice(0, 140)}). Chame vehicle_details do vehicleKey ANTES de afirmar km/cor/câmbio/preço, ou diga em text que vai confirmar.` };
   }
+  // Bytes de controle são ruído de transporte, não uma decisão conversacional.
+  // Limpe-os antes das validações para que uma resposta factual válida não
+  // consuma retries nem termine em technical_fallback. Se só havia ruído, o
+  // draft continua inválido e volta ao mesmo cérebro para nova autoria.
+  composed = { ...composed, text: sanitizeOutgoingText(composed.text) };
+  if (!composed.text.trim()) {
+    return { ok: false, feedback: "A resposta ficou sem conteúdo publicável após a normalização técnica. Reemita uma resposta textual válida." };
+  }
   // Grounding de alvo, nao conducao: uma pergunta pronominal de detalhe pode
   // apontar para mais de um veiculo lembrado ("qual o valor dele?" depois de
   // duas ofertas). Nesse estado a engine nao escolhe uma chave pelo lead. A
@@ -940,11 +942,6 @@ function authorFromBrainDraft(args: {
       && !proposedEffects.some((effect) => effect.kind === "send_media")
       && !mentionsLabel(composed.text, args.photoRecallLabel)) {
     return { ok: false, feedback: `O cliente perguntou de QUAL carro eram as fotos. O fato de memória aterrado é: "${args.photoRecallLabel}". Responda você mesmo nomeando esse veículo, sem reenviar mídia e sem expor chave interna.` };
-  }
-  // Corrupted text should be rewritten by the brain, not silently stripped into
-  // visible mojibake that can leak to WhatsApp.
-  if (hasCorruptedControlChars(composed.text)) {
-    return { ok: false, feedback: "Sua resposta veio CORROMPIDA (caracteres de controle/quebrados embutidos — acentos e emoji viraram lixo). Reescreva EXATAMENTE a mesma mensagem em português limpo e correto, com acentuação normal (á é ê ã õ ç) e SEM emojis nem caracteres especiais/de controle." };
   }
   // RD1-2: acolher entrada/parcela pertence ao prompt do portal e à autoria da LLM;
   // guarda legada só no replay. Em central_active a LLM acolhe seguindo o advisory + o prompt do portal.
@@ -2428,22 +2425,17 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           });
           const candidateValidation = validateTurnUnderstanding(candidate, leadMessage, true, turnValidationContext);
           const authorityFeedback = understandingAuthorityFeedback(candidateValidation);
-          // A busca continua sendo uma decisão do cérebro. Mas, quando ele
-          // declara o ato `search_stock`, o próprio contrato exige a
-          // capability/evidence que autoriza a tool. Aceitar o rótulo sem esse
-          // contrato permite uma resposta que diz "separei opções" sem nunca
-          // consultar o estoque. Isto não infere busca por palavras-chave: só
-          // pede que a LLM complete a decisão que ela mesma declarou.
-          const incompleteSearchAct = candidate.primaryIntent === "search_stock" && !isStockSearchTurn(candidateValidation);
-          const understandingFeedback = authorityFeedback
-            ?? (incompleteSearchAct
-              ? "Você declarou primaryIntent=search_stock, mas não forneceu requestedCapabilities=[\"stock_search\"] com evidence literal do bloco atual. Reemita o understanding e chame stock_search antes de apresentar disponibilidade, lista ou opções."
-              : null);
+          // A intenção declarada descreve a conversa; ela não autoriza a tool.
+          // Se a LLM omitir capability/evidence, a execução continua bloqueada
+          // no gate da query, mas uma resposta textual honesta (por exemplo,
+          // pedir esclarecimento) não deve virar retry/fallback por metadado
+          // duplicado. Só conflitos reais de evidência permanecem bloqueantes.
+          const understandingFeedback = authorityFeedback;
           if (llmFirst && understandingFeedback) {
             policyFeedbackLog.push(understandingFeedback);
             if (authorityRetries < AUTHORITY_RETRY_CAP && brainSteps + 1 < brainMaxSteps) {
               authorityRetries += 1;
-              observations.push({ tool: "response", ok: false, error: { code: incompleteSearchAct ? "UNDERSTANDING_INCOMPLETE" : "UNDERSTANDING_CONFLICT", message: understandingFeedback } });
+              observations.push({ tool: "response", ok: false, error: { code: "UNDERSTANDING_CONFLICT", message: understandingFeedback } });
               continue;
             }
             lockedU = null;
@@ -2596,7 +2588,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const listTurn = llmFirst
               && (contextState.lastRenderedOfferContext?.items.length ?? 0) === 0
               && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
-            const corruptionDeny = /CORROMPIDA|caracteres de controle/i.test(authored.feedback);
       const conductTurn = llmFirst && (lockedU?.primaryIntent === "financing" || lockedU?.primaryIntent === "trade_in" || sensitiveAnswerTurn);
             const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
             // ⭐MISSÃO FINAL: o backstop determinístico (fala LITERAL do lead pedindo humano) também mantém o retry NO ATO de
@@ -2614,10 +2605,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && stockSearchGroundableVehicles(f.data).length > 0);
             if (sensitiveAnswerTurn) {
               effFeedback = `ATO ATUAL = sensitive_data. O cliente acabou de fornecer um dado sensivel validado e armazenado por referencia NESTE bloco. Motivo da rejeicao anterior: ${authored.feedback} Reemita understanding com primaryIntent="sensitive_data", zero capabilities e evidence copiada do bloco atual. Confirme o recebimento SEM repetir valor/token/ref; depois conduza com no maximo UMA pergunta util. Nao use tool comercial, nao volte a perguntar o mesmo dado e nao herde visit/financing da memoria como ato atual.`;
-              keepRetrying = true;
-            } else if (corruptionDeny) {
-              // Encoding corruption is transient; retry with the same intent and
-              // an explicit cleanup instruction before any commercial feedback.
               keepRetrying = true;
             } else if (humanGuidanceTurn || visitGuidanceTurn) {
               // Estes atos nao possuem recovery comercial correto: uma falha
@@ -3628,7 +3615,16 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // T1 (audit Codex smoke): SANITIZA control chars do texto de saída num chokepoint ÚNICO — cobre o send_message
       // (materializeEffectPlans), o composedText do resultado e o evento response_composed. O LLM às vezes emite U+001F etc.
       const outComposed = { ...composed, text: sanitizeOutgoingText(composed.text) };
-      const outbox = materializeEffectPlans(decisionForOutbox, outComposed, { conversationId, createdAt: cutoff, providerCapability });
+      const outbox = materializeEffectPlans(decisionForOutbox, outComposed, {
+        conversationId,
+        createdAt: cutoff,
+        providerCapability,
+        assistantTurnAuthoring: responseSource === "technical_fallback"
+          ? "technical_fallback"
+          : (responseSource === "brain_final" || responseSource === "brain_retry")
+            ? "llm"
+            : "system",
+      });
 
       // Observabilidade institucional (audit): status TERMINAL por tópico resolvido no turno.
       const institutionalResolved = [...institutionalObs.entries()].map(([topic, obs]) => ({

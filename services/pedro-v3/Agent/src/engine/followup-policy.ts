@@ -18,6 +18,7 @@ export type FollowupEvaluationReason =
   | "state_terminal"
   | "handoff_in_flight"
   | "no_anchor"
+  | "anchor_degraded"
   | "invalid_time"
   | "lead_replied_after_anchor"
   | "stage_planned"
@@ -37,6 +38,12 @@ function latestOrdinaryAcceptedMessage(records: readonly OutboxRecord[]): Outbox
       && (record.receiptLevel === "accepted" || record.receiptLevel === "delivered")
       && !record.effectId.startsWith("followup:"))
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
+}
+
+function isTechnicalFallbackAnchor(record: OutboxRecord): boolean {
+  return record.onSuccess.some((mutation) => mutation.op === "append_assistant_turn"
+    && mutation.effectId === record.effectId
+    && mutation.turn.authoring === "technical_fallback");
 }
 
 function latestLeadAt(state: ConversationState): number {
@@ -78,6 +85,10 @@ export function evaluateFollowup(args: {
   if (handoffInFlight) return { due: null, reason: "handoff_in_flight" };
   const anchor = latestOrdinaryAcceptedMessage(args.outbox);
   if (!anchor) return { due: null, reason: "no_anchor" };
+  // Uma falha tecnica aceita no WhatsApp nao e uma abordagem comercial e nao
+  // pode iniciar T1/T2/T3. Estados/outbox antigos sem metadado preservam o
+  // comportamento anterior; a regra vale somente quando a origem e conhecida.
+  if (isTechnicalFallbackAnchor(anchor)) return { due: null, reason: "anchor_degraded" };
   const anchorMs = Date.parse(anchor.createdAt);
   const nowMs = Date.parse(args.now);
   // O turno do lead e a resposta do agente podem compartilhar o mesmo

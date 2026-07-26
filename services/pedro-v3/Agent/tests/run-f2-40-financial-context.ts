@@ -390,7 +390,7 @@ async function runEngine(): Promise<void> {
       : finU([txt("Ola! Eu sou o Carvalho " + String.fromCharCode(0x1f,0x1f) + "Voc" + String.fromCharCode(0) + "ê é de Taubaté?")], "reply", U("other"));   // 1a: corrompido (controle)
     const t = await c.t("Boa tarde", corruptThenClean);
     const hasCtrl = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/.test(t.outbox);
-    check("[G-enc] resposta com caracteres de controle -> engine rejeita -> reautora (brain_retry)", t.src === "brain_retry", `src=${t.src}`);
+    check("[G-enc] resposta válida com controle é normalizada sem retry", t.src === "brain_final", `src=${t.src}`);
     check("[G-enc-b] texto final LIMPO (sem caracteres de controle)", t.committed && !hasCtrl && has(t.outbox, "Taubate"), `outbox=${JSON.stringify(t.outbox)}`);
   }
 

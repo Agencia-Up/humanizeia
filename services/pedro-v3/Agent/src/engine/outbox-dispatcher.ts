@@ -150,7 +150,11 @@ export class OutboxDispatcher {
       (candidate) => candidate.turnId === record.turnId && candidate.order < record.order,
     );
     for (const prior of priors) {
-      if (prior.status === "failed" || prior.status === "skipped") return "failed";
+      // Falha retryable ainda e um estado transitório. Marcar o dependente como
+      // skipped aqui tornava a recuperacao inutil: a mensagem podia voltar no
+      // retry, mas CRM/handoff ja tinham sido descartados para sempre.
+      if (prior.status === "failed") return prior.terminalAt == null ? "pending" : "failed";
+      if (prior.status === "skipped") return "failed";
       if (!isEffectSatisfiedForDependency(prior)) return "pending";
     }
 
@@ -158,7 +162,9 @@ export class OutboxDispatcher {
       const dependency = allRecords.find(
         (candidate) => candidate.turnId === record.turnId && candidate.planId === depPlanId,
       );
-      if (!dependency || dependency.status === "failed" || dependency.status === "skipped") return "failed";
+      if (!dependency) return "failed";
+      if (dependency.status === "failed") return dependency.terminalAt == null ? "pending" : "failed";
+      if (dependency.status === "skipped") return "failed";
       if (!isEffectSatisfiedForDependency(dependency)) return "pending";
     }
 

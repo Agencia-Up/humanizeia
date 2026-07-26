@@ -371,6 +371,7 @@ export async function runConversationTurn(args: ConversationEngineArgs): Promise
         conversationId,
         createdAt: cutoff,
         providerCapability,
+        assistantTurnAuthoring: "system",
       });
 
       if (beforeCommit) await beforeCommit({ claimedEventIds, expectedVersion, nextState: reduced.next, turnOutput, outbox });

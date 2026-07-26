@@ -59,24 +59,73 @@ function adVehicleLabel(state: ConversationState): string | null {
   return [vehicle.marca, vehicle.modelo, year].filter(Boolean).join(" ");
 }
 
-// A T3 may mention an analyst only when the surrounding pilot is about to
-// materialize the handoff chain. This validates an operational claim; it does
-// not choose whether the lead should be transferred.
+// Uma mensagem de follow-up so pode AFIRMAR continuidade humana quando este
+// mesmo evento vai materializar o handoff (hoje, apenas o T3 habilitado). Isto
+// valida um efeito operacional; nao escolhe se/quando a conversa deve ser
+// transferida. Perguntas/ofertas como "quer que eu encaminhe?" continuam livres.
 function claimsHandoffContinuity(text: string): boolean {
-  const normalized = normalizeFollowupText(text);
-  const mentionsTeam = /\b(?:analista(?:s)?|vendedor(?:es)?|consultor(?:es)?|equipe)\b/.test(normalized);
-  const claimsAction = /\b(?:seu contato|contato)\b.{0,120}\b(?:encaminhad\w*|transferid\w*|esta\s+com|ja\s+esta|ficara?\s+com|vai\s+(?:falar|receber)|entrara?\s+em\s+contato|dara?\s+continuidade)/.test(normalized);
-  return mentionsTeam && claimsAction;
+  for (const sentence of text.split(/(?<=[.!?\n])/)) {
+    const normalized = normalizeFollowupText(sentence);
+    const mentionsTeam = /\b(?:analista(?:s)?|vendedor(?:es)?|consultor(?:es)?|equipe)\b/.test(normalized);
+    if (!mentionsTeam) continue;
+
+    // "Seu contato ja foi/sera encaminhado" e equivalentes: o contato vem
+    // antes do predicado operacional.
+    const contactFirst = /\b(?:seu\s+contato|o\s+contato|contato)\b.{0,120}\b(?:encaminhad\w*|transferid\w*|repassad\w*|esta\s+com|ja\s+esta|ficara?\s+com|vai\s+(?:falar|receber)|entrara?\s+em\s+contato|dara?\s+continuidade)/.test(normalized);
+
+    // "Vou encaminhar seu contato para um consultor": no incidente real, a
+    // acao vinha antes de "contato" e escapava do detector anterior. Somente
+    // formas assertivas entram aqui; "posso/quer que eu encaminhe?" nao casa.
+    const actionFirst = /\b(?:(?:vou|irei|vamos|iremos)\s+(?:te\s+|lhe\s+)?(?:encaminhar|transferir|repassar)|(?:encaminharei|transferirei|repassarei|encaminhamos|transferimos|repassamos|encaminho|transfiro|repasso))\b.{0,120}\b(?:seu\s+contato|o\s+contato|voce|te|lhe|analista|vendedor|consultor|equipe)\b/.test(normalized);
+
+    // "Um consultor dara continuidade/entrara em contato" afirma uma acao
+    // futura da equipe mesmo sem mencionar literalmente "seu contato".
+    const teamFirst = /\b(?:analista(?:s)?|vendedor(?:es)?|consultor(?:es)?|equipe)\b.{0,100}\b(?:vai|ira|entrara?|dara?)\s+(?:te\s+|lhe\s+)?(?:atender|chamar|receber|entrar\s+em\s+contato|dar\s+continuidade|continuidade)\b/.test(normalized);
+    if (contactFirst || actionFirst || teamFirst) return true;
+  }
+  return false;
 }
 
 function repeatsLastAgentQuestion(text: string, previous: string | null): boolean {
   if (!previous) return false;
   const normalizedText = normalizeFollowupText(text);
   const questions = previous.match(/[^?]{12,}\?/g) ?? [];
-  return questions.some((question) => {
+  if (questions.some((question) => {
     const core = normalizeFollowupText(question).replace(/\?$/, "").trim();
     return core.length >= 18 && normalizedText.includes(core);
-  });
+  })) return true;
+
+  // Comparacao lexical conservadora para a mesma pergunta reformulada em
+  // T1/T2 (por exemplo, "quer ver detalhes?" -> "gostaria de ver mais
+  // detalhes?"). Isto nao escolhe o proximo assunto e nao rejeita perguntas
+  // diferentes sobre o mesmo carro: exige ao menos dois termos informativos
+  // em comum e forte contencao entre os dois nucleos.
+  const STOP = new Set([
+    "a", "o", "as", "os", "um", "uma", "de", "da", "do", "das", "dos",
+    "em", "no", "na", "nos", "nas", "para", "pra", "por", "com", "e", "ou",
+    "se", "que", "voce", "voces", "seu", "sua", "seus", "suas", "te", "lhe",
+    "me", "eu", "ele", "ela", "isso", "esse", "essa", "desse", "dessa",
+    "ainda", "mais", "ja", "agora", "aqui", "ai", "pode", "posso", "poderia",
+    "quer", "quero", "gosta", "gostaria", "continuar", "continuarmos", "saber",
+    "informar", "ajudar", "melhor", "favor", "qual", "quais", "quanto", "quantos",
+  ]);
+  const tokens = (question: string): Set<string> => new Set(
+    normalizeFollowupText(question)
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(/\s+/)
+      .filter((token) => (token.length >= 3 || token === "km") && !STOP.has(token)),
+  );
+  const currentQuestions = text.match(/[^?]{8,}\?/g) ?? [];
+  return currentQuestions.some((current) => questions.some((prior) => {
+    const a = tokens(current);
+    const b = tokens(prior);
+    if (a.size < 2 || b.size < 2) return false;
+    const intersection = [...a].filter((token) => b.has(token)).length;
+    if (intersection < 2) return false;
+    const containment = intersection / Math.min(a.size, b.size);
+    const union = new Set([...a, ...b]).size;
+    return containment >= 0.8 && intersection / union >= 0.55;
+  }));
 }
 
 // A pergunta pendente e um fato semantico persistido pelo turno conversacional.
@@ -91,8 +140,7 @@ function repeatsPendingQuestionSlot(text: string, pendingSlot: string | null): b
 function violatesFollowupStyle(text: string, stage: FollowupStage): boolean {
   const normalized = normalizeFollowupText(text);
   const startsWithGreeting = /^(?:bom dia|boa tarde|boa noite|ola|oi)\b/.test(normalized);
-  const repeatsPresentation = /\b(?:sou o|sou a|aqui e o|aqui e a|meu nome e)\b/.test(normalized)
-    || (stage !== 3 && /\bconsultor(?:a)?\b/.test(normalized));
+  const repeatsPresentation = /\b(?:sou o|sou a|aqui e o|aqui e a|meu nome e)\b/.test(normalized);
   const coldFarewell = /\bprefiro ser honesto\b|\btalvez nao seja o melhor cenario\b/.test(normalized);
   return startsWithGreeting || repeatsPresentation || coldFarewell;
 }
@@ -201,24 +249,25 @@ export async function authorFollowupMessageDetailed(args: {
       && repeatsPendingQuestionSlot(text, memory.pendingAgentQuestion?.slot ?? null);
     const invalidStyle = violatesFollowupStyle(text, args.stage);
     const unsupportedClaim = claimsUnseenOutboundMaterial(text, args.state);
-    const unsupportedHandoffClaim = args.stage === 3 && claimsHandoffContinuity(text) && args.handoffAvailable !== true;
+    const handoffWillBeMaterialized = args.stage === 3 && args.handoffAvailable === true;
+    const unsupportedHandoffClaim = claimsHandoffContinuity(text) && !handoffWillBeMaterialized;
     const missingHandoffClaim = args.stage === 3 && args.handoffAvailable === true && !claimsHandoffContinuity(text);
     const questions = questionCount(text);
     if (!text || invalidStyle || repeatedQuestion || repeatedPendingSlot || unsupportedClaim || unsupportedHandoffClaim || missingHandoffClaim || (args.stage === 3 ? questions !== 0 : questions > 1)) {
       lastReason = !text ? "text_missing" : unsupportedHandoffClaim ? "unsupported_handoff_claim" : unsupportedClaim ? "unsupported_claim" : "question_contract";
-      feedback = args.stage === 3
-        ? unsupportedHandoffClaim
-          ? " FEEDBACK: o contexto deste T3 nao confirma uma transferencia executavel. Despeca-se sem dizer que o contato esta com analista/vendedor/equipe; deixe a porta aberta de forma cordial."
-          : missingHandoffClaim
+      feedback = unsupportedHandoffClaim
+        ? " FEEDBACK: este follow-up nao materializa uma transferencia. Reescreva com autoria propria sem afirmar que o contato foi ou sera encaminhado e sem prometer acao futura de analista/vendedor/equipe. Uma pergunta ou oferta, sem afirmar que a transferencia aconteceu, continua permitida."
+        : args.stage === 3
+          ? missingHandoffClaim
             ? " FEEDBACK: a transferencia deste T3 esta disponivel e sera materializada junto com a despedida. Despeca-se sem pergunta e informe claramente que o contato ja esta encaminhado a um consultor de vendas, que dara continuidade."
-          : " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
-        : unsupportedClaim
-          ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
-        : repeatedQuestion || repeatedPendingSlot
-          ? " FEEDBACK: voce repetiu uma pergunta de qualificacao que o cliente ainda nao respondeu. Nao a reformule. Faca uma retomada diferente e ligada ao contexto; a escolha do texto continua sendo sua."
-          : invalidStyle
-            ? " FEEDBACK: follow-up nao pode ter saudacao, reapresentacao, 'Prefiro ser honesto' ou linguagem de desistencia. Retome o historico com naturalidade."
-            : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";
+            : " FEEDBACK: T3 deve ser uma despedida curta, amigavel e sem pergunta. Nao use saudacao, apresentacao, 'Prefiro ser honesto' ou linguagem de desistencia fria."
+          : unsupportedClaim
+            ? " FEEDBACK: sua mensagem afirmou que algo foi enviado, mas esse material nao esta comprovado no historico atual. Reescreva sem essa afirmacao e reabra com uma mensagem verdadeira ligada ao contexto disponivel."
+            : repeatedQuestion || repeatedPendingSlot
+              ? " FEEDBACK: voce repetiu uma pergunta de qualificacao que o cliente ainda nao respondeu. Nao a reformule. Faca uma retomada diferente e ligada ao contexto; a escolha do texto continua sendo sua."
+              : invalidStyle
+                ? " FEEDBACK: follow-up nao pode ter saudacao, reapresentacao, 'Prefiro ser honesto' ou linguagem de desistencia. Retome o historico com naturalidade."
+                : " FEEDBACK: escreva uma mensagem curta com no maximo uma pergunta.";
       continue;
     }
     return { text, attempts: attempt + 1, reason: "authored" };
