@@ -45,6 +45,7 @@ begin
             prior.receipt_level,
             prior.outcome_applied_at
           )
+          and prior.terminal_at is null
       )
       and not exists (
         select 1

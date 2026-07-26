@@ -63,8 +63,10 @@ function effect(overrides: Partial<OutboxRecord>): OutboxRecord {
 
 console.log("\n=== F2.86 - recuperacao duravel de efeitos ===\n");
 
-// Incidente real: a mensagem falha uma vez de modo retryable. O CRM nao pode
-// ser descartado; apos a janela, a MESMA mensagem volta e libera o dependente.
+// Incidente real: a mensagem falha uma vez de modo retryable. O CRM e
+// independente do sucesso da entrega, mas respeita a ordem e aguarda enquanto
+// a mensagem ainda pode ser recuperada. Apos a janela, a MESMA mensagem volta
+// e libera a sequencia.
 {
   const clock = new FakeClock(NOW);
   const persistence = new InMemoryPersistence(clock, new FakeIdGen());
@@ -73,7 +75,6 @@ console.log("\n=== F2.86 - recuperacao duravel de efeitos ===\n");
     planId: "crm",
     kind: "crm_write",
     order: 1,
-    dependsOn: ["message"],
     payload: redact({ leadId: "lead-augusto", fields: { nome: "Augusto" } }),
   });
   const unit = persistence.begin();
@@ -121,7 +122,7 @@ console.log("\n=== F2.86 - recuperacao duravel de efeitos ===\n");
     && afterFailure[0]?.status === "failed"
     && afterFailure[0]?.terminalAt == null
     && afterFailure[0]?.nextRetryAt != null, JSON.stringify(afterFailure));
-  check("CRM dependente permanece pendente durante falha transitoria",
+  check("CRM independente permanece pendente durante falha transitoria anterior",
     afterFailure[1]?.status === "pending", JSON.stringify(afterFailure[1]));
   check("CRM nao executa antes da mensagem", crmCalls === 0, String(crmCalls));
 
@@ -143,6 +144,67 @@ console.log("\n=== F2.86 - recuperacao duravel de efeitos ===\n");
   check("novo tick e idempotente: zero reenvio e zero CRM duplicado",
     third === 0 && messageCalls === 2 && crmCalls === 1,
     JSON.stringify({ third, messageCalls, crmCalls }));
+}
+
+// Falha terminal de WhatsApp nao apaga o dado do lead. `order` terminou sua
+// funcao de serializacao; como o CRM nao declara dependsOn, ele ainda executa.
+{
+  const clock = new FakeClock(NOW);
+  const persistence = new InMemoryPersistence(clock, new FakeIdGen());
+  const conversationId = "wa:terminal-message-independent-crm";
+  const unit = persistence.begin();
+  unit.casState(conversationId, 0, createInitialState({
+    conversationId,
+    tenantId: TENANT,
+    agentId: AGENT,
+    leadId: "lead-terminal",
+    now: NOW,
+  }));
+  unit.appendOutbox([
+    effect({ conversationId, turnId: "turn-terminal", planId: "message", order: 0 }),
+    effect({
+      conversationId,
+      turnId: "turn-terminal",
+      planId: "crm",
+      kind: "crm_write",
+      order: 1,
+      payload: redact({ leadId: "lead-terminal", fields: { interesse: "SUV" } }),
+    }),
+  ]);
+  const committed = unit.commit();
+  if (!committed.ok) throw new Error(committed.reason);
+
+  const calls: string[] = [];
+  const provider: EffectDispatcher = {
+    async dispatch(record): Promise<EffectResult> {
+      calls.push(record.kind);
+      if (record.kind === "send_message") {
+        return {
+          status: "failed",
+          effectId: record.effectId,
+          error: { code: "UPSTREAM", message: "uazapi_http_401", retryable: false },
+        };
+      }
+      return {
+        status: "succeeded",
+        effectId: record.effectId,
+        receipt: { effectId: record.effectId, level: "delivered", at: clock.now() },
+      };
+    },
+  };
+  const gate = new InMemoryEffectGate();
+  gate.setActiveMode(conversationId, true);
+  const dispatcher = new OutboxDispatcher(persistence, clock, provider, gate, "f286-terminal");
+
+  const dispatched = await dispatcher.dispatchConversation(conversationId);
+  const records = persistence.listOutbox(conversationId);
+  check("falha terminal de mensagem nao impede CRM independente",
+    dispatched === 2
+      && calls.join(",") === "send_message,crm_write"
+      && records[0]?.status === "failed"
+      && records[0]?.terminalAt != null
+      && records[1]?.status === "succeeded",
+    JSON.stringify({ calls, records }));
 }
 
 // Receipt `accepted` tambem pode ser terminal para um send_message cujo

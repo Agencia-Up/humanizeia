@@ -440,6 +440,51 @@ async function runBasicTurn(args: { p: InMemoryPersistence; clock: FakeClock; tu
   check("F2.2-dispatcher", "13 A falha e B termina skipped sem mentir outcome", a.status === "failed" && a.terminalAt != null && b.status === "skipped" && b.terminalAt != null && b.outcomeAppliedAt == null, JSON.stringify({ a, b }));
 }
 
+// 13b) F2.2 DISPATCHER: order serializa, mas nao cria dependencia de sucesso
+{
+  const { p, clock, gate } = mk();
+  const u = p.begin();
+  u.casState("c1", 0, state());
+
+  const recA = outboxRec("c1", "t1", "msg-A", 1, []);
+  const recB: OutboxRecord = {
+    ...outboxRec("c1", "t1", "crm-B", 2, []),
+    kind: "crm_write",
+  };
+  u.appendOutbox([recA, recB]);
+  u.commit();
+
+  const dispatched: string[] = [];
+  const fakeDisp: EffectDispatcher = {
+    async dispatch(record) {
+      dispatched.push(record.planId);
+      if (record.planId === "msg-A") {
+        return {
+          status: "failed",
+          effectId: record.effectId,
+          error: { code: "UPSTREAM", message: "uazapi_http_503", retryable: false },
+        };
+      }
+      return {
+        status: "succeeded",
+        effectId: record.effectId,
+        receipt: { effectId: record.effectId, level: "delivered", at: clock.now() },
+      };
+    },
+  };
+
+  const dispatcher = new OutboxDispatcher(p, clock, fakeDisp, gate);
+  const count = await dispatcher.dispatchConversation("c1");
+  const list = p.listOutbox("c1");
+  const a = list.find((record) => record.planId === "msg-A")!;
+  const b = list.find((record) => record.planId === "crm-B")!;
+  check("F2.2-dispatcher", "13b efeito independente continua apos falha terminal anterior",
+    count === 2 && dispatched.join(",") === "msg-A,crm-B"
+      && a.status === "failed" && a.terminalAt != null
+      && b.status === "succeeded",
+    JSON.stringify({ dispatched, a, b }));
+}
+
 // 14) F2.2 OUTCOME COMMIT: accepted vs delivered
 {
   const { p, clock } = mk();

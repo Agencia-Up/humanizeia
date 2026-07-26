@@ -35,7 +35,16 @@ export type ValidatedUnderstanding = {
 };
 
 const VISIT_ACT_RX = /\b(?:visit\w*|agend\w*|marc\w*\s+(?:uma\s+)?visita|presencial\w*)\b/;
-const HUMAN_ACT_RX = /\b(?:quero|preciso|gostaria)\b.{0,35}\b(?:falar|atendente|vendedor|consultor|humano|pessoa)\b|\b(?:me\s+)?(?:transfira|transfere|transferir|encaminhe|encaminha|chame|chama)\b/;
+// Pedido humano e uma classe de ATO, nao uma lista de frases: verbo de
+// comunicacao com alvo humano concreto, verbo de transferencia, ou pedido
+// natural para chamar/enviar uma pessoa. "conversar SOBRE financiamento" nao
+// pertence a classe porque nao possui alvo humano depois de "com".
+const HUMAN_REQUEST_ACT_RX = /\b(?:quero|preciso|gostaria)\b.{0,35}\b(?:(?:falar|conversar)\s+com\s+)?(?:alguem|uma?\s+pessoa|um\s+humano|(?:um[ae]?\s+)?(?:vendedor|atendente|consultor|gerente)|a\s+equipe|o\s+time)\b|\b(?:falar|conversar)\s+com\s+(?:alguem|uma?\s+pessoa|um\s+humano|(?:um[ae]?\s+)?(?:vendedor|atendente|consultor|gerente)|a\s+equipe|o\s+time)\b|\b(?:me\s+)?(?:transfira(?:m)?|transfere(?:m)?|transferir|encaminhe(?:m)?|encaminha(?:m)?|encaminhar|repasse(?:m)?|repassa(?:m)?|repassar)\b|\b(?:transferencia|encaminhamento)\s+(?:para|a)\s+(?:um[ae]?\s+)?(?:pessoa|alguem|vendedor|atendente|consultor|gerente|humano)\b|\b(?:(?:pode|podem|poderia|poderiam)\s+(?:me\s+)?(?:mandar|chamar|enviar)|(?:(?:por\s+favor|por\s+gentileza)\s+)?(?:me\s+)?(?:manda|mandem|chama|chamem|envia|enviem))\s+(?:um[ae]?\s+)?(?:pessoa|alguem|vendedor|atendente|consultor|humano)\b/;
+
+function humanRequestAct(block: string): string | null {
+  const match = HUMAN_REQUEST_ACT_RX.exec(normalizeText(block));
+  return match?.[0] ?? null;
+}
 const SELECTION_ACT_RX = /\b(?:gost\w*|escolh\w*|fico\s+com)\b|\bquero\s+(?:esse|essa|este|esta)\b|\b(?:item|opcao|numero|posicao)\s*[1-9]\b/;
 // Atributo como PERGUNTA/consulta. Um filtro de busca ("quero SUV automatico")
 // nao e vehicle_detail apenas por conter a palavra "automatico".
@@ -119,7 +128,7 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   // continuam provando evidencia para cada acao de risco. Apenas pedidos
   // explicitamente prioritarios (humano e PII, nesta ordem) impedem que uma
   // intencao antiga da memoria tome o turno atual.
-  const asksHumanNow = HUMAN_ACT_RX.test(norm) || leadRequestsHumanExplicitly(block);
+  const asksHumanNow = leadRequestsHumanExplicitly(block);
   const hasSensitiveNow = SENSITIVE_DATA_ACT_RX.test(norm);
   if (asksHumanNow && u.primaryIntent !== "request_human") {
     issues.push(`o bloco atual pede atendimento humano, mas primaryIntent=${u.primaryIntent}`);
@@ -170,12 +179,12 @@ function semanticIssuesFor(u: TurnUnderstanding, block: string, validEvidence: r
   }
   if (u.primaryIntent === "request_human") {
     const humanEvidence = normalizeText(validEvidence.map((e) => e.quote).join("\n"));
-    // ⭐MISSÃO FINAL: o ATO de pedir humano está no BLOCO atual. Valida quando a evidência casa HUMAN_ACT_RX OU quando o
+    // ⭐MISSÃO FINAL: o ATO de pedir humano está no BLOCO atual. Valida quando a evidência contém esse ato OU quando o
     //   próprio bloco pede humano explicitamente (RX ESTRITO: alvo humano concreto/verbo de transferência — NÃO casa "quero
     //   falar sobre o preço"). O LLM às vezes cita um span curto ("vendedor") que sozinho não casa o ATO; a fala LITERAL do
     //   lead é a evidência. Proveniência intacta (o pedido está no turno atual) — evita que um pedido de humano fique
     //   untrusted e o handoff nunca materialize (viraria "qual seu nome?" ou technical_fallback).
-    if (!HUMAN_ACT_RX.test(humanEvidence) && !leadRequestsHumanExplicitly(block)) issues.push("request_human sem pedido de humano no bloco atual");
+    if (!leadRequestsHumanExplicitly(humanEvidence) && !leadRequestsHumanExplicitly(block)) issues.push("request_human sem pedido de humano no bloco atual");
   }
   if (u.primaryIntent === "sensitive_data" && !SENSITIVE_DATA_ACT_RX.test(norm)) {
     issues.push("sensitive_data sem token sensivel validado no bloco atual");
@@ -262,15 +271,11 @@ export function isPhotoRecall(v: ValidatedUnderstanding | null): boolean {
 // ⭐MISSÃO FINAL (backstop determinístico do handoff): pedido EXPLÍCITO de humano NO BLOCO do lead. Usado APENAS para
 //    NÃO deixar um pedido de humano virar coleta de dado quando o entendimento do cérebro vier fraco/sem evidência
 //    (o LLM às vezes responde "qual seu nome?" a "quero falar com um vendedor" sem propor handoff nem prometê-lo no texto,
-//    e aí nem requestsHuman nem promisesHumanHandoff disparam). É MAIS ESTRITO que HUMAN_ACT_RX de propósito: exige um alvo
-//    humano concreto (vendedor/atendente/consultor/gerente/humano) OU verbo de transferência OU "falar com uma pessoa/
-//    alguém/a equipe" — NÃO casa "quero falar sobre o preço". Não decide intenção nem escreve resposta: só garante que a
+//    e aí nem requestsHuman nem promisesHumanHandoff disparam). Exige um alvo humano concreto ou verbo de
+//    transferência; NÃO casa "quero conversar sobre o preço". Não decide intenção nem escreve resposta: só garante que a
 //    guarda de handoff (feedback+retry) rode para o LLM RE-AUTORAR incluindo o efeito. Autoridade = a fala LITERAL do lead.
-const HUMAN_REQUEST_EXPLICIT_RX = /\b(?:vendedor|atendente|consultor|gerente)\b|\bhumano\b|\b(?:me\s+)?(?:transfir|transfer|encaminh|repass)\w*|\bfalar\s+com\s+(?:uma?\s+(?:pessoa|atendente|vendedor|consultor)|algu[eé]m|um\s+humano|a\s+equipe|o\s+time)\b/;
-const HUMAN_REQUEST_NATURAL_RX = /\b(?:pode\s+|por\s+favor\s+|por\s+gentileza\s+)?(?:manda|mandem|chama|chamem|envia|enviem)\s+(?:um[ae]?\s+)?(?:pessoa|alguem|vendedor|atendente|consultor|humano)\b/;
 export function leadRequestsHumanExplicitly(block: string): boolean {
-  const n = normalizeText(block);
-  return HUMAN_REQUEST_EXPLICIT_RX.test(n) || HUMAN_REQUEST_NATURAL_RX.test(n);
+  return humanRequestAct(block) != null;
 }
 export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
   if (!v || !v.fromBrain || !v.trusted) return false;
@@ -282,7 +287,7 @@ export function requestsHuman(v: ValidatedUnderstanding | null): boolean {
     .filter((e) => e.capability === "handoff")
     .map((e) => e.quote)
     .join("\n"));
-  return v.understanding.requestedCapabilities.includes("handoff") && (HUMAN_ACT_RX.test(handoffEvidence) || HUMAN_REQUEST_NATURAL_RX.test(handoffEvidence));
+  return v.understanding.requestedCapabilities.includes("handoff") && leadRequestsHumanExplicitly(handoffEvidence);
 }
 
 export function commercialToolAllowedForHumanRequest(v: ValidatedUnderstanding | null, tool: string): boolean {
@@ -663,7 +668,8 @@ export function deriveFallbackUnderstanding(block: string, signals: FrameSignals
 
   if (PHOTO_MEMORY_Q.test(norm)) add("recall", firstMatch(PHOTO_MEMORY_Q, block), "recall_photos");
   else if (PHOTO_REQUEST_STEM.test(norm) && !isPhotoDeclined(block)) add("send_photos", firstMatch(PHOTO_REQUEST_STEM, block), "request_photos");
-  if (HUMAN_ACT_RX.test(norm)) add("handoff", firstMatch(HUMAN_ACT_RX, block), "request_human");
+  const humanRequest = humanRequestAct(block);
+  if (humanRequest) add("handoff", humanRequest, "request_human");
   if (SENSITIVE_DATA_ACT_RX.test(norm)) {
     primaryIntent = "sensitive_data";
     evidence.push({ capability: undefined, quote: block.slice(0, 80) });

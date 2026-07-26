@@ -472,6 +472,49 @@ console.log("\n=== F2.6B - active WhatsApp effects (fake sender, no network) ===
   check("uazapi", "failed body with token is not returned", !serialized.includes("SECRET-UAZAPI-TOKEN") && !serialized.includes("api.uazapi.example"), serialized);
 }
 
+// 12a) Falhas HTTP preservam apenas o status seguro para diagnostico.
+{
+  const unauthorizedTransport = new FakeUazapiTransport();
+  unauthorizedTransport.responses = [{
+    ok: false,
+    status: 401,
+    text: "SECRET-UAZAPI-TOKEN https://api.uazapi.example/internal",
+  }];
+  const unauthorized = makeUazapiSender({ transport: unauthorizedTransport });
+  const denied = await unauthorized.sender.sendText({
+    to: "5512999999999",
+    text: "Oi",
+    idempotencyKey: "idem-http-401",
+  });
+  const deniedSerialized = JSON.stringify(denied);
+  check("uazapi", "HTTP 401 e observavel e nao retryable",
+    !denied.ok && denied.message === "uazapi_http_401" && denied.retryable === false
+      && unauthorizedTransport.calls.length === 1,
+    JSON.stringify({ denied, calls: unauthorizedTransport.calls.length }));
+  check("uazapi", "diagnostico HTTP nao vaza corpo, host ou token",
+    !deniedSerialized.includes("SECRET-UAZAPI-TOKEN")
+      && !deniedSerialized.includes("api.uazapi.example")
+      && !deniedSerialized.includes("internal"),
+    deniedSerialized);
+
+  const unavailableTransport = new FakeUazapiTransport();
+  unavailableTransport.responses = Array.from({ length: 3 }, () => ({
+    ok: false,
+    status: 503,
+    text: "upstream private detail",
+  }));
+  const unavailable = makeUazapiSender({ transport: unavailableTransport });
+  const retryable = await unavailable.sender.sendText({
+    to: "5512999999999",
+    text: "Oi",
+    idempotencyKey: "idem-http-503",
+  });
+  check("uazapi", "HTTP 503 tenta endpoints compativeis e preserva status final",
+    !retryable.ok && retryable.message === "uazapi_http_503" && retryable.retryable
+      && unavailableTransport.calls.length === 3,
+    JSON.stringify({ retryable, calls: unavailableTransport.calls.length }));
+}
+
 // 12b) O indicador visual e best-effort e acontece apenas quando o dispatcher envia ao lead.
 {
   const { sender, transport } = makeUazapiSender();

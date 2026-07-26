@@ -87,6 +87,13 @@ export function filterBrainSlotMutations(args: {
     // (a) extração determinística cobriu o slot neste turno: ELA é a autoridade — a mutação da LLM
     //     (redundante ou conflitante) é descartada; o valor extraído já está nas mutações do turno.
     if (args.extractedSlots.has(m.slot)) { dropped.push({ slot: m.slot, reason: "extraction_authority" }); continue; }
+    // Uma origem explicitamente extraida como cidade nao pode ser reutilizada
+    // pela LLM como nome apenas porque havia uma pergunta de nome pendente.
+    // Se o bloco declarar tambem o nome, a extracao cobre os dois slots e a
+    // regra anterior continua sendo a autoridade para ambos.
+    if (m.slot === "nome" && args.extractedSlots.has("cidade") && !args.extractedSlots.has("nome")) {
+      dropped.push({ slot: m.slot, reason: "no_provenance" }); continue;
+    }
     // Se a extracao reconheceu que o bloco inteiro e uma apresentacao curta,
     // esse mesmo texto nao pode aterrar interesse/modelo/cidade inventado pela LLM.
     if (nameOnlyAnswer) { dropped.push({ slot: m.slot, reason: "no_provenance" }); continue; }

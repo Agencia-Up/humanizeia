@@ -93,6 +93,12 @@ function extractName(
     if (valid.length > 0) return { value: titleCase(valid.join(" ")), confidence: 0.95 };
   }
 
+  // Uma declaracao tipada de origem ("sou de ...", "moro em ...") responde
+  // cidade, nao nome — mesmo quando a pergunta pendente era sobre o nome. Se
+  // o bloco tambem trouxer uma autoapresentacao explicita, NAME_PATTERN acima
+  // ja a captura e ambos os fatos continuam livres para coexistir.
+  if (explicitCity(leadMessage) != null) return null;
+
   const objAskingName = state.currentObjective?.slot === "nome" && state.currentObjective.status === "pending";
   const agentAskedName = AGENT_ASKED_NAME.test(lastAgentText(state));
   if (objAskingName || agentAskedName) {

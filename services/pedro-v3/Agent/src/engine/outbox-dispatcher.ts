@@ -150,11 +150,12 @@ export class OutboxDispatcher {
       (candidate) => candidate.turnId === record.turnId && candidate.order < record.order,
     );
     for (const prior of priors) {
-      // Falha retryable ainda e um estado transitório. Marcar o dependente como
-      // skipped aqui tornava a recuperacao inutil: a mensagem podia voltar no
-      // retry, mas CRM/handoff ja tinham sido descartados para sempre.
-      if (prior.status === "failed") return prior.terminalAt == null ? "pending" : "failed";
-      if (prior.status === "skipped") return "failed";
+      // `order` serializa a execução, mas não declara dependência de SUCESSO.
+      // Enquanto o efeito anterior ainda pode mudar (pending/processing/retry),
+      // o próximo aguarda. Quando ele termina — com sucesso ou falha terminal —
+      // a sequência está resolvida e um efeito independente pode prosseguir.
+      // Propagação de falha pertence exclusivamente a `dependsOn` abaixo.
+      if (prior.terminalAt != null) continue;
       if (!isEffectSatisfiedForDependency(prior)) return "pending";
     }
 

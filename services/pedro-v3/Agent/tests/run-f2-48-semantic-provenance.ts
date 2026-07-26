@@ -313,6 +313,8 @@ async function main(): Promise<void> {
     check("[M6] resposta booleana curta à pergunta pendente -> aceita", f6.kept.length === 1, JSON.stringify(f6));
     const f7 = filterBrainSlotMutations({ mutations: [mk("interesse", "Douglas")], block: "Douglas", extractedSlots: new Set(["nome"]), pendingSlot: "nome", understandingTrusted: true });
     check("[M7] nome isolado nunca aterra interesse comercial", f7.kept.length === 0 && f7.dropped[0]?.reason === "no_provenance", JSON.stringify(f7.dropped));
+    const f8 = filterBrainSlotMutations({ mutations: [mk("nome", "São Carlos")], block: "sou de São Carlos", extractedSlots: new Set(["cidade"]), pendingSlot: "nome", understandingTrusted: true });
+    check("[M8] cidade tipada nunca aterra nome pendente pela LLM", f8.kept.length === 0 && f8.dropped[0]?.reason === "no_provenance", JSON.stringify(f8.dropped));
   }
 
   // ── [S] Seleção canônica por token da última oferta ──

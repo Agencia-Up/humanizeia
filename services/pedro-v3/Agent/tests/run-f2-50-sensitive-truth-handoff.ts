@@ -219,6 +219,13 @@ check("[H12] reconhecimento natural passa", sensitiveAnswerCompletenessFeedback(
 check("[H13] ref interna nunca pode aparecer", sensitiveAnswerCompletenessFeedback(["cpf"], "CPF_VALIDO_REF_" + REF_CPF) != null);
 check("[H14] pedido natural de uma pessoa reconhece handoff", leadRequestsHumanExplicitly("Por gentileza manda alguem pra mim"));
 check("[H15] pedido natural de vendedor reconhece handoff", leadRequestsHumanExplicitly("Pode mandar um vendedor para mim"));
+check("[H15a] ato de conversar com alguem reconhece handoff", leadRequestsHumanExplicitly("Posso conversar com alguém?"));
+check("[H15b] ato de conversar com pessoa da equipe reconhece handoff", leadRequestsHumanExplicitly("Quero conversar com uma pessoa da equipe"));
+check("[H15c] verbo de transferencia para vendedor reconhece handoff", leadRequestsHumanExplicitly("Pode me transferir para um vendedor?"));
+check("[H15d] transferencia de documento nao e pedido humano", !leadRequestsHumanExplicitly("Qual o valor da transferência do documento?"));
+check("[H15e] encaminhamento nominal so vale com alvo humano", !leadRequestsHumanExplicitly("Como funciona o encaminhamento do documento?"));
+check("[H15f] conversar sobre financiamento nao vira handoff", !leadRequestsHumanExplicitly("Quero conversar sobre financiamento"));
+check("[H15g] conversar sobre preco nao vira handoff", !leadRequestsHumanExplicitly("Podemos conversar sobre o preço?"));
 check("[H16] resposta nao oferece reenviar endereco pelo mesmo WhatsApp", asksToResendInstitutionalInfoViaWhatsApp("Nossa loja fica na Avenida Charles Schneider, 1700. Quer que eu te envie o endereco pelo WhatsApp?"));
 check("[H17] envio de foto pelo WhatsApp nao e falso positivo do endereco", !asksToResendInstitutionalInfoViaWhatsApp("Quer que eu te envie as fotos pelo WhatsApp?"));
 

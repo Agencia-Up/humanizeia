@@ -98,6 +98,16 @@ function failure(message: string, retryable: boolean): WhatsAppSendResult {
   return { ok: false, code: "UPSTREAM", message, retryable };
 }
 
+function httpFailure(status: number): WhatsAppSendResult {
+  const safeStatus = Number.isInteger(status) && status >= 100 && status <= 599
+    ? String(status)
+    : "unknown";
+  return failure(
+    `uazapi_http_${safeStatus}`,
+    safeStatus === "unknown" || status >= 500 || status === 429,
+  );
+}
+
 function timeoutFailure(): WhatsAppSendResult {
   return { ok: false, code: "TIMEOUT", message: "uazapi_timeout", retryable: true };
 }
@@ -255,7 +265,9 @@ export class UazapiWhatsAppSender implements WhatsAppSendPort {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      if (!response.ok) return failure("uazapi_http_failure", response.status >= 500 || response.status === 429);
+      // O status e diagnostico operacional seguro. Corpo, URL e credencial
+      // nunca entram no resultado persistido nem nos logs do outbox.
+      if (!response.ok) return httpFailure(response.status);
       return { ok: true, level: "accepted", providerMessageId: safeIdFromResponse(response.json) };
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return timeoutFailure();

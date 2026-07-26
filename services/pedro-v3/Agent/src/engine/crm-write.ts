@@ -12,9 +12,10 @@
 //    mesmo turno regrava o MESMO effect; o outbox deduplica por effectId).
 //  - Delta por turno: só emite plan quando o payload difere do que este
 //    estado já produziria antes do turno (evita updates idênticos por turno).
-//  - Ordem ALTA (CRM_WRITE_ORDER) e sem dependentes: o reply/media despacham
-//    ANTES; falha de CRM NUNCA silencia o lead. (E se o reply falhar, o
-//    dispatcher pula o CRM por dependência de ordem — dado fica p/ o próximo turno.)
+//  - Ordem ALTA (CRM_WRITE_ORDER) e sem dependentes: reply/media resolvem
+//    ANTES, mas a ordem não torna o CRM dependente do sucesso da mensagem.
+//    Assim uma falha terminal do WhatsApp não apaga os dados já coletados.
+//    Efeitos que realmente exigem sucesso declaram `dependsOn` explicitamente.
 //  - Troca NUNCA contamina interesse (colunas separadas: vehicle_interest ×
 //    trade_in_vehicle) e vice-versa — cada uma nasce do próprio slot.
 //  - "Nunca sobrescrever campo humano" / "nunca apagar": a POLÍTICA DE MERGE

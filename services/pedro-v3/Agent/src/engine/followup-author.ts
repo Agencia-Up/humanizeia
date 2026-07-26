@@ -76,7 +76,7 @@ function claimsHandoffContinuity(text: string): boolean {
     // "Vou encaminhar seu contato para um consultor": no incidente real, a
     // acao vinha antes de "contato" e escapava do detector anterior. Somente
     // formas assertivas entram aqui; "posso/quer que eu encaminhe?" nao casa.
-    const actionFirst = /\b(?:(?:vou|irei|vamos|iremos)\s+(?:te\s+|lhe\s+)?(?:encaminhar|transferir|repassar)|(?:encaminharei|transferirei|repassarei|encaminhamos|transferimos|repassamos|encaminho|transfiro|repasso))\b.{0,120}\b(?:seu\s+contato|o\s+contato|voce|te|lhe|analista|vendedor|consultor|equipe)\b/.test(normalized);
+    const actionFirst = /\b(?:(?:vou|irei|vamos|iremos)\s+(?:te\s+|lhe\s+)?(?:encaminhar|transferir|repassar|conectar|colocar\s+em\s+contato)|(?:encaminharei|transferirei|repassarei|conectarei|encaminhamos|transferimos|repassamos|conectamos|encaminho|transfiro|repasso|conecto))\b.{0,120}\b(?:seu\s+contato|o\s+contato|voce|te|lhe|analista|vendedor|consultor|equipe)\b/.test(normalized);
 
     // "Um consultor dara continuidade/entrara em contato" afirma uma acao
     // futura da equipe mesmo sem mencionar literalmente "seu contato".

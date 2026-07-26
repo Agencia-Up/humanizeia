@@ -163,6 +163,35 @@ const t2HandoffOffer = await authorFollowupMessageDetailed({
 check("T2 pode oferecer transferencia sem afirmar efeito inexistente", t2HandoffOffer.attempts === 1
   && t2HandoffOffer.text === "Quer que eu encaminhe seu contato para um consultor?");
 
+const t1FalseConnectBrain = new QueueBrain([
+  final("Vou te conectar agora com um consultor de vendas."),
+  final("Se ainda quiser, continuo por aqui para ajudar."),
+]);
+const t1FalseConnect = await authorFollowupMessageDetailed({
+  brain: t1FalseConnectBrain,
+  state: state(),
+  stage: 1,
+  turnId: "fu60-t1-false-connect",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("T1 rejeita conexao humana afirmada sem handoff", t1FalseConnect.attempts === 2
+  && t1FalseConnect.text === "Se ainda quiser, continuo por aqui para ajudar.");
+
+const t2ConnectOfferBrain = new QueueBrain([
+  final("Quer que eu te conecte com um consultor?"),
+]);
+const t2ConnectOffer = await authorFollowupMessageDetailed({
+  brain: t2ConnectOfferBrain,
+  state: state(),
+  stage: 2,
+  turnId: "fu60-t2-connect-offer",
+  now: NOW,
+  portalPromptSha256: "sha",
+});
+check("T2 pode oferecer conexao sem afirmar efeito inexistente", t2ConnectOffer.attempts === 1
+  && t2ConnectOffer.text === "Quer que eu te conecte com um consultor?");
+
 const adState = state();
 adState.adContext = {
   adId: "ad-f260",

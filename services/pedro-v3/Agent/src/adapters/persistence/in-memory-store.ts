@@ -203,7 +203,10 @@ export class InMemoryPersistence implements Persistence, ConversationRoutingStor
       const priors = all.filter((candidate) => (
         candidate.turnId === record.turnId && candidate.order < record.order
       ));
-      if (priors.some((prior) => !isEffectSatisfiedForDependency(prior))) continue;
+      // Ordem é barreira de serialização, não dependência de sucesso. Efeito
+      // anterior ainda aberto bloqueia; efeito terminal (inclusive failed ou
+      // skipped) libera os independentes. `dependsOn` abaixo continua estrito.
+      if (priors.some((prior) => prior.terminalAt == null && !isEffectSatisfiedForDependency(prior))) continue;
 
       const dependencies = record.dependsOn.map((planId) => (
         all.find((candidate) => candidate.turnId === record.turnId && candidate.planId === planId)

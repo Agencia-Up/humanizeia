@@ -93,6 +93,19 @@ async function main(): Promise<void> {
     const muts = extractLeadSlots({ leadMessage: "Taubaté", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1cn" });
     check("1c-neg 'Taubaté' em pergunta de cidade -> NÃO captura nome", !slot(muts, "nome"), JSON.stringify(muts));
   }
+  // 1d) Uma origem tipada nao vira nome mesmo quando a pergunta pendente era
+  // nome. O dado correto continua disponivel como cidade.
+  {
+    const muts = extractLeadSlots({ leadMessage: "Sou de São Carlos", state: withNameObjective(), interpretation: TI(), claimExtractor: extractor, turnId: "t1d" });
+    check("1d 'Sou de Sao Carlos' respondendo nome -> nao contamina nome", !slot(muts, "nome"), JSON.stringify(muts));
+    check("1d declaracao tipada preserva cidade", slot(muts, "cidade")?.value === "São Carlos", JSON.stringify(muts));
+  }
+  // 1e) Nome e cidade coexistem quando o lead declara ambos.
+  {
+    const muts = extractLeadSlots({ leadMessage: "Meu nome e Douglas, sou de São Carlos", state: withNameObjective(), interpretation: TI(), claimExtractor: extractor, turnId: "t1e" });
+    check("1e nome explicito continua capturado", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
+    check("1e cidade explicita continua capturada", slot(muts, "cidade")?.value === "São Carlos", JSON.stringify(muts));
+  }
 
   // 2) "Meu nome e douglas" (sem objetivo) -> nome "Douglas" (padrao explicito)
   {
@@ -142,6 +155,16 @@ async function main(): Promise<void> {
   {
     const muts = extractLeadSlots({ leadMessage: "talvez depois", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t8" });
     check("8 input ambiguo sem objetivo/padrao -> nao salva nome", !slot(muts, "nome"), JSON.stringify(muts));
+  }
+
+  // 8b) Uma pergunta de valor sem declaracao de posse/troca pertence ao
+  // assunto comercial ativo que a LLM resolvera. O extrator factual nao pode
+  // inventar um carro de troca nem posse apenas por existir uma avaliacao no
+  // enunciado (incidente: pergunta curta sobre o veiculo do anuncio).
+  {
+    const muts = extractLeadSlots({ leadMessage: "Quanto vale?", state: baseState(), interpretation: TI(), claimExtractor: extractor, turnId: "t8b" });
+    check("8b pergunta de valor sem posse/troca -> nao contamina possuiTroca", !slot(muts, "possuiTroca"), JSON.stringify(muts));
+    check("8b pergunta de valor sem posse/troca -> nao cria veiculoTroca", !slot(muts, "veiculoTroca"), JSON.stringify(muts));
   }
 
   // â”€â”€ IntegraÃ§Ã£o no engine: bloco real com nome explicito + 2 modelos â”€â”€
