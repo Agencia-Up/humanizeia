@@ -124,7 +124,18 @@ export type AdIdentityProof = {
 };
 
 function norm(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Provider feeds and ad vision describe the same trim with harmless formatting differences:
+  // `LIMITED+`/`LIMITED PLUS`, `V6`/`V 6` and `4x4`/`4 X 4`. This normalization is restricted
+  // to structured vehicle identity; assistant prose never participates in factual proof.
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\+/g, " plus ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\bv\s+(\d{1,2})\b/g, "v$1")
+    .replace(/\b(\d)\s+x\s+(\d)\b/g, "$1x$2");
 }
 
 function tokens(value: string | null | undefined): string[] {

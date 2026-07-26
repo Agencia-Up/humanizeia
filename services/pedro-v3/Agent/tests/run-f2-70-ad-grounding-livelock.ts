@@ -45,7 +45,13 @@ const ECOSPORT20: VehicleFact = { vehicleKey: "rm:eco20", marca: "Ford", modelo:
 const COMPASS22: VehicleFact = { vehicleKey: "rm:cmp22", marca: "Jeep", modelo: "Compass", ano: 2022, preco: 129990, km: 41000, cambio: "Automatico", cor: "Branco", tipo: "suv" };
 const COMPASS19: VehicleFact = { vehicleKey: "rm:cmp19", marca: "Jeep", modelo: "Compass", ano: 2019, preco: 103990, km: 78000, cambio: "Automatico", cor: "Preto", tipo: "suv" };
 const RENEGADE18: VehicleFact = { vehicleKey: "rm:ren18", marca: "Jeep", modelo: "Renegade", ano: 2018, preco: 71990, km: 122000, cambio: "Automatico", cor: "Preto", tipo: "suv" };
-const STOCK = [ECOSPORT20, COMPASS22, COMPASS19, RENEGADE18];
+const RANGER25: VehicleFact = {
+  vehicleKey: "bndv:ranger25", marca: "Ford", modelo: "Ranger",
+  versao: "LIMITED+ 3.0 V 6 4 X 4 CD TB DIE AUT", ano: 2025,
+  preco: 299900, km: 42597, cambio: "Automatico", cor: "Cinza",
+  combustivel: "diesel", combustivelLabel: "Diesel", tipo: "pickup",
+};
+const STOCK = [ECOSPORT20, COMPASS22, COMPASS19, RENEGADE18, RANGER25];
 const catalog = buildTenantCatalog(STOCK);
 const extractor = new CatalogClaimExtractor(catalog);
 const sdrPolicy = buildSdrQualificationPolicy({ qualificationQuestions: [], agentName: "Carvalho", companyName: "Icom Motors", promptText: "Você é o Carvalho da Icom Motors." } as never);
@@ -85,6 +91,7 @@ const U = (primaryIntent: PrimaryIntent): TurnUnderstanding => ({ primaryIntent,
 const txt = (content: string): ResponsePart => ({ type: "text", content });
 const offer = (keys: string[]): ResponsePart => ({ type: "vehicle_offer_list", vehicleKeys: keys });
 const vref = (vehicleKey: string, field: "marca" | "modelo" | "ano" | "km" | "cambio" | "cor"): ResponsePart => ({ type: "vehicle_ref", vehicleKey, field });
+const price = (vehicleKey: string): ResponsePart => ({ type: "money_ref", role: "vehicle_price", source: { kind: "vehicle_fact", vehicleKey } });
 const reply: ProposedEffectPlan = { kind: "send_message", planId: "reply", order: 0, onSuccess: [] } as ProposedEffectPlan;
 function finU(parts: ResponsePart[], reasonCode: string, u: TurnUnderstanding): AgentBrainStep {
   return { kind: "final", understanding: u, decision: { reasonCode, reasonSummary: "r", confidence: 0.9, responsePlan: { guidance: "g", draft: { parts } }, proposedEffects: [reply], memoryMutations: [], stateMutations: [] } as AgentBrainDecision };
@@ -296,6 +303,13 @@ async function main(): Promise<void> {
     title: "📲 Fale agora com um de nossos consultores!", body: "🚗 Veículos revisados e prontos para você!",
     greeting: "Olá! Quer saber mais sobre o Ford EcoSport SE 1.5 2020?", imageUrls: [], capturedAtTurn: 0,
   };
+  const adRanger: AdContext = {
+    adId: "120247924681440757", source: "facebook", sourceUrl: null,
+    title: "Ford Ranger Limited+ 2025", body: "R$ 299.900 | 42.597 km",
+    greeting: "Olá! Tenho interesse nesta Ranger.", imageUrls: [], capturedAtTurn: 0,
+    vehicleQuery: "FORD RANGER LIMITED+ 3.0 V6 4x4 CD TB DIESEL AUT. 2025",
+    confidence: 1, semanticSource: "image",
+  };
 
   // [B1] a LLM INVENTA a chave a partir do texto do anúncio (foi o que gpt-4.1-mini fez em produção).
   {
@@ -362,6 +376,43 @@ async function main(): Promise<void> {
     check("[B1c] anuncio aterrado + pergunta de nome e aceito", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
     check("[B1c] engine nao cria retry comercial de identidade", attempts === 2 && r.brainCalls <= 2, `attempts=${attempts} brainCalls=${r.brainCalls}`);
     check("[B1c] preserva o carro factual e a autoria do funil", has(r.outbox, "EcoSport 2020") && has(r.outbox, "nome"), r.outbox.slice(0, 140));
+  }
+
+  // [B1d] incidente real de 26/07: o provedor escreve V 6 / 4 X 4 / LIMITED+,
+  // enquanto a visão do anúncio escreve V6 / 4x4 / LIMITED PLUS. A busca encontrou
+  // uma única Ranger correta, mas a identidade ficou sem prova e "Valor" caiu em
+  // technical_fallback. Formatação do provedor não pode apagar o alvo factual.
+  {
+    const c = conv();
+    const block = "Valor";
+    const responder: BrainResponder = (frame, observations) => {
+      const u: TurnUnderstanding = {
+        ...U("vehicle_detail"),
+        // Production used stock_search to resolve the ad vehicle before answering
+        // the requested detail. Both decisions belong to the LLM contract; the
+        // engine only validates that each proposed tool has current-turn evidence.
+        requestedCapabilities: ["vehicle_details", "stock_search"],
+        subject: "offer_reference",
+        subjectValue: "Ford Ranger",
+        subjectSource: "memory",
+        evidence: [
+          ...ev(frame.block ?? block, "vehicle_details", 1),
+          ...ev(frame.block ?? block, "stock_search", 1),
+        ],
+      };
+      const searched = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
+      if (!searched) return qU({ tool: "stock_search", input: { marca: "Ford", modelo: "Ranger", anos: [2025] } }, u);
+      return finU([
+        txt("A Ranger anunciada está por "),
+        price(searched.data.items[0].vehicleKey),
+        txt("."),
+      ], "vehicle_detail", u);
+    };
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "asks_vehicle_detail", responder, adRanger);
+    check("[B1d] busca exata resolve a Ranger apesar da formatação do provedor", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
+    check("[B1d] preço factual chega ao lead", has(r.outbox, "299.900") || has(r.outbox, "299900"), r.outbox.slice(0, 140));
+    check("[B1d] zero falso 'veículo exato não resolvido'", !r.policyFeedback.some((f) => has(f, "ainda não tem um veículo exato resolvido")), r.policyFeedback.join(" | "));
+    check("[B1d] turno termina por autoria da LLM, sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}|${r.degradationKind}|${r.retryReasons.join("|")}`);
   }
 
   // [B1b] regressão do smoke 25/07: a LLM apresentou o único veículo em prosa natural,
