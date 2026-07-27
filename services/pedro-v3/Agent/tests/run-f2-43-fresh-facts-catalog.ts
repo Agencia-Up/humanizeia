@@ -278,7 +278,7 @@ async function main(): Promise<void> {
     c.preparer.emptyCatalog = true;
     await c.t("tem sedan?", searchB({ tipo: "sedan" }));   // 0 sedans no stock -> honesto
     const t2 = await c.t("tem onix?", searchB({ modelo: "Onix" }));
-    check("[H-0] setup: lista o Onix com snapshot vazio", has(t2.outbox, "onix"), `outbox="${t2.outbox.slice(0, 100)}"`);
+    check("[H-0] setup: lista o Onix com snapshot vazio", has(t2.outbox, "onix"), `input=${JSON.stringify(t2.stockInput)} outbox="${t2.outbox.slice(0, 100)}"`);
     const t3 = await c.t("Onix nao e um carro? pq disse que nao tinha?", () => finU([txt("Você tem razão, me desculpe pela confusão! Eu quis dizer que não tinha sedans — o Onix que te mostrei é um hatch. Quer ver as condições dele?")], "conversation_repair", U("conversation_repair")));
     check("[H-1] contestação: 0 stock_search, brain_*, sem re-lista", t3.stockCalls === 0 && NO_FALLBACK(t3) && !has(t3.outbox, "Encontrei estas opções"), `calls=${t3.stockCalls} src=${t3.src} outbox="${t3.outbox.slice(0, 100)}"`);
     check("[H-2] primaryIntent=conversation_repair", t3.primaryIntent === "conversation_repair", `intent=${t3.primaryIntent}`);

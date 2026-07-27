@@ -41,6 +41,7 @@ import {
   evaluateAdIdentityProof, resolveAdConfirmation, type AdIdentityProof, type GroundedVehicleRef,
 } from "../domain/operational-context.ts";
 import { detectCommercialConstraints, sufficientForStockSearch, canonicalBrand, describeConstraints, mergeActiveConstraints, constraintsToStockInput, detectCorrections, activeConstraintsFromStockInput, mentionsMotorcycle, deriveScopeFromHomogeneousOffer, detectSimilarityIntent, relaxToSimilar, type RelaxKind, type CommercialConstraints } from "./commercial-constraints.ts";
+import { applyMonetarySemanticsToCurrentConstraints, sanitizeStockSearchInputMoney } from "./monetary-semantics.ts";
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, detectExplicitOptOut, type LeadEngagement } from "./lead-intent.ts";
@@ -348,8 +349,8 @@ export function sanitizeOutgoingText(text: string): string {
     .normalize("NFC");
 }
 
-// ⭐Hardening (audit Codex): moreOptionsSearch chega JÁ GATEADO pelo caller ("mais opções" só exige busca quando o ato
-// declarado pela LLM NÃO é conversacional — contestação/financiamento/troca/smalltalk vencem o regex).
+// moreOptionsSearch chega gateado pela necessidade factual declarada pela LLM. O ato conversacional permanece
+// independente: contestação, financiamento ou troca podem consultar estoque quando o bloco atual realmente o pede.
 // Slots monetários do LEAD (fonte única: extractLeadSlots é autoritativo sobre a LLM — F2.40; a validationState
 // projeta ESTES slots do turno para render/validate enxergarem — F2.43/audit Codex).
 const VALIDATION_FINANCIAL_SLOTS = new Set(["entrada", "parcelaDesejada", "faixaPreco"]);
@@ -367,12 +368,10 @@ type MissingToolRequirement = { readonly tool: "stock_search" | "tenant_business
 function requiredToolBeforeFinal(frame: ReturnType<typeof buildTurnFrame>, observations: readonly AgentToolObservation[], searchTurn: boolean, moreOptionsNeedsScope: boolean, moreOptionsSearch: boolean, storeInfoTurn: boolean): MissingToolRequirement | null {
   const wasObserved = (tool: string) => observations.some((observation) =>
     observation.tool === tool && (observation.ok || observation.error.code !== "REQUIRED_TOOL_MISSING"));
-  // T4 (fonte única): uma pergunta de DISPONIBILIDADE/estoque do turno atual (understanding.primaryIntent=search_stock,
-  // já corrige typo "kiks"→Kicks pelo cérebro) EXIGE stock_search relevante antes do final — senão o cérebro responde o
-  // assunto anterior sem buscar (e a memória de foto não pode assumir a busca). Gated em llmFirst para não forçar busca
-  // no legado (onde o SDR pode acolher+perguntar o nome antes de listar — F2.13 [3c]).
+  // Uma necessidade factual de estoque declarada e validada no bloco atual exige a consulta antes do final. Isso vale
+  // independentemente do ato conversacional principal (busca, seleção, negociação, financiamento etc.).
   if (searchTurn && !wasObserved("stock_search")) {
-    return { tool: "stock_search", feedback: "O cliente deu filtro comercial suficiente NESTE turno (modelo, marca, tipo, faixa de preço, câmbio ou 'popular'). Chame stock_search com TODOS esses filtros (marca/modelo/tipo/precoMax/cambio/popular) ANTES de responder — corrija erros de digitação e NUNCA pergunte 'qual modelo/tipo você procura?' quando ele já informou. Se não houver estoque, seja honesto e ofereça algo parecido na mesma faixa." };
+    return { tool: "stock_search", feedback: "Você declarou stock_search como necessidade factual deste bloco, com evidência literal, mas ainda não executou a consulta. Chame stock_search com os critérios realmente pedidos antes de finalizar. Preserve o papel semântico dos valores: somente search_budget vira precoMax." };
   }
   // "mais opções" exige nova busca — MAS só quando há ESCOPO recuperável (F2.29). Sem escopo (nem filtro ativo, nem
   // oferta homogênea derivável) NÃO se força busca genérica: o engine PERGUNTA o escopo (executor determinístico). Forçar
@@ -2174,10 +2173,10 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       };
       const brainVU = (): ValidatedUnderstanding | null => (lockedU ? validateTurnUnderstanding(lockedU, leadMessage, true, turnValidationContext) : null);
       const authoritativeVU = (): ValidatedUnderstanding => brainVU() ?? validateTurnUnderstanding(fallbackUnderstanding, leadMessage, false, turnValidationContext);
-      // ⭐AUTORIDADE (audit Codex): o ATO declarado é PEDIDO DE ESTOQUE — primaryIntent=search_stock E capability de busca
-      // validada. É o que autoriza o ENGINE a agir (forçar/garantir busca). Capability solta NÃO basta: "quanto custa o
-      // Onix?" (vehicle_detail) pode carregar capability de busca sem o ATO ser busca — o engine não força nada nesse caso.
-      const brainSearchAct = (): boolean => lockedU?.primaryIntent === "search_stock" && isStockSearchTurn(brainVU());
+      // ATO CONVERSACIONAL e NECESSIDADE FACTUAL são eixos independentes. A LLM pode selecionar um veículo, negociar,
+      // tratar financiamento/troca ou reparar uma conversa e, no mesmo bloco, precisar confirmar preço/disponibilidade.
+      // A engine não renomeia o ato: apenas valida capability + evidência literal e garante que o fato pedido seja obtido.
+      const brainNeedsStockFact = (): boolean => isStockSearchTurn(brainVU());
       // ⭐F2.75 (incidente Icom anúncio Peugeot 2008 -> "todos os automáticos, do menor preço"): TROCA DE DIREÇÃO é
       // AUTORIDADE SEMÂNTICA da LLM (understanding.isTopicChange), NÃO heurística por filtro (não é "se mencionou câmbio").
       // Quando o lead AMPLIA/SUBSTITUI/REJEITA o alvo anterior, a busca parte SÓ dos critérios do BLOCO ATUAL
@@ -2187,7 +2186,39 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // impede que "isso"/"pode ser" marcado por engano zere o escopo. `broad` NÃO é reset — e desde a F2.76 ele é INERTE
       // na dimensão modelo (alternativas vêm de `modelos[]`; nunca reintroduzir OR-de-token).
       const topicChangeThisTurn = (): boolean => llmFirst && brainVU()?.understanding.isTopicChange === true && !isShortAffirmationBlock(leadMessage);
-      const searchScopeThisTurn = (): CommercialConstraints => topicChangeThisTurn() ? currentConstraints : commercialConstraints;
+      // O extrator legado ainda encontra números, mas a função comercial do valor vem da LLM. Somente search_budget
+      // limita estoque; proposta, entrada, parcela, renda, troca e financiamento permanecem fatos da negociação.
+      // Metadado incompleto/inválido não derruba o turno e, nos adapters de produção, não autoriza teto lexical.
+      const currentConstraintsForTurn = (): CommercialConstraints => applyMonetarySemanticsToCurrentConstraints(
+        currentConstraints,
+        leadMessage,
+        brainVU()?.understanding,
+      );
+      const commercialConstraintsForTurn = (): CommercialConstraints => {
+        const current = currentConstraintsForTurn();
+        // Também saneia a base persistida quando ela contém exatamente o valor
+        // que o bloco atual classificou como negociação. Isso cura estados já
+        // contaminados sem apagar um orçamento anterior de valor diferente.
+        const semanticBase = applyMonetarySemanticsToCurrentConstraints(
+          searchBase,
+          leadMessage,
+          brainVU()?.understanding,
+        );
+        // A necessidade da tool não concede autoridade para herdar escopo.
+        // Herança continua dependendo de contexto/filtro comercial validado;
+        // caso contrário uma nova chamada proposta pela LLM seria contaminada
+        // por marca/tipo/preço de uma busca anterior.
+        const merged = (llmFirst && isSearchishTurn)
+          ? mergeActiveConstraints(semanticBase, current, commercialCorrections)
+          : current;
+        const relaxed = (llmFirst && similarityTurn) ? relaxToSimilar(merged, !!current.cambio) : merged;
+        return (adExactFocusTurn && (!relaxed.anos || relaxed.anos.length === 0))
+          ? { ...relaxed, anos: [adFocus!.ano!] }
+          : relaxed;
+      };
+      const searchScopeThisTurn = (): CommercialConstraints => topicChangeThisTurn()
+        ? currentConstraintsForTurn()
+        : commercialConstraintsForTurn();
       const effectiveSearchScopeThisTurn = (): CommercialConstraints => { const base = searchScopeThisTurn(); return sufficientForStockSearch(base) ? base : (moreOptionsDerivedScope ?? base); };
       // Observabilidade (contrato Codex #7): input PROPOSTO pela LLM vs EXECUTADO — prova que o engine não reinjetou filtro antigo.
       const stockProposedVsExecuted: Array<{ readonly proposed: unknown; readonly executed: unknown; readonly topicChange: boolean; readonly source: "brain_loop" | "det_completion" }> = [];
@@ -2203,10 +2234,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       const brainStoreInfoAct = (): boolean => (llmFirst
         ? (isStoreInfoTurn(brainVU()) && institutionalTopicsRequested(leadMessage).length > 0)
         : frame.signals.mentionsStore === true);
-      // ⭐Hardening (audit Codex): a LLM declarou um ATO CONVERSACIONAL (contestação/financiamento/troca/smalltalk) —
-      // nenhum caminho determinístico (nem mentionsMoreOptions) pode forçar/exigir busca por cima dele. Ex.: "Você disse
-      // que não tinha outras opções, mas Corolla é sedan?" casa o regex de 'mais opções' mas o ato é conversation_repair.
-      const conversationalActDeclared = (): boolean => lockedU != null
+      // Um ato conversacional só bloqueia a recuperação determinística de "mais opções" quando a própria LLM NÃO pediu
+      // fato de estoque neste bloco. O rótulo do ato sozinho nunca cancela uma capability factual validada.
+      const purelyConversationalActDeclared = (): boolean => lockedU != null && !brainNeedsStockFact()
         && (lockedU.primaryIntent === "conversation_repair" || lockedU.primaryIntent === "financing" || lockedU.primaryIntent === "trade_in" || lockedU.primaryIntent === "smalltalk");
       // key -> {marca,modelo} ESTRUTURADO (audit Codex P0): SÓ de fontes com modelo estruturado confiável — VehicleFact
       // (stock_search/vehicle_details), oferta e identidade. NUNCA `selected.label` (texto livre; não infere modelo
@@ -2520,9 +2550,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // A ferramenta comercial só é exigida quando a própria LLM
             // declarou o ato atual como busca de estoque. Extratores do turno
             // continuam sendo fatos/enriquecimento, nunca autoridade paralela.
-            llmFirst && brainSearchAct(),
+            llmFirst && brainNeedsStockFact(),
             moreOptionsNeedsScope,
-            frame.signals.mentionsMoreOptions === true && brainSearchAct(),
+            frame.signals.mentionsMoreOptions === true && brainNeedsStockFact(),
             brainStoreInfoAct(),
           );
           if (missingTool && brainSteps + 1 < brainMaxSteps) {
@@ -2563,7 +2593,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // (retry) enquanto houver passo; senão sai do loop -> fallback técnico honesto pós-loop.
             // ⭐AUTORIDADE: a expectativa de busca soma a SEMÂNTICA da própria LLM (declarou capability de busca) ao contexto
             // (anúncio/similaridade/retomada) — prometer "vou buscar" sem executar continua proibido nesses casos.
-          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainSearchAct(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
+          const authored = authorFromBrainDraft({ finalDecision: step.decision, leadMessage, facts, identities, ctx: authoringContext(), proposedPrimaryIntent: step.understanding?.primaryIntent ?? null, turnId, selectionTurn: acceptedSelectionTurn(), institutionalObs, photoVU: photoVU(), requireBrain, target: resolveTargetWithAd(), openingNeedsDiscovery: isOpeningTurn && (adGenericEntry || firstContactNoCommercialTarget), openingNeedsIntroduction: isOpeningTurn && firstContactNoCommercialTarget, specificAdVehicle: specificAdEntry ? (adVehicleHint ?? null) : null, searchExpectedThisTurn: llmFirst && brainNeedsStockFact(), noCommercialContextYet, advancedThisTurn: leadAdvancedThisTurn, disengagementOnly: false, financialAnswerSlot: null, handoffPlannable, qualifiedHandoffReadyFor, humanRequested: requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage), sensitiveAnswerKinds, photoRecallLabel: persisted0.lastPhotoAction?.label ?? null });
             if (authored.ok) {
               finalDecision = step.decision; authoredDecision = authored.decision; authoredComposed = authored.composed; authoredProposedEffects = authored.proposedEffects;
               responseSource = brainRetries === 0 ? "brain_final" : "brain_retry";
@@ -2716,21 +2746,10 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           } });
           continue;
         }
-        // A semântica comercial vem da LLM. Se ela mesma declarou um ato
-        // conversacional incompatível com uma tool comercial, rejeitamos a
-        // combinação e devolvemos feedback ao mesmo cérebro. O engine não
-        // reclassifica o bloco por regex de troca, pagamento ou parcela.
-        const llmDeclaredNonCommercialAct = llmFirst && lockedU != null
-          && (lockedU.primaryIntent === "conversation_repair" || lockedU.primaryIntent === "financing" || lockedU.primaryIntent === "trade_in" || lockedU.primaryIntent === "smalltalk");
-        if (llmDeclaredNonCommercialAct && (call.tool === "stock_search" || call.tool === "vehicle_details" || call.tool === "vehicle_photos_resolve")) {
-          duplicateStockCallsBlocked += 1;
-          observations.push({ tool: "response", ok: false, error: { code: "FORBIDDEN", message: `Você declarou o ato atual como '${lockedU?.primaryIntent}'. Essa tool comercial não é compatível com o ato que você próprio entendeu. Reavalie o bloco atual; se ele realmente pede estoque/detalhes/fotos, reemita um understanding coerente com evidence literal e capability própria. Caso contrário, responda ao ato atual sem tool.` } });
-          if (++dupStockLoopCount >= DUP_STOCK_LOOP_CAP) break;
-          continue;
-        }
-        // P0-2 (audit Codex): AUTORIZAÇÃO TIPADA POR TOOL — cada tool comercial exige a capability PRÓPRIA + evidência
+        // AUTORIZAÇÃO TIPADA POR TOOL — cada tool comercial exige a capability PRÓPRIA + evidência
         // própria do CÉREBRO (stock_search->stock_search; vehicle_details->vehicle_details; vehicle_photos_resolve->
-        // send_photos). Exceção SISTÊMICA: vehicle_details do key que o engine exigiu p/ grounding (systemDetailKeys).
+        // send_photos). primaryIntent descreve o ato conversacional e NÃO veta uma necessidade factual válida.
+        // Exceção SISTÊMICA: vehicle_details do key que o engine exigiu p/ grounding (systemDetailKeys).
         // Sem autorização -> rejeita (REQUIRED_TURN_UNDERSTANDING) e o cérebro re-emite. (tenant_business_info isento.)
         const sysDetailOk = call.tool === "vehicle_details" && systemDetailKeys.has(((call.input as { vehicleKey?: string }).vehicleKey) ?? "");
         // Declarar a capability send_photos nao basta para consultar fotos: o
@@ -2901,15 +2920,21 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           continue;
         }
         if (!isKernelQueryCall(call)) { observations.push({ tool: (call as { tool: string }).tool, ok: false, error: { code: "VALIDATION", message: "tool desconhecida" } }); continue; }
+        // A LLM declarou o papel semântico dos valores do bloco. Se um valor de negociação foi copiado por engano para
+        // precoMax, removemos somente esse campo da chamada atual; o enriquecimento abaixo ainda preserva qualquer teto
+        // válido herdado do anúncio/escopo. Não há classificação textual nem regra por frase nesta camada.
+        const semanticallyScopedCall: QueryCall = call.tool === "stock_search"
+          ? { ...call, input: sanitizeStockSearchInputMoney(call.input, leadMessage, brainVU()?.understanding) }
+          : call;
         // AUTORIZAÇÃO POR CHAMADA (POL-STATE-011): a policy VALIDA (allow/deny), nunca escolhe o assunto.
-        const verdict = PolicyEngine.authorizeQuery(call, ctx, facts);
+        const verdict = PolicyEngine.authorizeQuery(semanticallyScopedCall, ctx, facts);
         if (verdict.outcome !== "allow") {
-          observations.push({ tool: call.tool, ok: false, error: { code: "FORBIDDEN", message: verdict.violations?.join(";") ?? "query negada" } });
+          observations.push({ tool: semanticallyScopedCall.tool, ok: false, error: { code: "FORBIDDEN", message: verdict.violations?.join(";") ?? "query negada" } });
           continue;
         }
         // P0-4 (audit): "mais opções" -> o ENGINE enriquece excludeKeys com a UNIÃO das keys da última oferta (não
         // depende de a LLM lembrar); preserva tipo/câmbio/teto. A chamada EXECUTADA (não só a proposta) carrega os excludes.
-        const execCall = enrichStockSearchCall(call, {
+        const execCall = enrichStockSearchCall(semanticallyScopedCall, {
           popular: frame.signals.mentionsPopular === true,
           moreOptions: frame.signals.mentionsMoreOptions,
           previousVehicleKeys: shownVehicleKeys,  // INC3: conjunto CUMULATIVO apresentado (clampa o excludeKeys do cérebro)
@@ -3027,7 +3052,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // F2.29: usa o escopo EFETIVO (comercial se suficiente; senão o derivado da oferta homogênea). "mais opções" só
           // busca COM escopo — sem escopo recuperável cai no executor de pergunta (abaixo), nunca lista genérico.
           const effScopeThisTurn = effectiveSearchScopeThisTurn();   // ⭐F2.75: escopo gateado por isTopicChange (mesma autoridade do loop)
-          if (llmFirst && brainSearchAct() && sufficientForStockSearch(effScopeThisTurn) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+          if (llmFirst && brainNeedsStockFact() && sufficientForStockSearch(effScopeThisTurn) && !facts.some((f) => f.ok && f.tool === "stock_search")) {
             try {
               const searchCall = enrichStockSearchCall({ tool: "stock_search", input: constraintsToStockInput(effScopeThisTurn) }, {
                 popular: frame.signals.mentionsPopular === true || effScopeThisTurn.popular === true,
@@ -3037,7 +3062,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
                 wantsMotorcycle,                       // F2.29: só libera moto se o lead pediu moto explicitamente
                 enforceShownClamp: llmFirst,           // INC3: clampa só no central_active
               });
-              stockProposedVsExecuted.push({ proposed: constraintsToStockInput(effectiveSearchScope), executed: searchCall.input, topicChange: topicChangeThisTurn(), source: "det_completion" });
+              stockProposedVsExecuted.push({ proposed: constraintsToStockInput(effScopeThisTurn), executed: searchCall.input, topicChange: topicChangeThisTurn(), source: "det_completion" });
               const authority: ToolExecutionAuthority = {
                 principal: "llm", source: "llm_intent_completion", primaryIntent: lockedU?.primaryIntent ?? null,
                 capability: "stock_search", currentTurnEvidence: brainVU()?.trusted === true, callSite: "search_fact_completion",
@@ -3126,9 +3151,9 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             const finalMissingTool = requiredToolBeforeFinal(
               frame,
               observations,
-              llmFirst && brainSearchAct(),
+              llmFirst && brainNeedsStockFact(),
               moreOptionsNeedsScope,
-              frame.signals.mentionsMoreOptions === true && brainSearchAct(),
+              frame.signals.mentionsMoreOptions === true && brainNeedsStockFact(),
               brainStoreInfoAct(),
             );
             if (finalMissingTool) {
@@ -3207,7 +3232,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               responseSource = "deterministic_institutional";
               effectiveDecision = detDiseng.decision; composed = detDiseng.composed; proposedEffects = detDiseng.proposedEffects;
               finalDecision = finalDecision ?? { reasonCode: "lead_disengaged", reasonSummary: "desinteresse -> resposta curta, sem funil", confidence: 0.85, responsePlan: { guidance: composed.text, draft: null }, proposedEffects: [], memoryMutations: [], stateMutations: [] };
-            } else if (moreOptionsNeedsScope && !conversationalActDeclared() && !facts.some((f) => f.ok && f.tool === "stock_search")) {
+            } else if (moreOptionsNeedsScope && !purelyConversationalActDeclared() && !facts.some((f) => f.ok && f.tool === "stock_search")) {
               // F2.29 (invariante 5): "mais opções" SEM escopo recuperável e SEM busca executada -> PERGUNTA o tipo/faixa.
               // Nunca cai em recovery genérico nem lista aleatória. Aterrado e honesto. ⭐Hardening: ato conversacional
               // declarado pela LLM (contestação etc.) vence o regex de 'mais opções' — a LLM conversa, o executor não roda.
@@ -3219,7 +3244,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               // T5: RECUPERAÇÃO CONTEXTUAL — nunca texto genérico ("não consegui confirmar"/"reformule"). Usa
               // TurnUnderstanding + fatos reais (busca->lista aterrada; detalhe->qual; etc.). technical_fallback fica só
               // como MARCADOR interno de degradação (o cérebro falhou); o TEXTO ao lead é sempre contextual/honesto.
-              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId, constraints: commercialConstraints, adVehicleLabel: adExactFocusTurn ? (adVehicleHint ?? null) : null });
+              const rec = buildContextualRecovery({ vU: authoritativeVU(), leadMessage, facts, observations, identities, ctx, turnId, constraints: searchScopeThisTurn(), adVehicleLabel: adExactFocusTurn ? (adVehicleHint ?? null) : null });
               // Recuperação CONTEXTUAL aterrada -> deterministic_recovery (texto útil, não "visível"); só o default genérico
               // (lastResort) é technical_fallback. Ambas são degradação (o cérebro não autorou).
               responseSource = rec.lastResort ? "technical_fallback" : "deterministic_recovery";
@@ -3483,7 +3508,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       // FOCO EXATO do anúncio (missão P0): o ANO injetado pelo anúncio NÃO persiste como filtro ativo (o lead não pediu esse
       // ano). Senão "tem outro Compass?"/"quero Onix" herdariam o ano 2019 e ficariam presos. Persistimos o escopo SEM o ano
       // do anúncio quando o lead não deu ano próprio.
-      if (adExactFocusTurn && executedScope && executedScope.anos && (!currentConstraints.anos || currentConstraints.anos.length === 0)) {
+      if (adExactFocusTurn && executedScope && executedScope.anos && (!currentConstraintsForTurn().anos || currentConstraintsForTurn().anos!.length === 0)) {
         const { anos: _adYear, ...rest } = executedScope;
         executedScope = rest;
       }
@@ -3714,14 +3739,14 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           stockSearchProposedVsExecuted: JSON.parse(JSON.stringify(stockProposedVsExecuted.slice(-4))),   // ⭐F2.75 (Codex #7): proposto pela LLM vs executado (JSON puro)
           topicChangeReset: topicChangeThisTurn(),                            // ⭐F2.75: o turno soltou o escopo do anúncio/ativo?
           moreOptions: baseSignals.mentionsMoreOptions, moreOptionsNeedsScope,
-          moreOptionsInheritedScope: baseSignals.mentionsMoreOptions && sufficientForStockSearch(effectiveSearchScope) ? effectiveSearchScope : null,
+          moreOptionsInheritedScope: baseSignals.mentionsMoreOptions && sufficientForStockSearch(effectiveSearchScopeThisTurn()) ? effectiveSearchScopeThisTurn() : null,
           // Missão P0 (doc 2): observabilidade de latência/retry. turnLatencyMs = tempo de parede do turno (RealClock em prod);
           // toolMs = soma do tempo das tools; firstFailureReason = 1º feedback/rejeição (por que houve retry). attempts=brainRetries.
           turnLatencyMs: Math.max(0, Date.parse(clock.now()) - turnStartMs),
           toolMs: toolTelemetry.reduce((sum, t) => sum + (t.ms ?? 0), 0),
           firstFailureReason: policyFeedbackLog[0] ? policyFeedbackLog[0].slice(0, 140) : null,
           // Missão P0 INC3/1/2: intenção do turno p/ auditoria de troca vs busca vs abertura.
-          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn: brainSearchAct(), pendingQuestionSlot, tradeBuyTurn, financialAnswerTurn,
+          tradeInAnswerTurn, resumeSearchTurn, searchExpectedThisTurn: brainNeedsStockFact(), pendingQuestionSlot, tradeBuyTurn, financialAnswerTurn,
           // Missão P0 (audit Codex): separação compra/troca + dedup de busca.
           buyConstraints: tradeBuyTurn ? buyConstraints : null,
           interesseBefore: contextState.slots.interesse.value ?? null,

@@ -158,19 +158,25 @@ async function main(): Promise<void> {
     check("[A-6] não caiu em terminalSafe", !t2.terminalSafe, `ts=${t2.terminalSafe}`);
   }
 
-  // ── B) INTENT CONTRADITÓRIO: a LLM classifica conversation_repair mas TENTA stock_search -> engine NEGA (feedback
-  //    semântico) -> a LLM re-decide e responde a conversa. ──
+  // ── B) ATO + NECESSIDADE FACTUAL: conversation_repair continua sendo o ato, mas a LLM pode consultar estoque
+  //    quando declara capability própria com evidência literal. O rótulo do ato não veta o fato necessário. ──
   {
     const c = conv();
     await c.t("tem corolla?", searchCorolla);
+    const repairWithStock: TurnUnderstanding = { ...U("conversation_repair"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Corolla" }] };
     const confused: BrainResponder = (_f, obs: readonly AgentToolObservation[]) => {
-      const denied = obs.some((o) => o.tool === "response" && !o.ok);
-      if (denied) return finU([txt("Verdade, você tem razão — o Corolla é sedan sim! Esses dois que te mostrei são sedans. Quer ver as condições?")], "conversation_repair", U("conversation_repair"));
-      return qU({ tool: "stock_search", input: { modelo: "Corolla" } }, { ...U("conversation_repair"), requestedCapabilities: ["stock_search"], evidence: [{ capability: "stock_search", quote: "Corolla" }] });
+      const stock = obs.find((o) => o.tool === "stock_search" && o.ok) as Extract<AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+      if (stock) return finU([
+        txt("Você tem razão — confirmei o modelo no estoque:"),
+        { type: "vehicle_ref", vehicleKey: stock.data.items[0]!.vehicleKey, field: "modelo" } as ResponsePart,
+        txt("é um sedan. Desculpe pela confusão."),
+      ], "conversation_repair", repairWithStock);
+      return qU({ tool: "stock_search", input: { modelo: "Corolla" } }, repairWithStock);
     };
     const t2 = await c.t("Corolla não é um sedan? pq disse que não tinha?", confused);
-    check("[B-1] tool com intent contraditório é NEGADA (0 stock_search executado)", t2.stockCalls === 0, `calls=${t2.stockCalls}`);
-    check("[B-2] a LLM re-decide após o feedback e responde a CONVERSA (brain_retry)", (t2.src === "brain_final" || t2.src === "brain_retry") && has(t2.outbox, "razão"), `src=${t2.src} outbox="${t2.outbox}"`);
+    check("[B-1] ato conversation_repair + capability stock_search executa UMA consulta", t2.stockCalls === 1, `calls=${t2.stockCalls}`);
+    check("[B-2] a LLM preserva o ato e responde com o fato consultado", (t2.src === "brain_final" || t2.src === "brain_retry") && has(t2.outbox, "razão") && has(t2.outbox, "Corolla"), `src=${t2.src} outbox="${t2.outbox}"`);
+    check("[B-3] primaryIntent permanece conversation_repair", t2.primaryIntent === "conversation_repair", `intent=${t2.primaryIntent}`);
   }
 
   // ── C) CONSTRAINT SEM ATO: a frase tem modelo/tipo mas a LLM classifica smalltalk -> NÃO força busca. ──

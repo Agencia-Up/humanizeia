@@ -377,6 +377,28 @@ export type TurnSubjectKind = (typeof TURN_SUBJECT_KINDS)[number];
 export const SUBJECT_SOURCES = ["current_turn", "memory", "inference", "none"] as const;
 export type SubjectSource = (typeof SUBJECT_SOURCES)[number];
 export type TurnUnderstandingEvidence = { readonly capability?: TurnCapability; readonly quote: string };
+// Papel SEMANTICO de cada valor monetario declarado no bloco atual. Somente
+// `search_budget` limita uma consulta de estoque; os demais papeis descrevem a
+// negociacao, o pagamento ou um fato citado e nao podem esconder veiculos.
+// A LLM classifica; a engine apenas valida valor+trecho contra a fala literal.
+export const MONETARY_ROLES = [
+  "search_budget",
+  "offer",
+  "down_payment",
+  "installment",
+  "income",
+  "trade_in_value",
+  "financing_amount",
+  "payment_instrument",
+  "vehicle_price_reference",
+  "other",
+] as const;
+export type MonetaryRole = (typeof MONETARY_ROLES)[number];
+export type TurnMonetaryMention = {
+  readonly value: number;
+  readonly role: MonetaryRole;
+  readonly quote: string;
+};
 export type TurnUnderstanding = {
   readonly primaryIntent: PrimaryIntent;
   readonly requestedCapabilities: readonly TurnCapability[];
@@ -384,6 +406,8 @@ export type TurnUnderstanding = {
   readonly subjectValue: string | null;    // modelo citado / número do ordinal / tipo / faixa — texto BRUTO p/ resolver alvo
   readonly subjectSource: SubjectSource;
   readonly evidence: readonly TurnUnderstandingEvidence[];   // cada quote TEM de existir no bloco atual
+  /** Classificacao dos valores escritos no bloco atual; ausente apenas em adapters/fixtures legados. */
+  readonly monetaryMentions?: readonly TurnMonetaryMention[];
   readonly isTopicChange: boolean;
   readonly answeredLeadQuestions: readonly string[];
   /** Declaração opcional da LLM; nunca é inferida pela engine. */

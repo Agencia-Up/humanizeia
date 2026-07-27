@@ -14,8 +14,9 @@ import type {
   AgentBrainPort, AgentBrainStep, AgentBrainDecision, AgentToolObservation, CentralQueryCall,
   DecisionWorkingMemoryMutation, TurnFrame, BusinessInfoTopic,
   TurnUnderstanding, TurnCapability, PrimaryIntent, TurnSubjectKind, SubjectSource, TurnUnderstandingEvidence,
+  TurnMonetaryMention, MonetaryRole,
 } from "../../domain/agent-brain.ts";
-import { BUSINESS_INFO_TOPICS, PRIMARY_INTENTS, TURN_CAPABILITIES, TURN_SUBJECT_KINDS, SUBJECT_SOURCES } from "../../domain/agent-brain.ts";
+import { BUSINESS_INFO_TOPICS, PRIMARY_INTENTS, TURN_CAPABILITIES, TURN_SUBJECT_KINDS, SUBJECT_SOURCES, MONETARY_ROLES } from "../../domain/agent-brain.ts";
 import type { DecisionMutation, ProposedEffectPlan, ResponseDraft, ResponsePart } from "../../domain/decision.ts";
 import type { KnowledgeGap } from "../../domain/knowledge.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
@@ -138,10 +139,11 @@ QUALIDADE CONVERSACIONAL GLOBAL
 
 UNDERSTANDING OBRIGATORIO
 Todo query ou final inclui na raiz:
-"understanding":{"primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|disengagement|conversation_repair|request_human|sensitive_data|other","requestedCapabilities":["stock_search"|"send_photos"|"vehicle_details"|"institutional_info"|"knowledge_search"|"recall"|"select"|"handoff"],"subject":"explicit_model|ordinal_from_last_offer|offer_reference|selected_vehicle|vehicle_type|budget|none","subjectValue":"<valor ou null>","subjectSource":"current_turn|memory|inference|none","evidence":[{"capability":"<capability>","quote":"<trecho literal do bloco atual>"}],"isTopicChange":true|false,"answeredLeadQuestions":[],"policyDecision":null|{"policyId":"<id configurado>","action":"continue|ask_clarification|inform|disqualify|handoff","evidence":"<trecho literal do bloco atual>"}}
+"understanding":{"primaryIntent":"search_stock|request_photos|recall_photos|select_vehicle|vehicle_detail|institutional|financing|visit|smalltalk|trade_in|disengagement|conversation_repair|request_human|sensitive_data|other","requestedCapabilities":["stock_search"|"send_photos"|"vehicle_details"|"institutional_info"|"knowledge_search"|"recall"|"select"|"handoff"],"subject":"explicit_model|ordinal_from_last_offer|offer_reference|selected_vehicle|vehicle_type|budget|none","subjectValue":"<valor ou null>","subjectSource":"current_turn|memory|inference|none","evidence":[{"capability":"<capability>","quote":"<trecho literal do bloco atual>"}],"monetaryMentions":[{"value":60000,"role":"search_budget|offer|down_payment|installment|income|trade_in_value|financing_amount|payment_instrument|vehicle_price_reference|other","quote":"<trecho literal com o valor>"}],"isTopicChange":true|false,"answeredLeadQuestions":[],"policyDecision":null|{"policyId":"<id configurado>","action":"continue|ask_clarification|inform|disqualify|handoff","evidence":"<trecho literal do bloco atual>"}}
 - Cada evidence.quote deve existir literalmente no bloco atual. Memoria nunca vira evidencia do turno.
 - policyDecision deve ser null quando nenhuma política configurada foi considerada. Quando não for null, declare somente uma política apresentada no contexto da empresa, a ação configurada para ela e uma evidência literal do bloco atual. Não invente id, não aplique política por palavra isolada e não use esse campo para escolher o assunto.
-- requestedCapabilities cobre apenas atos pedidos/agora necessarios. primaryIntent e o primeiro ato a tratar.
+- primaryIntent e o ato conversacional principal. requestedCapabilities e independente e cobre os FATOS/efeitos agora necessarios: selecionar, financiar, trocar ou reparar a conversa ainda pode exigir estoque/detalhes se o bloco atual pedir disponibilidade, preco ou opcoes.
+- Classifique TODO valor monetario literal do bloco em monetaryMentions. Use search_budget SOMENTE quando o valor limita os veiculos que o lead quer procurar. Proposta/oferta, entrada, parcela, renda, valor da troca, montante financiado, instrumento de pagamento e preco citado de um veiculo NAO sao teto de estoque. Sem valor literal, use [].
 - isTopicChange=true quando o bloco atual AMPLIA, SUBSTITUI ou REJEITA o alvo de compra anterior (do anuncio ou da ultima busca): ex.: sai de um modelo/tipo/faixa especifico para "qualquer carro", "todos os automaticos", "os mais baratos", outro modelo, ou "nao quero mais Y"/"nao e desse modelo". Nesse caso a busca parte SOMENTE dos criterios do bloco atual — nao arraste marca, modelo, tipo, ano nem preco anteriores. isTopicChange=false quando apenas ADICIONA/refina um criterio (cambio, teto de preco, cor) mantendo o MESMO alvo (ex.: "esse Peugeot e automatico?"), ou quando responde curto/confirma.
 
 TOOLS
@@ -169,7 +171,7 @@ Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0
 - Nunca use string solta dentro de parts, nunca invente outro type e nunca coloque send_media/image/media em parts. Use message_break somente quando o prompt pedir baloes separados; nunca no meio de vehicle_offer_list.
 - Para uma resposta conversacional sem fatos de estoque, use somente {"type":"text","content":"..."}.
 - Exemplo completo de final conversacional valido (copie a FORMA, nao o texto):
-  {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"reasonCode":"reply","confidence":0.9,"guidance":"responder naturalmente","draft":{"parts":[{"type":"text","content":"Claro. Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
+  {"kind":"final","understanding":{"primaryIntent":"smalltalk","requestedCapabilities":[],"subject":"none","subjectValue":null,"subjectSource":"current_turn","evidence":[],"monetaryMentions":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"reasonCode":"reply","confidence":0.9,"guidance":"responder naturalmente","draft":{"parts":[{"type":"text","content":"Claro. Como posso ajudar?"}]},"effects":[{"kind":"send_message"}],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Lista usa somente keys retornadas por stock_search; atributos/precos usam fatos aterrados.
 - Uma stock_search pode sustentar dois formatos escolhidos por voce conforme a conversa: vehicle_offer_list quando o lead pediu alternativas/lista, ou vehicle_ref/money_ref de UMA mesma key quando o assunto e um veiculo especifico. Resultado de busca nao obriga lista.
 - COMBUSTIVEL e FATO do estoque, nunca deducao. Para FILTRAR use stock_search com combustivel="diesel|flex|gasolina|etanol|hibrido|eletrico". Voce SO pode dizer que NAO ha um combustivel ("nao temos diesel") se, NESTE turno, uma stock_search tiver rodado COM esse combustivel no filtro E o resultado trouxer absenceAssertable=true. Se vier unverifiableFilters contendo "combustivel" (a fonte nao informa o combustivel de forma confiavel), diga com honestidade que nao conseguiu CONFIRMAR o combustivel — mostre os candidatos compativeis que existem ou ofereca falar com um consultor. NUNCA conclua ausencia a partir de uma busca que filtrou so por tipo/preco.
@@ -238,8 +240,14 @@ CONTEXTO
   - capabilities diz o que este turno consegue EXECUTAR. sendMedia ja considera provedor E tool permitida ao seu perfil: se for false, a foto nao sai por mais que voce a mencione.
   - appointmentBooking, deferredFactCheckTask e individualDeferredCallbackTask sao sempre false: nao ha reserva de horario executavel, nao ha tarefa que re-consulte um fato depois e nao existe tarefa individual de "eu verifico e te retorno" criada por esta conversa.
   - ⚠️Isso NAO significa que o cliente nunca mais sera contatado: existe uma cadencia comercial automatizada da plataforma (follow-up T1/T2/T3), INDEPENDENTE desta conversa, indicada em automatedLeadFollowupEnabled (true = existe; false = nao existe; null = nao informado neste turno). Ela nao e canal para cumprir uma promessa individual sua.
-  - ad.identity e o veiculo que o anuncio DECLAROU (fato da conversa, pode ser mencionado). ad.inventoryConfirmed=false significa que a disponibilidade dele ainda nao foi confirmada por consulta.
+- ad.identity e o veiculo que o anuncio DECLAROU (fato da conversa, pode ser mencionado). ad.inventoryConfirmed=false significa que a disponibilidade dele ainda nao foi confirmada por consulta.
 - Use o prompt do portal e o historico real para conduzir naturalmente. Responda primeiro a ultima fala, preserve papeis distintos entre compra, troca, pagamento, visita e dados, e tolere mensagens fragmentadas/abreviadas.
+
+UNDERSTANDING SEMANTICO
+- primaryIntent descreve o ATO conversacional principal deste bloco. requestedCapabilities descreve, de forma INDEPENDENTE, quais fatos ou efeitos esse ato precisa agora. Uma selecao, negociacao, troca, financiamento ou correcao pode precisar de stock_search/vehicle_details sem deixar de ser aquele ato.
+- Cada capability exige evidence.quote literal do bloco atual. Nao declare tool por memoria ou apenas porque um filtro antigo existe.
+- Classifique TODO valor monetario literal em monetaryMentions com value numerico, quote literal e UM role: search_budget, offer, down_payment, installment, income, trade_in_value, financing_amount, payment_instrument, vehicle_price_reference ou other.
+- search_budget e exclusivamente um teto/faixa que limita QUAIS veiculos procurar. Oferta/proposta, entrada, parcela, renda, valor de troca, montante financiado, forma de pagamento e preco citado nao filtram o estoque. Sem valor no bloco, use monetaryMentions:[].
 
 TOOLS E SEGURANCA
 - Voce decide responder, esclarecer ou chamar uma tool. A engine valida a decisao antes de executar.
@@ -253,7 +261,7 @@ SAIDA E EFEITOS
 - Responda SEMPRE com UM único objeto JSON válido (sem texto fora do JSON, sem cercas markdown como tres crases).
 - Query: {"kind":"query","understanding":{...},"call":{"tool":"<nome>","input":{...}}}
 - Nunca omita understanding em uma query. Exemplo valido (troque os valores pelo bloco atual):
-  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"call":{"tool":"stock_search","input":{"tipo":"suv"}}}
+  {"kind":"query","understanding":{"primaryIntent":"search_stock","requestedCapabilities":["stock_search"],"subject":"vehicle_type","subjectValue":"SUV","subjectSource":"current_turn","evidence":[{"capability":"stock_search","quote":"quero SUV"}],"monetaryMentions":[],"isTopicChange":false,"answeredLeadQuestions":[],"policyDecision":null},"call":{"tool":"stock_search","input":{"tipo":"suv"}}}
 - O quote do exemplo deve ser um trecho literal do bloco atual. Uma query sem understanding e evidence e invalida e deve ser reescrita por voce.
 - Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
@@ -322,18 +330,24 @@ function toolInputSchema(tool: string): Record<string, unknown> {
 }
 function agentStepJsonSchema(allowedTools: readonly string[]): Record<string, unknown> {
   const evidenceItem = strictObj(["capability", "quote"], { capability: { type: ["string", "null"], enum: [...TURN_CAPABILITIES, null] }, quote: S_STR });
+  const monetaryMention = strictObj(["value", "role", "quote"], {
+    value: { type: "number" },
+    role: { type: "string", enum: [...MONETARY_ROLES] },
+    quote: S_STR,
+  });
   const policyDecision = strictObj(["policyId", "action", "evidence"], {
     policyId: S_STR,
     action: { type: "string", enum: ["continue", "ask_clarification", "inform", "disqualify", "handoff"] },
     evidence: S_STR,
   });
   const understanding = strictObj(
-    ["primaryIntent", "requestedCapabilities", "subject", "subjectValue", "subjectSource", "evidence", "isTopicChange", "answeredLeadQuestions", "policyDecision"],
+    ["primaryIntent", "requestedCapabilities", "subject", "subjectValue", "subjectSource", "evidence", "monetaryMentions", "isTopicChange", "answeredLeadQuestions", "policyDecision"],
     { primaryIntent: { type: "string", enum: [...PRIMARY_INTENTS] },
       requestedCapabilities: { type: "array", items: { type: "string", enum: [...TURN_CAPABILITIES] } },
       subject: { type: "string", enum: [...TURN_SUBJECT_KINDS] }, subjectValue: S_STR_NULL,
       subjectSource: { type: "string", enum: [...SUBJECT_SOURCES] },
       evidence: { type: "array", items: evidenceItem }, isTopicChange: { type: "boolean" },
+      monetaryMentions: { type: "array", items: monetaryMention },
       answeredLeadQuestions: { type: "array", items: S_STR },
       policyDecision: { anyOf: [{ type: "null" }, policyDecision] } });
   // call = anyOf {null | branch por tool do ALLOWLIST REAL}; cada branch carrega só o input daquela tool.
@@ -1174,6 +1188,27 @@ export class OpenAiAgentBrain implements AgentBrainPort {
           return [{ capability: cap, quote: e.quote.slice(0, 120) }];
         })
       : [];
+    // Production adapters always expose the semantic field, even if a
+    // non-strict provider omitted/malformed it. An empty array with literal
+    // money is intentionally non-authoritative, so the engine cannot fall
+    // back to treating an unclassified amount as a stock ceiling.
+    const monetaryMentions: TurnMonetaryMention[] = Array.isArray(raw.monetaryMentions)
+      ? raw.monetaryMentions.flatMap((mention) => {
+          if (!isRecord(mention)
+            || typeof mention.value !== "number"
+            || !Number.isFinite(mention.value)
+            || mention.value < 0
+            || typeof mention.role !== "string"
+            || !(MONETARY_ROLES as readonly string[]).includes(mention.role)
+            || typeof mention.quote !== "string"
+            || mention.quote.trim() === "") return [];
+          return [{
+            value: mention.value,
+            role: mention.role as MonetaryRole,
+            quote: mention.quote.slice(0, 120),
+          }];
+        })
+      : [];
     const rawPolicy = isRecord(raw.policyDecision) ? raw.policyDecision : null;
     const policyDecision: TenantPolicyDecision | null = rawPolicy
       && typeof rawPolicy.policyId === "string"
@@ -1185,6 +1220,7 @@ export class OpenAiAgentBrain implements AgentBrainPort {
     return {
       primaryIntent: pi as PrimaryIntent, requestedCapabilities: caps, subject, subjectValue: str(raw.subjectValue),
       subjectSource, evidence, isTopicChange: raw.isTopicChange === true,
+      monetaryMentions,
       answeredLeadQuestions: Array.isArray(raw.answeredLeadQuestions) ? raw.answeredLeadQuestions.filter((q): q is string => typeof q === "string") : [],
       policyDecision,
     };
