@@ -516,7 +516,7 @@ interface ProvidersResp {
   recent_provider_errors_24h: number;
   error?: string;
 }
-const PROVIDER_LABEL: Record<string, string> = { openai: 'OpenAI', deepseek: 'DeepSeek', anthropic: 'Anthropic (Claude)' };
+const PROVIDER_LABEL: Record<string, string> = { openai: 'OpenAI', deepseek: 'DeepSeek', anthropic: 'Anthropic (Claude)', gemini: 'Google Gemini' };
 const STATUS_META: Record<string, { label: string; tone: 'good' | 'warn' | 'bad' | 'muted' }> = {
   ok: { label: 'No ar', tone: 'good' },
   quota: { label: 'Sem crédito', tone: 'bad' },
@@ -622,12 +622,91 @@ function ProvedoresTab() {
         </CardContent>
       </Card>
 
+      <MonitorChavesCard />
+
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         A sondagem faz uma chamada mínima a cada provedor (1 token) pra checar crédito/chave. "Reply/Planner em uso"
         reflete o override global (<span className="font-mono">PEDRO_REPLY_FORCE_PROVIDER</span> / <span className="font-mono">PEDRO_PLANNER_PROVIDER</span>);
         sem override, o reply segue o modelo configurado em cada agente.
       </p>
     </div>
+  );
+}
+
+/* ── Monitor automatico das chaves (cron 15 min + e-mail; ai_provider_health) ── */
+interface HealthRow {
+  provider: string; status: string; detalhe: string | null; in_use: boolean;
+  checked_at: string; last_ok_at: string | null; down_since: string | null;
+}
+interface HealthLogRow { id: string; provider: string; evento: string; status: string | null; created_at: string }
+
+function MonitorChavesCard() {
+  const [rows, setRows] = useState<HealthRow[] | null>(null);
+  const [log, setLog] = useState<HealthLogRow[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data: h } = await supabase.from('ai_provider_health')
+        .select('provider, status, detalhe, in_use, checked_at, last_ok_at, down_since')
+        .order('provider');
+      setRows((h as HealthRow[]) || []);
+      const { data: l } = await supabase.from('ai_provider_health_log')
+        .select('id, provider, evento, status, created_at')
+        .order('created_at', { ascending: false }).limit(8);
+      setLog((l as HealthLogRow[]) || []);
+    })();
+  }, []);
+
+  const EVENTO_LABEL: Record<string, string> = { caiu: '🔴 caiu', voltou: '🟢 voltou', alerta_repetido: '🔁 ainda caída (re-alerta)' };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <BellRing className="h-4 w-4 text-primary" /> Monitoramento automático
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          O sistema checa as chaves sozinho a cada 15 minutos e <span className="font-medium text-foreground">envia e-mail aos administradores</span> quando
+          uma chave cai (sem crédito, inválida ou fora do ar) e quando volta. Re-alerta a cada 6h enquanto estiver caída.
+        </p>
+        {rows === null ? <Skeleton className="h-14 w-full" /> : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aguardando a primeira checagem do monitor (roda a cada 15 min).</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {rows.map((r) => {
+              const meta = STATUS_META[r.status] ?? STATUS_META.other;
+              return (
+                <div key={r.provider} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full ${dotCls(meta.tone)}`} />
+                    <div>
+                      <span className="text-sm font-medium">{PROVIDER_LABEL[r.provider] ?? r.provider}</span>
+                      <div className="text-[11px] text-muted-foreground">
+                        {r.down_since ? `caída desde ${horaCurta(r.down_since)}` : `checada ${horaCurta(r.checked_at)}`}
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`text-xs font-semibold ${toneCls(meta.tone)}`}>{meta.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {log.length > 0 && (
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-2.5">
+            <p className="mb-1 text-[11px] font-medium text-muted-foreground">Últimos eventos</p>
+            {log.map((e) => (
+              <div key={e.id} className="flex items-center justify-between py-0.5 text-xs">
+                <span>{PROVIDER_LABEL[e.provider] ?? e.provider} — {EVENTO_LABEL[e.evento] ?? e.evento}{e.status && e.evento !== 'voltou' ? ` (${STATUS_META[e.status]?.label ?? e.status})` : ''}</span>
+                <span className="text-muted-foreground">{horaCurta(e.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

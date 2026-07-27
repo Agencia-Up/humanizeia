@@ -27,7 +27,11 @@ function makeLlm(model: string): LlmCall {
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
           model,
-          max_tokens: 4000,
+          // 4000 nao cabia mais: o contrato passou a pedir as 12 dimensoes NEPQ
+          // com evidencia em cada uma, e a resposta era CORTADA no meio (sem o
+          // '}' final) -> parseContrato falhava e virava "json invalido".
+          // Haiku 4.5 aceita saida bem maior; 16000 da folga com sobra.
+          max_tokens: 16000,
           temperature: 0.2,
           system,
           messages: [{ role: 'user', content: userText }],
@@ -36,6 +40,10 @@ function makeLlm(model: string): LlmCall {
       if (!res.ok) { console.error('[feedback-analista] anthropic', res.status, await res.text().catch(() => '')); return null; }
       const data = await res.json();
       const text = (data?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+      // Protecao: resposta truncada nunca mais pode se disfarcar de "json invalido".
+      if (data?.stop_reason === 'max_tokens') {
+        console.error(`[feedback-analista] RESPOSTA TRUNCADA (stop_reason=max_tokens, out=${data?.usage?.output_tokens}). Aumente max_tokens.`);
+      }
       const inTok = data?.usage?.input_tokens || 0;
       const outTok = data?.usage?.output_tokens || 0;
       const p = PRECOS[model] || PRECOS['claude-haiku-4-5'];
