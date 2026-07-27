@@ -3579,14 +3579,11 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
       //    plannable (flag+vendedor+CRM vinculado+crm_write do turno), reconstruímos a cadeia executável:
       //    reply (delivered-gate) -> crm_write -> handoff (saga) -> notify_seller. briefing/etiquetas = fatos. ──
       const wmPhoto = reduced.next.workingMemory?.lastPhotoAction ?? null;
-      // Encerramento por desinteresse também precisa chegar ao CRM/vendedor, mas
-      // sem mudar a despedida já autorada pela LLM. Pedido explícito de humano
-      // mantém a precedência e seu motivo próprio; após handoff concluído não
-      // abrimos uma nova cadeia.
+      // Somente opt-out explícito pode originar o handoff operacional silencioso.
+      // Despedidas e agradecimentos continuam sob autoria da LLM; uma classificação
+      // semântica genérica nunca autoriza a engine a transferir por conta própria.
+      // Pedido explícito de humano mantém sua precedência e seu motivo próprio.
       const explicitHumanRequest = requestsHuman(brainVU()) || leadRequestsHumanExplicitly(leadMessage);
-      const llmDeclaredDisengagement = llmFirst
-        && brainVU()?.trusted === true
-        && brainVU()?.understanding.primaryIntent === "disengagement";
       const forcedHandoffReason = llmFirst
         ? forcedSilentDisengagementReason({
           // Encaminhamento silencioso e uma acao operacional irreversivel: so
@@ -3597,7 +3594,7 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
           // Silent operational handoff is limited to the dedicated explicit
           // opt-out contract. A generic engagement detector must not close or
           // transfer a conversation merely because it sounds negative.
-          disengaged: detectExplicitOptOut(leadMessage) || llmDeclaredDisengagement,
+          disengaged: detectExplicitOptOut(leadMessage),
           explicitHumanRequest,
           stage: contextState.stage,
         })

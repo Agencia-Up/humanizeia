@@ -16,6 +16,7 @@ import { finalize } from "./finalizer.ts";
 import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import { renderVehicleOfferList } from "./vehicle-offer-render.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
+import { searchBudgetByClause } from "./lead-extraction.ts";
 
 const TYPES = /\b(suvs?|hatchback|hatch|sedans?|pickups?|picapes?)\b/g;
 const TYPE_MAP: Record<string, VehicleType> = { suv: "suv", suvs: "suv", hatch: "hatch", hatchback: "hatch", sedan: "sedan", sedans: "sedan", pickup: "pickup", pickups: "pickup", picape: "pickup", picapes: "pickup" };
@@ -62,12 +63,8 @@ function collectClaims(text: string, claimExtractor: ClaimExtractor, interpretat
   return { models, brands };
 }
 
-function parseBudget(norm: string): number | null {
-  const mil = /\b(\d{1,3})\s*mil\b/.exec(norm);
-  if (mil) return Number(mil[1]) * 1000;
-  const reais = /\br?\$?\s*(\d{4,7})\b/.exec(norm);
-  if (reais && /\bate\b|\br\$|\bfaixa\b|\bmaxim|\bteto\b/.test(norm)) return Number(reais[1]);
-  return null;
+function parseBudget(message: string): number | null {
+  return searchBudgetByClause(message);
 }
 
 function parseTransmission(norm: string): TransmissionPreference | null {
@@ -85,7 +82,7 @@ export function computeTurnFrame(args: { leadMessage: string; claimExtractor: Cl
   const norm = normalizeText(leadMessage);
   const claims = collectClaims(leadMessage, claimExtractor, args.interpretation);
   const explicitTypes = [...new Set((norm.match(TYPES) ?? []).map((t) => TYPE_MAP[t]).filter((x): x is VehicleType => !!x))];
-  const budgetMax = parseBudget(norm);
+  const budgetMax = parseBudget(leadMessage);
   const transmission = parseTransmission(norm);
   // item 1A.4 + busca SEM�NTICA (Codex): TIPO nunca � MODELO; e C�MBIO ("autom�tico"/"manual"/"CVT") �
   // prefer�ncia/FILTRO, jamais parte do modelo. Remove o c�mbio do modelo; se o que sobra � um TIPO puro
@@ -353,4 +350,3 @@ export function buildMoreOptionsTurnOutput(result: ExplicitSearchResult, turnId:
   // ve�culos novos renderizados -> RESETA a progress�o de esgotamento (o lead voltou a ver op��es).
   return composeTurn(turnId, "offer_more_options", guidance, fallbackText, facts, [{ op: "set_more_options_exhausted", value: 0 }], items);
 }
-

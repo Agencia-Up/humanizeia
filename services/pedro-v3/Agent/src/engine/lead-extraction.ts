@@ -377,21 +377,54 @@ export function leadStatedMoneyValues(message: string): number[] {
 // "picape até 100 mil, parcela até 1.800" separa as cláusulas e não confunde os valores (não depende de
 // distância nem de apagar texto). "unknown" = valor sem cue (resposta pura a uma pergunta pendente).
 export type MoneyRoleTag = "parcela" | "entrada" | "budget" | "unknown";
+const MONEY_CLAUSE_SPLIT_RX = /(?!\d)[,;.](?!\d)|\s+\b(?:e|com|mas|mais)\b\s+/i;
+
+function moneyRoleForClause(clause: string): MoneyRoleTag {
+  const n = clause.toLowerCase();
+  return /parcela|mensal|mensais|por m[eê]s|prestac/.test(n) ? "parcela"
+    : /entrada|sinal/.test(n) ? "entrada"
+    : /\bat[eé](?!\p{L})|\bno m[aá]ximo\b|\bor[çc]amento\b|\bfaixa\b|\binvestir\b|\bgastar\b/u.test(n) ? "budget"
+    : "unknown";
+}
+
 export function moneyByClause(message: string, financialContext = false): Array<{ role: MoneyRoleTag; value: number }> {
-  const clauses = message.split(/(?!\d)[,;.](?!\d)|\s+\b(?:e|com|mas|mais)\b\s+/i);
+  const clauses = message.split(MONEY_CLAUSE_SPLIT_RX);
   const out: Array<{ role: MoneyRoleTag; value: number }> = [];
   for (const clause of clauses) {
     const spans = moneySpans(clause, financialContext);
     if (spans.length === 0) continue;
-    const n = clause.toLowerCase();
-    const role: MoneyRoleTag =
-      /parcela|mensal|mensais|por m[eê]s|prestac/.test(n) ? "parcela"
-      : /entrada|sinal/.test(n) ? "entrada"
-      : /at[eé]|no m[aá]ximo|or[çc]amento|faixa|investir|gastar/.test(n) ? "budget"
-      : "unknown";
-    out.push({ role, value: spans[0].value });
+    out.push({ role: moneyRoleForClause(clause), value: spans[0].value });
   }
   return out;
+}
+
+/**
+ * Teto de BUSCA explicitamente declarado no bloco atual.
+ *
+ * Esta função é deliberadamente mais estreita que `moneyByClause`: ela só
+ * aceita uma quantia na mesma cláusula de um marcador inequívoco de orçamento.
+ * Um número plausível de ano (1900..2100) sem moeda/multiplicador continua ano,
+ * mesmo em "até 2025". Isso separa o papel do número antes de qualquer merge de
+ * constraints e impede que um "até" temporal/comercial distante capture o ano
+ * de um veículo.
+ */
+export function searchBudgetByClause(message: string): number | null {
+  for (const clause of message.split(MONEY_CLAUSE_SPLIT_RX)) {
+    if (moneyRoleForClause(clause) !== "budget") continue;
+    const span = moneySpans(clause, false)[0];
+    if (!span) continue;
+
+    // A unidade pode vir imediatamente depois do span numérico ("2000 reais")
+    // e, por isso, o contexto local inclui alguns caracteres dos dois lados.
+    const localSpan = clause.slice(Math.max(0, span.start - 4), Math.min(clause.length, span.end + 8));
+    const explicitMoneySyntax = /r\$/i.test(localSpan)
+      || /\b(?:mil|k|reais?)\b/i.test(localSpan)
+      || /\d[.\s]\d{3}\b/.test(localSpan);
+    const barePlausibleYear = span.value >= 1900 && span.value <= 2100 && !explicitMoneySyntax;
+    if (barePlausibleYear) continue;
+    return span.value;
+  }
+  return null;
 }
 
 export function parseBooleanAnswer(text: string): boolean | null {
