@@ -590,7 +590,7 @@ export function AgentFormDialog({ open, onOpenChange, agent, instances, agents, 
     try {
       // Step 1: Try Edge Function (Full cleanup)
       const { data, error: funcError } = await supabase.functions.invoke('delete-uazapi-instance', {
-        body: { instance_id: id, user_id: effectiveUserId }
+        body: { instance_id: id }
       });
       
       console.log('[Delete] Resultado Edge Function:', JSON.stringify(data || funcError, null, 2));

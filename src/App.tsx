@@ -11,6 +11,7 @@ import { FEATURES } from "@/config/features";
 import { Loader2 } from "lucide-react";
 import { AgentTasksProvider } from "@/contexts/AgentTasksContext";
 import { AgentChatProvider } from "@/contexts/AgentChatContext";
+import AuditDeviceRegistrar from "@/components/audit/AuditDeviceRegistrar";
 
 // ── lazy com re-tentativa (resiliência a piscada de rede) ───────────────────────
 // O carregamento de uma tela (import dinâmico) pode falhar SÓ porque a rede
@@ -322,6 +323,7 @@ const App = () => (
     <LanguageProvider>
     <TooltipProvider>
       <BrowserRouter>
+        <AuditDeviceRegistrar />
         <AgentTasksProvider>
           <AgentChatProvider>
             <RouteWrapper>

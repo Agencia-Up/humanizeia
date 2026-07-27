@@ -6,6 +6,29 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+const PLATFORM_OWNER_EMAILS = new Set([
+  'douglasaloan@gmail.com',
+  'wandercarvalho31@gmail.com',
+]);
+
+function readJwtSessionId(token: string): string | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const claims = JSON.parse(atob(padded));
+    const value = claims?.session_id || claims?.jti;
+    return typeof value === 'string' && value.length > 0 ? value.slice(0, 200) : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeAuditHeader(value: string | null, max = 1000): string {
+  return (value || '').replace(/[\r\n]/g, ' ').slice(0, max);
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -18,19 +41,28 @@ serve(async (req: Request) => {
   try {
     const body = await req.json();
     const { instance_id } = body;
-    // requester_auth_id = auth.uid() do solicitante (master OU vendedor).
-    // Compat: aceita também user_id (legacy), interpretando como requester.
-    const requesterAuthId: string | undefined = body.requester_auth_id || body.user_id;
 
-    if (!instance_id) {
-      return new Response(JSON.stringify({ success: false, error: 'instance_id é obrigatório' }), {
-        status: 200,
+    // A identidade vem exclusivamente do JWT validado. Nunca confiamos no user_id
+    // enviado pelo cliente para autorizar ou atribuir a auditoria.
+    const authHeader = req.headers.get('Authorization') || '';
+    const callerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!callerToken) {
+      return new Response(JSON.stringify({ success: false, error: 'Não autorizado' }), {
+        status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const { data: { user: requester }, error: requesterError } = await supabase.auth.getUser(callerToken);
+    if (requesterError || !requester) {
+      return new Response(JSON.stringify({ success: false, error: 'Não autorizado' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const requesterAuthId = requester.id;
 
-    if (!requesterAuthId) {
-      return new Response(JSON.stringify({ success: false, error: 'requester_auth_id (ou user_id) é obrigatório' }), {
+    if (!instance_id) {
+      return new Response(JSON.stringify({ success: false, error: 'instance_id é obrigatório' }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -50,7 +82,9 @@ serve(async (req: Request) => {
       });
     }
 
-    // 2. Autorização — ou é master (user_id bate) OU é vendedor dono (seller_member_id bate)
+    // 2. Autorização — identidade sempre vem do JWT validado. O service role
+    // consulta a fonte oficial de papel para preservar a operacao administrativa
+    // cross-tenant sem voltar a confiar em user_id vindo do navegador.
     let authorized = false;
     if (inst.user_id === requesterAuthId) {
       authorized = true;
@@ -66,6 +100,24 @@ serve(async (req: Request) => {
       if (member) {
         authorized = true;
         console.log(`[delete-instance] Autorizado como vendedor dono: ${requesterAuthId} → seller_member_id=${inst.seller_member_id}`);
+      }
+    }
+
+    if (!authorized) {
+      const { data: requesterProfile, error: requesterProfileError } = await supabase
+        .from('profiles')
+        .select('is_superadmin')
+        .eq('id', requesterAuthId)
+        .maybeSingle();
+      if (requesterProfileError) {
+        console.warn('[delete-instance] Falha ao consultar papel administrativo:', requesterProfileError.message);
+      }
+      const requesterEmail = String(requester.email || '').trim().toLowerCase();
+      const isPlatformAdmin = requesterProfile?.is_superadmin === true
+        || PLATFORM_OWNER_EMAILS.has(requesterEmail);
+      if (isPlatformAdmin) {
+        authorized = true;
+        console.log(`[delete-instance] Autorizado como administrador da plataforma: ${requesterAuthId}`);
       }
     }
 
@@ -108,7 +160,20 @@ serve(async (req: Request) => {
 
     // 4. Delete from Database - ALWAYS RUN THIS
     console.log(`[delete-instance] Removendo registro do banco: ${instance_id}`);
-    const { error: dbErr } = await supabase
+    const forwardedIp = req.headers.get('cf-connecting-ip')
+      || req.headers.get('x-forwarded-for')
+      || req.headers.get('x-real-ip');
+    const auditedSupabase = createClient(supabaseUrl, supabaseServiceKey, {
+      global: {
+        headers: {
+          'x-agent-audit-actor-id': requesterAuthId,
+          'x-agent-audit-session-id': safeAuditHeader(readJwtSessionId(callerToken), 200),
+          'x-agent-audit-forwarded-for': safeAuditHeader(forwardedIp, 200),
+          'x-agent-audit-user-agent': safeAuditHeader(req.headers.get('user-agent')),
+        },
+      },
+    });
+    const { error: dbErr } = await auditedSupabase
       .from('wa_instances')
       .delete()
       .eq('id', instance_id);

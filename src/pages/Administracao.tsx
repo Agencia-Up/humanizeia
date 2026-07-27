@@ -13,13 +13,15 @@ import {
   ShieldCheck, RefreshCcw, AlertTriangle, ChevronDown, ChevronRight,
   Activity, Users, BadgeCheck, Home, HeartPulse, ClipboardList,
   UserCheck, CalendarCheck, Inbox, Building2, KeyRound, Power, Cpu, Zap, Wallet, BellRing, MessagesSquare,
-  BookOpen,
+  BookOpen, History,
 } from 'lucide-react';
 import AdminMargemTab from '@/components/admin/AdminMargemTab';
 import AdminAuditoriaTab from '@/components/admin/AdminAuditoriaTab';
 import AdminDailyAuditTab from '@/components/admin/AdminDailyAuditTab';
 import AdminFeedbackConfigTab from '@/components/admin/AdminFeedbackConfigTab';
 import AdminSupportKbTab from '@/components/admin/AdminSupportKbTab';
+import AgentAuditLogDialog from '@/components/admin/AgentAuditLogDialog';
+import { supabaseRpc } from '@/lib/supabaseRpc';
 
 // ── Painel de Administracao (donos: Douglas + Wander) ────────────────────────
 // Organizado em ABAS pra facilitar a leitura de quem nao e tecnico. Cada aba = 1 bloco.
@@ -289,7 +291,7 @@ function OperacaoTab() {
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
     try {
-      const { data, error } = await (supabase as any).rpc('admin_pedro_ops_overview', { p_days: days });
+      const { data, error } = await supabaseRpc<{ agents?: AgentOps[] }>('admin_pedro_ops_overview', { p_days: days });
       if (error) throw error;
       setAgents(Array.isArray(data?.agents) ? data.agents : []);
     } catch (e: unknown) {
@@ -388,6 +390,14 @@ interface AgentCliente {
   plan_id: string | null;
   plan_status: string | null;
   stock_sources: string | null;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
+}
+interface DeletedAgentAuditRow {
+  agent_id: string;
+  agent_name: string;
+  client_name: string | null;
+  deleted_at: string;
 }
 const PLANO_LABEL: Record<string, string> = { basico: 'Básico', pro: 'Pro', enterprise: 'Pro Max' };
 function aiKeyInfo(a: AgentCliente): { label: string; tone: 'good' | 'neutral' | 'warn'; detail?: string } {
@@ -398,15 +408,47 @@ function aiKeyInfo(a: AgentCliente): { label: string; tone: 'good' | 'neutral' |
 
 function ClientesTab() {
   const [agents, setAgents] = useState<AgentCliente[]>([]);
+  const [deletedAgents, setDeletedAgents] = useState<AgentCliente[]>([]);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  const [auditAgent, setAuditAgent] = useState<AgentCliente | null>(null);
 
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
     try {
-      const { data, error } = await (supabase as any).rpc('admin_clientes_overview');
-      if (error) throw error;
-      setAgents(Array.isArray(data?.agents) ? data.agents : []);
+      const [currentResult, deletedResult] = await Promise.all([
+        supabaseRpc<{ agents?: AgentCliente[] }>('admin_clientes_overview'),
+        supabaseRpc<{ agents?: DeletedAgentAuditRow[] }>('admin_agent_audit_deleted_agents', { p_limit: 100 }),
+      ]);
+      if (currentResult.error) throw currentResult.error;
+      setAgents(Array.isArray(currentResult.data?.agents) ? currentResult.data.agents : []);
+      // A carteira atual continua utilizavel durante um deploy em duas etapas
+      // (frontend antes da migration). O historico arquivado aparece assim que a
+      // RPC nova estiver disponivel, sem derrubar a pagina administrativa.
+      if (deletedResult.error) {
+        setDeletedAgents([]);
+        console.debug('[agent-audit] arquivo de agentes excluidos indisponivel:', deletedResult.error.message);
+        return;
+      }
+      const archived = Array.isArray(deletedResult.data?.agents) ? deletedResult.data.agents : [];
+      setDeletedAgents(archived.map((item) => ({
+        agent_id: item.agent_id,
+        agent_name: item.agent_name || 'Agente excluído',
+        is_active: false,
+        model: null,
+        agent_type: null,
+        total_replies: null,
+        client_name: item.client_name,
+        grandfathered: false,
+        has_own_key: false,
+        own_key_providers: null,
+        plan_id: null,
+        plan_status: null,
+        stock_sources: null,
+        is_deleted: true,
+        deleted_at: item.deleted_at,
+      })));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setErro(msg.includes('forbidden') ? 'Acesso restrito aos administradores.' : (msg || 'Falha ao carregar.'));
@@ -417,14 +459,22 @@ function ClientesTab() {
   const ativos = agents.filter((a) => a.is_active).length;
   const comChavePropria = agents.filter((a) => a.has_own_key).length;
   const semChave = agents.filter((a) => !a.has_own_key && !a.grandfathered).length;
+  const visibleAgents = showDeleted ? [...agents, ...deletedAgents] : agents;
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">Carteira de clientes e seus agentes — status, plano, origem da chave de IA e fonte de estoque.</p>
-        <Button variant="outline" size="sm" onClick={carregar} disabled={loading}>
-          <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {deletedAgents.length > 0 && (
+            <Button variant={showDeleted ? 'secondary' : 'outline'} size="sm" onClick={() => setShowDeleted((value) => !value)}>
+              <History className="mr-2 h-4 w-4" /> Excluídos ({deletedAgents.length})
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={carregar} disabled={loading}>
+            <RefreshCcw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar
+          </Button>
+        </div>
       </div>
 
       {erro && <ErroBox msg={erro} />}
@@ -453,27 +503,48 @@ function ClientesTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? <LinhasSkeleton cols={7} /> : agents.length === 0 ? (
+                {loading ? <LinhasSkeleton cols={7} /> : visibleAgents.length === 0 ? (
                   <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhum agente cadastrado.</TableCell></TableRow>
-                ) : agents.map((a) => {
+                ) : visibleAgents.map((a) => {
                   const key = aiKeyInfo(a);
                   const keyCls = key.tone === 'good' ? 'text-emerald-600 dark:text-emerald-400'
                     : key.tone === 'warn' ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-muted-foreground';
                   return (
-                    <TableRow key={a.agent_id} className={a.is_active ? '' : 'opacity-60'}>
+                    <TableRow
+                      key={a.agent_id}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Abrir histórico do agente ${a.agent_name}`}
+                      title="Clique para abrir o histórico deste agente"
+                      onClick={() => setAuditAgent(a)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setAuditAgent(a);
+                        }
+                      }}
+                      className={`cursor-pointer outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/60 ${a.is_active ? '' : 'opacity-60'}`}
+                    >
                       <TableCell className="max-w-[200px]">
                         <div className="truncate font-medium">{a.agent_name}</div>
                         {a.client_name && <div className="truncate text-[11px] text-muted-foreground">{a.client_name}</div>}
+                        <div className="mt-1 flex items-center gap-1 text-[10px] text-primary/80">
+                          <History className="h-3 w-3" /> Ver histórico
+                        </div>
                       </TableCell>
                       <TableCell>
-                        {a.is_active
+                        {a.is_deleted
+                          ? <Badge variant="destructive">Excluído</Badge>
+                          : a.is_active
                           ? <Badge className="bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/15 dark:text-emerald-400">Ativo</Badge>
                           : <Badge variant="secondary" className="text-muted-foreground">Pausado</Badge>}
                       </TableCell>
-                      <TableCell><Badge variant="secondary" className="text-[11px]">{a.plan_id ? (PLANO_LABEL[a.plan_id] ?? a.plan_id) : '—'}</Badge></TableCell>
+                      <TableCell>{a.is_deleted ? <span className="text-muted-foreground/50">—</span> : <Badge variant="secondary" className="text-[11px]">{a.plan_id ? (PLANO_LABEL[a.plan_id] ?? a.plan_id) : '—'}</Badge>}</TableCell>
                       <TableCell>
-                        <span className={`text-[12px] ${keyCls}`}>{key.label}</span>
-                        {key.detail && <span className="ml-1 text-[10px] uppercase text-muted-foreground">{key.detail}</span>}
+                        {a.is_deleted ? <span className="text-muted-foreground/50">—</span> : <>
+                          <span className={`text-[12px] ${keyCls}`}>{key.label}</span>
+                          {key.detail && <span className="ml-1 text-[10px] uppercase text-muted-foreground">{key.detail}</span>}
+                        </>}
                       </TableCell>
                       <TableCell className="text-[12px] text-muted-foreground">{a.model || '—'}</TableCell>
                       <TableCell className="text-[12px]">{a.stock_sources
@@ -494,6 +565,12 @@ function ClientesTab() {
         pagando a própria IA. "Sem chave" = conta nova sem chave configurada — <span className="font-medium text-red-500">não responde</span> até configurar.
         O <span className="font-medium">Modelo</span> é o configurado no agente (pode estar sobreposto por um override global — ver aba de provedores).
       </p>
+
+      <AgentAuditLogDialog
+        open={auditAgent != null}
+        onOpenChange={(open) => { if (!open) setAuditAgent(null); }}
+        agent={auditAgent}
+      />
     </div>
   );
 }
