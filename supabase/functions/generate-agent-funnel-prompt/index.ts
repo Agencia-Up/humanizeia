@@ -24,9 +24,10 @@ import {
   validateTenantFunnelConfig,
   validateTenantPolicies,
 } from '../../../src/lib/pedroFunnelPolicyContract.ts';
-import { buildTenantSdrSystemPrompt } from '../../../src/lib/pedroFunnelPrompt.ts';
 import {
   buildFunnelPromptEditorRequest,
+  buildTenantSdrSystemPrompt,
+  sanitizeTenantFunnelPromptConfig,
   validateAiGeneratedFunnelPrompt,
 } from '../../../src/lib/pedroFunnelPrompt.ts';
 import { resolveAiKey } from '../_shared/aiKeys.ts';
@@ -89,8 +90,10 @@ async function improvePromptWithAi(
               'Seu trabalho é organizar a intenção comercial do cliente em instruções claras para uma LLM conduzir uma conversa humana.',
               'O prompt do portal governa personalidade, funil, perguntas, qualificação, desqualificação e estilo.',
               'O contrato v3 governa apenas formato, segurança, evidência, grounding e efeitos operacionais.',
-              'Preserve fatos e regras do cliente. Enriqueça apenas com boas práticas gerais de SDR e nunca invente fatos do negócio.',
-              'Não transforme a conversa em checklist, script rígido, regex, handler, roteador ou sequência obrigatória.',
+               'Preserve fatos e regras do cliente. Enriqueça apenas com boas práticas gerais de SDR e nunca invente fatos do negócio.',
+               'Não preserve nem crie despedidas que julguem negativamente a capacidade, a prontidão ou o momento de compra do lead; reescreva-as como encerramento cordial, neutro e com porta aberta.',
+               'Falta de produto numa consulta, silêncio e demora não desqualificam a pessoa. Uma busca vazia descreve somente o recorte consultado; inatividade pertence à cadência automatizada.',
+               'Não transforme a conversa em checklist, script rígido, regex, handler, roteador ou sequência obrigatória.',
               'Não imponha pergunta no fim de toda mensagem, pedido automático de nome/CPF, encerramento por silêncio ou repetição de fatos.',
               'A palavra JSON é obrigatória porque o contrato exige JSON.',
             ].join(' '),
@@ -386,7 +389,10 @@ serve(async (req) => {
 
     // O tipo operacional limita capacidades; personalidade e funil continuam
     // sendo definidos pelo prompt configurado no portal.
-    const promptConfig = { ...cfg, agent_type: agent.agent_type || 'generic' };
+    const promptConfig = sanitizeTenantFunnelPromptConfig({
+      ...cfg,
+      agent_type: agent.agent_type || 'generic',
+    });
     const canonicalPrompt = buildTenantSdrSystemPrompt(promptConfig);
     const generated = await improvePromptWithAi(effectiveOwnerId, promptConfig, canonicalPrompt);
     const newPrompt = generated.prompt;
@@ -410,7 +416,11 @@ serve(async (req) => {
     // 1) salva o prompt gerado no agent_funnel_config
     const { error: cfgUpdErr } = await supabase
       .from('agent_funnel_config')
-      .update({ generated_system_prompt: newPrompt })
+      .update({
+        bloco6_criterios: promptConfig.bloco6_criterios,
+        bloco8_regras: promptConfig.bloco8_regras,
+        generated_system_prompt: newPrompt,
+      })
       .eq('agent_id', agentId);
     if (cfgUpdErr) throw new Error(cfgUpdErr.message);
 

@@ -15,6 +15,7 @@
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, DecisionMutation, TurnInterpretation } from "../domain/decision.ts";
+import { vehicleTypesMentionedInText } from "../domain/decision.ts";
 import type { EntityReference, Id } from "../domain/types.ts";
 import { normalizeText, normalizedTermInText } from "./catalog-utils.ts";
 import { parseOrdinal } from "./ordinal.ts";
@@ -448,12 +449,8 @@ function parsePayment(text: string): "a_vista" | "financiamento" | "consorcio" |
 }
 
 function parseVehicleType(text: string): "suv" | "sedan" | "hatch" | "pickup" | null {
-  const norm = normalizeText(text);
-  if (/\bsuvs?\b/.test(norm)) return "suv";
-  if (/\bsedans?\b/.test(norm)) return "sedan";
-  if (/\bhatch(?:back)?s?\b/.test(norm)) return "hatch";
-  if (/\bpicapes?\b|\bpickups?\b/.test(norm)) return "pickup";
-  return null;
+  const type = vehicleTypesMentionedInText(text)[0] ?? null;
+  return type === "unknown" ? null : type;
 }
 
 function explicitCity(text: string): string | null {

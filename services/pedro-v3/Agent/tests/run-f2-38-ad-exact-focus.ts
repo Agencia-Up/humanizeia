@@ -185,8 +185,11 @@ const malformedOpeningThenFocusedVehicle: BrainResponder = (_f, obs) => {
     evidence: [{ capability: "stock_search", quote: "desse carro" }],
   };
   const stock = [...obs].reverse().find((o) => o.tool === "stock_search" && o.ok) as Extract<import("../src/domain/agent-brain.ts").AgentToolObservation, { tool: "stock_search"; ok: true }> | undefined;
+  // O contrato estável é o deny tipado da autoria, não a redação do feedback.
+  // A mensagem mudou quando a engine deixou de impor lista/formato, mas o draft
+  // com preço/modelo livres continua factual e corretamente rejeitado.
   const groundingFeedback = [...obs].reverse().find((o) => o.tool === "response" && !o.ok
-    && (o.error.message.includes("stock_search encontrou") || o.error.message.includes("ESTOQUE factual")));
+    && (o.error.code === "RESPONSE_REJECTED" || o.error.code === "FINAL_RESPONSE_REJECTED"));
   if (groundingFeedback && stock) {
     const vehicle = stock.data.items[0]!;
     return finU([

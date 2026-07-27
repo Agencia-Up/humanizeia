@@ -521,31 +521,24 @@ async function main(): Promise<void> {
     check("[B4] resposta final usa o estoque obtido", has(r.outbox, "SUV") || has(r.outbox, "EcoSport"), r.outbox.slice(0, 140));
   }
 
-  // [B5] Regressao do smoke 25/07: uma busca ampla retorna varios veiculos e
-  // a primeira autoria nao usa a parte estruturada. A engine nao escolhe a
-  // resposta comercial; devolve o conjunto factual admissivel e a LLM reautora.
+  // [B5] Regressao WA: uma busca ampla retorna varios veiculos, mas a LLM
+  // decide primeiro responder de forma conversacional sem citar atributos.
+  // A consulta disponibiliza fatos; a engine nao obriga listagem nem CTA.
   {
     const c = conv();
     const block = "Tem outra SUV mais em conta?";
     const responder: BrainResponder = (frame, observations) => {
       const us: TurnUnderstanding = { ...U("search_stock"), requestedCapabilities: ["stock_search"], evidence: ev(frame.block ?? block, "stock_search") };
       const searched = observations.find((o) => o.tool === "stock_search" && o.ok) as { ok: true; data: { items: VehicleFact[] } } | undefined;
-      const groundingFeedback = observations.find((o) => !o.ok && has(o.error.message, "vehicle_offer_list"));
       if (!searched) return qU({ tool: "stock_search", input: { tipo: "suv" } }, us);
-      if (!groundingFeedback) return finU([txt("Encontrei boas opcoes para voce. Qual delas quer conhecer?")], "offer_stock", us);
-      return finU([
-        txt("Encontrei estas opcoes de SUV para voce:"),
-        offer(searched.data.items.map((v) => v.vehicleKey)),
-        txt("Qual delas chamou mais sua atencao?"),
-      ], "offer_stock", us);
+      return finU([txt("Encontrei opcoes compativeis no estoque. Posso te mostrar primeiro as mais em conta?")], "offer_stock", us);
     };
     const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "direction_change", responder);
-    const expected = STOCK.filter((v) => v.tipo === "suv");
     check("[B5] busca ampla executa uma unica vez", r.exec.filter((x) => x === "stock_search").length === 1, r.exec.join(","));
-    check("[B5] feedback entrega a parte estrutural e as chaves admissiveis", r.policyFeedback.some((f) => has(f, "vehicle_offer_list") && expected.every((v) => f.includes(v.vehicleKey))), r.policyFeedback.join(" | ").slice(0, 500));
-    check("[B5] LLM reautora e o turno termina sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
-    check("[B5] lista final usa somente fatos da busca", expected.every((v) => has(r.outbox, v.modelo)), r.outbox.slice(0, 260));
-    check("[B5] convergencia custa busca + duas autorias", r.brainCalls <= 3, `brainCalls=${r.brainCalls}`);
+    check("[B5] engine nao exige vehicle_offer_list", !r.policyFeedback.some((f) => has(f, "vehicle_offer_list")), r.policyFeedback.join(" | ").slice(0, 500));
+    check("[B5] resposta valida e publicada sem fallback", r.committed && r.responseSource !== "technical_fallback", `${r.responseSource}`);
+    check("[B5] texto autoral da LLM foi preservado", has(r.outbox, "opcoes compativeis") && has(r.outbox, "mais em conta"), r.outbox.slice(0, 260));
+    check("[B5] consulta + autoria final sem retry de formato", r.brainCalls <= 2, `brainCalls=${r.brainCalls}`);
   }
 
   // ══════════════════════════════════════════════════════════════════════════

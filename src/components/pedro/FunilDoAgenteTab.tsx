@@ -32,6 +32,7 @@ import {
   type TenantPolicyAction,
   type TenantPolicyDomain,
 } from '@/lib/pedroFunnelPolicyContract';
+import { sanitizeTenantFunnelPromptConfig } from '@/lib/pedroFunnelPrompt';
 import {
   Accordion,
   AccordionContent,
@@ -460,13 +461,18 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
     if (!validateBeforePromptAction()) return;
     setSaving(true);
     try {
+      // A mesma higienização usada pelo compilador precisa valer para o que
+      // fica salvo no formulário. Caso contrário, uma regra rejeitada pelo
+      // gerador reapareceria no próximo autosave e voltaria a contaminar a IA.
+      const safeCfg = sanitizeTenantFunnelPromptConfig(cfg) as unknown as FunnelConfig;
+      setCfg(safeCfg);
       // Upsert config
       const { error: upErr } = await (supabase as any)
         .from('agent_funnel_config')
         .upsert({
           agent_id: agentId,
           user_id: userId,
-          ...cfg,
+          ...safeCfg,
         }, { onConflict: 'agent_id' });
       if (upErr) throw upErr;
 
@@ -1032,16 +1038,22 @@ export default function FunilDoAgenteTab({ agentId, userId }: FunilDoAgenteTabPr
               label="❌ Lead DESQUALIFICADO quando..."
               items={cfg.bloco6_criterios.disqualified_when}
               onChange={(disqualified_when) => setCfg({ ...cfg, bloco6_criterios: { ...cfg.bloco6_criterios, disqualified_when } })}
-              placeholder="Ex: Menor de 18 anos"
+              placeholder="Ex: Declarou explicitamente uma condição comercial impeditiva"
             />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Use apenas condições comerciais confirmadas pelo próprio lead. Falta de resposta, demora ou ausência de um produto no estoque não desqualificam a pessoa.
+            </p>
             <div>
               <Label className="text-xs text-muted-foreground">Mensagem para encerrar lead desqualificado</Label>
               <Textarea
                 value={cfg.bloco6_criterios.closing_message}
                 onChange={(e) => setCfg({ ...cfg, bloco6_criterios: { ...cfg.bloco6_criterios, closing_message: e.target.value } })}
-                placeholder="Ex: (nome), prefiro ser honesto com você. No momento talvez não seja..."
+                placeholder="Ex: Tudo bem, (nome)! Se quiser retomar ou conhecer outras opções, continuo à disposição 😊"
                 className="text-xs min-h-[70px]"
               />
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                Evite frases que julguem se o lead está pronto ou no momento certo para comprar. Mantenha a porta aberta.
+              </p>
             </div>
           </AccordionContent>
         </AccordionItem>

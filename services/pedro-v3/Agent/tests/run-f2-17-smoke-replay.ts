@@ -1,7 +1,9 @@
 // ============================================================================
 // F2.17 — REPLAY OFFLINE DETERMINÍSTICO dos 11 turnos do smoke (audit smoke #2). Engine central REAL (singleAuthor)
-// + AgentBrain SCRIPTADO (reproduz os ERROS do smoke #2: T3 pergunta em vez de listar, T7 escreve a CHAVE crua,
-// T9 sem excludeKeys) — e os INVARIANTES corrigem tudo. Prova em outbox.payload.text + tool EXECUTADA + estado + WM:
+// + AgentBrain SCRIPTADO. A autoria comercial continua no cérebro: quando o lead pede opções, o próprio brain
+// emite vehicle_offer_list; a engine apenas valida/renderiza e preserva o contexto ordinal. T7 ainda reproduz o
+// vazamento de CHAVE crua e T9 omite excludeKeys para validar os invariantes factuais do motor. Prova em
+// outbox.payload.text + tool EXECUTADA + estado + WM:
 //   zero vehicleKey no texto; T3 contém lista; T7 nomeia "Honda CRV 2010"; T9 executa excludeKeys; T11 persiste
 //   visita+sábado; T8 extrai endereço+horário reais do prompt (com regra de saudação "Se o horário for..." como armadilha).
 //   npx tsx tests/run-f2-17-smoke-replay.ts
@@ -174,11 +176,11 @@ async function main(): Promise<void> {
   const caps: Cap[] = [];
   caps.push(await turn("Bom dia", "ambiguous", [fin([txt("Bom dia! Sou o Aloan, consultor da Icom Motors. Como posso ajudar?")])]));
   caps.push(await turn("Ele tem quantos km?", "asks_vehicle_detail", [fin([txt("Pra te informar o km, qual carro você tem em mente?")])]));
-  // T3: brain PERGUNTA em vez de listar (erro do smoke #2) -> P0-3 deny -> re-autora COM a lista.
+  // T3: o lead pediu opções e a própria LLM decidiu apresentá-las em uma lista estruturada. A engine não escolhe
+  // conteúdo comercial nem força formato; apenas valida, renderiza e grava a ordem para referências posteriores.
   caps.push(await turn("Quero um SUV automático até 90 mil", "ambiguous", [
     q(stockCall()),
-    fin([txt("Encontrei ótimas opções de SUV automático até 90 mil. Quer que eu te mostre a lista?")]),         // sem offer_list -> deny
-    fin([txt("Tenho estas opções pra você:"), offer([PEUGEOT, CRV]), txt("Quer ver as fotos de alguma?")]),      // com offer_list -> ok
+    fin([txt("Tenho estas opções pra você:"), offer([PEUGEOT, CRV]), txt("Quer ver as fotos de alguma?")]),
   ]));
   // T4: "gostei do segundo" -> engine seleciona o 2º (CRV) + canonicaliza o label a partir do fato/oferta.
   caps.push(await turn("Gostei do segundo", "ambiguous", [fin([txt("Ótima escolha! Quer que eu te passe os detalhes ou já mando as fotos?")])]));

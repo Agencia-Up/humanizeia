@@ -18,6 +18,7 @@ import type {
 } from "../../domain/agent-brain.ts";
 import { BUSINESS_INFO_TOPICS, PRIMARY_INTENTS, TURN_CAPABILITIES, TURN_SUBJECT_KINDS, SUBJECT_SOURCES, MONETARY_ROLES } from "../../domain/agent-brain.ts";
 import type { DecisionMutation, ProposedEffectPlan, ResponseDraft, ResponsePart } from "../../domain/decision.ts";
+import { normalizeStockSearchInput } from "../../domain/decision.ts";
 import type { KnowledgeGap } from "../../domain/knowledge.ts";
 import type { VehicleType, TransmissionPreference } from "../../domain/types.ts";
 import type { FuelKind } from "../../domain/fuel.ts";
@@ -264,6 +265,7 @@ UNDERSTANDING SEMANTICO
 TOOLS E SEGURANCA
 - Voce decide responder, esclarecer ou chamar uma tool. A engine valida a decisao antes de executar.
 - stock_search consulta estoque atual; vehicle_details consulta atributos de um vehicleKey aterrado; vehicle_photos_resolve resolve fotos do alvo atual; tenant_business_info confirma endereco/horario/unidade; knowledge_search consulta a base do tenant.
+- Em stock_search, categoria nunca e modelo: SUV/sedan/hatch usam tipo correspondente; pickup/picape/caminhonete/utilitario usam tipo="pickup". Use modelo somente para nome de modelo real (por exemplo, HB20, Compass ou Tracker).
 - Nao use estoque para carro de troca, pagamento, contestacao ou item ja apresentado. Nao invente disponibilidade, preco, km, cor, foto, aprovacao ou efeito.
 - Resultado de tool volta para voce. Use-o no final e nao repita a mesma consulta. Nao escolha vendedor nem exponha vehicleKey, IDs, PII ou segredos.
 - Quando um detalhe tecnico pedido nao aparece nos fatos retornados, o fato verificado deste turno e apenas "nao confirmado nos dados disponiveis agora". Isso encerra a verificacao automatica deste turno: nao escreva que vai checar, confirmar, avisar ou retornar depois. Se decidir que uma pessoa deve continuar, inclua handoff no MESMO final; sem handoff, responda com transparencia e siga o prompt do portal.
@@ -278,7 +280,7 @@ SAIDA E EFEITOS
 - Final: {"kind":"final","understanding":{...},"reasonCode":"...","confidence":0.0,"guidance":"...","draft":{"parts":[...]},"effects":[...],"stateMutations":[],"memoryMutations":[],"knowledgeGaps":[]}
 - Query, tool, mídia, handoff, mutação ou qualquer efeito diferente de send_message exige understanding com primaryIntent, requestedCapabilities, subject, subjectSource e evidence literal do bloco atual. Uma resposta textual pura pode conter somente text/message_break e send_message.
 - draft.parts aceita apenas text, message_break, vehicle_ref, money_ref e vehicle_offer_list. Atributos e listas precisam de fatos aterrados; mídia e handoff ficam em effects.
-- Se o lead pediu ALTERNATIVAS e a ultima stock_search retornou duas ou mais stock.vehicleKeys, apresente as opcoes com UMA part vehicle_offer_list contendo somente essas chaves retornadas. O texto antes/depois continua sendo seu, mas nao transcreva a lista nem seus atributos em text e nao consulte a mesma busca novamente. Para um unico veiculo em foco, use vehicle_ref/money_ref da mesma chave quando precisar citar atributos.
+- Se voce decidir apresentar alternativas retornadas pela ultima stock_search, use UMA part vehicle_offer_list contendo somente essas chaves. Se decidir falar de um unico veiculo, use vehicle_ref/money_ref da mesma chave quando precisar citar atributos. A consulta disponibiliza fatos, mas nao obriga voce a listar ou mencionar um carro naquele mesmo texto; essa decisao pertence a voce conforme a conversa e o prompt do portal.
 - O texto comercial é sempre escrito por você. A engine não conduz, não lista, não transfere e não reescreve a mensagem.
 
 TRANSFERENCIA (VOCE DECIDE)
@@ -1255,7 +1257,12 @@ export class OpenAiAgentBrain implements AgentBrainPort {
       if (input.popular === true) out.popular = true;
       if (Array.isArray(input.excludeKeys)) out.excludeKeys = input.excludeKeys.filter((k): k is string => typeof k === "string");
       if (input.broad === true) out.broad = true;
-      return { tool: "stock_search", input: out };
+      // A saida real do modelo precisa atravessar a MESMA normalizacao usada
+      // pelo executor. Sem isso, uma categoria comercial escrita em `modelo`
+      // (ex.: "utilitario") escapava do adapter como modelo literal e produzia
+      // falso estoque vazio, embora o dominio ja soubesse que ela e tipo pickup.
+      const normalized = normalizeStockSearchInput(out);
+      return normalized.ok ? { tool: "stock_search", input: normalized.input } : null;
     }
     if (tool === "vehicle_details") { const key = str(input.vehicleKey); return key ? { tool: "vehicle_details", input: { vehicleKey: key } } : null; }
     if (tool === "vehicle_photos_resolve") {

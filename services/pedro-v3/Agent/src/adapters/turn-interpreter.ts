@@ -5,6 +5,7 @@
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { TurnInterpretation, TenantCatalog } from "../domain/decision.ts";
+import { vehicleTypesMentionedInText } from "../domain/decision.ts";
 import { normalizedTermInText } from "../engine/catalog-utils.ts";
 
 export type ExtractedEntities = {
@@ -43,16 +44,9 @@ export class CatalogEntityExtractor implements EntityExtractor {
       entities.changeCue = true;
     }
 
-    // Tipos de carroceria
-    if (msg.includes("sedan") || msg.includes("sedÃ£")) {
-      entities.modelType = "sedan";
-    } else if (msg.includes("suv")) {
-      entities.modelType = "suv";
-    } else if (msg.includes("hatch")) {
-      entities.modelType = "hatch";
-    } else if (msg.includes("pickup") || msg.includes("picape") || msg.includes("caminhonete")) {
-      entities.modelType = "pickup";
-    }
+    // Categoria comercial explícita, normalizada pela mesma fonte usada no
+    // decode/runner da stock_search. Isto descreve a entidade; não decide ação.
+    entities.modelType = vehicleTypesMentionedInText(msg)[0] ?? undefined;
 
     // Detalhes da troca (km, ano, rodado, etc.)
     if (

@@ -6,6 +6,7 @@
 // ============================================================================
 import type { ConversationState } from "../domain/conversation-state.ts";
 import type { TurnInterpretation, TenantCatalog } from "../domain/decision.ts";
+import { vehicleTypesMentionedInText } from "../domain/decision.ts";
 import type { CurrentTurnFacts, CurrentTurnIntent, FrameSignals, FrameTranscriptTurn, TurnFrame, WorkingMemoryV1 } from "../domain/agent-brain.ts";
 import type { DecisionMutation } from "../domain/decision.ts";
 import type { Iso } from "../domain/types.ts";
@@ -24,11 +25,7 @@ const POPULAR_RX = /\bpopular(?:es)?\b/;
 const MEMORY_Q_RX = /\bqual\b[^?]*\b(carro|ve[ií]culo|foto|modelo)\b|\bpedi\b|\bmandei\b|\bmostrei\b|\bmandou\b|\benviou\b|\bquais?\b[^?]*\bfotos?\b/;
 
 function mentionsVehicleType(norm: string): string | null {
-  if (/\bsuvs?\b/.test(norm)) return "suv";
-  if (/\bsedans?\b/.test(norm)) return "sedan";
-  if (/\bhatch/.test(norm)) return "hatch";
-  if (/\bpicapes?\b|\bpickups?\b/.test(norm)) return "pickup";
-  return null;
+  return vehicleTypesMentionedInText(norm)[0] ?? null;
 }
 
 // Sinais determinísticos (evidência auxiliar). O cérebro decide; isto só descreve o que a regex viu.

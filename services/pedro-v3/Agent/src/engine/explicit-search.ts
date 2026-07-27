@@ -10,6 +10,7 @@
 // ============================================================================
 import type { ConversationState, RenderedOfferItem } from "../domain/conversation-state.ts";
 import type { ClaimExtractor, DecisionMutation, ProposedDecision, QueryInputMap, QueryResult, TurnInterpretation } from "../domain/decision.ts";
+import { vehicleTypeFromCategoryTerm, vehicleTypesMentionedInText } from "../domain/decision.ts";
 import type { Id, TransmissionPreference, VehicleFact, VehicleType } from "../domain/types.ts";
 import type { QueryRunner, TurnOutput } from "./decision-engine.ts";
 import { finalize } from "./finalizer.ts";
@@ -18,8 +19,6 @@ import { renderVehicleOfferList } from "./vehicle-offer-render.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 import { searchBudgetByClause } from "./lead-extraction.ts";
 
-const TYPES = /\b(suvs?|hatchback|hatch|sedans?|pickups?|picapes?)\b/g;
-const TYPE_MAP: Record<string, VehicleType> = { suv: "suv", suvs: "suv", hatch: "hatch", hatchback: "hatch", sedan: "sedan", sedans: "sedan", pickup: "pickup", pickups: "pickup", picape: "pickup", picapes: "pickup" };
 // Referencia VAGA (pode herdar memoria): esse/dele/ordinal/foto. NAO e intencao comercial nova.
 const REFERENCE_ONLY = /\besse\b|\bessa\b|\beste\b|\besta\b|\bdele\b|\bdela\b|\bdesse\b|\bprimeir|\bsegund|\bterceir|\bquart|\bquint|\bfotos?\b|\bimagens?\b|\bmais\b|\boutr/;
 const TRANSMISSION_WORDS = /\b(automatic[oa]?|automatizad[oa]|manual|cvt|dsg|dualogic|imotion|tiptronic)\b/gi;
@@ -81,7 +80,7 @@ export function computeTurnFrame(args: { leadMessage: string; claimExtractor: Cl
   const { leadMessage, claimExtractor } = args;
   const norm = normalizeText(leadMessage);
   const claims = collectClaims(leadMessage, claimExtractor, args.interpretation);
-  const explicitTypes = [...new Set((norm.match(TYPES) ?? []).map((t) => TYPE_MAP[t]).filter((x): x is VehicleType => !!x))];
+  const explicitTypes = vehicleTypesMentionedInText(norm);
   const budgetMax = parseBudget(leadMessage);
   const transmission = parseTransmission(norm);
   // item 1A.4 + busca SEM�NTICA (Codex): TIPO nunca � MODELO; e C�MBIO ("autom�tico"/"manual"/"CVT") �
@@ -89,7 +88,7 @@ export function computeTurnFrame(args: { leadMessage: string; claimExtractor: Cl
   // (ex.: "hatch autom�tico" -> "hatch") ou vazio, descarta -> NUNCA stock_search({modelo:"hatch automatico"}).
   const explicitModels = claims.models
     .map((m) => m.replace(TRANSMISSION_WORDS, "").replace(/\s+/g, " ").trim())
-    .filter((m) => m.length > 0 && !TYPE_MAP[normalizeText(m)]);
+    .filter((m) => m.length > 0 && vehicleTypeFromCategoryTerm(m) == null);
   const isNewCommercialIntent = explicitModels.length > 0 || claims.brands.length > 0 || explicitTypes.length > 0 || budgetMax != null || transmission != null;
   const isReferenceOnly = !isNewCommercialIntent && REFERENCE_ONLY.test(norm);
   return { explicitModels, explicitBrands: claims.brands, explicitTypes, budgetMax, transmission, isNewCommercialIntent, isReferenceOnly };

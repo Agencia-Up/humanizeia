@@ -83,7 +83,6 @@ import {
 } from "./tool-authority.ts";
 import { institutionalTopicsRequested, mentionsContact } from "./turn-domain.ts";
 import { normalizeText } from "./catalog-utils.ts";
-import { draftNaturallyReferencesSingleFreshVehicle } from "./draft-grounding.ts";
 import { parseOrdinal } from "./ordinal.ts";
 import { assertReplayWiring, isLegacyReplayEnabled, assertLegacyAuthoringAuthorized } from "./legacy/legacy-replay.ts";
 import {
@@ -838,34 +837,10 @@ function authorFromBrainDraft(args: {
   const renderFacts: QueryResult[] = rememberedOfferItems.length > 0
     ? [...realFacts, { ok: true, tool: "stock_search", data: { items: rememberedOfferItems, filtersUsed: {} }, source: "rendered_offer_memory" }]
     : realFacts;
-  // P0-3 (audit): busca com RESULTADOS deve RESPONDER usando algum fato
-  // aterrado. A forma continua sendo escolha da LLM: vehicle_offer_list para
-  // alternativas, ou vehicle_ref/money_ref de uma mesma key para um veículo
-  // em foco. A engine não transforma toda consulta em listagem.
-  const freshStockVehicles = realFacts.flatMap((fact) =>
-    fact.ok && fact.tool === "stock_search" ? fact.data.items : []);
-  const freshStockKeys = new Set(freshStockVehicles.map((item) => item.vehicleKey));
-  const draftGroundsFreshStock = draft.parts.some((part) => {
-    if (part.type === "vehicle_offer_list") return part.vehicleKeys.some((key) => freshStockKeys.has(key));
-    if (part.type === "vehicle_ref") return freshStockKeys.has(part.vehicleKey);
-    return part.type === "money_ref"
-      && part.source.kind === "vehicle_fact"
-      && freshStockKeys.has(part.source.vehicleKey);
-  }) || draftNaturallyReferencesSingleFreshVehicle({
-    draft,
-    freshVehicles: freshStockVehicles,
-    claimExtractor: args.ctx.claimExtractor,
-  });
-  if (rememberedOfferItems.length === 0
-      && freshStockKeys.size > 0
-      && !draftGroundsFreshStock
-      && !proposedEffects.some((e) => e.kind === "send_media")) {
-    const keys = [...freshStockKeys].slice(0, 6);
-    const structuralPart = keys.length > 1
-      ? `Como o lead pediu alternativas e a busca trouxe ${keys.length} opcoes, inclua no draft exatamente uma part estrutural ${JSON.stringify({ type: "vehicle_offer_list", vehicleKeys: keys })}. O texto antes/depois continua sendo seu.`
-      : `Como existe um unico veiculo em foco, use vehicle_ref/money_ref da chave ${JSON.stringify(keys[0])} ao citar seus atributos, ou mencione naturalmente a identidade completa retornada sem inventar atributos.`;
-    return { ok: false, feedback: `A stock_search encontrou veiculo(s), mas o draft nao usa nenhum fato retornado. ${structuralPart} Nao transcreva atributos/lista em texto livre e nao chame stock_search novamente.` };
-  }
+  // Uma consulta bem-sucedida disponibiliza fatos; ela não obriga a LLM a
+  // listar, citar ou escolher um veículo naquele mesmo texto. As guardas de
+  // grounding abaixo continuam rejeitando qualquer atributo/valor inventado.
+  // Assim, a engine valida o que foi afirmado sem prescrever a condução.
   // B3 (audit): postQuery é AUTORIDADE. Se negar (ex.: oferta acima do teto, veículo fora dos fatos), o draft ORIGINAL
   // NÃO pode ser enviado — feedback ao MESMO cérebro; nenhum efeito comercial original sobrevive (o retry re-autora).
   const post = PolicyEngine.postQuery(proposal, realFacts, args.ctx);
@@ -2607,17 +2582,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             //   (1) LISTAGEM (comercial/retomada COM itens): entrega as vehicleKeys EXATAS + formato de 3 partes -> a LLM devolve
             //       a vehicle_offer_list (o sistema formata preço/km). (2) MONEY em condução (pagamento/troca): o carro de troca
             //       NÃO tem vehicleKey, então money_ref não conserta -> orienta a NÃO afirmar valores e PERGUNTAR/oferecer.
-            // ⭐AUTORIDADE: busca EXECUTADA (autorizada no gate da call — pela LLM ou por contexto) com itens -> o desfecho
-            // certo é APRESENTAR o resultado; orienta a LLM a listar. O detector de constraint não participa.
-            // ⭐F2.43: inclui a perna de "MAIS OPÇÕES" — a busca executada pelo executor determinístico de mais-opções
-            // também precisa do feedback de LISTAGEM (sem ele, o draft sem offer_list caía no fingerprint -> recovery_offer,
-            // o engine listando no lugar da LLM). Ato conversacional declarado continua vencendo (repairTurn tem precedência).
-            // Uma stock_search observada com itens já é fato de grounding. A
-            // validação só exige que a LLM não esconda esse fato; não decide o
-            // assunto nem o CTA.
-            const listTurn = llmFirst
-              && (contextState.lastRenderedOfferContext?.items.length ?? 0) === 0
-              && facts.some((f) => f.ok && f.tool === "stock_search" && f.data.items.length > 0);
       const conductTurn = llmFirst && (lockedU?.primaryIntent === "financing" || lockedU?.primaryIntent === "trade_in" || sensitiveAnswerTurn);
             const visitGuidanceTurn = llmFirst && (lockedU?.primaryIntent === "visit" || visitAnswerTurn);
             // ⭐MISSÃO FINAL: o backstop determinístico (fala LITERAL do lead pedindo humano) também mantém o retry NO ATO de
@@ -2628,11 +2592,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             // ⭐AUTORIDADE: CONTESTAÇÃO (conversation_repair declarado pela LLM) — a resposta certa é TEXTO simples
             // (reconhecer/corrigir/conduzir); vehicle_offer_list exige fato DO TURNO e aqui não há busca — orienta a LLM.
             const repairTurn = llmFirst && lockedU?.primaryIntent === "conversation_repair";
-            // ⭐"mais opções"/busca que voltou VAZIA (todas as stock_search do turno com 0 itens): a resposta certa é a
-            // LLM ser HONESTA em texto (sem re-listar os mesmos), nunca o engine escrever (recovery_stock_empty).
-            // F2.76 def#2: "vazio" só quando NÃO há veículo GROUNDÁVEL (items ∪ familyCandidates). Um turno family_candidate
-            // (items:[] mas há candidatos de família REAIS) NÃO é busca vazia — não pode receber o feedback "voltou VAZIA".
-            const emptyStockTurn = llmFirst && facts.some((f) => f.ok && f.tool === "stock_search") && !facts.some((f) => f.ok && f.tool === "stock_search" && stockSearchGroundableVehicles(f.data).length > 0);
             if (sensitiveAnswerTurn) {
               effFeedback = `ATO ATUAL = sensitive_data. O cliente acabou de fornecer um dado sensivel validado e armazenado por referencia NESTE bloco. Motivo da rejeicao anterior: ${authored.feedback} Reemita understanding com primaryIntent="sensitive_data", zero capabilities e evidence copiada do bloco atual. Confirme o recebimento SEM repetir valor/token/ref; depois conduza com no maximo UMA pergunta util. Nao use tool comercial, nao volte a perguntar o mesmo dado e nao herde visit/financing da memoria como ato atual.`;
               keepRetrying = true;
@@ -2654,22 +2613,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
             } else if (repairTurn) {
               effFeedback = `Mantenha o ato que voce declarou (conversation_repair) e corrija somente a violacao: ${authored.feedback} Use os fatos atuais e o prompt do portal para decidir como reconhecer a correcao e conduzir a conversa. Nao use tool sem necessidade e use no maximo UMA pergunta.`;
               keepRetrying = true;
-            } else if (listTurn) {
-              // ⭐Missão P0 (exige-e-proíbe, teto de preço): o feedback de LISTAGEM só entrega keys que a POL-STOCK-003
-              // ACEITA (preço <= teto do lead quando faixaPreco.max é conhecida) — o engine nunca manda listar uma key
-              // que a própria policy vai negar. Se TODAS excederem o teto, não é listTurn (cai na condução honesta).
-              const priceCeiling = ctx.state.slots.faixaPreco.value?.max ?? null;
-              const listKeys: string[] = [];
-              for (const f of facts) if (f.ok && f.tool === "stock_search") for (const it of f.data.items) {
-                if (priceCeiling != null && typeof it.preco === "number" && it.preco > priceCeiling) continue;
-                if (!listKeys.includes(it.vehicleKey) && listKeys.length < 6) listKeys.push(it.vehicleKey);
-              }
-              if (listKeys.length > 0) {
-                effFeedback = `ESTOQUE factual: a stock_search já retornou estas vehicleKeys aterradas: ${JSON.stringify(listKeys)}. Escolha a forma pelo ato atual: use vehicle_offer_list somente se estiver apresentando alternativas; se o assunto for um veículo específico, use vehicle_ref/money_ref de UMA mesma key para descrevê-lo sem disparar lista. Não escreva atributos de estoque em text e não chame stock_search novamente.`;
-              } else {
-                effFeedback = `A stock_search retornou itens, mas eles não atendem ao teto de preço informado pelo lead. Responda com honestidade usando apenas os fatos disponíveis; a LLM escolhe a formulação e o próximo passo conforme o portal. Não use vehicle_offer_list desses itens, não invente valores e não chame tools novamente.`;
-              }
-              keepRetrying = true;
             } else if (conductTurn) {
               // CONDUÇÃO (pagamento / avaliação de troca): o ÚNICO desfecho válido é ACOLHER + conduzir com UMA pergunta de
               // avanço. QUALQUER deny aqui (valor em texto livre, atributo de carro sem aterrar, ou volta à descoberta) recebe
@@ -2686,9 +2629,6 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
               // receives the validation failure and decides the next natural
               // move from the portal prompt and current facts.
               effFeedback = `Mantenha o ato que voce declarou (${lockedU?.primaryIntent ?? "ato atual"}) e corrija somente a violacao: ${authored.feedback} Use os fatos atuais e o prompt do portal para decidir a resposta e o proximo passo; nao invente dados, nao reabra outro assunto e use no maximo UMA pergunta.`;
-              keepRetrying = true;
-            } else if (emptyStockTurn) {
-              effFeedback = "A busca deste turno voltou VAZIA (com os carros já mostrados excluídos, não há NOVAS opções nesse filtro). Responda com UMA parte text HONESTA: diga que no momento não tem outras opções além das que já mostrou e CONDUZA com UMA pergunta curta (fotos/detalhes/condições de algum dos mostrados, ou se ele quer ampliar o filtro — outro tipo/faixa). NÃO use vehicle_offer_list, NÃO re-liste os mesmos, NÃO escreva R$/km.";
               keepRetrying = true;
             } else if (llmFirst && acceptedSelectionTurn()) {
               // ⭐Missão P0 (varredura exige-e-proíbe, smoke T4): deny em turno de SELEÇÃO ("gostei do segundo") também é

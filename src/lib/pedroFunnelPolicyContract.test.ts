@@ -5,7 +5,11 @@ import {
   validateTenantFunnelConfig,
   validateTenantPolicies,
 } from './pedroFunnelPolicyContract';
-import { buildTenantSdrSystemPrompt, validateAiGeneratedFunnelPrompt } from './pedroFunnelPrompt';
+import {
+  buildFunnelPromptEditorRequest,
+  buildTenantSdrSystemPrompt,
+  validateAiGeneratedFunnelPrompt,
+} from './pedroFunnelPrompt';
 
 describe('Pedro v3 tenant funnel policies', () => {
   const noEntry = {
@@ -243,5 +247,103 @@ describe('Pedro v3 tenant funnel policies', () => {
 
     expect(result.valid).toBe(false);
     expect(result.reasons.filter((reason) => reason.includes('instrução concorrente')).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('removes lifecycle and buyer-discouraging pseudo-criteria without deleting objective client policies', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Duda', company: 'Wa Veículos' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Duda, da Wa Veículos.' },
+      bloco6_criterios: {
+        qualified_when: ['interesse confirmado'],
+        disqualified_when: [
+          'Não respondeu',
+          'Parou de falar no meio do funil',
+          'Sem condições financeiras mínimas no momento',
+          'Declarou explicitamente que não possui entrada',
+          'Mora fora da região atendida pela empresa',
+        ],
+        closing_message: '{nome}, talvez não seja a melhor oportunidade de compra no momento.',
+      },
+      bloco9_empresa: { name: 'Wa Veículos' },
+    };
+
+    const prompt = buildTenantSdrSystemPrompt(config);
+    expect(prompt).not.toContain('Não respondeu');
+    expect(prompt).not.toContain('Parou de falar no meio do funil');
+    expect(prompt).not.toContain('Sem condições financeiras mínimas no momento');
+    expect(prompt).not.toContain('talvez não seja a melhor oportunidade');
+    expect(prompt).toContain('Declarou explicitamente que não possui entrada');
+    expect(prompt).toContain('Mora fora da região atendida pela empresa');
+    expect(prompt).toContain('continuo à disposição');
+  });
+
+  it('rejects an AI-generated prompt that republishes a buyer-discouraging judgment', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Duda', company: 'Wa Veículos' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Duda, da Wa Veículos.' },
+      bloco9_empresa: { name: 'Wa Veículos' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const result = validateAiGeneratedFunnelPrompt(
+      `${canonical}\nMensagem ao lead: Talvez não seja o melhor cenário para comprar agora.`,
+      canonical,
+      config,
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons).toContain('mensagem que desencoraja ou julga o momento de compra do lead');
+  });
+
+  it('removes runtime directives from both the canonical prompt and the AI editing input', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Duda', company: 'Wa Veículos' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Duda, da Wa Veículos.' },
+      bloco8_regras: {
+        always: [
+          'Toda mensagem termina com pergunta de condução',
+          'Follow-up mínimo 3-4 horas depois, sempre com contexto',
+          'Tratar o cliente pelo nome assim que souber',
+        ],
+        never: [
+          'Nunca deixar conversa terminar sem tentar capturar o contato',
+          'Nunca dar desconto sem consultar o vendedor',
+        ],
+      },
+      bloco9_empresa: { name: 'Wa Veículos' },
+    };
+
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const editorRequest = buildFunnelPromptEditorRequest(config, canonical);
+    for (const unsafe of [
+      'Toda mensagem termina com pergunta de condução',
+      'Follow-up mínimo 3-4 horas depois, sempre com contexto',
+      'Nunca deixar conversa terminar sem tentar capturar o contato',
+    ]) {
+      expect(canonical).not.toContain(unsafe);
+      expect(editorRequest).not.toContain(unsafe);
+    }
+    expect(canonical).toContain('Tratar o cliente pelo nome assim que souber');
+    expect(canonical).toContain('Nunca dar desconto sem consultar o vendedor');
+  });
+
+  it('rejects AI output that reintroduces a rigid runtime directive', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Duda', company: 'Wa Veículos' },
+      bloco3_abordagem: { presentation: 'Olá! Sou a Duda, da Wa Veículos.' },
+      bloco9_empresa: { name: 'Wa Veículos' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const result = validateAiGeneratedFunnelPrompt(
+      `${canonical}\nToda mensagem termina com pergunta de condução.`,
+      canonical,
+      config,
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons).toContain('regra de runtime ou condução rígida concorrente com o Pedro v3');
   });
 });

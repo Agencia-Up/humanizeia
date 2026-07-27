@@ -41,6 +41,101 @@ const numbered = (value: unknown): string => {
   return values.length ? values.map((item, index) => `${index + 1}. ${item}`).join("\n") : "(nenhuma pergunta configurada)";
 };
 
+const normalizeInstruction = (value: string): string => value
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/\s+/g, " ")
+  .trim();
+
+/**
+ * Inatividade pertence à automação T1/T2/T3, não à compreensão do turno.
+ * Mantê-la entre critérios conversacionais fazia uma resposta curta ou a falta
+ * de resposta parecer uma desqualificação comercial para a LLM.
+ */
+const isLifecycleCriterion = (value: string): boolean => {
+  const normalized = normalizeInstruction(value);
+  return [
+    /\bnao (?:respondeu|responder|retornou|retornar)\b/,
+    /\bparou de (?:responder|falar|interagir)\b/,
+    /\b(?:sem resposta|silencio|inatividade|ficou inativo|sumiu)\b/,
+    /\b(?:demorou|demora|tempo sem retorno)\b/,
+  ].some((pattern) => pattern.test(normalized));
+};
+
+const SAFE_DISQUALIFICATION_CLOSING = "Tudo bem! Se quiser retomar ou conhecer outras opções, continuo à disposição por aqui 😊";
+
+/** Detecta juízo negativo sobre a aptidão ou o momento de compra do lead. */
+const containsBuyerDiscouragingJudgment = (value: string): boolean => {
+  const normalized = normalizeInstruction(value);
+  return [
+    /\b(?:talvez|provavelmente)?\s*nao (?:seja|e|seria)\b.{0,45}\b(?:melhor|ideal|boa)\b.{0,30}\b(?:cenario|momento|oportunidade|hora)\b/,
+    /\bnao (?:esta|estaria) (?:pronto|preparado|apto)\b.{0,35}\b(?:comprar|compra|negocio|seguir)\b/,
+    /\bsem condicoes\b.{0,35}\b(?:comprar|compra|financiar|negocio)\b/,
+    /\bsem condicoes financeiras(?: minimas)?(?: no momento| agora)?\b/,
+    /\bmelhor (?:nao|deixar de)\b.{0,25}\b(?:comprar|seguir|negociar)\b/,
+  ].some((pattern) => pattern.test(normalized));
+};
+
+const safeClosingMessage = (owner: FunnelRecord): string => {
+  const configured = text(owner, "closing_message", SAFE_DISQUALIFICATION_CLOSING);
+  return containsBuyerDiscouragingJudgment(configured) ? SAFE_DISQUALIFICATION_CLOSING : configured;
+};
+
+const conversationalDisqualificationCriteria = (value: unknown): string[] =>
+  items(value).filter((criterion) => !isLifecycleCriterion(criterion) && !containsBuyerDiscouragingJudgment(criterion));
+
+/**
+ * Regras de mecânica do runtime não são políticas comerciais do tenant.
+ * Mantê-las no prompt faria o formulário concorrer com a cadência, o canal e
+ * a condução contextual da LLM. O filtro é por classe de diretiva, não por
+ * frase de uma loja específica.
+ */
+const isCompetingRuntimeDirective = (value: string): boolean => {
+  const normalized = normalizeInstruction(value);
+  return [
+    /\b(?:toda|cada) mensagem\b.{0,35}\b(?:termina|termine|finaliza|finalize)\b.{0,30}\bpergunta\b/,
+    /\bfollow[ -]?up\b.{0,45}\b(?:minim|depois|apos|hora|horas|minuto|minutos|dia|dias)\b/,
+    /\bnunca (?:deixe|deixar) (?:a )?conversa (?:terminar|encerrar)\b.{0,55}\b(?:capturar|pedir|obter|coletar)\b.{0,20}\bcontato\b/,
+    /\b(?:sempre|antes de qualquer coisa)\b.{0,25}\b(?:peca|pedir|solicite|solicitar)\b.{0,25}\b(?:nome|cpf)\b/,
+  ].some((pattern) => pattern.test(normalized));
+};
+
+const conversationalBusinessRules = (value: unknown): string[] =>
+  items(value).filter((rule) => !isCompetingRuntimeDirective(rule));
+
+/**
+ * Sanitização compartilhada pelo prompt canônico e pela edição com IA. Isso
+ * garante que o fallback determinístico não republique justamente o material
+ * que a validação recusou na saída do modelo.
+ */
+export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string, unknown> {
+  const cfg = record(input);
+  const b6 = record(cfg.bloco6_criterios);
+  const b8 = record(cfg.bloco8_regras);
+  return {
+    ...cfg,
+    bloco6_criterios: {
+      ...b6,
+      disqualified_when: conversationalDisqualificationCriteria(b6.disqualified_when),
+      closing_message: safeClosingMessage(b6),
+    },
+    bloco8_regras: {
+      ...b8,
+      always: conversationalBusinessRules(b8.always),
+      never: conversationalBusinessRules(b8.never),
+    },
+  };
+}
+
+const containsPublishedBuyerDiscouragement = (prompt: string): boolean => prompt
+  .split(/\r?\n/)
+  .some((line) => {
+    if (!containsBuyerDiscouragingJudgment(line)) return false;
+    const normalized = normalizeInstruction(line);
+    return !/\b(?:nao diga|nunca diga|nao use|evite|proibido|nao emita)\b/.test(normalized);
+  });
+
 export interface FunnelPromptValidationResult {
   valid: boolean;
   reasons: string[];
@@ -88,6 +183,12 @@ export function validateAiGeneratedFunnelPrompt(
   for (const expression of forbidden) {
     if (expression.test(prompt)) reasons.push(`instrução concorrente detectada: ${expression.source}`);
   }
+  if (containsPublishedBuyerDiscouragement(prompt)) {
+    reasons.push("mensagem que desencoraja ou julga o momento de compra do lead");
+  }
+  if (prompt.split(/\r?\n/).some(isCompetingRuntimeDirective)) {
+    reasons.push("regra de runtime ou condução rígida concorrente com o Pedro v3");
+  }
 
   const cfg = record(config);
   const b1 = record(cfg.bloco1_identidade);
@@ -118,6 +219,7 @@ export function validateAiGeneratedFunnelPrompt(
 }
 
 export function buildFunnelPromptEditorRequest(config: unknown, canonicalPrompt: string): string {
+  const safeConfig = sanitizeTenantFunnelPromptConfig(config);
   return `Você é a arquiteta sênior de prompts de SDR do Pedro v3. Responda em JSON válido, com um único campo string chamado "prompt".
 
 O texto final será usado como system prompt de um SDR no WhatsApp. Transforme a configuração preenchida pelo cliente em um prompt claro, natural, completo e executável pela LLM. Preserve as decisões comerciais do cliente, mas organize-as para que sejam interpretadas pelo contexto da conversa — nunca como checklist, script rígido ou roteador de palavras-chave.
@@ -128,6 +230,8 @@ COMO ENRIQUECER SEM INVENTAR:
 - Complete somente boas práticas gerais de atendimento SDR: escuta ativa, resposta ao último bloco, uma pergunta relevante por vez, memória dos fatos já confirmados, adaptação quando o lead muda de assunto e transição natural para o humano.
 - Não invente fatos do negócio. Não crie preços, produtos, prazos, políticas, endereço, horários, condições, garantias, ferramentas ou capacidades que não estejam na configuração ou no contrato canônico.
 - Preserve fatos, exemplos, marcadores como [PERIODO], políticas e instruções específicas do cliente. Se uma regra estiver ambígua, mantenha a intenção e deixe a LLM pedir esclarecimento quando necessário.
+- Não preserve literalmente uma despedida que julgue negativamente a capacidade, a prontidão ou o momento de compra do lead. Reescreva-a como encerramento cordial, neutro e com porta aberta.
+- Falta de produto numa consulta, incompatibilidade pontual de estoque, silêncio e demora não desqualificam a pessoa. Inatividade pertence à cadência automatizada; desqualificação conversacional exige evidência explícita no bloco atual de um critério comercial válido.
 - Explique que perguntas são preferências adaptativas: a LLM usa somente o que ainda falta e nunca repete pergunta ou fato já confirmado.
 - Mantenha uma seção de abertura literal, uma seção de condução natural, qualificação adaptativa, ramificações, critérios de transferência/encerramento, regras específicas, informações da empresa e capacidades operacionais.
 - Use exatamente estes títulos principais para o contrato ser validado: ## PRECEDÊNCIA E PAPEL, ## IDENTIDADE DA EMPRESA, ## CONDUÇÃO NATURAL, ## PRIMEIRO CONTATO, ## QUALIFICAÇÃO ADAPTATIVA, ## QUALIFICAÇÃO, DESQUALIFICAÇÃO E ENCERRAMENTO, ## TRANSFERÊNCIA PARA HUMANO, ## REGRAS ESPECÍFICAS DA EMPRESA, ## INFORMAÇÕES DA EMPRESA, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL.
@@ -139,12 +243,13 @@ REGRAS INEGOCIÁVEIS:
 - Não crie regex, handlers, roteamento determinístico, etapas obrigatórias ou regras por frase.
 - Não crie regras artificiais como "toda mensagem termina com pergunta", "sempre peça nome/CPF", "encerre se o lead demorar" ou "siga esta ordem sem exceção".
 - Não invente produto, preço, política, endereço, horário, tool ou capacidade.
+- Nunca aconselhe o lead a não comprar, nem conclua que ele não está apto ou no momento adequado para comprar. Uma busca vazia descreve somente o recorte consultado e não autoriza encerrar o atendimento.
 - Preserve todos os fatos configurados pelo cliente, inclusive regras específicas e apresentação.
 - Não remova as seções do contrato v3, as capacidades autorizadas, a precedência do portal ou a autoria da LLM.
 - Este pedido contém a palavra JSON porque a resposta deve ser JSON puro. Não use markdown nem cercas de código.
 
 <CONFIGURACAO_DO_CLIENTE>
-${JSON.stringify(config, null, 2)}
+${JSON.stringify(safeConfig, null, 2)}
 </CONFIGURACAO_DO_CLIENTE>
 
 <PROMPT_CANONICO_V3>
@@ -161,7 +266,7 @@ Entregue o prompt completo, em português do Brasil, pronto para o runtime. A me
  * responsável apenas pelo contrato técnico, grounding, segurança e efeitos.
  */
 export function buildTenantSdrSystemPrompt(input: unknown): string {
-  const cfg = record(input);
+  const cfg = sanitizeTenantFunnelPromptConfig(input);
   const agentType = text(cfg, "agent_type", "");
   const isGeneralSdr = agentType === "sdr_geral";
   const b1 = record(cfg.bloco1_identidade);
@@ -183,6 +288,8 @@ export function buildTenantSdrSystemPrompt(input: unknown): string {
   const policySection = buildTenantPolicyPromptSection(cfg.tenant_policies);
   const presentation = text(b3, "presentation", "Olá! Tudo bem?");
   const firstQuestion = text(b3, "first_question", "(não definida; responda primeiro ao bloco atual do lead)");
+  const disqualificationCriteria = conversationalDisqualificationCriteria(b6.disqualified_when);
+  const closingMessage = safeClosingMessage(b6);
 
   return `# PEDRO V3 — PROMPT COMERCIAL DO PORTAL
 
@@ -256,12 +363,14 @@ Considere o lead qualificado quando o contexto real satisfizer os critérios aba
 ${list(b6.qualified_when, "- ")}
 
 Preferências de desqualificação da empresa:
-${list(b6.disqualified_when, "- ")}
+${list(disqualificationCriteria, "- ")}
 
-Aplique critérios pelo sentido da conversa e por evidência atual. Não trate distância, resposta curta, “vou pensar”, objeção ou agradecimento isolado como desinteresse automaticamente. Quando houver desinteresse inequívoco, encerre cordialmente e não continue empurrando o funil.
+Aplique critérios somente quando o bloco atual trouxer evidência explícita e inequívoca. Não trate ausência de resposta, demora, resposta curta, “vou pensar”, objeção, agradecimento ou uma busca de estoque sem resultado como desqualificação da pessoa. Critérios objetivos configurados pela empresa — por exemplo localidade atendida ou condição financeira explicitamente declarada — permanecem válidos quando a evidência estiver no bloco atual. Inatividade é tratada pela cadência automatizada T1/T2/T3, fora da decisão conversacional deste turno.
+
+Uma indisponibilidade pontual descreve apenas o produto ou o recorte consultado: responda com honestidade, adapte a busca quando o lead quiser e mantenha a relação comercial. Nunca emita juízo negativo sobre a capacidade, a prontidão ou o momento de compra do lead.
 
 Mensagem de encerramento preferida:
-"${text(b6, "closing_message", "Tudo bem! Não vou tomar mais seu tempo. Se quiser retomar, é só me chamar por aqui.")}"
+"${closingMessage}"
 
 ## TRANSFERÊNCIA PARA HUMANO
 
@@ -301,7 +410,8 @@ ${isGeneralSdr
     ? `- Este é um SDR Geral. Não há consulta de estoque, detalhes de veículos nem envio de fotos automotivas neste perfil.
 - Use a Base de conhecimento quando precisar de informações do negócio, produtos ou serviços configurados pelo cliente.
 - Para endereço, horário ou informação institucional atual, use a fonte institucional disponível e depois redija você mesma a resposta.`
-    : `- Consulte estoque quando precisar de disponibilidade ou dados atuais de veículos; use detalhes e fotos somente de um veículo aterrados por resultado válido.
+    : `- Consulte estoque quando precisar de disponibilidade ou dados atuais de veículos; use detalhes e fotos somente de um veículo aterrado por resultado válido.
+- Quando o lead pedir opções e a consulta retornar veículos, entregue opções reais daquele resultado antes de avançar. Você decide quantidade, linguagem e próximo passo conforme a conversa; a engine não escolhe a apresentação comercial.
 - Para endereço, horário ou informação institucional atual, use a fonte institucional disponível e depois redija você mesma a resposta.
 - A Base de conhecimento pode complementar fatos do negócio quando estiver disponível.`}
 - Para transferência, CRM, follow-up ou mídia, declare a ação apropriada; nunca prometa um efeito que não foi executado.

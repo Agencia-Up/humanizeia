@@ -152,7 +152,7 @@ export type QueryResult = {
 
 export type ToolError = { code: "TIMEOUT" | "NOT_FOUND" | "UPSTREAM" | "VALIDATION" | "FORBIDDEN"; message: string; retryable: boolean };
 
-// 1A.4: um termo de TIPO (suv/sedan/hatch/picape) NUNCA é `modelo`. Se o proponente (LLM) o colocar em
+// 1A.4: um termo de TIPO (suv/sedan/hatch/picape/utilitário) NUNCA é `modelo`. Se o proponente (LLM) o colocar em
 // `modelo`, movemos para `tipo` e removemos de `modelo` — evita stock_search({modelo:"suv"}) que zera a
 // busca com estoque real. Aplicado no DECODE da proposta e no runner (defesa em profundidade). Modelo real
 // (onix/hb20/...) fica intacto. Função PURA.
@@ -161,11 +161,28 @@ export type ToolError = { code: "TIMEOUT" | "NOT_FOUND" | "UPSTREAM" | "VALIDATI
 const STOCK_TYPE_WORDS: Readonly<Record<string, VehicleType>> = {
   suv: "suv", suvs: "suv", sedan: "sedan", sedans: "sedan", hatch: "hatch", hatchback: "hatch", hatchbacks: "hatch",
   picape: "pickup", picapes: "pickup", pickup: "pickup", pickups: "pickup", caminhonete: "pickup", caminhonetes: "pickup",
+  utilitario: "pickup", utilitarios: "pickup", utilitaria: "pickup", utilitarias: "pickup",
 };
 export type StockInputNormalization =
   | { readonly ok: true; readonly input: QueryInputMap["stock_search"] }
   | { readonly ok: false; readonly conflict: string };
 const stockTypeWordKey = (s: string): string => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+/**
+ * Fonte única para converter uma categoria comercial pura no tipo canônico do
+ * estoque. `null` significa que o termo pode ser um modelo real e não deve ser
+ * reinterpretado pela engine.
+ */
+export function vehicleTypeFromCategoryTerm(value: string): VehicleType | null {
+  return STOCK_TYPE_WORDS[stockTypeWordKey(value)] ?? null;
+}
+
+/** Extrai categorias automotivas explícitas sem decidir intenção ou condução. */
+export function vehicleTypesMentionedInText(value: string): VehicleType[] {
+  const tokens = stockTypeWordKey(value).match(/[a-z0-9]+/g) ?? [];
+  return [...new Set(tokens.map((token) => vehicleTypeFromCategoryTerm(token)).filter((type): type is VehicleType => type != null))];
+}
+
 export function normalizeStockSearchInput(input: QueryInputMap["stock_search"]): StockInputNormalization {
   let out: QueryInputMap["stock_search"] = input;
   // ⭐F2.79: PONTO ÚNICO de dobra do alias legado. `hibrido:true` vira `combustivel:"hibrido"`; conflito com
@@ -183,7 +200,7 @@ export function normalizeStockSearchInput(input: QueryInputMap["stock_search"]):
   }
   // Guarda do `modelo` único (existente): um termo de TIPO em `modelo` vira `tipo` (ou FALHA se conflita).
   if (typeof out.modelo === "string") {
-    const asType = STOCK_TYPE_WORDS[stockTypeWordKey(out.modelo)];
+    const asType = vehicleTypeFromCategoryTerm(out.modelo);
     if (asType) {
       if (out.tipo != null && out.tipo !== asType) {
         return { ok: false, conflict: `modelo '${out.modelo}' (tipo ${asType}) conflita com tipo '${out.tipo}'` };
@@ -198,7 +215,7 @@ export function normalizeStockSearchInput(input: QueryInputMap["stock_search"]):
     let tipoFromAlt: VehicleType | undefined;
     const realModels: string[] = [];
     for (const m of out.modelos) {
-      const asType = typeof m === "string" ? STOCK_TYPE_WORDS[stockTypeWordKey(m)] : undefined;
+      const asType = typeof m === "string" ? vehicleTypeFromCategoryTerm(m) : null;
       if (asType) {
         if (out.tipo != null && out.tipo !== asType) {
           return { ok: false, conflict: `modelo '${m}' (tipo ${asType}) conflita com tipo '${out.tipo}'` };
