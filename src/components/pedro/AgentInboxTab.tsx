@@ -456,7 +456,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         remote_jid: r.phone || '',
         lead_name: r.contact_name || null,
         status: '',
-        ai_paused: !!r.ia_pausada,
+        ai_paused: r.crm_source === 'marcos' ? true : !!r.ia_pausada,
         instance_id: r.instance_id || null,
         agent_id: r.agent_id || '',
         message_count: r.message_count || 0,
@@ -465,7 +465,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         last_interaction_at: r.last_message_at || r.first_seen_at,
         summary: r.last_message || null,
         assigned_to_id: r.assigned_to_id || null,
-        origem: 'pedro',
+        // Conversa vinculada a lead do MARCOS segue as convencoes do Marcos
+        // (transferencia via crmLeadId; sem conceito de pausa da IA).
+        origem: r.crm_source === 'marcos' ? 'marcos' : 'pedro',
         semCrm: !!r.sem_vinculo_crm,
         agenteInativo: !!r.agente_inativo,
       }));
@@ -1082,8 +1084,22 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     setTransferringLead(true);
     try {
       const isMarcosLead = selectedLead.origem === 'marcos';
+      let effectiveLeadId = String(selectedLead.id);
+      const isOrphanConv = effectiveLeadId.startsWith('conv:');
 
-      if (!isMarcosLead && !selectedLead.ai_paused) {
+      if (isOrphanConv) {
+        // FASE 6: conversa sem CRM — adota a conversa como lead ANTES do fluxo
+        // manual (RPC atomica/idempotente: find-or-create por telefone canonico,
+        // vincula a projecao e ja deixa a IA pausada; ambiguidade vira erro claro).
+        const { data: adopt, error: adoptErr } = await (supabase as any).rpc('manual_transfer_conversation', {
+          p_conversation_id: effectiveLeadId.slice(5),
+          p_notes: transferNotes.trim() || null,
+        });
+        if (adoptErr) throw new Error(adoptErr.message || 'Falha ao criar o lead desta conversa');
+        const adoptedLeadId = (adopt as any)?.lead_id;
+        if (!adoptedLeadId) throw new Error('A conversa nao gerou lead. Recarregue a lista e tente de novo.');
+        effectiveLeadId = adoptedLeadId;
+      } else if (!isMarcosLead && !selectedLead.ai_paused) {
         await persistConversationPause(selectedLead, true, 'transferencia_manual_no_painel');
       }
 
@@ -1099,7 +1115,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
               ownerUserId: userId || null,
             }
           : {
-              leadId: selectedLead.id,
+              leadId: effectiveLeadId,
               memberId: seller.id,
               notes: transferNotes.trim() || 'Transferencia manual via Conversas IA',
               remoteJid: selectedLead.remote_jid || null,
