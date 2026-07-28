@@ -413,11 +413,11 @@ async function main(): Promise<void> {
     check("[T7] seleção: a LLM REDIGE (brain_final/retry, NÃO recovery), 0 vehicle_details, sem terminalSafe", t2.detailObs <= 1 && (t2.src === "brain_final" || t2.src === "brain_retry") && !t2.terminalSafe, `detailObs=${t2.detailObs} src=${t2.src} terminalSafe=${t2.terminalSafe}`);
     check("[T7b] a LLM nomeou o carro escolhido usando o LABEL entregue no FEEDBACK (engine não escreveu)", has(t2.outbox, "Renegade"), `outbox="${t2.outbox}"`);
   }
-  // T8-a) captura OPORTUNÍSTICA de nome: "Douglas" pelado (sem pergunta de nome) -> nome=Douglas conhecido.
+  // T8-a) bloco curto sem pergunta de nome não prova identidade.
   {
     const c = conv();
-    const t1 = await c.t("Douglas", { responder: () => finU([txt("Prazer, Douglas! O que você procura?")], "reply", U("other")) });
-    check("[T8a] 'Douglas' pelado -> nome capturado oportunisticamente", t1.slots?.nome.value === "Douglas" && t1.slots?.nome.status === "known", `nome=${JSON.stringify(t1.slots?.nome)}`);
+    const t1 = await c.t("Esquece", { responder: () => finU([txt("Tudo bem. Se precisar, fico à disposição.")], "reply", U("disengagement")) });
+    check("[T8a] despedida curta não vira nome no CRM", t1.slots?.nome.status !== "known", `nome=${JSON.stringify(t1.slots?.nome)}`);
   }
   // T8-b) turno de PAGAMENTO NÃO pede nome: o cérebro tenta pedir nome -> engine NEGA -> re-autora conduzindo troca/entrada.
   {
@@ -432,7 +432,7 @@ async function main(): Promise<void> {
   // T8-c) nome JÁ conhecido -> engine NEGA repergunta de nome (o cérebro re-autora seguindo a conversa).
   {
     const c = conv();
-    await c.t("Douglas", { responder: () => finU([txt("Prazer! O que procura?")], "reply", U("other")) });   // nome=Douglas
+    await c.t("Meu nome é Douglas", { responder: () => finU([txt("Prazer! O que procura?")], "reply", U("other")) });   // nome=Douglas
     // ⭐RD1-2: "não repergunte nome conhecido" é ADVISORY (knownName). A LLM advertida usa o nome e avança de 1ª.
     const conductNoReask: BrainResponder = () => finU([txt("Temos boas opções, Douglas! Que tipo você prefere?")], "reply", U("other"));
     const t2 = await c.t("quero ver carros", { responder: conductNoReask });
@@ -445,7 +445,7 @@ async function main(): Promise<void> {
   //     resposta (removido recovery_name_identified). [[pedro-v3-llm-first-no-handler]]
   {
     const c = conv();
-    await c.t("Oi", { responder: () => finU([txt("Olá! Me conta o que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other")) });
+    await c.t("Oi", { responder: () => finU([txt("Olá! Para eu continuar, qual é o seu nome?")], "reply", U("other")) });
     // ⭐RD1-2: acolher+avançar (não pedir sobrenome) é ADVISORY. A LLM advertida acolhe de 1ª; o engine ENTREGA (brain_final).
     const nameThenAck: BrainResponder = () => finU([txt("Prazer, Douglas! Me conta o que você procura: um modelo, um tipo de carro ou uma faixa de preço?")], "reply", U("other"));
     const t2 = await c.t("Douglas", { responder: nameThenAck });

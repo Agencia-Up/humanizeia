@@ -396,8 +396,26 @@ export function acceptsAgentPhotoOffer(block: string, state?: ConversationState 
   if (!/\b(?:fotos?|imagens?)\b/.test(n)) return false;
   return SHORT_AFFIRMATION_RX.test(normalizeText(block).trim());
 }
-export function authorizesPhotoByResolvedTarget(target: TargetResolution, block: string, state?: ConversationState | null): boolean {
-  return target.kind === "resolved" && (leadRequestsPhoto(block) || answersPendingPhotoTargetQuestion(target, state) || acceptsAgentPhotoOffer(block, state));
+export function authorizesPhotoByResolvedTarget(
+  target: TargetResolution,
+  block: string,
+  state?: ConversationState | null,
+  validated?: ValidatedUnderstanding | null,
+): boolean {
+  if (target.kind !== "resolved") return false;
+  if (leadRequestsPhoto(block) || answersPendingPhotoTargetQuestion(target, state) || acceptsAgentPhotoOffer(block, state)) return true;
+
+  // O debounce pode agrupar o aceite curto a uma cortesia posterior
+  // ("Sim" + "Por favor, bom dia! Obrigado!"). Nesse caso o bloco inteiro
+  // deixa de ser uma afirmação curta, mas a evidência validada pela própria LLM
+  // ainda responde inequivocamente à última oferta de fotos. A autoridade segue
+  // sendo semântica e contextual: request_photos + capability + quote literal +
+  // alvo já resolvido. Não inferimos foto de um "sim" solto.
+  return validated?.fromBrain === true
+    && validated.trusted
+    && validated.understanding.primaryIntent === "request_photos"
+    && validated.understanding.requestedCapabilities.includes("send_photos")
+    && validated.validEvidence.some((e) => e.capability === "send_photos" && acceptsAgentPhotoOffer(e.quote, state));
 }
 // ── P0-2: AUTORIZAÇÃO TIPADA POR TOOL. Cada tool comercial exige a capability PRÓPRIA + evidência própria, do CÉREBRO.
 //    Fonte única: só a intenção declarada+evidenciada autoriza a ação. (tenant_business_info = institucional, à parte.) ──

@@ -256,15 +256,16 @@ async function main(): Promise<void> {
   ] });
   check("[15] B2: final sem vehicle_details do selecionado -> nunca envia atributo -> recuperação contextual", r15.result.status === "committed" && isRecoverySrc(r15.result) && degradedOf(r15.result) === false && !r15.outboxText.includes("132.623") && r15.composeCalls === 0, `src=${srcOf(r15.result)} degraded=${degradedOf(r15.result)} text="${r15.outboxText}"`);
 
-  // [16] postQuery deny (POL-TRACK-001: responder pagamento não vira envio de foto) -> draft original NÃO vai;
-  //      feedback -> re-autora sem o efeito comercial. NENHUM send_media original sobrevive no outbox.
+  // [16] Replay legado: sem autoridade llmFirst, a relação de pagamento
+  // continua protegida. O contrato de produção em que request_photos vence
+  // objetivo antigo é exercitado ponta a ponta na F2.48.
   const payState = seedState(ONIX2, { withPhotoMemory: true });
   payState.currentObjective = { id: "obj-pay", type: "perguntou_pagamento", slot: "formaPagamento", askedAt: NOW, askedInTurnId: "seed-t0", deliveredByEffectId: "seed-t0:msg", deliveryLevel: "accepted", expectedAnswerKinds: ["valor"], status: "pending", attempts: 1 };
   const r16 = await runTurn({ state: payState, leadText: "me manda a foto dele", relation: "answers_pending", script: [
-    finalDraft([txt("Aqui as fotos!")], [reply, media(ONIX2, ["p1", "p2"])]),        // send_photos -> POL-TRACK-001 deny
-    finalDraft([txt("Sobre o pagamento, trabalhamos com à vista e financiamento. Como você prefere?")]),  // re-autora sem foto
+    finalDraft([txt("Aqui estão as fotos do Onix.")], [reply, media(ONIX2, ["p1", "p2"])]),
+    finalDraft([txt("Sobre o pagamento, trabalhamos com à vista e financiamento. Como você prefere?")]),
   ] });
-  check("[16] postQuery deny -> draft original não vai; nenhum send_media original sobrevive (brain_retry)", r16.result.status === "committed" && !hasMedia(r16.result) && srcOf(r16.result) === "brain_retry" && /pagamento/i.test(r16.outboxText) && r16.composeCalls === 0, `media=${hasMedia(r16.result)} src=${srcOf(r16.result)} text="${r16.outboxText}"`);
+  check("[16] replay legado preserva deny e nenhum send_media original sobrevive", r16.result.status === "committed" && !hasMedia(r16.result) && srcOf(r16.result) === "brain_retry" && /pagamento/i.test(r16.outboxText) && r16.composeCalls === 0, `media=${hasMedia(r16.result)} src=${srcOf(r16.result)} text="${r16.outboxText}"`);
 
   // [17] identidade LEMBRADA sem ano/preço NUNCA vira 0/-1: sem fetch, vehicle_ref(ano)/money_ref falham fechado.
   const noYearState = seedState(ONIX2, {});

@@ -79,13 +79,12 @@ async function main(): Promise<void> {
     check("1b sem objetivo pendente -> nao emite resolve_objective", !muts.some((m) => m.op === "resolve_objective"));
   }
 
-  // 1c) "Douglas" pelado SEM pergunta de nome -> captura OPORTUNÍSTICA (audit Codex smoke real T8: o lead SE APRESENTA
-  //     espontaneamente; "Douglas" não é preço/tipo/comando -> é o nome). Guardas: 1-2 tokens, isNameToken, sem outro
-  //     answer-kind, e não em pergunta de cidade. Antes o comportamento era "não captura" (invertido pelo requisito novo).
+  // 1c) Um bloco curto e isolado SEM pergunta de nome não prova identidade.
+  //     Incidente real: "Esquece" era despedida e contaminou o nome do CRM.
   {
     const st = baseState({ recentTurns: [{ role: "agent", text: "Temos varios SUVs. Qual faixa de preco?", at: NOW }] });
-    const muts = extractLeadSlots({ leadMessage: "Douglas", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1c" });
-    check("1c 'Douglas' pelado sem pergunta de nome -> captura OPORTUNÍSTICA (auto-apresentação)", slot(muts, "nome")?.value === "Douglas", JSON.stringify(muts));
+    const muts = extractLeadSlots({ leadMessage: "Esquece", state: st, interpretation: TI(), claimExtractor: extractor, turnId: "t1c" });
+    check("1c 'Esquece' sem pergunta de nome -> NÃO contamina o CRM", !slot(muts, "nome"), JSON.stringify(muts));
   }
   // 1c-neg) resposta pelada a pergunta de CIDADE NÃO vira nome (a extração de cidade cuida do valor).
   {

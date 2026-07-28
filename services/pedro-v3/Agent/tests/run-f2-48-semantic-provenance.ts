@@ -188,7 +188,28 @@ function convWired(db: FakeCrmDb) {
     const outbox = (await persistence.listOutbox(conversationId)).filter((o) => o.turnId === turnId) as unknown as OutboxRecord[];
     return { outbox, state: persistence.load(conversationId)?.state ?? null, sentTexts: wa.texts.slice(before), binding, staleRetried: stale, observations: r.status === "committed" ? r.toolObservations : [], responseSource: r.status === "committed" ? r.responseSource : null };
   };
-  return { t, db };
+  const seedPendingPaymentObjective = (): void => {
+    const snapshot = persistence.load(conversationId);
+    if (!snapshot) throw new Error("estado ausente para semear objetivo pendente");
+    const next = structuredClone(snapshot.state);
+    next.currentObjective = {
+      id: "stale-payment-objective",
+      type: "perguntou_pagamento",
+      slot: "entrada",
+      askedAt: clock.now(),
+      askedInTurnId: "old-payment-turn",
+      deliveredByEffectId: "old-payment-turn:reply",
+      deliveryLevel: "accepted",
+      expectedAnswerKinds: ["valor"],
+      status: "pending",
+      attempts: 0,
+    };
+    const uow = persistence.begin();
+    uow.casState(conversationId, snapshot.version, next);
+    const committed = uow.commit();
+    if (!committed.ok) throw new Error(`falha ao semear objetivo: ${committed.reason}`);
+  };
+  return { t, db, seedPendingPaymentObjective };
 }
 const slotVal = (st: ConversationState | null, slot: string): unknown => {
   const s = (st?.slots as Record<string, { status?: string; value?: unknown }> | undefined)?.[slot];
@@ -405,9 +426,10 @@ async function main(): Promise<void> {
   {
     const db = new FakeCrmDb();
     const c = convWired(db);
-    const tF = await c.t("obrigado!", () => finU([txt("Obrigado voce! Fico a disposicao.")], U("smalltalk", "obrigado!")));
+    const tF = await c.t("obrigado!", () => finU([txt("Obrigado voce! Fico a disposicao.")], U("disengagement", "obrigado!")));
     // RD1-2: a forma da despedida (encerrar sem pergunta, sem reabrir funil) eh ADVISORY (disengagementOnly). A LLM advertida encerra -> entregue (brain_final).
     check("[C2-F1] despedida: LLM encerra (brain_final) sem pergunta e sem reabrir funil", (tF.responseSource ?? "").startsWith("brain") && tF.sentTexts.length === 1 && !tF.sentTexts[0].includes("?") && !has(tF.sentTexts[0], "troca"), tF.sentTexts.join("|").slice(0, 100));
+    check("[C2-F1b] decisão semântica de despedida suspende a cadência", tF.state?.followupSuspendedAt != null, String(tF.state?.followupSuspendedAt));
     const c2 = convWired(new FakeCrmDb());
     const tF2 = await c2.t("obrigado!", () => finU([txt("Obrigado pelo contato! Fico à disposição para dar continuidade quando precisar.")], U("smalltalk", "obrigado!")));
     check("[C2-F2] 'contato/continuidade' em despedida válida não vira coleta ou handoff", tF2.responseSource === "brain_final" && tF2.sentTexts.length === 1, tF2.sentTexts.join("|").slice(0, 100));
@@ -426,6 +448,31 @@ async function main(): Promise<void> {
     const duplicateFeedbacks = tP.observations.filter((o) => o.tool === "response" && !o.ok && (o as { error?: { code?: string } }).error?.code === "DUP_PHOTO_RESOLVE").length;
     check("[C2-PH1] photo resolve idêntica executa uma vez e o loop recebe cap", realPhotoResults === 1 && duplicateFeedbacks <= 2, `real=${realPhotoResults} dup=${duplicateFeedbacks}`);
     check("[C2-PH2] cérebro que nunca finaliza NÃO é substituído pela engine: zero mídia comercial fabricada", !tP.outbox.some((x) => x.kind === "send_media") && tP.responseSource === "technical_fallback", `source=${tP.responseSource}`);
+  }
+  // ── [C2-PH-CURRENT] objetivo antigo nunca pode dispensar o ato atual autorado pela LLM ──
+  {
+    const db = new FakeCrmDb();
+    const c = convWired(db);
+    await c.t("tem SUV automático?", searchSuv);
+    await c.t("Gostei do Aircross", () => finU([txt("Ótima escolha! Quer que eu envie as fotos dele?")], U("select_vehicle", "Gostei do Aircross", "select")));
+    c.seedPendingPaymentObjective();
+    const photoU = U("request_photos", "Sim", "send_photos");
+    const tP = await c.t(["Sim", "Por favor, bom dia! Obrigado!"], (_f, obs) => {
+      const photo = [...obs].reverse().find((o) => o.tool === "vehicle_photos_resolve" && o.ok) as Extract<AgentToolObservation, { tool: "vehicle_photos_resolve"; ok: true }> | undefined;
+      if (photo?.data.photoIds.length) {
+        return finWithEffects([txt("Claro! Aqui estão as fotos do C3 Aircross.")], photoU, [reply, media(photo.data.vehicleKey, photo.data.photoIds)]);
+      }
+      if (sawStale(obs)) {
+        return qU({ tool: "vehicle_photos_resolve", input: { vehicleRef: { kind: "vehicle", key: AIRCROSS.vehicleKey } } }, photoU);
+      }
+      // Reproduz o incidente: a LLM entendeu request_photos, mas tentou negar
+      // a disponibilidade sem consultar/enviar. O validador deve devolver o
+      // turno à própria LLM, mesmo existindo um objetivo antigo de pagamento.
+      return finU([txt("No momento, não tenho fotos desse veículo.")], photoU);
+    });
+    check("[C2-PH-C1] resposta sem foto é rejeitada e reautorada pela LLM", tP.staleRetried, `source=${tP.responseSource}`);
+    check("[C2-PH-C2] pedido atual termina em send_media do veículo selecionado", tP.outbox.some((x) => x.kind === "send_media") && tP.responseSource?.startsWith("brain") === true, `source=${tP.responseSource} kinds=${tP.outbox.map((x) => x.kind).join(",")}`);
+    check("[C2-PH-C3] objetivo antigo não troca o alvo da mídia", tP.state?.vehicleContext.selected?.key === AIRCROSS.vehicleKey, String(tP.state?.vehicleContext.selected?.key));
   }
   // ── [C2-SC] a fala da LLM também respeita os slots; CRM seguro não basta ──
   {

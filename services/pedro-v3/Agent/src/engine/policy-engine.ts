@@ -310,13 +310,16 @@ export const PolicyEngine = {
     const obj = ctx.state.currentObjective;
 
     // POL-TRACK-001: resposta a pergunta de pagamento não vira busca de estoque se relation=answers_pending.
-    // ⭐P0-B (Codex — AUTORIDADE LLM-first): a MUDANÇA DE ASSUNTO vence, mas a autoridade é o TurnUnderstanding CONFIÁVEL
-    // e VALIDADO da LLM (`acceptedPrimaryIntent === "search_stock"`, que já implica capability stock_search + evidence do
-    // bloco atual porque só é setado quando o understanding é `trusted`), NUNCA um detector heurístico. Sem
-    // acceptedPrimaryIntent (legado kernel/v2/replay) o comportamento antigo (deny) é preservado.
-    const currentTurnIsSearch = ctx.acceptedPrimaryIntent === "search_stock";
+    // ⭐P0-B (Codex — AUTORIDADE LLM-first): o ato comercial EXPLÍCITO do
+    // bloco atual vence um objetivo antigo, mas a autoridade é somente o
+    // TurnUnderstanding confiável e validado da LLM. Busca e pedido de fotos
+    // são intents distintos que legitimamente usam as duas ações protegidas
+    // por esta policy. Não inferimos isso por texto/regex.
+    const currentTurnOwnsCommercialAction =
+      ctx.acceptedPrimaryIntent === "search_stock"
+      || ctx.acceptedPrimaryIntent === "request_photos";
     const isPayRelation = ctx.interpretation.relation === "answers_pending" && obj?.type === "perguntou_pagamento" && obj.status === "pending";
-    if (!currentTurnIsSearch && isPayRelation && (proposal.proposedAction === "search_stock" || proposal.proposedAction === "send_photos")) {
+    if (!currentTurnOwnsCommercialAction && isPayRelation && (proposal.proposedAction === "search_stock" || proposal.proposedAction === "send_photos")) {
       verdicts.push({ policyId: "POL-TRACK-001", outcome: "deny", violations: ["resposta de financiamento virou busca"] });
     }
 

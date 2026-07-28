@@ -9,7 +9,7 @@ import { buildConversationContext } from "../src/engine/conversation-context.ts"
 import { buildCurrentTurnFacts } from "../src/engine/current-turn-facts.ts";
 import { extractLeadSlots, inferredQuestionSlot } from "../src/engine/lead-extraction.ts";
 import { buildTurnFrame } from "../src/engine/turn-frame-builder.ts";
-import { authorizesPhotoByResolvedTarget, resolveTurnTarget } from "../src/engine/turn-understanding.ts";
+import { authorizesPhotoByResolvedTarget, resolveTurnTarget, type ValidatedUnderstanding } from "../src/engine/turn-understanding.ts";
 import { buildWorkingMemory } from "../src/engine/working-memory.ts";
 
 let ok = 0;
@@ -138,6 +138,34 @@ function main(): void {
     && blue.vehicleKey === "rm:corolla-2016"
     && blue.source === "turn_offer_reference", JSON.stringify(blue));
   check("[D2] resposta a pergunta de foto aceita a referencia estruturada", authorizesPhotoByResolvedTarget(blue, "Me mostra o azul", state));
+
+  const photoAcceptance: ValidatedUnderstanding = {
+    understanding: {
+      ...understanding("Sim"),
+      subject: "selected_vehicle",
+      subjectValue: null,
+      subjectSource: "memory",
+      evidence: [{ capability: "send_photos", quote: "Sim" }],
+    },
+    trusted: true,
+    fromBrain: true,
+    validEvidence: [{ capability: "send_photos", quote: "Sim" }],
+  };
+  const photoOfferState: ConversationState = {
+    ...state,
+    recentTurns: [{ role: "agent", text: "Quer que eu envie as fotos dele?", at: NOW }],
+  };
+  check("[D3] aceite de foto dentro de burst usa a evidencia sem transformar cortesia em pedido", authorizesPhotoByResolvedTarget(
+    blue,
+    "Sim\nPor favor, bom dia! Obrigado!",
+    photoOfferState,
+    photoAcceptance,
+  ));
+  check("[D4] burst sem decisao semantica nao transforma 'sim' em envio de foto", !authorizesPhotoByResolvedTarget(
+    blue,
+    "Sim\nPor favor, bom dia! Obrigado!",
+    photoOfferState,
+  ));
 
   const year = resolveTurnTarget({ understanding: understanding("Corolla 2016"), leadMessage: "Me manda fotos do Corolla 2016", state, claimExtractor: noClaims, knownModels });
   check("[E] modelo e ano citados juntos restringem ao item exato", year.kind === "resolved"

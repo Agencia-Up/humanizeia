@@ -104,6 +104,41 @@ const isCompetingRuntimeDirective = (value: string): boolean => {
 const conversationalBusinessRules = (value: unknown): string[] =>
   items(value).filter((rule) => !isCompetingRuntimeDirective(rule));
 
+const FACT_TOPIC = String.raw`(?:preco|valor|quilometragem|km|ano|cor|cambio|fotos?|imagens?|detalhes?|informacoes?)`;
+const QUALIFICATION = String.raw`(?:qualific\w*|colet\w*.{0,18}dados|dados.{0,18}qualific\w*)`;
+
+/**
+ * Detecta instruções que escondem um fato solicitado até uma etapa de
+ * qualificação. A classificação é por relação semântica entre classes de
+ * assunto, não por frase de uma loja. Qualificar pode continuar depois da
+ * resposta; o que não pode é virar pré-condição para entregar um fato já
+ * disponível ou consultar a fonte apropriada.
+ */
+const isFactAnswerGatedByQualification = (value: string): boolean => {
+  const normalized = normalizeInstruction(value);
+  const fact = new RegExp(`\\b${FACT_TOPIC}\\b`);
+  const qualification = new RegExp(`\\b${QUALIFICATION}\\b`);
+  if (!fact.test(normalized) || !qualification.test(normalized)) return false;
+
+  const restrictive = String.raw`(?:nao|nunca|evit\w*|proibid\w*|somente|so|apenas|aguard\w*|esper\w*)`;
+  return [
+    new RegExp(`\\b${QUALIFICATION}\\b.{0,55}\\bantes de\\b.{0,55}\\b${FACT_TOPIC}\\b`),
+    new RegExp(`\\b${FACT_TOPIC}\\b.{0,45}\\b(?:somente|so|apenas)\\b.{0,35}\\b(?:apos|depois de)\\b.{0,40}\\b${QUALIFICATION}\\b`),
+    new RegExp(`\\b(?:somente|so|apenas)\\b.{0,35}\\b${FACT_TOPIC}\\b.{0,35}\\b(?:apos|depois de)\\b.{0,40}\\b${QUALIFICATION}\\b`),
+    new RegExp(`\\b${restrictive}\\b.{0,45}\\b(?:inform\w*|fal\w*|pass\w*|envi\w*|mostr\w*)?\\s*.{0,20}\\b${FACT_TOPIC}\\b.{0,45}\\bantes de\\b.{0,40}\\b${QUALIFICATION}\\b`),
+    new RegExp(`\\bsem\\b.{0,30}\\b${QUALIFICATION}\\b.{0,35}\\b${restrictive}\\b.{0,45}\\b${FACT_TOPIC}\\b`),
+    new RegExp(`\\b${restrictive}\\b.{0,45}\\b${FACT_TOPIC}\\b.{0,35}\\bate\\b.{0,35}\\b${QUALIFICATION}\\b`),
+  ].some((pattern) => pattern.test(normalized));
+};
+
+// Em um campo "evite", a própria lista já fornece a negação. Assim,
+// "Falar preço antes de qualificar" também representa o bloqueio indevido.
+const isFactWithholdingAvoidRule = (value: string): boolean => {
+  const normalized = normalizeInstruction(value);
+  return isFactAnswerGatedByQualification(value)
+    || new RegExp(`\\b${FACT_TOPIC}\\b.{0,50}\\bantes de\\b.{0,40}\\b${QUALIFICATION}\\b`).test(normalized);
+};
+
 /**
  * Sanitização compartilhada pelo prompt canônico e pela edição com IA. Isso
  * garante que o fallback determinístico não republique justamente o material
@@ -111,10 +146,15 @@ const conversationalBusinessRules = (value: unknown): string[] =>
  */
 export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string, unknown> {
   const cfg = record(input);
+  const b3 = record(cfg.bloco3_abordagem);
   const b6 = record(cfg.bloco6_criterios);
   const b8 = record(cfg.bloco8_regras);
   return {
     ...cfg,
+    bloco3_abordagem: {
+      ...b3,
+      avoid: items(b3.avoid).filter((rule) => !isFactWithholdingAvoidRule(rule)),
+    },
     bloco6_criterios: {
       ...b6,
       disqualified_when: conversationalDisqualificationCriteria(b6.disqualified_when),
@@ -122,8 +162,8 @@ export function sanitizeTenantFunnelPromptConfig(input: unknown): Record<string,
     },
     bloco8_regras: {
       ...b8,
-      always: conversationalBusinessRules(b8.always),
-      never: conversationalBusinessRules(b8.never),
+      always: conversationalBusinessRules(b8.always).filter((rule) => !isFactAnswerGatedByQualification(rule)),
+      never: conversationalBusinessRules(b8.never).filter((rule) => !isFactWithholdingAvoidRule(rule)),
     },
   };
 }
@@ -189,6 +229,9 @@ export function validateAiGeneratedFunnelPrompt(
   if (prompt.split(/\r?\n/).some(isCompetingRuntimeDirective)) {
     reasons.push("regra de runtime ou condução rígida concorrente com o Pedro v3");
   }
+  if (prompt.split(/\r?\n/).some(isFactAnswerGatedByQualification)) {
+    reasons.push("resposta factual condicionada à qualificação");
+  }
 
   const cfg = record(config);
   const b1 = record(cfg.bloco1_identidade);
@@ -233,6 +276,7 @@ COMO ENRIQUECER SEM INVENTAR:
 - Não preserve literalmente uma despedida que julgue negativamente a capacidade, a prontidão ou o momento de compra do lead. Reescreva-a como encerramento cordial, neutro e com porta aberta.
 - Falta de produto numa consulta, incompatibilidade pontual de estoque, silêncio e demora não desqualificam a pessoa. Inatividade pertence à cadência automatizada; desqualificação conversacional exige evidência explícita no bloco atual de um critério comercial válido.
 - Explique que perguntas são preferências adaptativas: a LLM usa somente o que ainda falta e nunca repete pergunta ou fato já confirmado.
+- Quando o lead pedir preço, valor, quilometragem, ano, cor, câmbio, fotos ou outro dado objetivo, responda primeiro com o fato aterrado ou consulte a ferramenta apropriada. Qualificação não é pré-condição para entregar um fato solicitado; depois, prossiga naturalmente com a próxima pergunta relevante.
 - Mantenha uma seção de abertura literal, uma seção de condução natural, qualificação adaptativa, ramificações, critérios de transferência/encerramento, regras específicas, informações da empresa e capacidades operacionais.
 - Use exatamente estes títulos principais para o contrato ser validado: ## PRECEDÊNCIA E PAPEL, ## IDENTIDADE DA EMPRESA, ## CONDUÇÃO NATURAL, ## PRIMEIRO CONTATO, ## QUALIFICAÇÃO ADAPTATIVA, ## QUALIFICAÇÃO, DESQUALIFICAÇÃO E ENCERRAMENTO, ## TRANSFERÊNCIA PARA HUMANO, ## REGRAS ESPECÍFICAS DA EMPRESA, ## INFORMAÇÕES DA EMPRESA, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL.
 
@@ -244,6 +288,7 @@ REGRAS INEGOCIÁVEIS:
 - Não crie regras artificiais como "toda mensagem termina com pergunta", "sempre peça nome/CPF", "encerre se o lead demorar" ou "siga esta ordem sem exceção".
 - Não invente produto, preço, política, endereço, horário, tool ou capacidade.
 - Nunca aconselhe o lead a não comprar, nem conclua que ele não está apto ou no momento adequado para comprar. Uma busca vazia descreve somente o recorte consultado e não autoriza encerrar o atendimento.
+- Nunca esconda preço, valor, quilometragem, ano, cor, câmbio, fotos ou outro fato solicitado até o lead concluir a qualificação. Entregue ou consulte o fato primeiro; qualifique depois, se ainda fizer sentido.
 - Preserve todos os fatos configurados pelo cliente, inclusive regras específicas e apresentação.
 - Não remova as seções do contrato v3, as capacidades autorizadas, a precedência do portal ou a autoria da LLM.
 - Este pedido contém a palavra JSON porque a resposta deve ser JSON puro. Não use markdown nem cercas de código.
@@ -318,6 +363,7 @@ Objetivo comercial: ${text(b3, "objective", "criar conexão e entender a necessi
 - Não transforme as perguntas abaixo em checklist nem repita algo já respondido.
 - Uma resposta curta, agradecimento ou objeção deve ser interpretada pelo contexto; não encerre por reflexo.
 - Seja breve, humano e específico. Não use pergunta-isca genérica quando já houver um assunto claro.
+- Quando o lead pedir preço, valor, quilometragem, ano, cor, câmbio, fotos ou outro dado objetivo, responda primeiro com o fato aterrado ou consulte a ferramenta apropriada. Qualificação não é pré-condição para entregar um fato solicitado; depois, prossiga naturalmente com a próxima pergunta relevante.
 
 ## PRIMEIRO CONTATO
 

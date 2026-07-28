@@ -104,6 +104,16 @@ reactivated.recentTurns.push({ role: "lead", text: "Voltei", at: "2026-07-11T12:
 const reactivatedAnchor = record({ effectId: "reactivated:message", turnId: "reactivated", idempotencyKey: "reactivated:message", createdAt: "2026-07-11T12:17:00.000Z" });
 check("[P9d] nova fala do lead reativa o ciclo de follow-up", !isFollowupSuspended(reactivated)
   && evaluateFollowupDue({ state: reactivated, outbox: [reactivatedAnchor], rules: rules.followup, now: "2026-07-11T12:22:00.000Z" })?.stage === 1);
+const disengaged = state();
+disengaged.stage = "greeting";
+disengaged.followupSuspendedAt = NOW;
+check("[P9e] despedida aceita suspende follow-up mesmo sem mudar o stage", isFollowupSuspended(disengaged)
+  && evaluateFollowup({ state: disengaged, outbox: [anchor], rules: rules.followup, now: NOW }).reason === "state_terminal");
+const disengagedThenReturned = state();
+disengagedThenReturned.stage = "greeting";
+disengagedThenReturned.followupSuspendedAt = NOW;
+disengagedThenReturned.recentTurns.push({ role: "lead", text: "Quero voltar a ver os carros", at: "2026-07-11T12:16:00.000Z" });
+check("[P9f] nova fala após despedida reabre um ciclo sem apagar o histórico", !isFollowupSuspended(disengagedThenReturned));
 
 const b1 = new QueueBrain([final("Ainda procura um carro?")]);
 check("[L1] LLM autora T1", await authorFollowupMessage({ brain: b1, state: state(), stage: 1, turnId: "fu1", now: NOW, portalPromptSha256: "sha" }) === "Ainda procura um carro?");

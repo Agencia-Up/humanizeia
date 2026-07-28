@@ -53,14 +53,17 @@ function latestLeadAt(state: ConversationState): number {
 }
 
 export function isFollowupSuspended(state: ConversationState): boolean {
-  if (state.stage !== "handoff" && state.stage !== "closed") return false;
+  // O marcador é a autoridade durável: ele pode vir de handoff/closed OU de
+  // uma despedida aceita semanticamente antes de o funil mudar de stage.
+  if (state.followupSuspendedAt) {
+    const suspendedAt = Date.parse(state.followupSuspendedAt);
+    if (!Number.isFinite(suspendedAt)) return true;
+    // Uma fala nova do lead depois da suspensão reativa a conversa. O novo
+    // ciclo só poderá nascer depois da resposta a essa fala.
+    return latestLeadAt(state) <= suspendedAt;
+  }
   // Estados antigos sem o marcador continuam terminais por compatibilidade.
-  if (!state.followupSuspendedAt) return true;
-  const suspendedAt = Date.parse(state.followupSuspendedAt);
-  if (!Number.isFinite(suspendedAt)) return true;
-  // Uma fala nova do lead depois da transferência reativa a conversa. O novo
-  // ciclo só poderá nascer depois da resposta a essa fala.
-  return latestLeadAt(state) <= suspendedAt;
+  return state.stage === "handoff" || state.stage === "closed";
 }
 
 export function evaluateFollowup(args: {

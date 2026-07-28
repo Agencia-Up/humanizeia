@@ -707,13 +707,13 @@ function authorFromBrainDraft(args: {
     && args.photoVU.trusted
     && args.photoVU.understanding.primaryIntent === "request_photos"
     && args.photoVU.understanding.requestedCapabilities.includes("send_photos")
-    && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state);
+    && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU);
   // A resposta a "de qual carro você quer as fotos?" pode ser semanticamente uma
   // seleção ("o número 1") ou apenas o modelo ("T-Cross"). A LLM continua dona
   // desse ato; a pergunta pendente só autoriza o efeito factual do alvo resolvido.
   const pendingPhotoTargetAuthorized = args.photoVU?.fromBrain === true
     && args.photoVU.trusted
-    && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state);
+    && authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU);
   const photoAuthorized = authorizesPhotoSend(args.photoVU, args.leadMessage, args.requireBrain)
     || acceptedPhotoAuthorized
     || pendingPhotoTargetAuthorized;
@@ -1150,8 +1150,13 @@ function authorFromBrainDraft(args: {
     composed,
     institutionalObs: args.institutionalObs ?? new Map(),
     proposedEffects,
-    pendingObjective: args.ctx.state.currentObjective?.status === "pending",
-    photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state) || leadRequestsPhoto(args.leadMessage),
+    // Em llmFirst, a semântica aceita do bloco atual vence um objetivo antigo.
+    // Quando a própria LLM declarou request_photos, o objetivo pendente não
+    // pode tornar opcional justamente a completude desse pedido. Replay legado
+    // não possui essa autoridade semântica e preserva o contrato anterior.
+    pendingObjective: args.ctx.state.currentObjective?.status === "pending"
+      && !(args.requireBrain && photoAuthorized),
+    photoRequested: photoAuthorized || authorizesPhotoByResolvedTarget(args.target, args.leadMessage, args.ctx.state, args.photoVU) || leadRequestsPhoto(args.leadMessage),
     photoTargetResolved: args.target.kind === "resolved",
     photoLookupStatus: photoLookupStatus(args.facts, args.target),
   });
@@ -1338,7 +1343,7 @@ function turnCompletenessFeedback(args: {
   readonly composed: RenderedResponse;
   readonly institutionalObs: ReadonlyMap<BusinessInfoTopic, AgentToolObservation>;
   readonly proposedEffects: readonly ProposedEffectPlan[];
-  readonly pendingObjective: boolean;   // objetivo pendente (ex.: pagamento) -> policy pode ter prioridade sobre a foto
+  readonly pendingObjective: boolean;   // objetivo antigo ainda aplicável; request_photos aceito no bloco atual sempre vence
   readonly photoRequested: boolean;     // T2 (fonte única): o turno autoriza foto pela semântica (não regex de frase)
   readonly photoTargetResolved: boolean;
   readonly photoLookupStatus: PhotoLookupStatus;
@@ -2384,7 +2389,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
           && v.understanding.primaryIntent === "request_photos"
           && v.understanding.requestedCapabilities.includes("send_photos")
           && v.validEvidence.length > 0
-          && authorizesPhotoByResolvedTarget(target, leadMessage, contextState);
+          && authorizesPhotoByResolvedTarget(target, leadMessage, contextState, v);
       };
       const currentPhotoActAuthorized = (target: TargetResolution): boolean =>
         authorizesPhotoSend(photoVU(), leadMessage, requireBrain)
@@ -3710,6 +3715,14 @@ const PROVENANCE_RETRY_CAP = 2;   // ⭐SEM inv.1: retries bounded p/ evidence f
         forcedReason: forcedHandoffReason ?? undefined,
       });
       if (handoffChain.planned && reduced.next.followupSuspendedAt == null) reduced.next.followupSuspendedAt = cutoff;
+      // Uma despedida aceita pela semântica da LLM encerra a cadência deste
+      // ciclo mesmo antes de o funil chegar a handoff/closed. Não inferimos por
+      // frase e não alteramos a autoria: apenas persistimos a decisão semântica
+      // já validada. Uma nova fala posterior do lead reativa o ciclo.
+      const acceptedIntentForFollowup = acceptedPassiveUnderstanding?.primaryIntent ?? acceptedBrainPrimaryIntent();
+      if (acceptedIntentForFollowup === "disengagement" && reduced.next.followupSuspendedAt == null) {
+        reduced.next.followupSuspendedAt = cutoff;
+      }
       const decisionForOutbox = { ...decisionWithCrm, effectPlan: handoffChain.effectPlan };
       const handoffGraphViolations = validateEffectPlans(decisionForOutbox.effectPlan);
       if (handoffGraphViolations.length > 0) {

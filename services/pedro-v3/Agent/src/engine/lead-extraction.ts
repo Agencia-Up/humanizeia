@@ -116,18 +116,11 @@ function extractName(
       }
     }
   }
-  // Missão P0 (audit Codex smoke real T8): captura OPORTUNÍSTICA de nome — o lead se APRESENTA espontaneamente ("Douglas",
-  // "Douglas Aloan") mesmo SEM termos perguntado. Só quando o bloco INTEIRO é um nome PELADO (1-2 tokens que passam
-  // isNameToken; nenhum outro answer-kind: valor/modelo/negação/afirmação/data/comando) — evita capturar "SUV"/"Sim"/
-  // "automático"/"mostra" como nome. Confidence menor (não foi resposta a uma pergunta de nome). >=NAME_CONFIDENCE_MIN.
-  // Guard: se o agente perguntou a CIDADE, um token pelado ("Taubaté") é a cidade, NÃO o nome — a extração de cidade cuida.
-  const bareTokens = leadMessage.trim().split(/\s+/).filter(Boolean);
-  if (inferredQuestionSlot(state) !== "cidade"
-    && bareTokens.length >= 1 && bareTokens.length <= 2
-    && classifyAnswerKinds(leadMessage.trim(), claimExtractor).size === 0
-    && bareTokens.every((t) => isNameToken(t, claimExtractor))) {
-    return { value: titleCase(bareTokens.join(" ")), confidence: 0.8 };
-  }
+  // Um bloco curto isolado não prova que o lead declarou o próprio nome.
+  // A mesma forma lexical pode ser uma despedida, correção, produto ou outra
+  // resposta contextual. Nome só nasce de autoapresentação explícita (acima)
+  // ou de resposta a uma pergunta/objetivo de nome. A LLM continua livre para
+  // conversar com o texto; o extrator apenas deixa de gravar um fato sem prova.
   return null;
 }
 

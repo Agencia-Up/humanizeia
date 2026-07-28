@@ -329,6 +329,39 @@ describe('Pedro v3 tenant funnel policies', () => {
     expect(canonical).toContain('Nunca dar desconto sem consultar o vendedor');
   });
 
+  it('answers requested facts before qualification and removes stale fact-withholding rules', () => {
+    const unsafe = 'Falar preço antes de qualificar';
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: {
+        presentation: 'Olá! Sou a Aline, da Mônaco Automóveis.',
+        avoid: [unsafe, 'Não repetir perguntas respondidas'],
+      },
+      bloco8_regras: {
+        always: ['Responder com clareza'],
+        never: ['Nunca inventar preço'],
+      },
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    };
+
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const editorRequest = buildFunnelPromptEditorRequest(config, canonical);
+    expect(canonical).not.toContain(unsafe);
+    expect(editorRequest).not.toContain(unsafe);
+    expect(canonical).toContain('Não repetir perguntas respondidas');
+    expect(canonical).toContain('Nunca inventar preço');
+    expect(canonical).toContain('Qualificação não é pré-condição para entregar um fato solicitado');
+
+    const generated = validateAiGeneratedFunnelPrompt(
+      `${canonical}\nNunca informe preço antes de qualificar o lead.`,
+      canonical,
+      config,
+    );
+    expect(generated.valid).toBe(false);
+    expect(generated.reasons).toContain('resposta factual condicionada à qualificação');
+  });
+
   it('rejects AI output that reintroduces a rigid runtime directive', () => {
     const config = {
       agent_type: 'sdr',
