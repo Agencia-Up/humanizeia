@@ -113,6 +113,68 @@ export function extractContactName(payload: any): string | null {
   return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 
+/** Timestamp do PROVEDOR em segundos (aceita ms). null quando o payload não traz. */
+export function extractProviderTimestamp(payload: any): number | null {
+  const m = pickIncoming(payload);
+  const candidates = [
+    m?.messageTimestamp, m?.timestamp, m?.t, m?.key?.timestamp,
+    payload?.messageTimestamp, payload?.timestamp,
+    payload?.data?.messageTimestamp, payload?.message?.messageTimestamp,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+  }
+  return null;
+}
+
+/** FNV-1a 32-bit em hex (síncrono, estável entre runtimes). */
+export function contentHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * REVISÃO F2 (ponto 1): chave determinística de FALLBACK quando o provedor não
+ * manda message id. Entra em `remote_message_id`, então o índice único
+ * (user_id, instance_id, remote_message_id) passa a deduplicar retries TAMBÉM
+ * sem id — antes, id nulo escapava do índice parcial e o retry DUPLICAVA.
+ *
+ * Composição: direção + telefone canônico + timestamp + tipo + hash(conteúdo+mídia).
+ * tenant/instância ficam de fora DE PROPÓSITO: já são colunas do índice único.
+ * Timestamp: o do PROVEDOR (segundo) quando existe — retry reentrega o mesmo
+ * payload → mesma chave. Sem timestamp do provedor, usa balde de 60s do relógio
+ * local (retries da uazapi chegam em segundos).
+ *
+ * COLISÕES (documentadas):
+ *  - mesma direção+fone+mesmo segundo (ou mesmo balde de 60s sem ts do provedor)
+ *    +mesmo tipo+conteúdo idêntico ⇒ tratado como UMA mensagem. É indistinguível
+ *    de retry; cliente real mandando a MESMA frase 2x no MESMO segundo é raro e
+ *    o custo é perder o eco, não a conversa.
+ *  - conteúdos DIFERENTES colidindo no hash FNV-32 dentro do MESMO segundo/fone:
+ *    ~2^-32 por par — desprezível.
+ *  - retry SEM ts do provedor cruzando o balde de 60s ⇒ pode duplicar (residual,
+ *    só quando o provedor não manda nem id nem timestamp).
+ */
+export function fallbackMessageKey(args: {
+  direction: PersistDirection;
+  phone: string;
+  providerTsSec: number | null;
+  nowIso: string;
+  messageType: string;
+  content: string;
+  mediaUrl: string | null;
+}): string {
+  const ts = args.providerTsSec ?? Math.floor(Date.parse(args.nowIso) / 60000);
+  const tsTag = args.providerTsSec != null ? `s${ts}` : `m${ts}`;
+  const h = contentHash(`${args.content}|${args.mediaUrl || ""}`);
+  return `fb1:${args.direction}:${args.phone}:${tsTag}:${args.messageType}:${h}`;
+}
+
 /** Número do provedor pode vir "<sender>:<id>"; devolve o id "core" após o ':'. */
 export function coreMessageId(msgId: string): string {
   const s = String(msgId || "");
@@ -158,21 +220,26 @@ function isUniqueViolation(error: any): boolean {
 }
 
 /**
- * Requisito 7: uma `fromMe` cujo message id JÁ é uma saída automática do V3 não
- * pode ser gravada como manual (o V3 já a registra em v3_effect_outbox e a RPC a
- * mostra como 'ia'). Casa por provider_receipt->>providerMessageId, tolerando o
- * prefixo "<sender>:<id>". Fail-CLOSED: na dúvida (erro), tratamos como automática
- * e NÃO gravamos — evitar duplicar/relabelar é mais importante que capturar uma
- * eventual manual (o inbound do cliente, que é o essencial, é tratado à parte).
+ * Requisito 7 + REVISÃO F2 (ponto 2): classifica uma `fromMe` em relação ao V3.
+ *  - "auto": o message id JÁ é uma saída automática do V3 (v3_effect_outbox tem o
+ *    providerMessageId) → NÃO gravar (a RPC já a mostra como 'ia').
+ *  - "manual": não é do V3 → gravar como mensagem manual da linha.
+ *  - "uncertain": a CONSULTA falhou. Antes isto era fail-closed (skip) e uma
+ *    mensagem MANUAL podia desaparecer em silêncio. Agora o chamador ESTACIONA a
+ *    linha (is_archived=true + ai_category='v3_uncertain') — durável e observável
+ *    para reconciliação, fora dos previews públicos, sem duplicar como manual.
+ * Casa por provider_receipt->>providerMessageId tolerando o prefixo "<sender>:".
  */
-export async function isV3AutoOutbound(supabase: any, tenant: string, msgId: string): Promise<boolean> {
+export type V3OutboundVerdict = "auto" | "manual" | "uncertain";
+
+export async function classifyV3Outbound(supabase: any, tenant: string, msgId: string): Promise<V3OutboundVerdict> {
   const full = String(msgId || "");
-  if (!full) return false;
+  if (!full) return "manual";
   // O id "core" (sem o prefixo "<sender>:") é alfanumérico -> seguro como sufixo de
   // LIKE. `%core` casa tanto "core" quanto "sender:core", cobrindo as duas formas em
   // que o provider grava/entrega o id, sem quebrar o parser de filtro do PostgREST.
   const core = coreMessageId(full);
-  if (!core) return false;
+  if (!core) return "manual";
   try {
     const { data, error } = await supabase
       .from("v3_effect_outbox")
@@ -181,10 +248,44 @@ export async function isV3AutoOutbound(supabase: any, tenant: string, msgId: str
       .in("kind", ["send_message", "send_media"])
       .like("provider_receipt->>providerMessageId", `%${core}`)
       .limit(1);
-    if (error) return true; // fail-closed: na dúvida, trata como automática (não duplica)
-    return Array.isArray(data) && data.length > 0;
+    if (error) return "uncertain";
+    return Array.isArray(data) && data.length > 0 ? "auto" : "manual";
   } catch {
-    return true; // fail-closed
+    return "uncertain";
+  }
+}
+
+/**
+ * REVISÃO F2 (ponto 2b): `fromMe` SEM message id não passava por NENHUMA checagem
+ * de V3 e era gravada como manual — podendo duplicar com a automática quando o
+ * eco do provedor vem sem id. Checagem por CONTEÚDO numa janela curta: efeito
+ * send_message do tenant, despachado nos últimos minutos, com o MESMO texto.
+ * Aproximação documentada: a janela é por tenant (o outbox não tem instance_id);
+ * duas instâncias do MESMO tenant enviando o MESMO texto no MESMO minuto seriam
+ * fundidas — cenário improvável e o custo é o eco, não a conversa.
+ */
+export async function looksLikeRecentV3SendByContent(
+  supabase: any,
+  tenant: string,
+  content: string,
+  nowIso: string,
+): Promise<V3OutboundVerdict> {
+  const text = String(content || "").trim();
+  if (!text) return "manual";
+  const since = new Date(Date.parse(nowIso) - 3 * 60 * 1000).toISOString();
+  try {
+    const { data, error } = await supabase
+      .from("v3_effect_outbox")
+      .select("effect_id")
+      .eq("tenant_id", tenant)
+      .eq("kind", "send_message")
+      .gte("dispatched_at", since)
+      .eq("payload->>text", text)
+      .limit(1);
+    if (error) return "uncertain";
+    return Array.isArray(data) && data.length > 0 ? "auto" : "manual";
+  } catch {
+    return "uncertain";
   }
 }
 
@@ -214,11 +315,32 @@ export async function persistPrivateInboundMessage(deps: PersistDeps): Promise<P
   const mediaUrl = extractMediaUrl(payload, messageType);
   const contactName = extractContactName(payload);
 
-  // Requisito 6/7: fromMe automática do V3 -> já rastreada, não gravar.
-  if (cls.direction === "outgoing" && msgId) {
-    if (await isV3AutoOutbound(supabase, waInstance.user_id, msgId)) {
-      return { status: "skipped", reason: "from_me_v3_auto", remote_message_id: msgId };
+  // REVISÃO F2 (ponto 1): remote_message_id NUNCA vai nulo — sem id do provedor,
+  // usa a chave determinística de fallback. Assim o índice único
+  // (user_id, instance_id, remote_message_id) deduplica retry TAMBÉM sem id.
+  const effectiveMsgId = msgId ?? fallbackMessageKey({
+    direction: cls.direction,
+    phone,
+    providerTsSec: extractProviderTimestamp(payload),
+    nowIso,
+    messageType,
+    content,
+    mediaUrl,
+  });
+
+  // Requisito 6/7 + REVISÃO F2 (ponto 2): fromMe automática do V3 -> já rastreada,
+  // não gravar. Com id casa por providerMessageId; sem id casa por CONTEÚDO em
+  // janela curta. "uncertain" (consulta falhou) ESTACIONA a linha (abaixo) em vez
+  // de sumir com uma possível manual.
+  let parkUncertain = false;
+  if (cls.direction === "outgoing") {
+    const verdict = msgId
+      ? await classifyV3Outbound(supabase, waInstance.user_id, msgId)
+      : await looksLikeRecentV3SendByContent(supabase, waInstance.user_id, content, nowIso);
+    if (verdict === "auto") {
+      return { status: "skipped", reason: msgId ? "from_me_v3_auto" : "from_me_v3_auto_content", remote_message_id: effectiveMsgId };
     }
+    parkUncertain = verdict === "uncertain";
   }
 
   const row = {
@@ -231,8 +353,13 @@ export async function persistPrivateInboundMessage(deps: PersistDeps): Promise<P
     content,
     media_url: mediaUrl,
     is_read: cls.direction === "outgoing", // saída nossa já nasce "lida"
-    is_archived: false,
-    remote_message_id: msgId,
+    // "uncertain" fica ESTACIONADA: durável e observável (reconciliação lê
+    // ai_category='v3_uncertain'), fora dos previews públicos (que filtram
+    // is_archived=false). A timeline pública passa a excluir arquivadas na
+    // Fase 4 — mais um motivo pra F2 não ser implantada sozinha.
+    is_archived: parkUncertain,
+    ai_category: parkUncertain ? "v3_uncertain" : null,
+    remote_message_id: effectiveMsgId,
     created_at: nowIso,
   };
 
@@ -244,24 +371,29 @@ export async function persistPrivateInboundMessage(deps: PersistDeps): Promise<P
     const { error } = await supabase.from("wa_inbox").insert(row);
     if (error) {
       if (isUniqueViolation(error)) {
-        return { status: "deduped", reason: "dedup_unique", direction: cls.direction, remote_message_id: msgId };
+        return { status: "deduped", reason: "dedup_unique", direction: cls.direction, remote_message_id: effectiveMsgId };
       }
       // Requisito 9: nunca esconder; reportar erro observável ao chamador.
       return {
         status: "error",
         reason: cls.reason,
         direction: cls.direction,
-        remote_message_id: msgId,
+        remote_message_id: effectiveMsgId,
         error: String(error.message || error).slice(0, 300),
       };
     }
-    return { status: "persisted", reason: cls.reason, direction: cls.direction, remote_message_id: msgId };
+    return {
+      status: "persisted",
+      reason: parkUncertain ? "from_me_uncertain_parked" : cls.reason,
+      direction: cls.direction,
+      remote_message_id: effectiveMsgId,
+    };
   } catch (e) {
     return {
       status: "error",
       reason: cls.reason,
       direction: cls.direction,
-      remote_message_id: msgId,
+      remote_message_id: effectiveMsgId,
       error: String((e as any)?.message || e).slice(0, 300),
     };
   }
