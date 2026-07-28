@@ -51,6 +51,10 @@ interface Lead {
   origem?: 'pedro' | 'marcos';
   // Vendedor atribuido (ai_crm_leads.assigned_to_id / crm_leads.assigned_to) — mostrado no card p/ o master.
   assigned_to_id?: string | null;
+  // FASE 5 — flags da projecao (Conversas IA): conversa sem lead no CRM e
+  // conversa cuja instancia esta sem agente ativo. Orfa tem id "conv:<uuid>".
+  semCrm?: boolean;
+  agenteInativo?: boolean;
 }
 
 interface Message {
@@ -375,7 +379,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
         .from('wa_ai_agents')
         .select('id, name, is_active, instance_ids, instance_id')
         .eq('user_id', userId)
-        .eq('is_active', true)
+        // FASE 5: ativos E inativos — o historico nao some quando o agente desliga.
+        .order('is_active', { ascending: false })
         .order('name');
       const list = data || [];
       setAgents(list);
@@ -425,6 +430,49 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     const sellerFilterIds = (!isSeller && sellerFilter !== ALL_SELLERS)
       ? (sellers.find(s => s.key === sellerFilter)?.memberIds || [])
       : null;
+    if (!unified) {
+      // FASE 5: Conversas IA le a PROJECAO (conversa existe SEM CRM; inclui
+      // agente inativo/pausado). Pagina por cursor (last_message_at, id) ate
+      // esgotar — preserva busca/selecao do front com teto de seguranca.
+      const all: any[] = [];
+      let before: string | null = null;
+      let beforeId: string | null = null;
+      for (let page = 0; page < 25; page++) {
+        const { data: v2, error: e2 } = await (supabase as any).rpc('get_ai_conversations_v2', {
+          p_limit: 200, p_before: before, p_before_id: beforeId,
+        });
+        if (e2) { if (page === 0) { setLeads([]); setLoadingLeads(false); return; } break; }
+        const batch = (v2 || []) as any[];
+        all.push(...batch);
+        if (batch.length < 200) break;
+        before = batch[batch.length - 1].last_message_at;
+        beforeId = batch[batch.length - 1].conversation_id;
+      }
+      let rows = all;
+      if (selectedAgentId && selectedAgentId !== ALL_AGENTS) rows = rows.filter(r => r.agent_id === selectedAgentId);
+      if (sellerFilterIds && sellerFilterIds.length > 0) rows = rows.filter(r => r.assigned_to_id && sellerFilterIds.includes(r.assigned_to_id));
+      const mapped: Lead[] = rows.map((r: any): Lead => ({
+        id: r.crm_lead_id || `conv:${r.conversation_id}`,
+        remote_jid: r.phone || '',
+        lead_name: r.contact_name || null,
+        status: '',
+        ai_paused: !!r.ia_pausada,
+        instance_id: r.instance_id || null,
+        agent_id: r.agent_id || '',
+        message_count: r.message_count || 0,
+        created_at: r.first_seen_at,
+        arrived_at: r.first_seen_at,
+        last_interaction_at: r.last_message_at || r.first_seen_at,
+        summary: r.last_message || null,
+        assigned_to_id: r.assigned_to_id || null,
+        origem: 'pedro',
+        semCrm: !!r.sem_vinculo_crm,
+        agenteInativo: !!r.agente_inativo,
+      }));
+      setLeads(mapped);
+      setLoadingLeads(false);
+      return;
+    }
     const { data, error } = await (supabase as any).rpc('get_allowed_lead_conversations', {
       p_agent_id: (selectedAgentId && selectedAgentId !== ALL_AGENTS) ? selectedAgentId : null,
       p_seller_member_ids: (sellerFilterIds && sellerFilterIds.length > 0) ? sellerFilterIds : null,
@@ -622,6 +670,9 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   const selectedLeadId = selectedLead?.id || '';
   const selectedLeadPhone = selectedLead?.remote_jid || '';
   const selectedLeadInstanceId = selectedLead?.instance_id || null;
+  // FASE 5: conversa SEM lead no CRM (id sintetico da projecao). Ver e ler = ok;
+  // pausar/transferir/enviar exigem lead (a F6 cria/vincula ao transferir).
+  const isOrphanSelected = !!selectedLead && String(selectedLead.id).startsWith('conv:');
 
   /* ── Fetch messages for selected lead ──────────────────────────── */
   const fetchMessages = useCallback(async (silent = false) => {
@@ -634,13 +685,22 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
       // telefone (com/sem 55, com/sem 9º dígito) são resolvidas no servidor. Sem consulta
       // direta a wa_inbox/wa_chat_history aqui. Fora do unified (aba do Pedro) passa a
       // instância do lead p/ manter o filtro por número; no unified, timeline completa.
-      const { data: rpcRows } = await (supabase as any).rpc('get_allowed_lead_messages', {
-        p_lead_id: selectedLeadId,
-        p_source: selectedLead?.origem || null,
-        p_phone: selectedLeadPhone,
-        p_instance_id: (!unified && selectedLeadInstanceId) ? selectedLeadInstanceId : null,
-        p_limit: 1500,
-      });
+      // FASE 5: no modo Conversas IA a timeline vem da RPC v2 por IDENTIDADE
+      // (instancia+telefone) — abre tambem conversa SEM lead no CRM, consolida
+      // wa_inbox+chat+V3 com dedupe no servidor e devolve actor/metadata.
+      const { data: rpcRows } = !unified
+        ? await (supabase as any).rpc('get_ai_conversation_messages_v2', {
+            p_instance_id: selectedLeadInstanceId || null,
+            p_phone: selectedLeadPhone,
+            p_limit: 1000,
+          })
+        : await (supabase as any).rpc('get_allowed_lead_messages', {
+            p_lead_id: selectedLeadId,
+            p_source: selectedLead?.origem || null,
+            p_phone: selectedLeadPhone,
+            p_instance_id: null,
+            p_limit: 1500,
+          });
 
       const inboxRows: Message[] = [];
       const historyRows: Message[] = [];
@@ -932,6 +992,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   };
 
   const handleTogglePause = async (lead: Lead) => {
+    if (String(lead.id).startsWith('conv:')) return; // orfa: sem lead no CRM
     setTogglingPause(true);
     const newPaused = !lead.ai_paused;
     try {
@@ -1136,6 +1197,14 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
   /* ── Enviar resposta manual ──────────────────────────────────────── */
   const handleSend = async () => {
     if (!replyText.trim() || !selectedLead || sending) return;
+    if (isOrphanSelected) {
+      toast({
+        title: 'Conversa sem lead no CRM',
+        description: 'Use "Transferir" para criar o lead e assumir o atendimento.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!unified && !selectedLead.ai_paused) {
       toast({
         title: 'Pause a IA primeiro',
@@ -1422,7 +1491,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
     );
   }
 
-  if (agents.length === 0 && !unified) {
+  if (agents.length === 0 && !unified && !loadingLeads && leads.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <Bot className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -1523,8 +1592,8 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                   {agents.map(a => (
                     <SelectItem key={a.id} value={a.id} className="text-xs">
                       <span className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                        {a.name}
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.is_active ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+                        {a.name}{a.is_active ? '' : ' (inativo)'}
                       </span>
                     </SelectItem>
                   ))}
@@ -1747,13 +1816,23 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground">
                               {lead.origem === 'marcos' ? 'Marcos' : 'Pedro'}
                             </span>
-                          ) : lead.ai_paused ? (
+                          ) : (
+                            <span className="flex items-center gap-1">
+                            {lead.semCrm && (
+                              <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-500">Sem CRM</span>
+                            )}
+                            {lead.agenteInativo && (
+                              <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">Inativo</span>
+                            )}
+                            {lead.ai_paused ? (
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 flex items-center gap-0.5">
                               <Pause className="h-2.5 w-2.5" /> Manual
                             </span>
                           ) : (
                             <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-violet-500/15 text-violet-400 flex items-center gap-0.5">
                               <Bot className="h-2.5 w-2.5" /> IA
+                            </span>
+                          )}
                             </span>
                           )}
                           {unified && !isSeller && lead.assigned_to_id && sellerNameById.get(lead.assigned_to_id) && (
@@ -1932,7 +2011,7 @@ export function AgentInboxTab({ userId, isSeller = false, sellerMemberIds = [], 
                           : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
                       }`}
                       onClick={() => handleTogglePause(selectedLead)}
-                      disabled={togglingPause}
+                      disabled={togglingPause || isOrphanSelected}
                     >
                       {togglingPause ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
