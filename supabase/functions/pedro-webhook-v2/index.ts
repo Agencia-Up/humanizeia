@@ -15,6 +15,7 @@ import { identifyPedroContact } from "../_shared/pedro-v2/contactIdentity.ts";
 import { resolveUazapiPhone, resolveUazapiText } from "../_shared/pedro-v2/phone.ts";
 import { handleSellerInbound } from "../_shared/pedro-v2/transferRouter.ts";
 import { classifyUazapiInboundAudience } from "../_shared/pedro-v2/inboundAudience.ts";
+import { persistPrivateInboundMessage } from "../_shared/pedro-v2/persistPrivateInbound.ts";
 import { executePostTransferPlan, resolvePostTransferPlan } from "../_shared/pedro-v2/postTransferOwnership.ts";
 import { sendPedroText } from "../_shared/pedro-v2/uazapiSender_20260524.ts";
 import { logCtwaDiag } from "./ctwaDiag.ts";
@@ -562,6 +563,37 @@ Deno.serve(async (req) => {
 
   const agentsList = Array.isArray(allAgents) ? allAgents : [];
 
+  // ── FASE 2: RASTREAMENTO GARANTIDO (a automação pode parar, o rastreamento não) ─
+  // Persiste a mensagem privada real da linha de IA em wa_inbox, chamado UMA vez
+  // ANTES de selectActiveAgent — logo antes de is_active/horário/ai_paused/despacho,
+  // INCLUSIVE no caminho ativo (o rastreamento NÃO depende do serviço V3 externo).
+  // Idempotente por (user_id, instance_id, remote_message_id). Nunca dispara IA,
+  // resposta ou follow-up. No caminho ativo convive com o v3_inbox; a dedup da
+  // timeline (wa_inbox × v3_inbox) será feita na projeção/RPC das Fases 3/4 — por
+  // isso a Fase 2 NÃO deve ser implantada isolada. Retorna o resultado ao chamador.
+  const persistTrack = async (tag: string) => {
+    if (payload?.dry_run === true) return { status: "skipped", reason: "dry_run" } as const;
+    const r = await persistPrivateInboundMessage({
+      supabase,
+      waInstance,
+      agentsList,
+      payload,
+      audience: inboundAudience,
+      isMessageUpdate: isMessageUpdateEvent(payload),
+    });
+    if (r.status === "error") {
+      // Requisito 9: erro observável, nunca escondido, nunca "sucesso" sem gravar.
+      console.error(
+        `[pedro-webhook-v2] persist_track_failed tag=${tag} dir=${r.direction ?? "-"} msgid=${r.remote_message_id ?? "-"} instance=${waInstance.id} err=${r.error}`,
+      );
+    } else if (r.status !== "skipped") {
+      console.log(
+        `[pedro-webhook-v2] persist_track ${r.status} tag=${tag} dir=${r.direction ?? "-"} reason=${r.reason} msgid=${r.remote_message_id ?? "-"} instance=${waInstance.id}`,
+      );
+    }
+    return r;
+  };
+
   // ── CONFIRMACAO OPERACIONAL DO VENDEDOR (antes de selectActiveAgent) ─────────
   // Incidente 24/07 (conta WA / Wa Duda): o agente foi desativado (is_active=false)
   // com a instancia ainda conectada; os vendedores Luiz responderam "Ok" e a
@@ -620,9 +652,25 @@ Deno.serve(async (req) => {
     // Nao e vendedor -> segue o fluxo normal do lead (selectActiveAgent abaixo).
   }
 
+  // ── FASE 2: PERSISTÊNCIA GARANTIDA (ponto único, ANTES de qualquer decisão) ─────
+  // Grava a mensagem privada real da linha de IA em wa_inbox ANTES de selectActiveAgent
+  // / is_active / horário / ai_paused / despacho V3 — INCLUSIVE no caminho ativo. O
+  // rastreamento não depende do serviço V3 externo. Vendedores já retornaram acima.
+  // Inbound do cliente é sagrado: erro real de banco -> 5xx pra uazapi RE-tentar
+  // (idempotente, e ANTES de qualquer despacho -> sem risco de resposta dupla). fromMe
+  // é best-effort (nunca derruba). Não dispara IA, resposta nem follow-up.
+  {
+    const _pr = await persistTrack("pre_dispatch");
+    if (_pr.status === "error" && _pr.direction === "incoming") {
+      return jsonResponse({ ok: false, error: "inbox_persist_failed", build: PEDRO_V2_BUILD }, 500);
+    }
+  }
+
   const agent = selectActiveAgent(agentsList, waInstance.id);
 
   if (agentError || !agent) {
+    // FASE 2: a mensagem JÁ foi persistida acima (rastreamento garantido). Aqui só
+    // encerramos sem V2/V3 — agente inativo/ausente não responde.
     console.log(`[Webhook] Nenhum agente ativo encontrado para a instância ${waInstance.id} (Carvalho copia)`);
     return jsonResponse({ ok: true, ignored: "agent_not_found_or_inactive", instance: instanceName });
   }
@@ -693,6 +741,8 @@ Deno.serve(async (req) => {
   // fromMe on the AI instance is ignored only after message_update receipts had
   // the chance to be reconciled. Seller instances were handled above.
   if (inboundAudience.kind === "self") {
+    // FASE 2: fromMe já foi persistida acima (manual registrada; automática do V3
+    // pulada via providerMessageId). Aqui só encerramos — fromMe nunca inicia turno.
     return jsonResponse({ ok: true, ignored: "from_me" });
   }
 
@@ -843,25 +893,8 @@ Deno.serve(async (req) => {
       p_origin: "ai",
     });
     if (_pauseLead?.ai_paused === true || (_pauseDecision && _pauseDecision.allowed === false)) {
-      // Registra o inbound para nao perder a mensagem durante a pausa (best-effort;
-      // o indice unico wa_inbox_remote_msg_unique deduplica retries do webhook).
-      try {
-        const _im: any = payload?.message ?? payload?.data?.message ?? payload?.data ?? payload ?? {};
-        const _imId = _im?.messageid || _im?.key?.id || _im?.id || (payload as any)?.messageid || null;
-        await supabase.from("wa_inbox").insert({
-          user_id: _pauseTenant,
-          instance_id: waInstance.id,
-          phone: resolveUazapiPhone(payload),
-          contact_name: _im?.pushName || _im?.senderName || _im?.notifyName || null,
-          direction: "incoming",
-          message_type: "text",
-          content: resolveUazapiText(payload) || "[mensagem recebida]",
-          media_url: null,
-          is_read: false,
-          is_archived: false,
-          remote_message_id: typeof _imId === "string" ? _imId : null,
-        });
-      } catch (_e) { /* inbox best-effort: nunca derruba o gate de pausa */ }
+      // FASE 2: a mensagem JÁ foi persistida antes do selectActiveAgent. Durante a
+      // pausa apenas NÃO despachamos ao V3 (sem resposta, sem follow-up).
       console.log(`[Webhook] ai_paused_no_dispatch reason=${_pauseDecision?.reason} lead=${_pauseLead?.id ?? "-"} instance=${waInstance.id}`);
       return jsonResponse({ ok: true, accepted: true, routed: "ai_paused_no_dispatch", reason: _pauseDecision?.reason ?? "paused", build: PEDRO_V2_BUILD });
     }
