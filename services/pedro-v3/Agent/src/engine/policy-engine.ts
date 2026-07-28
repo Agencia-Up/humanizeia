@@ -579,7 +579,7 @@ export const PolicyEngine = {
       // vehicleKey or authorize availability, price, mileage, color or trim.
       for (const declared of ctx.declaredVehicleIdentities ?? []) {
         if (declared.brand) validBrands.add(normalizeText(declared.brand));
-        validModels.add(normalizeText(declared.model));
+        if (declared.model) validModels.add(normalizeText(declared.model));
         addClaims(declared.label);
       }
       if (sel?.label) addClaims(sel.label);

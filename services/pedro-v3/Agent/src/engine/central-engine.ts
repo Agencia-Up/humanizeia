@@ -45,7 +45,7 @@ import { applyMonetarySemanticsToCurrentConstraints, sanitizeStockSearchInputMon
 import { selectPhotos } from "./photo-selection.ts";
 import { resolveVehicleTypeFromTaxonomy } from "../adapters/read/vehicle-taxonomy.ts";
 import { detectDisengagement, detectExplicitOptOut, type LeadEngagement } from "./lead-intent.ts";
-import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, buildAdIdentityTarget, type AdFocusedVehicle } from "./ad-context.ts";
+import { extractAdVehicleConstraints, adHasVehicle, refersToAd, isBareGreeting, resolveAdCandidateKeys, resolveAdFocusedVehicle, asksAdAlternatives, buildAdDeclaredVehicleIdentity, buildAdIdentityTarget, type AdFocusedVehicle } from "./ad-context.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
 import type { ClaimExtractor } from "../domain/decision.ts";
 import type { TenantAgentRef } from "../domain/read-ports.ts";
@@ -1880,6 +1880,9 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
       // Identity declared by the ad and exact proof are separate from "this vehicle exists". Old states without a
       // typed proof remain unknown; a rendered family candidate can never silently become the advertised trim.
       const adIdentityTarget = llmFirst ? buildAdIdentityTarget(effectiveAdContext) : null;
+      // The ad declaration is a weaker, independent authority: it lets the LLM name exactly what the structured
+      // ad payload named even when a finite taxonomy does not know that model. It never confirms stock or attributes.
+      const adDeclaredIdentity = llmFirst ? buildAdDeclaredVehicleIdentity(effectiveAdContext) : null;
       const currentAdFingerprint = adFingerprintOf({ adId: effectiveAdContext?.adId ?? null, identity: adIdentityTarget?.identity ?? null });
       const carriedAdProof = carryForwardProof(contextState.adIdentityProof ?? null, currentAdFingerprint);
       const initialGroundedKeys = [...new Set([
@@ -2099,7 +2102,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
             automatedLeadFollowupEnabled: args.automatedLeadFollowupEnabled ?? null,
           },
           ad: {
-            identity: adIdentityTarget?.identity ?? adVehicleHint ?? null,
+            identity: adDeclaredIdentity?.label ?? adIdentityTarget?.identity ?? adVehicleHint ?? null,
             confidence: effectiveAdContext?.confidence ?? null,
             referenceKey: adConfirmation.vehicleKey,
           },
@@ -2118,9 +2121,7 @@ export async function runCentralConversationTurn(args: CentralTurnArgs): Promise
         ...ctx,
         state: contextState,
         acceptedPrimaryIntent: (llmFirst && brainVU()) ? brainVU()!.understanding.primaryIntent : undefined,
-        declaredVehicleIdentities: adIdentityTarget
-          ? [{ source: "paid_ad", label: adIdentityTarget.identity, brand: adIdentityTarget.marca, model: adIdentityTarget.modelo }]
-          : undefined,
+        declaredVehicleIdentities: adDeclaredIdentity ? [adDeclaredIdentity] : undefined,
       });
       let authoredComposed: RenderedResponse | null = null;
       let authoredDecision: TurnDecision | null = null;

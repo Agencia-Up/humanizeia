@@ -10,6 +10,7 @@ import { buildFrameSignals } from "./turn-frame-builder.ts";
 import { normalizeText } from "./catalog-utils.ts";
 import { VEHICLE_TAXONOMY } from "../adapters/read/vehicle-taxonomy.ts";
 import type { AdContext } from "../domain/conversation-state.ts";
+import type { DeclaredVehicleIdentity } from "../domain/context.ts";
 import type { ClaimExtractor, TurnInterpretation } from "../domain/decision.ts";
 import type { AdIdentityTarget } from "../domain/operational-context.ts";
 import type { VehicleType } from "../domain/types.ts";
@@ -249,4 +250,38 @@ export function buildAdIdentityTarget(ad: AdContext | null | undefined): AdIdent
     : [];
 
   return { identity, marca: market.marca || null, modelo: market.modelo, ano, variantTokens };
+}
+
+/**
+ * Returns the identity explicitly declared by the structured ad payload.
+ *
+ * This authority is intentionally weaker than `buildAdIdentityTarget`: it
+ * allows the LLM to name what the ad itself named, but never proves inventory,
+ * availability, a vehicle key, price, mileage or trim. The raw semantic label
+ * therefore remains usable even when the finite market taxonomy does not know
+ * the brand/model yet. When the exact parser does know it, parsed fields are
+ * included only as enrichment for the grounding policy.
+ */
+export function buildAdDeclaredVehicleIdentity(ad: AdContext | null | undefined): DeclaredVehicleIdentity | null {
+  if (!ad) return null;
+  const semanticLabel = typeof ad.vehicleQuery === "string" && ad.vehicleQuery.trim()
+    ? ad.vehicleQuery.trim()
+    : null;
+  const exactTarget = buildAdIdentityTarget(ad);
+
+  if (semanticLabel) {
+    return {
+      source: "paid_ad",
+      label: semanticLabel,
+      brand: exactTarget?.marca ?? null,
+      model: exactTarget?.modelo ?? null,
+    };
+  }
+  if (!exactTarget) return null;
+  return {
+    source: "paid_ad",
+    label: exactTarget.identity,
+    brand: exactTarget.marca,
+    model: exactTarget.modelo,
+  };
 }

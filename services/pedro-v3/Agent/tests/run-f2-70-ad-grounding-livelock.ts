@@ -51,7 +51,14 @@ const RANGER25: VehicleFact = {
   preco: 299900, km: 42597, cambio: "Automatico", cor: "Cinza",
   combustivel: "diesel", combustivelLabel: "Diesel", tipo: "pickup",
 };
-const STOCK = [ECOSPORT20, COMPASS22, COMPASS19, RENEGADE18, RANGER25];
+// Fora da taxonomia finita usada pelo parser legado. O estoque real ainda
+// conhece o carro, e o anuncio estruturado pode declarar sua identidade sem
+// fabricar disponibilidade, preco, atributos ou uma vehicleKey.
+const AUDI_A3: VehicleFact = {
+  vehicleKey: "rm:audi-a3", marca: "Audi", modelo: "A3", ano: 2020,
+  preco: 129900, km: 61000, cambio: "Automatico", cor: "Preto", tipo: "sedan",
+};
+const STOCK = [ECOSPORT20, COMPASS22, COMPASS19, RENEGADE18, RANGER25, AUDI_A3];
 const catalog = buildTenantCatalog(STOCK);
 const extractor = new CatalogClaimExtractor(catalog);
 const sdrPolicy = buildSdrQualificationPolicy({ qualificationQuestions: [], agentName: "Carvalho", companyName: "Icom Motors", promptText: "Você é o Carvalho da Icom Motors." } as never);
@@ -310,6 +317,30 @@ async function main(): Promise<void> {
     vehicleQuery: "FORD RANGER LIMITED+ 3.0 V6 4x4 CD TB DIESEL AUT. 2025",
     confidence: 1, semanticSource: "image",
   };
+
+  const adAudi: AdContext = {
+    adId: "ad-audi-a3", source: "facebook", sourceUrl: null,
+    title: "Oferta da loja", body: "Veiculos revisados e prontos para voce.",
+    greeting: "Ola! Como podemos ajudar?", imageUrls: [], capturedAtTurn: 0,
+    vehicleQuery: "Audi A3 2020", confidence: 1, semanticSource: "image",
+  };
+
+  // [B0] P0 de 28/07: a identidade declarada pelo anuncio independe da
+  // taxonomia finita usada para prova exata de estoque. A LLM pode apresenta-la
+  // naturalmente; isso nao concede preco, atributo, disponibilidade nem chave.
+  // Esta prova atravessa o central-engine completo, nao apenas a policy isolada.
+  {
+    const c = conv();
+    const block = "Ola! Posso ter mais informacoes sobre isso?";
+    const responder: BrainResponder = () => finU([
+      txt("Bom dia! Vi que voce veio pelo anuncio do Audi A3 2020. Quer saber mais sobre ele?"),
+    ], "ad_identity_introduction", U("smalltalk"));
+    const r = await turn(c.persistence, c.clock, c.brain, c.preparer, c.id, 1, block, "ambiguous", responder, adAudi);
+    check("[B0] identidade fora da taxonomia atravessa o central-engine", r.committed && has(r.outbox, "Audi A3 2020"), `${r.responseSource}|${r.outbox}`);
+    check("[B0] identidade declarada nao gera grounding_deny", !r.retryReasons.includes("grounding_deny"), r.retryReasons.join("|"));
+    check("[B0] apresentacao natural nao exige tool nem part tipada", r.exec.length === 0 && r.brainCalls === 1, `exec=${r.exec.join(",")} calls=${r.brainCalls}`);
+    check("[B0] resposta chega pela autoria da LLM, sem fallback", r.responseSource !== "technical_fallback" && !has(r.outbox, INSTABILIDADE), `${r.responseSource}|${r.degradationKind}`);
+  }
 
   // [B1] a LLM INVENTA a chave a partir do texto do anúncio (foi o que gpt-4.1-mini fez em produção).
   {

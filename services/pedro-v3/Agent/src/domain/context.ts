@@ -5,6 +5,21 @@ import type { ConversationState } from "./conversation-state.ts";
 import type { TurnInterpretation, TenantCatalog, ClaimExtractor } from "./decision.ts";
 import type { PrimaryIntent } from "./agent-brain.ts";
 
+/**
+ * Identity declared by a trusted, structured conversation source.
+ *
+ * `label` is the source statement and is sufficient to authorize only the
+ * natural mention of that identity. Optional parsed brand/model fields are
+ * enrichment, never a prerequisite: a paid ad must not become unmentionable
+ * merely because its vehicle is absent from a finite market taxonomy.
+ */
+export type DeclaredVehicleIdentity = {
+  readonly source: "paid_ad";
+  readonly label: string;
+  readonly brand?: string | null;
+  readonly model?: string | null;
+};
+
 export type TurnContext = {
   state: ConversationState;
   turnId: Id;
@@ -22,12 +37,7 @@ export type TurnContext = {
    * This authorizes only naming the identity in natural text. It never proves
    * inventory availability, a vehicleKey, price, mileage or any other attribute.
    */
-  declaredVehicleIdentities?: readonly {
-    readonly source: "paid_ad";
-    readonly label: string;
-    readonly brand: string | null;
-    readonly model: string;
-  }[];
+  declaredVehicleIdentities?: readonly DeclaredVehicleIdentity[];
 };
 
 export type QueryLoopLimits = {
