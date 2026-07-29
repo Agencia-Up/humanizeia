@@ -3,9 +3,11 @@
 // wa-sync-ai-conversations — importa a caixa da UAZAPI para "Conversas IA".
 //
 // SOMENTE LEITURA/IMPORTACAO. NUNCA: responde ao cliente, chama o V3, cria lead,
-// altera CRM, dispara follow-up/transferencia, consome tokens de IA. Processa
-// apenas instancias de IA (nunca de vendedor). Exclui grupo/status/broadcast/
-// internos. Idempotente pelo messageid REAL do provedor. Autoria por EVIDENCIA
+// altera CRM, dispara follow-up/transferencia, consome tokens de IA.
+// Escopo (regras do dono): linha de IA -> TODAS as conversas (o numero da IA
+// existe para atender lead de trafego pago); linha de VENDEDOR -> SOMENTE as
+// conversas com leads dele cadastrados na Logos (o resto da agenda pessoal
+// nunca e lido). Exclui grupo/status/broadcast/internos. Idempotente pelo messageid REAL do provedor. Autoria por EVIDENCIA
 // (fromMe + correspondencia com v3_effect_outbox), nunca pela instancia.
 //
 // Contrato UAZAPI validado (read-only) na instancia piloto:
@@ -84,11 +86,17 @@ Deno.serve(async (req) => {
     .eq("id", instanceId).maybeSingle();
   if (!inst) return json({ ok: false, error: "instance_not_found" }, 404);
   if (String(inst.user_id) !== tenantId) return json({ ok: false, error: "tenant_instance_mismatch" }, 403);
-  if (inst.seller_member_id) return json({ ok: false, error: "seller_instance_never_synced" }, 400);
-  const { data: agents } = await admin.from("wa_ai_agents").select("id, instance_id, instance_ids").eq("user_id", tenantId);
-  const isAiInstance = (agents || []).some((a: any) =>
-    a.instance_id === instanceId || (Array.isArray(a.instance_ids) && a.instance_ids.includes(instanceId)));
-  if (!isAiInstance) return json({ ok: false, error: "instance_not_linked_to_ai_agent" }, 400);
+
+  // ── MODO DA INSTANCIA (regras 1 e 2 do dono) ────────────────────────────────
+  // Linha de IA (seller_member_id IS NULL) = MESMA definicao usada pelos gatilhos
+  // da projecao e pelas RPCs. Regra 2: TODA conversa dela entra (o numero da IA
+  // existe para atender lead de trafego pago), com ou sem lead no CRM.
+  //   -> nao exigimos vinculo com wa_ai_agents: na WA o agente aponta para uma
+  //      instancia que nao existe mais, e isso nao pode esconder a conversa real.
+  // Linha de VENDEDOR = so as conversas com leads DELE cadastrados na Logos
+  // (regra 1). Qualquer outro numero do WhatsApp pessoal fica de fora.
+  const sellerMemberId: string | null = inst.seller_member_id ? String(inst.seller_member_id) : null;
+  const mode: "ia" | "vendedor" = sellerMemberId ? "vendedor" : "ia";
   if (inst.provider === "meta") return json({ ok: false, error: "meta_instance_uses_cloud_api_not_supported_here" }, 400);
   const baseUrl = String(inst.api_url || ""); const uaToken = String(inst.api_key_encrypted || "");
   if (!baseUrl || !uaToken) return json({ ok: false, error: "instance_missing_url_or_token" }, 400);
@@ -121,6 +129,27 @@ Deno.serve(async (req) => {
       (x: any) => x, () => ({ data: [] }));
     const internalKeys = new Set<string>((Array.isArray(internalRows) ? internalRows : []).map((k: any) => String(k)));
 
+    // ── REGRA 1: numeros permitidos numa linha de VENDEDOR ────────────────────
+    // Só entram conversas com leads DELE cadastrados na Logos (Pedro + Marcos).
+    // Sem lead atribuido => nada a sincronizar (nunca varre a agenda pessoal).
+    let allowedKeys: Set<string> | null = null;
+    if (mode === "vendedor") {
+      const keys = new Set<string>();
+      const { data: pedroLeads } = await admin.from("ai_crm_leads")
+        .select("remote_jid").eq("user_id", tenantId).eq("assigned_to_id", sellerMemberId);
+      for (const l of (pedroLeads || []) as any[]) keys.add(logosPhoneKey(String(l.remote_jid || "").split("@")[0]));
+      const { data: marcosLeads } = await admin.from("crm_leads")
+        .select("phone").eq("user_id", tenantId).eq("assigned_to", sellerMemberId);
+      for (const l of (marcosLeads || []) as any[]) keys.add(logosPhoneKey(String(l.phone || "")));
+      keys.delete("");
+      allowedKeys = keys;
+      if (!keys.size) {
+        await admin.from("wa_sync_checkpoint").update({ status: "idle", locked_at: null }).eq("tenant_id", tenantId).eq("instance_id", instanceId);
+        if (runId) await admin.from("wa_sync_run").update({ finished_at: new Date().toISOString(), status: "ok", error: "vendedor_sem_lead_atribuido" }).eq("id", runId);
+        return json({ ok: true, dry_run: dryRun, run_id: runId, mode, ...counters, note: "vendedor_sem_lead_atribuido_nada_a_sincronizar" });
+      }
+    }
+
     // Assinaturas do que o V3 ENVIOU (para autoria ia_v3) — 1 query.
     const v3map = new Map<string, V3Sig[]>();
     try {
@@ -147,6 +176,7 @@ Deno.serve(async (req) => {
         const pkey = logosPhoneKey(chat.phone || jid);
         if (!pc || pkey.length < 8) continue;
         if (internalKeys.has(pkey)) continue; // numero interno do tenant
+        if (allowedKeys && !allowedKeys.has(pkey)) continue; // regra 1: so lead do vendedor
         counters.chats_found++;
         processedChats++;
 
@@ -162,7 +192,7 @@ Deno.serve(async (req) => {
             if (ts < sinceMs) { stop = true; break; } // fora da janela -> para (ordenado desc)
             const mid = String(m.messageid || m.id || "");
             if (!mid) { counters.failures++; continue; }
-            const { actor, dir } = classifyActor(m, pkey, v3map);
+            const { actor, dir } = classifyActor(m, pkey, mode === "vendedor" ? new Map() : v3map);
             const type = mapMessageType(m.messageType || m.type);
             const row = {
               tenant_id: tenantId, instance_id: instanceId, chatid: jid,
@@ -233,5 +263,5 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: status !== "error", dry_run: dryRun, run_id: runId, tenant_id: tenantId, instance_id: instanceId, ...counters, error: errText });
+  return json({ ok: status !== "error", dry_run: dryRun, run_id: runId, tenant_id: tenantId, instance_id: instanceId, mode, ...counters, error: errText });
 });
