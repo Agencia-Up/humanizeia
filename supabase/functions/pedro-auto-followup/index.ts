@@ -231,6 +231,49 @@ async function resolveAgentInstance(supabase: any, agentId: string | null, cache
   return inst;
 }
 
+type AutomationGateResult = {
+  allowed: boolean;
+  reason: string;
+};
+
+async function checkAiAutomationAllowed(
+  supabase: any,
+  params: {
+    tenantId: string;
+    agentId: string | null;
+    leadId: string;
+    instanceId: string | null;
+    phone: string;
+  },
+): Promise<AutomationGateResult> {
+  const { data, error } = await supabase.rpc("is_ai_automation_allowed_v2", {
+    p_tenant: params.tenantId,
+    p_agent_id: params.agentId,
+    p_lead_id: params.leadId,
+    p_v3_conversation_id: null,
+    p_instance_id: params.instanceId,
+    p_phone: params.phone,
+    p_action_kind: "auto_followup",
+    p_origin: "ai",
+  });
+
+  if (error) {
+    console.error("[auto-followup] Falha ao validar pausa da automacao:", {
+      tenant_id: params.tenantId,
+      agent_id: params.agentId,
+      lead_id: params.leadId,
+      instance_id: params.instanceId,
+      error: error.message || String(error),
+    });
+    return { allowed: false, reason: "automation_gate_error" };
+  }
+
+  return {
+    allowed: data?.allowed === true,
+    reason: String(data?.reason || (data?.allowed === true ? "allowed" : "automation_blocked")),
+  };
+}
+
 // TRAVA DE 24h (regra do dono): so reativa lead SEM atendimento da IA ha MAIS de 24h —
 // nao enche o saco de quem acabou de falar com o agente (caso real: lead falou 11:04,
 // recusou, e recebeu reativacao 11:07). Como a RPC retorna a fila em rodizio (ordenada por
@@ -470,6 +513,23 @@ serve(async (req) => {
           continue;
         }
 
+        const remoteJid = String(lead.remote_jid || "");
+        const phoneNumber = remoteJid.split("@")[0];
+        const initialAutomationGate = await checkAiAutomationAllowed(supabase, {
+          tenantId: cfg.user_id,
+          agentId: lead.agent_id,
+          leadId: lead.lead_id,
+          instanceId: inst.id || null,
+          phone: phoneNumber,
+        });
+        if (!initialAutomationGate.allowed) {
+          r.actions.push({
+            lead_id: lead.lead_id,
+            skipped: initialAutomationGate.reason,
+          });
+          continue;
+        }
+
         // 5c. Monta contexto e gera a mensagem.
         let transcript = "";
         let carro = "";
@@ -524,8 +584,23 @@ serve(async (req) => {
         const baseUrl = String(inst.api_url).replace(/\/+$/, "");
         const instKey = inst.api_key_encrypted || "";
         const instName = inst.instance_name || "";
-        const remoteJid = lead.remote_jid;
-        const phoneNumber = String(remoteJid).split("@")[0];
+
+        // Fecha a janela de corrida entre a geracao da mensagem e o envio. Se o
+        // usuario pausar a conversa nesse intervalo, nenhum follow-up e enviado.
+        const finalAutomationGate = await checkAiAutomationAllowed(supabase, {
+          tenantId: cfg.user_id,
+          agentId: lead.agent_id,
+          leadId: lead.lead_id,
+          instanceId: inst.id || null,
+          phone: phoneNumber,
+        });
+        if (!finalAutomationGate.allowed) {
+          r.actions.push({
+            lead_id: lead.lead_id,
+            skipped: finalAutomationGate.reason,
+          });
+          continue;
+        }
 
         const sent = await sendUazapiTextMessage(baseUrl, instKey, instName, phoneNumber, remoteJid, message);
 
