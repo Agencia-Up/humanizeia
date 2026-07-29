@@ -167,13 +167,26 @@ Deno.serve(async (req) => {
     } catch { /* sem V3 -> tudo fromMe vira humano_manual */ }
 
     let offset = Number(ck?.last_chat_offset || 0);
-    let processedChats = 0; let maxTsSeen = Number(ck?.last_synced_ts ? new Date(ck.last_synced_ts).getTime() : 0);
+    const previousSyncedMs = Number(ck?.last_synced_ts ? new Date(ck.last_synced_ts).getTime() : 0);
+    // Offset zero + checkpoint existente significa que o backfill ja completou
+    // uma volta. Nesse modo, a lista ordenada permite parar assim que chegamos
+    // a chats/mensagens que nao sao mais novos que o ultimo checkpoint.
+    const incrementalCycle = offset === 0 && previousSyncedMs > 0;
+    let reachedIncrementalCutoff = false;
+    let processedChats = 0; let maxTsSeen = previousSyncedMs;
 
-    while (processedChats < maxChats) {
+    chatPages: while (processedChats < maxChats) {
       const page = await uaFetch(baseUrl, uaToken, "/chat/find", { limit: 50, offset, sort: "-wa_lastMsgTimestamp" });
       if (!page.length) break;
       for (const chat of page) {
         if (processedChats >= maxChats) break;
+        const chatLastMs = msgTs({
+          messageTimestamp: chat.wa_lastMsgTimestamp ?? chat.lastMessageTimestamp ?? chat.timestamp ?? 0,
+        });
+        if (incrementalCycle && chatLastMs > 0 && chatLastMs <= previousSyncedMs) {
+          reachedIncrementalCutoff = true;
+          break chatPages;
+        }
         offset++;
         if (isGroupOrSpecial(chat)) continue;
         const jid = String(chat.wa_chatid || chat.id || "");
@@ -194,6 +207,7 @@ Deno.serve(async (req) => {
           let stop = false;
           for (const m of msgs) {
             const ts = msgTs(m);
+            if (incrementalCycle && ts <= previousSyncedMs) { stop = true; break; }
             if (ts < sinceMs) { stop = true; break; } // fora da janela -> para (ordenado desc)
             const mid = String(m.messageid || m.id || "");
             if (!mid) { counters.failures++; continue; }
@@ -252,7 +266,7 @@ Deno.serve(async (req) => {
       if (page.length < 50) break;
     }
     // Se varreu tudo, reinicia o offset para a proxima rodada pegar novidades do topo.
-    if (processedChats < maxChats) offset = 0;
+    if (incrementalCycle || reachedIncrementalCutoff || processedChats < maxChats) offset = 0;
     await admin.from("wa_sync_checkpoint").update({ last_chat_offset: offset }).eq("tenant_id", tenantId).eq("instance_id", instanceId);
   } catch (e: any) {
     status = "error"; errText = String(e?.message || e).slice(0, 500); counters.failures++;

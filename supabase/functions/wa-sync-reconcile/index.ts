@@ -30,9 +30,9 @@ Deno.serve(async (req) => {
   if (!allowlist.length) return json({ ok: true, dispatched: 0, note: "allowlist_vazia_noop" });
 
   const body = await req.json().catch(() => ({} as any));
-  const maxInstances = Math.min(Math.max(Number(body?.max_instances ?? 6), 1), 30);
+  const maxInstances = Math.min(Math.max(Number(body?.max_instances ?? 2), 1), 30);
   const windowDays = Number(body?.window_days ?? 30);
-  const maxChats = Number(body?.max_chats ?? 40); // incremental por rodada
+  const maxChats = Number(body?.max_chats ?? 5); // curto no cron; backfill avanca por checkpoint
 
   // Todas as linhas UAZAPI do tenant: linha de IA entra inteira; linha de
   // vendedor e filtrada pelo proprio syncer para somente leads atribuidos no CRM.
