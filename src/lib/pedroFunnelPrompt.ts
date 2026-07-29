@@ -271,6 +271,16 @@ const LOCKED_V3_SECTIONS = [
 
 const normalizePromptNewlines = (value: string): string => value.replace(/\r\n?/g, "\n").trim();
 
+const markdownRootHeading = (prompt: string): string | null => normalizePromptNewlines(prompt)
+  .split("\n")
+  .map((line) => line.trim())
+  .find((line) => /^#(?!#)\s+\S/.test(line)) ?? null;
+
+const markdownLevelTwoHeadings = (prompt: string): string[] => normalizePromptNewlines(prompt)
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => /^##(?!#)\s+\S/.test(line));
+
 const markdownSection = (prompt: string, heading: string): string | null => {
   const normalized = normalizePromptNewlines(prompt);
   const start = normalized.indexOf(heading);
@@ -287,11 +297,38 @@ const markdownSection = (prompt: string, heading: string): string | null => {
 export function enforceCanonicalV3Sections(candidate: string, canonicalPrompt: string): string {
   let result = normalizePromptNewlines(candidate);
   const canonical = normalizePromptNewlines(canonicalPrompt);
+
+  // O título raiz faz parte do contrato. Modelos frequentemente devolvem
+  // todas as seções corretas e omitem somente a primeira linha; isso não deve
+  // inutilizar a edição inteira nem obrigar o portal a cair no fallback.
+  const expectedRoot = markdownRootHeading(canonical);
+  const currentRoot = markdownRootHeading(result);
+  if (expectedRoot) {
+    result = currentRoot
+      ? result.replace(/^#(?!#)\s+.*$/m, expectedRoot)
+      : `${expectedRoot}\n\n${result}`.trim();
+  }
+
+  const canonicalHeadings = markdownLevelTwoHeadings(canonical);
   for (const heading of LOCKED_V3_SECTIONS) {
     const expected = markdownSection(canonical, heading);
     const current = markdownSection(result, heading);
-    if (!expected || !current) continue;
-    result = result.replace(current, expected);
+    if (!expected) continue;
+    if (current) {
+      result = result.replace(current, expected);
+      continue;
+    }
+
+    // Se a IA apagar uma seção fixa, reinsira o bloco canônico na posição
+    // correta. Seções comerciais editáveis continuam sujeitas à validação e
+    // nunca são inventadas por este reparo determinístico.
+    const headingIndex = canonicalHeadings.indexOf(heading);
+    const nextHeading = canonicalHeadings
+      .slice(headingIndex + 1)
+      .find((candidateHeading) => markdownSection(result, candidateHeading) != null);
+    result = nextHeading
+      ? result.replace(nextHeading, `${expected}\n\n${nextHeading}`)
+      : `${result}\n\n${expected}`.trim();
   }
   return result.trim();
 }
@@ -392,6 +429,7 @@ O texto final será usado como system prompt de um SDR no WhatsApp. Transforme a
 O prompt do portal é a fonte principal da personalidade, do funil, das perguntas, da qualificação, da desqualificação e do estilo. O contrato técnico v3 é a camada operacional que protege fatos e executa efeitos; ele não pode assumir a condução comercial do atendimento.
 
 SEÇÕES FIXAS DO PRODUTO:
+- Preserve literalmente a primeira linha do PROMPT_CANONICO_V3, incluindo o título raiz "# PEDRO V3 — PROMPT COMERCIAL DO PORTAL".
 - Copie literalmente do PROMPT_CANONICO_V3 as seções ## PRECEDÊNCIA E PAPEL, ## PRIMEIRO CONTATO, ## CAPACIDADES OPERACIONAIS e ## REGRA FINAL. Elas serão recompostas pelo código depois da sua edição e não são espaço para criatividade.
 - A seção de capacidades já descreve as cadeias corretas de anúncio, consulta de estoque, detalhes, aterramento, fotos, mídia, mudança de interesse, conhecimento e transferência. Não resuma, não remova tools e não crie uma segunda versão concorrente dessas regras em outra seção.
 

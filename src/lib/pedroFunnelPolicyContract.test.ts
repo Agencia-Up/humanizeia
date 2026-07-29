@@ -270,6 +270,33 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     expect(validateAiGeneratedFunnelPrompt(protectedPrompt, canonical, config).valid).toBe(true);
   });
 
+  it('restores the root heading and any fixed section omitted by the AI editor', () => {
+    const config = {
+      agent_type: 'sdr',
+      bloco1_identidade: { agent_name: 'Aline', company: 'Mônaco Automóveis' },
+      bloco3_abordagem: { presentation: '[PERIODO]! Sou Aline, da Mônaco Automóveis 😊' },
+      bloco9_empresa: { name: 'Mônaco Automóveis' },
+    };
+    const canonical = buildTenantSdrSystemPrompt(config);
+    const firstContact = canonical.slice(
+      canonical.indexOf('## PRIMEIRO CONTATO'),
+      canonical.indexOf('## QUALIFICAÇÃO ADAPTATIVA'),
+    ).trim();
+    const altered = canonical
+      .replace(/^# PEDRO V3[^\n]*\n+/, '')
+      .replace(`${firstContact}\n\n`, '');
+
+    expect(validateAiGeneratedFunnelPrompt(altered, canonical, config).valid).toBe(false);
+    const protectedPrompt = enforceCanonicalV3Sections(altered, canonical);
+    expect(protectedPrompt.startsWith('# PEDRO V3 — PROMPT COMERCIAL DO PORTAL')).toBe(true);
+    expect((protectedPrompt.match(/## PRIMEIRO CONTATO/g) ?? []).length).toBe(1);
+    expect(protectedPrompt).toContain('[PERIODO]! Sou Aline, da Mônaco Automóveis 😊');
+    expect(validateAiGeneratedFunnelPrompt(protectedPrompt, canonical, config)).toEqual({
+      valid: true,
+      reasons: [],
+    });
+  });
+
   it('teaches the prompt editor to preserve tool chains without making the engine conduct the sale', () => {
     const config = {
       agent_type: 'sdr',
@@ -281,6 +308,7 @@ Identifique o horário atual e cumprimente conforme o momento. Em seguida, apres
     const request = buildFunnelPromptEditorRequest(config, canonical);
 
     expect(request).toContain('SEÇÕES FIXAS DO PRODUTO');
+    expect(request).toContain('Preserve literalmente a primeira linha');
     expect(request).toContain('anúncio, consulta de estoque, detalhes, aterramento, fotos, mídia');
     expect(request).toContain('Não troque o preço retornado por uma tool pelo teto de orçamento do lead');
     expect(request).toContain('não transforme a engine em cérebro do atendimento');

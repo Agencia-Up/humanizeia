@@ -91,6 +91,7 @@ async function improvePromptWithAi(
               'Seu trabalho é organizar a intenção comercial do cliente em instruções claras para uma LLM conduzir uma conversa humana.',
               'O prompt do portal governa personalidade, funil, perguntas, qualificação, desqualificação e estilo.',
               'O contrato v3 governa apenas formato, segurança, evidência, grounding e efeitos operacionais.',
+              'Preserve literalmente o título raiz # PEDRO V3 — PROMPT COMERCIAL DO PORTAL.',
               'As seções fixas de precedência, primeiro contato, capacidades operacionais e regra final devem permanecer idênticas ao contrato canônico; o servidor também as recompõe após sua edição.',
               'Não resuma nem contradiga as cadeias canônicas de anúncio, stock_search, vehicle_details, vehicle_photos_resolve, referências aterradas, send_media e handoff.',
                'Preserve fatos e regras do cliente. Enriqueça apenas com boas práticas gerais de SDR e nunca invente fatos do negócio.',
